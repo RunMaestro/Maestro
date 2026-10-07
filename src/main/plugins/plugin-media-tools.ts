@@ -260,6 +260,8 @@ export class PluginMediaTools {
 		if (!job || job.pluginId !== owner || !job.audio.has(audioId) || job.controller.signal.aborted)
 			throw new MediaError('MediaInvalid');
 		if (job.operation || job.serviceLease || job.ran) throw new MediaError('MediaBusy');
+		// Capture only the approved run fields; owner handles never become run options.
+		const { model, language } = options;
 		const aliases = new Map<string, string>([[randomUUID(), audioId]]);
 		job.serviceLease = { authorize };
 		this.check(job);
@@ -275,7 +277,7 @@ export class PluginMediaTools {
 				if (job.operation) throw new MediaError('MediaBusy');
 				const operation = this.execute(job, `media.${method}`, {
 					audioId: original,
-					options: { profile: 'whisper-cli', ...options },
+					options: { profile: 'whisper-cli', model, language },
 				});
 				job.operation = operation;
 				try {

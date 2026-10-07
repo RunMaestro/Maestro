@@ -261,11 +261,17 @@ export class PluginServiceHost {
 		const idValue = randomUUID();
 		let lease: MediaServiceLease;
 		try {
-			lease = this.deps.media.delegate(pluginId, raw.jobId, raw.audioId, raw, () => {
-				const live = this.binding(pluginId, id);
-				if (live.registration !== binding.registration)
-					throw new ServiceError('ServiceUnavailable');
-			});
+			lease = this.deps.media.delegate(
+				pluginId,
+				raw.jobId,
+				raw.audioId,
+				{ model: raw.model, language: raw.language },
+				() => {
+					const live = this.binding(pluginId, id);
+					if (live.registration !== binding.registration)
+						throw new ServiceError('ServiceUnavailable');
+				}
+			);
 		} catch (error) {
 			if (guard?.ok) guard.release();
 			throw this.failure(error);

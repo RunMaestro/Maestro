@@ -5,9 +5,16 @@ import * as os from 'node:os';
 import { PluginMediaTools, resolveMediaRuntime } from '../../../main/plugins/plugin-media-tools';
 import { MEDIA_LIMITS } from '../../../shared/plugins/media-tools';
 import { PluginServiceHost } from '../../../main/plugins/plugin-service-host';
-import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
+import {
+	validatePluginManifest,
+	type PluginManifest,
+} from '../../../shared/plugins/plugin-manifest';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
-import { parsePermissions } from '../../../shared/plugins/permissions';
+import {
+	parsePermissions,
+	grantsFromRequests,
+	isPermitted,
+} from '../../../shared/plugins/permissions';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 
 const native = vi.hoisted(() => ({ execFile: vi.fn(), paths: vi.fn() }));
@@ -537,6 +544,146 @@ describe('media tools boundary', () => {
 });
 
 describe('service media leases', () => {
+	it('runs a valid registry transcription through the real media broker and native run boundary', async () => {
+		const provider = validatePluginManifest(
+			JSON.parse(
+				await fs.readFile(
+					new URL(
+						'../../../../examples/plugins/transcription-service/plugin.json',
+						import.meta.url
+					),
+					'utf8'
+				)
+			)
+		);
+		const consumer = validatePluginManifest({
+			id: 'consumer',
+			name: 'Consumer',
+			version: '1.0.0',
+			tier: 1,
+			entry: 'main.js',
+			maestro: { minHostApi: '1.24.0' },
+			requires: [
+				{
+					id: 'voice',
+					provider: 'example.transcription',
+					service: 'transcription',
+					contract: 'maestro.audio.transcribe',
+					version: '^1.0.0',
+					optional: true,
+				},
+			],
+			permissions: [
+				{ capability: 'services:call', scope: 'example.transcription/transcription' },
+				{ capability: 'media:tools', scope: 'discord-voice' },
+			],
+		});
+		expect(provider.errors).toEqual([]);
+		expect(consumer.errors).toEqual([]);
+		const manifests = { 'example.transcription': provider.manifest!, consumer: consumer.manifest! };
+		const delegate = vi.spyOn(tools, 'delegate');
+		const registry = new PluginServiceHost({
+			manifest: (id) => manifests[id as keyof typeof manifests],
+			running: () => true,
+			allowed: (id, capability, target) =>
+				isPermitted(
+					grantsFromRequests(manifests[id as keyof typeof manifests]?.permissions ?? [], 1),
+					capability,
+					target
+				),
+			media: tools,
+			invoke: async (id, command, raw) => {
+				expect(id).toBe('example.transcription');
+				expect(command).toBe('service:transcription');
+				const args = raw as { callId: string; audioId: string; model: 'base'; language: 'de' };
+				await registry.media(id, 'probe', args.callId, args.audioId);
+				const decoded = (await registry.media(id, 'decode', args.callId, args.audioId)) as {
+					audioId: string;
+				};
+				const probe = (await registry.media(id, 'probe', args.callId, decoded.audioId)) as {
+					durationSeconds: number;
+				};
+				const output = (await registry.media(id, 'run', args.callId, decoded.audioId)) as {
+					json: string;
+				};
+				const transcript = JSON.parse(output.json);
+				return {
+					text: transcript.transcription[0].text,
+					language: transcript.result.language,
+					model: args.model,
+					durationSeconds: probe.durationSeconds,
+					multilingual: transcript.model.multilingual,
+					translated: transcript.params.translate,
+				};
+			},
+		});
+		try {
+			registry.register('example.transcription', 'transcription');
+			const { jobId } = (await tools.call('consumer', 'media.open', {})) as { jobId: string };
+			const { audioId } = (await tools.call('consumer', 'media.download', { jobId, url })) as {
+				audioId: string;
+			};
+			const { callId } = registry.start('consumer', 'voice', {
+				jobId,
+				audioId,
+				model: 'base',
+				language: 'de',
+			});
+			await expect(registry.result('consumer', callId)).resolves.toEqual({
+				text: 'Guten Tag.',
+				language: 'de',
+				model: 'base',
+				durationSeconds: 1,
+				multilingual: true,
+				translated: false,
+			});
+			expect(delegate).toHaveBeenCalledWith(
+				'consumer',
+				jobId,
+				audioId,
+				{ model: 'base', language: 'de' },
+				expect.any(Function)
+			);
+			expect(native.execFile.mock.calls.map(([binary]) => path.basename(binary))).toEqual(
+				expect.arrayContaining(['ffprobe', 'ffmpeg', 'whisper-cli'])
+			);
+			expect(
+				native.execFile.mock.calls.filter(([binary]) => binary.endsWith('whisper-cli'))
+			).toHaveLength(1);
+			expect(await fs.readdir(root)).toEqual([]);
+			await expect(registry.media('example.transcription', 'run', callId, audioId)).rejects.toThrow(
+				'ServiceInvalid'
+			);
+		} finally {
+			await registry.cleanupPlugin('consumer');
+			await registry.cleanupPlugin('example.transcription');
+			await tools.cleanupPlugin('consumer');
+			delegate.mockRestore();
+		}
+	});
+
+	it('captures only approved delegated run options, excluding handles and later caller mutations', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const options = {
+			model: 'base' as const,
+			language: 'de',
+			jobId,
+			audioId,
+			profile: 'foreign-profile',
+			args: ['--bad'],
+		};
+		const lease = tools.delegate('p', jobId, audioId, options, () => {});
+		options.language = 'en';
+		const decoded = (await lease.call('decode', lease.audioId)) as { audioId: string };
+		await expect(lease.call('run', decoded.audioId)).resolves.toEqual({ json: whisperJson });
+		const run = native.execFile.mock.calls.find(([binary]) => binary.endsWith('whisper-cli'))!;
+		expect(run[1][run[1].indexOf('-l') + 1]).toBe('de');
+		expect(run[1]).not.toContain('--bad');
+		await lease.close();
+		expect(await fs.readdir(root)).toEqual([]);
+	});
+
 	it('mints fresh aliases, preserves the original deadline and ownership, and makes handoff exclusive', async () => {
 		const jobId = await open();
 		const audioId = await download(jobId);
