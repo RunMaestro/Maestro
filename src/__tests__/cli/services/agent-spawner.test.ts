@@ -2562,7 +2562,9 @@ Some text with [x] in it that's not a checkbox
 
 		it('delivers a declared secret from a credentials file to that agent only', async () => {
 			const actualFs = await vi.importActual<typeof import('fs')>('fs');
-			const credentials = actualFs.mkdtempSync(path.join(os.tmpdir(), 'cli-secret-'));
+			// os.tmpdir() is mocked to '/tmp' for this suite, which is no folder on Windows.
+			const actualOs = await vi.importActual<typeof import('os')>('os');
+			const credentials = actualFs.mkdtempSync(path.join(actualOs.tmpdir(), 'cli-secret-'));
 			const secretFile = path.join(credentials, 'MAESTRO_TEST_DEPLOY_TOKEN');
 			actualFs.writeFileSync(secretFile, 'sentinel-cli-91f2\n');
 			// fs.readFileSync is mocked for this suite; serve the real secret file.

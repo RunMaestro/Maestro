@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { MAESTRO_LIB_VERSION } from '../version';
 import {
@@ -148,7 +149,8 @@ describe('the built maestro-lib entry', () => {
 			'-e',
 			`
 			import { MAESTRO_LIB_VERSION, runTurn, planSessionTurn } from ${JSON.stringify(
-				path.join(libDir, 'index.js')
+				// ESM takes a URL, and a Windows path reads as one with a "c:" scheme.
+				pathToFileURL(path.join(libDir, 'index.js')).href
 			)};
 			console.log(JSON.stringify({
 				version: MAESTRO_LIB_VERSION,

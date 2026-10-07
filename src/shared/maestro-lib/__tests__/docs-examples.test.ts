@@ -106,10 +106,13 @@ describe('docs/maestro-lib.md examples', () => {
 	it('type-checks every block against the entry module', () => {
 		// Each block is served from memory at a path beside this test, so the
 		// compiler sees it inside the project and nothing is written to disk.
+		// Paths use forward slashes: the compiler asks for files that way on
+		// Windows too, and a backslash in the import specifier would be an escape.
+		const toSlashes = (file: string) => file.split(path.sep).join('/');
 		const examples = new Map(
 			blocks.map((block, index) => [
-				path.join(__dirname, `__docs_example_${index}_line_${block.line}.ts`),
-				block.code.replace(/from 'maestro-lib'/g, `from '${ENTRY}'`),
+				toSlashes(path.join(__dirname, `__docs_example_${index}_line_${block.line}.ts`)),
+				block.code.replace(/from 'maestro-lib'/g, `from '${toSlashes(ENTRY)}'`),
 			])
 		);
 		const files = [...examples.keys()];
