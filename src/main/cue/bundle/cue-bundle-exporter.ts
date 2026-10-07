@@ -157,7 +157,9 @@ export function isWithin(
 	child: string,
 	platform: NodeJS.Platform = process.platform
 ): boolean {
-	const p = platform === 'win32' ? path.win32 : path;
+	// `path.posix`, not `path`: on a Windows host `path` is `path.win32`, which
+	// would fold case for the POSIX rules a non-win32 `platform` asks for.
+	const p = platform === 'win32' ? path.win32 : path.posix;
 	const fold = (s: string) => (platform === 'win32' ? s.toLowerCase() : s);
 	const rel = p.relative(fold(parent), fold(child));
 	return rel === '' || (!rel.startsWith('..') && !p.isAbsolute(rel));
