@@ -96,6 +96,8 @@ LoadCredential=ANTHROPIC_API_KEY:/etc/maestro/credentials/ANTHROPIC_API_KEY
 
 The engine looks for each secret in this order: the credentials directory, `/run/secrets/<NAME>`, then the environment. A file is the safer channel: it is not visible in the process environment, and each agent receives only the secrets its bundle declared. Shell command steps receive none; name a variable in `MAESTRO_SERVER_ENV_ALLOW` if a step needs it.
 
+The same lookup covers a webhook's `secret_env` and the token Cue's own `gh` calls use: a `GH_TOKEN` (or `GITHUB_TOKEN`) credential is handed to `gh` alone, never to agents, and is read again on every poll, so a rotated file takes effect without a restart. A token file takes precedence over `gh auth login`.
+
 **Upgrading.** Unpack a newer bundle and run its `install.sh` again. The data directory, workspaces, env file and credentials are kept, and a running service is restarted on the new version. The installer replaces the unit file, so keep your changes in drop-ins.
 
 ## Option 2: Container
@@ -140,7 +142,7 @@ With Docker Compose, `packaging/server/compose.yaml` has the same setup: `docker
 - **Stop timeout.** The engine drains active runs for up to 90 seconds on stop, but `docker stop` waits only 10 seconds by default. Use `--stop-timeout 120` (or `docker stop -t 120`), or `stop_grace_period: 120s` in Compose. The image runs `tini` without `-g`, so the stop signal reaches the engine alone and runs in flight can finish.
 - **Restart after a hard kill.** If the engine is killed without stopping (`docker kill`, out of memory, a host crash), its lock stays behind. A new container cannot tell that lock from one held by another container on the same volume, so it waits for the lock to go quiet: the engine refuses to start for up to 3 minutes, and a restart policy brings it back after that.
 - **Health.** The image's health check calls `/healthz` on the engine's status port, 7433, inside the container. `docker ps` shows `healthy` once it answers.
-- **Secrets as files.** Docker and Compose secrets mounted at `/run/secrets/<NAME>` are read by name before the environment, like systemd credentials, and each agent receives only the secrets its bundle declared.
+- **Secrets as files.** Docker and Compose secrets mounted at `/run/secrets/<NAME>` are read by name before the environment, like systemd credentials, and each agent receives only the secrets its bundle declared. A `GH_TOKEN` secret authenticates Cue's GitHub triggers.
 - **Webhook port.** Inside the container the webhook listener listens on all interfaces so the port can be published. Publish it to the host's loopback (`127.0.0.1:17997:17997`) and put a reverse proxy or tunnel in front of it.
 
 ## Health and status

@@ -45,6 +45,7 @@ import {
 } from '../../shared/serverSecrets';
 import { findFanOutTarget } from '../../shared/cue/fan-out-target';
 import { isGhInstalled } from '../utils/cliDetection';
+import { GH_TOKEN_SECRET_NAMES } from './cue-gh-token';
 
 export type CueReadinessGapKind =
 	/** The provider is unknown, has no output parser, or cannot run a turn without a terminal. */
@@ -326,8 +327,23 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 			kind: 'tool-missing',
 			tool: 'gh',
 			subscription: needsGh.name,
-			message: `GitHub trigger "${needsGh.name}" needs the GitHub CLI (gh), which is not installed. Install gh and authenticate it (gh auth login, or GH_TOKEN).`,
+			message: `GitHub trigger "${needsGh.name}" needs the GitHub CLI (gh), which is not installed. Install gh and authenticate it (gh auth login, or GH_TOKEN as $CREDENTIALS_DIRECTORY/GH_TOKEN, /run/secrets/GH_TOKEN, or the environment variable).`,
 		});
+	}
+	// gh's login is not probed (that is a network call), but a token secret
+	// file that exists and cannot be used is a certain failure: the poller
+	// drops that name rather than fall back to a stale variable.
+	if (needsGh) {
+		for (const name of GH_TOKEN_SECRET_NAMES) {
+			const lookup = lookupSecret(name, inputs.secretLookup);
+			if (lookup.status !== 'unusable') continue;
+			add({
+				kind: 'secret-unusable',
+				subscription: needsGh.name,
+				secret: name,
+				message: `GitHub trigger "${needsGh.name}" reads its token from ${describeSecretProblem({ name, ...lookup })}.`,
+			});
+		}
 	}
 	if (repoInferredRoots.size > 0) {
 		if (!(await probes.binaryExists('git'))) {

@@ -22,6 +22,7 @@ import {
 import type { CueGitHubLabelTarget } from '../../shared/cue';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
 import { ghErrorHaystack, isGitHubAuthError } from '../utils/ghErrors';
+import { buildGhEnv, redactGhTokens } from './cue-gh-token';
 
 // Re-exported: the auth predicate moved to utils/ghErrors so Send Feedback can
 // share it, and existing importers still reach it here.
@@ -209,20 +210,42 @@ export function isGitHubConnectivityError(err: unknown): boolean {
 /** Expanded env so packaged Electron can find gh in /opt/homebrew/bin, /usr/local/bin, etc. */
 const ghEnv = getExpandedEnv();
 
+/**
+ * Run gh with the GitHub token from a secret file or the environment
+ * (`buildGhEnv`), resolved per call so a rotated file is picked up. A failure
+ * is rethrown with every token value scrubbed from its message and output, so
+ * nothing downstream (logs, Sentry, the Cue database) can carry one.
+ * `onTokenProblems` receives the unusable token files, by name and path.
+ */
 function execFileAsync(
 	cmd: string,
 	args: string[],
-	opts?: { cwd?: string; timeout?: number }
+	opts?: { cwd?: string; timeout?: number },
+	onTokenProblems?: (problems: string[]) => void
 ): Promise<{ stdout: string; stderr: string }> {
+	const { env, tokens, problems } = buildGhEnv(ghEnv);
+	onTokenProblems?.(problems);
 	return new Promise((resolve, reject) => {
-		cpExecFile(cmd, args, { ...opts, env: ghEnv }, (error, stdout, stderr) => {
+		cpExecFile(cmd, args, { ...opts, env }, (error, stdout, stderr) => {
 			if (error) {
-				reject(error);
+				reject(scrubGhError(error, tokens));
 			} else {
 				resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
 			}
 		});
 	});
+}
+
+function scrubGhError(error: Error, tokens: string[]): Error {
+	if (tokens.length === 0) return error;
+	const fields = error as Error & { stdout?: unknown; stderr?: unknown; cmd?: unknown };
+	error.message = redactGhTokens(error.message, tokens);
+	if (error.stack) error.stack = redactGhTokens(error.stack, tokens);
+	for (const key of ['stdout', 'stderr', 'cmd'] as const) {
+		const value = fields[key];
+		if (value !== undefined && value !== null) fields[key] = redactGhTokens(String(value), tokens);
+	}
+	return error;
 }
 
 export interface CueGitHubPollerConfig {
@@ -326,11 +349,29 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	const basePollMs = pollMinutes * 60 * 1000;
 	let currentPollMs = basePollMs;
 
+	// A token secret file that exists but cannot be used is logged once per
+	// change, not once per gh call.
+	let lastTokenProblems = '';
+	function reportTokenProblems(problems: string[]): void {
+		const joined = problems.join('; ');
+		if (joined === lastTokenProblems) return;
+		lastTokenProblems = joined;
+		if (joined) onLog('warn', `[CUE] "${triggerName}" cannot use the GitHub token: ${joined}`);
+	}
+
+	function runGh(
+		cmd: string,
+		args: string[],
+		opts?: { cwd?: string; timeout?: number }
+	): Promise<{ stdout: string; stderr: string }> {
+		return execFileAsync(cmd, args, opts, reportTokenProblems);
+	}
+
 	async function resolveGh(): Promise<string | null> {
 		if (ghCommand !== null) return ghCommand;
 		try {
 			const cmd = await resolveGhPath();
-			await execFileAsync(cmd, ['--version']);
+			await runGh(cmd, ['--version']);
 			ghCommand = cmd;
 		} catch (err) {
 			// `gh` not being installed is expected in some environments, so the
@@ -350,7 +391,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	async function resolveRepo(): Promise<string | null> {
 		if (resolvedRepo) return resolvedRepo;
 		try {
-			const { stdout } = await execFileAsync(
+			const { stdout } = await runGh(
 				ghCommand!,
 				['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
 				{ cwd: projectRoot, timeout: 10000 }
@@ -373,7 +414,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				const message = err instanceof Error ? err.message : String(err);
 				onLog(
 					'warn',
-					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect, or provide GH_TOKEN as a secret file or environment variable: ${message}`
 				);
 				return null;
 			}
@@ -410,7 +451,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		sinceIso: string | null
 	): Promise<GitHubComment[] | null> {
 		try {
-			const { stdout } = await execFileAsync(
+			const { stdout } = await runGh(
 				ghCommand!,
 				[itemType, 'view', String(itemNumber), '--repo', repo, '--json', 'comments'],
 				{ cwd: projectRoot, timeout: 30000 }
@@ -503,7 +544,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	async function pollPRs(repo: string): Promise<void> {
 		// For "merged" state, query closed PRs and filter by merge status client-side
 		const ghStateArg = stateFilter === 'merged' ? 'closed' : stateFilter;
-		const { stdout } = await execFileAsync(
+		const { stdout } = await runGh(
 			ghCommand!,
 			[
 				'pr',
@@ -547,7 +588,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	}
 
 	async function pollIssues(repo: string): Promise<void> {
-		const { stdout } = await execFileAsync(
+		const { stdout } = await runGh(
 			ghCommand!,
 			[
 				'issue',
@@ -591,7 +632,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	 * reactions, and user objects we would immediately discard.
 	 */
 	async function fetchLabelEventPage(repo: string, page: number): Promise<RawLabelEvent[]> {
-		const { stdout } = await execFileAsync(
+		const { stdout } = await runGh(
 			ghCommand!,
 			[
 				'api',
@@ -786,7 +827,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				// instead of filing a crash report on every tick (MAESTRO-KE).
 				onLog(
 					'warn',
-					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect, or provide GH_TOKEN as a secret file or environment variable: ${message}`
 				);
 			} else {
 				// Emit typed payload so the metric interceptor bumps the

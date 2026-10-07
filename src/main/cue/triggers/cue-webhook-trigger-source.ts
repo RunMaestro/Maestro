@@ -20,7 +20,11 @@ import {
 	type CueWebhookDelivery,
 } from '../cue-webhook-server';
 import { passesFilter } from './cue-trigger-filter';
-import { describeSecretProblem, lookupSecret } from '../../../shared/serverSecrets';
+import {
+	describeSecretProblem,
+	lookupSecret,
+	type SecretLookupOptions,
+} from '../../../shared/serverSecrets';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
 
 /**
@@ -30,14 +34,17 @@ import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-so
  * credential, then `/run/secrets/<NAME>`, then the environment
  * (`src/shared/serverSecrets.ts`). Returns the reason when nothing usable is
  * found, which leaves the subscription unregistered rather than listening
- * without authentication. Never logs the value.
+ * without authentication. Never logs the value. `options` is for tests.
  */
-export function resolveWebhookSecret(webhook: {
-	secret?: string;
-	secret_env?: string;
-}): { secret: string } | { secret: null; reason?: string } {
+export function resolveWebhookSecret(
+	webhook: {
+		secret?: string;
+		secret_env?: string;
+	},
+	options?: SecretLookupOptions
+): { secret: string } | { secret: null; reason?: string } {
 	if (webhook.secret_env) {
-		const lookup = lookupSecret(webhook.secret_env);
+		const lookup = lookupSecret(webhook.secret_env, options);
 		if (lookup.status === 'found') return { secret: lookup.value };
 		if (lookup.status === 'missing') {
 			return {

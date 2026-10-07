@@ -16,6 +16,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // Hoisted mock references (vi.hoisted runs before vi.mock hoisting)
 const {
@@ -1790,6 +1793,182 @@ describe('cue-github-poller', () => {
 				'6000'
 			);
 			cleanup();
+		});
+	});
+
+	describe('GitHub token from a secret file', () => {
+		const TOKEN_VARS = ['GH_TOKEN', 'GITHUB_TOKEN', 'CREDENTIALS_DIRECTORY'] as const;
+		let saved: Record<string, string | undefined>;
+		let credentials: string;
+
+		beforeEach(() => {
+			saved = Object.fromEntries(TOKEN_VARS.map((k) => [k, process.env[k]]));
+			for (const k of TOKEN_VARS) delete process.env[k];
+			credentials = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cue-gh-token-')));
+		});
+
+		afterEach(() => {
+			for (const k of TOKEN_VARS) {
+				if (saved[k] === undefined) delete process.env[k];
+				else process.env[k] = saved[k];
+			}
+			fs.rmSync(credentials, { recursive: true, force: true });
+		});
+
+		const pr = {
+			...samplePRs[0],
+			number: 42,
+			updatedAt: '2026-03-05T00:00:00Z',
+		};
+
+		/** Answer every gh call Cue makes, recording each call's subcommand and env. */
+		function serveAll(): Array<{ call: string; env: NodeJS.ProcessEnv }> {
+			const seen: Array<{ call: string; env: NodeJS.ProcessEnv }> = [];
+			mockExecFile.mockImplementation(
+				(
+					_cmd: string,
+					args: string[],
+					opts: { env: NodeJS.ProcessEnv },
+					cb: (err: Error | null, stdout: string, stderr: string) => void
+				) => {
+					const key = args.join(' ');
+					const call =
+						args[0] === '--version' || args[0] === 'api' ? args[0] : args.slice(0, 2).join(' ');
+					seen.push({ call, env: opts.env });
+					if (key.includes('--version')) return cb(null, '2.0.0', '');
+					if (key.startsWith('repo view')) return cb(null, 'owner/repo\n', '');
+					if (key.startsWith('pr list')) return cb(null, JSON.stringify([pr]), '');
+					if (key.startsWith('pr view')) return cb(null, JSON.stringify({ comments: [] }), '');
+					if (key.startsWith('issue list')) return cb(null, '[]', '');
+					if (key.includes('issues/events')) return cb(null, '[]', '');
+					cb(new Error(`unexpected gh call: ${key}`), '', '');
+				}
+			);
+			return seen;
+		}
+
+		async function runEveryGhCall(): Promise<void> {
+			mockIsGitHubItemSeen.mockReturnValue(true);
+			mockGetGitHubItemState.mockReturnValue({
+				lastRevision: '2026-03-02T00:00:00Z',
+				fireCount: 0,
+			});
+			const cleanups = [
+				// Auto-detected repo (repo view), PR list, and comments (pr view).
+				createCueGitHubPoller(makeConfig({ repo: undefined, retriggerOnComments: true })),
+				createCueGitHubPoller(makeConfig({ eventType: 'github.issue' })),
+				createCueGitHubPoller(makeConfig({ eventType: 'github.label' })),
+			];
+			await vi.advanceTimersByTimeAsync(2100);
+			for (const cleanup of cleanups) cleanup();
+		}
+
+		it('hands a GH_TOKEN systemd credential to every gh call, ahead of the environment', async () => {
+			fs.writeFileSync(path.join(credentials, 'GH_TOKEN'), 'file-token\n');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			process.env.GH_TOKEN = 'stale-env-token';
+			const seen = serveAll();
+
+			await runEveryGhCall();
+
+			expect(new Set(seen.map((s) => s.call))).toEqual(
+				new Set(['--version', 'repo view', 'pr list', 'pr view', 'issue list', 'api'])
+			);
+			for (const { env } of seen) expect(env.GH_TOKEN).toBe('file-token');
+			// The value goes to the child only; agents inherit process.env.
+			expect(process.env.GH_TOKEN).toBe('stale-env-token');
+		});
+
+		it('hands a GITHUB_TOKEN secret file to gh under its own name', async () => {
+			fs.writeFileSync(path.join(credentials, 'GITHUB_TOKEN'), 'file-token');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			const seen = serveAll();
+
+			await runEveryGhCall();
+
+			expect(seen.length).toBeGreaterThan(0);
+			for (const { env } of seen) {
+				expect(env.GITHUB_TOKEN).toBe('file-token');
+				expect(env.GH_TOKEN).toBeUndefined();
+			}
+			expect(process.env.GITHUB_TOKEN).toBeUndefined();
+		});
+
+		it('still hands gh a GH_TOKEN from the environment', async () => {
+			process.env.GH_TOKEN = 'env-token';
+			const seen = serveAll();
+
+			await runEveryGhCall();
+
+			expect(seen.length).toBeGreaterThan(0);
+			for (const { env } of seen) expect(env.GH_TOKEN).toBe('env-token');
+		});
+
+		it('picks up a rotated secret file on the next poll', async () => {
+			const file = path.join(credentials, 'GH_TOKEN');
+			fs.writeFileSync(file, 'first-token');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			const seen = serveAll();
+
+			const cleanup = createCueGitHubPoller(makeConfig());
+			await vi.advanceTimersByTimeAsync(2100);
+			expect(seen.at(-1)?.env.GH_TOKEN).toBe('first-token');
+
+			fs.writeFileSync(file, 'second-token');
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+			expect(seen.at(-1)?.env.GH_TOKEN).toBe('second-token');
+			cleanup();
+		});
+
+		it('keeps the token out of every log line and every reported error', async () => {
+			fs.writeFileSync(path.join(credentials, 'GH_TOKEN'), 'file-token');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			mockExecFile.mockImplementation((_c, args, _o, cb) => {
+				if ((args as string[]).includes('--version')) return cb(null, '2.0.0', '');
+				const err = Object.assign(new Error('gh: unexpected failure for file-token'), {
+					stderr: 'echoed file-token',
+				});
+				return cb(err, '', 'echoed file-token');
+			});
+			const config = makeConfig({ eventType: 'github.issue' });
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+			cleanup();
+
+			const logged = JSON.stringify((config.onLog as ReturnType<typeof vi.fn>).mock.calls);
+			expect(logged).toContain('[redacted]');
+			expect(logged).not.toContain('file-token');
+			expect(mockCaptureException).toHaveBeenCalled();
+			for (const [err] of mockCaptureException.mock.calls) {
+				const e = err as Error & { stderr?: string };
+				expect(e.message).not.toContain('file-token');
+				expect(String(e.stack)).not.toContain('file-token');
+				expect(String(e.stderr)).not.toContain('file-token');
+			}
+		});
+
+		it('drops a stale variable when the token file is unusable, and says so once', async () => {
+			fs.writeFileSync(path.join(credentials, 'GH_TOKEN'), '');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			process.env.GH_TOKEN = 'stale-env-token';
+			const seen = serveAll();
+			const config = makeConfig();
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+			cleanup();
+
+			expect(seen.length).toBeGreaterThan(1);
+			for (const { env } of seen) expect(env.GH_TOKEN).toBeUndefined();
+			const calls = (config.onLog as ReturnType<typeof vi.fn>).mock.calls;
+			const tokenWarnings = calls.filter((c) =>
+				String(c[1]).includes('cannot use the GitHub token')
+			);
+			expect(tokenWarnings).toHaveLength(1);
+			expect(String(tokenWarnings[0][1])).toContain('GH_TOKEN');
+			expect(String(tokenWarnings[0][1])).toContain('is empty');
+			expect(JSON.stringify(calls)).not.toContain('stale-env-token');
 		});
 	});
 });

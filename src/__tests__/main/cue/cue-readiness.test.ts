@@ -226,6 +226,45 @@ describe('checkCueReadiness', () => {
 		expect(report.gaps).toEqual([]);
 	});
 
+	it('accepts a GH_TOKEN secret file, and reports one that cannot be used', async () => {
+		const yaml =
+			'subscriptions:\n  - name: prs\n    event: github.pull_request\n    repo: acme/web\n    prompt: review\n';
+		const root = workspace('gh-token', yaml);
+		const run = () =>
+			checkCueReadiness(inputs({ sessions: [agent({ id: 'gh-token', projectRoot: root })] }));
+
+		fs.writeFileSync(path.join(runSecrets, 'GH_TOKEN'), `${SENTINEL}\n`);
+		expect((await run()).gaps).toEqual([]);
+
+		fs.writeFileSync(path.join(runSecrets, 'GITHUB_TOKEN'), '');
+		const report = await run();
+		expect(report.gaps).toEqual([
+			{
+				kind: 'secret-unusable',
+				subscription: 'prs',
+				secret: 'GITHUB_TOKEN',
+				message: `GitHub trigger "prs" reads its token from GITHUB_TOKEN (${path.join(runSecrets, 'GITHUB_TOKEN')}) is empty.`,
+			},
+		]);
+		expect(JSON.stringify(report)).not.toContain(SENTINEL);
+	});
+
+	it('names the token secret file as a remedy when gh is missing', async () => {
+		const root = workspace(
+			'no-gh',
+			'subscriptions:\n  - name: prs\n    event: github.pull_request\n    repo: acme/web\n    prompt: review\n'
+		);
+		const report = await checkCueReadiness(
+			inputs({
+				sessions: [agent({ id: 'no-gh', projectRoot: root })],
+				probes: { isGhInstalled: async () => false },
+			})
+		);
+		expect(report.gaps.map((g) => g.message)).toEqual([
+			expect.stringContaining('$CREDENTIALS_DIRECTORY/GH_TOKEN, /run/secrets/GH_TOKEN'),
+		]);
+	});
+
 	it('reports an unusable secret file and never a secret value', async () => {
 		const root = workspace('secrets', beat('secrets-beat'));
 		fs.writeFileSync(path.join(runSecrets, 'GOOD_TOKEN'), `${SENTINEL}\n`);
