@@ -107,6 +107,17 @@ export interface MaestroServicesApi {
 
 const LOCAL_SERVICE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 const PROVIDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+
+/** Exact provider/service pair, using the same bounded IDs as service declarations. */
+export function isValidServiceCallTarget(target: string): boolean {
+	const parts = target.split('/');
+	return (
+		parts.length === 2 &&
+		PROVIDER_ID.exec(parts[0])?.[0] === parts[0] &&
+		LOCAL_SERVICE_ID.exec(parts[1])?.[0] === parts[1]
+	);
+}
+
 function object(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

@@ -22,6 +22,8 @@
  *   silently become an allow-all.
  */
 
+import { isValidServiceCallTarget } from './services';
+
 /**
  * The fixed vocabulary of things a sandboxed plugin can ask to do. Adding a
  * capability is a host-API change (it expands the contract). Each maps to a
@@ -434,7 +436,8 @@ export function parseAllowlistScope(scope: string | undefined): readonly string[
 }
 
 /** Validate an allowlist request scope at parse time: required, non-empty, and
- * every member a plain exact token (no wildcards/paths/whitespace/quotes). */
+ * every member a plain exact token (no wildcards/paths/whitespace/quotes).
+ * services:call alone uses exact provider/service pairs instead of bare tokens. */
 function validateAllowlistScope(capability: PluginCapability, scope: unknown): string | null {
 	if (typeof scope !== 'string' || scope.trim() === '') {
 		return `capability "${capability}" requires an allowlist scope naming exact targets (never wildcard)`;
@@ -444,7 +447,11 @@ function validateAllowlistScope(capability: PluginCapability, scope: unknown): s
 		return `capability "${capability}" allowlist scope has no valid members`;
 	}
 	for (const member of members) {
-		if (!isValidAllowlistMember(member)) {
+		const valid =
+			capability === 'services:call'
+				? isValidServiceCallTarget(member)
+				: isValidAllowlistMember(member);
+		if (!valid) {
 			return `capability "${capability}" allowlist member "${member}" contains forbidden characters (exact names only)`;
 		}
 	}
@@ -486,6 +493,10 @@ export function isPermitted(
 		if (grant.capability !== capability) continue;
 		if (scopeKind === 'none') return true;
 		if (scopeKind === 'allowlist') {
+			// Service pairs must also be valid when read from persisted grants;
+			// malformed/wildcard members never authorize even an exact target.
+			if (capability === 'services:call' && validateAllowlistScope(capability, grant.scope))
+				continue;
 			// Never wildcard: an unscoped act-verb grant and a target-less call
 			// are both denied; only an exact named member matches.
 			if (target !== undefined && allowlistScopeCovers(grant.scope, target)) return true;

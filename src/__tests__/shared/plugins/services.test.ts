@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
 	parseServiceDeclarations,
@@ -25,6 +26,31 @@ const required = {
 const request = { jobId: 'job', audioId: 'audio', model: 'base', language: 'de' };
 
 describe('host-known service contract', () => {
+	it('accepts the native provider and consumer manifests documented in plugin-services.md', () => {
+		const examples = [
+			...readFileSync(
+				new URL('../../../../docs/plugin-services.md', import.meta.url),
+				'utf8'
+			).matchAll(/```json\n([\s\S]*?)\n```/g),
+		].map((match) => JSON.parse(match[1]));
+		expect(examples).toHaveLength(2);
+		const [provider, consumer] = examples;
+		const providerResult = validatePluginManifest(provider);
+		const consumerResult = validatePluginManifest({
+			id: 'example.consumer',
+			name: 'Consumer',
+			version: '1.0.0',
+			tier: 1,
+			entry: 'main.js',
+			maestro: { minHostApi: '1.24.0' },
+			...consumer,
+		});
+		expect(providerResult.errors).toEqual([]);
+		expect(providerResult.manifest?.provides).toEqual(provider.provides);
+		expect(consumerResult.errors).toEqual([]);
+		expect(consumerResult.manifest?.requires).toEqual(consumer.requires);
+		expect(consumerResult.manifest?.permissions).toEqual(consumer.permissions);
+	});
 	it('preserves provided/required declarations through the manifest validator', () => {
 		const result = validatePluginManifest({
 			id: 'example.plugin',

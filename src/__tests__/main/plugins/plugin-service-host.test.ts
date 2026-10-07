@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PluginServiceHost } from '../../../main/plugins/plugin-service-host';
 import { TRANSCRIPTION_CONTRACT, SERVICE_LIMITS } from '../../../shared/plugins/services';
-import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
+import {
+	validatePluginManifest,
+	type PluginManifest,
+} from '../../../shared/plugins/plugin-manifest';
+import { grantsFromRequests, isPermitted } from '../../../shared/plugins/permissions';
 import type { PluginMediaTools, MediaServiceLease } from '../../../main/plugins/plugin-media-tools';
 
 const request = {
@@ -127,6 +131,72 @@ afterEach(async () => {
 });
 
 describe('host-mediated service lifecycle', () => {
+	it('uses native manifest permissions for exact consent and denies foreign or revoked scopes', async () => {
+		for (const id of ['consumer', 'provider']) {
+			const parsed = validatePluginManifest({
+				...records[id],
+				permissions:
+					id === 'consumer'
+						? [
+								{ capability: 'services:call', scope: 'provider/transcription' },
+								{ capability: 'media:tools', scope: 'discord-voice' },
+							]
+						: [
+								{ capability: 'services:provide', scope: 'transcription' },
+								{ capability: 'media:tools', scope: 'service-transcription' },
+							],
+			});
+			expect(parsed.errors).toEqual([]);
+			expect(parsed.manifest).not.toBeNull();
+			records[id] = parsed.manifest!;
+		}
+		const grants = Object.fromEntries(
+			Object.entries(records).map(([id, manifest]) => [
+				id,
+				grantsFromRequests(manifest.permissions ?? [], 1),
+			])
+		);
+		host = new PluginServiceHost({
+			manifest: (id) => records[id],
+			running: (id) => running.has(id),
+			allowed: (id, capability, target) => isPermitted(grants[id] ?? [], capability, target),
+			invoke,
+			media: media as PluginMediaTools,
+		});
+		// Declaring a dependency alone never grants consent.
+		const approved = grants.consumer;
+		grants.consumer = [];
+		host.register('provider', 'transcription');
+		expect(host.available('consumer', 'voice')).toBe(false);
+		expect((await host.status('consumer', 'voice')).state).toBe('denied');
+		expect(() => host.start('consumer', 'voice', request)).toThrow('ServiceDenied');
+		grants.consumer = approved;
+		expect(host.available('consumer', 'voice')).toBe(true);
+		expect((await host.status('consumer', 'voice')).state).toBe('ready');
+		const { callId } = host.start('consumer', 'voice', request);
+		await expect(host.result('consumer', callId)).resolves.toEqual(result);
+		expect(invoke).toHaveBeenCalledTimes(1);
+		vi.mocked(media.delegate).mockClear();
+		for (const scope of [
+			'foreign/transcription',
+			'provider/other',
+			'provider/*',
+			'provider/transcription,provider/*',
+			undefined,
+		]) {
+			grants.consumer = approved.map((grant) =>
+				grant.capability === 'services:call' ? { ...grant, scope } : grant
+			);
+			expect(host.available('consumer', 'voice')).toBe(false);
+			expect((await host.status('consumer', 'voice')).state).toBe('denied');
+			expect(() => host.start('consumer', 'voice', request)).toThrow('ServiceDenied');
+		}
+		grants.consumer = approved.filter((grant) => grant.capability !== 'services:call');
+		expect((await host.status('consumer', 'voice')).state).toBe('denied');
+		expect(() => host.start('consumer', 'voice', request)).toThrow('ServiceDenied');
+		expect(media.delegate).not.toHaveBeenCalled();
+		expect(invoke).toHaveBeenCalledTimes(1);
+	});
 	it.each([
 		'consumer:services:call',
 		'consumer:media:tools',
@@ -150,6 +220,7 @@ describe('host-mediated service lifecycle', () => {
 		await expect(value).rejects.toMatchObject({ code: 'ServiceCancelled' });
 	});
 	it('routes a pinned versioned provider and withholds owner handles/URLs; cleans before result', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
 		expect(await host.status('consumer', 'voice')).toMatchObject({
 			state: 'ready',
 			provider: 'provider',
