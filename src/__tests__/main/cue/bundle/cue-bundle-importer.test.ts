@@ -445,14 +445,18 @@ describe('importCueBundle against a fixture bundle', () => {
 			expect(error.code).toBe('AGENT_NAME_TAKEN');
 		});
 
-		it('refuses to write through a symlink that leaves the workspace', async () => {
-			const outside = path.join(tmp, 'outside');
-			fs.mkdirSync(outside);
-			fs.symlinkSync(outside, path.join(projRoot, '.maestro'));
-			const error = await refused(options());
-			expect(error.code).toBe('PATH_ESCAPE');
-			expect(fs.readdirSync(outside)).toEqual([]);
-		});
+		// Skipped on Windows like the same check's own test in zip-archive.test.ts.
+		it.skipIf(process.platform === 'win32')(
+			'refuses to write through a symlink that leaves the workspace',
+			async () => {
+				const outside = path.join(tmp, 'outside');
+				fs.mkdirSync(outside);
+				fs.symlinkSync(outside, path.join(projRoot, '.maestro'));
+				const error = await refused(options());
+				expect(error.code).toBe('PATH_ESCAPE');
+				expect(fs.readdirSync(outside)).toEqual([]);
+			}
+		);
 	});
 
 	describe('security controls', () => {

@@ -298,20 +298,29 @@ describe('collectClaudeAssets', () => {
 		expect(result.files.map((f) => f.archivePath)).toEqual(['workspaces/proj/.mcp.json']);
 	});
 
-	it('skips symlinks in skills and an unreadable .mcp.json, with warnings', () => {
+	// A file symlink needs a privilege Windows does not grant by default.
+	it.skipIf(process.platform === 'win32')('skips symlinks in skills, with a warning', () => {
 		write('.claude/skills/a/SKILL.md', 'a');
 		write('outside.txt', 'secret stuff', tmp);
 		fs.symlinkSync(path.join(tmp, 'outside.txt'), path.join(root, '.claude/skills/a/link.txt'));
+		const result = collect();
+		expect(result.files.map((f) => f.archivePath)).toEqual([
+			'workspaces/proj/.claude/skills/a/SKILL.md',
+		]);
+		expect(result.warnings).toEqual(
+			expect.arrayContaining([expect.stringContaining('symbolic link')])
+		);
+	});
+
+	it('leaves out an unreadable .mcp.json, with a warning', () => {
+		write('.claude/skills/a/SKILL.md', 'a');
 		write('.mcp.json', '{ not json');
 		const result = collect();
 		expect(result.files.map((f) => f.archivePath)).toEqual([
 			'workspaces/proj/.claude/skills/a/SKILL.md',
 		]);
 		expect(result.warnings).toEqual(
-			expect.arrayContaining([
-				expect.stringContaining('symbolic link'),
-				expect.stringContaining('.mcp.json was left out'),
-			])
+			expect.arrayContaining([expect.stringContaining('.mcp.json was left out')])
 		);
 	});
 });
