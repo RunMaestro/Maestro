@@ -251,6 +251,46 @@ describe('Claude Code assets in an agent bundle', () => {
 		}
 	);
 
+	it.skipIf(process.platform === 'win32')(
+		'restores a lost executable bit on re-import, except on Windows where no file has one',
+		async () => {
+			const script = path.join(src.root, '.claude/skills/triage/scripts/check.sh');
+			write(script, '#!/bin/sh\necho ok\n');
+			fs.chmodSync(script, 0o755);
+			const { outputPath } = await exportAgent();
+			const dst = target();
+			const importAgain = (force = true) =>
+				importCueBundle({
+					bundlePath: outputPath,
+					dataDir: dst.dataDir,
+					workspaces: { app: dst.root },
+					runningVersion: '99.0.0',
+					claudeConfigDir: dst.claudeDir,
+					force,
+				});
+			await importAgain(false);
+			const imported = path.join(dst.root, '.claude/skills/triage/scripts/check.sh');
+
+			fs.chmodSync(imported, 0o644);
+			await importAgain();
+			expect(fs.statSync(imported).mode & 0o111).not.toBe(0);
+
+			// Windows stats every file without executable bits, so the same bytes are not rewritten there.
+			fs.chmodSync(imported, 0o644);
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			try {
+				await importAgain();
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+			expect(fs.statSync(imported).mode & 0o111).toBe(0);
+		}
+	);
+
 	it('reports an MCP server that differs as a conflict', async () => {
 		const { outputPath } = await exportAgent();
 		const dst = target();

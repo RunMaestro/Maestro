@@ -30,6 +30,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import { isWindows } from '../../../shared/platformDetection';
 import type { CuePipeline, PipelineLayoutState } from '../../../shared/cue-pipeline-types';
 import type { SessionInfo } from '../../../shared/types';
 import {
@@ -693,7 +694,9 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		files.push({ kind, source, target, action });
 		plannedTargets.add(target);
 		// Same bytes but missing its executable bit still needs the write's chmod.
-		const lacksExec = executable && before !== null && (fs.statSync(target).mode & 0o111) === 0;
+		// Windows reports no executable bits on any file, so there is nothing to fix there.
+		const lacksExec =
+			executable && before !== null && !isWindows() && (fs.statSync(target).mode & 0o111) === 0;
 		if (action !== 'unchanged' || lacksExec) {
 			writes.push({
 				target,
