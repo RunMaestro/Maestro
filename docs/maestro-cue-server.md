@@ -38,7 +38,7 @@ tar -xzf maestro-server-<version>.tgz
 sudo ./maestro-server/install.sh
 ```
 
-The installer adds git and the GitHub CLI, creates the `maestro` user, and picks one Node.js for everything: the one on PATH when it is 22 or newer and the `maestro` user can run it, otherwise Node.js 24 from nodejs.org. With that Node.js it installs Claude Code, the SQLite driver and the CLI, then installs the `maestro-cue` service without starting it. Run it with `--help` for its options: `--enable` starts the service, `--agent-cli <npm package>` picks the agent CLIs instead of Claude Code (repeat it, for example `--agent-cli @openai/codex`), `--no-agent-cli` installs none, and `--skip-gh` leaves out the GitHub CLI.
+The installer adds git and the GitHub CLI, creates the `maestro` user, and picks one Node.js for everything: the one on PATH when it is 22 or newer and the `maestro` user can run it, otherwise Node.js 24 from nodejs.org. With that Node.js it installs Claude Code, the SQLite driver and the CLI, then installs the `maestro-cue` service without starting it. Run it with `--help` for its options: `--enable` enables and starts the service once there is something to run (see below), `--agent-cli <npm package>` picks the agent CLIs instead of Claude Code (repeat it, for example `--agent-cli @openai/codex`), `--no-agent-cli` installs none, and `--skip-gh` leaves out the GitHub CLI.
 
 | Path                                      | What it holds                                                      |
 | ----------------------------------------- | ------------------------------------------------------------------ |
@@ -72,7 +72,9 @@ sudo systemctl enable --now maestro-cue
 journalctl -u maestro-cue -f
 ```
 
-`cue engine check` also reports an empty data directory as ready, so confirm it lists your agents (`--json` has `agents` and `subscriptions`).
+A data directory with nothing to run is not ready: with no agents, or with agents but no enabled subscription on any of them, `cue engine check` reports a `nothing-to-run` gap and exits 1, `--require-ready` refuses to start, and `/readyz` answers 503. That is almost always a bundle that was never imported.
+
+**`install.sh --enable`** asks `cue engine check` before it enables anything. When the check reports `nothing-to-run`, the installer still installs everything, leaves the service disabled, says why, and exits 3. Import a bundle, then run `sudo systemctl enable --now maestro-cue`. Any other gap is left to the service itself: a secret in `maestro.env` or a `LoadCredential=` file exists only in the service's environment, so `--require-ready` judges those when it starts. On an upgrade a running engine is restarted on the new version as before, and a service that is already enabled is started without the check.
 
 **How the service behaves:**
 
@@ -95,6 +97,16 @@ LoadCredential=ANTHROPIC_API_KEY:/etc/maestro/credentials/ANTHROPIC_API_KEY
 ```
 
 The engine looks for each secret in this order: the credentials directory, `/run/secrets/<NAME>`, then the environment. A file is the safer channel: it is not visible in the process environment, and each agent receives only the secrets its bundle declared. Shell command steps receive none; name a variable in `MAESTRO_SERVER_ENV_ALLOW` if a step needs it.
+
+**What agents inherit (server mode).** The unit and the container image set `MAESTRO_SERVER_MODE=1`, so an agent does not inherit the service's whole environment, only:
+
+- system variables (`PATH`, `HOME`, `USER`, `LANG`, `TMPDIR` and the like), proxy and TLS trust variables, and common toolchain homes;
+- every name starting with `LC_`, `XDG_`, `SSH_` or `MAESTRO_`;
+- provider credentials and account homes: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, `CLAUDE_CONFIG_DIR`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `CODEX_HOME`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, `FACTORY_API_KEY`, `COPILOT_HOME`, `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, and the other names Maestro suggests for its providers. A key reaches the agents of every provider, not only its own;
+- the names you list, comma separated, in `MAESTRO_SERVER_ENV_ALLOW` (set it in `maestro.env`);
+- the secrets the agent's bundle declared, from files or the environment.
+
+Everything else in `maestro.env` stays with the engine. Two cases need a step: a provider key Maestro does not list (for example an OpenCode `GEMINI_API_KEY`, or the AWS or Google credentials behind `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`) goes in `MAESTRO_SERVER_ENV_ALLOW`, and a `GH_TOKEN` you want Cue's GitHub triggers to use without agents seeing it goes in a credential file rather than `maestro.env`. A standalone `maestro-cli cue engine start` run by hand without `MAESTRO_SERVER_MODE=1` keeps the whole environment, as before.
 
 The same lookup covers a webhook's `secret_env` and the token Cue's own `gh` calls use: a `GH_TOKEN` (or `GITHUB_TOKEN`) credential is handed to `gh` alone, never to agents, and is read again on every poll, so a rotated file takes effect without a restart. A token file takes precedence over `gh auth login`.
 
@@ -133,13 +145,14 @@ docker run -d --name maestro-cue --restart unless-stopped --stop-timeout 120 \
   maestro-cue
 ```
 
-`maestro.env` holds `KEY=value` lines such as `ANTHROPIC_API_KEY=...` and `GH_TOKEN=...`. To log `gh` in interactively instead, run `docker exec -it maestro-cue gh auth login`; the login is kept in the `maestro-home` volume.
+`maestro.env` holds `KEY=value` lines such as `ANTHROPIC_API_KEY=...` and `GH_TOKEN=...`. The image runs in server mode like the unit, so agents inherit only what [server mode](#option-1-linux-vm-with-systemd) lets through. To log `gh` in interactively instead, run `docker exec -it maestro-cue gh auth login`; the login is kept in the `maestro-home` volume.
 
 With Docker Compose, `packaging/server/compose.yaml` has the same setup: `docker compose up -d --build` from that folder.
 
 **Things to know:**
 
 - **Stop timeout.** The engine drains active runs for up to 90 seconds on stop, but `docker stop` waits only 10 seconds by default. Use `--stop-timeout 120` (or `docker stop -t 120`), or `stop_grace_period: 120s` in Compose. The image runs `tini` without `-g`, so the stop signal reaches the engine alone and runs in flight can finish.
+- **One engine per volume.** A second engine started on the same data volume, in another container, sees the first one's lock while its heartbeat is fresh, logs `Another Cue engine (...) already holds the lock` and exits 1. It never runs beside the first.
 - **Restart after a hard kill.** If the engine is killed without stopping (`docker kill`, out of memory, a host crash), its lock stays behind. A new container cannot tell that lock from one held by another container on the same volume, so it waits for the lock to go quiet: the engine refuses to start for up to 3 minutes, and a restart policy brings it back after that.
 - **Health.** The image's health check calls `/healthz` on the engine's status port, 7433, inside the container. `docker ps` shows `healthy` once it answers.
 - **Secrets as files.** Docker and Compose secrets mounted at `/run/secrets/<NAME>` are read by name before the environment, like systemd credentials, and each agent receives only the secrets its bundle declared. A `GH_TOKEN` secret authenticates Cue's GitHub triggers.

@@ -313,11 +313,56 @@ describe('checkCueReadiness', () => {
 
 	it('ignores agents with no Cue config, so unrelated desktop agents add no gaps', async () => {
 		const root = workspace('no-config');
+		const cue = workspace('cue', beat('beat'));
 		const report = await checkCueReadiness(
 			inputs({
-				sessions: [agent({ id: 'idle', toolType: 'hermes', projectRoot: root })],
+				sessions: [
+					agent({ id: 'idle', toolType: 'hermes', projectRoot: root }),
+					agent({ id: 'runner', projectRoot: cue }),
+				],
 			})
 		);
-		expect(report).toMatchObject({ ready: true, agents: 0, workspaces: 0 });
+		expect(report).toMatchObject({ ready: true, agents: 1, workspaces: 1, gaps: [] });
+	});
+
+	describe('nothing to run', () => {
+		it('is not ready for a data dir with no agents (nothing imported)', async () => {
+			const report = await checkCueReadiness(inputs({ sessions: [] }));
+			expect(report.ready).toBe(false);
+			expect(report.gaps).toEqual([
+				{ kind: 'nothing-to-run', message: expect.stringContaining('has no agents') },
+			]);
+			expect(formatCueReadiness(report)[1]).toMatch(/\[nothing-to-run\].*bundle import/);
+		});
+
+		it('is not ready when agents exist but no subscription runs on any of them', async () => {
+			const root = workspace('no-config');
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'idle', projectRoot: root })] })
+			);
+			expect(report.gaps).toEqual([
+				{
+					kind: 'nothing-to-run',
+					message: expect.stringContaining('1 agent(s) but no enabled Cue subscription'),
+				},
+			]);
+		});
+
+		it('counts a disabled subscription as nothing to run', async () => {
+			const root = workspace('off', beat('off', '    enabled: false\n'));
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'a', projectRoot: root })] })
+			);
+			expect(report.ready).toBe(false);
+			expect(report.gaps.map((g) => g.kind)).toEqual(['nothing-to-run']);
+		});
+
+		it('counts no subscription pinned to an agent that is missing', async () => {
+			const root = workspace('pinned', beat('orphan', '    agent_id: gone\n'));
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'a', projectRoot: root })] })
+			);
+			expect(report.gaps.map((g) => g.kind).sort()).toEqual(['nothing-to-run', 'unknown-agent']);
+		});
 	});
 });

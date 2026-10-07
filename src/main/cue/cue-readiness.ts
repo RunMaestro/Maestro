@@ -67,7 +67,13 @@ export type CueReadinessGapKind =
 	/** A host tool something needs (gh, git) is not installed. */
 	| 'tool-missing'
 	/** A GitHub trigger infers its repo from a project root that is not a git checkout. */
-	| 'not-a-git-checkout';
+	| 'not-a-git-checkout'
+	/**
+	 * The data directory has no agents, or no enabled subscription runs on any
+	 * of them: an engine started on it would sit idle while reporting healthy,
+	 * which on a server almost always means the bundle was never imported.
+	 */
+	| 'nothing-to-run';
 
 export interface CueReadinessGap {
 	kind: CueReadinessGapKind;
@@ -188,6 +194,7 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	let needsGh: CueSubscription | undefined;
 	const repoInferredRoots = new Map<string, CueSubscription>();
 	let subscriptionCount = 0;
+	let runsSomething = false;
 
 	for (const session of sessions) {
 		const subs = session.projectRoot ? configs.get(session.projectRoot) : undefined;
@@ -196,6 +203,7 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 		if (owned.length === 0) continue;
 		involved.set(session.id, session);
 		for (const sub of owned) {
+			if (sub.enabled) runsSomething = true;
 			if ((sub.action ?? 'prompt') === 'prompt' && !sub.fan_out?.length) {
 				promptAgents.set(session.id, session);
 			}
@@ -234,6 +242,20 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 			}
 		}
 		subscriptionCount += subs.length;
+	}
+
+	// ─── Anything to run at all ─────────────────────────────────────────────
+	if (sessions.length === 0) {
+		add({
+			kind: 'nothing-to-run',
+			message:
+				'This data directory has no agents, so the engine has nothing to run. Import a bundle first: maestro-cli bundle import <zip> --workspace <key>=<folder>.',
+		});
+	} else if (!runsSomething) {
+		add({
+			kind: 'nothing-to-run',
+			message: `This data directory has ${sessions.length} agent(s) but no enabled Cue subscription that runs on one of them, so the engine has nothing to run. Import a pipeline bundle, or enable a subscription in a workspace's .maestro/cue.yaml.`,
+		});
 	}
 
 	// ─── Per agent ──────────────────────────────────────────────────────────

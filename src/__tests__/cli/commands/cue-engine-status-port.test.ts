@@ -19,10 +19,17 @@ vi.mock('better-sqlite3', () => ({
 }));
 
 const report = vi.hoisted(() => ({ current: undefined as unknown }));
-vi.mock('../../../main/cue/cue-readiness', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../../main/cue/cue-readiness')>()),
-	checkCueReadiness: vi.fn(async () => report.current),
-}));
+// A test that sets no report gets the real check over its data dir.
+vi.mock('../../../main/cue/cue-readiness', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../main/cue/cue-readiness')>();
+	return {
+		...actual,
+		checkCueReadiness: vi.fn(
+			async (inputs: Parameters<typeof actual.checkCueReadiness>[0]) =>
+				report.current ?? actual.checkCueReadiness(inputs)
+		),
+	};
+});
 
 const engine = vi.hoisted(() => ({
 	start: vi.fn(),
@@ -75,7 +82,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 import { createStandaloneCueEngine } from '../../../cli/services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../../../cli/services/cue-trigger-inbox';
 import { setCueEngineLockStatusPort } from '../../../main/cue/cue-engine-lock';
-import { cueEngineStart, cueEngineStatus } from '../../../cli/commands/cue-engine';
+import { cueEngineCheck, cueEngineStart, cueEngineStatus } from '../../../cli/commands/cue-engine';
 
 const ready: CueReadinessReport = {
 	ready: true,
@@ -183,6 +190,35 @@ describe('cue engine start --status-port', () => {
 		const readyz = await fetch(`${base}/readyz`);
 		expect(readyz.status).toBe(503);
 		expect((await readyz.json()).gaps[0]).toMatchObject({ kind: 'tool-missing', tool: 'gh' });
+	});
+
+	it('agrees with check and --require-ready that an empty data dir is not ready', async () => {
+		report.current = undefined; // the real check, over a data dir with no agents
+
+		await cueEngineCheck({ dataDir: tmp, json: true });
+		expect(process.exitCode).toBe(1);
+		const checked = JSON.parse(String(logSpy.mock.calls[0][0]));
+		expect(checked.gaps.map((g: { kind: string }) => g.kind)).toEqual(['nothing-to-run']);
+		process.exitCode = undefined;
+
+		await expect(cueEngineStart({ dataDir: tmp, requireReady: true, json: true })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(createStandaloneCueEngine).not.toHaveBeenCalled();
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toMatchObject({
+			started: false,
+			code: 'NOT_READY',
+			readiness: { ready: false, gaps: [{ kind: 'nothing-to-run' }] },
+		});
+
+		const port = await freePort();
+		void cueEngineStart({ dataDir: tmp, statusPort: port });
+		await vi.waitFor(() => expect(startCueTriggerInbox).toHaveBeenCalled());
+		const readyz = await fetch(`http://127.0.0.1:${port}/readyz`);
+		expect(readyz.status).toBe(503);
+		expect((await readyz.json()).gaps).toEqual([
+			expect.objectContaining({ kind: 'nothing-to-run' }),
+		]);
 	});
 
 	it('fails /healthz once the engine reports a lost lock', async () => {

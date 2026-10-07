@@ -2,8 +2,13 @@
 #
 #   docker compose up -d --build
 #
-# One data volume per engine: two engines sharing a volume cannot see each
-# other's lock across containers. See docs/maestro-cue-server.md.
+# One data volume per engine. A second engine on the same volume, in another
+# container, sees the first one's lock while its heartbeat is fresh, logs
+# "Another Cue engine ... already holds the lock" and exits 1, so it never runs
+# beside it; it takes over only once that heartbeat has been quiet for 3
+# minutes. The image runs in server mode (MAESTRO_SERVER_MODE=1), so the
+# variables in maestro.env reach agents only when the allowlist lets them.
+# See docs/maestro-cue-server.md.
 
 services:
   maestro-cue:

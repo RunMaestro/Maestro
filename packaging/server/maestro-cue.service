@@ -30,6 +30,11 @@ Environment=HOME=/var/lib/maestro
 # Inherited by agents, so a maestro-cli call from inside a run finds the same
 # data directory.
 Environment=MAESTRO_USER_DATA=/var/lib/maestro/data
+# Server mode: agents inherit only an allowlist of this service's environment
+# (system variables, proxies, provider keys such as ANTHROPIC_API_KEY, and the
+# names in MAESTRO_SERVER_ENV_ALLOW), plus the secrets their bundle declared.
+# Anything else in maestro.env stays with the engine.
+Environment=MAESTRO_SERVER_MODE=1
 EnvironmentFile=-/etc/maestro/maestro.env
 WorkingDirectory=/var/lib/maestro
 ExecStart=/usr/local/bin/maestro-cli cue engine start --data-dir /var/lib/maestro/data --status-port 7433 --require-ready --log-format json --drain-timeout 90

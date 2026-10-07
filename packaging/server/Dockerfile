@@ -76,8 +76,12 @@ RUN ln -s /opt/maestro/bin/maestro-cli /usr/local/bin/maestro-cli
 # outside the container's own network namespace. Inside the container it
 # listens on all interfaces; what is exposed is decided when publishing the
 # port (publish it to the host's loopback and put a proxy in front).
+# Server mode: agents inherit only an allowlist of the container's environment
+# (system variables, proxies, provider keys such as ANTHROPIC_API_KEY, and the
+# names in MAESTRO_SERVER_ENV_ALLOW), plus the secrets their bundle declared.
 ENV MAESTRO_USER_DATA=/var/lib/maestro/data \
-	MAESTRO_CUE_WEBHOOK_HOST=0.0.0.0
+	MAESTRO_CUE_WEBHOOK_HOST=0.0.0.0 \
+	MAESTRO_SERVER_MODE=1
 
 USER maestro
 WORKDIR /var/lib/maestro

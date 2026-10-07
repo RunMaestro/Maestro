@@ -25,8 +25,17 @@
 # Run it again with a newer bundle to upgrade. The data directory, workspaces,
 # env file and credentials are kept, and a running service is restarted.
 #
+# Exit status: 0 when done, 1 on an error, 3 when everything was installed but
+# --enable was refused because there is nothing to run yet (see --enable).
+#
 # Options:
-#   --enable              enable and start maestro-cue after installing
+#   --enable              enable and start maestro-cue after installing, once
+#                         `maestro-cli cue engine check` finds something to run.
+#                         On a data directory with no agents or no enabled
+#                         subscription (no bundle imported yet) the service is
+#                         left disabled and the installer exits 3. Other gaps
+#                         are left to the service: it starts with
+#                         --require-ready, in its own environment.
 #   --skip-gh             do not install the GitHub CLI
 #   --agent-cli PACKAGE   agent CLI to install with npm (repeatable; replaces the
 #                         default @anthropic-ai/claude-code), e.g. @openai/codex
@@ -62,7 +71,7 @@ warn() { printf '%swarn%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
 die()  { printf '%serror%s %s\n' "$C_RED" "$C_RESET" "$1" >&2; exit 1; }
 
 usage() {
-	sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -232,6 +241,31 @@ ln -sf "$PREFIX/bin/maestro-cli" /usr/local/bin/maestro-cli
 ok "maestro-cli $(MAESTRO_ALLOW_ROOT=1 maestro-cli --version)"
 
 # ---- systemd -------------------------------------------------------------
+
+# The message of the `nothing-to-run` gap `cue engine check` reports for the
+# data directory (no agents, or no enabled subscription on one), or nothing
+# when it has something to run. The readiness check decides; this only reads
+# its report. Its other gaps are not looked at: a secret in maestro.env or a
+# LoadCredential= file exists only in the service's environment, so they are
+# for --require-ready to judge when the service starts.
+nothing_to_run_reason() {
+	report=$(cd "$STATE_DIR" && runuser -u maestro -- env HOME="$STATE_DIR" MAESTRO_USER_DATA="$DATA_DIR" \
+		"$PREFIX/bin/maestro-cli" cue engine check --data-dir "$DATA_DIR" --json 2>/dev/null) || true
+	printf '%s' "$report" | "$NODE_BIN" -e '
+		let text = "";
+		process.stdin.on("data", (chunk) => (text += chunk)).on("end", () => {
+			let report;
+			try {
+				report = JSON.parse(text);
+			} catch {
+				console.log("maestro-cli cue engine check did not report on the data directory");
+				return;
+			}
+			const gap = (report.gaps || []).find((g) => g.kind === "nothing-to-run");
+			if (gap) console.log(gap.message);
+		});'
+}
+
 info "Installing the maestro-cue service"
 install -m 0644 "$PREFIX/maestro-cue.service" "$UNIT_PATH"
 systemctl daemon-reload
@@ -241,9 +275,23 @@ if systemctl is-active --quiet maestro-cue; then
 	systemctl restart maestro-cue
 	ok "maestro-cue restarted on the new version"
 fi
+ENABLE_REFUSED=""
 if [ "$ENABLE" = 1 ]; then
-	systemctl enable --now maestro-cue
-	ok "maestro-cue enabled and running"
+	# Already enabled (an upgrade): nothing new is being enabled, so there is
+	# nothing to gate; make sure it runs.
+	if systemctl is-enabled --quiet maestro-cue; then
+		systemctl start maestro-cue
+		ok "maestro-cue enabled and running"
+	else
+		ENABLE_REFUSED=$(nothing_to_run_reason)
+		if [ -n "$ENABLE_REFUSED" ]; then
+			warn "not enabling maestro-cue: $ENABLE_REFUSED"
+			warn "import a bundle (step 2 below), then: sudo systemctl enable --now maestro-cue"
+		else
+			systemctl enable --now maestro-cue
+			ok "maestro-cue enabled and running"
+		fi
+	fi
 elif ! systemctl is-active --quiet maestro-cue; then
 	ok "maestro-cue installed (not started)"
 fi
@@ -259,10 +307,13 @@ ${C_BOLD}Next steps${C_RESET}
        sudo -H -u maestro maestro-cli bundle import pipeline.zip --workspace <key>=$WORK_DIR/<name>
   3. For github.* triggers, log gh in as the maestro user (or set GH_TOKEN in the env file):
        sudo -H -u maestro gh auth login
-  4. Check that every subscription has what it needs (it also reports an empty
-     data directory as ready, so confirm it lists your agents):
+  4. Check that every subscription has what it needs (an empty data directory
+     is reported as not ready, with nothing to run):
        sudo -H -u maestro maestro-cli cue engine check
   5. Start it and follow the log:
        sudo systemctl enable --now maestro-cue
        journalctl -u maestro-cue -f
 EOF
+
+# Everything is installed; only the enable was held back.
+[ -z "$ENABLE_REFUSED" ] || exit 3

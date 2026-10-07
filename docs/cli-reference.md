@@ -844,7 +844,7 @@ Run Maestro Cue unattended (no desktop app) and control that runner
 
 ## `maestro-cli cue engine start`
 
-Start the Cue engine in this process and block until Ctrl+C / stopped
+Start the Cue engine in this process and block until Ctrl+C / stopped. Agents inherit the whole environment unless MAESTRO_SERVER_MODE=1 (set by the server unit and image), which passes only the server allowlist plus MAESTRO_SERVER_ENV_ALLOW and declared secrets
 
 | Option                      | Description                                                                                                    | Default  |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------- | -------- |
@@ -858,7 +858,7 @@ Start the Cue engine in this process and block until Ctrl+C / stopped
 
 ## `maestro-cli cue engine check`
 
-Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present; list every gap (exit 1 when not ready)
+Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present, and that there is something to run; list every gap (exit 1 when not ready)
 
 | Option              | Description                                                                     | Default |
 | ------------------- | ------------------------------------------------------------------------------- | ------- |
