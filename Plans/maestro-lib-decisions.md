@@ -164,6 +164,8 @@ Decided 2026-10-07.
 
 **Checks.** `built-entry.test.ts` builds into a scratch folder with no `node_modules` above it and, in a separate plain `node` process, loads the bundle with `require` and with `import`, then plans, streams, resumes and stops a turn through it against the fake agent. `no-desktop-framework.smoke.test.ts` walks the entry's import graph, including the `src/shared` modules outside the folder that the folder scan never read.
 
+**Documentation.** `docs/maestro-lib.md` (in the docs navigation, and copied into the build as `README.md`); `docs-examples.test.ts` type-checks its examples against the entry.
+
 **Existing callers are unchanged.** The desktop, the CLI, Cue and `maestro-lib-run` still import the modules directly. Moving them onto the entry would only add an indirection; the entry is for tools outside this repository.
 
 ## Other

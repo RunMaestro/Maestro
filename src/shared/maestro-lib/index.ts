@@ -5,7 +5,10 @@
  *
  * This is the library's one public entry. A tool built on it imports from
  * here and nowhere else; every other module under `src/shared/maestro-lib/`
- * is internal and may change without a version bump. `npm run
+ * is internal and may change without a version bump. The documentation for
+ * that tool's developer is `docs/maestro-lib.md`; `docs-examples.test.ts`
+ * type-checks its examples against this module, so a change here that breaks
+ * one fails the tests. `npm run
  * build:maestro-lib` bundles this module into `dist/maestro-lib/` with its
  * type declarations and a `package.json` carrying `MAESTRO_LIB_VERSION`.
  *

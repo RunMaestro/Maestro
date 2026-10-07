@@ -11,6 +11,7 @@
  *   index.d.ts     The entry's types, re-exported from types/.
  *   types/         Declarations for every module the entry reaches, emitted
  *                  by the TypeScript compiler with the CLI's options.
+ *   README.md      docs/maestro-lib.md, the library's documentation.
  *   package.json   Private (never published), versioned with
  *                  MAESTRO_LIB_VERSION; `maestroAppVersion` records the app
  *                  version the build was cut from.
@@ -158,6 +159,8 @@ async function build() {
 		if (typeof MAESTRO_LIB_VERSION !== 'string' || MAESTRO_LIB_VERSION.length === 0) {
 			throw new Error('The built bundle exports no MAESTRO_LIB_VERSION');
 		}
+
+		fs.copyFileSync(path.join(rootDir, 'docs/maestro-lib.md'), path.join(outDir, 'README.md'));
 
 		const libPackage = {
 			name: 'maestro-lib',

@@ -178,6 +178,9 @@ describe('the built maestro-lib entry', () => {
 			maestroAppVersion: appPackage.version,
 		});
 		expect(fs.existsSync(path.join(libDir, 'index.d.ts'))).toBe(true);
+		expect(fs.readFileSync(path.join(libDir, 'README.md'), 'utf8')).toBe(
+			fs.readFileSync(path.join(REPO_ROOT, 'docs/maestro-lib.md'), 'utf8')
+		);
 		expect(
 			fs.readFileSync(path.join(libDir, 'types/shared/maestro-lib/index.d.ts'), 'utf8')
 		).toContain('planSessionTurn');

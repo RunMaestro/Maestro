@@ -11,6 +11,8 @@ Verified on 2026-10-05 with real Claude Code and OpenCode turns, and the Cue eng
 - **Nothing reachable at startup imports `better-sqlite3`.** A checkout's copy is built for Electron's ABI (`postinstall` runs `electron-rebuild`) and cannot load under plain Node, so code that needs SQLite sits behind a dynamic `import()`, and `src/__tests__/cli/plain-node-imports.test.ts` fails the build if a static import ever reaches it. A server builds it for Node instead: see [Native modules on a server](#native-modules-on-a-server).
 - **stdout is the result, stderr is the log.** `--json` output and JSONL run events go to stdout. The main-process logger the CLI reuses is switched to stderr at startup (`logger.routeConsoleToStderr()` in `src/cli/index.ts`), so a script can parse stdout line by line. `cue engine start --log-format json` keeps the same split; see [Engine logs](#engine-logs---log-format).
 
+- **A program that runs turns itself does not need the CLI.** The library the CLI runs its agents through has a public entry (`src/shared/maestro-lib/index.ts`) and its own build; see `docs/maestro-lib.md`.
+
 ## Service contract (Cue engine on a server)
 
 The whole contract a Dockerfile, systemd unit or install script builds against, in one place. Each row links to the section with the details; the code is the source of truth and `docs/cli-reference.md` is generated from it.

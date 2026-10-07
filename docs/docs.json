@@ -110,7 +110,7 @@
 			},
 			{
 				"group": "Providers & CLI",
-				"pages": ["provider-notes", "multi-provider", "cli", "cli-reference"]
+				"pages": ["provider-notes", "multi-provider", "cli", "cli-reference", "maestro-lib"]
 			},
 			{
 				"group": "Integrations",
