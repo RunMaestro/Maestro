@@ -105,6 +105,43 @@ function findMainOffenders(file: string, source: string): string[] {
 	return specifiers;
 }
 
+const ENTRY = path.join(LIB_ROOT, 'index.ts');
+
+/** The source file a relative specifier names, or null when it is not a source file. */
+function resolveSourceFile(fromFile: string, specifier: string): string | null {
+	const base = path.resolve(path.dirname(fromFile), specifier);
+	for (const candidate of [base, `${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')]) {
+		if (SOURCE_EXTENSIONS.has(path.extname(candidate)) && fs.existsSync(candidate)) {
+			return candidate;
+		}
+	}
+	return null;
+}
+
+/**
+ * Every source file the entry reaches through relative imports, inside the
+ * library folder or not. The folder scan above misses what the library pulls
+ * from the rest of `src/shared`; a consumer of the entry gets all of it.
+ */
+function collectImportGraph(entry: string): string[] {
+	const seen = new Set<string>();
+	const pending = [entry];
+	while (pending.length > 0) {
+		const file = pending.pop()!;
+		if (seen.has(file)) continue;
+		seen.add(file);
+		const source = fs.readFileSync(file, 'utf-8');
+		IMPORT_SPECIFIER_PATTERN.lastIndex = 0;
+		let match: RegExpExecArray | null;
+		while ((match = IMPORT_SPECIFIER_PATTERN.exec(source)) !== null) {
+			if (!match[1].startsWith('.')) continue;
+			const resolved = resolveSourceFile(file, match[1]);
+			if (resolved) pending.push(resolved);
+		}
+	}
+	return [...seen].sort();
+}
+
 describe('maestro-lib: no desktop framework dependency', () => {
 	it('has no `electron` import specifier anywhere in the library source', () => {
 		const testDir = path.join(LIB_ROOT, '__tests__') + path.sep;
@@ -138,6 +175,53 @@ describe('maestro-lib: no desktop framework dependency', () => {
 		}
 
 		expect(offenders).toEqual([]);
+	});
+
+	describe('the public entry (index.ts) and everything it imports', () => {
+		const graph = collectImportGraph(ENTRY);
+
+		it('reaches modules outside the library folder, so the folder scan alone is not enough', () => {
+			expect(graph).toContain(ENTRY);
+			expect(graph.some((file) => !file.startsWith(LIB_ROOT + path.sep))).toBe(true);
+		});
+
+		it('has no `electron` import specifier', () => {
+			const offenders = graph.flatMap((file) =>
+				findElectronOffenders(fs.readFileSync(file, 'utf-8')).map(
+					(specifier) => `${path.relative(LIB_ROOT, file)} imports "${specifier}"`
+				)
+			);
+			expect(offenders).toEqual([]);
+		});
+
+		it('has no file in src/main and no import specifier that resolves into it', () => {
+			const offenders = graph.flatMap((file) => [
+				...((file + path.sep).startsWith(SRC_MAIN) ? [path.relative(LIB_ROOT, file)] : []),
+				...findMainOffenders(file, fs.readFileSync(file, 'utf-8')).map(
+					(specifier) => `${path.relative(LIB_ROOT, file)} imports "${specifier}"`
+				),
+			]);
+			expect(offenders).toEqual([]);
+		});
+
+		it('loads, and exposes plan, run, stop, outcome, parsers and host hooks', async () => {
+			const entry = await import('../index');
+
+			for (const name of [
+				'planSessionTurn',
+				'startTurn',
+				'runTurn',
+				'runToCompletion',
+				'stopProcess',
+				'resolveTurnOutcome',
+				'createOutputParser',
+				'getOutputParser',
+				'setMaestroLibLogger',
+			] as const) {
+				expect(typeof entry[name], name).toBe('function');
+			}
+			expect(typeof entry.MAESTRO_LIB_VERSION).toBe('string');
+		});
 	});
 
 	it('the src/main scan catches a relative import into src/main', () => {

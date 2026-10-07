@@ -150,6 +150,22 @@ Two defects found here were fixes to features that did not work, so they cannot 
 - The retained stderr is bounded, like stdout. Callers still receive every chunk.
 - The headless program pauses the agent's stdout while its own stdout is full.
 
+## Public library
+
+### D19. One entry module, its own build, its own version
+
+Decided 2026-10-07.
+
+**Surface.** `src/shared/maestro-lib/index.ts` is the only public module. It re-exports the existing functions and types, grouped as providers, plan, run, stop, outcome, parsers and host hooks, with no new wrappers: none was needed. Resume is `SessionTurnRequest.resumeSessionId` fed from `CompletedTurn.sessionId`, and stop is the `TurnHandle` that `runTurn` and `startTurn` return, so both are reachable from the entry alone. Kept private: the parser classes and registry writers (`registerOutputParser`, `clearParserRegistry`), the environment, prompt-delivery, SSH and Windows helpers, `UsageAccumulator`, `BufferedLineReader`, the process-table internals, and the `logger` and `capture*` functions the library calls on its host. The one source change outside new files is `export` on the existing `BuildAgentArgsOptions` type, so the options of an exported function can be named.
+
+**Build.** `npm run build:maestro-lib` (`scripts/build-maestro-lib.mjs`) writes `dist/maestro-lib/`: one CommonJS bundle for Node 20, which `require` and `import` both load; declarations emitted by the TypeScript compiler with the CLI's options (no tsconfig is added or changed); and a `package.json`. Only `node-pty` stays external, and the library uses only its types, so the package lists it as an optional peer. The build fails when esbuild reports an Electron or `src/main` input, and it loads the finished bundle in plain Node before writing the package. It does not join `npm run build`: nothing in the app uses it, and `dist/**` is what electron-builder packages, so joining would ship it inside the app. Adding it there is a separate decision.
+
+**Version.** `MAESTRO_LIB_VERSION` in `version.ts`, exported from the entry and written into the built `package.json` (with `maestroAppVersion`, the app version the build was cut from). It is semver over the entry only, starting at `0.1.0`, independent of the app version: the app releases often with no change to this surface. The package is `private`, so it cannot be published by accident; a tool pins it by path or `file:` dependency and checks the version.
+
+**Checks.** `built-entry.test.ts` builds into a scratch folder with no `node_modules` above it and, in a separate plain `node` process, loads the bundle with `require` and with `import`, then plans, streams, resumes and stops a turn through it against the fake agent. `no-desktop-framework.smoke.test.ts` walks the entry's import graph, including the `src/shared` modules outside the folder that the folder scan never read.
+
+**Existing callers are unchanged.** The desktop, the CLI, Cue and `maestro-lib-run` still import the modules directly. Moving them onto the entry would only add an indirection; the entry is for tools outside this repository.
+
 ## Other
 
 ### D16. The Claude transcript fix for a remote API resume
