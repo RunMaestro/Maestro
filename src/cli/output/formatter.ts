@@ -937,7 +937,9 @@ export function formatDirectorNotesHistory(
 					? c('magenta', '[CUE]')
 					: entry.type === 'AGENT'
 						? c('cyan', '[AGENT]')
-						: c('yellow', '[USER]');
+						: entry.type === 'RELAY'
+							? c('cyan', '[RELAY]')
+							: c('yellow', '[USER]');
 		const agent = entry.agentName
 			? c('white', truncate(entry.agentName, 20))
 			: dim(entry.sourceSessionId.slice(0, 8));

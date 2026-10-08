@@ -229,7 +229,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 
 					{/* Type Pill */}
 					<span
-						className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase flex-shrink-0"
+						className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold flex-shrink-0 ${entry.type === 'RELAY' ? '' : 'uppercase'}`}
 						style={{
 							backgroundColor: colors.bg,
 							color: colors.text,
@@ -237,7 +237,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						}}
 					>
 						<Icon className="w-2.5 h-2.5" />
-						{entry.type}
+						{entry.type === 'RELAY' ? 'Relay' : entry.type}
 					</span>
 				</div>
 

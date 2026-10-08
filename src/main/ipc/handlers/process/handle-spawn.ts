@@ -8,11 +8,17 @@ import { AgentDetector } from '../../../agents';
 import { checkBinaryExists, checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
 import {
+	pluginToolRunIdentity,
+	createPluginRunProofFile,
+	removePluginRunProofFile,
+} from '../../../plugins/plugin-tool-run-identity';
+import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
 } from '../../../plugins/plugin-manager-singleton';
 import {
 	buildMcpInjection,
+	mergeMcpInjectionArgs,
 	MCP_CONFIG_BY_AGENT,
 } from '../../../../shared/plugins/mcp-agent-config';
 import type { InteractiveReplayController } from '../../../agents/claude-interactive-replay';
@@ -78,6 +84,27 @@ export interface SpawnHandlerDependencies {
 export async function handleProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
+) {
+	const proofCleanup: { release?: () => void } = {};
+	try {
+		return await handleProcessSpawnImpl(config, deps, proofCleanup);
+	} catch (error) {
+		try {
+			proofCleanup.release?.();
+		} catch (cleanupError) {
+			captureException(
+				cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
+				{ context: 'plugin run proof cleanup', sessionId: config.sessionId }
+			);
+		}
+		throw error;
+	}
+}
+
+async function handleProcessSpawnImpl(
+	config: SpawnProcessConfig,
+	deps: SpawnHandlerDependencies,
+	proofCleanup: { release?: () => void }
 ) {
 	const {
 		getProcessManager,
@@ -309,6 +336,27 @@ export async function handleProcessSpawn(
 	// only - the bridge reaches the app over a localhost WebSocket + discovery
 	// file an SSH-remote agent cannot see. Best-guess (unverified) agents are
 	// intentionally skipped to avoid breaking their startup with a wrong shape.
+	let pluginRunToken: string | undefined;
+	let pluginRunProofFile: string | undefined;
+	const exitListener: { current?: (sessionId: string) => void } = {};
+	const cleanupPluginRunProof = (): void => {
+		const token = pluginRunToken;
+		const file = pluginRunProofFile;
+		pluginRunToken = undefined;
+		pluginRunProofFile = undefined;
+		if (exitListener.current) processManager.off('exit', exitListener.current);
+		if (token) pluginToolRunIdentity.revoke(token);
+		if (file) {
+			try {
+				removePluginRunProofFile(file);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', LOG_CONTEXT, {
+					error: String(error),
+				});
+			}
+		}
+	};
+	proofCleanup.release = cleanupPluginRunProof;
 	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
 	if (
 		mcpCap?.verified &&
@@ -321,12 +369,23 @@ export async function handleProcessSpawn(
 		!(claudeResolvedMode === 'interactive' && resolvedMaestroPBinPath)
 	) {
 		const mcpTools = getActivePluginManager()?.getContributions().tools ?? [];
-		if (mcpTools.length > 0) {
+		const storedAgent = (deps.sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
+			(session) => session?.id === baseSessionId
+		);
+		if (mcpTools.length > 0 && storedAgent) {
+			pluginRunToken = pluginToolRunIdentity.issue(baseSessionId);
+			try {
+				pluginRunProofFile = createPluginRunProofFile(pluginRunToken);
+			} catch (error) {
+				cleanupPluginRunProof();
+				throw error;
+			}
 			const mcpSpec = {
 				command: process.execPath,
 				args: [resolveMaestroCliScriptPath(), 'mcp', 'serve', '--tab', baseSessionId],
 				env: {
 					ELECTRON_RUN_AS_NODE: '1',
+					MAESTRO_PLUGIN_RUN_TOKEN_FILE: pluginRunProofFile,
 					// The agent's MCP client forwards only a sanitized env subset to
 					// the spawned bridge; forward the data-dir overrides the app
 					// itself honors so the bridge resolves the SAME discovery file
@@ -365,7 +424,7 @@ export async function handleProcessSpawn(
 					});
 				}, 30_000);
 			}
-			finalArgs = [...mcpInjection.globalArgs, ...finalArgs];
+			finalArgs = mergeMcpInjectionArgs(mcpCap, finalArgs, mcpInjection.globalArgs);
 			effectiveCustomEnvVars = {
 				...(effectiveCustomEnvVars || {}),
 				...mcpInjection.env,
@@ -406,6 +465,7 @@ export async function handleProcessSpawn(
 						'Switch this agent to Full Access or Read-Only, or disable SSH.\r\n'
 				);
 			}
+			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
 		try {
@@ -432,6 +492,7 @@ export async function handleProcessSpawn(
 						'Switch to Full Access or Read-Only to continue.\r\n'
 				);
 			}
+			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
 	}
@@ -899,6 +960,11 @@ export async function handleProcessSpawn(
 		}
 	}
 
+	exitListener.current = (sessionId: string): void => {
+		if (sessionId !== config.sessionId || !pluginRunToken) return;
+		cleanupPluginRunProof();
+	};
+	if (pluginRunToken && exitListener.current) processManager.on('exit', exitListener.current);
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -939,6 +1005,8 @@ export async function handleProcessSpawn(
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 	});
+	if (!result.success && pluginRunToken) exitListener.current?.(config.sessionId);
+	if (result.success) proofCleanup.release = undefined;
 
 	// The prime outran the spawn cap, so the process started without a usable
 	// catalog and its first usage event carries the 200k fallback. Close the loop:

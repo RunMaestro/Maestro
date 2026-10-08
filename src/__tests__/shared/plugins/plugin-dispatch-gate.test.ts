@@ -3,6 +3,7 @@ import {
 	evaluatePluginDispatch,
 	evaluateScheduledDispatch,
 } from '../../../shared/plugins/plugin-dispatch-gate';
+import relayRelease from './fixtures/relay-release-question.json';
 import { rateRisk } from '../../../shared/pianola/pianola-risk';
 
 describe('evaluatePluginDispatch', () => {
@@ -14,6 +15,15 @@ describe('evaluatePluginDispatch', () => {
 		expect(v.eligible).toBe(false);
 		expect(v.risk).toBe('high');
 		expect(v.reason).toMatch(/high-risk/);
+	});
+
+	it('preserves the legacy Relay rejection contract and the automatic risk ceiling', () => {
+		expect(evaluatePluginDispatch(relayRelease.fullPrompt)).toEqual({
+			eligible: false,
+			risk: 'high',
+			reason: 'high-risk prompt: auto-dispatch blocked, surfaced for review',
+		});
+		expect(evaluatePluginDispatch(relayRelease.wrapper).eligible).toBe(true);
 	});
 
 	it('marks a benign prompt eligible', () => {

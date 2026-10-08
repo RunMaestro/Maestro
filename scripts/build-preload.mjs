@@ -63,7 +63,7 @@ async function build() {
 		logBuilt(consentPreloadOutfile);
 
 		// Broker-only plugin-panel preload for panel <webview> guests: the one-way
-		// postMessage -> sendToHost bridge. Forced by the main process in
+		// postMessage -> sendToHost bridge plus host theme application. Forced in
 		// will-attach-webview; never referenced by the renderer.
 		await esbuild.build({
 			entryPoints: [path.join(rootDir, 'src/main/preload/plugin-panel.ts')],

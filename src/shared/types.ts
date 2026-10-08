@@ -415,7 +415,7 @@ export interface UsageStats {
  * Adding a member here? `ALL_HISTORY_ENTRY_TYPES` (shared/history.ts) is the
  * single list every filter/validator iterates - update it, not a local copy.
  */
-export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT';
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT' | 'RELAY';
 
 export interface HistoryEntry {
 	id: string;

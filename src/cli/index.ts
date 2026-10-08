@@ -172,7 +172,13 @@ import {
 	pianolaSuperviseRemove,
 	pianolaSuperviseSetEnabled,
 } from './commands/pianola-supervise';
-import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
+import {
+	pluginInit,
+	pluginValidate,
+	pluginSign,
+	pluginPack,
+	pluginRuntime,
+} from './commands/plugin';
 import {
 	agentRunAppendEvent,
 	agentRunList,
@@ -444,6 +450,11 @@ program
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
+	.option('--require-plugin-tools', 'Fail if a desktop-backed run with plugin tools is unavailable')
+	.option(
+		'--require-tool-receipt <tool-id>',
+		'Require a host-observed delivery receipt from this plugin tool ID'
+	)
 	.option(
 		'--no-system-prompt',
 		'Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.'
@@ -1602,7 +1613,7 @@ program
 	.command('test-ssh-remote <remote-id>')
 	.description('Test an SSH remote connection and report what the remote answered')
 	.option('-a, --agent <command>', 'Also check whether this binary is on the remote PATH')
-	.option('--timeout <seconds>', 'Give up after this many seconds (default: 60)')
+	.option('--timeout <seconds>', 'Give up after this many seconds', Number, 60)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(testSshRemote);
 
@@ -2380,6 +2391,18 @@ program
 const plugin = program
 	.command('plugin')
 	.description('Author, validate, sign, and package Maestro plugins');
+
+plugin
+	.command('list')
+	.description('Read installed plugin versions, load status, and enable state from the desktop')
+	.option('--json', 'Output as JSON')
+	.action((options) => pluginRuntime('list', undefined, options));
+
+plugin
+	.command('update <dir>')
+	.description('Update an installed plugin from a local package directory, preserving data')
+	.option('--json', 'Output the resulting plugin registry as JSON')
+	.action((dir, options) => pluginRuntime('update', dir, options));
 
 plugin
 	.command('init [dir]')

@@ -19,6 +19,7 @@ import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins
 import { useSessionStore } from '../../../stores/sessionStore';
 import { notifyToast } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
+import { FilterInput } from '../../ui/FilterInput';
 
 interface AgentDispatchAllowlistProps {
 	theme: Theme;
@@ -47,6 +48,21 @@ export function AgentDispatchAllowlist({
 
 	const [checked, setChecked] = useState<Set<string>>(new Set());
 	const [saving, setSaving] = useState(false);
+	const [query, setQuery] = useState('');
+	const normalizedQuery = query.trim().toLowerCase();
+	const visibleSessions = useMemo(
+		() =>
+			sessions.filter(
+				(session) =>
+					(session.name ?? '').toLowerCase().includes(normalizedQuery) ||
+					session.id.toLowerCase().includes(normalizedQuery)
+			),
+		[sessions, normalizedQuery]
+	);
+	const visibleSessionIds = useMemo(
+		() => new Set(visibleSessions.map((session) => session.id)),
+		[visibleSessions]
+	);
 
 	// Seed the editable set from the persisted scope. Reset on pluginId too, so a
 	// switch between plugins whose grants happen to share the same scope string
@@ -56,6 +72,7 @@ export function AgentDispatchAllowlist({
 	useEffect(() => {
 		setChecked(new Set(currentMembers));
 	}, [currentMembers, pluginId]);
+	useEffect(() => setQuery(''), [pluginId]);
 
 	// Allowed ids that no longer match a live agent (a deleted agent, or a stale
 	// manifest id): unenforceable, and dropped when the user saves.
@@ -64,6 +81,9 @@ export function AgentDispatchAllowlist({
 		[checked, sessionIds]
 	);
 	const liveCheckedCount = checked.size - staleChecked.length;
+	const hiddenCheckedCount = normalizedQuery
+		? [...checked].filter((id) => sessionIds.has(id) && !visibleSessionIds.has(id)).length
+		: 0;
 
 	// A save is meaningful when the live selection diverges from the persisted
 	// scope, OR there are stale ids to prune.
@@ -117,6 +137,14 @@ export function AgentDispatchAllowlist({
 				Choose which agents this plugin may send prompts to. High risk: only allow agents you trust
 				this plugin to drive. Changes apply immediately, with no re-signing.
 			</p>
+			<FilterInput
+				theme={theme}
+				ariaLabel="Search agents"
+				placeholder="Search by name or ID"
+				value={query}
+				onChange={setQuery}
+				width={320}
+			/>
 
 			{sessions.length === 0 ? (
 				<div
@@ -125,12 +153,20 @@ export function AgentDispatchAllowlist({
 				>
 					No agents yet. Create an agent, then allow it here.
 				</div>
+			) : visibleSessions.length === 0 ? (
+				<div
+					className="text-xs italic rounded-lg border p-3 mt-2"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+					data-testid="agent-dispatch-allowlist-no-results"
+				>
+					No agents match your search.
+				</div>
 			) : (
 				<div
-					className="flex flex-col gap-1 max-h-64 overflow-y-auto rounded-lg border p-1.5"
+					className="flex flex-col gap-1 max-h-64 overflow-y-auto rounded-lg border p-1.5 mt-2"
 					style={{ borderColor: theme.colors.border }}
 				>
-					{sessions.map((session) => (
+					{visibleSessions.map((session) => (
 						<label
 							key={session.id}
 							data-testid="agent-dispatch-allowlist-row"
@@ -183,6 +219,7 @@ export function AgentDispatchAllowlist({
 				</button>
 				<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 					{liveCheckedCount} of {sessions.length} agent{sessions.length === 1 ? '' : 's'} allowed
+					{hiddenCheckedCount > 0 ? ` (${hiddenCheckedCount} hidden by search)` : ''}
 				</span>
 			</div>
 		</div>

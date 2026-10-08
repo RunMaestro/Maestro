@@ -155,7 +155,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 					<button
 						key={type}
 						onClick={() => onToggleFilter(type)}
-						className={`flex items-center gap-1.5 py-1.5 rounded-full font-bold uppercase whitespace-nowrap transition-all ${
+						className={`flex items-center gap-1.5 py-1.5 rounded-full font-bold whitespace-nowrap transition-all ${type === 'RELAY' ? '' : 'uppercase'} ${
 							isActive ? 'opacity-100' : 'opacity-40'
 						}`}
 						style={{
@@ -169,7 +169,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 						}}
 					>
 						{density.icon && <Icon className="w-3 h-3" />}
-						{type}
+						{type === 'RELAY' ? 'Relay' : type}
 					</button>
 				);
 			})}

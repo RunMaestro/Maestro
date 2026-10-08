@@ -24,7 +24,7 @@ import {
 
 interface TestSshRemoteOptions {
 	agent?: string;
-	timeout?: string;
+	timeout?: string | number;
 	json?: boolean;
 }
 

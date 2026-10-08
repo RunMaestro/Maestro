@@ -29,8 +29,8 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useUIStore } from '../../stores/uiStore';
 import { PluginPanelFrame } from './PluginPanelFrame';
 
-/** Every placement except `modal` docks inline through this slot. */
-export type DockedPlacement = Exclude<PanelPlacement, 'modal'>;
+/** Global docks only. `settings` belongs to the selected plugin's details page. */
+export type DockedPlacement = Exclude<PanelPlacement, 'modal' | 'settings'>;
 
 interface PluginPanelSlotProps {
 	theme: Theme;

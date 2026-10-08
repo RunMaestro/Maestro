@@ -30,6 +30,7 @@ import type { HistoryEntry, HistoryEntryType } from './types';
 export const ALL_HISTORY_ENTRY_TYPES: readonly HistoryEntryType[] = [
 	'USER',
 	'AGENT',
+	'RELAY',
 	'AUTO',
 	'CUE',
 ] as const;
