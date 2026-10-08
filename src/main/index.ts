@@ -1452,14 +1452,14 @@ app
 					// Reach the always-mounted toast channel, even with Cue closed.
 					// Log every warning, but coalesce sticky notices per agent for 5m.
 					if (!cueHealthToastAt.has(payload.sessionId)) {
-						cueHealthToastAt.set(payload.sessionId, now);
-						emitCueNotifyToast(mainWindow, {
+						const delivered = emitCueNotifyToast(mainWindow, {
 							agentId: payload.sessionId,
 							title: 'Cue trigger health',
 							message: payload.message,
 							sticky: true,
 							color: 'orange',
 						});
+						if (delivered) cueHealthToastAt.set(payload.sessionId, now);
 					}
 				}
 				// Push activity updates to renderer (and web-desktop bridge clients)

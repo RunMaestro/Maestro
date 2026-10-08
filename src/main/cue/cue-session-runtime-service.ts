@@ -355,8 +355,9 @@ export function createCueSessionRuntimeService(
 		if (!preserveYamlWatcher) {
 			yamlWatchers.get(sessionId)?.cleanup();
 			yamlWatchers.delete(sessionId);
-			loadedYamlFiles.delete(sessionId);
 		}
+		// Stopped triggers no longer represent a loaded runtime, even if bytes are unchanged.
+		loadedYamlFiles.delete(sessionId);
 		const state = registry.get(sessionId);
 		if (!state) return;
 

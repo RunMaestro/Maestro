@@ -257,4 +257,27 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(watcherReady).toHaveLength(1);
 	});
+	it('retries a failed manual refresh even when the YAML bytes have not changed', async () => {
+		runtime.clearAll();
+		watcherReady.length = 0;
+		await cueSchedule({
+			agent: 'target',
+			every: '15m',
+			prompt: 'inert test',
+			name: 'completion',
+			json: true,
+		});
+		runtime.initSession(readSessions()[1], { reason: 'system-boot' });
+		await Promise.all(watcherReady);
+		expect(dispatch).toHaveBeenCalledTimes(1);
+		ioFaults.failedReads = 1;
+		expect(() => runtime.refreshSession('target', root)).toThrow('transient config read failure');
+		expect(registry.has('target')).toBe(false);
+		for (const [callback, delay] of intervals.mock.calls) {
+			if (delay === 30_000) (callback as () => void)();
+		}
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2), { timeout: 4000 });
+		expect(registry.get('target')?.triggerSources).toHaveLength(1);
+		expect(watcherReady).toHaveLength(1);
+	});
 });
