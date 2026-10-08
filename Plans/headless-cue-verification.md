@@ -409,8 +409,16 @@ processes.
    `[CUE] self-destruct removed ...` (`console.log` in
    `src/main/cue/cue-self-destruct.ts`) to stdout. Under systemd stdout and
    stderr both reach the journal, so they would land between the JSON lines.
-   The unit and the image do not set `MAESTRO_CUE_DEBUG=0`. Pre-existing; not
-   changed.
+   The unit and the image do not set `MAESTRO_CUE_DEBUG=0`. Fixed later the
+   same day: under `--log-format json` the logger takes over `console.*`, so
+   such lines become JSON lines on stderr (debug ones dropped at the default
+   level) and the `--json` result is the only thing on stdout. Packaging
+   unchanged. Rerun with the same rig as the pause rerun: engine started with
+   `--log-format json`, then `cue schedule --agent live-ops --in 1m --notify --name live-once`
+   (a `cue.yaml` reload), the `time.once` fired, self-destructed and reloaded
+   again: stdout 0 bytes (1113 before), stderr 37 lines, all JSON, including
+   `self-destruct removed "live-once" from cue.yaml (completed)` and both
+   `Config reloaded` lines; engine exit 0.
 
 ### Rerun of the pause catch-up after the fix
 

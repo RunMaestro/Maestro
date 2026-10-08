@@ -18,6 +18,7 @@
 
 import { resolveCliPath } from '../utils/parse';
 import { assertUserDataDirExists, resolveUserDataDir } from '../../shared/userDataDir';
+import { logger } from '../../main/utils/logger';
 
 export type DataDirSource = 'flag' | 'env' | 'default';
 
@@ -79,7 +80,9 @@ export function requireDataDirOrExit(options: RequireDataDirOptions = {}): void 
 		if ((error as NodeJS.ErrnoException).code) throw error;
 		const message = error instanceof Error ? error.message : String(error);
 		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: message, code: 'DATA_DIR_NOT_FOUND' }));
+			logger.writeStdout(
+				JSON.stringify({ success: false, error: message, code: 'DATA_DIR_NOT_FOUND' })
+			);
 		} else if (options.log) {
 			options.log('error', message);
 		} else {

@@ -113,7 +113,9 @@ function reportSqliteUnavailable(
 	log?: StandaloneCueLog
 ): void {
 	if (options.json) {
-		console.log(JSON.stringify({ error: 'sqlite_unavailable', message: error.message }, null, 2));
+		logger.writeStdout(
+			JSON.stringify({ error: 'sqlite_unavailable', message: error.message }, null, 2)
+		);
 	} else if (log) {
 		log('error', error.message);
 	} else {
@@ -228,7 +230,9 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		} catch (err) {
 			const message = (err as Error).message;
 			if (options.json) {
-				console.log(JSON.stringify({ started: false, code: 'INVALID_OPTIONS', error: message }));
+				logger.writeStdout(
+					JSON.stringify({ started: false, code: 'INVALID_OPTIONS', error: message })
+				);
 			} else {
 				log('error', message);
 			}
@@ -245,7 +249,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	logReadiness(readiness, log, options.requireReady ? 'error' : 'warn');
 	if (options.requireReady && !readiness.ready) {
 		if (options.json) {
-			console.log(JSON.stringify({ started: false, code: 'NOT_READY', readiness }, null, 2));
+			logger.writeStdout(JSON.stringify({ started: false, code: 'NOT_READY', readiness }, null, 2));
 		}
 		process.exit(1);
 	}
@@ -312,7 +316,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 			health.dispose();
 			if (!(err instanceof CueStatusPortInUseError)) throw err;
 			if (options.json) {
-				console.log(
+				logger.writeStdout(
 					JSON.stringify({ started: false, code: err.code, error: err.message, port: err.port })
 				);
 			} else {
@@ -386,7 +390,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 			? `Another Cue engine (${lock.mode}, pid ${lock.pid}, started ${lock.startedAt}) already holds the lock. Stop it first ("maestro-cli cue engine stop" if it's a standalone runner, or disable Cue in the desktop app's Settings).`
 			: 'Engine failed to start (see the log line above for the reason).';
 		if (options.json) {
-			console.log(JSON.stringify({ started: false, error: conflictMessage }));
+			logger.writeStdout(JSON.stringify({ started: false, error: conflictMessage }));
 		} else {
 			log('error', conflictMessage);
 		}
@@ -407,7 +411,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	health.markRunning();
 
 	if (options.json) {
-		console.log(
+		logger.writeStdout(
 			JSON.stringify({
 				started: true,
 				pid: process.pid,

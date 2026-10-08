@@ -20,6 +20,17 @@ import { isWindows, isMacOS } from '../../shared/platformDetection';
 import { setMaestroLibLogger } from '../../shared/maestro-lib/host';
 import { formatJsonLogLine } from '../../shared/jsonLogLine';
 
+type ConsoleMethod = 'log' | 'debug' | 'info' | 'warn' | 'error';
+
+/** The level a captured console line is logged at (see `consoleJson()`). */
+const CONSOLE_METHOD_LEVELS: Record<ConsoleMethod, MainLogLevel> = {
+	log: 'debug',
+	debug: 'debug',
+	info: 'info',
+	warn: 'warn',
+	error: 'error',
+};
+
 // Re-export types for backwards compatibility
 export type { MainLogLevel as LogLevel, SystemLogEntry as LogEntry };
 
@@ -73,6 +84,8 @@ class Logger extends EventEmitter {
 	private logFileStream: fs.WriteStream | null = null;
 	private currentLogDate: string = '';
 	private consoleToStderr = false;
+	/** `console.log` as it was before `consoleJson()` took it over. */
+	private stdoutConsoleLog: ((...args: unknown[]) => void) | null = null;
 
 	private levelPriority = LOG_LEVEL_PRIORITY;
 
@@ -298,10 +311,47 @@ class Logger extends EventEmitter {
 	 * here match the engine's own `onLog` lines field for field. Implies
 	 * `routeConsoleToStderr()`: stdout stays the command's result channel. The
 	 * desktop never calls this.
+	 *
+	 * Also takes over the process's `console` methods, so a module that writes
+	 * with `console.*` directly (`cueDebugLog`, `cue-self-destruct.ts`, the
+	 * next one somebody adds) becomes a JSON line here too instead of free text
+	 * between the JSON lines. `console.log` / `console.debug` log at `debug`,
+	 * `info` / `warn` / `error` at their own level, and the configured level
+	 * applies as for any other line (so `[CueDebug]` is dropped at the default
+	 * `info`). Text arguments form the message; an object argument contributes
+	 * only its identifier fields, as with `data` anywhere else. A command's own
+	 * result goes through `writeStdout()`.
 	 */
 	consoleJson(): void {
 		this.consoleToStderr = true;
 		this.consoleAsJson = true;
+		if (this.stdoutConsoleLog) return;
+		this.stdoutConsoleLog = console.log.bind(console);
+		for (const method of Object.keys(CONSOLE_METHOD_LEVELS) as ConsoleMethod[]) {
+			console[method] = (...args: unknown[]) => this.logConsoleCall(method, args);
+		}
+	}
+
+	/**
+	 * Print a command's result line on stdout. The same as `console.log` unless
+	 * `consoleJson()` took the console over, in which case it still reaches
+	 * stdout rather than becoming a log line.
+	 */
+	writeStdout(...args: unknown[]): void {
+		(this.stdoutConsoleLog ?? console.log)(...args);
+	}
+
+	private logConsoleCall(method: ConsoleMethod, args: unknown[]): void {
+		const level = CONSOLE_METHOD_LEVELS[method];
+		if (!this.shouldLog(level)) return;
+		const text: string[] = [];
+		let data: unknown;
+		for (const arg of args) {
+			if (arg instanceof Error) text.push(arg.message);
+			else if (arg !== null && typeof arg === 'object') data ??= arg;
+			else text.push(String(arg));
+		}
+		this.addLog({ timestamp: Date.now(), level, message: text.join(' '), data });
 	}
 
 	setLogLevel(level: MainLogLevel): void {

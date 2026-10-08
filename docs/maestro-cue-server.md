@@ -515,7 +515,9 @@ docker exec maestro-cue node -e "fetch('http://127.0.0.1:7433/status').then(r=>r
 
 ### Logs
 
-The engine logs one JSON object per line. On a VM they go to the journal (`journalctl -u maestro-cue`), in a container to `docker logs maestro-cue`.
+The engine logs one JSON object per line. On a VM they go to the journal (`journalctl -u maestro-cue`), in a container to `docker logs maestro-cue`. Every line the engine prints is JSON, so a log shipper can parse all of them: each has `timestamp`, `level` (`debug`, `info`, `warn` or `error`) and `message`, and a line about a run also carries its `runId`, `subscriptionName`, `pipelineId` and `sessionId`. Prompt text and trigger payloads are never logged.
+
+Debug output (the `[CueDebug]` lines printed when a `cue.yaml` reloads) is left out of the JSON logs. To see it, run the engine by hand with `--log-format text` instead of `--log-format json`, which prints the debug lines as plain text. `MAESTRO_CUE_DEBUG=0` turns them off in text mode too.
 
 ### Stop
 
