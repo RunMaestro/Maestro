@@ -163,7 +163,13 @@ export interface MessageHandlerCallbacks {
 	}) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null; command?: string; inputRequired?: boolean },
+		config: {
+			cwd?: string;
+			shell?: string;
+			name?: string | null;
+			command?: string;
+			inputRequired?: boolean;
+		},
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	writeTerminalTab: (
