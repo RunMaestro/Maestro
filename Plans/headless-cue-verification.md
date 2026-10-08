@@ -276,5 +276,173 @@ Read from `git diff 89986c4f9..HEAD`; nothing was run on a Windows host.
 
 - **A Windows host.** Everything above is from reading the code; windows-latest in CI is the first real run.
 - **The win32-only `.cmd` shim test** in `start-turn.test.ts`. It runs only on windows-latest.
-- **The real-SQLite tests in `cue-db-integration.test.ts`** (the existing round trip and the new read-only check). They skip on **every CI leg**, not just Windows: `postinstall` runs `electron-rebuild`, so better-sqlite3 is built for Electron and plain Node cannot load it. They also skipped here, and building a plain-Node copy failed because this machine has no network access. Today's read-only behavior is covered only by the mocked `cue-db.test.ts`.
+- **The real-SQLite tests in `cue-db-integration.test.ts`** (the existing round trip and the new read-only check). They skip on **every CI leg**, not just Windows: `postinstall` runs `electron-rebuild`, so better-sqlite3 is built for Electron and plain Node cannot load it. They also skipped here, and building a plain-Node copy failed because this machine has no network access. Today's read-only behavior is covered only by the mocked `cue-db.test.ts`. Later the same day both were run with a plain-Node binary and pass; see [Stage A](#stage-a-live-this-machine).
 - CI's two-shard split was not reproduced; the suite ran as one process.
+
+## Stage A, live, this machine
+
+Dated 2026-10-08, on this Linux machine as my own user (no systemd, no
+container), against `feat/cue-server` at `e0d971409`. Real providers: Claude
+Code 2.1.295 (subscription login in `~/.claude`, model `haiku`) and OpenCode
+1.18.33 (free plan). Node 24.21.0. No codex.
+
+### Setup
+
+- `$S` is a scratch folder outside the repo; every seed file, script, log and
+  data dir lived there and none is committed.
+- `$SRV` is `npm run build:cli` plus `node scripts/build-server.mjs`, copied
+  from `dist/server/maestro-server/`, with a `node_modules/better-sqlite3`
+  12.11.1 that loads under plain Node (ABI 137). `install.sh` was not run.
+- `mcli` is `env -i HOME PATH USER LANG CREDENTIALS_DIRECTORY=$S/creds MAESTRO_SERVER_MODE=1 MAESTRO_LIVE_LOG=$S/logs/ops.log node $SRV/maestro-cli.js`.
+  `mrun` is the same with `MAESTRO_USER_DATA=$S/server-data` and without server mode, for the on-demand verbs.
+- The webhook secret was a random value in `$S/creds/LIVE_HOOK_SECRET` (the
+  systemd credential layout); it is not written here.
+- Every engine start was `cue engine start --data-dir $S/server-data --status-port 7433 --require-ready --log-format json`
+  under `setsid`, with stdout and stderr captured separately.
+
+Source: a desktop-format data dir `$S/src-data` seeded by script (agent
+records, one playbook per provider, `cue-pipeline-layout.json`) and three git
+workspaces. Pipeline `Live`, three agents:
+
+| Agent        | Provider    | Subscriptions                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LiveClaude` | Claude Code | `sched` (`time.scheduled`, one time 7 minutes after seeding), `slow` (`cli.trigger`, a turn that runs `sleep 90` in its Bash tool)                                                                                                                                                                                                                                                                                       |
+| `LiveOpen`   | OpenCode    | `after-claude` (`agent.completed` from `LiveClaude`, `filter: triggeredBy: sched`)                                                                                                                                                                                                                                                                                                                                       |
+| `LiveOps`    | Claude Code | All `action: command` (an `echo` into `$MAESTRO_LIVE_LOG`, no agent turn): `join` (fan-in of `LiveClaude` / `sched` and `LiveOpen` / `after-claude`), `hook` and `slowhook` (`webhook.received`, HMAC in `X-Hub-Signature-256`; `slowhook` sleeps 30 s), `beat` (`time.heartbeat`, 2 min), `boot` (`app.startup`), `files` (`file.changed`, `inbox/*.txt`), `todo` (`task.pending`, `TODO.md`), `manual` (`cli.trigger`) |
+
+### Results
+
+| Item                                                   | Result                | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `bundle export --pipeline Live --data-dir $S/src-data` | Pass                  | exit 0; 3 agents, 3 workspaces, 12 files; `Secrets to set on import: LIVE_HOOK_SECRET`. A first seed with a command fan-in and no `source_sub` also exported with exit 0 (see Observations)                                                                                                                                                                                                                                                                                                |
+| `bundle validate`                                      | Pass                  | `PASS (0 errors, 0 warnings)`. On the first seed: exit 1, `[cue-config-invalid] "source_sub" is required for agent.completed subscriptions when action is "command"`                                                                                                                                                                                                                                                                                                                       |
+| `bundle inspect`                                       | Pass                  | 3 agents, 3 workspaces, 8 event types, `Secrets: LIVE_HOOK_SECRET`                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Import, two workspaces on one folder (3392fcd76)       | Pass                  | exit 2, `Workspaces "claude" and "opencode" are both mapped to <folder>. Each workspace needs its own folder.`; the data dir was not created. The same through a symlink to the folder: same refusal                                                                                                                                                                                                                                                                                       |
+| Import `--dry-run`                                     | Pass                  | exit 0; full plan (3 new agents, 4 files, 11 subscriptions, all 8 shell commands listed); data dir still absent, workspaces unchanged                                                                                                                                                                                                                                                                                                                                                      |
+| Import                                                 | Pass                  | exit 0; data dir created with agents, playbooks and layout                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `cue engine check`                                     | Pass                  | exit 0, `Ready: 3 agent(s), 3 workspace(s), 11 subscription(s) checked, no gaps.`                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Start (run 1)                                          | Pass                  | `/readyz` 200 `ready:true` within 1 s; `/healthz` 200; `boot` and the initial `beat` ran; all 211 stderr lines of run 1 parsed as JSON                                                                                                                                                                                                                                                                                                                                                     |
+| Schedule, chain, fan-in, real providers                | Pass                  | 16:20 `sched` on Claude answered `scheduled` (6.7 s); `after-claude` on OpenCode answered `chained` (15.3 s); `"join" triggered (agent.completed, fan-in complete)`. Each agent row in `cue_events` has a provider session id and usage. The `slow` run's completion was correctly filtered out of both (`filter not matched`, `triggeredBy "slow" not in source_sub`)                                                                                                                     |
+| `cli.trigger` through the inbox                        | Pass                  | `cue trigger manual` exit 0 and `manual` ran. It also started `slow`, by design (see Observations)                                                                                                                                                                                                                                                                                                                                                                                         |
+| `task.pending`                                         | Pass                  | A `TODO.md` written before the first scan was seeded (no fire); a task added later fired `todo` at the next 1 minute poll                                                                                                                                                                                                                                                                                                                                                                  |
+| `file.changed`                                         | **Fail, then pass**   | With `inbox/` created after the engine started: two changes, no event. With `inbox/` present at start (run 2): fired 5 s after the change. Finding 1                                                                                                                                                                                                                                                                                                                                       |
+| `time.once`                                            | Pass                  | `mrun cue schedule --agent live-ops --in 1m --notify --name live-once` against the running engine: `Config reloaded`, fired at `fire_at`, `self-destruct removed "live-once"`                                                                                                                                                                                                                                                                                                              |
+| Signed webhook                                         | Pass                  | unsigned 401; signed 202 `{"accepted":1}`; the same delivery id again 200 `duplicate`; unknown path 404                                                                                                                                                                                                                                                                                                                                                                                    |
+| Status read-only (0df924926)                           | Pass                  | `cue engine status` and `inspect` exit 0 against the live engine; before and after: `cue.db` mode `600`, files `cue.db cue.db-shm cue.db-wal`, `sqlite_master` hash `3e2cbaae8821d471`, `user_version` 0, all unchanged                                                                                                                                                                                                                                                                    |
+| Stop drains with a run in flight (run 1)               | Pass                  | `cue trigger slow --prompt "...sleep 120..."`; `sleep 120` (pid 1023810) under `claude --print` in the engine's process group; SIGTERM: `/readyz` 503 `phase: draining`; `waiting up to 90s`, then `timeout: stopping 1 run(s) through the stop ladder`, run recorded `stopped` (exit 143); engine exit 0 after 91.6 s; afterwards no `sleep 120`, no `claude --print`, no lock                                                                                                            |
+| Webhook during the drain                               | Differs from the docs | Connection refused, not the documented `503` with `Retry-After`. Finding 3                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| kill -9 mid-run, restart (runs 2 and 3)                | Pass                  | `slowhook` deliveries `k9-A` (running `sleep 30`) and `k9-B` (queued), both acknowledged 202; `kill -9` (exit 137) left the lock, `k9-B` in `cue_event_queue` and `k9-A` `running`. Run 3 took over the dead lock in about 2 s, `Restored 1 persisted queue entry`, ran `k9-B` once and marked `k9-A` `failed` ("The Cue engine exited before this run finished"). Redelivering both ids: 200 `duplicate` each. Queue empty. `k9-A`'s orphaned `sleep 30` finished on its own (documented) |
+| Pause catch-up (247b04bb0)                             | **Partial**           | SIGSTOP 150 s, SIGCONT: `Sleep detected (gap: 3m). Reconciling missed events.` and `Reconciling "beat": 1 interval(s) missed during sleep, firing catch-up`, at the moment of SIGCONT. Then `beat`'s own overdue timer fired again 13 ms later: two runs for one missed slot. Finding 2                                                                                                                                                                                                    |
+| Clean stop (run 3)                                     | Pass                  | `cue engine stop --data-dir ... --wait-ms 120000` exit 0, engine exit 0, lock removed, `status` says not running                                                                                                                                                                                                                                                                                                                                                                           |
+| JSON logs                                              | Partial               | stderr of runs 1, 2 and 3: 211, 33 and 74 lines, 0 unparseable. Run 3's stdout got 1113 bytes of multi-line non-JSON text. Finding 4                                                                                                                                                                                                                                                                                                                                                       |
+
+On-demand verbs, `mrun` (no engine involvement):
+
+| Command                                                                                                                     | Claude Code                                  | OpenCode                                       |
+| --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------- |
+| `send <agent> "Remember the codeword ... Reply with only OK."`                                                              | exit 0, `OK`, usage reported                 | exit 0, `OK`, usage reported                   |
+| `send <agent> "What was the codeword?..." --session <id>`                                                                   | exit 0, `PELICAN-42`, same session id        | exit 0, `HERON-17`, same session id            |
+| `playbook pb-<k> --json`                                                                                                    | exit 0, 1/1 task, 15.4 s, `hello-claude.txt` | exit 0, 1/1 task, 45.9 s, `hello-opencode.txt` |
+| `run-doc <workspace>/rundoc.md --agent <agent> --json`                                                                      | exit 0, 1/1 task checked, file written       | exit 0, 1/1 task checked, file written         |
+| `goal-run <agent> "Create a file named goal-<k>.txt containing the number 7" --exit-criteria ... --max-iterations 2 --json` | exit 0, `goal_complete`, 1 iteration         | exit 0, `goal_complete`, 1 iteration           |
+
+All 32 `--json` lines parsed. The data dir afterwards held 14 ledger runs
+(`cli:send`, `cli:autorun`, `cli:autorun-synopsis`, `cli:goal`), every one with
+usage, and 14 history entries.
+
+Stopping a turn that started a tool process:
+
+| Where                    | Before the stop         | After                                                                              |
+| ------------------------ | ----------------------- | ---------------------------------------------------------------------------------- |
+| Engine drain (run 1)     | `sleep 120` pid 1023810 | Gone; `claude --print` gone; run `stopped`                                         |
+| TUI example, Claude Code | `sleep 47` pid 1014388  | Ctrl+C: `[interrupted]` in 0.8 s; `sleep` gone 2 s later; second Ctrl+C exited 0   |
+| TUI example, OpenCode    | `sleep 53` pid 1015790  | Ctrl+C: `[interrupted] no usage reported` in 0.2 s; `sleep` gone 2 s later; exit 0 |
+
+This closes the TUI record's open question: the tool's child process is gone
+after the stop. In both TUI runs `[tool Bash]` / `[tool bash]` was not printed
+while the tool ran, only after it returned, unlike the earlier TUI record (Claude
+Code 2.1.295 here); the driver therefore polled `pgrep` for the `sleep`.
+
+### Measurements
+
+| Measurement                                                   | Target        | Result                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Idle engine RSS, 72 samples over 721 s (`/proc/<pid>/status`) | under 150 MB  | **Pass**: 121.6 MB throughout                                                                                                                                                                                                                          |
+| Idle engine CPU, same window (`/proc/<pid>/stat` ticks)       | under 1%      | **Pass**: 0.148% average, 0.30% in the busiest 10 s. The window included the engine's own 2 minute `beat` and 1 minute `todo` scans, no agent turn                                                                                                     |
+| Webhook start latency, 25 signed deliveries 2 s apart         | p95 under 1 s | **Pass**: from the request leaving to the `runStarted` log line, p50 50 ms, p95 53 ms, max 53 ms. The `runStarted` line came 13 to 15 ms before the 202 response in every case (a 2xx follows the start), so measured from the response it is negative |
+
+Only the engine's own process was measured. Shell runs are separate
+processes.
+
+### Findings
+
+1. **`file.changed` misses a watched folder created after the engine started.**
+   Pre-existing (`src/main/cue/cue-file-watcher.ts`, chokidar 3.6.0), desktop
+   included. Reproduction outside Maestro: `chokidar.watch('inbox/*.txt', { cwd: root, ignoreInitial: true })`
+   on a `root` with no `inbox/`; after `ready`, create `inbox/` and write
+   `inbox/a.txt` twice. No event, no error; `getWatched()` shows only the
+   root. With `inbox/` present before the watch, `add` fires. Not fixed: outside
+   today's work. Workaround: create the folder before the engine starts (or
+   restart it).
+2. **A pause longer than an interval fires that interval twice at resume.**
+   From 247b04bb0 (today). Reproduction: a `time.heartbeat` subscription of 2
+   minutes, `kill -STOP` the engine for 150 s, `kill -CONT`. The heartbeat tick
+   reconciles (`1 interval(s) missed ... firing catch-up`) and the
+   subscription's own `setInterval` tick, overdue because the monotonic clock
+   ran during SIGSTOP, fires again 13 ms later. `docs/maestro-cue-server.md`
+   (Sleep and pause) says each interval "runs once, however many times it came
+   due". A real suspend on Linux or macOS stops the monotonic clock, so the
+   interval timer is not overdue there; SIGSTOP and a VM pause that keeps the
+   guest's monotonic clock running are affected. Not fixed: it needs the
+   recovery service to reset each interval source's timer after a catch-up,
+   which also touches the desktop's resume path, so it is not small.
+   Reported for a decision.
+3. **No 503 during a drain.** A delivery sent while the engine drains is
+   refused at the TCP level (a proxy answers 502): the drain stops every
+   trigger source and the listener closes with the last webhook subscription.
+   The docs (Webhooks behind a proxy, Limits) say "while Cue is off or
+   stopping ... a delivery is answered 503 with Retry-After: 30". Nothing is
+   acknowledged either way, so a sender retries; the docs overstate it.
+   Pre-existing; not changed.
+4. **Non-JSON text on stdout under `--log-format json`.** A `cue.yaml` reload
+   (here the `time.once` added by `cue schedule` and its self-destruct) prints
+   multi-line `[CueDebug] engine:refreshSession:...` objects
+   (`src/shared/cueDebug.ts`, on unless `MAESTRO_CUE_DEBUG=0`) and a plain
+   `[CUE] self-destruct removed ...` (`console.log` in
+   `src/main/cue/cue-self-destruct.ts`) to stdout. Under systemd stdout and
+   stderr both reach the journal, so they would land between the JSON lines.
+   The unit and the image do not set `MAESTRO_CUE_DEBUG=0`. Pre-existing; not
+   changed.
+
+### Observations
+
+- `cue trigger manual` also started `slow`: a manual trigger fires every
+  subscription in the same pipeline with the same trigger config (both are
+  `cli.trigger` in `Live`), as the editor's Run button does (`triggerSubscription`
+  in `cue-engine.ts`). `--prompt` limits it to the named one. The `cli.trigger`
+  section of `docs/maestro-cue-events.md` does not say so.
+- `bundle export` exported a pipeline whose `cue.yaml` fails validation (exit 0);
+  `bundle validate` and `import` catch it.
+- The real-SQLite tests in `cue-db-integration.test.ts`, skipped in CI, were run
+  here once by putting the plain-Node `better_sqlite3.node` in place, then
+  restoring the Electron build (sha256 prefix `2580cf63a1c12153` before and
+  after): both pass, including today's read-only check.
+- `~/.config/maestro` and `~/.config/maestro-dev`: nothing newer than the stamp
+  taken before the first `mrun`. The random webhook secret appears in no file
+  under the data dir, the workspaces, the logs or `$SRV`.
+
+### Triggers not exercised
+
+`github.pull_request`, `github.issue` and `github.label`: no scratch GitHub
+repository, and creating one on the user's account is an outward-facing step
+this stage does not take. The other nine of the twelve ran.
+
+### Not run
+
+- systemd (`systemctl stop`, `Type=notify`, `LoadCredential=`) and the
+  packaged `install.sh`: the next stage. `CREDENTIALS_DIRECTORY` was set by
+  hand here.
+- The container.
+- Codex (not installed).
+- A real host suspend (only SIGSTOP), which is the case Finding 2 does not
+  affect on Linux.
