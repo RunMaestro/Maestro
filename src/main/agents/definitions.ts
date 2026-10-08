@@ -324,7 +324,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 					'Request readable Codex reasoning summaries for the Thinking display. Default follows the Codex CLI and model; some providers do not support summaries.',
 				options: ['', 'auto', 'concise', 'detailed', 'none'],
 				default: '',
-				argBuilder: (value: string) => (value ? ['-c', `model_reasoning_summary="${value}"`] : []),
+				argBuilder: (value: string) =>
+					['auto', 'concise', 'detailed', 'none'].includes(value)
+						? ['-c', `model_reasoning_summary="${value}"`]
+						: [],
 			},
 		],
 	},

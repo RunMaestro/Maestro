@@ -927,6 +927,32 @@ describe('applyAgentConfigOverrides', () => {
 		).toEqual([...baseArgs, '-c', 'model_reasoning_summary="auto"']);
 	});
 
+	it.each(['', 'invalid', ' auto ', null, 42])(
+		'ignores unsupported stored Codex reasoning summary %s',
+		(reasoningSummary) => {
+			const codex = getAgentDefinition('codex');
+			const baseArgs = ['exec', '--json'];
+			expect(
+				applyAgentConfigOverrides(codex, baseArgs, {
+					agentConfigValues: { reasoningSummary },
+				}).args
+			).toEqual(baseArgs);
+		}
+	);
+
+	it.each(['auto', 'concise', 'detailed', 'none'])(
+		'forwards supported Codex reasoning summary %s',
+		(reasoningSummary) => {
+			const codex = getAgentDefinition('codex');
+			const baseArgs = ['exec', '--json'];
+			expect(
+				applyAgentConfigOverrides(codex, baseArgs, {
+					agentConfigValues: { reasoningSummary },
+				}).args
+			).toEqual([...baseArgs, '-c', `model_reasoning_summary="${reasoningSummary}"`]);
+		}
+	);
+
 	it('processes configOptions with argBuilder', () => {
 		const agent = makeAgent({
 			configOptions: [
