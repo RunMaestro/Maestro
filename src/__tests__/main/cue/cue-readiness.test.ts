@@ -325,6 +325,88 @@ describe('checkCueReadiness', () => {
 		expect(report).toMatchObject({ ready: true, agents: 1, workspaces: 1, gaps: [] });
 	});
 
+	describe('disabled subscriptions', () => {
+		/** An enabled heartbeat beside `disabled`, so the data dir is otherwise ready. */
+		const withHealthyBeat = (disabled: string) => `${beat('live')}${disabled}    enabled: false\n`;
+
+		it('needs no gh or GitHub token for a disabled GitHub trigger', async () => {
+			const root = workspace(
+				'gh-off',
+				withHealthyBeat('  - name: prs\n    event: github.pull_request\n    prompt: review\n')
+			);
+			fs.writeFileSync(path.join(runSecrets, 'GITHUB_TOKEN'), '');
+			let toolProbed = false;
+			const report = await checkCueReadiness(
+				inputs({
+					sessions: [agent({ id: 'gh-off', projectRoot: root })],
+					probes: {
+						isGhInstalled: async () => ((toolProbed = true), false),
+						binaryExists: async () => ((toolProbed = true), false),
+					},
+				})
+			);
+			expect(toolProbed).toBe(false);
+			expect(report).toMatchObject({ ready: true, subscriptions: 2, gaps: [] });
+		});
+
+		it('needs no webhook secret for a disabled webhook', async () => {
+			const root = workspace(
+				'hook-off',
+				withHealthyBeat(
+					'  - name: deploy-hook\n    event: webhook.received\n    prompt: deploy\n    webhook:\n      secret_env: HOOK_SECRET\n'
+				)
+			);
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'hook-off', projectRoot: root })] })
+			);
+			expect(report).toMatchObject({ ready: true, gaps: [] });
+		});
+
+		it('reports no unknown agent for a disabled fan-out or pin', async () => {
+			const root = workspace(
+				'fan-off',
+				withHealthyBeat(
+					'  - name: fan\n    event: time.heartbeat\n    interval_minutes: 60\n    prompt: hi\n    fan_out: [Nobody]\n'
+				) +
+					'  - name: pinned\n    event: time.heartbeat\n    interval_minutes: 60\n    prompt: hi\n    agent_id: gone\n    enabled: false\n'
+			);
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'fan-off', projectRoot: root })] })
+			);
+			expect(report).toMatchObject({ ready: true, agents: 1, subscriptions: 3, gaps: [] });
+		});
+
+		it('needs no provider binary for an agent whose only prompt subscription is disabled', async () => {
+			const root = workspace(
+				'prompt-off',
+				'subscriptions:\n  - name: tidy\n    event: time.heartbeat\n    interval_minutes: 60\n    action: command\n    command:\n      mode: shell\n      shell: "echo hi"\n' +
+					'  - name: ask\n    event: time.heartbeat\n    interval_minutes: 60\n    prompt: hi\n    enabled: false\n'
+			);
+			let planned = false;
+			const report = await checkCueReadiness(
+				inputs({
+					sessions: [agent({ id: 'prompt-off', toolType: 'hermes', projectRoot: root })],
+					probes: {
+						planSessionTurn: async () => {
+							planned = true;
+							return { ok: false, reason: 'not-installed', error: 'x' };
+						},
+					},
+				})
+			);
+			expect(planned).toBe(false);
+			expect(report.ready).toBe(true);
+		});
+
+		it('still reports a cue.yaml that does not parse', async () => {
+			const root = workspace('broken-off', 'subscriptions: [\n');
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'broken-off', projectRoot: root })] })
+			);
+			expect(report.gaps.map((g) => g.kind)).toContain('cue-config');
+		});
+	});
+
 	describe('nothing to run', () => {
 		it('is not ready for a data dir with no agents (nothing imported)', async () => {
 			const report = await checkCueReadiness(inputs({ sessions: [] }));

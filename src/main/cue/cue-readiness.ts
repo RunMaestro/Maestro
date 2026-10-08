@@ -93,11 +93,11 @@ export interface CueReadinessReport {
 	ready: boolean;
 	/** ISO time the check ran; the status endpoint reports how fresh it is. */
 	checkedAt: string;
-	/** Agents checked: those owning a Cue config, and every fan-out target. */
+	/** Agents checked: those owning an enabled subscription, and every fan-out target of one. */
 	agents: number;
 	/** Project roots with a cue.yaml. */
 	workspaces: number;
-	/** Subscriptions that loaded. */
+	/** Subscriptions that loaded, disabled ones included (readiness checks only the enabled). */
 	subscriptions: number;
 	gaps: CueReadinessGap[];
 }
@@ -163,7 +163,13 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	const add = (gap: CueReadinessGap) => gaps.push(gap);
 
 	// ─── Workspaces: every project root an agent stands in, loaded once ─────
+	// `configs` holds only the ENABLED subscriptions, the ones the engine wires
+	// (`cue-session-runtime-service` skips `enabled === false`). Filtering here,
+	// once, keeps a disabled subscription from adding any gap below: its gh,
+	// webhook secret, provider, fan-out targets and pinned agent are never
+	// needed. A config that does not parse or validate is still reported.
 	const configs = new Map<string, CueSubscription[]>();
+	let subscriptionCount = 0;
 	for (const session of sessions) {
 		const root = session.projectRoot;
 		if (!root || configs.has(root) || !isDirectory(root)) continue;
@@ -181,7 +187,11 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 			});
 			continue;
 		}
-		configs.set(root, loaded.config.subscriptions);
+		subscriptionCount += loaded.config.subscriptions.length;
+		configs.set(
+			root,
+			loaded.config.subscriptions.filter((sub) => sub.enabled !== false)
+		);
 		for (const warning of loaded.warnings) {
 			add({ kind: 'cue-config', workspace: root, message: `Cue config in ${root}: ${warning}` });
 		}
@@ -193,7 +203,6 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	const webhookSecrets = new Map<string, string>(); // secret name -> subscription
 	let needsGh: CueSubscription | undefined;
 	const repoInferredRoots = new Map<string, CueSubscription>();
-	let subscriptionCount = 0;
 	let runsSomething = false;
 
 	for (const session of sessions) {
@@ -202,8 +211,8 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 		const owned = ownedBy(session, subs);
 		if (owned.length === 0) continue;
 		involved.set(session.id, session);
+		runsSomething = true;
 		for (const sub of owned) {
-			if (sub.enabled) runsSomething = true;
 			if ((sub.action ?? 'prompt') === 'prompt' && !sub.fan_out?.length) {
 				promptAgents.set(session.id, session);
 			}
@@ -241,7 +250,6 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 				});
 			}
 		}
-		subscriptionCount += subs.length;
 	}
 
 	// ─── Anything to run at all ─────────────────────────────────────────────

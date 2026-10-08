@@ -275,6 +275,7 @@ docker run --rm --env-file maestro.env \
 ```
 
 - **Secrets in credential files.** On a VM, `LoadCredential=` files are visible to the service alone, so a check from a shell reports them as missing. The service runs the same check when it starts (`--require-ready`) and logs every gap it still finds.
+- **Disabled subscriptions are ignored.** A subscription with `enabled: false` adds no gap: it needs no `gh`, webhook secret, provider binary or target agent until it is enabled. A `cue.yaml` that does not parse is still reported.
 - **Nothing to run.** A data directory with no agents, or with agents but no enabled subscription on any of them, has a `nothing-to-run` gap: the check exits 1, `--require-ready` refuses to start, and `/readyz` answers 503. That is almost always a bundle that was never imported. An exported agent brings its own subscriptions, if it had any. A server that only runs agents on demand needs no engine: leave the service off.
 - **`install.sh --enable`** runs the check before it enables the service. On `nothing-to-run` it still installs everything, leaves the service disabled, says why, and exits 3. Any other gap is left to the service, which judges secrets in its own environment.
 - **Not checked:** whether a provider or `gh` is signed in. Run one turn to prove a sign-in (see [Run an exported agent on demand](#run-an-exported-agent-on-demand)).

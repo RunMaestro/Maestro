@@ -190,7 +190,9 @@ Limits:
 
 `checkCueReadiness()` (`src/main/cue/cue-readiness.ts`) checks everything an unattended engine over this data dir would need and returns ONE value, `CueReadinessReport`: `ready`, `checkedAt`, counts of agents, workspaces and subscriptions, and `gaps`, each with a `kind`, the `agentId` / `agentName` / `subscription` / `workspace` / `secret` / `tool` it concerns, and one actionable `message`. Every gap is collected; nothing stops at the first.
 
-Which agents: those whose project root has a Cue config and owns a subscription, plus every `fan_out` target. Other agents in the data dir (a desktop's unrelated ones) are not checked.
+Which agents: those whose project root has a Cue config and owns an enabled subscription, plus every `fan_out` target of one. Other agents in the data dir (a desktop's unrelated ones) are not checked.
+
+Disabled subscriptions (`enabled: false`) are ignored, exactly as the engine skips them: the filter is applied once, where each `cue.yaml` loads, so a disabled `github.*` trigger needs no `gh` or token, a disabled webhook needs no `secret_env`, a disabled `fan_out` or `agent_id` cannot be an `unknown-agent`, and a disabled prompt subscription asks for no provider binary. A `cue.yaml` that does not parse or validate is still a `cue-config` gap. The `subscriptions` count still includes disabled ones, since they loaded.
 
 | Gap kind                             | Checked by (the code the real run uses)                                                                                                                                       |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
