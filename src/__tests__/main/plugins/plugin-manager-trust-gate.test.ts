@@ -28,7 +28,7 @@ import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 const trustedSigner = makeSigningKeys();
 const strangerSigner = makeSigningKeys();
 
-function writeCodePlugin(id: string, opts: { theme?: boolean } = {}): string {
+function writeCodePlugin(id: string, opts: { theme?: boolean; settings?: boolean } = {}): string {
 	const dir = path.join(pluginsDir(), id);
 	fs.mkdirSync(dir, { recursive: true });
 	const manifest = {
@@ -38,6 +38,16 @@ function writeCodePlugin(id: string, opts: { theme?: boolean } = {}): string {
 		tier: 1,
 		entry: 'main.js',
 		maestro: { minHostApi: '1.0.0' },
+		...(opts.settings
+			? {
+					permissions: [{ capability: 'ui:panel' }],
+					contributes: {
+						panels: [
+							{ id: 'config', title: 'Configuration', entry: 'panel.html', placement: 'settings' },
+						],
+					},
+				}
+			: {}),
 		...(opts.theme
 			? {
 					contributes: {
@@ -54,6 +64,7 @@ function writeCodePlugin(id: string, opts: { theme?: boolean } = {}): string {
 			: {}),
 	};
 	fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(manifest));
+	fs.writeFileSync(path.join(dir, 'panel.html'), '<html>settings</html>');
 	fs.writeFileSync(path.join(dir, 'main.js'), 'module.exports = { activate() {} };');
 	return dir;
 }
@@ -192,5 +203,34 @@ describe('FC1 trusted-to-run gate', () => {
 		manager.setEnabled('tampered.data', true);
 		const themes = manager.getContributions().themes;
 		expect(themes.some((t) => t.pluginId === 'tampered.data')).toBe(false);
+	});
+});
+
+describe('settings panel activation boundary', () => {
+	it('requires trust, enable and live ui:panel consent and removes HTML on disable/uninstall', () => {
+		let grants = [{ capability: 'ui:panel' as const }];
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			sandbox: makeSandbox(),
+			trustedKeys: () => [trustedSigner.publicKeyB64],
+			getGrants: () => grants,
+		});
+		const trusted = writeCodePlugin('settings.trusted', { settings: true });
+		signPluginDir(trusted, trustedSigner);
+		writeCodePlugin('settings.unsigned', { settings: true });
+		manager.refresh();
+		manager.setEnabled('settings.trusted', true);
+		manager.setEnabled('settings.unsigned', true);
+		expect(manager.getContributions().panels.map((p) => p.id)).toEqual(['settings.trusted/config']);
+		expect(manager.getPanelHtml('settings.trusted/config')).toContain('settings');
+		grants = [];
+		expect(manager.getContributions().panels).toEqual([]);
+		expect(manager.getPanelHtml('settings.trusted/config')).toBeNull();
+		grants = [{ capability: 'ui:panel' }];
+		manager.setEnabled('settings.trusted', false);
+		expect(manager.getContributions().panels).toEqual([]);
+		manager.setEnabled('settings.trusted', true);
+		manager.uninstall('settings.trusted');
+		expect(manager.getPanelHtml('settings.trusted/config')).toBeNull();
 	});
 });

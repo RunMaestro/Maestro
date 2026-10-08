@@ -18,14 +18,18 @@
  * the `ui.*Panel` verbs (where it is enforced) rather than here.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { Theme } from '../../types';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
+import { pluginSettingsId } from '../../../shared/plugins/panel-host';
+import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { PluginPanelHost } from '../Settings/PluginPanelHost';
 
 export function PluginModalPanelMount({ theme }: { theme: Theme }) {
 	const contributions = usePluginContributions();
+	const panelsRef = useRef(contributions.panels);
+	panelsRef.current = contributions.panels;
 	const openPluginPanelId = useUIStore((s) => s.openPluginPanelId);
 	const setOpenPluginPanelId = useUIStore((s) => s.setOpenPluginPanelId);
 	const toggleOpenPluginPanelId = useUIStore((s) => s.toggleOpenPluginPanelId);
@@ -34,6 +38,14 @@ export function PluginModalPanelMount({ theme }: { theme: Theme }) {
 		const plugins = window.maestro?.plugins;
 		if (!plugins?.onPanelVisibility) return;
 		return plugins.onPanelVisibility(({ panelId, action }) => {
+			const panel = panelsRef.current.find((p) => p.id === panelId);
+			if (panel?.placement === 'settings') {
+				if (action === 'open')
+					useModalStore
+						.getState()
+						.openModal('settings', { tab: 'encore', settingId: pluginSettingsId(panelId) });
+				return;
+			}
 			if (action === 'open') setOpenPluginPanelId(panelId);
 			else if (action === 'toggle') toggleOpenPluginPanelId(panelId);
 			// `close` only ever closes the plugin's OWN panel, never whatever else
@@ -49,8 +61,15 @@ export function PluginModalPanelMount({ theme }: { theme: Theme }) {
 				: null,
 		[contributions.panels, openPluginPanelId]
 	);
+	useEffect(() => {
+		if (panel?.placement !== 'settings') return;
+		useModalStore
+			.getState()
+			.openModal('settings', { tab: 'encore', settingId: pluginSettingsId(panel.id) });
+		setOpenPluginPanelId(null);
+	}, [panel, setOpenPluginPanelId]);
 
-	if (!panel) return null;
+	if (!panel || panel.placement === 'settings') return null;
 
 	return <PluginPanelHost theme={theme} panel={panel} onClose={() => setOpenPluginPanelId(null)} />;
 }

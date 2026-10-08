@@ -155,9 +155,20 @@ export class PluginManager {
 		// ledger, so this reads sealed, anti-rollback grants rather than the
 		// forgeable plain-JSON store the default falls back to.
 		const getGrants = this.deps.getGrants ?? readGrants;
-		return aggregateContributions(manifests, (pluginId, cap) =>
+		const contributions = aggregateContributions(manifests, (pluginId, cap) =>
 			isPermitted(getGrants(pluginId), cap)
 		);
+		// Settings destinations are executable plugin UI. Fail closed unless the
+		// active record has a verified trusted publisher and a live ui:panel grant.
+		const trusted = new Set(
+			this.getActiveRecords()
+				.filter((r) => r.signature?.status === 'trusted')
+				.map((r) => r.id)
+		);
+		contributions.panels = contributions.panels.filter(
+			(p) => p.placement !== 'settings' || trusted.has(p.pluginId)
+		);
+		return contributions;
 	}
 
 	/**

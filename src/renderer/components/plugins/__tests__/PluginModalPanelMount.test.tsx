@@ -20,6 +20,7 @@ import type {
 	PanelContribution,
 } from '../../../../shared/plugins/contributions';
 import { useUIStore } from '../../../stores/uiStore';
+import { useModalStore } from '../../../stores/modalStore';
 
 const theme = THEMES.dracula;
 
@@ -99,6 +100,7 @@ beforeEach(() => {
 	// The open-panel id is a module-level store singleton; reset it so one test's
 	// overlay never leaks into the next.
 	useUIStore.setState({ openPluginPanelId: null });
+	useModalStore.getState().closeModal('settings');
 });
 
 afterEach(() => {
@@ -107,6 +109,35 @@ afterEach(() => {
 });
 
 describe('PluginModalPanelMount', () => {
+	it('resolves a settings summon arriving before contribution loading completes', async () => {
+		let resolve!: (value: AggregatedContributions) => void;
+		pluginBridge.contributions.mockImplementation(
+			() =>
+				new Promise((done) => {
+					resolve = done;
+				})
+		);
+		renderMount();
+		broadcast('open');
+		await act(async () => resolve({ ...EMPTY, panels: [panel({ placement: 'settings' })] }));
+		expect(useModalStore.getState().getData('settings')).toMatchObject({
+			settingId: 'plugin-settings:acme.flow/flow',
+		});
+		expect(useUIStore.getState().openPluginPanelId).toBeNull();
+	});
+	it('routes a settings panel to its own settings card after contributions load', async () => {
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			panels: [panel({ placement: 'settings' })],
+		});
+		renderMount();
+		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
+		broadcast('open');
+		expect(useModalStore.getState().getData('settings')).toMatchObject({
+			settingId: 'plugin-settings:acme.flow/flow',
+		});
+		expect(useUIStore.getState().openPluginPanelId).toBeNull();
+	});
 	it('renders nothing until the store field names a live panel', async () => {
 		const { container } = renderMount();
 

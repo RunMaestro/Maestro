@@ -59,6 +59,17 @@ export interface PluginMediaToolsDeps {
 	tempDir?: string;
 }
 
+/** Canonical host setting validation shared by desktop IPC and CLI writes. */
+export async function resolveMediaModelDirectory(value: unknown): Promise<string> {
+	if (typeof value !== 'string') throw new Error('Invalid media model directory');
+	if (value === '') return '';
+	if (!path.isAbsolute(value)) throw new Error('Media model directory must be absolute');
+	const canonical = await fs.realpath(value);
+	if (!(await fs.stat(canonical)).isDirectory())
+		throw new Error('Media model directory must be a directory');
+	return canonical;
+}
+
 /** Resolve existing installations at call time. No binaries/models are downloaded or bundled. */
 export async function resolveMediaRuntime(configuredDirectory?: unknown): Promise<Runtime> {
 	const binaries: Runtime['binaries'] = {};
@@ -264,9 +275,14 @@ export class PluginMediaTools {
 		);
 	}
 
-	cleanupPlugin(pluginId: string): void {
-		for (const job of this.jobs.values())
-			if (job.pluginId === pluginId) void this.close(job, 'MediaCancelled').catch(() => {});
+	cleanupPlugin(pluginId: string): Promise<void> {
+		const drain = Promise.all(
+			[...this.jobs.values()]
+				.filter((job) => job.pluginId === pluginId)
+				.map((job) => this.close(job, 'MediaCancelled'))
+		).then(() => {});
+		void drain.catch(() => {});
+		return drain;
 	}
 
 	/** Lookups do not accept a signal. Settle on cancellation; a late answer may never cause I/O. */

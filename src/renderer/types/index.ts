@@ -86,6 +86,7 @@ export type UsageDashboardViewMode =
 	| 'cue'
 	| 'shortcuts';
 export type SettingsTab =
+	| 'environment'
 	| 'general'
 	// SettingsModal has always rendered a Display tab and accepted it as an
 	// `initialTab`; it was simply missing from this union, so nothing could

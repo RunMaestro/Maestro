@@ -29,13 +29,15 @@ export function useSettingsSearch({
 	isOpen,
 	onSearchActiveChange,
 	onNavigate,
+	additionalSettings = [],
 }: Pick<SettingsSearchProps, 'isOpen' | 'onSearchActiveChange'> & {
+	additionalSettings?: SearchableSetting[];
 	onNavigate?: (tab: SearchableSetting['tab'], settingId: string) => void;
 }) {
 	const [query, setQuery] = useState('');
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
-	const results = searchSettings(query);
+	const results = searchSettings(query, additionalSettings);
 	const isActive = query.length > 0;
 
 	// Notify parent when search active state changes

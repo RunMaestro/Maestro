@@ -54,7 +54,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.22.0';
+export const HOST_API_VERSION = '1.23.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

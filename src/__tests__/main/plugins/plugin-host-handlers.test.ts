@@ -411,6 +411,16 @@ describe('ui.openPanel / ui.closePanel / ui.togglePanel', () => {
 				size: 'full' as const,
 			};
 		}
+		if (localId === 'config')
+			return {
+				id: 'p/config',
+				localId,
+				pluginId,
+				title: 'Config',
+				entry: 'panel.html',
+				placement: 'settings' as const,
+				size: 'default' as const,
+			};
 		if (localId === 'side') {
 			return {
 				id: 'p/side',
@@ -424,6 +434,17 @@ describe('ui.openPanel / ui.closePanel / ui.togglePanel', () => {
 		}
 		return null;
 	};
+
+	it('opens own settings destinations but never closes/toggles host settings', async () => {
+		const sink = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelVisibility: sink, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+		await h['ui.openPanel']!('p', { panelId: 'config' });
+		expect(sink).toHaveBeenCalledWith('p', 'p/config', 'open');
+		await expect(h['ui.closePanel']!('p', { panelId: 'config' })).rejects.toThrow();
+		await expect(h['ui.togglePanel']!('p', { panelId: 'config' })).rejects.toThrow();
+	});
 
 	const granted = (panelVisibility: ReturnType<typeof vi.fn>) =>
 		buildHostCallHandlers(
@@ -614,6 +635,17 @@ describe('net.fetch fail-closed (connection pinning)', () => {
 });
 
 describe('settings.get scoping', () => {
+	it('denies host media paths even for trusted plugins with settings:read', async () => {
+		const get = vi.fn(() => '/private/models');
+		const h = buildHostCallHandlers(
+			makeDeps({ settingsGet: get, broker: brokerFor(() => [grant('settings:read')]) })
+		);
+		await expect(h['settings.get']!('p', { key: 'mediaModelDirectory' })).rejects.toThrow(
+			'host-only'
+		);
+		expect(get).not.toHaveBeenCalled();
+	});
+
 	it('denies the feature gate and peer namespaces, allows own + general keys', async () => {
 		const settingsGet = vi.fn((key: string) => `V:${key}`);
 		const h = buildHostCallHandlers(makeDeps({ settingsGet }));

@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react';
 import {
 	X,
 	Keyboard,
@@ -37,6 +37,9 @@ import { ThemeTab } from './tabs/ThemeTab';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { AboutTab } from './tabs/AboutTab';
 import { useSettingsSearch, SettingsSearchInput, SettingsSearchResults } from './SettingsSearch';
+import { usePluginContributions } from '../../hooks/usePluginContributions';
+import { pluginSettingsId } from '../../../shared/plugins/panel-host';
+import { PluginSettingsCard } from './PluginSettingsCard';
 import type { SearchableSetting } from './searchableSettings';
 
 type SettingsTabId =
@@ -50,7 +53,8 @@ type SettingsTabId =
 	| 'ssh'
 	| 'environment'
 	| 'encore'
-	| 'prompts';
+	| 'prompts'
+	| `plugin-settings:${string}`;
 
 // Alphabetized by label (case-insensitive) so the sidebar reads predictably
 // regardless of which tabs ship. Mount-time default is still 'general' -
@@ -207,6 +211,35 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setSshRemoteHonorGitignore,
 	} = useSettings();
 
+	const contributions = usePluginContributions();
+	const settingsPanels = useMemo(
+		() => contributions.panels.filter((p) => p.placement === 'settings'),
+		[contributions.panels]
+	);
+	const pluginSettings = useMemo<SearchableSetting[]>(
+		() =>
+			settingsPanels.map((panel) => ({
+				id: pluginSettingsId(panel.id),
+				tab: pluginSettingsId(panel.id),
+				tabLabel: 'Plugin settings',
+				label: panel.title,
+				description: `Settings from ${panel.pluginId}`,
+				keywords: [panel.pluginId, panel.localId],
+			})),
+		[settingsPanels]
+	);
+	const tabItems = useMemo(
+		() => [
+			...TAB_ITEMS,
+			...settingsPanels.map((panel) => ({
+				id: pluginSettingsId(panel.id),
+				label: panel.title,
+				icon: Puzzle,
+			})),
+		],
+		[settingsPanels]
+	);
+
 	// Lazy init reads the remembered tab on mount. Doing this in useState (rather
 	// than a restore effect) avoids racing with the persist effect below - under
 	// React StrictMode a restore-via-effect double-fires and clobbers the saved
@@ -261,8 +294,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	useEffect(() => {
 		if (!isOpen || !initialSettingId) return;
 		pendingScrollIdRef.current = initialSettingId;
+		if (initialSettingId.startsWith('plugin-settings:')) {
+			const available = settingsPanels.some((p) => pluginSettingsId(p.id) === initialSettingId);
+			setActiveTab(available ? (initialSettingId as SettingsTabId) : 'encore');
+			if (!available) pendingScrollIdRef.current = null;
+		}
 		setDeepLinkJump((n) => n + 1);
-	}, [isOpen, initialSettingId]);
+	}, [isOpen, initialSettingId, settingsPanels]);
 
 	useEffect(() => {
 		const targetId = pendingScrollIdRef.current;
@@ -287,6 +325,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 	const search = useSettingsSearch({
 		isOpen,
+		additionalSettings: pluginSettings,
 		onSearchActiveChange: handleSearchActiveChange,
 		onNavigate: handleSearchNavigate,
 	});
@@ -300,10 +339,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// (e.g. caller switches tab without closing). Mount-time restoration is
 	// handled by the lazy useState init above, not here.
 	useEffect(() => {
-		if (isOpen && initialTab) {
+		if (isOpen && initialTab && !initialSettingId?.startsWith('plugin-settings:')) {
 			setActiveTab(initialTab);
 		}
-	}, [isOpen, initialTab]);
+	}, [isOpen, initialTab, initialSettingId]);
 
 	// Persist the current tab in module memory so the next open lands here.
 	// In-memory only - resets on app restart by design.
@@ -359,7 +398,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		if (!isOpen) return;
 
 		const handleTabNavigation = (e: KeyboardEvent) => {
-			const tabs = TAB_ITEMS.map((t) => t.id);
+			const tabs = tabItems.map((t) => t.id);
 			const currentIndex = tabs.indexOf(activeTab);
 
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
@@ -375,7 +414,18 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 		window.addEventListener('keydown', handleTabNavigation);
 		return () => window.removeEventListener('keydown', handleTabNavigation);
-	}, [isOpen, activeTab]);
+	}, [isOpen, activeTab, tabItems]);
+
+	useEffect(() => {
+		if (
+			activeTab.startsWith('plugin-settings:') &&
+			!pluginSettings.some((s) => s.tab === activeTab)
+		) {
+			lastTabScrollPositions.delete(activeTab);
+			pendingScrollIdRef.current = null;
+			setActiveTab('encore');
+		}
+	}, [activeTab, pluginSettings]);
 
 	if (!isOpen) return null;
 
@@ -444,7 +494,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 							aria-label="Settings tabs"
 						>
-							{TAB_ITEMS.map((tab) => (
+							{tabItems.map((tab) => (
 								<SettingsTabButton
 									key={tab.id}
 									tab={tab}
@@ -462,7 +512,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 							aria-label="Settings tabs"
 						>
-							{TAB_ITEMS.map((tab) => (
+							{tabItems.map((tab) => (
 								<SettingsTabButton
 									key={tab.id}
 									tab={tab}
@@ -606,6 +656,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						{activeTab === 'environment' && <EnvironmentTab theme={theme} />}
 
 						{activeTab === 'encore' && <EncoreTab theme={theme} isOpen={isOpen} />}
+
+						{settingsPanels.map(
+							(panel) =>
+								activeTab === pluginSettingsId(panel.id) && (
+									<PluginSettingsCard key={panel.id} panel={panel} theme={theme} />
+								)
+						)}
 
 						{activeTab === 'about' && <AboutTab theme={theme} />}
 					</div>

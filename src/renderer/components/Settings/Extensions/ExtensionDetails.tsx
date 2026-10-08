@@ -32,7 +32,8 @@ import {
 	type UnifiedExtension,
 } from './extensionModel';
 import { FIRST_PARTY_PLUGINS } from '../../../../shared/plugins/first-party';
-import { getModalActions } from '../../../stores/modalStore';
+import { pluginSettingsId } from '../../../../shared/plugins/panel-host';
+import { getModalActions, useModalStore } from '../../../stores/modalStore';
 import { launchFromSettings } from '../../../utils/launchFromSettings';
 
 interface ExtensionDetailsProps {
@@ -128,11 +129,18 @@ export function ExtensionDetails({
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
 		: [];
+	const settingsPanels =
+		contributions?.panels.filter((p) => p.pluginId === ext.id && p.placement === 'settings') ?? [];
 	const canConfigurePlugin = isPlugin && ext.state === 'enabled' && pluginSettings.length > 0;
 
 	// The Settings sub-tab exists when there's something to configure: a
 	// first-party config body, a configurable plugin, or Pianola's modal entry.
-	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola || isWebLogin;
+	const hasSettingsTab =
+		Boolean(settingsBody) ||
+		canConfigurePlugin ||
+		isPianola ||
+		isWebLogin ||
+		settingsPanels.length > 0;
 
 	// Reset transient editor + sub-tab when switching extensions. Default to
 	// Settings when it exists, else Permissions.
@@ -600,6 +608,22 @@ export function ExtensionDetails({
 								Enable Pianola to open its manager and rules.
 							</div>
 						))}
+
+					{settingsPanels.map((panel) => (
+						<button
+							key={panel.id}
+							type="button"
+							className="w-full px-3 py-2 rounded border text-sm"
+							style={{ borderColor: theme.colors.border }}
+							onClick={() =>
+								useModalStore
+									.getState()
+									.openModal('settings', { tab: 'encore', settingId: pluginSettingsId(panel.id) })
+							}
+						>
+							Open {panel.title}
+						</button>
+					))}
 
 					{/* Plugin: consent-gated live editor for contributed settings */}
 					{isPlugin && canConfigurePlugin && (

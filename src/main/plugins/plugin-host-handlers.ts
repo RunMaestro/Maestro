@@ -819,6 +819,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertBrokerAllowed(deps, pluginId, 'settings.get', p);
 			if (SECRET_KEY_PATTERN.test(p.key)) throw new Error('access to secret settings is denied');
 			if (/encorefeatures/i.test(p.key)) throw new Error('access to the feature gate is denied');
+			if (p.key === 'mediaModelDirectory') throw new Error('host media configuration is host-only');
 			const ownNamespace = `plugins.${pluginId}.`;
 			if (p.key.startsWith('plugins.') && !p.key.startsWith(ownNamespace)) {
 				throw new Error("access to another plugin's settings is denied");
@@ -1407,7 +1408,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				// Only `modal` panels have a summonable host; docked ones are always
 				// mounted and have their own hide control, so this would be a no-op the
 				// plugin could not distinguish from success.
-				if (panel.placement !== 'modal') {
+				if (panel.placement !== 'modal' && !(panel.placement === 'settings' && action === 'open')) {
 					throw new Error(`panel "${panelId}" is not a modal panel`);
 				}
 				panelVisibility(pluginId, `${pluginId}/${panelId}`, action);

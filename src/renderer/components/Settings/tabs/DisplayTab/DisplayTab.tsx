@@ -27,7 +27,6 @@ import {
 import { typographySnapshotMatches } from '../../../../../shared/typographySnapshot';
 import { useBionifyAlgorithmState, useFontConfigurationState } from './hooks';
 import type { DisplayTabProps } from './types';
-import { PluginPanelSlot } from '../../../plugins/PluginPanelSlot';
 import { PluginUiItemsSlot } from '../../../plugins/PluginUiItemsSlot';
 
 export type { DisplayTabProps } from './types';
@@ -236,11 +235,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			{/* This neutral display-settings slot is deliberately outside plugin
 			    management, consent, uninstall, and grant/revoke flows. */}
 			<PluginUiItemsSlot surface="settingsSection" className="rounded-lg border p-3" />
-			<PluginPanelSlot
-				theme={theme}
-				placement="settings"
-				className="flex flex-col overflow-hidden rounded-lg border h-[440px]"
-			/>
 
 			{bionifyAlgorithmState.showInfoModal && (
 				<BionifyInfoModal theme={theme} onClose={bionifyAlgorithmState.closeInfoModal} />
