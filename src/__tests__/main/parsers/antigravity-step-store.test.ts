@@ -122,6 +122,12 @@ describe('storedResultSummary / commandExitCode', () => {
 		expect(storedResultSummary(result)).toBe('The command exited with code 1.');
 	});
 
+	it('reads command output from a result with CRLF separators', () => {
+		expect(
+			storedResultSummary('\r\nThe command exited with code 0.\r\nOutput:\r\nhello.txt\r\n')
+		).toBe('hello.txt');
+	});
+
 	it('joins stdout and stderr when both have text', () => {
 		expect(
 			storedResultSummary('\nThe command exited with code 2.\nStdout:\nok\nStderr:\nboom\n')

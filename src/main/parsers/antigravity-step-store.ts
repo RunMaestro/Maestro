@@ -171,6 +171,8 @@ export function commandExitCode(toolName: string | undefined, result: string): n
  * model ("Don't ask for permission"), not output.
  */
 export function storedResultSummary(result: string): string {
+	// CRLF separators would miss the LF-only patterns below and fall through to the status line.
+	result = result.replace(/\r\n/g, '\n');
 	const diffs = [...result.matchAll(/\[diff_block_start\]\n?([\s\S]*?)\n?\[diff_block_end\]/g)].map(
 		(match) => match[1].trimEnd()
 	);
