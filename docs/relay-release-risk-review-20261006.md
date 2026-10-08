@@ -64,7 +64,7 @@ Tests/artifacts:
 Run the paired check from this worktree:
 
 ```bash
-node scripts/verify-relay-reply-path.mjs /home/chris/code/Maestro-Backstage
+node scripts/verify-relay-reply-path.mjs <Backstage checkout>
 ```
 
 It verifies release text and a nonempty receipt at a fake network sink, preserves text and disabled mentions, rejects missing/foreign/revoked proof and foreign/rebound/guild-mismatched destinations/untrusted plugin, and checks the real Relay risk-error mapping. Result: one successful **fake** message, zero live network calls. Backstage files are read only; no plugin runtime/source/settings were changed there.
@@ -77,20 +77,5 @@ Verification receipts:
 - Prettier checks and `git diff --check`: passed.
 - Full wrapper fixture matches the current Backstage `formatPrompt` expression with synthetic metadata: passed.
 - Paired host/Backstage reply-path harness: passed unchanged release text, authorization negatives, receipt/mention behavior and the legacy `risk-blocked` mapping; **zero live network calls**.
-- Installed-ASAR comparison: original/full-wrapper remain high/ineligible; neither source correction is installed.
 
 The targeted files cover host handlers, headless runner, sandbox RPC, ActionGuard, permission broker/signatures, run identity, WebSocket handlers, MCP bridge, dispatch gate, exact/unattended permissions and Pianola classifier/policy. Test sinks and configuration are synthetic; no actual release, destructive command, provider turn or Discord message was executed.
-
-## Checkout and still-installed status
-
-The implementation remains uncommitted and reviewable in the existing registered worktree:
-
-- Path: `/home/chris/code/worktrees/fix/relay-risk-review`
-- Branch/base: `fix/relay-risk-review`, committed base `83c579b99` (`fix/relay-host-only`)
-- Registered agent ID: `085552b5-59c9-4b32-8ef2-f96f33adc86d`
-
-Parent `fix/media-host-settings` and the pre-existing dirty `fix/relay-headless-dispatch` worktree were not edited. No integration merge or packaging was attempted. A future package still requires the separately authorized latest-RC/local-PR provenance and packaged-feature checks; this source result is not an installer recommendation.
-
-Running installed app, checked again: **0.18.9-RC, commit `3927c43e`**. Installed-ASAR pure verdicts still mark the original and full-wrapper prompts high/ineligible with the legacy rejection message. Its installed handler files contain neither the conversation nor reply exemption. **Neither correction is installed.**
-
-Return this source result through the originating desktop dispatch completion callback. Do not create a Discord report or a second delivery path.

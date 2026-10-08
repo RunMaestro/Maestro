@@ -53,7 +53,7 @@ The host also records successful provider session IDs in a private persistent bi
 
 A plugin stop or uninstall aborts outstanding sends and closes admission for new host calls during sandbox shutdown. A provider result that arrives after cancellation is reported as failed and cannot recreate a purged session binding.
 
-Before spawning, the host checks the live `agents:dispatch` allowlist for the exact agent ID, separate unattended consent, trusted plugin signature, low/medium Pianola risk verdict, closed parameter schema, and the ActionGuard rate/concurrency/audit gate. The target is resolved against stored agents at execution time. `agents.dispatch` remains an asynchronous desktop dispatch acknowledgment.
+Before spawning, the host checks the live `agents:dispatch` allowlist for the exact agent ID, separate unattended consent, trusted plugin signature, closed parameter schema, and the ActionGuard rate/concurrency/audit gate. Non-Relay plugins and all `agents.dispatch` calls additionally require a low/medium Pianola risk verdict. The target is resolved against stored agents at execution time. `agents.dispatch` remains an asynchronous desktop dispatch acknowledgment.
 
 ## Relay session origin and History
 
@@ -132,3 +132,50 @@ consent for the new code identity. Enabling before that consent fails.
 The host re-authorizes a completed send before returning text or storing a provider
 session, including providers that emitted no progress. Run tokens are revoked
 before proof-file removal, so a filesystem cleanup error cannot retain authority.
+
+## Supported return flow
+
+For delegated results, return the worker's result to the **originating authorized agent** run. That run calls the
+currently advertised Relay MCP tool with the report text and an existing
+permitted destination. It returns the real tool result, including nonempty
+`messageIds`, to its caller. A headless origin can receive the result through
+the synchronous `maestro-cli send` response; it has no desktop callback tab.
+Do not lend a run proof to a worker or put an originator ID in tool arguments.
+
+For scheduled shell reports, keep the script's status and report text
+deterministic. A downstream Cue `agent.completed` subscription can select the
+specific shell subscription using `source_session_ids` and `source_sub`, and
+pass `{{CUE_SOURCE_STATUS}}` / `{{CUE_SOURCE_OUTPUT}}` to an authorized **agent prompt**. The shell step itself cannot call Relay. A manual shell
+orchestrator can instead call `maestro-cli send` for the same stored authorized agent and inspect its JSON response. In both cases the agent must call
+the live advertised plugin tool, and the caller must require actual returned
+`messageIds`. If the tool is absent or rejects the destination, report failure;
+do not infer delivery from prose.
+
+The source now supports:
+
+```bash
+maestro-cli send <origin-agent> <prompt> --require-tool-receipt sh.maestro.relay/send
+```
+
+This implies
+`--require-plugin-tools`, names the exact host tool contribution, and requires
+a successful call observed on that run's proof. The CLI JSON adds
+`toolReceipts: [{ runId, agentId, toolId, messageIds }]`. A zero exit status
+requires a successful provider run, the requested tool still active, and a
+matching receipt with nonempty numeric Discord IDs. Final provider prose is
+never parsed as a receipt. The random `runId` is separate from the secret
+proof. A nonzero result may still carry IDs from a completed send before a
+later provider failure, so a caller must inspect them before retrying.
+
+For a deterministic consumer, pass the full stored origin agent ID, capture
+stdout as JSON, and require process exit 0 plus `success: true`. Check top-level
+`agentId` is the origin, then select a `toolReceipts` entry whose `agentId`
+equals that origin, `toolId` equals `sh.maestro.relay/send`, `runId` is a
+32-character lowercase hex string, and `messageIds` is a nonempty array of
+Discord numeric ID strings. Store those IDs with the report's own key before
+marking it delivered. `sh_maestro_relay__send` is the MCP callable name to
+discover inside the agent run; `sh.maestro.relay/send` is the host contribution
+ID passed to this CLI guard. On a nonzero exit, inspect any receipts before
+deciding whether retrying could duplicate a completed send.
+
+`--require-plugin-tools` requires a local, verified MCP injection mode and refuses standalone, SSH, unverified providers and Claude interactive/dynamic runs before spawning. It does not prove delivery; use the exact receipt guard for that.

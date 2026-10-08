@@ -206,6 +206,7 @@ export async function send(
 						reply = await desktop.sendCommand<DesktopSendAgentReply>(
 							{
 								type: 'plugins_send_agent',
+								...(requirePluginHost ? { requirePluginTools: true } : {}),
 								agentId,
 								prompt: message,
 								providerSessionId: agentSessionId || undefined,

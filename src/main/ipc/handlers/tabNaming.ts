@@ -138,6 +138,15 @@ export async function generateTabName(
 	});
 
 	try {
+		if (
+			config.sessionSshRemoteConfig?.enabled &&
+			!getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
+				sessionSshConfig: config.sessionSshRemoteConfig,
+			}).config
+		) {
+			logger.warn('Configured SSH remote unavailable for tab naming', LOG_CONTEXT);
+			return null;
+		}
 		// Resolve the agent: use the utility agent if configured, otherwise the
 		// session agent. Null/empty leaves behavior unchanged (session agent).
 		const utilityAgentId =

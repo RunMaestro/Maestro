@@ -243,6 +243,32 @@ describe('Tab Naming IPC Handlers', () => {
 		expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
 	});
 
+	it.each([null, 'missing', 'disabled'])(
+		'refuses an enabled unresolved SSH title target before a local spawn: %s',
+		async (remoteId) => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+			const result = await generateTabName(
+				{
+					getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+					getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+					agentConfigsStore: mockAgentConfigsStore as any,
+					settingsStore: mockSettingsStore as any,
+				},
+				{
+					userMessage: 'remote private text',
+					agentType: 'codex',
+					cwd: '/remote',
+					sessionSshRemoteConfig: { enabled: true, remoteId },
+					useUtilityAgent: false,
+				}
+			);
+			expect(result).toBeNull();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+		}
+	);
+
 	describe('tabNaming:generateTabName', () => {
 		it('returns null when agent is not found', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(null);

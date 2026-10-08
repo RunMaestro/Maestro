@@ -2249,6 +2249,26 @@ Some text with [x] in it that's not a checkbox
 			expect(args).not.toContain('--agent-level');
 		});
 
+		it('uses live desktop config and command with global env below session env', async () => {
+			mockReadAgentConfig.mockReturnValue({ customArgs: '--wrong-disk-config' });
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				agentConfigValues: { customArgs: '--live-desktop-config' },
+				agentCommand: '/desktop/claude',
+				globalEnvVars: { MAESTRO_TEST_GLOBAL: 'global', MAESTRO_TEST_LAYER: 'global' },
+				customEnvVars: { MAESTRO_TEST_LAYER: 'session' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			const {
+				args,
+				options: { env },
+			} = spawnCall();
+			expect(args).toContain('--live-desktop-config');
+			expect(args).not.toContain('--wrong-disk-config');
+			expect(mockSpawn.mock.calls[0][0]).toBe('/desktop/claude');
+			expect(env.MAESTRO_TEST_GLOBAL).toBe('global');
+			expect(env.MAESTRO_TEST_LAYER).toBe('session');
+		});
+
 		it('applies session customEnvVars to local spawn env (wins over shell env)', async () => {
 			const prev = process.env.MAESTRO_TEST_ENV;
 			process.env.MAESTRO_TEST_ENV = 'from-shell';

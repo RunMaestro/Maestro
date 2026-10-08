@@ -143,6 +143,9 @@ type SpawnOverrides = Pick<
 	| 'customEffort'
 	| 'customArgs'
 	| 'customEnvVars'
+	| 'globalEnvVars'
+	| 'agentConfigValues'
+	| 'agentCommand'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
@@ -287,7 +290,7 @@ function resolveAgentOverrides(
 	overrides: SpawnOverrides,
 	readOnlyMode?: boolean
 ): { args: string[]; userCustomEnvVars?: Record<string, string> } {
-	const agentConfigValues = readAgentConfig(toolType);
+	const agentConfigValues = overrides.agentConfigValues ?? readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
 		agentConfigValues,
 		sessionCustomModel: overrides.customModel,
@@ -575,7 +578,7 @@ async function spawnClaudeAgent(
 	overrides: SpawnOverrides = {},
 	tokenSource: ClaudeTokenSourceFields = {}
 ): Promise<AgentResult> {
-	const env = buildExpandedEnv();
+	const env = { ...buildExpandedEnv(), ...overrides.globalEnvVars };
 	const def = getAgentDefinition('claude-code');
 
 	// Build args WITHOUT the prompt - the prompt is appended below for local
@@ -640,7 +643,7 @@ async function spawnClaudeAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const claudeCommand = sshRemoteConfig?.enabled
 		? getAgentCommand('claude-code')
-		: await resolveLocalAgentCommand('claude-code');
+		: (overrides.agentCommand ?? (await resolveLocalAgentCommand('claude-code')));
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 	const agentCustomPath = getAgentCustomPath('claude-code');
 
@@ -1056,7 +1059,7 @@ async function spawnJsonLineAgent(
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {}
 ): Promise<AgentResult> {
-	const env = buildExpandedEnv();
+	const env = { ...buildExpandedEnv(), ...overrides.globalEnvVars };
 	const def = getAgentDefinition(toolType);
 
 	// Build args from agent definition (without the prompt or model/customArgs -
@@ -1169,7 +1172,7 @@ async function spawnJsonLineAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
-		: await resolveLocalAgentCommand(toolType);
+		: (overrides.agentCommand ?? (await resolveLocalAgentCommand(toolType)));
 
 	// See the note in spawnClaudeAgent: CLI runs are invisible to the desktop
 	// WakaTime listener, so they beat from their own output stream.
@@ -1453,6 +1456,10 @@ export interface SpawnAgentOptions {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/** Live desktop values; omitted by standalone CLI callers. */
+	globalEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
+	agentCommand?: string;
 	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
@@ -1522,6 +1529,9 @@ export async function spawnAgent(
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		globalEnvVars: options?.globalEnvVars,
+		agentConfigValues: options?.agentConfigValues,
+		agentCommand: options?.agentCommand,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,

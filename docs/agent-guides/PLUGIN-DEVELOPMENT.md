@@ -377,7 +377,7 @@ host controls the frame, icon mapping, tooltip, and non-suppressible plugin prov
 
 ### tools (tier 1)
 
-`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response and returns the handler's result. The handler receives `(args, context)`, where `context.callerAgentId` is a host-verified agent ID or `null`. Never use `args.agentId` as caller identity. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points local Claude and Codex runs at `maestro-cli mcp serve`, and every model-initiated call is risk-gated. See [Relay host contract](../relay-host-contract.md).
+`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response and returns the handler's result. The handler receives `(args, context)`, where `context.callerAgentId` is a host-verified agent ID or `null`. Never use `args.agentId` as caller identity. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points local Claude and Codex runs at `maestro-cli mcp serve`, and model-initiated calls are risk-gated except the exact declared `sh.maestro.relay/send` reply tool with a valid host-issued caller proof and live trusted Relay identity. See [Relay host contract](../relay-host-contract.md).
 
 ### keybindings (tier 1)
 

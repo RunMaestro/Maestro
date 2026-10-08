@@ -19,7 +19,7 @@ import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins
 import { useSessionStore } from '../../../stores/sessionStore';
 import { notifyToast } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
-import { FormInput } from '../../ui/FormInput';
+import { FilterInput } from '../../ui/FilterInput';
 
 interface AgentDispatchAllowlistProps {
 	theme: Theme;
@@ -137,26 +137,13 @@ export function AgentDispatchAllowlist({
 				Choose which agents this plugin may send prompts to. High risk: only allow agents you trust
 				this plugin to drive. Changes apply immediately, with no re-signing.
 			</p>
-			<FormInput
+			<FilterInput
 				theme={theme}
-				label="Search agents"
+				ariaLabel="Search agents"
 				placeholder="Search by name or ID"
 				value={query}
 				onChange={setQuery}
-				testId="agent-dispatch-allowlist-search"
-				addon={
-					query ? (
-						<button
-							type="button"
-							onClick={() => setQuery('')}
-							aria-label="Clear agent search"
-							className="text-xs px-2 rounded border"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-						>
-							Clear
-						</button>
-					) : undefined
-				}
+				width={320}
 			/>
 
 			{sessions.length === 0 ? (

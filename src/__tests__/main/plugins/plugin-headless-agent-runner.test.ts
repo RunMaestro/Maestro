@@ -13,6 +13,64 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it('forwards live desktop config, binary and global environment independently of session overrides', async () => {
+		const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+		const config = { reasoningSummary: 'detailed', customEnvVars: { SHARED: 'agent' } };
+		const global = { SHARED: 'global', GLOBAL_ONLY: 'global' };
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => ({ ...agent, customEnvVars: { SHARED: 'session' } }),
+			detectAgent: async () => ({ available: true, path: '/desktop/codex' }),
+			getAgentConfig: () => config,
+			getGlobalEnvVars: () => global,
+			hasPluginTools: () => false,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		await run('agent-a', 'hello');
+		expect(spawn).toHaveBeenCalledWith(
+			'codex',
+			'/project',
+			'hello',
+			undefined,
+			expect.objectContaining({
+				agentConfigValues: config,
+				globalEnvVars: global,
+				agentCommand: '/desktop/codex',
+				customEnvVars: { SHARED: 'session' },
+			})
+		);
+	});
+
+	it.each([
+		{ ...agent, toolType: 'opencode' },
+		{ ...agent, sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' } },
+		{ ...agent, toolType: 'claude-code', enableMaestroP: true, maestroPMode: 'interactive' },
+		{ ...agent, toolType: 'claude-code', enableMaestroP: true, maestroPMode: 'dynamic' },
+	])('refuses required plugin tools before spawning an unsupported mode: %j', async (target) => {
+		const spawn = vi.fn();
+		const issueRunToken = vi.fn();
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => target as SessionInfo,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => true,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken,
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		expect(
+			await run('agent-a', 'hello', undefined, undefined, 'user', undefined, undefined, true)
+		).toMatchObject({ success: false, error: 'Authenticated plugin tools unavailable' });
+		expect(spawn).not.toHaveBeenCalled();
+		expect(issueRunToken).not.toHaveBeenCalled();
+	});
+
 	it('returns only receipts tied to its issued proof, independent of final prose', async () => {
 		const identity = new runIdentity.PluginToolRunIdentity();
 		const run = createPluginHeadlessAgentRunner({

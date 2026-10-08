@@ -100,7 +100,9 @@ export async function handlePluginsSendAgent(
 	const prompt = message.prompt;
 	const sessionId = message.providerSessionId;
 	const requiredToolId = message.requiredToolId;
+	const requirePluginTools = message.requirePluginTools;
 	if (
+		(requirePluginTools !== undefined && typeof requirePluginTools !== 'boolean') ||
 		typeof agentId !== 'string' ||
 		!ctx.callbacks.getSessionDetail?.(agentId) ||
 		typeof prompt !== 'string' ||
@@ -134,7 +136,8 @@ export async function handlePluginsSendAgent(
 				controller.signal,
 				'user',
 				undefined,
-				requiredToolId as string | undefined
+				requiredToolId as string | undefined,
+				...(requirePluginTools === true ? ([true] as const) : [])
 			);
 			const toolStillActive =
 				requiredToolId === undefined ||

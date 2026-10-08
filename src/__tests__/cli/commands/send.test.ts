@@ -204,7 +204,10 @@ describe('send command', () => {
 		});
 		await send('agent-abc', 'report', { requireToolReceipt: 'sh.maestro.relay/send' });
 		expect(desktop.sendCommand).toHaveBeenCalledWith(
-			expect.objectContaining({ requiredToolId: 'sh.maestro.relay/send' }),
+			expect.objectContaining({
+				requiredToolId: 'sh.maestro.relay/send',
+				requirePluginTools: true,
+			}),
 			'plugins_send_agent_result',
 			61 * 60_000
 		);
