@@ -549,6 +549,10 @@ An agent, subscription or file that already exists is a conflict: the import sto
 
 An import never deletes an agent or a subscription, but a `--force` import that maps an agent to a different workspace leaves the old workspace's subscriptions behind. Work still queued from the last run for an agent or subscription that is gone is dropped at start with a warning in the log and an entry in the run history, never run, and so is any half-finished fan-in that waits on it.
 
+### Do not open the desktop app on the server's data directory
+
+The engine reads its agents when it starts and does not watch for changes. A Maestro desktop app opened on the same data directory while the engine holds it cannot start its own Cue engine (it logs that another engine holds the lock), but it still saves the changes you make to agents. The server engine picks those up only after it restarts. Change agents on a server by stopping the engine, importing and starting it again, as above, and do not run the desktop app against the server's data directory.
+
 ### Upgrade
 
 **VM.** Unpack a newer bundle and run its `install.sh` again. The data directory, workspaces, env file, credentials and logins are kept, and a running service is restarted on the new version. The installer replaces the unit file, so keep your changes in drop-ins.
