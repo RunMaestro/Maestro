@@ -32,6 +32,7 @@ import {
 	isSessionBusyWithCli,
 	getSessionIdsBusyWithCli,
 } from '../../shared/cli-activity';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 
 // Local type alias mirroring the (now-internal) CliActivityStatus shape
 // expected by registerCliActivity. Kept in sync with shared/cli-activity.ts.
@@ -70,8 +71,15 @@ describe('cli-activity', () => {
 		pid: 67890,
 	};
 
+	let savedUserDataEnv: string | undefined;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+
+		// Platform-default tests must not see the runner's MAESTRO_USER_DATA;
+		// the override tests set it themselves.
+		savedUserDataEnv = process.env.MAESTRO_USER_DATA;
+		delete process.env.MAESTRO_USER_DATA;
 
 		// Default mock implementations
 		mockOs.platform.mockReturnValue('darwin');
@@ -87,6 +95,53 @@ describe('cli-activity', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		if (savedUserDataEnv === undefined) delete process.env.MAESTRO_USER_DATA;
+		else process.env.MAESTRO_USER_DATA = savedUserDataEnv;
+	});
+
+	describe('MAESTRO_USER_DATA', () => {
+		// The desktop sets it on its own env and every agent it spawns inherits
+		// it, so a CLI run inside an agent must register where the desktop's
+		// watcher (getUserDataPath()/cli-activity.json) is looking. The old
+		// private resolver ignored it, so in dev the desktop never saw a CLI run.
+		it('reads the activity file from MAESTRO_USER_DATA', () => {
+			process.env.MAESTRO_USER_DATA = '/data/maestro-dev';
+
+			getCliActivityForSession('any-session');
+
+			expect(mockFs.readFileSync).toHaveBeenCalledWith(
+				path.join(path.resolve('/data/maestro-dev'), 'cli-activity.json'),
+				'utf-8'
+			);
+		});
+
+		it('registers activity into MAESTRO_USER_DATA', () => {
+			process.env.MAESTRO_USER_DATA = '/data/maestro-dev';
+
+			registerCliActivity(sampleActivity);
+
+			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
+				path.join(path.resolve('/data/maestro-dev'), 'cli-activity.json'),
+				expect.any(String),
+				'utf-8'
+			);
+		});
+
+		it('agrees with resolveUserDataDir() on a case-sensitive Linux install', () => {
+			mockOs.platform.mockReturnValue('linux');
+			mockOs.homedir.mockReturnValue('/home/testuser');
+			const originalXdg = process.env.XDG_CONFIG_HOME;
+			delete process.env.XDG_CONFIG_HOME;
+			try {
+				getCliActivityForSession('any-session');
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join(resolveUserDataDir(), 'cli-activity.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalXdg !== undefined) process.env.XDG_CONFIG_HOME = originalXdg;
+			}
+		});
 	});
 
 	describe('getConfigDir (internal via path construction)', () => {
@@ -104,7 +159,7 @@ describe('cli-activity', () => {
 						'/Users/testuser',
 						'Library',
 						'Application Support',
-						'maestro',
+						'Maestro',
 						'cli-activity.json'
 					),
 					'utf-8'
@@ -122,7 +177,7 @@ describe('cli-activity', () => {
 				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('C:\\Users\\testuser\\AppData\\Roaming', 'maestro', 'cli-activity.json'),
+					path.join('C:\\Users\\testuser\\AppData\\Roaming', 'Maestro', 'cli-activity.json'),
 					'utf-8'
 				);
 
@@ -138,7 +193,7 @@ describe('cli-activity', () => {
 				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('C:\\Users\\testuser', 'AppData', 'Roaming', 'maestro', 'cli-activity.json'),
+					path.join('C:\\Users\\testuser', 'AppData', 'Roaming', 'Maestro', 'cli-activity.json'),
 					'utf-8'
 				);
 
@@ -156,7 +211,7 @@ describe('cli-activity', () => {
 				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('/home/testuser/.custom-config', 'maestro', 'cli-activity.json'),
+					path.join('/home/testuser/.custom-config', 'Maestro', 'cli-activity.json'),
 					'utf-8'
 				);
 
@@ -172,7 +227,7 @@ describe('cli-activity', () => {
 				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('/home/testuser', '.config', 'maestro', 'cli-activity.json'),
+					path.join('/home/testuser', '.config', 'Maestro', 'cli-activity.json'),
 					'utf-8'
 				);
 
@@ -190,7 +245,7 @@ describe('cli-activity', () => {
 				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('/home/testuser', '.config', 'maestro', 'cli-activity.json'),
+					path.join('/home/testuser', '.config', 'Maestro', 'cli-activity.json'),
 					'utf-8'
 				);
 

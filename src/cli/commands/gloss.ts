@@ -19,7 +19,12 @@ import {
 	type GlossLevel,
 } from '../../shared/themeGloss';
 import { readSettingValue } from '../services/storage';
-import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	reportResult,
+	failCommand,
+	exitIfMaestroNotRunning,
+} from '../services/session-command';
 
 interface GlossOptions {
 	list?: boolean;
@@ -81,6 +86,7 @@ export async function gloss(level: string | undefined, options: GlossOptions): P
 			jsonExtra: { level: next, previousLevel: current },
 		});
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 }

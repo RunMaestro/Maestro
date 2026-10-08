@@ -16,6 +16,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // Hoisted mock references (vi.hoisted runs before vi.mock hoisting)
 const {
@@ -87,6 +90,12 @@ vi.mock('../../../main/cue/cue-db', () => ({
 		mockSetGitHubItemRevision(subId, key, revision),
 }));
 
+import {
+	reserveLabelEvent,
+	resetGitHubChangeReservationsForTests,
+} from '../../../main/cue/cue-github-items';
+import type { CueEmitOutcome } from '../../../main/cue/triggers/cue-guarded-emit';
+import type { CueEvent } from '../../../main/cue/cue-types';
 import {
 	createCueGitHubPoller,
 	isGitHubConnectivityError,
@@ -213,7 +222,10 @@ function makeConfig(overrides: Partial<CueGitHubPollerConfig> = {}): CueGitHubPo
 		repo: 'owner/repo',
 		pollMinutes: 5,
 		projectRoot: '/projects/test',
-		onEvent: vi.fn(),
+		// Every event reaches the run manager at once (no SusFactor scoring).
+		onEvent: vi.fn((_event: unknown, onOutcome: (outcome: 'emitted') => void) =>
+			onOutcome('emitted')
+		),
 		onLog: vi.fn(),
 		triggerName: 'test-trigger',
 		subscriptionId: 'session-1:test-sub',
@@ -272,6 +284,46 @@ describe('cue-github-poller', () => {
 		);
 		expect(config.onEvent).not.toHaveBeenCalled();
 
+		cleanup();
+	});
+
+	it('runs one poll at a time: a pollNow during a poll runs one more afterwards', async () => {
+		// Webhooks call pollNow; two polls side by side could fire the same items.
+		let inFlight = 0;
+		let maxInFlight = 0;
+		let prLists = 0;
+		mockExecFile.mockImplementation(
+			(
+				cmd: string,
+				args: string[],
+				_opts: unknown,
+				cb: (err: Error | null, stdout: string, stderr: string) => void
+			) => {
+				const key = `${cmd} ${args.join(' ')}`;
+				if (key.includes('--version')) return cb(null, '2.0.0', '');
+				if (key.includes('pr list')) {
+					prLists++;
+					inFlight++;
+					maxInFlight = Math.max(maxInFlight, inFlight);
+					setTimeout(() => {
+						inFlight--;
+						cb(null, '[]', '');
+					}, 1000);
+					return;
+				}
+				cb(new Error(`Command not found: ${key}`), '', '');
+			}
+		);
+		let handle: { pollNow: () => void } | undefined;
+		const cleanup = createCueGitHubPoller(makeConfig({ onReady: (h) => (handle = h) }));
+		await vi.advanceTimersByTimeAsync(2000); // the first poll is waiting on gh
+
+		handle!.pollNow();
+		handle!.pollNow();
+		await vi.advanceTimersByTimeAsync(3000);
+
+		expect(maxInFlight).toBe(1);
+		expect(prLists).toBe(2);
 		cleanup();
 	});
 
@@ -658,7 +710,8 @@ describe('cue-github-poller', () => {
 		// Track onEvent calls to call cleanup mid-iteration
 		let cleanupFn: (() => void) | null = null;
 		let eventCallCount = 0;
-		const originalOnEvent = vi.fn(() => {
+		const originalOnEvent = vi.fn((_event: unknown, onOutcome: (outcome: 'emitted') => void) => {
+			onOutcome('emitted');
 			eventCallCount++;
 			if (eventCallCount === 1 && cleanupFn) {
 				cleanupFn(); // Stop after first event
@@ -1583,6 +1636,13 @@ describe('cue-github-poller', () => {
 			);
 		}
 
+		/** Only the watermark row exists; no label add has a row yet. */
+		function watermarkAt(revision: string) {
+			mockGetGitHubItemState.mockImplementation((_subId: string, key: string) =>
+				key === '__label_watermark__' ? { lastRevision: revision, fireCount: 0 } : null
+			);
+		}
+
 		function labelConfig(overrides: Partial<CueGitHubPollerConfig> = {}) {
 			return makeConfig({ eventType: 'github.label', ...overrides });
 		}
@@ -1605,7 +1665,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('fires oldest-first for events past the watermark and carries the label payload', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig();
 			setupLabelFeed({
 				1: [
@@ -1640,7 +1700,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('only fires for watched labels, matched case-insensitively', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig({ watchLabels: ['Ready-To-Merge'] });
 			setupLabelFeed({
 				1: [
@@ -1660,7 +1720,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('narrows to issues when gh_label_target is "issue"', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig({ labelTarget: 'issue' });
 			setupLabelFeed({
 				1: [
@@ -1681,7 +1741,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('pages back until it crosses the watermark', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig();
 			setupLabelFeed({
 				1: Array.from({ length: 100 }, (_, i) => labelEvent({ id: 6000 - i })),
@@ -1700,8 +1760,24 @@ describe('cue-github-poller', () => {
 			cleanup();
 		});
 
+		it('fires once for an event that shifted onto the next page mid-scan', async () => {
+			watermarkAt('4000');
+			const config = labelConfig();
+			setupLabelFeed({
+				1: Array.from({ length: 100 }, (_, i) => labelEvent({ id: 6000 - i })),
+				// New activity pushed page 1's last event (5901) onto page 2.
+				2: [labelEvent({ id: 5901 }), labelEvent({ id: 5000 }), labelEvent({ id: 4000 })],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).toHaveBeenCalledTimes(101);
+			cleanup();
+		});
+
 		it('warns when the watermark is out of reach instead of skipping silently', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '1', fireCount: 0 });
+			watermarkAt('1');
 			const config = labelConfig();
 			const fullPage = (base: number) =>
 				Array.from({ length: 100 }, (_, i) => labelEvent({ id: base - i }));
@@ -1718,7 +1794,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('advances the watermark past events it filtered out', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig({ watchLabels: ['nothing-matches'] });
 			setupLabelFeed({
 				1: [labelEvent({ id: 6000, label: 'wontfix' }), labelEvent({ id: 4000 })],
@@ -1734,6 +1810,281 @@ describe('cue-github-poller', () => {
 				'6000'
 			);
 			cleanup();
+		});
+
+		describe('an add that has not reached the run manager', () => {
+			/** `cue_github_seen` rows backed by a map, so what one poll writes the next one reads. */
+			function rowsBackedByMap(rows: Map<string, string>) {
+				mockGetGitHubItemState.mockImplementation((_subId: string, key: string) =>
+					rows.has(key) ? { lastRevision: rows.get(key)!, fireCount: 0 } : null
+				);
+				mockSetGitHubItemRevision.mockImplementation((_subId: string, key: string, rev: string) => {
+					rows.set(key, rev);
+				});
+			}
+
+			afterEach(() => {
+				resetGitHubChangeReservationsForTests();
+			});
+
+			it('keeps the watermark below it, and the next poll fires only it', async () => {
+				const rows = new Map([['__label_watermark__', '4000']]);
+				rowsBackedByMap(rows);
+				setupLabelFeed({
+					1: [
+						labelEvent({ id: 6000, label: 'needs-rebase', created_at: '2026-03-04T00:01:00Z' }),
+						labelEvent({ id: 5000, label: 'ready-to-merge' }),
+						labelEvent({ id: 4000, label: 'already-seen' }),
+					],
+				});
+				// The engine stopped while 5000 was on its way: it never dispatched.
+				const fired: string[] = [];
+				const config = labelConfig({
+					onEvent: vi.fn((event: CueEvent, onOutcome: (outcome: CueEmitOutcome) => void) => {
+						const label = String(event.payload.label);
+						fired.push(label);
+						onOutcome(label === 'ready-to-merge' && fired.length === 1 ? 'not-running' : 'emitted');
+					}),
+				});
+
+				const cleanup = createCueGitHubPoller(config);
+				await vi.advanceTimersByTimeAsync(2100);
+				expect(fired).toEqual(['ready-to-merge', 'needs-rebase']);
+				expect(rows.get('__label_watermark__')).toBe('4999');
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+				// 6000 already has its row, so only 5000 fires again.
+				expect(fired).toEqual(['ready-to-merge', 'needs-rebase', 'ready-to-merge']);
+				expect(rows.get('__label_watermark__')).toBe('6000');
+				cleanup();
+			});
+
+			it('waits for a webhook firing the same add, and reads it again if that never dispatched', async () => {
+				const rows = new Map([['__label_watermark__', '4000']]);
+				rowsBackedByMap(rows);
+				setupLabelFeed({ 1: [labelEvent({ id: 5000 }), labelEvent({ id: 4000 })] });
+				// The webhook took the same add first and is still scoring it.
+				const webhook = reserveLabelEvent(
+					'session-1:test-sub',
+					'owner/repo',
+					{ number: 42, label: 'ready-to-merge', labeledAt: '2026-03-04T00:00:00Z' },
+					'webhook'
+				);
+				const config = labelConfig();
+
+				const cleanup = createCueGitHubPoller(config);
+				await vi.advanceTimersByTimeAsync(2100);
+				expect(config.onEvent).not.toHaveBeenCalled();
+				// Still waiting on the webhook: the watermark has not moved.
+				expect(rows.get('__label_watermark__')).toBe('4000');
+
+				webhook.release();
+				await vi.advanceTimersByTimeAsync(0);
+				expect(rows.get('__label_watermark__')).toBe('4999');
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+				expect(config.onEvent).toHaveBeenCalledTimes(1);
+				expect(rows.get('__label_watermark__')).toBe('5000');
+				cleanup();
+			});
+
+			it('moves past an add the webhook fired, and never fires it from the poll', async () => {
+				const rows = new Map([['__label_watermark__', '4000']]);
+				rowsBackedByMap(rows);
+				setupLabelFeed({ 1: [labelEvent({ id: 5000 }), labelEvent({ id: 4000 })] });
+				const webhook = reserveLabelEvent(
+					'session-1:test-sub',
+					'owner/repo',
+					{ number: 42, label: 'ready-to-merge', labeledAt: '2026-03-04T00:00:00Z' },
+					'webhook'
+				);
+				const config = labelConfig();
+
+				const cleanup = createCueGitHubPoller(config);
+				await vi.advanceTimersByTimeAsync(2100);
+				webhook.commit();
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+				expect(config.onEvent).not.toHaveBeenCalled();
+				expect(rows.get('__label_watermark__')).toBe('5000');
+				cleanup();
+			});
+		});
+	});
+
+	describe('GitHub token from a secret file', () => {
+		const TOKEN_VARS = ['GH_TOKEN', 'GITHUB_TOKEN', 'CREDENTIALS_DIRECTORY'] as const;
+		let saved: Record<string, string | undefined>;
+		let credentials: string;
+
+		beforeEach(() => {
+			saved = Object.fromEntries(TOKEN_VARS.map((k) => [k, process.env[k]]));
+			for (const k of TOKEN_VARS) delete process.env[k];
+			credentials = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cue-gh-token-')));
+		});
+
+		afterEach(() => {
+			for (const k of TOKEN_VARS) {
+				if (saved[k] === undefined) delete process.env[k];
+				else process.env[k] = saved[k];
+			}
+			fs.rmSync(credentials, { recursive: true, force: true });
+		});
+
+		const pr = {
+			...samplePRs[0],
+			number: 42,
+			updatedAt: '2026-03-05T00:00:00Z',
+		};
+
+		/** Answer every gh call Cue makes, recording each call's subcommand and env. */
+		function serveAll(): Array<{ call: string; env: NodeJS.ProcessEnv }> {
+			const seen: Array<{ call: string; env: NodeJS.ProcessEnv }> = [];
+			mockExecFile.mockImplementation(
+				(
+					_cmd: string,
+					args: string[],
+					opts: { env: NodeJS.ProcessEnv },
+					cb: (err: Error | null, stdout: string, stderr: string) => void
+				) => {
+					const key = args.join(' ');
+					const call =
+						args[0] === '--version' || args[0] === 'api' ? args[0] : args.slice(0, 2).join(' ');
+					seen.push({ call, env: opts.env });
+					if (key.includes('--version')) return cb(null, '2.0.0', '');
+					if (key.startsWith('repo view')) return cb(null, 'owner/repo\n', '');
+					if (key.startsWith('pr list')) return cb(null, JSON.stringify([pr]), '');
+					if (key.startsWith('pr view')) return cb(null, JSON.stringify({ comments: [] }), '');
+					if (key.startsWith('issue list')) return cb(null, '[]', '');
+					if (key.includes('issues/events')) return cb(null, '[]', '');
+					cb(new Error(`unexpected gh call: ${key}`), '', '');
+				}
+			);
+			return seen;
+		}
+
+		async function runEveryGhCall(): Promise<void> {
+			mockIsGitHubItemSeen.mockReturnValue(true);
+			mockGetGitHubItemState.mockReturnValue({
+				lastRevision: '2026-03-02T00:00:00Z',
+				fireCount: 0,
+			});
+			const cleanups = [
+				// Auto-detected repo (repo view), PR list, and comments (pr view).
+				createCueGitHubPoller(makeConfig({ repo: undefined, retriggerOnComments: true })),
+				createCueGitHubPoller(makeConfig({ eventType: 'github.issue' })),
+				createCueGitHubPoller(makeConfig({ eventType: 'github.label' })),
+			];
+			await vi.advanceTimersByTimeAsync(2100);
+			for (const cleanup of cleanups) cleanup();
+		}
+
+		it('hands a GH_TOKEN systemd credential to every gh call, ahead of the environment', async () => {
+			fs.writeFileSync(path.join(credentials, 'GH_TOKEN'), 'file-token\n');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			process.env.GH_TOKEN = 'stale-env-token';
+			const seen = serveAll();
+
+			await runEveryGhCall();
+
+			expect(new Set(seen.map((s) => s.call))).toEqual(
+				new Set(['--version', 'repo view', 'pr list', 'pr view', 'issue list', 'api'])
+			);
+			for (const { env } of seen) expect(env.GH_TOKEN).toBe('file-token');
+			// The value goes to the child only; agents inherit process.env.
+			expect(process.env.GH_TOKEN).toBe('stale-env-token');
+		});
+
+		it('hands a GITHUB_TOKEN secret file to gh under its own name', async () => {
+			fs.writeFileSync(path.join(credentials, 'GITHUB_TOKEN'), 'file-token');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			const seen = serveAll();
+
+			await runEveryGhCall();
+
+			expect(seen.length).toBeGreaterThan(0);
+			for (const { env } of seen) {
+				expect(env.GITHUB_TOKEN).toBe('file-token');
+				expect(env.GH_TOKEN).toBeUndefined();
+			}
+			expect(process.env.GITHUB_TOKEN).toBeUndefined();
+		});
+
+		it('still hands gh a GH_TOKEN from the environment', async () => {
+			process.env.GH_TOKEN = 'env-token';
+			const seen = serveAll();
+
+			await runEveryGhCall();
+
+			expect(seen.length).toBeGreaterThan(0);
+			for (const { env } of seen) expect(env.GH_TOKEN).toBe('env-token');
+		});
+
+		it('picks up a rotated secret file on the next poll', async () => {
+			const file = path.join(credentials, 'GH_TOKEN');
+			fs.writeFileSync(file, 'first-token');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			const seen = serveAll();
+
+			const cleanup = createCueGitHubPoller(makeConfig());
+			await vi.advanceTimersByTimeAsync(2100);
+			expect(seen.at(-1)?.env.GH_TOKEN).toBe('first-token');
+
+			fs.writeFileSync(file, 'second-token');
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+			expect(seen.at(-1)?.env.GH_TOKEN).toBe('second-token');
+			cleanup();
+		});
+
+		it('keeps the token out of every log line and every reported error', async () => {
+			fs.writeFileSync(path.join(credentials, 'GH_TOKEN'), 'file-token');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			mockExecFile.mockImplementation((_c, args, _o, cb) => {
+				if ((args as string[]).includes('--version')) return cb(null, '2.0.0', '');
+				const err = Object.assign(new Error('gh: unexpected failure for file-token'), {
+					stderr: 'echoed file-token',
+				});
+				return cb(err, '', 'echoed file-token');
+			});
+			const config = makeConfig({ eventType: 'github.issue' });
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+			cleanup();
+
+			const logged = JSON.stringify((config.onLog as ReturnType<typeof vi.fn>).mock.calls);
+			expect(logged).toContain('[redacted]');
+			expect(logged).not.toContain('file-token');
+			expect(mockCaptureException).toHaveBeenCalled();
+			for (const [err] of mockCaptureException.mock.calls) {
+				const e = err as Error & { stderr?: string };
+				expect(e.message).not.toContain('file-token');
+				expect(String(e.stack)).not.toContain('file-token');
+				expect(String(e.stderr)).not.toContain('file-token');
+			}
+		});
+
+		it('drops a stale variable when the token file is unusable, and says so once', async () => {
+			fs.writeFileSync(path.join(credentials, 'GH_TOKEN'), '');
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			process.env.GH_TOKEN = 'stale-env-token';
+			const seen = serveAll();
+			const config = makeConfig();
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+			cleanup();
+
+			expect(seen.length).toBeGreaterThan(1);
+			for (const { env } of seen) expect(env.GH_TOKEN).toBeUndefined();
+			const calls = (config.onLog as ReturnType<typeof vi.fn>).mock.calls;
+			const tokenWarnings = calls.filter((c) =>
+				String(c[1]).includes('cannot use the GitHub token')
+			);
+			expect(tokenWarnings).toHaveLength(1);
+			expect(String(tokenWarnings[0][1])).toContain('GH_TOKEN');
+			expect(String(tokenWarnings[0][1])).toContain('is empty');
+			expect(JSON.stringify(calls)).not.toContain('stale-env-token');
 		});
 	});
 });

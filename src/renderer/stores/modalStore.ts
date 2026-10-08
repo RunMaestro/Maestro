@@ -214,7 +214,14 @@ export interface CueModalData {
 	/** Tab the modal opens on. Values match `CueModalTab` in
 	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
 	 *  `shared/uiSurfaces.ts`. */
-	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
+	initialTab?:
+		| 'dashboard'
+		| 'scheduled'
+		| 'pipeline'
+		| 'pipeline-list'
+		| 'activity'
+		| 'backup'
+		| 'bundles';
 	/**
 	 * Agent to highlight and scroll to in the dashboard's session table.
 	 *

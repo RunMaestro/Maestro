@@ -8,6 +8,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import {
+	MaestroNotRunningError,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+} from '../../../cli/services/maestro-not-running';
 import type * as MaestroClientModule from '../../../cli/services/maestro-client';
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
@@ -548,35 +552,45 @@ describe('dispatch command', () => {
 	});
 
 	describe('error mapping', () => {
-		it('maps connection errors to MAESTRO_NOT_RUNNING', async () => {
-			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
-			vi.mocked(withMaestroClient).mockRejectedValue(new Error('ECONNREFUSED'));
-
-			await dispatch('agent-abc', 'Hello', {});
-
-			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-			expect(output.success).toBe(false);
-			expect(output.code).toBe('MAESTRO_NOT_RUNNING');
-			expect(processExitSpy).toHaveBeenCalledWith(1);
-		});
-
-		// MaestroClient throws three distinct error strings before any WebSocket
-		// activity. They must map to MAESTRO_NOT_RUNNING - not COMMAND_FAILED -
-		// so downstream consumers (Maestro-Discord, Cue) can distinguish "app
-		// down" from "command rejected" via the error code.
+		// The client classifies an absent app by TYPE, every cause gets the same
+		// message, and the exit is 3. Downstream consumers (Maestro-Discord, Cue)
+		// tell "app down" from "command rejected" by the code.
 		it.each([
-			['Maestro desktop app is not running'],
-			['Maestro discovery file is stale (app may have crashed)'],
-			['Not connected to Maestro'],
-		])('maps MaestroClient error "%s" to MAESTRO_NOT_RUNNING', async (errorMessage) => {
+			['no-discovery-file'],
+			['stale-discovery-file'],
+			['connect-timeout'],
+			['connect-failed'],
+		] as const)(
+			'maps a %s MaestroNotRunningError to MAESTRO_NOT_RUNNING, exit 3',
+			async (reason) => {
+				vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+				vi.mocked(withMaestroClient).mockRejectedValue(new MaestroNotRunningError(reason));
+
+				await dispatch('agent-abc', 'Hello', {});
+
+				const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+				expect(output).toEqual({
+					success: false,
+					error: MAESTRO_NOT_RUNNING_MESSAGE,
+					code: 'MAESTRO_NOT_RUNNING',
+				});
+				expect(processExitSpy).toHaveBeenCalledWith(3);
+			}
+		);
+
+		// The old classifier matched English substrings, so a desktop-side
+		// failure that happened to say "websocket" or "not running" was reported
+		// as an absent app. Only the type counts now.
+		it('does not reclassify an ordinary error by its wording', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
-			vi.mocked(withMaestroClient).mockRejectedValue(new Error(errorMessage));
+			vi.mocked(withMaestroClient).mockRejectedValue(
+				new Error('Maestro desktop app is not running a websocket ECONNREFUSED')
+			);
 
 			await dispatch('agent-abc', 'Hello', {});
 
 			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-			expect(output.success).toBe(false);
-			expect(output.code).toBe('MAESTRO_NOT_RUNNING');
+			expect(output.code).toBe('COMMAND_FAILED');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 

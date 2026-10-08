@@ -2,9 +2,9 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
-import { parseCliBool, isInheritValue } from './utils/parse';
+import { parseCliBool, parseCliPort, parseCliSeconds, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -59,6 +59,14 @@ import {
 	cuePipelineRemove,
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
+import {
+	cueEngineStart,
+	cueEngineCheck,
+	cueEngineStop,
+	cueEngineStatus,
+	cueEngineInspect,
+} from './commands/cue-engine';
+import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -1002,6 +1010,10 @@ cue
 	.option('-p, --prompt <text>', 'Override the subscription prompt with custom text')
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('--source-agent-id <id>', 'Agent ID to pass as source context for write-back')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueTrigger);
 
 cue
@@ -1116,6 +1128,182 @@ cuePipeline
 	.option('--force', 'Suppress the no-op error when the pipeline is already absent')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cuePipelineRemove);
+
+// Cue engine subcommands - run Maestro Cue unattended, without the desktop
+// app, and inspect/control that runner. See `cue-engine.ts` for what the
+// standalone engine can and cannot do relative to the desktop app's own
+// instance, and `cue-engine-lock.ts` for the cross-process guard that keeps
+// this from double-firing triggers alongside a desktop app left open.
+const cueEngine = cue
+	.command('engine')
+	.description('Run Maestro Cue unattended (no desktop app) and control that runner');
+
+cueEngine
+	.command('start')
+	.description(
+		'Start the Cue engine in this process and block until Ctrl+C / stopped. Agents inherit the whole environment unless MAESTRO_SERVER_MODE=1 (set by the server unit and image), which passes only the server allowlist plus MAESTRO_SERVER_ENV_ALLOW and declared secrets'
+	)
+	.option('--json', 'Print machine-readable start/failure status')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.addOption(
+		new Option(
+			'--log-format <format>',
+			'Log line format: text, or one JSON object per line on stderr'
+		)
+			.choices(['text', 'json'])
+			.default('text')
+	)
+	.option(
+		'--require-ready',
+		'Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"'
+	)
+	.option(
+		'--status-port <port>',
+		'Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given',
+		(value) => {
+			try {
+				return parseCliPort(value, '--status-port');
+			} catch (err) {
+				throw new InvalidArgumentError((err as Error).message);
+			}
+		}
+	)
+	.option(
+		'--drain-timeout <seconds>',
+		'On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once',
+		(value) => {
+			try {
+				return parseCliSeconds(value, '--drain-timeout');
+			} catch (err) {
+				throw new InvalidArgumentError((err as Error).message);
+			}
+		},
+		90
+	)
+	.option(
+		'--notify-webhook <url>',
+		'POST a JSON notice for every notify action and every expired agent login to this http(s) URL'
+	)
+	.action((opts) => cueEngineStart({ ...opts, version: cliVersion }));
+
+cueEngine
+	.command('check')
+	.description(
+		'Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present, and that there is something to run; list every gap (exit 1 when not ready)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.action(cueEngineCheck);
+
+cueEngine
+	.command('stop')
+	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
+		parseInt(v, 10)
+	)
+	.action((opts) => cueEngineStop(opts));
+
+cueEngine
+	.command('status')
+	.description('Report whether an engine is running and its last known heartbeat')
+	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.action(cueEngineStatus);
+
+cueEngine
+	.command('inspect')
+	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
+	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.action(cueEngineInspect);
+
+// Bundle commands - pack a Cue pipeline or one agent into a portable zip, and
+// import one. With the app running (and no --data-dir), export and import go
+// through it, the same as the Cue modal's Bundles tab; otherwise they read and
+// write the data directory directly.
+const bundle = program
+	.command('bundle')
+	.description('Export, validate, inspect, and import portable Cue pipeline and agent bundles');
+
+bundle
+	.command('export')
+	.description('Export one Cue pipeline or one agent to a deterministic bundle zip')
+	.option('-a, --agent <id-or-name>', 'Export this agent (exclusive with --pipeline)')
+	.option('-p, --pipeline <name>', 'Export this Cue pipeline (exclusive with --agent)')
+	.option('-o, --output <path>', 'Zip to write (default: ./<name>.maestro-bundle.zip)')
+	.option('--allow-inline-secrets', 'Export subscriptions that hold a literal webhook.secret')
+	.option('--data-dir <path>', "Read Maestro's data from this directory instead of the default")
+	.option('--created-at <iso>', 'Record this ISO-8601 time as the bundle creation time')
+	.option('--no-claude-skills', 'Leave out Claude Code skills (.claude/skills)')
+	.option('--no-claude-mcp', 'Leave out .mcp.json (exported with secrets as ${VAR} references)')
+	.option(
+		'--no-claude-memory',
+		'Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => bundleExport(cliVersion, options));
+
+bundle
+	.command('validate <bundle>')
+	.description(
+		'Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version'
+	)
+	.option(
+		'--check-env',
+		'Also check that this machine supplies each required secret (systemd credential, /run/secrets file, or environment variable); missing or unusable ones are warnings'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((bundlePath, options) => bundleValidate(cliVersion, bundlePath, options));
+
+bundle
+	.command('inspect <bundle>')
+	.description('Describe a bundle from its manifest and README without unpacking the rest')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(bundleInspect);
+
+bundle
+	.command('import <bundle>')
+	.description(
+		'Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders. Prints the plan, shell commands included, before the first write'
+	)
+	.option(
+		'-w, --workspace <key=path>',
+		'Map a bundle workspace to its own local folder (repeatable, one per workspace)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--agent-path <tool=path>',
+		'Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--data-dir <path>', 'Import into this Maestro data directory instead of the default')
+	.option('--dry-run', 'Report everything the import would do, including conflicts; write nothing')
+	.option('--force', 'Overwrite conflicting agents, subscriptions, playbooks, files, and paths')
+	.option(
+		'--reject-shell-commands',
+		'Refuse the import, before anything is written, if any subscription runs a shell command'
+	)
+	.option('--json', 'Output as JSON (for scripting): one document, after the import')
+	.action((bundlePath, options) => bundleImport(cliVersion, bundlePath, options));
 
 // Director's Notes commands
 const directorNotes = program

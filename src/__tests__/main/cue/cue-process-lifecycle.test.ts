@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
 import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
+import { ClaudeOutputParser } from '../../../shared/maestro-lib/parsers/claude-output-parser';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -16,6 +17,7 @@ import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
 const mockGetOutputParser = vi.fn(() => null as any);
 vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
+	createOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 }));
 
 // Mock Sentry
@@ -51,6 +53,7 @@ class MockChildProcess extends EventEmitter {
 	stdin = {
 		write: vi.fn(),
 		end: vi.fn(),
+		on: vi.fn(),
 	};
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
@@ -183,6 +186,19 @@ describe('cue-process-lifecycle', () => {
 	});
 
 	describe('runProcess', () => {
+		it('neither spawns nor registers a process for a run already stopped', async () => {
+			const controller = new AbortController();
+			controller.abort();
+			const result = await runProcess(
+				'stopped-run',
+				createSpec(),
+				createOptions({ signal: controller.signal })
+			);
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(getActiveProcessMap().has('stopped-run')).toBe(false);
+			expect(result).toMatchObject({ status: 'stopped', exitCode: null, stdout: '', stderr: '' });
+		});
+
 		it('spawns process with correct command, args, and cwd', async () => {
 			const spec = createSpec();
 			const resultPromise = runProcess('run-1', spec, createOptions());
@@ -295,7 +311,10 @@ describe('cue-process-lifecycle', () => {
 				);
 				await vi.advanceTimersByTimeAsync(0);
 
-				expect(mockChild.stdin.write).toHaveBeenCalledWith('#!/bin/bash\nclaude "prompt"');
+				expect(mockChild.stdin.write).toHaveBeenCalledWith(
+					'#!/bin/bash\nclaude "prompt"',
+					expect.any(Function)
+				);
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
@@ -314,7 +333,7 @@ describe('cue-process-lifecycle', () => {
 				);
 				await vi.advanceTimersByTimeAsync(0);
 
-				expect(mockChild.stdin.write).toHaveBeenCalledWith('large prompt');
+				expect(mockChild.stdin.write).toHaveBeenCalledWith('large prompt', expect.any(Function));
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
@@ -385,6 +404,370 @@ describe('cue-process-lifecycle', () => {
 
 				mockChild.emit('close', null);
 				await resultPromise;
+			});
+		});
+
+		describe('turn outcome', () => {
+			const resultParser = (detectErrorFromExit?: () => unknown) =>
+				({
+					parseJsonLine: (line: string) => {
+						try {
+							const msg = JSON.parse(line);
+							if (msg.type === 'result') return { type: 'result', text: msg.result || '' };
+							return { type: 'system', raw: msg };
+						} catch {
+							return null;
+						}
+					},
+					detectErrorFromExit: detectErrorFromExit ?? (() => null),
+				}) as any;
+
+			it('completes a run that answered in full and then exited non-zero', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'all done' }));
+				mockChild.emit('close', 1, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('all done');
+				expect(result.exitCode).toBe(1);
+			});
+
+			it('fails a run whose provider classified the exit as an error', async () => {
+				mockGetOutputParser.mockReturnValue(
+					resultParser(() => ({ type: 'auth_required', message: 'token expired' }))
+				);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'partial' }));
+				mockChild.emit('close', 1, null);
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
+			it('reports a stopped run as stopped, not failed', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(stopProcess('run-1')).toBe(true);
+				mockChild.emit('close', null, 'SIGTERM');
+
+				expect((await resultPromise).status).toBe('stopped');
+			});
+
+			it('sums per-step usage across a run', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'system', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'copilot-cli' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'step', usage: { inputTokens: 10, outputTokens: 5 } }) +
+						'\n' +
+						JSON.stringify({
+							type: 'result',
+							result: 'done',
+							usage: { inputTokens: 3, outputTokens: 7, costUsd: 0.5 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(13);
+				expect(result.usage?.outputTokens).toBe(12);
+				expect(result.usage?.totalCostUsd).toBe(0.5);
+			});
+
+			it('takes Claude usage from the last event, which carries the turn total', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'text', isPartial: true, text: '', usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Per-call usage, then the result's whole-turn total. Summing would
+				// report 130 input tokens instead of 100.
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'assistant', usage: { inputTokens: 30, outputTokens: 4 } }) +
+						'\n' +
+						JSON.stringify({
+							type: 'result',
+							result: 'done',
+							usage: { inputTokens: 100, outputTokens: 12 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(100);
+				expect(result.usage?.outputTokens).toBe(12);
+			});
+
+			it('keeps the Codex occupancy snapshot and reported window on the result (#1669)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '' }
+							: { type: 'usage', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Running session totals, as Codex reports them.
+				const tokenCount = (inputTokens: number, outputTokens: number) =>
+					JSON.stringify({
+						type: 'token_count',
+						usage: {
+							inputTokens,
+							outputTokens,
+							contextWindow: 272_000,
+							contextWindowReported: true,
+						},
+					}) + '\n';
+				mockChild.stdout.emit(
+					'data',
+					tokenCount(100, 10) +
+						tokenCount(300, 30) +
+						JSON.stringify({ type: 'result', result: 'done' }) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(300);
+				expect(result.usage?.outputTokens).toBe(30);
+				expect(result.usage?.absoluteUsage).toEqual({
+					inputTokens: 300,
+					outputTokens: 30,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				});
+				expect(result.usage?.contextWindow).toBe(272_000);
+				expect(result.usage?.contextWindowResolved).toBe(true);
+			});
+
+			it('keeps the Claude occupancy snapshot when a later usage event carries none (#1669)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'usage', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const occupancy = {
+					inputTokens: 1000,
+					outputTokens: 20,
+					cacheReadInputTokens: 500,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				};
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({
+						type: 'result',
+						result: 'done',
+						usage: {
+							inputTokens: 4000,
+							outputTokens: 60,
+							costUsd: 0.1,
+							contextWindow: 1_000_000,
+							contextWindowReported: true,
+							absoluteUsage: occupancy,
+						},
+					}) +
+						'\n' +
+						JSON.stringify({
+							type: 'usage',
+							usage: { inputTokens: 4000, outputTokens: 60, costUsd: 0.1, contextWindow: 200_000 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				// Last write wins for the totals, as before...
+				expect(result.usage?.inputTokens).toBe(4000);
+				expect(result.usage?.totalCostUsd).toBe(0.1);
+				// ...but the trailing event does not erase the metadata.
+				expect(result.usage?.absoluteUsage).toEqual(occupancy);
+				expect(result.usage?.contextWindow).toBe(1_000_000);
+				expect(result.usage?.contextWindowResolved).toBe(true);
+			});
+
+			it('fails a parser-less agent that exits non-zero, whatever it printed', async () => {
+				mockGetOutputParser.mockReturnValue(null);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', 'command not found: something\n');
+				mockChild.emit('close', 127, null);
+
+				const result = await resultPromise;
+				expect(result.status).toBe('failed');
+				expect(result.stdout).toBe('command not found: something\n');
+			});
+
+			// `null` rather than `undefined` at this layer: the streaming capture
+			// starts null and `cue-executor` maps it to undefined on the way out.
+			it('leaves usage unset when the provider reports none', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'done' }));
+				mockChild.emit('close', 0, null);
+
+				expect((await resultPromise).usage).toBeNull();
+			});
+
+			it('fails a signal kill even when the agent had streamed an answer', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				// A truncated answer must not chain onward as a success.
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'half an ans' }));
+				mockChild.emit('close', null, 'SIGKILL');
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
+			it('fails a signal kill nobody requested', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.emit('close', null, 'SIGKILL');
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
+			// Claude Code reports a failed turn in-band (a result flagged
+			// `is_error: true`) and then exits 0. The real parser is used so the
+			// classification under test is the one production runs.
+			it('fails a run whose provider reported the failure in-band and exited 0', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({
+						type: 'result',
+						subtype: 'error_max_turns',
+						is_error: true,
+						session_id: 'sess-1',
+					}) + '\n'
+				);
+				mockChild.emit('close', 0, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toContain('maximum number of turns');
+			});
+
+			it('still completes a run whose provider recovered past an in-turn API error notice', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				const lines = [
+					{
+						type: 'assistant',
+						error: 'server_error',
+						is_api_error_message: true,
+						message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error' }] },
+					},
+					{ type: 'assistant', message: { content: [{ type: 'text', text: 'Recovered.' }] } },
+					{ type: 'result', subtype: 'success', is_error: false, result: 'Recovered.' },
+				];
+				mockChild.stdout.emit('data', lines.map((l) => JSON.stringify(l) + '\n').join(''));
+				mockChild.emit('close', 0, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('Recovered.');
+			});
+
+			it('reports a stopped run as stopped even when the provider flushes a failed result', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(stopProcess('run-1')).toBe(true);
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true }) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				expect((await resultPromise).status).toBe('stopped');
 			});
 		});
 
@@ -468,6 +851,111 @@ describe('cue-process-lifecycle', () => {
 				const result = await resultPromise;
 
 				expect(result.stdout).toBe('Hello from the agent');
+			});
+		});
+
+		// Live stream capture (Plans/maestro-lib-cli-migration.md, "Cue"): the
+		// same single pass that builds clean stdout also tracks the provider
+		// session id and delta-normalized usage, so the dashboard has a token
+		// figure for a run even when it executed over SSH (whose on-disk
+		// session file cue-token-accessor.ts can never read).
+		describe('providerSessionId and usage capture', () => {
+			it('captures the last session id the parser reports', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: (event: any) => event.session_id ?? null,
+					extractUsage: () => null,
+				} as any);
+
+				const lines = [
+					JSON.stringify({ session_id: 'sess-1' }),
+					JSON.stringify({ session_id: 'sess-2' }),
+				].join('\n');
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', lines + '\n');
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.providerSessionId).toBe('sess-2');
+			});
+
+			it('returns null providerSessionId/usage when no parser is registered', async () => {
+				mockGetOutputParser.mockReturnValue(null);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', 'plain text\n');
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.providerSessionId).toBeNull();
+				expect(result.usage).toBeNull();
+			});
+
+			it('passes through per-turn usage unmodified for a non-combined-context provider', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: () => null,
+					extractUsage: (event: any) => event.usage ?? null,
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 100, outputTokens: 50 } }) + '\n'
+				);
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.usage).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+			});
+
+			it('delta-normalizes cumulative usage for a combined-context-window provider (codex)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: () => null,
+					extractUsage: (event: any) => event.usage ?? null,
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec({ command: 'codex' }),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Codex reports a running SESSION TOTAL on every event, not a
+				// per-turn delta - exactly the shape the CLI migration's
+				// UsageAccumulator test pins (100, then 100+200=300 cumulative).
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 100, outputTokens: 0 } }) + '\n'
+				);
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 300, outputTokens: 0 } }) + '\n'
+				);
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				// Deltas are 100, then 300 - 100 = 200, and the run consumed both:
+				// 300. Keeping only the newest delta would report 200 and lose
+				// the first event; taking the raw value would double-count.
+				expect(result.usage).toMatchObject({ inputTokens: 300 });
 			});
 		});
 

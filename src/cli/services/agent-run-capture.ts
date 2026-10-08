@@ -20,8 +20,52 @@ import {
 import { upsertAgentRun, appendAgentRunEvent } from './agent-run-store';
 import { generateUUID } from '../../shared/uuid';
 import { logger } from '../../main/utils/logger';
+import { SIGINT_EXIT_CODE } from '../utils/interrupt';
+import type { AgentResult } from './agent-spawner';
+import type { UsageStats } from '../../shared/types';
 
 const LOG_CONTEXT = 'AgentRunCapture';
+
+export interface CliRunSettlement {
+	status: 'completed' | 'failed' | 'cancelled';
+	exitCode: number;
+	/**
+	 * The provider's token/cost report for the turn, when it sent one. Lands on
+	 * `AgentRun.usage` so the run's usage is persisted in the data dir: `send`
+	 * writes no history entry, so without this its usage existed only on stdout,
+	 * which on a headless server means nowhere.
+	 */
+	usage?: UsageStats;
+}
+
+/**
+ * Derive the run ledger settlement from an AgentResult. Interrupted turns
+ * settle as cancelled (exit 130); successful turns complete (exit 0); any
+ * other failure settles as failed (exit 1).
+ */
+export function settlementFromAgentResult(result: AgentResult): CliRunSettlement {
+	// An interrupted or failed turn can still have spent tokens; keep the report.
+	const usage = result.usageStats ? { usage: result.usageStats } : {};
+	if (result.outcome === 'interrupted') {
+		return { status: 'cancelled', exitCode: SIGINT_EXIT_CODE, ...usage };
+	}
+	return {
+		status: result.success ? 'completed' : 'failed',
+		exitCode: result.success ? 0 : 1,
+		...usage,
+	};
+}
+
+/**
+ * The run's `usage` record: the provider's fields minus empty ones, or nothing
+ * at all when it reported none. Never a fabricated zero record - the same rule
+ * the desktop producer (`usageFromProvider`) follows.
+ */
+function runUsage(usage: UsageStats | undefined): AgentRun['usage'] {
+	if (!usage) return undefined;
+	const entries = Object.entries(usage).filter(([, v]) => v !== undefined && v !== null);
+	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
 
 export interface CaptureCliRunInput {
 	/**
@@ -61,7 +105,8 @@ function buildRun(
 	createdAt: number,
 	updatedAt: number,
 	status: AgentRunStatus,
-	metadata?: AgentRun['metadata']
+	metadata?: AgentRun['metadata'],
+	usage?: AgentRun['usage']
 ): AgentRun {
 	return {
 		id: runId,
@@ -78,6 +123,7 @@ function buildRun(
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
 		...(metadata ? { metadata } : {}),
+		...(usage ? { usage } : {}),
 	};
 }
 
@@ -94,19 +140,22 @@ function startRun(input: CaptureCliRunInput, runId: string, startedAt: number): 
 	});
 }
 
-/** Settle the run to a terminal state from the resolved exit code. */
+/** Settle the run to a terminal state from the resolved settlement. */
 function settleRun(
 	input: CaptureCliRunInput,
 	runId: string,
 	startedAt: number,
-	exitCode: number
+	settlement: CliRunSettlement
 ): void {
 	const completedAt = Date.now();
 	const durationMs = completedAt - startedAt;
-	const status: AgentRunStatus = exitCode === 0 ? 'completed' : 'failed';
-	// Guard the lifecycle edge (running -> completed/failed) before persisting.
+	const { status, exitCode } = settlement;
+	const usage = runUsage(settlement.usage);
+	// Guard the lifecycle edge (running -> completed/failed/cancelled) before persisting.
 	assertTransition('running', status);
-	upsertAgentRun(buildRun(input, runId, startedAt, completedAt, status, { durationMs, exitCode }));
+	upsertAgentRun(
+		buildRun(input, runId, startedAt, completedAt, status, { durationMs, exitCode }, usage)
+	);
 	appendAgentRunEvent({
 		id: `evt_${runId}_${status}_${completedAt}`,
 		runId,
@@ -120,15 +169,15 @@ function settleRun(
 
 /**
  * Wrap a `spawnAgent` invocation with ledger capture. Creates a running
- * AgentRun before `run()`, settles it to completed/failed on return using the
- * exit code from `resolveExit`, and settles it to failed (then re-throws) if
+ * AgentRun before `run()`, settles it to completed/failed/cancelled on return using the
+ * settlement from `resolveSettlement`, and settles it to failed (then re-throws) if
  * `run()` throws. All ledger errors are swallowed so the CLI path is never
  * broken by capture. Returns exactly what `run()` returned.
  */
 export async function captureCliRun<T>(
 	input: CaptureCliRunInput,
 	run: () => Promise<T>,
-	resolveExit: (result: T) => number
+	resolveSettlement: (result: T) => CliRunSettlement
 ): Promise<T> {
 	const startedAt = Date.now();
 	const runId = createRunId(input.source, startedAt);
@@ -136,17 +185,17 @@ export async function captureCliRun<T>(
 	try {
 		const result = await run();
 		safeLedger(() => {
-			let exitCode = 1;
+			let settlement: CliRunSettlement = { status: 'failed', exitCode: 1 };
 			try {
-				exitCode = resolveExit(result);
+				settlement = resolveSettlement(result);
 			} catch (error) {
-				logger.error('agent-run resolveExit failed', LOG_CONTEXT, error);
+				logger.error('agent-run resolveSettlement failed', LOG_CONTEXT, error);
 			}
-			settleRun(input, runId, startedAt, exitCode);
+			settleRun(input, runId, startedAt, settlement);
 		});
 		return result;
 	} catch (error) {
-		safeLedger(() => settleRun(input, runId, startedAt, 1));
+		safeLedger(() => settleRun(input, runId, startedAt, { status: 'failed', exitCode: 1 }));
 		throw error;
 	}
 }

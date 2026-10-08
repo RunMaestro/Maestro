@@ -61,14 +61,45 @@ describe('cue-queue-persistence', () => {
 		onLog = vi.fn();
 	});
 
-	function makePersistence(opts?: { timeoutMs?: number; known?: string[]; now?: number }) {
+	function makePersistence(opts?: {
+		timeoutMs?: number;
+		known?: string[];
+		knownSubscriptions?: string[];
+		now?: number;
+	}) {
 		return createCueQueuePersistence({
 			onLog,
 			getSessionTimeoutMs: () => opts?.timeoutMs ?? 30 * 60 * 1000,
 			knownSessionIds: () => new Set(opts?.known ?? ['s-1']),
+			...(opts?.knownSubscriptions
+				? { knownSubscriptionNames: () => new Set(opts.knownSubscriptions) }
+				: {}),
 			now: () => opts?.now ?? NOW,
 		});
 	}
+
+	describe('restoring only what a previous run left behind', () => {
+		// The engine snapshots persistedIds() before sessions initialize. A row
+		// persisted after that (this boot's own app.startup queued behind a
+		// busy slot) is still live in memory, so restoring it would run it twice.
+		it('restores only the ids in the snapshot and leaves later rows alone', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'from-last-run', makeEntry({ subscriptionName: 'old' }));
+			const before = p.persistedIds();
+			p.persist('s-1', 'queued-this-boot', makeEntry({ subscriptionName: 'startup' }));
+
+			const restored = p.restoreAll(before).get('s-1')!;
+			expect(restored.map((e) => e.persistId)).toEqual(['from-last-run']);
+			expect(p.persistedIds()).toEqual(new Set(['from-last-run', 'queued-this-boot']));
+		});
+
+		it('restores every row when no snapshot is given', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'a', makeEntry());
+			p.persist('s-1', 'b', makeEntry());
+			expect(p.restoreAll().get('s-1')).toHaveLength(2);
+		});
+	});
 
 	describe('persist + restore round-trip', () => {
 		it('round-trips all scalar + nested fields', () => {
@@ -206,6 +237,57 @@ describe('cue-queue-persistence', () => {
 			});
 		});
 
+		it('drops rows whose subscription is in no agent config, and records why', () => {
+			const p = makePersistence({ known: ['s-1'], knownSubscriptions: ['kept'] });
+			p.persist('s-1', 'alive', makeEntry({ subscriptionName: 'kept' }));
+			p.persist('s-1', 'orphan', makeEntry({ subscriptionName: 'removed-by-import' }));
+
+			const restored = p.restoreAll();
+
+			expect(restored.get('s-1')?.map((e) => e.persistId)).toEqual(['alive']);
+			expect(
+				getSharedDb()
+					.getQueuedEvents()
+					.map((row) => row.id)
+			).toEqual(['alive']);
+			expect(onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('whose subscription is no longer in any agent'),
+				{ type: 'queueDropped', count: 1, reason: 'subscription-missing' }
+			);
+			const orphan = getSharedDb()
+				.getRecentCueEvents(0)
+				.find((e) => e.id === 'orphan');
+			expect(JSON.parse(orphan?.payload ?? '{}')).toMatchObject({
+				droppedFromQueue: true,
+				reason: 'subscription-missing',
+			});
+		});
+
+		it("keeps a fan-out row whose subscription lives in another agent's config", () => {
+			// The target agent's own config has no `owner-fanout`; the owner's does,
+			// and the names are checked across every agent.
+			const p = makePersistence({
+				known: ['s-1', 's-target'],
+				knownSubscriptions: ['owner-fanout'],
+			});
+			p.persist('s-target', 'fanout', makeEntry({ subscriptionName: 'owner-fanout' }));
+
+			expect(
+				p
+					.restoreAll()
+					.get('s-target')
+					?.map((e) => e.persistId)
+			).toEqual(['fanout']);
+		});
+
+		it('skips the subscription check when the dep is omitted', () => {
+			const p = makePersistence({ known: ['s-1'] });
+			p.persist('s-1', 'any', makeEntry({ subscriptionName: 'whatever' }));
+
+			expect(p.restoreAll().get('s-1')).toHaveLength(1);
+		});
+
 		it('drops stale rows whose age exceeds session timeout, records timeout event', () => {
 			const p = makePersistence({ timeoutMs: 10 * 60 * 1000, now: NOW });
 			// Queued 20 minutes ago
@@ -281,6 +363,37 @@ describe('cue-queue-persistence', () => {
 
 		it('returns empty map when no rows exist', () => {
 			const p = makePersistence();
+			expect(p.restoreAll().size).toBe(0);
+		});
+	});
+
+	describe('rows a drain deferred', () => {
+		const timeoutMs = 30 * 60 * 1000;
+
+		it('measures age while an engine was up, not the downtime, and rebases queuedAt', () => {
+			const p = makePersistence({ timeoutMs });
+			// Queued 5 minutes before the drain, restored 5 hours later.
+			const drainedAt = NOW - 5 * 60 * 60 * 1000;
+			p.persist('s-1', 'deferred', makeEntry({ queuedAt: drainedAt - 5 * 60_000, drainedAt }));
+
+			const [entry] = p.restoreAll().get('s-1')!;
+			expect(entry.persistId).toBe('deferred');
+			expect(entry.drainedAt).toBe(drainedAt);
+			expect(entry.queuedAt).toBe(NOW - 5 * 60_000);
+			// The stamp is the module's; the event itself never carries it.
+			expect(entry.event).not.toHaveProperty('maestroDrainedAt');
+		});
+
+		it('still drops a deferred row that was already stale when the engine stopped', () => {
+			const p = makePersistence({ timeoutMs });
+			const drainedAt = NOW - 60_000;
+			p.persist('s-1', 'old', makeEntry({ queuedAt: drainedAt - 31 * 60_000, drainedAt }));
+			expect(p.restoreAll().size).toBe(0);
+		});
+
+		it('keeps the wall-clock rule for an unstamped row of the same age', () => {
+			const p = makePersistence({ timeoutMs });
+			p.persist('s-1', 'crash', makeEntry({ queuedAt: NOW - 5 * 60 * 60 * 1000 - 5 * 60_000 }));
 			expect(p.restoreAll().size).toBe(0);
 		});
 	});

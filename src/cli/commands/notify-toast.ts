@@ -3,6 +3,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface NotifyToastOptions {
 	color?: string;
@@ -210,6 +211,7 @@ export async function notifyToast(
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));

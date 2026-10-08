@@ -70,6 +70,17 @@ export interface CueTriggerSource {
 	 * on the epoch timeline, which a zone change does not move.
 	 */
 	onTimeZoneChange?(): void;
+
+	/**
+	 * Optional: resolves once every event this source has already accepted
+	 * has reached its outcome (emitted, filtered, blocked) and the source has
+	 * written its "handled" record. Called by the engine's drain after
+	 * `stop()`, so an event accepted just before shutdown is dispatched (and
+	 * deferred to the queue) instead of lost. Only a source whose emit can lag
+	 * its acceptance needs it: the webhook and GitHub sources, whose SusFactor
+	 * guard is asynchronous (`cue-guarded-emit.ts`). Must not reject.
+	 */
+	settle?(): Promise<void>;
 }
 
 /**

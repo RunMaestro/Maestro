@@ -66,7 +66,40 @@ async function build() {
 			// fsevents is an optional native module (.node) pulled in transitively
 			// by chokidar on macOS. esbuild can't bundle .node files, and chokidar
 			// guards its require() in a try/catch, so mark it external.
+			//
+			// 'electron' and 'electron-store' are external for a different reason:
+			// the `electron` npm package's own index.js resolves its binary path
+			// relative to ITS OWN file location (a `path.txt` sibling under
+			// node_modules/electron/), and esbuild inlining it breaks that
+			// resolution - bundled, it throws "Electron failed to install
+			// correctly" the moment anything requires it, even though
+			// `require('electron')` under plain Node works fine unbundled (it
+			// resolves to the binary path string, not the Electron API surface).
+			// `standalone Cue engine` (`cue engine start`) is the first CLI
+			// command whose import graph reaches an electron-store-backed module
+			// (`claude-usage-startup.ts`, via `resolveClaudeSpawnMode.ts`), so
+			// this was a latent bug no prior command tripped.
+			//
+			// 'better-sqlite3' is a native addon, and its `bindings` resolver
+			// locates the compiled `.node` file by walking up from ITS OWN package
+			// directory, so it cannot be inlined. It is aliased below to
+			// src/cli/better-sqlite3-shim.ts, which loads the real package at
+			// runtime with Node's own require: the installed app's Electron-built
+			// copy (`app.asar.unpacked`, already shipped via `asarUnpack`) when
+			// `maestro-cli` runs on Maestro's runtime, ordinary resolution
+			// otherwise, and a clear error instead of a dlopen stack when no copy
+			// fits this runtime. See src/cli/utils/native-sqlite.ts.
+			//
+			// Superseded for 'electron' / 'electron-store' by the alias below: both
+			// are now bundled, and 'electron' resolves to a shim that answers
+			// app.getPath('userData') with Maestro's real data directory. See
+			// src/cli/electron-shim.cjs for why (the standalone Cue engine could
+			// not start on a host without Electron installed).
 			external: ['fsevents'],
+			alias: {
+				electron: path.join(rootDir, 'src/cli/electron-shim.cjs'),
+				'better-sqlite3': path.join(rootDir, 'src/cli/better-sqlite3-shim.ts'),
+			},
 			plugins: [rawMdPlugin],
 			define: {
 				__MAESTRO_CLI_VERSION__: JSON.stringify(cliVersion),

@@ -57,6 +57,9 @@ import type { CueQueryService } from './cue-query-service';
 import { createCueSessionRuntimeService } from './cue-session-runtime-service';
 import type { CueSessionRuntimeService, SessionInitReason } from './cue-session-runtime-service';
 import { createCueSessionRegistry, type CueSessionRegistry } from './cue-session-registry';
+import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
+import { createCueFanInPersistence, type CueFanInPersistence } from './cue-fan-in-persistence';
+import { getMatchingSources } from './cue-completion-service';
 import type { SessionState } from './cue-session-state';
 import { createCueRecoveryService, type CueRecoveryService } from './cue-recovery-service';
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
@@ -64,6 +67,7 @@ import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './c
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
 import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
+import { holdCueWebhookListener } from './cue-webhook-server';
 import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
 import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
 import * as yaml from 'js-yaml';
@@ -76,6 +80,13 @@ import {
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
+import {
+	acquireCueEngineLock,
+	releaseCueEngineLock,
+	touchCueEngineLock,
+	CUE_ENGINE_LOCK_HEARTBEAT_MS,
+	type CueEngineRunnerMode,
+} from './cue-engine-lock';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -92,6 +103,8 @@ export interface CueEngineDeps {
 		action?: CueSubscription['action'];
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
+		/** Aborted when the run is stopped; see `CueRunManagerDeps.onCueRun`. */
+		signal?: AbortSignal;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -123,7 +136,71 @@ export interface CueEngineDeps {
 	 * an app restart. Omit (tests) to prune with the default window.
 	 */
 	getCueHistoryRetentionDays?: () => unknown;
+	/**
+	 * Which kind of process this engine instance runs in - `'desktop'`
+	 * (default, every existing caller) or `'standalone'` (the headless
+	 * `maestro-cli cue engine` runner). Stamped onto the cross-process lock
+	 * (`cue-engine-lock.ts`) so `start()` can refuse to run a second engine
+	 * over the same data directory and a lock conflict message can say WHICH
+	 * kind of process is already running.
+	 */
+	runnerMode?: CueEngineRunnerMode;
+	/**
+	 * Called once when the lock heartbeat finds another engine has taken the
+	 * lock over, just before this engine stops itself. The standalone runner
+	 * uses it to fail `/healthz` (see `cue-engine-health.ts`) so a supervisor
+	 * learns why the engine went quiet without re-reading the lock file.
+	 */
+	onLockLost?: () => void;
+	/**
+	 * How many Cue child processes are still alive (agent, shell and maestro-cli
+	 * runs all register in `cue-process-lifecycle.ts`). The drain waits on it
+	 * after stopping runs, so the engine never exits with agents running.
+	 * Omit (desktop, tests) when the drain is not used.
+	 */
+	countLiveCueProcesses?: () => number;
+	/**
+	 * Kill every Cue process tree NOW through the shared stop ladder (immediate
+	 * and blocking: `stopAllProcesses`). The drain's last resort, and what a
+	 * second shutdown signal runs.
+	 */
+	killAllCueProcessesNow?: () => void;
+	/**
+	 * Told each drain phase with its log message (`drain`). The standalone
+	 * runner forwards it to its health object, which reports it to systemd as
+	 * STATUS=. Metadata only: counts and phase names, no run content.
+	 */
+	onDrainPhase?: (phase: CueDrainPhase, message: string) => void;
 }
+
+/** One phase of `CueEngine.drain`, as logged (`engineDrain` payload). */
+export type CueDrainPhase =
+	| 'disarmed'
+	| 'waiting'
+	| 'stopping'
+	| 'persisted'
+	| 'finished'
+	| 'forced';
+
+/** What `CueEngine.drain` did. */
+export interface CueDrainReport {
+	/** True when `forceStop()` (a second signal) cut the drain short. */
+	forced: boolean;
+	/** Runs that finished on their own during the drain. */
+	completed: number;
+	/** Runs stopped through the stop ladder (timeout or force); recorded as `stopped`. */
+	stopped: number;
+	/** Queue entries persisted for the next start (deferred triggers and successors included). */
+	persistedQueue: number;
+	/** Fan-ins still waiting on sources when the engine stopped. */
+	partialFanIns: number;
+	durationMs: number;
+}
+
+/** After stopping runs, how long the drain waits for their processes beyond the ladder's own grace. */
+const DRAIN_PROCESS_EXIT_MARGIN_MS = 2_000;
+/** Poll period while waiting for processes to exit (they do not report exit to the engine). */
+const DRAIN_PROCESS_POLL_MS = 100;
 
 /**
  * Granularity the Conductor level accrues in. Matches Auto Run's 60s progress
@@ -148,10 +225,18 @@ function deriveCueTaskKind(
 
 export class CueEngine {
 	private enabled = false;
+	/** The drain in progress, if any (see `drain`). */
+	private drainInProgress: Promise<CueDrainReport> | null = null;
+	/** Cuts the drain in progress short (see `forceStop`). */
+	private forceDrain: (() => void) | null = null;
+	/** `forceStop()` arrived with no drain running: the drain it starts is forced from the outset. */
+	private forceNextDrain = false;
 	/** Set to 'system-boot' while the engine is running after a system-boot or
 	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
 	 * sessions that arrive after start() (the common case at boot). */
 	private startReason: 'system-boot' | null = null;
+	/** Refreshes the cross-process lock's heartbeat while the engine runs. */
+	private lockHeartbeat: ReturnType<typeof setInterval> | null = null;
 	private activityLog: CueActivityLog = createCueActivityLog();
 	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
@@ -165,6 +250,8 @@ export class CueEngine {
 	private cleanupService: CueCleanupService;
 	private metrics: CueMetricsCollector = createCueMetrics();
 	private queuePersistence: CueQueuePersistence;
+	/** Durable fan-in progress; standalone runner only (see cue-fan-in-persistence.ts). */
+	private fanInPersistence: CueFanInPersistence | undefined;
 	private deps: CueEngineDeps;
 	/**
 	 * Per-`projectRoot` chain of pending YAML mutations. `setSubscriptionEnabled`
@@ -250,6 +337,13 @@ export class CueEngine {
 				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
 			},
 			knownSessionIds: () => new Set(deps.getSessions().map((s) => s.id)),
+			knownSubscriptionNames: () => {
+				const names = new Set<string>();
+				for (const state of this.registry.snapshot().values()) {
+					for (const sub of state.config.subscriptions) names.add(sub.name);
+				}
+				return names;
+			},
 		});
 
 		this.runManager = createCueRunManager({
@@ -355,7 +449,12 @@ export class CueEngine {
 			// Phase 01: gate cue_events stats lineage writes on the Encore flag.
 			getUsageStatsEnabled: deps.getUsageStatsEnabled,
 		});
+		this.fanInPersistence =
+			deps.runnerMode === 'standalone'
+				? createCueFanInPersistence({ onLog: meteredOnLog })
+				: undefined;
 		this.fanInTracker = createCueFanInTracker({
+			persistence: this.fanInPersistence,
 			onLog: meteredOnLog,
 			getSessions: deps.getSessions,
 			dispatchSubscription: (
@@ -530,6 +629,12 @@ export class CueEngine {
 			onFailure: (payload) => {
 				this.meteredOnLog('warn', '[CUE] Heartbeat write failing', payload);
 			},
+			// Standalone only: no Electron powerMonitor 'resume' there, so a
+			// late tick is the wake signal. The desktop already reconciles on
+			// resume and must not do it twice.
+			...(deps.runnerMode === 'standalone'
+				? { onWallClockGap: () => this.reconcileAfterWake() }
+				: {}),
 		});
 		this.recoveryService = createCueRecoveryService({
 			onLog: meteredOnLog,
@@ -548,6 +653,7 @@ export class CueEngine {
 			onDispatch: (sessionId, sub, event) => {
 				this.dispatchService.dispatchSubscription(sessionId, sub, event, sessionId);
 			},
+			firedRecord: this.registry,
 			getCueHistoryRetentionDays: deps.getCueHistoryRetentionDays,
 		});
 	}
@@ -568,10 +674,29 @@ export class CueEngine {
 	start(reason: SessionInitReason = 'user-toggle'): void {
 		if (this.enabled) return;
 
-		const initResult = this.recoveryService.init();
-		if (!initResult.ok) {
+		// Cross-process guard (cue-engine-lock.ts): refuse to start a second
+		// engine loop over the same data directory - a standalone
+		// `maestro-cli cue engine` runner and this desktop instance (or two
+		// standalone runners) dispatching the SAME subscriptions would
+		// double-fire every trigger. Logged and returned, not thrown, to match
+		// every other early-return failure path in this method (the DB-init
+		// failure right below does the same) - existing callers (boot,
+		// `cue:enable`) already treat a no-op start as "try again later."
+		const lock = acquireCueEngineLock(this.deps.runnerMode ?? 'desktop');
+		if (!lock.acquired) {
+			this.meteredOnLog(
+				'error',
+				`[CUE] Refusing to start: another Cue engine (${lock.heldBy.mode}, pid ${lock.heldBy.pid}) already holds the lock for this data directory. Stop it first, or this instance will exit without starting.`
+			);
 			return;
 		}
+
+		const initResult = this.recoveryService.init();
+		if (!initResult.ok) {
+			releaseCueEngineLock();
+			return;
+		}
+		this.startLockHeartbeat();
 
 		// Rehydrate the activity log from sqlite so the Cue Modal shows recent
 		// runs after an app restart instead of starting blank. Must run after
@@ -592,6 +717,12 @@ export class CueEngine {
 			type: 'engineStarted',
 		} satisfies CueLogPayload);
 
+		// Snapshot what a PREVIOUS run left in the queue before any session
+		// initializes: initSession can enqueue this boot's own app.startup or
+		// initial heartbeat behind a busy slot, and that enqueue persists a row
+		// the restore below would otherwise run a second time.
+		const persistedBeforeBoot = this.queuePersistence.persistedIds();
+
 		const sessions = this.deps.getSessions();
 		for (const session of sessions) {
 			this.sessionRuntimeService.initSession(session, { reason });
@@ -604,7 +735,7 @@ export class CueEngine {
 		// The prior persistId is discarded via remove() inside the restore
 		// helper's session-missing drop path (if applicable), or is discarded
 		// implicitly on re-enqueue since we never reuse the old id.
-		const restored = this.queuePersistence.restoreAll();
+		const restored = this.queuePersistence.restoreAll(persistedBeforeBoot);
 		for (const [sessionId, entries] of restored) {
 			for (const entry of entries) {
 				// Remove the persisted row immediately - runManager.execute will
@@ -634,13 +765,22 @@ export class CueEngine {
 					// chain root in stats. Roots and rows persisted before
 					// usageStats was enabled come back as undefined.
 					entry.chainRootId,
-					entry.parentEventId
+					entry.parentEventId,
+					undefined,
+					// Work a drain deferred is not buffered overflow: restore all of it.
+					entry.drainedAt !== undefined
 				);
 			}
 		}
 
-		// Detect sleep gap from previous heartbeat
-		this.recoveryService.detectSleepAndReconcile();
+		// Partial fan-ins a previous run left on disk (standalone only). After
+		// sessions init, so the subscriptions they belong to can be looked up.
+		this.restoreFanInProgress();
+
+		// Detect the gap since the previous run's last heartbeat. Heartbeat
+		// subscriptions are skipped: each one already fired as its session
+		// initialized above, and a catch-up would run it twice in a row.
+		this.recoveryService.detectSleepAndReconcile({ atEngineStart: true });
 
 		// Start heartbeat writer (30s interval)
 		this.heartbeat.start();
@@ -652,6 +792,14 @@ export class CueEngine {
 
 		this.enabled = false;
 		this.startReason = null;
+		if (this.lockHeartbeat) {
+			clearInterval(this.lockHeartbeat);
+			this.lockHeartbeat = null;
+		}
+		// Release the cross-process lock acquired in start() so a standalone
+		// runner (or this same process restarting the engine) can acquire it.
+		// No-op if this process doesn't hold it - see cue-engine-lock.ts.
+		releaseCueEngineLock();
 		this.sessionRuntimeService.clearAll();
 		// Clear startup dedup keys so that re-enabling Cue fires app.startup
 		// subscriptions again for the new engine cycle.
@@ -673,8 +821,267 @@ export class CueEngine {
 		} satisfies CueLogPayload);
 	}
 
+	/**
+	 * Rebuild partial fan-ins from `cue_fan_in_state`, judged against the
+	 * configs just loaded (see `CueFanInTracker.restore`).
+	 */
+	private restoreFanInProgress(): void {
+		if (!this.fanInPersistence) return;
+		const rows = this.fanInPersistence.loadAll();
+		if (rows.length === 0) return;
+		const result = this.fanInTracker.restore(rows, (ownerSessionId, subscriptionName) => {
+			const state = this.registry.get(ownerSessionId);
+			const sub = state?.config.subscriptions.find(
+				(s) => s.name === subscriptionName && s.event === 'agent.completed' && s.enabled !== false
+			);
+			if (!state || !sub) return null;
+			return { sub, settings: state.config.settings ?? {}, sources: getMatchingSources(sub) };
+		});
+		this.meteredOnLog(
+			'cue',
+			`[CUE] Restored fan-in progress: ${result.resumed} waiting, ${result.completed} complete, ${result.expired} timed out while down, ${result.invalid} dropped`
+		);
+	}
+
+	/**
+	 * Stop gracefully: accept no new work, let the runs in flight finish for up
+	 * to `timeoutMs`, stop what is left through the stop ladder (recorded as
+	 * `stopped`, which never chains), persist every queued event and every
+	 * successor for the next start, then release the lock and close the
+	 * database. The standalone runner calls it on SIGTERM / SIGINT; the
+	 * desktop keeps using `stop()`, which is unchanged.
+	 *
+	 * Phases, one `engineDrain` log line each:
+	 *  (a) `disarmed` - every trigger source and yaml watcher stopped, the run
+	 *      manager gated: anything dispatched from now on (a late trigger, the
+	 *      successor of a run that finishes, a fan-in completing) is queued
+	 *      and persisted, never started, and the queue never drains.
+	 *  (b) `waiting`  - until no run is active and every source has settled
+	 *      the emits it already acknowledged, or the timeout.
+	 *  (c) `stopping` - the runs still active are stopped through the ladder;
+	 *      then wait for their processes (ladder grace plus a margin) and
+	 *      kill whatever is left immediately.
+	 *  (d) `persisted` - the queue is re-persisted with a drain stamp, which
+	 *      exempts it from the restore-time stale drop (cue-queue-persistence).
+	 *  (e) `finished` - memory released WITHOUT deleting persisted rows (unlike
+	 *      `stop()`), lock released, database closed.
+	 *
+	 * Calling it again returns the same promise. `forceStop()` cuts it short.
+	 */
+	drain(options: { timeoutMs: number }): Promise<CueDrainReport> {
+		if (this.drainInProgress) return this.drainInProgress;
+		if (!this.enabled) {
+			return Promise.resolve({
+				forced: false,
+				completed: 0,
+				stopped: 0,
+				persistedQueue: 0,
+				partialFanIns: 0,
+				durationMs: 0,
+			});
+		}
+		this.drainInProgress = this.runDrain(Math.max(0, options.timeoutMs)).finally(() => {
+			this.drainInProgress = null;
+			this.forceDrain = null;
+		});
+		return this.drainInProgress;
+	}
+
+	/**
+	 * A second shutdown signal: stop every run and kill every Cue process tree
+	 * immediately, persist the queue, release the lock and close the database.
+	 * Starts a drain first when none is running, so the same steps apply.
+	 */
+	forceStop(): void {
+		if (!this.drainInProgress) {
+			if (!this.enabled) return;
+			this.forceNextDrain = true;
+			void this.drain({ timeoutMs: 0 });
+			return;
+		}
+		this.forceDrain?.();
+	}
+
+	private logDrain(phase: CueDrainPhase, message: string, count?: number): void {
+		this.meteredOnLog('cue', `[CUE] Drain: ${message}`, {
+			type: 'engineDrain',
+			drainPhase: phase,
+			...(count !== undefined ? { count } : {}),
+		} satisfies CueLogPayload);
+		try {
+			this.deps.onDrainPhase?.(phase, message);
+		} catch {
+			// A reporting hook must not break the drain.
+		}
+	}
+
+	private async runDrain(timeoutMs: number): Promise<CueDrainReport> {
+		const startedAt = Date.now();
+		let forced = this.forceNextDrain;
+		this.forceNextDrain = false;
+		const forcedSignal = new Promise<'forced'>((resolve) => {
+			this.forceDrain = () => {
+				forced = true;
+				resolve('forced');
+			};
+		});
+		const timers: Array<ReturnType<typeof setTimeout>> = [];
+		const after = (ms: number) =>
+			new Promise<'timeout'>((resolve) => {
+				const timer = setTimeout(() => resolve('timeout'), ms);
+				timer.unref?.();
+				timers.push(timer);
+			});
+		const queuedCount = () =>
+			[...this.runManager.getQueueStatus().values()].reduce((a, b) => a + b, 0);
+
+		// (a) Accept no new work. The webhook listener stays bound until the
+		// drain ends, answering 503 with Retry-After instead of refusing the
+		// connection (released in the `finally` below, forced or not).
+		const releaseWebhookListener = holdCueWebhookListener();
+		this.runManager.setDraining(true);
+		const disarmed = this.sessionRuntimeService.disarmAll();
+		const inFlight = this.runManager.getActiveRuns().length;
+		this.logDrain(
+			'disarmed',
+			`stopped ${disarmed} trigger source(s); ${inFlight} run(s) in flight, ${queuedCount()} queued event(s) held for the next start`,
+			inFlight
+		);
+
+		try {
+			// (b) Let the runs in flight finish.
+			if (timeoutMs > 0) {
+				this.logDrain(
+					'waiting',
+					`waiting up to ${Math.round(timeoutMs / 1000)}s for ${inFlight} run(s) to finish`,
+					inFlight
+				);
+				await Promise.race([
+					Promise.all([this.runManager.whenIdle(), this.sessionRuntimeService.settleAll()]),
+					after(timeoutMs),
+					forcedSignal,
+				]);
+			}
+
+			// (c) Stop what is left through the stop ladder.
+			const remaining = this.runManager.getActiveRuns().map((run) => run.runId);
+			if (remaining.length > 0 || forced) {
+				this.logDrain(
+					forced ? 'forced' : 'stopping',
+					forced
+						? `second signal: stopping ${remaining.length} run(s) and killing every Cue process now`
+						: `timeout: stopping ${remaining.length} run(s) through the stop ladder`,
+					remaining.length
+				);
+			}
+			for (const runId of remaining) this.runManager.stopRun(runId);
+			const live = this.deps.countLiveCueProcesses ?? (() => 0);
+			// A stopped run whose launch had not spawned yet (executor load,
+			// spawn spec, SSH probe) has no process to count, but it is still
+			// settling: keep the lock until its launch returns. Its signal is
+			// aborted, so it returns `stopped` without spawning. A launch still
+			// pending at the deadline (or after a second signal) cannot spawn
+			// either; it re-checks the signal right before spawning.
+			const busy = () => live() > 0 || this.runManager.getUnsettledStoppedRunCount() > 0;
+			if (!forced && busy()) {
+				const deadline = Date.now() + BACKGROUND_STOP_GRACE_MS + DRAIN_PROCESS_EXIT_MARGIN_MS;
+				while (busy() && Date.now() < deadline && !forced) {
+					await Promise.race([after(DRAIN_PROCESS_POLL_MS), forcedSignal]);
+				}
+			}
+			if (forced || live() > 0) this.deps.killAllCueProcessesNow?.();
+
+			// (d) Persist what must survive.
+			const persisted = this.runManager.persistQueueForRestart(Date.now());
+			const partialFanIns = this.fanInTracker.getActiveTrackerKeys().length;
+			this.logDrain(
+				'persisted',
+				`${persisted} queued event(s) persisted for the next start` +
+					(partialFanIns > 0
+						? `; ${partialFanIns} partial fan-in(s) ${this.fanInPersistence ? 'kept for the next start' : 'discarded'}`
+						: ''),
+				persisted
+			);
+
+			// (e) Release everything without deleting what was persisted.
+			this.finishDrain();
+			const report: CueDrainReport = {
+				forced,
+				completed: Math.max(0, inFlight - remaining.length),
+				stopped: remaining.length,
+				persistedQueue: persisted,
+				partialFanIns,
+				durationMs: Date.now() - startedAt,
+			};
+			this.logDrain(
+				'finished',
+				`${report.completed} run(s) finished, ${report.stopped} stopped, ${report.persistedQueue} queued event(s) persisted (${(report.durationMs / 1000).toFixed(1)}s${forced ? ', forced' : ''})`,
+				report.completed
+			);
+			return report;
+		} finally {
+			for (const timer of timers) clearTimeout(timer);
+			releaseWebhookListener();
+		}
+	}
+
+	/**
+	 * The drain's teardown: what `stop()` does, minus the two steps that delete
+	 * persisted state. Memory is released first, so the session teardown's
+	 * `clearQueue` / `clearFanInState` find nothing to delete.
+	 */
+	private finishDrain(): void {
+		this.enabled = false;
+		this.startReason = null;
+		if (this.lockHeartbeat) {
+			clearInterval(this.lockHeartbeat);
+			this.lockHeartbeat = null;
+		}
+		this.runManager.discardInMemory();
+		this.runManager.setDraining(false);
+		// Persisted fan-in progress stays on disk for the next start.
+		this.fanInTracker.forgetInMemory();
+		this.sessionRuntimeService.clearAll();
+		this.sessionRuntimeService.clearAllStartupKeys();
+		releaseCueEngineLock();
+		this.heartbeat.stop();
+		this.recoveryService.shutdown();
+		this.metrics.reset();
+		this.meteredOnLog('cue', '[CUE] Engine stopped', {
+			type: 'engineStopped',
+		} satisfies CueLogPayload);
+	}
+
+	/**
+	 * Keep the cross-process lock fresh. A lock whose heartbeat stops is treated
+	 * as stale (that is what protects against PID reuse), so a running engine
+	 * must keep beating. If another engine has taken the lock over - this
+	 * process was suspended past the stale window - stop rather than fire
+	 * every trigger a second time beside it.
+	 */
+	private startLockHeartbeat(): void {
+		const mode = this.deps.runnerMode ?? 'desktop';
+		this.lockHeartbeat = setInterval(() => {
+			if (touchCueEngineLock(mode) === 'lost') {
+				this.meteredOnLog(
+					'error',
+					'[CUE] Another Cue engine took over the lock for this data directory - stopping this one to avoid firing every trigger twice.'
+				);
+				this.deps.onLockLost?.();
+				// A drain in progress must not fall through to stop(), which
+				// would delete the queue it is deferring; cut it short instead.
+				if (this.drainInProgress) this.forceStop();
+				else this.stop();
+			}
+		}, CUE_ENGINE_LOCK_HEARTBEAT_MS);
+		// Never keep a process alive just to beat.
+		this.lockHeartbeat.unref?.();
+	}
+
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */
 	refreshSession(sessionId: string, projectRoot: string): void {
+		// A drain has disarmed every trigger; a yaml change must not re-arm one.
+		if (this.drainInProgress) return;
 		// When the engine started with 'system-boot', sessions that arrive via
 		// refreshSession (the typical path at boot, since getSessions() is empty
 		// when start() fires) should still get their app.startup triggers.
@@ -916,10 +1323,14 @@ export class CueEngine {
 	 * check short-circuits without firing duplicate catch-ups. Multiple resume
 	 * events from the same wake (lid + display + monitor) are absorbed.
 	 *
-	 * No-op when the engine is disabled.
+	 * Callers: the desktop's powerMonitor 'resume' handler, and in the
+	 * standalone engine the heartbeat's wall-clock gap check, which runs before
+	 * that tick writes `last_seen` (see `CueHeartbeatHooks.onWallClockGap`).
+	 *
+	 * No-op when the engine is disabled or draining.
 	 */
 	reconcileAfterWake(): void {
-		if (!this.enabled) return;
+		if (!this.enabled || this.drainInProgress) return;
 
 		this.heartbeat.stop();
 		try {
@@ -965,7 +1376,7 @@ export class CueEngine {
 	 * No-op when the engine is disabled.
 	 */
 	handleTimeZoneChange(previousZone: string, zone: string): void {
-		if (!this.enabled) return;
+		if (!this.enabled || this.drainInProgress) return;
 
 		this.meteredOnLog(
 			'cue',
@@ -1219,6 +1630,8 @@ export class CueEngine {
 		promptOverride?: string,
 		sourceAgentId?: string
 	): boolean {
+		// A draining engine accepts no new work.
+		if (this.drainInProgress) return false;
 		type OwnedSub = {
 			ownerSessionId: string;
 			state: SessionState;

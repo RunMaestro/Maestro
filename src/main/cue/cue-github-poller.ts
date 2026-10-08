@@ -8,10 +8,10 @@
  */
 
 import { execFile as cpExecFile } from 'child_process';
-import { createCueEvent, type CueEvent } from './cue-types';
+import type { CueEvent } from './cue-types';
+import { isFinalEmitOutcome, type CueEmitOutcome } from './triggers/cue-guarded-emit';
 import {
 	isCueDbReady,
-	isGitHubItemSeen,
 	markGitHubItemSeen,
 	hasAnyGitHubSeen,
 	pruneGitHubSeen,
@@ -23,20 +23,37 @@ import {
 import type { CueGitHubLabelTarget } from '../../shared/cue';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
 import { ghErrorHaystack, isGitHubAuthError } from '../utils/ghErrors';
+import { buildGhEnv, redactGhTokens } from './cue-gh-token';
 
 // Re-exported: the auth predicate moved to utils/ghErrors so Send Feedback can
 // share it, and existing importers still reach it here.
 export { isGitHubAuthError };
 import { captureException } from '../utils/sentry';
 import type { CueLogPayload } from '../../shared/cue-log-types';
+import {
+	buildGitHubItemEvent,
+	buildGitHubLabelEvent,
+	decideGitHubItem,
+	DEFAULT_MAX_NOTIFICATIONS,
+	githubItemKey,
+	isNewerRevision,
+	labelEventMatchesFilters,
+	claimLabelEventFiredByOtherSource,
+	claimLabelEventInFlightForOtherSource,
+	labelEventHandledBySource,
+	reserveGitHubChange,
+	reserveLabelEvent,
+	type GitHubChangeReservation,
+	type GitHubComment,
+	type GitHubItemEventType,
+	type GitHubItemSnapshot,
+	type GitHubLabelEventSnapshot,
+	type GitHubLabelFilters,
+} from './cue-github-items';
 
-/**
- * Default per-item re-trigger cap when `retrigger_on_comments` is enabled but
- * `max_notifications` is omitted. Counts re-fires only - the initial discovery
- * fire is always allowed. Set so a busy PR can't flood Cue indefinitely while
- * leaving plenty of room for legitimate back-and-forth between agents.
- */
-export const DEFAULT_MAX_NOTIFICATIONS = 10;
+export type { GitHubComment } from './cue-github-items';
+
+export { DEFAULT_MAX_NOTIFICATIONS } from './cue-github-items';
 
 /**
  * Sentinel value for `max_notifications` meaning "no cap". Chosen over `null`
@@ -94,12 +111,44 @@ interface RawGitHubComment {
 	url?: string;
 }
 
-/** Normalized comment shape attached to re-trigger event payloads. */
-export interface GitHubComment {
-	author: string;
-	body: string;
-	createdAt: string;
-	url: string;
+/** Normalize one item from `gh pr list` / `gh issue list` JSON. */
+function snapshotFromGh(item: any): GitHubItemSnapshot {
+	return {
+		number: item.number,
+		title: item.title,
+		author: item.author?.login ?? 'unknown',
+		url: item.url,
+		body: item.body ?? '',
+		state: item.state?.toLowerCase() ?? 'open',
+		labels: (item.labels ?? []).map((l: { name: string }) => l.name),
+		createdAt: item.createdAt ?? '',
+		updatedAt: item.updatedAt ?? '',
+		isDraft: item.isDraft ?? false,
+		headRef: item.headRefName ?? '',
+		baseRef: item.baseRefName ?? '',
+		mergedAt: item.mergedAt ?? '',
+		assignees: (item.assignees ?? []).map((a: { login: string }) => a.login),
+	};
+}
+
+/** Normalize one label add from the issue-events feed. */
+function labelSnapshotFromFeed(ev: RawLabelEvent): GitHubLabelEventSnapshot {
+	return {
+		label: ev.label,
+		actor: ev.actor,
+		labeledAt: ev.created_at,
+		number: ev.number,
+		title: ev.title,
+		url: ev.url,
+		body: ev.body ?? '',
+		state: ev.state ?? 'open',
+		labels: ev.labels ?? [],
+		isPr: ev.is_pr,
+		merged: ev.merged,
+		author: ev.author,
+		itemCreatedAt: ev.item_created_at ?? '',
+		itemUpdatedAt: ev.item_updated_at ?? '',
+	};
 }
 
 /**
@@ -166,15 +215,25 @@ export function isGitHubConnectivityError(err: unknown): boolean {
 /** Expanded env so packaged Electron can find gh in /opt/homebrew/bin, /usr/local/bin, etc. */
 const ghEnv = getExpandedEnv();
 
+/**
+ * Run gh with the GitHub token from a secret file or the environment
+ * (`buildGhEnv`), resolved per call so a rotated file is picked up. A failure
+ * is rethrown with every token value scrubbed from its message and output, so
+ * nothing downstream (logs, Sentry, the Cue database) can carry one.
+ * `onTokenProblems` receives the unusable token files, by name and path.
+ */
 function execFileAsync(
 	cmd: string,
 	args: string[],
-	opts?: { cwd?: string; timeout?: number }
+	opts?: { cwd?: string; timeout?: number },
+	onTokenProblems?: (problems: string[]) => void
 ): Promise<{ stdout: string; stderr: string }> {
+	const { env, tokens, problems } = buildGhEnv(ghEnv);
+	onTokenProblems?.(problems);
 	return new Promise((resolve, reject) => {
-		cpExecFile(cmd, args, { ...opts, env: ghEnv }, (error, stdout, stderr) => {
+		cpExecFile(cmd, args, { ...opts, env }, (error, stdout, stderr) => {
 			if (error) {
-				reject(error);
+				reject(scrubGhError(error, tokens));
 			} else {
 				resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
 			}
@@ -182,12 +241,30 @@ function execFileAsync(
 	});
 }
 
+function scrubGhError(error: Error, tokens: string[]): Error {
+	if (tokens.length === 0) return error;
+	const fields = error as Error & { stdout?: unknown; stderr?: unknown; cmd?: unknown };
+	error.message = redactGhTokens(error.message, tokens);
+	if (error.stack) error.stack = redactGhTokens(error.stack, tokens);
+	for (const key of ['stdout', 'stderr', 'cmd'] as const) {
+		const value = fields[key];
+		if (value !== undefined && value !== null) fields[key] = redactGhTokens(String(value), tokens);
+	}
+	return error;
+}
+
 export interface CueGitHubPollerConfig {
 	eventType: 'github.pull_request' | 'github.issue' | 'github.label';
 	repo?: string;
 	pollMinutes: number;
 	projectRoot: string;
-	onEvent: (event: CueEvent) => void;
+	/**
+	 * Hand an event on, and report how it ended by calling `onOutcome` exactly
+	 * once (possibly later, after SusFactor). The poller writes its
+	 * `cue_github_seen` record only on a final outcome, so an item whose event
+	 * never reached the run manager is found again by the next poll.
+	 */
+	onEvent: (event: CueEvent, onOutcome: (outcome: CueEmitOutcome) => void) => void;
 	onLog: (level: string, message: string, data?: unknown) => void;
 	triggerName: string;
 	subscriptionId: string;
@@ -225,9 +302,10 @@ export interface CueGitHubPollerConfig {
 	 * immediate poll (in addition to the normal poll schedule). The caller
 	 * stores the handle so it can fire on system wake / user request without
 	 * re-spawning the poller. Calling `pollNow()` after the poller is stopped
-	 * is a no-op.
+	 * is a no-op. `getRepo()` is the repo the poller keys items by (the
+	 * configured one, or what `gh` auto-detected), or null until it is known.
 	 */
-	onReady?: (handle: { pollNow: () => void }) => void;
+	onReady?: (handle: { pollNow: () => void; getRepo: () => string | null }) => void;
 	/**
 	 * Optional gate: when this returns `false`, doPoll skips the HTTP fetch
 	 * to gh CLI. The 24h prune timer keeps running (cheap). Used by the
@@ -282,11 +360,29 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	const basePollMs = pollMinutes * 60 * 1000;
 	let currentPollMs = basePollMs;
 
+	// A token secret file that exists but cannot be used is logged once per
+	// change, not once per gh call.
+	let lastTokenProblems = '';
+	function reportTokenProblems(problems: string[]): void {
+		const joined = problems.join('; ');
+		if (joined === lastTokenProblems) return;
+		lastTokenProblems = joined;
+		if (joined) onLog('warn', `[CUE] "${triggerName}" cannot use the GitHub token: ${joined}`);
+	}
+
+	function runGh(
+		cmd: string,
+		args: string[],
+		opts?: { cwd?: string; timeout?: number }
+	): Promise<{ stdout: string; stderr: string }> {
+		return execFileAsync(cmd, args, opts, reportTokenProblems);
+	}
+
 	async function resolveGh(): Promise<string | null> {
 		if (ghCommand !== null) return ghCommand;
 		try {
 			const cmd = await resolveGhPath();
-			await execFileAsync(cmd, ['--version']);
+			await runGh(cmd, ['--version']);
 			ghCommand = cmd;
 		} catch (err) {
 			// `gh` not being installed is expected in some environments, so the
@@ -306,7 +402,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	async function resolveRepo(): Promise<string | null> {
 		if (resolvedRepo) return resolvedRepo;
 		try {
-			const { stdout } = await execFileAsync(
+			const { stdout } = await runGh(
 				ghCommand!,
 				['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
 				{ cwd: projectRoot, timeout: 10000 }
@@ -329,7 +425,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				const message = err instanceof Error ? err.message : String(err);
 				onLog(
 					'warn',
-					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect, or provide GH_TOKEN as a secret file or environment variable: ${message}`
 				);
 				return null;
 			}
@@ -366,7 +462,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		sinceIso: string | null
 	): Promise<GitHubComment[] | null> {
 		try {
-			const { stdout } = await execFileAsync(
+			const { stdout } = await runGh(
 				ghCommand!,
 				[itemType, 'view', String(itemNumber), '--repo', repo, '--json', 'comments'],
 				{ cwd: projectRoot, timeout: 30000 }
@@ -400,10 +496,98 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
+	/**
+	 * Run one pull request or issue through the shared decision and fire what
+	 * it calls for. The webhook path makes the same decision against the same
+	 * rows, so whichever source sees a change first fires it and the other
+	 * skips it.
+	 */
+	async function processItem(
+		itemEventType: GitHubItemEventType,
+		repo: string,
+		item: GitHubItemSnapshot,
+		isFirstRun: boolean
+	): Promise<void> {
+		const itemKey = githubItemKey(itemEventType, repo, item.number);
+		const updatedAt = item.updatedAt;
+		const decision = decideGitHubItem({
+			subscriptionId,
+			itemKey,
+			updatedAt,
+			isFirstRun,
+			retrigger,
+			cap,
+		});
+
+		if (decision.kind === 'seed') {
+			markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
+			return;
+		}
+		if (decision.kind === 'skip') return;
+
+		if (decision.kind === 'retrigger') {
+			// Held from the decision on, so a webhook cannot fire the same change
+			// while the comments load or the event is scored.
+			const reservation = reserveGitHubChange(subscriptionId, itemKey, () =>
+				recordGitHubRetrigger(subscriptionId, itemKey, updatedAt)
+			);
+			let newComments: GitHubComment[] | null;
+			try {
+				newComments = await fetchNewComments(
+					itemEventType === 'github.pull_request' ? 'pr' : 'issue',
+					repo,
+					item.number,
+					decision.state.lastRevision
+				);
+			} catch (err) {
+				reservation.release();
+				throw err;
+			}
+			const current = getGitHubItemState(subscriptionId, itemKey);
+			if (
+				stopped ||
+				!current ||
+				!isNewerRevision(updatedAt, current.lastRevision) ||
+				current.fireCount >= cap
+			) {
+				reservation.release();
+				return;
+			}
+			fire(
+				buildGitHubItemEvent(itemEventType, triggerName, repo, item, {
+					retriggerCount: current.fireCount + 1,
+					newComments: newComments ?? [],
+				}),
+				reservation
+			);
+			return;
+		}
+
+		fire(
+			buildGitHubItemEvent(itemEventType, triggerName, repo, item, null),
+			reserveGitHubChange(subscriptionId, itemKey, () =>
+				markGitHubItemSeen(subscriptionId, itemKey, updatedAt)
+			)
+		);
+	}
+
+	/** Emit, then record the change only once the event reached a final outcome. */
+	function fire(event: CueEvent, reservation: GitHubChangeReservation): void {
+		try {
+			onEvent(event, (outcome) => {
+				if (isFinalEmitOutcome(outcome)) reservation.commit();
+				else reservation.release();
+			});
+		} catch (err) {
+			reservation.release();
+			throw err;
+		}
+	}
+
 	async function pollPRs(repo: string): Promise<void> {
 		// For "merged" state, query closed PRs and filter by merge status client-side
 		const ghStateArg = stateFilter === 'merged' ? 'closed' : stateFilter;
-		const { stdout } = await execFileAsync(
+		const { stdout } = await runGh(
 			ghCommand!,
 			[
 				'pr',
@@ -437,74 +621,8 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 		for (const item of items) {
 			if (stopped) return;
-			const itemKey = `pr:${repo}:${item.number}`;
-			const updatedAt: string = item.updatedAt ?? '';
-
-			if (isFirstRun) {
-				markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
-				continue;
-			}
-
-			if (isGitHubItemSeen(subscriptionId, itemKey)) {
-				if (!retrigger) continue;
-				const state = getGitHubItemState(subscriptionId, itemKey);
-				if (!state) continue;
-				// No new activity since last seen → nothing to do.
-				if (!updatedAt || state.lastRevision === updatedAt) continue;
-				// Cap reached: freeze state so raising the cap later resumes
-				// from the right point. Don't update last_revision.
-				if (state.fireCount >= cap) continue;
-
-				const newComments = await fetchNewComments('pr', repo, item.number, state.lastRevision);
-				if (stopped) return;
-				const event = createCueEvent('github.pull_request', triggerName, {
-					type: 'pull_request',
-					number: item.number,
-					title: item.title,
-					author: item.author?.login ?? 'unknown',
-					url: item.url,
-					body: (item.body ?? '').slice(0, 5000),
-					state: item.mergedAt ? 'merged' : (item.state?.toLowerCase() ?? 'open'),
-					draft: item.isDraft ?? false,
-					labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
-					head_branch: item.headRefName ?? '',
-					base_branch: item.baseRefName ?? '',
-					repo,
-					created_at: item.createdAt ?? '',
-					updated_at: updatedAt,
-					merged_at: item.mergedAt ?? '',
-					is_retrigger: true,
-					retrigger_count: state.fireCount + 1,
-					new_comments: newComments ?? [],
-				});
-				onEvent(event);
-				recordGitHubRetrigger(subscriptionId, itemKey, updatedAt);
-				continue;
-			}
-
-			const event = createCueEvent('github.pull_request', triggerName, {
-				type: 'pull_request',
-				number: item.number,
-				title: item.title,
-				author: item.author?.login ?? 'unknown',
-				url: item.url,
-				body: (item.body ?? '').slice(0, 5000),
-				state: item.mergedAt ? 'merged' : (item.state?.toLowerCase() ?? 'open'),
-				draft: item.isDraft ?? false,
-				labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
-				head_branch: item.headRefName ?? '',
-				base_branch: item.baseRefName ?? '',
-				repo,
-				created_at: item.createdAt ?? '',
-				updated_at: updatedAt,
-				merged_at: item.mergedAt ?? '',
-				is_retrigger: false,
-				retrigger_count: 0,
-				new_comments: [],
-			});
-
-			onEvent(event);
-			markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
+			await processItem('github.pull_request', repo, snapshotFromGh(item), isFirstRun);
+			if (stopped) return;
 		}
 
 		if (isFirstRun) {
@@ -513,7 +631,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	}
 
 	async function pollIssues(repo: string): Promise<void> {
-		const { stdout } = await execFileAsync(
+		const { stdout } = await runGh(
 			ghCommand!,
 			[
 				'issue',
@@ -541,65 +659,8 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 		for (const item of items) {
 			if (stopped) return;
-			const itemKey = `issue:${repo}:${item.number}`;
-			const updatedAt: string = item.updatedAt ?? '';
-
-			if (isFirstRun) {
-				markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
-				continue;
-			}
-
-			if (isGitHubItemSeen(subscriptionId, itemKey)) {
-				if (!retrigger) continue;
-				const state = getGitHubItemState(subscriptionId, itemKey);
-				if (!state) continue;
-				if (!updatedAt || state.lastRevision === updatedAt) continue;
-				if (state.fireCount >= cap) continue;
-
-				const newComments = await fetchNewComments('issue', repo, item.number, state.lastRevision);
-				if (stopped) return;
-				const event = createCueEvent('github.issue', triggerName, {
-					type: 'issue',
-					number: item.number,
-					title: item.title,
-					author: item.author?.login ?? 'unknown',
-					url: item.url,
-					body: (item.body ?? '').slice(0, 5000),
-					state: item.state?.toLowerCase() ?? 'open',
-					labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
-					assignees: (item.assignees ?? []).map((a: { login: string }) => a.login).join(','),
-					repo,
-					created_at: item.createdAt ?? '',
-					updated_at: updatedAt,
-					is_retrigger: true,
-					retrigger_count: state.fireCount + 1,
-					new_comments: newComments ?? [],
-				});
-				onEvent(event);
-				recordGitHubRetrigger(subscriptionId, itemKey, updatedAt);
-				continue;
-			}
-
-			const event = createCueEvent('github.issue', triggerName, {
-				type: 'issue',
-				number: item.number,
-				title: item.title,
-				author: item.author?.login ?? 'unknown',
-				url: item.url,
-				body: (item.body ?? '').slice(0, 5000),
-				state: item.state?.toLowerCase() ?? 'open',
-				labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
-				assignees: (item.assignees ?? []).map((a: { login: string }) => a.login).join(','),
-				repo,
-				created_at: item.createdAt ?? '',
-				updated_at: updatedAt,
-				is_retrigger: false,
-				retrigger_count: 0,
-				new_comments: [],
-			});
-
-			onEvent(event);
-			markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
+			await processItem('github.issue', repo, snapshotFromGh(item), isFirstRun);
+			if (stopped) return;
 		}
 
 		if (isFirstRun) {
@@ -614,7 +675,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	 * reactions, and user objects we would immediately discard.
 	 */
 	async function fetchLabelEventPage(repo: string, page: number): Promise<RawLabelEvent[]> {
-		const { stdout } = await execFileAsync(
+		const { stdout } = await runGh(
 			ghCommand!,
 			[
 				'api',
@@ -651,18 +712,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
-	/** True when this label event matches the subscription's kind + label + state filters. */
-	function labelEventMatches(ev: RawLabelEvent): boolean {
-		if (labelTarget === 'pr' && !ev.is_pr) return false;
-		if (labelTarget === 'issue' && ev.is_pr) return false;
-		if (watchedLabels.size > 0 && !watchedLabels.has((ev.label ?? '').toLowerCase())) return false;
-		// `gh_state` is optional here (unlike the PR/issue pollers, which
-		// default to "open"): a label subscription with no explicit state
-		// should fire wherever the label lands.
-		if (!ghState || stateFilter === 'all') return true;
-		if (stateFilter === 'merged') return ev.is_pr && ev.merged;
-		return (ev.state ?? '').toLowerCase() === stateFilter;
-	}
+	const labelFilters: GitHubLabelFilters = { labelTarget, watchedLabels, ghState };
 
 	/**
 	 * Poll the repo-wide issue-events feed and fire for every `labeled` event
@@ -678,7 +728,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		const watermark = Number(watermarkState?.lastRevision ?? '');
 		const isFirstRun = watermarkState?.lastRevision == null || !Number.isFinite(watermark);
 
-		const collected: RawLabelEvent[] = [];
+		const collected = new Map<number, RawLabelEvent>();
 		let highestId = Number.isFinite(watermark) ? watermark : 0;
 		let reachedWatermark = false;
 
@@ -688,7 +738,9 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			for (const ev of events) {
 				if (typeof ev.id !== 'number') continue;
 				if (ev.id > highestId) highestId = ev.id;
-				if (!isFirstRun && ev.id > watermark) collected.push(ev);
+				// Keyed by id: the feed is offset-paged, so events that land
+				// mid-scan push the tail of one page onto the next.
+				if (!isFirstRun && ev.id > watermark) collected.set(ev.id, ev);
 			}
 			// The first page alone establishes the watermark on a first run, and
 			// a page that isn't full is the end of the feed either way.
@@ -720,41 +772,74 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 		// Oldest first so a batch of label adds reaches the agent in the order
 		// a human applied them.
-		collected.sort((a, b) => a.id - b.id);
+		const ordered = [...collected.values()].sort((a, b) => a.id - b.id);
 
-		for (const ev of collected) {
-			if (stopped) return;
-			if (!labelEventMatches(ev)) continue;
-			const event = createCueEvent('github.label', triggerName, {
-				type: ev.is_pr ? 'pull_request' : 'issue',
-				label: ev.label,
-				label_actor: ev.actor,
-				labeled_at: ev.created_at,
-				number: ev.number,
-				title: ev.title,
-				author: ev.author,
-				url: ev.url,
-				body: ev.body ?? '',
-				state: ev.is_pr && ev.merged ? 'merged' : (ev.state ?? 'open'),
-				labels: (ev.labels ?? []).join(','),
+		// Each add this poll fires, or leaves to a webhook firing it right now,
+		// with whether it reached a final outcome.
+		const pending: Array<{ id: number; settled: Promise<boolean> }> = [];
+		for (const raw of ordered) {
+			if (stopped) break;
+			const ev = labelSnapshotFromFeed(raw);
+			if (!labelEventMatchesFilters(ev, labelFilters)) continue;
+			// Fired by an earlier poll whose watermark did not get past it.
+			if (labelEventHandledBySource(subscriptionId, repo, ev, 'poll')) continue;
+			// A webhook may already have fired this add, or be firing it now.
+			if (claimLabelEventFiredByOtherSource(subscriptionId, repo, ev, 'poll')) continue;
+			const webhookInFlight = claimLabelEventInFlightForOtherSource(
+				subscriptionId,
 				repo,
-				created_at: ev.item_created_at ?? '',
-				updated_at: ev.item_updated_at ?? '',
-				is_retrigger: false,
-				retrigger_count: 0,
-				new_comments: [],
-			});
-			onEvent(event);
+				ev,
+				'poll'
+			);
+			if (webhookInFlight) {
+				pending.push({ id: raw.id, settled: webhookInFlight });
+				continue;
+			}
+			const reservation = reserveLabelEvent(subscriptionId, repo, ev, 'poll');
+			fire(buildGitHubLabelEvent(triggerName, repo, ev), reservation);
+			pending.push({ id: raw.id, settled: reservation.settled });
 		}
 
 		// Advance past everything scanned, matched or not: an event filtered out
-		// by kind/label must not be re-examined forever.
-		if (highestId > watermark) {
-			setGitHubItemRevision(subscriptionId, LABEL_WATERMARK_KEY, String(highestId));
+		// by kind/label must not be re-examined forever. But never past an add
+		// that did not reach the run manager: the watermark stays just below
+		// it, so the next poll (or the next start, after a crash) reads it
+		// again, and the adds above it that did fire are skipped by their rows.
+		let next = stopped ? watermark : highestId;
+		for (const { id, settled } of pending) {
+			if (!(await settled)) next = Math.min(next, id - 1);
+		}
+		if (next > watermark) {
+			setGitHubItemRevision(subscriptionId, LABEL_WATERMARK_KEY, String(next));
 		}
 	}
 
+	/**
+	 * One poll at a time. A webhook can ask for a poll (`pollNow`) while the
+	 * scheduled one is still running; two polls side by side could both read
+	 * the label watermark and fire the same adds. A request made during a poll
+	 * runs one more poll after it instead.
+	 */
+	let polling = false;
+	let pollRequested = false;
 	async function doPoll(): Promise<void> {
+		if (polling) {
+			pollRequested = true;
+			return;
+		}
+		polling = true;
+		try {
+			await pollOnce();
+		} finally {
+			polling = false;
+		}
+		if (pollRequested && !stopped) {
+			pollRequested = false;
+			await doPoll();
+		}
+	}
+
+	async function pollOnce(): Promise<void> {
 		if (stopped) return;
 		// Visibility-aware pause: skip the gh CLI fetch when inactive. The
 		// scheduleNextPoll loop keeps running so we resume cleanly when the
@@ -808,7 +893,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				// instead of filing a crash report on every tick (MAESTRO-KE).
 				onLog(
 					'warn',
-					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect, or provide GH_TOKEN as a secret file or environment variable: ${message}`
 				);
 			} else {
 				// Emit typed payload so the metric interceptor bumps the
@@ -912,6 +997,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				void captureException(err, { operation: 'cue:github:pollNow', triggerName });
 			});
 		},
+		getRepo: () => resolvedRepo,
 	});
 
 	// Cleanup function

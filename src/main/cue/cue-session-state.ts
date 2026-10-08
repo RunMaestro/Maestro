@@ -1,4 +1,4 @@
-import type { CueConfig, CueSessionStatus, CueSubscription } from './cue-types';
+import type { CueConfig, CueSessionStatus, CueSettings, CueSubscription } from './cue-types';
 import type { CueTriggerSource } from './triggers/cue-trigger-source';
 
 /**
@@ -94,6 +94,27 @@ export interface OwnershipCandidate {
 	projectRoot: string;
 }
 
+/** The part of a cue config {@link computeOwnershipWarning} reads. */
+export interface OwnershipConfig {
+	settings: Pick<CueSettings, 'owner_agent_id'>;
+}
+
+/**
+ * The sessions that compete for ownership of a cue.yaml: a tool type that
+ * participates in Cue AND a cue config at their projectRoot. A terminal (or
+ * any non-AI-agent) session, or one with no config, could otherwise win the
+ * implicit first-in-list race at a shared projectRoot, become the "owner",
+ * have nothing to dispatch, and silently suppress automation on the real
+ * Cue-configured agent. The runtime and the readiness check both pass this
+ * list to {@link computeOwnershipWarning}, so they pick the same owner.
+ */
+export function selectOwnershipCandidates<T extends OwnershipCandidate & { toolType: string }>(
+	sessions: T[],
+	hasCueConfig: (projectRoot: string) => boolean
+): T[] {
+	return sessions.filter((s) => s.toolType !== 'terminal' && hasCueConfig(s.projectRoot));
+}
+
 /**
  * Compute the ownership warning for a session that just loaded `config`.
  *
@@ -125,7 +146,7 @@ export interface OwnershipCandidate {
 export function computeOwnershipWarning(params: {
 	session: OwnershipCandidate;
 	candidates: OwnershipCandidate[];
-	config: CueConfig;
+	config: OwnershipConfig;
 	configFromAncestor: boolean;
 }): string | undefined {
 	if (params.configFromAncestor) return undefined;
@@ -170,6 +191,47 @@ export function computeOwnershipWarning(params: {
 		return `"${firstForRoot.name}" was selected as the owner of this projectRoot (no settings.owner_agent_id set - first agent wins). Set settings.owner_agent_id in cue.yaml to choose a different owner.`;
 	}
 	return undefined;
+}
+
+/** Who runs a cue.yaml's unpinned subscriptions at one projectRoot. */
+export interface ConfigOwnerResolution<T> {
+	/** The agent that runs them. Absent when no agent does. */
+	owner?: T;
+	/**
+	 * Why no agent does: the runtime's own ownership warning (a
+	 * settings.owner_agent_id that matches nobody in the root, or more than
+	 * one agent by display name). Absent when there is an owner.
+	 */
+	problem?: string;
+}
+
+/**
+ * The owner of the config at `projectRoot`, decided for each session there
+ * exactly as `initSession` decides it: the first session
+ * {@link computeOwnershipWarning} clears, over the
+ * {@link selectOwnershipCandidates} candidates. The readiness check and the
+ * bundle exporter call this so they agree with the running engine.
+ */
+export function resolveConfigOwner<T extends OwnershipCandidate & { toolType: string }>(params: {
+	projectRoot: string;
+	sessions: T[];
+	hasCueConfig: (projectRoot: string) => boolean;
+	config: OwnershipConfig;
+}): ConfigOwnerResolution<T> {
+	const candidates = selectOwnershipCandidates(params.sessions, params.hasCueConfig);
+	let problem: string | undefined;
+	for (const session of params.sessions) {
+		if (session.projectRoot !== params.projectRoot) continue;
+		const warning = computeOwnershipWarning({
+			session,
+			candidates,
+			config: params.config,
+			configFromAncestor: false,
+		});
+		if (!warning) return { owner: session };
+		problem ??= warning;
+	}
+	return { problem };
 }
 
 export function toSessionStatus(params: {

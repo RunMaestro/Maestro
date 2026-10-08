@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 
 // Store parameters passed to mock statement methods
 const runCalls: unknown[][] = [];
@@ -40,6 +41,8 @@ const mockStatement = {
 };
 
 const prepareCalls: string[] = [];
+const constructorCalls: unknown[][] = [];
+let constructorError: Error | null = null;
 
 const mockDb = {
 	pragma: vi.fn((query: string) => {
@@ -108,18 +111,13 @@ const mockDb = {
 
 vi.mock('better-sqlite3', () => ({
 	default: class MockDatabase {
-		constructor() {
-			/* noop */
+		constructor(...args: unknown[]) {
+			constructorCalls.push(args);
+			if (constructorError) throw constructorError;
 		}
 		pragma = mockDb.pragma;
 		prepare = mockDb.prepare;
 		close = mockDb.close;
-	},
-}));
-
-vi.mock('electron', () => ({
-	app: {
-		getPath: vi.fn(() => os.tmpdir()),
 	},
 }));
 
@@ -141,6 +139,10 @@ import {
 	clearGitHubSeenForSubscription,
 	safeRecordCueEvent,
 	safeUpdateCueEventStatus,
+	claimWebhookDelivery,
+	isWebhookDeliveryClaimed,
+	WEBHOOK_DELIVERY_RETENTION_MS,
+	readCueDbStatusFigures,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -149,6 +151,8 @@ beforeEach(() => {
 	getCalls.length = 0;
 	allCalls.length = 0;
 	prepareCalls.length = 0;
+	constructorCalls.length = 0;
+	constructorError = null;
 	mockGetReturn = undefined;
 	mockAllReturn = [];
 
@@ -225,6 +229,136 @@ describe('cue-db lifecycle', () => {
 	});
 });
 
+describe('readCueDbStatusFigures (read-only, for status beside a live engine)', () => {
+	let dir: string;
+	let dbPath: string;
+
+	/** A cue.db with the sidecars a live engine's open connection keeps. */
+	function liveDbFiles(): void {
+		fs.writeFileSync(dbPath, 'db');
+		fs.chmodSync(dbPath, 0o600);
+		fs.writeFileSync(`${dbPath}-wal`, '');
+		fs.writeFileSync(`${dbPath}-shm`, '');
+	}
+
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-db-ro-'));
+		dbPath = path.join(dir, 'cue.db');
+	});
+
+	afterEach(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('opens read-only with fileMustExist and reads the figures', () => {
+		liveDbFiles();
+		mockGetReturn = { last_seen: 1234, c: 1234 };
+
+		expect(readCueDbStatusFigures(dbPath)).toEqual({
+			ok: true,
+			lastHeartbeatMs: 1234,
+			totalEvents: 1234,
+		});
+		expect(constructorCalls).toEqual([[dbPath, { readonly: true, fileMustExist: true }]]);
+		expect(mockDb.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('runs no schema, migration or journal-mode statement', () => {
+		liveDbFiles();
+		readCueDbStatusFigures(dbPath);
+
+		expect(mockDb.pragma).not.toHaveBeenCalled();
+		expect(mockStatement.run).not.toHaveBeenCalled();
+		expect(prepareCalls.length).toBeGreaterThan(0);
+		for (const sql of prepareCalls) expect(sql.trim()).toMatch(/^SELECT\b/);
+	});
+
+	it('creates no file beside the database', () => {
+		liveDbFiles();
+		const before = fs.readdirSync(dir).sort();
+
+		readCueDbStatusFigures(dbPath);
+
+		expect(fs.readdirSync(dir).sort()).toEqual(before);
+	});
+
+	// POSIX modes are largely ignored on NTFS.
+	it.skipIf(process.platform === 'win32')('leaves the mode of cue.db unchanged', () => {
+		liveDbFiles();
+		fs.chmodSync(dbPath, 0o640);
+
+		readCueDbStatusFigures(dbPath);
+
+		expect(fs.statSync(dbPath).mode & 0o777).toBe(0o640);
+	});
+
+	it('never becomes the module singleton a writer would reuse', () => {
+		liveDbFiles();
+		readCueDbStatusFigures(dbPath);
+
+		expect(isCueDbReady()).toBe(false);
+		expect(() => getLastHeartbeat()).toThrow('Cue database not initialized');
+	});
+
+	it('reports a missing cue.db without creating it or its folder', () => {
+		const missing = path.join(dir, 'nested', 'cue.db');
+
+		const result = readCueDbStatusFigures(missing);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('does not exist');
+		expect(constructorCalls).toHaveLength(0);
+		expect(fs.existsSync(path.dirname(missing))).toBe(false);
+	});
+
+	it('does not open a WAL database whose sidecars are gone (the open would create them)', () => {
+		fs.writeFileSync(dbPath, 'db');
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('no process has the database open');
+		expect(constructorCalls).toHaveLength(0);
+		expect(fs.readdirSync(dir)).toEqual(['cue.db']);
+	});
+
+	it('reports an open failure as a reason', () => {
+		liveDbFiles();
+		constructorError = Object.assign(new Error('unable to open database file'), {
+			code: 'SQLITE_CANTOPEN',
+		});
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result).toEqual({
+			ok: false,
+			reason: `could not read ${dbPath}: unable to open database file`,
+		});
+	});
+
+	it('reports a failed query as a reason and still closes the handle', () => {
+		liveDbFiles();
+		mockStatement.get.mockImplementationOnce(() => {
+			throw new Error('database is locked');
+		});
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('database is locked');
+		expect(mockDb.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('rethrows SqliteUnavailableError so the CLI reports it as before', () => {
+		liveDbFiles();
+		const unavailable = new Error('cannot load better-sqlite3');
+		unavailable.name = 'SqliteUnavailableError';
+		constructorError = unavailable;
+
+		expect(() => readCueDbStatusFigures(dbPath)).toThrow(unavailable);
+	});
+});
+
 describe('cue-db additive column migration', () => {
 	const dbPath = path.join(os.tmpdir(), 'test-cue.db');
 
@@ -276,6 +410,7 @@ describe('cue-db additive column migration', () => {
 					{ name: 'exit_code' },
 					{ name: 'output_excerpt' },
 					{ name: 'full_output' },
+					{ name: 'stream_usage_json' },
 				];
 			}
 			return originalPragma?.(query);
@@ -372,12 +507,14 @@ describe('cue-db event journal', () => {
 		const lastPrepare = prepareCalls[prepareCalls.length - 1];
 		expect(lastPrepare).toContain('output_excerpt = ?');
 		expect(lastPrepare).toContain('full_output = ?');
+		expect(lastPrepare).toContain('stream_usage_json = ?');
 		const lastRun = runCalls[runCalls.length - 1];
 		// status, completed_at, provider_session_id, error_message, exit_code,
-		// output_excerpt, full_output, id
+		// output_excerpt, full_output, stream_usage_json, id
 		expect(lastRun[5]).toBe('Merged PR #12.');
 		expect(lastRun[6]).toBe('Merged PR #12.\nDetails follow.');
-		expect(lastRun[7]).toBe('evt-5');
+		expect(lastRun[7]).toBeNull(); // stream_usage_json (not passed by this call)
+		expect(lastRun[8]).toBe('evt-5');
 	});
 
 	it('should write NULL output columns for a silent run', () => {
@@ -387,7 +524,8 @@ describe('cue-db event journal', () => {
 		// No provider session id, so the columns shift left by one.
 		expect(lastRun[4]).toBeNull(); // output_excerpt
 		expect(lastRun[5]).toBeNull(); // full_output
-		expect(lastRun[6]).toBe('evt-6');
+		expect(lastRun[6]).toBeNull(); // stream_usage_json
+		expect(lastRun[7]).toBe('evt-6');
 	});
 
 	it('should query recent events with correct since parameter', () => {
@@ -699,5 +837,78 @@ describe('safeUpdateCueEventStatus', () => {
 	it('does not throw when DB is unavailable (not initialized)', () => {
 		closeCueDb();
 		expect(() => safeUpdateCueEventStatus('evt-1', 'completed')).not.toThrow();
+	});
+});
+
+describe('cue-db webhook delivery dedupe', () => {
+	beforeEach(() => {
+		initCueDb(undefined, path.join(os.tmpdir(), 'test-cue.db'));
+	});
+
+	it('creates the deliveries table and its index at init', () => {
+		expect(
+			prepareCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS cue_webhook_deliveries'))
+		).toBe(true);
+		expect(prepareCalls.some((sql) => sql.includes('idx_cue_webhook_deliveries_received'))).toBe(
+			true
+		);
+	});
+
+	it('claims a new delivery with one INSERT OR IGNORE, after dropping an expired row', () => {
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		prepareCalls.length = 0;
+		const before = Date.now();
+
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(true);
+
+		const expire = prepareCalls.findIndex((sql) =>
+			sql.includes('DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ?')
+		);
+		const insert = prepareCalls.findIndex((sql) =>
+			sql.includes('INSERT OR IGNORE INTO cue_webhook_deliveries')
+		);
+		expect(expire).toBeGreaterThanOrEqual(0);
+		expect(insert).toBeGreaterThan(expire);
+		const [expirePath, expireId, cutoff] = runCalls[0] as [string, string, number];
+		expect([expirePath, expireId]).toEqual(['github', 'abc-123']);
+		expect(cutoff).toBeGreaterThanOrEqual(before - WEBHOOK_DELIVERY_RETENTION_MS);
+		expect(runCalls[1].slice(0, 2)).toEqual(['github', 'abc-123']);
+	});
+
+	it('checks for a live claim with one SELECT, without writing', () => {
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		getCalls.length = 0;
+		prepareCalls.length = 0;
+		const before = Date.now();
+		mockGetReturn = { 1: 1 };
+		expect(isWebhookDeliveryClaimed('github#session-1:sub', 'abc-123')).toBe(true);
+		mockGetReturn = undefined;
+		expect(isWebhookDeliveryClaimed('github#session-1:sub', 'abc-123')).toBe(false);
+		expect(
+			prepareCalls.every((sql) => sql.startsWith('SELECT 1 FROM cue_webhook_deliveries'))
+		).toBe(true);
+		expect(runCalls).toEqual([]);
+		const [path, id, cutoff] = getCalls[0] as [string, string, number];
+		expect([path, id]).toEqual(['github#session-1:sub', 'abc-123']);
+		expect(cutoff).toBeGreaterThanOrEqual(before - WEBHOOK_DELIVERY_RETENTION_MS);
+	});
+
+	it('reports a redelivery when the INSERT changes nothing', () => {
+		mockStatement.run
+			.mockImplementationOnce(() => ({ changes: 0 }))
+			.mockImplementationOnce(() => ({ changes: 0 }));
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(false);
+	});
+
+	it('treats every delivery as new without a database', () => {
+		closeCueDb();
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(true);
+		expect(isWebhookDeliveryClaimed('github', 'abc-123')).toBe(false);
+	});
+
+	it('remembers deliveries for 24 hours', () => {
+		expect(WEBHOOK_DELIVERY_RETENTION_MS).toBe(24 * 60 * 60 * 1000);
 	});
 });

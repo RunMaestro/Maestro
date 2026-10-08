@@ -10,9 +10,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as crypto from 'crypto';
 import { EventEmitter } from 'events';
-import type * as http from 'http';
+import * as http from 'http';
 import {
 	handleCueWebhookRequest,
+	holdCueWebhookListener,
 	registerCueWebhook,
 	resetCueWebhookServerForTests,
 	type CueWebhookDelivery,
@@ -65,6 +66,8 @@ function makeRequest(opts: {
 	return req;
 }
 
+let registrationCount = 0;
+
 function register(overrides: Partial<CueWebhookRegistration> = {}): {
 	deliveries: CueWebhookDelivery[];
 	onLog: ReturnType<typeof vi.fn>;
@@ -73,6 +76,7 @@ function register(overrides: Partial<CueWebhookRegistration> = {}): {
 	const deliveries: CueWebhookDelivery[] = [];
 	const onLog = vi.fn();
 	const unregister = registerCueWebhook({
+		id: `session-1:hook-${++registrationCount}`,
 		path: 'my-hook',
 		secret: 's3cret',
 		onDelivery: (d) => deliveries.push(d),
@@ -421,6 +425,41 @@ describe('cue-webhook-server', () => {
 		expect(deliveries).toHaveLength(0);
 	});
 
+	it('answers an oversized upload on a real socket with 413 instead of a reset', async () => {
+		// The mock above never exercises the socket. Destroying the request
+		// before writing the answer passed there and still left real senders
+		// with a dropped connection and no status code at all.
+		const { onLog } = register();
+		let port = 0;
+		for (let i = 0; i < 100 && !port; i++) {
+			const started = onLog.mock.calls
+				.map((c) => String(c[1]))
+				.find((m) => m.includes('listener started'));
+			port = started ? Number(/:(\d+)\/cue\//.exec(started)?.[1] ?? 0) : 0;
+			if (!port) await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		expect(port).toBeGreaterThan(0);
+
+		const status = await new Promise<number | undefined>((resolve, reject) => {
+			const req = http.request(
+				{
+					host: '127.0.0.1',
+					port,
+					method: 'POST',
+					path: '/cue/my-hook',
+					headers: { 'x-maestro-cue-secret': 's3cret' },
+				},
+				(res) => {
+					res.resume();
+					resolve(res.statusCode);
+				}
+			);
+			req.on('error', reject);
+			req.end(Buffer.alloc(1024 * 1024 + 64 * 1024, 'x'));
+		});
+		expect(status).toBe(413);
+	});
+
 	it('surfaces a non-JSON body as raw text with a null parsed body', async () => {
 		const { deliveries } = register();
 		const res = makeResponse();
@@ -455,5 +494,41 @@ describe('cue-webhook-server', () => {
 
 		expect(res.status).toBe(404);
 		expect(deliveries).toHaveLength(0);
+	});
+
+	describe('holdCueWebhookListener (an engine drain)', () => {
+		const post = (headers: Record<string, string>) => {
+			const res = makeResponse();
+			return handleCueWebhookRequest(
+				makeRequest({ url: '/cue/my-hook', headers, body: '{}' }),
+				res as unknown as http.ServerResponse
+			).then(() => res);
+		};
+
+		it('answers a released registration 503 until the hold is released, recording nothing', async () => {
+			const { deliveries, onLog, unregister } = register();
+			const release = holdCueWebhookListener();
+			unregister();
+
+			const held = await post({ 'x-maestro-cue-secret': 's3cret', 'x-github-delivery': 'd1' });
+			expect(held.status).toBe(503);
+			expect(held.body).toEqual({ accepted: 0, failed: 1 });
+			expect((await post({ 'x-maestro-cue-secret': 'nope' })).status).toBe(401);
+			expect(deliveries).toHaveLength(0);
+			expect(onLog).toHaveBeenCalledWith('warn', expect.stringContaining('Cue is stopping'));
+
+			release();
+			release(); // idempotent
+			expect((await post({ 'x-maestro-cue-secret': 's3cret' })).status).toBe(404);
+		});
+
+		it('leaves a live registration alone and is a no-op with nothing registered', async () => {
+			const release = holdCueWebhookListener();
+			const { deliveries } = register();
+			expect((await post({ 'x-maestro-cue-secret': 's3cret' })).status).toBe(202);
+			expect(deliveries).toHaveLength(1);
+			release();
+			expect((await post({ 'x-maestro-cue-secret': 's3cret' })).status).toBe(202);
+		});
 	});
 });

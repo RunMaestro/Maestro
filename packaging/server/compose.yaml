@@ -1,0 +1,43 @@
+# Maestro Cue engine with Docker Compose. From this folder:
+#
+#   docker compose up -d --build
+#
+# One data volume per engine. A second engine on the same volume, in another
+# container, sees the first one's lock while its heartbeat is fresh, logs
+# "Another Cue engine ... already holds the lock" and exits 1, so it never runs
+# beside it; it takes over only once that heartbeat has been quiet for 3
+# minutes. The image runs in server mode (MAESTRO_SERVER_MODE=1), so the
+# variables in maestro.env reach agents only when the allowlist lets them.
+# See docs/maestro-cue-server.md.
+
+services:
+  maestro-cue:
+    build:
+      context: ../..
+      dockerfile: packaging/server/Dockerfile
+    image: maestro-cue
+    restart: unless-stopped
+    # The engine drains active runs for up to 90 s on stop; Docker's default
+    # grace period is 10 s.
+    stop_grace_period: 120s
+    env_file:
+      - path: maestro.env
+        required: false
+    ports:
+      # Webhooks only. Published to the host's loopback: put a reverse proxy
+      # or tunnel in front of it rather than exposing it directly.
+      - '127.0.0.1:17997:17997'
+    volumes:
+      - maestro-home:/var/lib/maestro
+      - maestro-work:/srv/maestro
+    # Secrets the engine reads as files land in /run/secrets/<NAME>:
+    # secrets:
+    #   - GH_WEBHOOK_SECRET
+
+# secrets:
+#   GH_WEBHOOK_SECRET:
+#     file: ./secrets/GH_WEBHOOK_SECRET
+
+volumes:
+  maestro-home:
+  maestro-work:

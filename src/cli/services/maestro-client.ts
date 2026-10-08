@@ -5,6 +5,14 @@ import WebSocket from 'ws';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
 import { CLI_SECRET_HEADER } from '../../shared/webLogin';
 import { readSessions, resolveAgentId } from './storage';
+import { MaestroNotRunningError } from './maestro-not-running';
+
+export {
+	MAESTRO_NOT_RUNNING_CODE,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+	MaestroNotRunningError,
+	type MaestroNotRunningReason,
+} from './maestro-not-running';
 
 const CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
@@ -57,16 +65,19 @@ export class MaestroClient {
 
 	/**
 	 * Connect to the running Maestro app.
-	 * Throws if the app is not running or connection fails.
+	 * Throws `MaestroNotRunningError` if the app is not running or not reachable.
 	 */
 	async connect(): Promise<void> {
 		const info = readCliServerInfo();
 		if (!info) {
-			throw new Error('Maestro desktop app is not running');
+			throw new MaestroNotRunningError('no-discovery-file');
 		}
 
 		if (!isCliServerRunning()) {
-			throw new Error('Maestro discovery file is stale (app may have crashed)');
+			throw new MaestroNotRunningError(
+				'stale-discovery-file',
+				`pid ${info.pid} is gone (app may have crashed)`
+			);
 		}
 
 		// Use 127.0.0.1 instead of `localhost` - Node 18's default DNS resolution
@@ -88,7 +99,7 @@ export class MaestroClient {
 				if (!settled) {
 					settled = true;
 					ws.close();
-					reject(new Error('Connection to Maestro timed out'));
+					reject(new MaestroNotRunningError('connect-timeout'));
 				}
 			}, CONNECT_TIMEOUT_MS);
 
@@ -108,7 +119,14 @@ export class MaestroClient {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timeout);
-				reject(new Error(`Failed to connect to Maestro: ${err.message}`));
+				// A socket-level failure carries an errno (ECONNREFUSED, ...): nothing
+				// is listening. An HTTP rejection of the upgrade has none - the app
+				// answered and said no, so it is running and keeps its own error.
+				if ((err as NodeJS.ErrnoException).code) {
+					reject(new MaestroNotRunningError('connect-failed', err.message));
+				} else {
+					reject(new Error(`Failed to connect to Maestro: ${err.message}`));
+				}
 			});
 		});
 	}

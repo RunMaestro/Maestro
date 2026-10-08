@@ -58,6 +58,7 @@ import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
+import { createCueBundleApi } from './cueBundle';
 import { createPianolaApi } from './pianola';
 import { createPluginsApi } from './plugins';
 import { createWakatimeApi } from './wakatime';
@@ -251,6 +252,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
+	// Cue Bundle API (Cue modal Bundles tab - export / import pipelines and agents)
+	cueBundle: createCueBundleApi(),
+
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: createPianolaApi(),
 
@@ -365,6 +369,8 @@ export {
 	createCueApi,
 	// Cue Backup
 	createCueBackupApi,
+	// Cue Bundles
+	createCueBundleApi,
 	// Pianola
 	createPianolaApi,
 	// Plugins

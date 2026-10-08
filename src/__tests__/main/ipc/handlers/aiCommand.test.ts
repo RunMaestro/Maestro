@@ -143,6 +143,29 @@ describe('aiCommand IPC handler', () => {
 		expect(prompt).toContain('build-box');
 	});
 
+	it('hands the model turn the remote list, so an SSH agent gets a suggestion at all', async () => {
+		// groomContext refuses an SSH agent that arrives without a store to look
+		// its remote up in. Without this, every suggestion for an agent on a
+		// remote failed before anything ran.
+		const remote = { id: 'r1', name: 'build-box', host: 'build.example.com', enabled: true };
+		settingsValues.sshRemotes = [remote];
+
+		await invokeSuggest({
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			sshRemoteName: 'build-box',
+		});
+
+		const [options] = mockGroomContext.mock.calls[0];
+		expect(options.sessionSshRemoteConfig).toEqual({ enabled: true, remoteId: 'r1' });
+		expect(options.sshStore.getSshRemotes()).toEqual([remote]);
+	});
+
+	it('passes no remote list for a local agent', async () => {
+		await invokeSuggest();
+
+		expect(mockGroomContext.mock.calls[0][0].sshStore).toBeUndefined();
+	});
+
 	it('rejects an empty request without calling the model', async () => {
 		const result = await invokeSuggest({ request: '   ' });
 

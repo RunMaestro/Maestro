@@ -10,8 +10,10 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
 import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
-import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
+import { UsageAccumulator } from '../../../shared/maestro-lib/streaming/usage-accumulator';
+import type { ManagedProcess, UsageStats, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
 
 interface StdoutHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -33,6 +35,16 @@ const MAX_COPILOT_JSON_BUFFER_LENGTH = 1024 * 1024;
  * On the first usage report, it returns the values as-is.
  * On subsequent reports, it computes the delta from the previous totals.
  *
+ * Delegates the actual computation to maestro-lib's shared `UsageAccumulator`
+ * (Plans/maestro-lib-turn-contract.md, section 3) - one instance per process,
+ * lazily created and cached on `managedProcess.usageAccumulator`, matching
+ * this function's own previous per-process lifetime exactly
+ * (`managedProcess.lastUsageTotals`'s lifetime was already the process's).
+ * `lastUsageTotals`/`usageIsCumulative` are still mirrored back onto
+ * `managedProcess` after every call: `plugin-event-listener.ts` and this
+ * file's own test suite read those two fields directly, not through the
+ * accumulator, so they have to keep reflecting its internal state.
+ *
  * @see https://platform.claude.com/docs/en/build-with-claude/prompt-caching
  * @see https://codelynx.dev/posts/calculate-claude-code-context
  */
@@ -49,86 +61,31 @@ function normalizeUsageToDelta(
 		absoluteUsage?: UsageStats['absoluteUsage'];
 	}
 ): typeof usageStats & { absoluteUsage?: UsageStats['absoluteUsage'] } {
-	const totals: UsageTotals = {
-		inputTokens: usageStats.inputTokens,
-		outputTokens: usageStats.outputTokens,
-		cacheReadInputTokens: usageStats.cacheReadInputTokens,
-		cacheCreationInputTokens: usageStats.cacheCreationInputTokens,
-		reasoningTokens: usageStats.reasoningTokens || 0,
-	};
-
-	const last = managedProcess.lastUsageTotals;
-	const cumulativeFlag = managedProcess.usageIsCumulative;
-
-	if (cumulativeFlag === false) {
-		managedProcess.lastUsageTotals = totals;
-		return usageStats;
+	if (!managedProcess.usageAccumulator) {
+		// Preserve the pre-normalization cumulative totals as `absoluteUsage`, but ONLY
+		// for combined-context providers (Codex) whose cumulative total IS the current
+		// window occupancy. This function also runs for Claude Code, which can look
+		// monotonic for the first turns of a session; Claude's TURN TOTALS here are the
+		// CLI's own sum across the turn's internal API calls (token spend), so attaching
+		// them would let the timeline plot spend as context fill.
+		//
+		// Claude Code still gets an `absoluteUsage`, just not from here: its parser
+		// attaches the LAST internal call's usage, which is a genuine occupancy
+		// snapshot (a single call's input cannot exceed the window) and a different
+		// quantity from the cumulative totals COMBINED_CONTEXT_AGENTS providers get
+		// here. `UsageAccumulator` preserves an incoming `absoluteUsage` untouched
+		// whenever it isn't attaching its own, so it can never be overwritten or
+		// double-attached.
+		const attachesAbsolute = COMBINED_CONTEXT_AGENTS.has(managedProcess.toolType as never);
+		managedProcess.usageAccumulator = new UsageAccumulator({
+			attachesAbsoluteUsage: attachesAbsolute,
+		});
 	}
 
-	if (!last) {
-		managedProcess.lastUsageTotals = totals;
-		return usageStats;
-	}
-
-	const delta = {
-		inputTokens: totals.inputTokens - last.inputTokens,
-		outputTokens: totals.outputTokens - last.outputTokens,
-		cacheReadInputTokens: totals.cacheReadInputTokens - last.cacheReadInputTokens,
-		cacheCreationInputTokens: totals.cacheCreationInputTokens - last.cacheCreationInputTokens,
-		reasoningTokens: totals.reasoningTokens - last.reasoningTokens,
-	};
-
-	const isMonotonic =
-		delta.inputTokens >= 0 &&
-		delta.outputTokens >= 0 &&
-		delta.cacheReadInputTokens >= 0 &&
-		delta.cacheCreationInputTokens >= 0 &&
-		delta.reasoningTokens >= 0;
-
-	if (!isMonotonic) {
-		managedProcess.usageIsCumulative = false;
-		managedProcess.lastUsageTotals = totals;
-		return usageStats;
-	}
-
-	managedProcess.usageIsCumulative = true;
-	managedProcess.lastUsageTotals = totals;
-	// Preserve the pre-normalization cumulative totals as `absoluteUsage`, but ONLY
-	// for combined-context providers (Codex) whose cumulative total IS the current
-	// window occupancy. This function also runs for Claude Code, which can look
-	// monotonic for the first turns of a session; Claude's TURN TOTALS here are the
-	// CLI's own sum across the turn's internal API calls (token spend), so attaching
-	// them would let the timeline plot spend as context fill. The first event of a
-	// session returns raw above (no `last` yet) and is already absolute.
-	//
-	// Claude Code still gets an `absoluteUsage`, just not from here: its parser
-	// attaches the LAST internal call's usage, which is a genuine occupancy
-	// snapshot (a single call's input cannot exceed the window) and a different
-	// quantity from the cumulative totals this branch rejects. Every path in this
-	// function preserves an incoming `absoluteUsage` - the three early returns pass
-	// `usageStats` through verbatim, and the spread below re-attaches only for
-	// COMBINED_CONTEXT_AGENTS, which claude-code is not - so it can never be
-	// overwritten or double-attached.
-	const attachesAbsolute = COMBINED_CONTEXT_AGENTS.has(managedProcess.toolType as never);
-	return {
-		...usageStats,
-		inputTokens: delta.inputTokens,
-		outputTokens: delta.outputTokens,
-		cacheReadInputTokens: delta.cacheReadInputTokens,
-		cacheCreationInputTokens: delta.cacheCreationInputTokens,
-		reasoningTokens: delta.reasoningTokens,
-		...(attachesAbsolute
-			? {
-					absoluteUsage: {
-						inputTokens: totals.inputTokens,
-						outputTokens: totals.outputTokens,
-						cacheReadInputTokens: totals.cacheReadInputTokens,
-						cacheCreationInputTokens: totals.cacheCreationInputTokens,
-						reasoningTokens: totals.reasoningTokens,
-					},
-				}
-			: {}),
-	};
+	const normalized = managedProcess.usageAccumulator.normalize(usageStats);
+	managedProcess.lastUsageTotals = managedProcess.usageAccumulator.lastTotals;
+	managedProcess.usageIsCumulative = managedProcess.usageAccumulator.isCumulative;
+	return normalized;
 }
 
 /** Split a buffer of concatenated JSON objects (no newline separators) into individual complete objects and a partial remainder. */
@@ -458,6 +415,23 @@ export class StdoutHandler {
 			this.emitSessionIdIfNeeded(sessionId, managedProcess, extractCopilotSessionId(parsed));
 		}
 
+		// ── Held in-turn error notice ──
+		// Not after a Stop: a result the CLI flushes on its way out would otherwise
+		// raise the held notice for a turn the user abandoned. Exit drops it.
+		// Decided BEFORE the line's own error detection: the result that ends a
+		// turn on a held notice is itself a failed result (`is_error: true`), and
+		// the notice says more about the failure than the envelope does. Settling
+		// it first sets `errorEmitted`, so the envelope then renders as usual
+		// instead of replacing the notice with a vaguer error.
+		if (
+			managedProcess.provisionalError &&
+			!managedProcess.interrupted &&
+			parsed !== null &&
+			outputParser
+		) {
+			this.resolveProvisionalError(sessionId, managedProcess, parsed, outputParser);
+		}
+
 		// ── Error detection from parser ──
 		// `interrupted` means the USER pressed Stop, and `interrupt()` sets it
 		// before signalling. Anything a CLI reports after that is a consequence of
@@ -483,13 +457,17 @@ export class StdoutHandler {
 				// Losing it means recovery from a *recoverable* error silently opens a
 				// fresh conversation and drops the context the retry was supposed to
 				// continue. ExitHandler does the same for the flushed no-newline case.
+				// The same envelope can also carry the turn's usage (a failed Claude
+				// `result` reports what the turn spent before it failed), and that
+				// spend is real, so it is counted rather than dropped with the line.
+				let errorLineEvent: ParsedEvent | null = null;
 				if (parsed !== null) {
-					const event = outputParser.parseJsonObject(parsed);
-					if (event) {
+					errorLineEvent = outputParser.parseJsonObject(parsed);
+					if (errorLineEvent) {
 						this.emitSessionIdIfNeeded(
 							sessionId,
 							managedProcess,
-							outputParser.extractSessionId(event)
+							outputParser.extractSessionId(errorLineEvent)
 						);
 					}
 				}
@@ -532,6 +510,9 @@ export class StdoutHandler {
 				managedProcess.errorEmitted = true;
 				managedProcess.provisionalError = undefined;
 				this.emitter.emit('agent-error', sessionId, agentError);
+				if (errorLineEvent) {
+					this.emitUsageIfPresent(sessionId, managedProcess, errorLineEvent, outputParser);
+				}
 				return;
 			}
 		}
@@ -540,7 +521,16 @@ export class StdoutHandler {
 		// Only check non-JSON lines. Valid JSON lines contain structured agent output
 		// (e.g., assistant messages) whose text content can false-positive match SSH
 		// error patterns like "command not found" when the agent quotes shell commands.
-		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId && parsed === null) {
+		// `!interrupted` for the same reason as the parser branch above: a stopped
+		// turn must not surface as a crash. Whatever a torn-down remote writes on
+		// its way out, raising it here would arm recovery for a turn the user
+		// deliberately abandoned.
+		if (
+			!managedProcess.errorEmitted &&
+			!managedProcess.interrupted &&
+			managedProcess.sshRemoteId &&
+			parsed === null
+		) {
 			const sshError = matchSshErrorPattern(line);
 			if (sshError) {
 				managedProcess.errorEmitted = true;
@@ -557,18 +547,6 @@ export class StdoutHandler {
 				this.emitter.emit('agent-error', sessionId, agentError);
 				return;
 			}
-		}
-
-		// ── Held in-turn error notice ──
-		// Not after a Stop: a result the CLI flushes on its way out would otherwise
-		// raise the held notice for a turn the user abandoned. Exit drops it.
-		if (
-			managedProcess.provisionalError &&
-			!managedProcess.interrupted &&
-			parsed !== null &&
-			outputParser
-		) {
-			this.resolveProvisionalError(sessionId, managedProcess, parsed, outputParser);
 		}
 
 		// ── Process parsed data ──
@@ -623,26 +601,13 @@ export class StdoutHandler {
 		}
 	}
 
-	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
-	private handleParsedEvent(
+	/** Emit an event's usage, delta-normalized for the providers that report running totals. */
+	private emitUsageIfPresent(
 		sessionId: string,
 		managedProcess: ManagedProcess,
-		parsed: unknown,
+		event: ParsedEvent,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
-		const event = outputParser.parseJsonObject(parsed);
-
-		if (!event) return;
-
-		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
-		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
-		// Reset resultEmitted on each new step so the last text event wins instead of the first.
-		if (event.type === 'init' && managedProcess.toolType === 'opencode') {
-			managedProcess.resultEmitted = false;
-			managedProcess.streamedText = '';
-		}
-
-		// Extract usage
 		const usage = outputParser.extractUsage(event);
 		if (usage) {
 			const usageStats = this.buildUsageStats(managedProcess, usage);
@@ -662,6 +627,28 @@ export class StdoutHandler {
 
 			this.emitter.emit('usage', sessionId, normalizedUsageStats);
 		}
+	}
+
+	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
+	private handleParsedEvent(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		parsed: unknown,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	): void {
+		const event = outputParser.parseJsonObject(parsed);
+
+		if (!event) return;
+
+		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
+		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
+		// Reset resultEmitted on each new step so the last text event wins instead of the first.
+		if (event.type === 'init' && managedProcess.toolType === 'opencode') {
+			managedProcess.resultEmitted = false;
+			managedProcess.streamedText = '';
+		}
+
+		this.emitUsageIfPresent(sessionId, managedProcess, event, outputParser);
 
 		// Extract session ID
 		const eventSessionId = outputParser.extractSessionId(event);

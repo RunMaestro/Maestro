@@ -225,3 +225,26 @@ describe('pipeline-layout-store - save', () => {
 		expect(loaded!.pipelines[0].id).toBe('p1');
 	});
 });
+
+describe('pipeline-layout-store - explicit data directory', () => {
+	it('reads and writes the layout in the given directory, not the resolved one', () => {
+		const other = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-layout-other-'));
+		try {
+			savePipelineLayout(
+				{
+					version: 2,
+					pipelines: [{ id: 'p1', name: 'One', color: '#fff', nodes: [], edges: [] }],
+					selectedPipelineId: null,
+					perProject: {},
+				},
+				other
+			);
+			expect(fs.existsSync(path.join(other, 'cue-pipeline-layout.json'))).toBe(true);
+			expect(fs.existsSync(path.join(scratchDir, 'cue-pipeline-layout.json'))).toBe(false);
+			expect(loadPipelineLayout(other)?.pipelines.map((p) => p.id)).toEqual(['p1']);
+			expect(loadPipelineLayout()).toBeNull();
+		} finally {
+			fs.rmSync(other, { recursive: true, force: true });
+		}
+	});
+});

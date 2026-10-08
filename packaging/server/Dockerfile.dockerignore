@@ -1,0 +1,11 @@
+.git
+**/node_modules
+dist
+release
+docs
+e2e
+mockups
+Plans
+chocolatey
+**/.DS_Store
+*.log

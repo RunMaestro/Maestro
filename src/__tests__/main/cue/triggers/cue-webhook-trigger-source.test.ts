@@ -18,6 +18,9 @@ import type { CueEvent, CueSubscription } from '../../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../../shared/types';
 import { EventEmitter } from 'events';
 import type * as http from 'http';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 function makeSession(): SessionInfo {
 	return {
@@ -57,12 +60,20 @@ function makeCtx(sub: CueSubscription, enabled = true) {
 	};
 }
 
-/** POST a body to the shared listener and resolve once it has responded. */
+/** POST a body to the shared listener and resolve with its status once it has responded. */
 async function deliver(
 	path: string,
 	body: string,
 	headers: Record<string, string> = { 'x-maestro-cue-secret': 's3cret' }
 ): Promise<number> {
+	return (await deliverWithHeaders(path, body, headers)).status;
+}
+
+async function deliverWithHeaders(
+	path: string,
+	body: string,
+	headers: Record<string, string> = { 'x-maestro-cue-secret': 's3cret' }
+): Promise<{ status: number; headers: Record<string, string> }> {
 	const req = new EventEmitter() as unknown as http.IncomingMessage & { destroy: () => void };
 	req.method = 'POST';
 	req.url = `/cue/${path}`;
@@ -74,14 +85,16 @@ async function deliver(
 	});
 
 	let status = 0;
+	let responseHeaders: Record<string, string> = {};
 	const res = {
-		writeHead: (code: number) => {
+		writeHead: (code: number, h: Record<string, string> = {}) => {
 			status = code;
+			responseHeaders = h;
 		},
 		end: () => {},
 	};
 	await handleCueWebhookRequest(req, res as unknown as http.ServerResponse);
-	return status;
+	return { status, headers: responseHeaders };
 }
 
 describe('cue-webhook-trigger-source', () => {
@@ -129,6 +142,46 @@ describe('cue-webhook-trigger-source', () => {
 
 		expect(await deliver('hook', '{}', { 'x-maestro-cue-secret': 'from-env' })).toBe(202);
 		expect(emit).toHaveBeenCalledTimes(1);
+	});
+
+	describe('secret_env from a secret file', () => {
+		let credentials: string;
+		const originalCredentials = process.env.CREDENTIALS_DIRECTORY;
+
+		beforeEach(() => {
+			credentials = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'webhook-secret-')));
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+		});
+
+		afterEach(() => {
+			if (originalCredentials === undefined) delete process.env.CREDENTIALS_DIRECTORY;
+			else process.env.CREDENTIALS_DIRECTORY = originalCredentials;
+			fs.rmSync(credentials, { recursive: true, force: true });
+		});
+
+		it('reads a systemd credential, ahead of the environment', async () => {
+			fs.writeFileSync(path.join(credentials, 'WEBHOOK_TEST_SECRET'), 'from-file\n');
+			process.env.WEBHOOK_TEST_SECRET = 'stale-env';
+			const { ctx, emit } = makeCtx(
+				makeSub({ webhook: { path: 'hook', secret_env: 'WEBHOOK_TEST_SECRET' } })
+			);
+			createCueWebhookTriggerSource(ctx)?.start();
+
+			expect(await deliver('hook', '{}', { 'x-maestro-cue-secret': 'stale-env' })).toBe(401);
+			expect(await deliver('hook', '{}', { 'x-maestro-cue-secret': 'from-file' })).toBe(202);
+			expect(emit).toHaveBeenCalledTimes(1);
+		});
+
+		it('refuses to start on an unusable file and names it without its value', () => {
+			fs.writeFileSync(path.join(credentials, 'WEBHOOK_TEST_SECRET'), '');
+			process.env.WEBHOOK_TEST_SECRET = 'stale-env';
+			const { ctx, onLog } = makeCtx(makeSub({ webhook: { secret_env: 'WEBHOOK_TEST_SECRET' } }));
+			expect(createCueWebhookTriggerSource(ctx)).toBeNull();
+			const message = String(onLog.mock.calls[0][1]);
+			expect(message).toContain('WEBHOOK_TEST_SECRET');
+			expect(message).toContain('is empty');
+			expect(message).not.toContain('stale-env');
+		});
 	});
 
 	it('defaults the path to a slug of the subscription name', async () => {
@@ -181,13 +234,16 @@ describe('cue-webhook-trigger-source', () => {
 		expect(emit).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not emit while the engine is disabled', async () => {
+	it('answers 503 with Retry-After while the engine is disabled, and emits nothing', async () => {
 		const { ctx, emit } = makeCtx(makeSub({ webhook: { path: 'hook', secret: 's3cret' } }), false);
 		createCueWebhookTriggerSource(ctx)?.start();
 
-		// The listener still accepts the delivery - the gate is on dispatch, so
-		// a sender doesn't start seeing errors just because Cue is paused.
-		expect(await deliver('hook', '{}')).toBe(202);
+		// A delivery Maestro will not act on is never acknowledged: the sender
+		// is told to come back, and nothing is recorded, so its retry fires
+		// once Cue runs.
+		const res = await deliverWithHeaders('hook', '{}');
+		expect(res.status).toBe(503);
+		expect(res.headers['retry-after']).toBe('30');
 		expect(emit).not.toHaveBeenCalled();
 	});
 

@@ -52,6 +52,18 @@ Commands exit with a standardized code so scripts and CI can branch on the failu
 | `4`  | The running app does not support the command (older build) |
 | `5`  | The app was reachable but did not respond in time          |
 
+Every verb that needs the desktop app reports its absence the same way: the message `Maestro desktop app is not running or not reachable`, exit code `3`, and with `--json` (or on verbs that always print JSON) the code `MAESTRO_NOT_RUNNING`:
+
+```json
+{
+	"success": false,
+	"error": "Maestro desktop app is not running or not reachable",
+	"code": "MAESTRO_NOT_RUNNING"
+}
+```
+
+This covers a missing or stale discovery file, a connection that never opens, and one refused at the network level. An app that answers but refuses the connection (for example the Web Login gate) is running, so it reports its own error instead.
+
 ### Who Moves the View (`--background` / `--focus`)
 
 Focus belongs to whoever is at the keyboard. An agent may create a surface; it should not decide you ought to be looking at it. Every verb that can move the Maestro view or raise a notice therefore accepts `--background`, which means exactly two things: the active agent does not change, and the active tab inside any agent does not change. The surface is still created and still addressable - it lands in the tab bar the way a browser opens a background tab.
@@ -110,6 +122,7 @@ The response is always JSON:
 	"sessionId": "abc123def456",
 	"response": "The authentication flow works by...",
 	"success": true,
+	"outcome": "completed",
 	"usage": {
 		"inputTokens": 1000,
 		"outputTokens": 500,
@@ -121,6 +134,19 @@ The response is always JSON:
 	}
 }
 ```
+
+`outcome` says how the turn ended:
+
+| `outcome`                | `success` | Meaning                                                                                                 |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------- |
+| `completed`              | `true`    | Clean exit with the provider's explicit done signal.                                                    |
+| `completed-with-warning` | `true`    | An answer was captured, but the process exited non-zero or never sent a done signal.                    |
+| `interrupted`            | `false`   | The send was stopped (Ctrl+C or SIGTERM). Never reported as a crash, even if the agent wrote to stderr. |
+| `crashed`                | `false`   | No usable answer, a classified provider error (auth, rate limit, ...), or the process failed to start.  |
+
+For providers that stream JSON lines (everything except Claude Code), a captured answer outranks a bare non-zero exit, but not a specific provider error: a turn whose stderr says the login expired fails even if some text was produced. Claude Code keeps requiring a clean exit. A process killed by a signal nobody requested is always `crashed`.
+
+The first Ctrl+C stops the agent gracefully (SIGTERM, then SIGKILL after 5 seconds if it ignores it) and exits with code `130`; a second Ctrl+C exits immediately. Other failures exit with `1`. Over an SSH remote this stops the local `ssh` client, and the remote process is not guaranteed to receive the hangup.
 
 On failure, `success` is `false` and an `error` field is included:
 
@@ -308,7 +334,7 @@ Currently supported for `claude-code` agents.
 
 Inspect open AI tabs across the running Maestro desktop app and read their conversation history. Pair `dispatch --new-tab` (writes, returns a `tabId`) with `session show <tabId>` (reads, supports `--since` and `--tail`) to build a stateless poll loop without owning a persistent connection - used by Maestro-Discord and Cue follow-ups.
 
-Both verbs talk to the running desktop over the same WebSocket as `dispatch`. There is no on-disk fallback: if the app is not running, the CLI exits with code `MAESTRO_NOT_RUNNING`.
+Both verbs talk to the running desktop over the same WebSocket as `dispatch`. There is no on-disk fallback: if the app is not running, the CLI reports `MAESTRO_NOT_RUNNING` and exits `3`.
 
 #### List Open Tabs
 
@@ -409,7 +435,7 @@ JSON shape:
 
 `role` is a coarse classification (`user` | `assistant` | `system` | `tool` | `thinking` | `error` | `unknown`) so conversational consumers can branch on intent; the raw `source` is preserved alongside for callers that need to discriminate further. ISO timestamps are emitted verbatim so a `messages[-1].timestamp` from one call can be fed directly back into `--since` on the next.
 
-Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`.
+Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`, except `MAESTRO_NOT_RUNNING`, which exits `3`.
 
 ### Pasted Images (`image list` / `image save`)
 
@@ -876,8 +902,8 @@ prints a `maestro://session/<agent-id>/tab/<tab-id>` deep link that reopens it.
 Use it when an orchestrating agent needs to launch a worker the user can watch;
 use the headless default for CI and scripting.
 
-`--visible` **fails closed**. If the desktop app is not reachable it exits with
-`MAESTRO_NOT_RUNNING` rather than quietly running headlessly, because a silent
+`--visible` **fails closed**. If the desktop app is not reachable it reports
+`MAESTRO_NOT_RUNNING` and exits `3` rather than quietly running headlessly, because a silent
 fallback is invisible in exactly the surface you were pointing at. Other stable
 failure codes: `AGENT_BUSY` (the agent already has an Auto Run going - pass
 `--wait` to queue instead), `AUTO_RUN_DISABLED`, `SESSION_NOT_FOUND`,
@@ -1328,6 +1354,12 @@ maestro-cli playbook <playbook-id> --json
 {"type":"document_complete","timestamp":...,"document":"tasks.md","tasksCompleted":5}
 {"type":"loop_complete","timestamp":...,"iteration":1,"tasksCompleted":5,"elapsedMs":60000}
 {"type":"complete","timestamp":...,"success":true,"totalTasksCompleted":5,"totalElapsedMs":60000,"totalCost":0.05}
+```
+
+If the run is interrupted (Ctrl+C or SIGTERM), the agent turn in flight is stopped gracefully and the stream ends with a `complete` event carrying `"stopped":true`. The interrupted task is recorded as "interrupted" rather than failed, and the process exits with code `130`. A second Ctrl+C exits immediately. `maestro-cli playbook`, `maestro-cli run-doc` and `maestro-cli goal-run` all behave this way; a goal run ends with `exitReason: "stopped-by-user"`.
+
+```json
+{"type":"complete","timestamp":...,"success":false,"totalTasksCompleted":2,"totalElapsedMs":31000,"stopped":true}
 ```
 
 The `send` command always outputs JSON (no `--json` flag needed).

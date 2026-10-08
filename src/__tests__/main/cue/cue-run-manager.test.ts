@@ -202,6 +202,30 @@ describe('createCueRunManager', () => {
 			);
 		});
 
+		it('carries the executor usage onto the completed run', async () => {
+			const usage = {
+				inputTokens: 120,
+				outputTokens: 34,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.01,
+				contextWindow: 200000,
+			};
+			const deps = createDeps({ onCueRun: vi.fn(async () => makeResult({ usage })) });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(deps.onRunCompleted).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({ usage }),
+				'test-sub',
+				undefined,
+				expect.any(String)
+			);
+		});
+
 		it('calls onRunCompleted with failed status on failure', async () => {
 			const deps = createDeps({
 				onCueRun: vi.fn(async () => makeResult({ status: 'failed', exitCode: 1 })),
@@ -504,6 +528,7 @@ describe('createCueRunManager', () => {
 				exitCode: 0,
 				outputExcerpt: 'output',
 				fullOutput: 'output',
+				streamUsageJson: null,
 			});
 		});
 
@@ -640,7 +665,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'completed',
 				undefined,
-				{ errorMessage: null, exitCode: 0, outputExcerpt: 'hi', fullOutput: 'hi' }
+				{
+					errorMessage: null,
+					exitCode: 0,
+					outputExcerpt: 'hi',
+					fullOutput: 'hi',
+					streamUsageJson: null,
+				}
 			);
 			// And a log should explain the run was recorded post-stop AND
 			// include the structured runFinished payload so the renderer
@@ -678,7 +709,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'failed',
 				undefined,
-				{ errorMessage: 'boom', exitCode: 0, outputExcerpt: 'output', fullOutput: 'output' }
+				{
+					errorMessage: 'boom',
+					exitCode: 0,
+					outputExcerpt: 'output',
+					fullOutput: 'output',
+					streamUsageJson: null,
+				}
 			);
 		});
 
@@ -797,7 +834,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'completed',
 				undefined,
-				{ errorMessage: null, exitCode: 0, outputExcerpt: 'output', fullOutput: 'output' }
+				{
+					errorMessage: null,
+					exitCode: 0,
+					outputExcerpt: 'output',
+					fullOutput: 'output',
+					streamUsageJson: null,
+				}
 			);
 			// And the post-stop log MUST include the structured runFinished
 			// payload so renderer listeners observe the transition.
@@ -1422,6 +1465,7 @@ describe('createCueRunManager', () => {
 				remove: vi.fn(),
 				clearSession: vi.fn(),
 				clearAll: vi.fn(),
+				persistedIds: vi.fn(() => new Set<string>()),
 				restoreAll: vi.fn(() => new Map()),
 			};
 		}
@@ -1638,6 +1682,271 @@ describe('createCueRunManager', () => {
 				expect.objectContaining({ subscriptionName: 'sub-incoming' })
 			);
 			expect(manager.getQueueStatus().size).toBe(0);
+		});
+	});
+
+	describe('drain gate', () => {
+		function persistenceSpy() {
+			return {
+				persist: vi.fn(),
+				remove: vi.fn(),
+				clearSession: vi.fn(),
+				clearAll: vi.fn(),
+				persistedIds: vi.fn(() => new Set<string>()),
+				restoreAll: vi.fn(() => new Map()),
+			};
+		}
+
+		it('queues and persists instead of starting, past queue_size, and never drains', async () => {
+			const queuePersistence = persistenceSpy();
+			const onCueRun = vi.fn(async () => makeResult());
+			const deps = createDeps({
+				onCueRun,
+				queuePersistence,
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 1 })),
+			});
+			const manager = createCueRunManager(deps);
+			manager.setDraining(true);
+			for (let i = 0; i < 3; i++) manager.execute('session-1', 'p', createEvent(), `sub-${i}`);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(onCueRun).not.toHaveBeenCalled();
+			expect(manager.getQueueStatus().get('session-1')).toBe(3);
+			expect(queuePersistence.persist).toHaveBeenCalledTimes(3);
+			expect(deps.onLog).not.toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('Queue overflow'),
+				expect.anything()
+			);
+		});
+
+		it('defers even with queue_size 0', () => {
+			const deps = createDeps({
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 0 })),
+			});
+			const manager = createCueRunManager(deps);
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'sub');
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+
+		it('stamps every queued entry on persistQueueForRestart', () => {
+			const queuePersistence = persistenceSpy();
+			const manager = createCueRunManager(createDeps({ queuePersistence }));
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			manager.execute('session-1', 'p', createEvent(), 'b');
+			queuePersistence.persist.mockClear();
+
+			expect(manager.persistQueueForRestart(1234)).toBe(2);
+			const stamped = queuePersistence.persist.mock.calls.map((call) => call[2]);
+			expect(stamped.map((e) => [e.subscriptionName, e.drainedAt])).toEqual([
+				['a', 1234],
+				['b', 1234],
+			]);
+		});
+
+		it('discardInMemory forgets the queue without deleting persisted rows; reset() deletes them', () => {
+			const queuePersistence = persistenceSpy();
+			const manager = createCueRunManager(createDeps({ queuePersistence }));
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			manager.discardInMemory();
+			expect(manager.getQueueStatus().size).toBe(0);
+			expect(queuePersistence.clearAll).not.toHaveBeenCalled();
+			expect(queuePersistence.remove).not.toHaveBeenCalled();
+			manager.reset();
+			expect(queuePersistence.clearAll).toHaveBeenCalledTimes(1);
+		});
+
+		it('whenIdle resolves after the last active run finishes and its successors are queued', async () => {
+			let finish: () => void = () => {};
+			const onRunCompleted = vi.fn();
+			const manager = createCueRunManager(
+				createDeps({
+					onCueRun: vi.fn(
+						() =>
+							new Promise<CueRunResult>((resolve) => {
+								finish = () => resolve(makeResult());
+							})
+					),
+					onRunCompleted,
+				})
+			);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			let idle = false;
+			void manager.whenIdle().then(() => {
+				idle = true;
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(idle).toBe(false);
+			finish();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(idle).toBe(true);
+			expect(onRunCompleted).toHaveBeenCalled();
+			await expect(manager.whenIdle()).resolves.toBeUndefined();
+		});
+
+		it('exemptFromQueueCap keeps a restored deferred entry past queue_size', () => {
+			const manager = createCueRunManager(
+				createDeps({
+					onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+					getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 1 })),
+				})
+			);
+			manager.execute('session-1', 'p', createEvent(), 'running');
+			for (let i = 0; i < 3; i++) {
+				manager.execute(
+					'session-1',
+					'p',
+					createEvent(),
+					`deferred-${i}`,
+					undefined,
+					1,
+					undefined,
+					undefined,
+					undefined,
+					Date.now(),
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					true
+				);
+			}
+			expect(manager.getQueueStatus().get('session-1')).toBe(3);
+		});
+	});
+
+	describe('cancelling a launch that has not spawned yet', () => {
+		/** onCueRun that awaits `gate` (an executor load, an SSH probe) and then
+		 *  honors the signal the way the real executors do before spawning. */
+		function gatedLaunch() {
+			const spawned: string[] = [];
+			const signals: Array<AbortSignal | undefined> = [];
+			const gates: Array<() => void> = [];
+			const onCueRun = vi.fn(async (request: Parameters<CueRunManagerDeps['onCueRun']>[0]) => {
+				signals.push(request.signal);
+				await new Promise<void>((resolve) => gates.push(resolve));
+				if (request.signal?.aborted) {
+					return makeResult({
+						runId: request.runId,
+						subscriptionName: request.subscriptionName,
+						status: 'stopped',
+						stdout: '',
+						exitCode: null,
+					});
+				}
+				spawned.push(request.subscriptionName);
+				return makeResult({ runId: request.runId, subscriptionName: request.subscriptionName });
+			});
+			const openGate = async () => {
+				gates.shift()!();
+				await vi.advanceTimersByTimeAsync(0);
+			};
+			return { onCueRun, spawned, signals, openGate };
+		}
+
+		it('hands every launch the run signal and aborts it on stop', async () => {
+			const launch = gatedLaunch();
+			const deps = createDeps({ onCueRun: launch.onCueRun });
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			expect(launch.signals[0]?.aborted).toBe(false);
+
+			manager.stopRun('run-1');
+			expect(launch.signals[0]?.aborted).toBe(true);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(1);
+
+			await launch.openGate();
+			expect(launch.spawned).toEqual([]);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(0);
+			// The row ends stopped (never the launch's own failed or completed),
+			// and the run does not chain.
+			expect(safeUpdateCueEventStatus).toHaveBeenLastCalledWith(
+				'run-1',
+				'stopped',
+				undefined,
+				expect.anything()
+			);
+			expect(deps.onRunCompleted).not.toHaveBeenCalled();
+			const finished = (deps.onLog as ReturnType<typeof vi.fn>).mock.calls
+				.map((call) => call[2] as { type?: string; status?: string } | undefined)
+				.filter((data) => data?.type === 'runFinished');
+			expect(finished.map((data) => data!.status)).toEqual(['stopped']);
+		});
+
+		it('a stop while the main phase is finishing never launches the output prompt', async () => {
+			let finishMain!: (result: CueRunResult) => void;
+			const onCueRun = vi.fn(
+				() =>
+					new Promise<CueRunResult>((resolve) => {
+						finishMain = resolve;
+					})
+			);
+			const manager = createCueRunManager(createDeps({ onCueRun }));
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub', 'output prompt');
+
+			manager.stopRun('run-1');
+			// The main process had already finished when the stop came in, so
+			// its launch answers completed anyway.
+			finishMain(makeResult({ runId: 'run-1', status: 'completed' }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(onCueRun).toHaveBeenCalledTimes(1);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(0);
+		});
+
+		it('a stop during the output phase cancels that launch too', async () => {
+			const launch = gatedLaunch();
+			const deps = createDeps({ onCueRun: launch.onCueRun });
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub', 'output prompt');
+			await launch.openGate(); // main phase completes
+			expect(launch.onCueRun).toHaveBeenCalledTimes(2);
+			expect(launch.signals[1]?.aborted).toBe(false);
+
+			manager.stopRun('run-1');
+			expect(launch.signals[1]?.aborted).toBe(true);
+			await launch.openGate();
+			expect(launch.spawned).toEqual(['test-sub']);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(0);
+			expect(updateCueEventStatus).toHaveBeenCalledWith(
+				'run-2',
+				'stopped',
+				undefined,
+				expect.anything()
+			);
+		});
+
+		it('stopAll and reset cancel pending launches as well', async () => {
+			const launch = gatedLaunch();
+			const manager = createCueRunManager(
+				createDeps({
+					onCueRun: launch.onCueRun,
+					getSessionSettings: vi.fn(() => ({ ...defaultSettings, max_concurrent: 2 })),
+				})
+			);
+			manager.execute('session-1', 'a', createEvent(), 'a');
+			manager.execute('session-1', 'b', createEvent(), 'b');
+			manager.stopAll();
+			manager.execute('session-1', 'c', createEvent(), 'c');
+			manager.reset();
+			expect(launch.signals.map((signal) => signal?.aborted)).toEqual([true, true, true]);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(3);
+			await launch.openGate();
+			await launch.openGate();
+			await launch.openGate();
+			expect(launch.spawned).toEqual([]);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(0);
+		});
+
+		it('whenIdle does not wait for a stopped launch', async () => {
+			const launch = gatedLaunch();
+			const manager = createCueRunManager(createDeps({ onCueRun: launch.onCueRun }));
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			manager.stopRun('run-1');
+			await expect(manager.whenIdle()).resolves.toBeUndefined();
+			await launch.openGate();
 		});
 	});
 });

@@ -224,7 +224,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			sessionId: string
 		) => Promise<SessionMessagesResult | null>;
-		// NEW: Single-call grooming (recommended) - spawns batch process and returns response
+		// Single-call grooming: spawns a batch process and returns its response
 		groomContext: (
 			projectRoot: string,
 			agentType: string,
@@ -249,10 +249,6 @@ interface MaestroAPI {
 		) => Promise<string>;
 		// Cancel all active grooming sessions
 		cancelGrooming: () => Promise<void>;
-		// DEPRECATED: Use groomContext instead
-		createGroomingSession: (projectRoot: string, agentType: string) => Promise<string>;
-		sendGroomingPrompt: (sessionId: string, prompt: string) => Promise<string>;
-		cleanupGroomingSession: (sessionId: string) => Promise<void>;
 	};
 	settings: {
 		get: (key: string) => Promise<unknown>;
@@ -4556,6 +4552,9 @@ interface MaestroAPI {
 		) => Promise<import('../shared/cue-backup-types').CueBackupDiffStatusMap>;
 		delete: (filePath: string) => Promise<void>;
 	};
+
+	// Cue Bundle API (export / import a pipeline or an agent as a portable zip)
+	cueBundle: import('../main/preload/cueBundle').CueBundleApi;
 
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.

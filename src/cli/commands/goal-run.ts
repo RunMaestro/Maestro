@@ -3,7 +3,7 @@
 
 import { getSessionById } from '../services/storage';
 import { detectAgent } from '../services/agent-spawner';
-import { getAgentDefinition } from '../../main/agents/definitions';
+import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import { emitError, emitJsonl } from '../output/jsonl';
 import {
 	formatRunEvent,
@@ -14,11 +14,14 @@ import {
 } from '../output/formatter';
 import { checkAgentBusy, waitForAgentAvailable } from '../services/agent-busy';
 import { runGoal } from '../services/goal-runner';
+import { installInterruptHandler } from '../utils/interrupt';
 import {
 	withMaestroClient,
 	UnsupportedCommandError,
 	CommandTimeoutError,
 } from '../services/maestro-client';
+import { ExitCode } from '../exit-codes';
+import { MaestroNotRunningError } from '../services/maestro-not-running';
 import type { GoalRunConfig } from '../../shared/goalDriven/types';
 
 interface GoalRunOptions {
@@ -106,13 +109,18 @@ function goalRunDeepLink(agentId: string, tabId?: string): string {
  * one shape and no path can silently fall back to a headless run - the whole
  * point of `--visible` is that the user can watch it.
  */
-function failVisibleLaunch(message: string, code: string, useJson: boolean): never {
+function failVisibleLaunch(
+	message: string,
+	code: string,
+	useJson: boolean,
+	exitCode: ExitCode = ExitCode.GeneralError
+): never {
 	if (useJson) {
 		emitError(message, code);
 	} else {
 		console.error(formatError(message));
 	}
-	process.exit(1);
+	process.exit(exitCode);
 }
 
 /**
@@ -186,6 +194,14 @@ async function runVisibleGoalRun(
 		// Fail closed. Never fall back to a headless run: the caller asked for a
 		// run they could watch, and a silent headless substitute is invisible in
 		// exactly the surface they were pointing at.
+		if (error instanceof MaestroNotRunningError) {
+			failVisibleLaunch(
+				`${error.message}. Start Maestro and retry, or drop --visible to run headlessly.`,
+				error.code,
+				useJson,
+				ExitCode.NotRunning
+			);
+		}
 		if (error instanceof UnsupportedCommandError) {
 			failVisibleLaunch(error.message, 'UNSUPPORTED_COMMAND', useJson);
 		}
@@ -346,19 +362,35 @@ export async function goalRun(
 			console.log('');
 		}
 
+		// First Ctrl+C stops the run gracefully (the iteration in flight is aborted
+		// and the run ends `stopped-by-user`); a second one exits immediately.
+		const interrupt = installInterruptHandler({
+			onFirst: () => {
+				if (!useJson) {
+					console.log(formatInfo('Stopping... press Ctrl+C again to quit immediately.'));
+				}
+			},
+		});
+
 		const generator = runGoal(agent, goalConfig, {
 			writeHistory: options.history !== false, // --no-history sets history to false
 			verbose: options.verbose,
 			model: options.model?.trim() || undefined,
 			effort: options.effort?.trim() || undefined,
+			signal: interrupt.signal,
 		});
 
-		for await (const event of generator) {
-			if (useJson) {
-				console.log(JSON.stringify(event));
-			} else {
-				console.log(formatRunEvent(event as RunEvent, { debug: false }));
+		try {
+			for await (const event of generator) {
+				if (useJson) {
+					console.log(JSON.stringify(event));
+				} else {
+					console.log(formatRunEvent(event as RunEvent, { debug: false }));
+				}
 			}
+			if (interrupt.signal.aborted) process.exitCode = 130;
+		} finally {
+			interrupt.dispose();
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';

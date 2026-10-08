@@ -372,6 +372,39 @@ describe('listClaudeSessions', () => {
 		expect(result.sessions[0].origin).toBe('user');
 	});
 
+	// The origins store used to be read from a hard-coded `Maestro` folder that
+	// ignored MAESTRO_USER_DATA, so an agent the app spawned with a dev data dir
+	// listed its sessions without their names. It now shares the CLI's resolver.
+	it('reads the origins store from MAESTRO_USER_DATA', () => {
+		const saved = process.env.MAESTRO_USER_DATA;
+		process.env.MAESTRO_USER_DATA = '/data/maestro-dev';
+		const originsPath = path.join(path.resolve('/data/maestro-dev'), 'claude-session-origins.json');
+		try {
+			vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+			vi.mocked(fs.readdirSync).mockReturnValue(['session-named.jsonl' as unknown as fs.Dirent]);
+			vi.mocked(fs.statSync).mockReturnValue({ size: 500, mtimeMs: Date.now() } as fs.Stats);
+			vi.mocked(fs.readFileSync).mockImplementation((p) => {
+				const pStr = p.toString();
+				if (pStr === originsPath) {
+					return JSON.stringify({
+						origins: { [projectPath]: { 'session-named': { sessionName: 'From Dev Data' } } },
+					});
+				}
+				if (pStr.includes('session-named.jsonl')) {
+					return makeJsonlContent({ userMessage: 'Do something', assistantMessage: 'Done' });
+				}
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			});
+
+			const result = listClaudeSessions(projectPath);
+
+			expect(result.sessions[0].sessionName).toBe('From Dev Data');
+		} finally {
+			if (saved === undefined) delete process.env.MAESTRO_USER_DATA;
+			else process.env.MAESTRO_USER_DATA = saved;
+		}
+	});
+
 	it('should search in session names from origins store', () => {
 		vi.mocked(os.platform).mockReturnValue('darwin');
 

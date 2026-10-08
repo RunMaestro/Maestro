@@ -4,6 +4,7 @@
 // verb uses, so they fail with MAESTRO_NOT_RUNNING when the app is down.
 
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { resolveAgentId } from '../services/storage';
 
 interface QueueListItem {
@@ -38,27 +39,11 @@ function emitError(error: string, code: string): void {
 }
 
 /**
- * Map a thrown queue-command error to the same "app down" vs "generic failure"
- * codes the dispatch verb uses, so scripts can branch on `code` consistently.
+ * Map a thrown queue-command error that is NOT an absent app (those exit 3
+ * through `exitIfMaestroNotRunning` first) to the verb's generic failure code.
  */
 function mapQueueError(error: unknown): { error: string; code: string } {
 	const msg = error instanceof Error ? error.message : String(error);
-	const lower = msg.toLowerCase();
-	if (
-		lower.includes('econnrefused') ||
-		lower.includes('connection refused') ||
-		lower.includes('websocket') ||
-		lower.includes('enotfound') ||
-		lower.includes('etimedout') ||
-		lower.includes('maestro desktop app is not running') ||
-		lower.includes('discovery file is stale') ||
-		lower.includes('not connected to maestro')
-	) {
-		return {
-			error: 'Maestro desktop is not running or not reachable',
-			code: 'MAESTRO_NOT_RUNNING',
-		};
-	}
 	return { error: `Command failed: ${msg}`, code: 'COMMAND_FAILED' };
 }
 
@@ -94,6 +79,7 @@ export async function queueList(options: QueueListOptions): Promise<void> {
 		const queues = result.queues ?? [];
 		console.log(JSON.stringify({ success: true, queues, totalItems: countItems(queues) }, null, 2));
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
 		process.exit(1);
@@ -146,6 +132,7 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 			JSON.stringify({ success: true, agentId: sessionId, itemId, removed: true }, null, 2)
 		);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
 		process.exit(1);

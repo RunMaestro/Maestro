@@ -35,12 +35,7 @@ import { registerDebugHandlers, DebugHandlerDependencies } from './debug';
 import { registerSpeckitHandlers } from './speckit';
 import { registerOpenSpecHandlers } from './openspec';
 import { registerBmadHandlers } from './bmad';
-import {
-	registerContextHandlers,
-	ContextHandlerDependencies,
-	cleanupAllGroomingSessions,
-	getActiveGroomingSessionCount,
-} from './context';
+import { registerContextHandlers, ContextHandlerDependencies } from './context';
 import { registerMarketplaceHandlers, MarketplaceHandlerDependencies } from './marketplace';
 import { registerStatsHandlers, StatsHandlerDependencies } from './stats';
 import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-stats';
@@ -74,6 +69,7 @@ import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from 
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
+import { registerCueBundleHandlers } from './cue-bundle';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
@@ -122,7 +118,7 @@ export { registerDebugHandlers };
 export { registerSpeckitHandlers };
 export { registerOpenSpecHandlers };
 export { registerBmadHandlers };
-export { registerContextHandlers, cleanupAllGroomingSessions, getActiveGroomingSessionCount };
+export { registerContextHandlers };
 export { registerMarketplaceHandlers };
 export type { MarketplaceHandlerDependencies };
 export { registerStatsHandlers };
@@ -155,6 +151,7 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
+export { registerCueBundleHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
 export { registerPluginsHandlers };
@@ -391,6 +388,11 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register Cue Backup handlers (Cue modal Backup tab)
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
+	});
+	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	registerCueBundleHandlers({
+		sessionsStore: deps.sessionsStore,
+		getMainWindow: deps.getMainWindow,
 	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();

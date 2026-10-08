@@ -109,6 +109,126 @@ describe('Logger', () => {
 		});
 	});
 
+	describe('routeConsoleToStderr for the CLI', () => {
+		// maestro-cli prints its result (`--json`, JSONL run events) on stdout and
+		// reuses main modules that log through this logger; an Auto Run's
+		// `autorun` lines used to land in the middle of that JSON stream.
+		it('sends every level to stderr and nothing to stdout', () => {
+			logger.setLogLevel('debug');
+			logger.routeConsoleToStderr();
+
+			logger.debug('d');
+			logger.info('i');
+			logger.warn('w');
+			logger.error('e');
+			logger.autorun('a', 'Agent');
+			logger.toast('t');
+			logger.cue('c');
+
+			expect(consoleLogSpy).not.toHaveBeenCalled();
+			expect(consoleInfoSpy).not.toHaveBeenCalled();
+			expect(consoleWarnSpy).not.toHaveBeenCalled();
+			expect(consoleErrorSpy).toHaveBeenCalledTimes(7);
+			expect(String(consoleErrorSpy.mock.calls[4][0])).toContain('[AUTORUN] [Agent] a');
+		});
+
+		it('is off by default, so the desktop keeps its per-level console output', () => {
+			logger.info('i');
+			logger.autorun('a');
+			expect(consoleInfoSpy).toHaveBeenCalledTimes(2);
+			expect(consoleErrorSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('consoleJson', () => {
+		// consoleJson() takes the console over; put back whatever was there
+		// (the spies) so the takeover cannot leak into later tests.
+		const methods = ['log', 'debug', 'info', 'warn', 'error'] as const;
+		let saved: Array<[(typeof methods)[number], unknown]>;
+		beforeEach(() => {
+			saved = methods.map((m) => [m, console[m]]);
+		});
+		afterEach(() => {
+			for (const [m, fn] of saved) (console as unknown as Record<string, unknown>)[m] = fn;
+		});
+
+		// `cue engine start --log-format json`: the shared Cue modules log through
+		// this logger, so its lines must come out in the same JSON shape as the
+		// engine's own, on stderr, one object per line.
+		it('writes one JSON object per line to stderr and nothing to the console methods', () => {
+			const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+			logger.consoleJson();
+
+			logger.warn('careful', 'Telemetry');
+			logger.cue('c', 'Cue', { runId: 'r1', prompt: 'never logged' });
+
+			expect(consoleErrorSpy).not.toHaveBeenCalled();
+			expect(consoleInfoSpy).not.toHaveBeenCalled();
+			expect(consoleWarnSpy).not.toHaveBeenCalled();
+			const lines = writeSpy.mock.calls.map((c) => String(c[0]));
+			expect(lines).toHaveLength(2);
+			for (const line of lines)
+				expect(line.endsWith('\n') && !line.slice(0, -1).includes('\n')).toBe(true);
+			expect(JSON.parse(lines[0])).toMatchObject({
+				level: 'warn',
+				message: 'careful',
+				context: 'Telemetry',
+			});
+			const second = JSON.parse(lines[1]);
+			expect(second).toMatchObject({ level: 'info', category: 'cue', runId: 'r1' });
+			expect(lines[1]).not.toContain('never logged');
+			writeSpy.mockRestore();
+		});
+
+		it('turns direct console calls into JSON lines at their level, through the level filter', () => {
+			const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+			logger.consoleJson();
+
+			console.log('[CueDebug] dropped at info', { sessionId: 's1' });
+			console.warn('[CUE] careful', new Error('boom'));
+			console.info('plain', 3, true);
+			logger.setLogLevel('debug');
+			console.log('[CueDebug] kept', { sessionId: 's1', projectRoot: '/secret/path' });
+			console.debug('also debug');
+
+			const lines = writeSpy.mock.calls.map((c) => JSON.parse(String(c[0])));
+			expect(lines).toEqual([
+				expect.objectContaining({ level: 'warn', message: '[CUE] careful boom' }),
+				expect.objectContaining({ level: 'info', message: 'plain 3 true' }),
+				expect.objectContaining({ level: 'debug', message: '[CueDebug] kept', sessionId: 's1' }),
+				expect.objectContaining({ level: 'debug', message: 'also debug' }),
+			]);
+			expect(JSON.stringify(lines)).not.toContain('/secret/path');
+			expect(consoleLogSpy).not.toHaveBeenCalled();
+			expect(consoleWarnSpy).not.toHaveBeenCalled();
+			writeSpy.mockRestore();
+		});
+
+		it('writeStdout reaches the console.log from before the takeover', () => {
+			const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+			logger.consoleJson();
+			logger.consoleJson(); // idempotent: does not capture its own capture
+
+			logger.writeStdout('{"started":true}');
+			console.log('not a result');
+
+			expect(consoleLogSpy).toHaveBeenCalledTimes(1);
+			expect(consoleLogSpy).toHaveBeenCalledWith('{"started":true}');
+			writeSpy.mockRestore();
+		});
+	});
+
+	describe('without consoleJson (text mode, the desktop)', () => {
+		it('leaves the console methods alone and writeStdout is console.log', () => {
+			const before = console.log;
+			logger.writeStdout('result');
+			logger.info('hello');
+			expect(console.log).toBe(before);
+			expect(consoleLogSpy).toHaveBeenCalledWith('result');
+			expect(consoleInfoSpy).toHaveBeenCalledWith(expect.stringContaining('hello'), '');
+		});
+	});
+
 	describe('Log Level Management', () => {
 		it('should have default log level of info', async () => {
 			expect(logger.getLogLevel()).toBe('info');

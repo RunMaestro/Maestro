@@ -9,8 +9,8 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
-import { resolveUserDataDir } from '../../shared/userDataDir';
 import { captureException } from '../utils/sentry';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 
 const LOG_CONTEXT = '[CueDB]';
 
@@ -64,6 +64,15 @@ export interface CueEventRecord {
 	outputExcerpt?: string | null;
 	/** Head-truncated stdout behind the excerpt. NULL for a silent run. */
 	fullOutput?: string | null;
+	/**
+	 * Serialized `UsageStats` delta-normalized from the agent's stdout stream
+	 * as the run executed (see `CueRunResult.usage`). NULL for command/shell
+	 * runs, agents that emit no usage events in-stream, and rows written
+	 * before this column existed. This is the ONLY token figure available for
+	 * an SSH-remote Cue run - `cue-token-accessor.ts`'s on-disk lookup cannot
+	 * reach a session file that lives on the remote host.
+	 */
+	streamUsageJson?: string | null;
 }
 
 // ============================================================================
@@ -88,7 +97,8 @@ const CREATE_CUE_EVENTS_SQL = `
     error_message TEXT,
     exit_code INTEGER,
     output_excerpt TEXT,
-    full_output TEXT
+    full_output TEXT,
+    stream_usage_json TEXT
   )
 `;
 
@@ -115,6 +125,7 @@ const CUE_EVENTS_ADDITIVE_COLUMNS = [
 	{ name: 'exit_code', type: 'INTEGER' },
 	{ name: 'output_excerpt', type: 'TEXT' },
 	{ name: 'full_output', type: 'TEXT' },
+	{ name: 'stream_usage_json', type: 'TEXT' },
 ] as const;
 
 const CREATE_CUE_EVENTS_INDEXES_SQL = `
@@ -194,6 +205,27 @@ const CREATE_CUE_EVENT_QUEUE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_event_queue_queued ON cue_event_queue(queued_at)
 `;
 
+// Partial fan-in progress (standalone engine only). One row per source that
+// has completed for a fan-in still waiting on others, written through as each
+// completion arrives and deleted when the fan-in fires, times out or is reset,
+// so a crash or a drain keeps it. `output` is the same tail-capped
+// (SOURCE_OUTPUT_MAX_CHARS) text the tracker holds in memory. Additive table;
+// no existing table changes.
+const CREATE_CUE_FAN_IN_STATE_SQL = `
+  CREATE TABLE IF NOT EXISTS cue_fan_in_state (
+    owner_session_id TEXT NOT NULL,
+    subscription_name TEXT NOT NULL,
+    source_session_id TEXT NOT NULL,
+    source_session_name TEXT NOT NULL,
+    output TEXT NOT NULL,
+    truncated INTEGER NOT NULL DEFAULT 0,
+    chain_depth INTEGER NOT NULL DEFAULT 0,
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL,
+    PRIMARY KEY (owner_session_id, subscription_name, source_session_id)
+  )
+`;
+
 // Telemetry outbox - buffers telemetry events between flushes. Rows are
 // inserted from the dispatch / run-completion hot paths, read in batches by
 // the submitter, and deleted only after a successful POST to runmaestro.ai.
@@ -245,6 +277,31 @@ const CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL = `
 const CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_telemetry_outbox_created ON cue_telemetry_outbox(created_at)
 `;
+
+/**
+ * Webhook deliveries already accepted, keyed by path and the sender's delivery
+ * id. A sender that retries (GitHub's "Redeliver", a timeout on its side)
+ * reuses the id, so the retry is answered without firing anything a second
+ * time. Rows live for {@link WEBHOOK_DELIVERY_RETENTION_MS}.
+ */
+const CREATE_CUE_WEBHOOK_DELIVERIES_SQL = `
+  CREATE TABLE IF NOT EXISTS cue_webhook_deliveries (
+    path TEXT NOT NULL,
+    delivery_id TEXT NOT NULL,
+    received_at INTEGER NOT NULL,
+    PRIMARY KEY (path, delivery_id)
+  )
+`;
+
+const CREATE_CUE_WEBHOOK_DELIVERIES_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_cue_webhook_deliveries_received ON cue_webhook_deliveries(received_at)
+`;
+
+/** How long a webhook delivery id is remembered. */
+export const WEBHOOK_DELIVERY_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Expired delivery rows are swept at most this often, from the claim path. */
+const WEBHOOK_DELIVERY_PRUNE_INTERVAL_MS = 60 * 1000;
 
 // ============================================================================
 // Module State
@@ -313,10 +370,13 @@ export function initCueDb(
 	for (const sql of CREATE_CUE_EVENT_QUEUE_INDEXES_SQL.split(';').filter((s) => s.trim())) {
 		db.prepare(sql).run();
 	}
+	db.prepare(CREATE_CUE_FAN_IN_STATE_SQL).run();
 	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
 	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
 	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_SQL).run();
 	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL).run();
+	db.prepare(CREATE_CUE_WEBHOOK_DELIVERIES_SQL).run();
+	db.prepare(CREATE_CUE_WEBHOOK_DELIVERIES_INDEX_SQL).run();
 
 	log('info', `Cue database initialized at ${dbPath}`);
 }
@@ -337,6 +397,78 @@ export function closeCueDb(): void {
  */
 export function isCueDbReady(): boolean {
 	return db !== null;
+}
+
+// ============================================================================
+// Read-only access (outside the engine process)
+// ============================================================================
+
+/** What `maestro-cli cue engine status` reads from `cue.db`. */
+export type CueDbStatusFigures =
+	| { ok: true; lastHeartbeatMs: number | null; totalEvents: number }
+	| { ok: false; reason: string };
+
+/**
+ * Read the status figures from `cue.db` without writing to it, for a process
+ * that is not the engine (an operator's `status` next to a live engine,
+ * possibly as another user).
+ *
+ * Unlike {@link initCueDb} this never creates the folder or the file, never
+ * chmods, never sets the journal mode and never runs schema statements, so it
+ * cannot change the database under the engine that owns it. The read-only
+ * handle is opened, read and closed here; it is never the module singleton,
+ * so a writer in the same process can never pick it up.
+ *
+ * `cue.db` is always WAL (initCueDb sets it). SQLite opens a WAL database
+ * read-only only when its `-wal` and `-shm` files exist, and otherwise creates
+ * them if the folder is writable (files a user running under sudo would then
+ * own) or fails with SQLITE_CANTOPEN. Both exist while any connection has the
+ * database open, so their absence means nothing is using it and there is no
+ * live figure to read: that is reported as a reason instead of opened.
+ *
+ * Expected failures (missing file, permissions, busy, an older schema without
+ * a table) come back as `{ ok: false, reason }`. `SqliteUnavailableError` from
+ * the CLI's lazy loader is rethrown so callers report it as they already do.
+ */
+export function readCueDbStatusFigures(dbPathOverride?: string): CueDbStatusFigures {
+	const dbPath = dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
+	if (!fs.existsSync(dbPath)) {
+		return { ok: false, reason: `${dbPath} does not exist` };
+	}
+	const missingSidecar = ['-wal', '-shm'].find((suffix) => !fs.existsSync(dbPath + suffix));
+	if (missingSidecar) {
+		return {
+			ok: false,
+			reason: `${dbPath}${missingSidecar} does not exist, so no process has the database open`,
+		};
+	}
+
+	let handle: Database.Database | null = null;
+	try {
+		handle = new Database(dbPath, { readonly: true, fileMustExist: true });
+		return {
+			ok: true,
+			lastHeartbeatMs: lastHeartbeatIn(handle),
+			totalEvents: countCueEventsIn(handle),
+		};
+	} catch (err) {
+		if (isSqliteUnavailable(err)) throw err;
+		return { ok: false, reason: `could not read ${dbPath}: ${errorText(err)}` };
+	} finally {
+		handle?.close();
+	}
+}
+
+function errorText(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * `SqliteUnavailableError` lives in the CLI (`cli/utils/native-sqlite.ts`);
+ * matched by name so this module does not import from the CLI.
+ */
+function isSqliteUnavailable(err: unknown): boolean {
+	return err instanceof Error && err.name === 'SqliteUnavailableError';
 }
 
 // ============================================================================
@@ -461,6 +593,8 @@ export interface CueEventCompletionInfo {
 	outputExcerpt?: string | null;
 	/** Head-truncated stdout; null when the run printed nothing. */
 	fullOutput?: string | null;
+	/** Serialized `UsageStats` from the stdout stream; null when the run produced no usage events. See {@link CueEventRecord.streamUsageJson}. */
+	streamUsageJson?: string | null;
 }
 
 /**
@@ -504,6 +638,8 @@ export function updateCueEventStatus(
 		values.push(completion.outputExcerpt ?? null);
 		columns.push('full_output = ?');
 		values.push(completion.fullOutput ?? null);
+		columns.push('stream_usage_json = ?');
+		values.push(completion.streamUsageJson ?? null);
 	}
 
 	values.push(id);
@@ -585,7 +721,13 @@ export function safeUpdateCueEventStatus(
  */
 export function countCueEvents(): number {
 	if (!db) return 0;
-	const row = db.prepare(`SELECT COUNT(*) AS c FROM cue_events`).get() as { c: number } | undefined;
+	return countCueEventsIn(db);
+}
+
+function countCueEventsIn(database: Database.Database): number {
+	const row = database.prepare(`SELECT COUNT(*) AS c FROM cue_events`).get() as
+		| { c: number }
+		| undefined;
 	return row?.c ?? 0;
 }
 
@@ -608,6 +750,7 @@ interface CueEventRow {
 	exit_code: number | null;
 	output_excerpt: string | null;
 	full_output: string | null;
+	stream_usage_json: string | null;
 }
 
 /** Single mapping from the on-disk row to {@link CueEventRecord}. */
@@ -630,6 +773,7 @@ function rowToCueEventRecord(row: CueEventRow): CueEventRecord {
 		exitCode: row.exit_code,
 		outputExcerpt: row.output_excerpt,
 		fullOutput: row.full_output,
+		streamUsageJson: row.stream_usage_json,
 	};
 }
 
@@ -1032,7 +1176,11 @@ export function updateHeartbeat(): void {
  * Read the last-seen heartbeat timestamp, or null if none exists.
  */
 export function getLastHeartbeat(): number | null {
-	const row = getDb().prepare(`SELECT last_seen FROM cue_heartbeat WHERE id = 1`).get() as
+	return lastHeartbeatIn(getDb());
+}
+
+function lastHeartbeatIn(database: Database.Database): number | null {
+	const row = database.prepare(`SELECT last_seen FROM cue_heartbeat WHERE id = 1`).get() as
 		| { last_seen: number }
 		| undefined;
 	return row?.last_seen ?? null;
@@ -1051,6 +1199,24 @@ export function pruneCueEvents(olderThanMs: number): void {
 	if (result.changes > 0) {
 		log('info', `Pruned ${result.changes} old Cue event(s)`);
 	}
+}
+
+/**
+ * Settle every run a previous engine left `running`. Only called at engine
+ * start, while this process holds the cross-process lock, so no live engine
+ * can own one of these rows: its engine was killed (SIGKILL, crash, power
+ * loss) before the run finished. Left alone, the row reads as in progress
+ * forever. The run's own process may have outlived the engine and finished,
+ * but nothing recorded how, so `failed` with an explanation is the honest
+ * status. Returns how many rows were settled.
+ */
+export function failOrphanedRunningEvents(message: string): number {
+	const result = getDb()
+		.prepare(
+			`UPDATE cue_events SET status = 'failed', completed_at = ?, error_message = COALESCE(error_message, ?) WHERE status = 'running'`
+		)
+		.run(Date.now(), message);
+	return result.changes;
 }
 
 // ============================================================================
@@ -1216,6 +1382,61 @@ export function clearGitHubSeenForSubscription(subscriptionId: string): void {
 }
 
 // ============================================================================
+// Webhook Delivery Dedupe
+// ============================================================================
+
+let lastWebhookDeliveryPruneAt = 0;
+
+/**
+ * Claim a webhook delivery. Returns true the first time a (path, delivery id)
+ * pair is seen within {@link WEBHOOK_DELIVERY_RETENTION_MS}, false for a
+ * redelivery that must not fire again.
+ *
+ * The INSERT is the check, so two copies of one delivery racing in cannot both
+ * claim it. A row older than the retention window no longer counts, even
+ * before the periodic sweep removes it. Fails open: without a database every
+ * delivery is new, which is how webhooks behaved before this table existed.
+ */
+export function claimWebhookDelivery(path: string, deliveryId: string): boolean {
+	if (!db) return true;
+	const now = Date.now();
+	const cutoff = now - WEBHOOK_DELIVERY_RETENTION_MS;
+	const database = getDb();
+	database
+		.prepare(
+			`DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ? AND received_at < ?`
+		)
+		.run(path, deliveryId, cutoff);
+	const result = database
+		.prepare(
+			`INSERT OR IGNORE INTO cue_webhook_deliveries (path, delivery_id, received_at) VALUES (?, ?, ?)`
+		)
+		.run(path, deliveryId, now);
+	if (now - lastWebhookDeliveryPruneAt >= WEBHOOK_DELIVERY_PRUNE_INTERVAL_MS) {
+		lastWebhookDeliveryPruneAt = now;
+		database.prepare(`DELETE FROM cue_webhook_deliveries WHERE received_at < ?`).run(cutoff);
+	}
+	return result.changes > 0;
+}
+
+/**
+ * Whether a (path, delivery id) pair was already claimed within
+ * {@link WEBHOOK_DELIVERY_RETENTION_MS}. Read-only: the listener checks it on
+ * arrival and claims only after the delivery was taken, so a crash in between
+ * leaves no claim to block the sender's retry. Without a database nothing
+ * counts as claimed.
+ */
+export function isWebhookDeliveryClaimed(path: string, deliveryId: string): boolean {
+	if (!db) return false;
+	const row = getDb()
+		.prepare(
+			`SELECT 1 FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ? AND received_at >= ?`
+		)
+		.get(path, deliveryId, Date.now() - WEBHOOK_DELIVERY_RETENTION_MS);
+	return row !== undefined;
+}
+
+// ============================================================================
 // Phase 12A - Queue Persistence
 // ============================================================================
 
@@ -1349,6 +1570,116 @@ export function safePersistQueuedEvent(record: CueQueuedEventRecord): void {
 			eventJsonLen: record.eventJson.length,
 		};
 		captureException(err, { operation: 'safePersistQueuedEvent', record: sanitized });
+	}
+}
+
+/** One completed source of a fan-in still waiting on others (`cue_fan_in_state`). */
+export interface CueFanInStateRecord {
+	ownerSessionId: string;
+	subscriptionName: string;
+	sourceSessionId: string;
+	sourceSessionName: string;
+	output: string;
+	truncated: boolean;
+	chainDepth: number;
+	/** When the fan-in's FIRST source completed; its timeout counts from here. */
+	startedAt: number;
+	completedAt: number;
+}
+
+/** Upsert one completed fan-in source. Throws on DB failure; see the safe wrapper. */
+export function persistFanInSource(record: CueFanInStateRecord): void {
+	getDb()
+		.prepare(
+			`INSERT OR REPLACE INTO cue_fan_in_state
+			 (owner_session_id, subscription_name, source_session_id, source_session_name,
+			  output, truncated, chain_depth, started_at, completed_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		)
+		.run(
+			record.ownerSessionId,
+			record.subscriptionName,
+			record.sourceSessionId,
+			record.sourceSessionName,
+			record.output,
+			record.truncated ? 1 : 0,
+			record.chainDepth,
+			record.startedAt,
+			record.completedAt
+		);
+}
+
+/** Delete every persisted source of one fan-in. */
+export function removeFanInState(ownerSessionId: string, subscriptionName: string): void {
+	getDb()
+		.prepare(`DELETE FROM cue_fan_in_state WHERE owner_session_id = ? AND subscription_name = ?`)
+		.run(ownerSessionId, subscriptionName);
+}
+
+/** Every persisted fan-in source, oldest first. */
+export function getFanInState(): CueFanInStateRecord[] {
+	const rows = getDb()
+		.prepare(`SELECT * FROM cue_fan_in_state ORDER BY started_at ASC, completed_at ASC`)
+		.all() as Array<{
+		owner_session_id: string;
+		subscription_name: string;
+		source_session_id: string;
+		source_session_name: string;
+		output: string;
+		truncated: number;
+		chain_depth: number;
+		started_at: number;
+		completed_at: number;
+	}>;
+	return rows.map((row) => ({
+		ownerSessionId: row.owner_session_id,
+		subscriptionName: row.subscription_name,
+		sourceSessionId: row.source_session_id,
+		sourceSessionName: row.source_session_name,
+		output: row.output,
+		truncated: row.truncated === 1,
+		chainDepth: row.chain_depth,
+		startedAt: row.started_at,
+		completedAt: row.completed_at,
+	}));
+}
+
+/** Safe wrapper: persist a fan-in source; a failure degrades to in-memory only. */
+export function safePersistFanInSource(record: CueFanInStateRecord): void {
+	try {
+		persistFanInSource(record);
+	} catch (err) {
+		log(
+			'warn',
+			`Failed to persist fan-in progress (${record.subscriptionName}): ${err instanceof Error ? err.message : String(err)}`
+		);
+		// Ids and sizes only: the output may carry user content.
+		captureException(err, {
+			operation: 'safePersistFanInSource',
+			record: {
+				ownerSessionId: record.ownerSessionId,
+				subscriptionName: record.subscriptionName,
+				sourceSessionId: record.sourceSessionId,
+				outputLen: record.output.length,
+			},
+		});
+	}
+}
+
+/** Safe wrapper: delete one fan-in's persisted sources; non-throwing. */
+export function safeRemoveFanInState(ownerSessionId: string, subscriptionName: string): void {
+	try {
+		removeFanInState(ownerSessionId, subscriptionName);
+	} catch (err) {
+		log(
+			'warn',
+			`Failed to remove fan-in progress (${subscriptionName}): ${err instanceof Error ? err.message : String(err)}`
+		);
+		captureException(err, {
+			operation: 'safeRemoveFanInState',
+			ownerSessionId,
+			subscriptionName,
+		});
 	}
 }
 

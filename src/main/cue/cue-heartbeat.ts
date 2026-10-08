@@ -10,6 +10,7 @@
 import { updateHeartbeat } from './cue-db';
 import { captureException } from '../utils/sentry';
 import type { CueLogPayload } from '../../shared/cue-log-types';
+import { SLEEP_THRESHOLD_MS } from './cue-recovery-service';
 
 export const HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
 
@@ -37,6 +38,21 @@ export interface CueHeartbeat {
 export interface CueHeartbeatHooks {
 	onTick?: () => void;
 	onFailure?: (payload: CueLogPayload & { type: 'heartbeatFailure' }) => void;
+	/**
+	 * The host slept or the process was paused: the wall clock moved at least
+	 * {@link SLEEP_THRESHOLD_MS} since the previous tick (or start). Node timers
+	 * follow a monotonic clock that stops during suspend, so the tick arrives
+	 * late in wall-clock terms and this is how a process without a power event
+	 * (the standalone engine) learns of the wake.
+	 *
+	 * Called BEFORE the tick writes, so `last_seen` in the database still marks
+	 * where the gap began when the hook runs `detectSleepAndReconcile()`. A
+	 * write first would leave a gap of about zero and lose the window. A clock
+	 * moved backward never calls it. If the hook restarts the heartbeat (as
+	 * `CueEngine.reconcileAfterWake()` does) the stale tick ends there;
+	 * otherwise it writes as usual.
+	 */
+	onWallClockGap?: (gapMs: number) => void;
 }
 
 /**
@@ -122,10 +138,20 @@ export function createCueHeartbeat(hooksOrOnTick?: CueHeartbeatHooks | (() => vo
 	function startHeartbeat(): void {
 		stopHeartbeat();
 		attempt();
-		heartbeatInterval = setInterval(() => {
+		let previousTickAt = Date.now();
+		const interval = setInterval(() => {
+			const now = Date.now();
+			const gapMs = now - previousTickAt;
+			previousTickAt = now;
+			if (hooks.onWallClockGap && gapMs >= SLEEP_THRESHOLD_MS) {
+				hooks.onWallClockGap(gapMs);
+				// Restarted (or stopped) by the hook: that start already wrote.
+				if (heartbeatInterval !== interval) return;
+			}
 			attempt();
 			hooks.onTick?.();
 		}, HEARTBEAT_INTERVAL_MS);
+		heartbeatInterval = interval;
 	}
 
 	function stopHeartbeat(): void {

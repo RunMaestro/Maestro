@@ -16,6 +16,7 @@
 
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface CreateWorktreeOptions {
 	agent?: string;
@@ -118,6 +119,7 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<vo
 			}
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
 		fail(error instanceof Error ? error.message : String(error));
 	}
 }

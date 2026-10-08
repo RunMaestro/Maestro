@@ -1449,3 +1449,75 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 });
+
+// Claude Code ends a failed turn with an ordinary `result` flagged
+// `is_error: true` and exits 0, so this flag is the only thing that says the
+// turn failed.
+describe('ClaudeOutputParser failed results (is_error: true)', () => {
+	const parser = new ClaudeOutputParser();
+
+	it('reports an API error the CLI gave up on, even under subtype "success"', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'success',
+			is_error: true,
+			result:
+				'API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}',
+			session_id: 'sess-1',
+		});
+
+		expect(error).not.toBeNull();
+		expect(error?.agentId).toBe('claude-code');
+		expect(error?.message).toBeTruthy();
+	});
+
+	it('names the cause from the subtype when the result carries no text', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_max_turns',
+			is_error: true,
+			session_id: 'sess-1',
+		});
+
+		expect(error).toMatchObject({
+			type: 'unknown',
+			message: 'Claude Code stopped after reaching its maximum number of turns.',
+			recoverable: true,
+		});
+	});
+
+	it('does not show the internal diagnostics array as the message', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			is_error: true,
+			errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+		});
+
+		expect(error?.message).toBe('Claude Code stopped with an error before finishing the turn.');
+	});
+
+	it('leaves a successful result alone', () => {
+		expect(
+			parser.detectErrorFromParsed({
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: 'All done.',
+			})
+		).toBeNull();
+	});
+
+	it('still parses the failed result as a result, so its usage is read', () => {
+		const event = parser.parseJsonObject({
+			type: 'result',
+			subtype: 'error_max_turns',
+			is_error: true,
+			total_cost_usd: 0.5,
+			usage: { input_tokens: 10, output_tokens: 20 },
+		});
+
+		expect(event?.type).toBe('result');
+		expect(event?.usage?.costUsd).toBe(0.5);
+	});
+});

@@ -10,7 +10,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 // Mock dependencies before importing the module
-vi.mock('../../../main/utils/execFile', () => ({
+vi.mock('../../../shared/maestro-lib/launch/exec-file', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
@@ -39,12 +39,20 @@ import {
 	checkBinaryExists,
 	probeWindowsPaths,
 	probeUnixPaths,
+	probeUnixPathsAll,
 	findAllBinaryPaths,
 	type BinaryDetectionResult,
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
 import { captureException } from '../../../main/utils/sentry';
+import { setMaestroLibLogger, setMaestroLibErrorReporter } from '../../../shared/maestro-lib/host';
+
+// The library logs and reports through its host (shared/maestro-lib/host.ts),
+// which the real desktop modules register into on load. They are mocked here,
+// so register the mocks instead.
+setMaestroLibLogger(logger);
+setMaestroLibErrorReporter({ captureException, captureMessage: vi.fn() });
 
 describe('path-prober', () => {
 	beforeEach(() => {
@@ -427,6 +435,27 @@ describe('path-prober', () => {
 			expect(await probeWindowsPaths('copilot')).toBe(wingetPath);
 		});
 
+		it('leads with the WinGet Links shim for copilot, over an npm shim', async () => {
+			// A portable WinGet package never lands in Program Files, it only gets
+			// a Links shim, so the shim has to outrank the npm `.cmd` wrapper too.
+			// Making the table reachable is what put this ordering into effect.
+			const home = os.homedir();
+			const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+			const wingetLink = path.join(localAppData, 'Microsoft', 'WinGet', 'Links', 'copilot.exe');
+			const npmShim = path.join(
+				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
+				'npm',
+				'copilot.cmd'
+			);
+			accessMock.mockImplementation(async (probePath) => {
+				const candidate = String(probePath);
+				if (candidate === wingetLink || candidate === npmShim) return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeWindowsPaths('copilot')).toBe(wingetLink);
+		});
+
 		it('should probe the current Codex Desktop executable', async () => {
 			const originalLocalAppData = process.env.LOCALAPPDATA;
 			const readdirMock = vi.spyOn(fs.promises, 'readdir');
@@ -606,6 +635,19 @@ describe('path-prober', () => {
 				path.join(home, '.opencode', 'bin', 'opencode')
 			);
 		});
+
+		it('lists /usr/local/bin/copilot once, not twice', async () => {
+			// `homebrew()` already emits the Intel root, so the hand-written
+			// `/usr/local/bin/copilot` that sat beside it was a second copy at a
+			// lower priority. `probeUnixPaths` hid that by taking the first hit,
+			// but `probeUnixPathsAll` is exported and does not de-duplicate.
+			accessMock.mockImplementation(async (probePath) => {
+				if (String(probePath) === '/usr/local/bin/copilot') return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeUnixPathsAll('copilot')).toEqual(['/usr/local/bin/copilot']);
+		});
 	});
 
 	describe('checkBinaryExists', () => {
@@ -730,6 +772,33 @@ describe('path-prober', () => {
 				const result = await checkBinaryExists('binary');
 				expect(result.exists).toBe(true);
 				expect(result.path).toBe('C:\\path\\to\\binary.exe');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('picks the .cmd over the extensionless npm shim `where` lists first (#1718)', async () => {
+			// An npm global install writes `opencode` (an sh shim CreateProcess
+			// cannot run) next to `opencode.cmd`, and `where` lists the shim first.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const cmdShim = 'C:\\tools\\npm\\opencode.cmd';
+
+			try {
+				// The known install locations hold nothing; only the .cmd beside the
+				// shim exists.
+				accessMock.mockImplementation(async (p) => {
+					if (p === cmdShim) return undefined;
+					throw new Error('ENOENT');
+				});
+				execMock.mockResolvedValue({
+					exitCode: 0,
+					stdout: 'C:\\tools\\npm\\opencode\r\nC:\\tools\\npm\\opencode.cmd\r\n',
+					stderr: '',
+				});
+
+				const result = await checkBinaryExists('opencode');
+				expect(result).toEqual({ exists: true, path: cmdShim });
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}

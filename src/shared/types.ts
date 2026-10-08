@@ -253,6 +253,8 @@ export interface SessionInfo {
 	toolType: ToolType;
 	cwd: string;
 	projectRoot: string;
+	/** The agent's original working directory, persisted by the desktop app. Older records may lack it. */
+	fullPath?: string;
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
@@ -279,6 +281,15 @@ export interface SessionInfo {
 	 * can be turned back on without retyping its value.
 	 */
 	customEnvVarsDisabled?: Record<string, string>;
+	/**
+	 * Secret env var NAMES this agent needs but whose values are never stored:
+	 * written by bundle import from the bundle's `env.required`. The CLI and
+	 * Cue resolve each one at launch from `$CREDENTIALS_DIRECTORY/<NAME>`,
+	 * `/run/secrets/<NAME>` or the environment (`src/shared/serverSecrets.ts`)
+	 * and hand it to this agent alone. The desktop carries the field unchanged
+	 * and never reads it; bundle export writes it back into `env.required`.
+	 */
+	requiredSecrets?: string[];
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

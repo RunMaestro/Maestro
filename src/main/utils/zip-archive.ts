@@ -142,7 +142,14 @@ export function readZipArchive(filePath: string, options?: ReadZipArchiveOptions
 	};
 }
 
-function assertNoSymlinkOnPath(destRoot: string, target: string): void {
+/**
+ * Throw unless `target` sits strictly beneath `destRoot` and no path component
+ * between them that already exists is a symlink. Components that do not exist
+ * yet end the walk, since nothing can be redirected through them. Exported for
+ * other writers that place archive content under a root (the Cue bundle
+ * importer), so they refuse exactly what extraction refuses.
+ */
+export function assertNoSymlinkOnPath(destRoot: string, target: string): void {
 	const rel = path.relative(destRoot, target);
 	if (!rel || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
 		throw new Error(`Refusing zip entry outside destination: ${rel || target}`);

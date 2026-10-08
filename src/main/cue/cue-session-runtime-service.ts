@@ -7,6 +7,7 @@ import { clearGitHubSeenForSubscription } from './cue-db';
 import {
 	computeOwnershipWarning,
 	countActiveSubscriptions,
+	selectOwnershipCandidates,
 	type SessionState,
 } from './cue-session-state';
 import type { CueSessionRegistry } from './cue-session-registry';
@@ -98,6 +99,20 @@ export interface CueSessionRuntimeService {
 	removeSession(sessionId: string): void;
 	teardownSession(sessionId: string): void;
 	clearAll(): void;
+	/**
+	 * The drain's first step (`CueEngine.drain`): stop every trigger source and
+	 * yaml watcher so no new work arrives, but keep the registry. Unlike
+	 * `teardownSession` it leaves fan-in state and the queue alone (teardown
+	 * clears both, deleting persisted rows), and settings and `agent.completed`
+	 * configs stay readable for the successors of runs still finishing.
+	 * Returns how many sources were stopped.
+	 */
+	disarmAll(): number;
+	/**
+	 * Resolves once every stopped source has settled the emits it already
+	 * acknowledged (see `CueTriggerSource.settle`). Call after `disarmAll`.
+	 */
+	settleAll(): Promise<void>;
 	/** Drop ALL app.startup dedup keys. Delegated from engine.stop(). */
 	clearAllStartupKeys(): void;
 }
@@ -108,6 +123,9 @@ export function createCueSessionRuntimeService(
 	const { registry } = deps;
 	const yamlWatchers = new Map<string, { projectRoot: string; cleanup: () => void }>();
 	const loadedYamlFiles = new Map<string, ReturnType<typeof readCueConfigFile>>();
+
+	/** Sources `disarmAll` stopped, kept only so `settleAll` can wait on them. */
+	let disarmedSources: CueTriggerSource[] = [];
 
 	function getSession(sessionId: string): SessionInfo | undefined {
 		return deps.getSessions().find((session) => session.id === sessionId);
@@ -195,15 +213,12 @@ export function createCueSessionRuntimeService(
 		// of truth: this session is NOT the config owner and the dashboard
 		// will surface the string as a red-triangle tooltip. Subscriptions
 		// with an explicit `agent_id` continue to fan out regardless.
-		// Filter candidates to sessions that could actually own a Cue config -
-		// a cue.yaml at their projectRoot AND a tool type that participates
-		// in Cue. A terminal (or any non-AI-agent) session could otherwise
-		// win the implicit first-in-list race at a shared projectRoot,
-		// become the "owner", have nothing to dispatch, and silently suppress
-		// automation on the real Cue-configured agent.
-		const candidates = deps
-			.getSessions()
-			.filter((s) => s.toolType !== 'terminal' && resolveCueConfigPath(s.projectRoot) !== null);
+		// Candidates: sessions that could actually own a Cue config (see
+		// {@link selectOwnershipCandidates}).
+		const candidates = selectOwnershipCandidates(
+			deps.getSessions(),
+			(root) => resolveCueConfigPath(root) !== null
+		);
 		const ownershipWarning = computeOwnershipWarning({
 			session,
 			candidates,
@@ -511,6 +526,31 @@ export function createCueSessionRuntimeService(
 			for (const { cleanup } of yamlWatchers.values()) cleanup();
 			yamlWatchers.clear();
 			loadedYamlFiles.clear();
+		},
+
+		disarmAll(): number {
+			let stopped = 0;
+			disarmedSources = [];
+			for (const [, state] of registry.snapshot()) {
+				for (const source of state.triggerSources) {
+					source.stop();
+					disarmedSources.push(source);
+					stopped++;
+				}
+				state.triggerSources = [];
+			}
+			// Every cue.yaml watcher, loaded or pending, lives in one map; a
+			// drained engine reloads nothing, and its baselines go with it.
+			for (const { cleanup } of yamlWatchers.values()) cleanup();
+			yamlWatchers.clear();
+			loadedYamlFiles.clear();
+			return stopped;
+		},
+
+		async settleAll(): Promise<void> {
+			const sources = disarmedSources;
+			disarmedSources = [];
+			await Promise.all(sources.map((source) => source.settle?.()));
 		},
 
 		clearAllStartupKeys(): void {

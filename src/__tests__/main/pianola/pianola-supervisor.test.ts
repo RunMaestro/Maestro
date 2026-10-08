@@ -30,7 +30,11 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 // Force the POSIX kill path so killProcess uses child.kill (our spy) instead of
 // shelling out to taskkill against a fake pid on Windows.
-vi.mock('../../../shared/platformDetection', () => ({ isWindows: () => false }));
+vi.mock('../../../shared/platformDetection', () => ({
+	isWindows: () => false,
+	// Decides where the stop ladder reads the process table from.
+	isLinux: () => process.platform === 'linux',
+}));
 
 import { PianolaSupervisor } from '../../../main/pianola/pianola-supervisor';
 import { readSupervisorTargets } from '../../../main/pianola/pianola-store-main';
