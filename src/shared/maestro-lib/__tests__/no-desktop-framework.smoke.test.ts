@@ -224,6 +224,29 @@ describe('maestro-lib: no desktop framework dependency', () => {
 		});
 	});
 
+	describe('the terminal example (examples/maestro-lib-tui)', () => {
+		const tuiFile = path.resolve(LIB_ROOT, '../../../examples/maestro-lib-tui/tui.mjs');
+		/** Where `npm run build:maestro-lib` bundles ENTRY, as the example names it. */
+		const BUILT_ENTRY = '../../dist/maestro-lib/index.js';
+
+		it('imports Node built-ins and the built public entry, nothing else', () => {
+			const source = fs.readFileSync(tuiFile, 'utf-8');
+			IMPORT_SPECIFIER_PATTERN.lastIndex = 0;
+			const specifiers: string[] = [];
+			let match: RegExpExecArray | null;
+			while ((match = IMPORT_SPECIFIER_PATTERN.exec(source)) !== null) {
+				specifiers.push(match[1]);
+			}
+
+			expect(specifiers).toContain(BUILT_ENTRY);
+			expect(specifiers.filter((s) => s !== BUILT_ENTRY && !s.startsWith('node:'))).toEqual([]);
+			// The bundle is ENTRY alone, whose import graph the checks above walk.
+			expect(path.resolve(path.dirname(tuiFile), BUILT_ENTRY)).toBe(
+				path.resolve(LIB_ROOT, '../../../dist/maestro-lib/index.js')
+			);
+		});
+	});
+
 	it('the src/main scan catches a relative import into src/main', () => {
 		const file = path.join(LIB_ROOT, 'parsers', 'example.ts');
 		expect(findMainOffenders(file, "import { logger } from '../../../main/utils/logger';")).toEqual(

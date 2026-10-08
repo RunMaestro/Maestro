@@ -6,6 +6,8 @@ icon: book
 
 maestro-lib is the part of Maestro that starts a coding agent (Claude Code, Codex, OpenCode and others), sends it a prompt, reads its reply as it streams, stops it, and reports how the turn ended. The desktop app, `maestro-cli` and Cue all run their agents through it. You can use it from your own Node program through one entry module.
 
+For a worked example, see the [terminal example](https://github.com/RunMaestro/Maestro/tree/main/examples/maestro-lib-tui): a small interactive program that starts, streams, resumes and stops turns with nothing but this entry.
+
 ## What it is, and what it is not
 
 It is:
@@ -434,4 +436,5 @@ export async function runByHand(spec: TurnProcessSpec, agentId: string): Promise
 
 - [Maestro CLI](./cli) for running agents and playbooks from a shell.
 - [Running Cue on a Server](./maestro-cue-server) for unattended pipelines.
+- [`examples/maestro-lib-tui`](https://github.com/RunMaestro/Maestro/tree/main/examples/maestro-lib-tui), an interactive terminal chat built on the built entry alone: provider choice, streaming, resume, Ctrl+C to stop. Its README says how to run it.
 - `maestro-lib-run`, a small program in the Maestro build that runs one turn with these same calls and prints JSON lines. Its source, `src/shared/maestro-lib/bin/run-turn.ts`, is a complete example.

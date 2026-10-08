@@ -169,3 +169,61 @@ Exit codes recorded: run 1 `0` (drained), runs 2 and 3 `137` (kill -9), run 4
 
 Throwaway files (the Dockerfile, the stub, the seed and HTTP scripts) lived in
 a scratch directory and are not committed.
+
+## maestro-lib terminal example, live run
+
+Dated 2026-10-08, on Linux (Node v24.21.0), against `feat/cue-server` with
+maestro-lib 0.2.0 built by `npm run build:maestro-lib`. Program:
+`examples/maestro-lib-tui/tui.mjs`, which imports Node's modules and the built
+entry only. Provider versions: Claude Code 2.1.294 (subscription login),
+OpenCode 1.18.33 (API key, free plan, its configured default model). The TUI
+ran in a real pseudo-terminal, so Ctrl+C was the keystroke (byte `0x03`), not a
+signal. The working folder was an empty scratch folder.
+
+### Claude Code
+
+| Typed                                                          | What happened                                                                                                                                  |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node tui.mjs --agent claude-code --cwd <scratch>`             | `Provider: claude-code`                                                                                                                        |
+| `Reply with exactly one word: hello`                           | `[started, pid 680553]`, streamed `hello`, `[completed] 2 in, 4 out, 7976 cache read, $0.0751`, session `f9e27dcb-917b-4922-ab34-04cd1e4a20ab` |
+| `What word did you just reply with? One word.`                 | `[resuming, pid 680818]`, `hello`, `[completed]`, same session id: the resume carried the conversation                                         |
+| `Run the shell command sleep 45 and then tell me it finished.` | `[resuming, pid 680900]`, `[tool Bash]` while `sleep 45` ran                                                                                   |
+| Ctrl+C                                                         | `[stopping; Ctrl+C again to exit]`, then `[interrupted] 6 in, 88 out, 27598 cache read, $0.2277`                                               |
+| Ctrl+C                                                         | The TUI exited                                                                                                                                 |
+
+The stop was repeated in a second short session to read the exit status: a new
+turn (`pid 688068`) running `sleep 45` stopped as `interrupted`, and the second
+Ctrl+C exited the TUI with code 0.
+
+### OpenCode
+
+| Typed                                                          | What happened                                                                                                             |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `node tui.mjs --agent opencode --cwd <scratch>`                | `Provider: opencode`                                                                                                      |
+| `Reply with exactly one word: hello`                           | `[started, pid 685800]`, `hello`, `[completed] 9011 in, 3 out, 2368 cache read`, session `ses_ee36facc3ffevdG170214LM2VC` |
+| `What word did you just reply with? One word.`                 | `[resuming, pid 686296]`, `hello`, `[completed]`, same session id                                                         |
+| `Run the shell command sleep 45 and then tell me it finished.` | `[resuming, pid 686440]`, `[tool bash]` while `sleep 45` ran                                                              |
+| Ctrl+C                                                         | `[stopping; Ctrl+C again to exit]`, then `[interrupted] 51 in, 34 out, 11392 cache read`                                  |
+| Ctrl+C                                                         | The TUI exited with code 0                                                                                                |
+
+### Leftover processes
+
+After both runs, every agent pid the TUI printed (680553, 680818, 680900,
+685800, 686296, 686440, 688068) was gone (`kill -0` failed), and no `sleep`
+process was found right after each run. Whether `sleep 45` had started before
+the stop was not checked separately.
+
+### Automated
+
+`src/shared/maestro-lib/__tests__/tui-example.test.ts` (POSIX only) drives the
+same program against the fake agent: a turn streams, the next prompt resumes
+with `--resume <first turn's session id>`, Ctrl+C ends a held turn as
+`interrupted`, and both `/quit` and a second Ctrl+C mid-turn exit 0 with the
+agent gone. `no-desktop-framework.smoke.test.ts` checks the program's imports
+are Node built-ins and `../../dist/maestro-lib/index.js` only.
+
+### Library gaps
+
+None found. Everything the program needed is exported by the entry, so
+`MAESTRO_LIB_VERSION` stays 0.2.0. A provider's availability is read by
+planning a turn with an empty prompt, which starts nothing.
