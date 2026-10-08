@@ -102,6 +102,27 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'advanced',
 	},
+	ttsrEnabled: {
+		description:
+			'Time-Traveling Stream Rules: watch agent output streams and interrupt turns that match a rule. AND-gated with the ttsr Encore feature flag.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	ttsrDisabledRules: {
+		description:
+			'TTSR rule names disabled globally. Rules listed here are loaded but never matched.',
+		type: 'array',
+		default: [],
+		category: 'advanced',
+	},
+	ttsrContextMode: {
+		description:
+			"How an interrupted turn is torn down: 'keep' (SIGINT, let the provider commit the partial turn) or 'discard' (hard kill, best-effort pre-commit). Applies to projects whose .maestro/ttsr.yaml does not set its own contextMode. Validated in the TTSR normalizer.",
+		type: 'string',
+		default: 'keep',
+		category: 'advanced',
+	},
 	coworkingBrowserInteraction: {
 		description:
 			'Agent ids (ToolType values) for which Coworking browser interaction tools are allowed. Empty array means all off.',

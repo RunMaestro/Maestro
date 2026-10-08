@@ -10,6 +10,7 @@ import type { PluginGroupingRegistry } from '../../plugins/plugin-grouping-regis
 import type { AuthorizationStore } from '../../plugins/authorization-ledger';
 import type { PluginEventBusImpl } from '../../plugins/plugin-event-bus';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
+import type { TtsrRuntime } from '../../ttsr';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import type { WakaTimeManager } from '../../wakatime-manager';
 import type { MaestroCliManager } from '../../maestro-cli-manager';
@@ -43,6 +44,7 @@ export interface IpcBootstrapDependencies {
 	getPluginAuthStore: () => AuthorizationStore | null;
 	getPluginEventBus: () => PluginEventBusImpl | null;
 	getInteractiveReplayController: () => InteractiveReplayController<ProcessSpawnConfig> | null;
+	getTtsrRuntime: () => TtsrRuntime | null;
 	/**
 	 * Collectors for a support (debug) package. One object shared by the debug and
 	 * feedback IPC handlers and the CLI bridge, so every path builds the same zip.
