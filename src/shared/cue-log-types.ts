@@ -60,7 +60,7 @@ export type CueLogPayload =
 			/** Omitted for aggregate restore-path drops that span multiple sessions. */
 			sessionId?: string;
 			count: number;
-			reason: 'stale' | 'malformed' | 'session-missing';
+			reason: 'stale' | 'malformed' | 'session-missing' | 'subscription-missing';
 	  }
 	| {
 			type: 'fanInTimeout';

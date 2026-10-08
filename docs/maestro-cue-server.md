@@ -527,7 +527,7 @@ If the host sleeps or the engine is paused (a VM suspend, a closed laptop lid, `
 
 ### Add or replace agents and pipelines
 
-Stop the engine, import, check, and start it again:
+Import needs the engine stopped: it refuses while one is running against the data directory. The engine reads its agents and their `cue.yaml` files when it starts, so the next start picks up every agent and subscription the import added, changed or removed. Stop the engine, import, check, and start it again:
 
 ```bash
 # VM
@@ -546,6 +546,8 @@ docker start maestro-cue
 ```
 
 An agent, subscription or file that already exists is a conflict: the import stops before writing and lists it. Run it again with `--force` to replace it with the bundle's version. Sign in any new provider before the start.
+
+An import never deletes an agent or a subscription, but a `--force` import that maps an agent to a different workspace leaves the old workspace's subscriptions behind. Work still queued from the last run for an agent or subscription that is gone is dropped at start with a warning in the log and an entry in the run history, never run, and so is any half-finished fan-in that waits on it.
 
 ### Upgrade
 

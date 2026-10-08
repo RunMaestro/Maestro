@@ -61,11 +61,19 @@ describe('cue-queue-persistence', () => {
 		onLog = vi.fn();
 	});
 
-	function makePersistence(opts?: { timeoutMs?: number; known?: string[]; now?: number }) {
+	function makePersistence(opts?: {
+		timeoutMs?: number;
+		known?: string[];
+		knownSubscriptions?: string[];
+		now?: number;
+	}) {
 		return createCueQueuePersistence({
 			onLog,
 			getSessionTimeoutMs: () => opts?.timeoutMs ?? 30 * 60 * 1000,
 			knownSessionIds: () => new Set(opts?.known ?? ['s-1']),
+			...(opts?.knownSubscriptions
+				? { knownSubscriptionNames: () => new Set(opts.knownSubscriptions) }
+				: {}),
 			now: () => opts?.now ?? NOW,
 		});
 	}
@@ -227,6 +235,57 @@ describe('cue-queue-persistence', () => {
 				droppedFromQueue: true,
 				reason: 'session-missing',
 			});
+		});
+
+		it('drops rows whose subscription is in no agent config, and records why', () => {
+			const p = makePersistence({ known: ['s-1'], knownSubscriptions: ['kept'] });
+			p.persist('s-1', 'alive', makeEntry({ subscriptionName: 'kept' }));
+			p.persist('s-1', 'orphan', makeEntry({ subscriptionName: 'removed-by-import' }));
+
+			const restored = p.restoreAll();
+
+			expect(restored.get('s-1')?.map((e) => e.persistId)).toEqual(['alive']);
+			expect(
+				getSharedDb()
+					.getQueuedEvents()
+					.map((row) => row.id)
+			).toEqual(['alive']);
+			expect(onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('whose subscription is no longer in any agent'),
+				{ type: 'queueDropped', count: 1, reason: 'subscription-missing' }
+			);
+			const orphan = getSharedDb()
+				.getRecentCueEvents(0)
+				.find((e) => e.id === 'orphan');
+			expect(JSON.parse(orphan?.payload ?? '{}')).toMatchObject({
+				droppedFromQueue: true,
+				reason: 'subscription-missing',
+			});
+		});
+
+		it("keeps a fan-out row whose subscription lives in another agent's config", () => {
+			// The target agent's own config has no `owner-fanout`; the owner's does,
+			// and the names are checked across every agent.
+			const p = makePersistence({
+				known: ['s-1', 's-target'],
+				knownSubscriptions: ['owner-fanout'],
+			});
+			p.persist('s-target', 'fanout', makeEntry({ subscriptionName: 'owner-fanout' }));
+
+			expect(
+				p
+					.restoreAll()
+					.get('s-target')
+					?.map((e) => e.persistId)
+			).toEqual(['fanout']);
+		});
+
+		it('skips the subscription check when the dep is omitted', () => {
+			const p = makePersistence({ known: ['s-1'] });
+			p.persist('s-1', 'any', makeEntry({ subscriptionName: 'whatever' }));
+
+			expect(p.restoreAll().get('s-1')).toHaveLength(1);
 		});
 
 		it('drops stale rows whose age exceeds session timeout, records timeout event', () => {

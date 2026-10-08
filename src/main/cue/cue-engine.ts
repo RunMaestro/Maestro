@@ -336,6 +336,13 @@ export class CueEngine {
 				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
 			},
 			knownSessionIds: () => new Set(deps.getSessions().map((s) => s.id)),
+			knownSubscriptionNames: () => {
+				const names = new Set<string>();
+				for (const state of this.registry.snapshot().values()) {
+					for (const sub of state.config.subscriptions) names.add(sub.name);
+				}
+				return names;
+			},
 		});
 
 		this.runManager = createCueRunManager({

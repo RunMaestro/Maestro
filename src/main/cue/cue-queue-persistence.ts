@@ -84,6 +84,16 @@ export interface CueQueuePersistenceDeps {
 	getSessionTimeoutMs: (sessionId: string) => number;
 	/** Membership check: drop persisted entries whose session is no longer registered. */
 	knownSessionIds: () => Set<string>;
+	/**
+	 * Every subscription name in a registered agent's current config. A row
+	 * whose subscription is in none of them was removed (a re-import, a yaml
+	 * edit while the engine was down) and is dropped instead of running a
+	 * prompt the config no longer has. Checked across ALL agents, not the
+	 * row's own: a fan-out row runs on a target agent whose config does not
+	 * carry the owner's subscription. Omit (tests, older call sites) to skip
+	 * the check.
+	 */
+	knownSubscriptionNames?: () => Set<string>;
 	/** Override for testing - defaults to Date.now. */
 	now?: () => number;
 }
@@ -171,10 +181,12 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 		const currentTime = now();
 		const knownSessions = deps.knownSessionIds();
+		const knownSubscriptions = deps.knownSubscriptionNames?.();
 		const restored = new Map<string, RestoredQueueEntry[]>();
 		let droppedStale = 0;
 		let droppedMalformed = 0;
 		let droppedMissingSession = 0;
+		let droppedMissingSubscription = 0;
 
 		/**
 		 * Record a restore-path drop in `cue_events` so users see WHY a
@@ -189,7 +201,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		 */
 		function recordRestoredDrop(
 			row: CueQueuedEventRecord,
-			reason: 'stale' | 'malformed' | 'session-missing',
+			reason: 'stale' | 'malformed' | 'session-missing' | 'subscription-missing',
 			extraPayload: Record<string, unknown> = {}
 		): void {
 			try {
@@ -216,6 +228,13 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				recordRestoredDrop(row, 'session-missing');
 				safeRemoveQueuedEvent(row.id);
 				droppedMissingSession++;
+				continue;
+			}
+
+			if (knownSubscriptions && !knownSubscriptions.has(row.subscriptionName)) {
+				recordRestoredDrop(row, 'subscription-missing');
+				safeRemoveQueuedEvent(row.id);
+				droppedMissingSubscription++;
 				continue;
 			}
 
@@ -294,6 +313,17 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 					type: 'queueDropped',
 					count: droppedMissingSession,
 					reason: 'session-missing',
+				} satisfies CueLogPayload
+			);
+		}
+		if (droppedMissingSubscription > 0) {
+			deps.onLog(
+				'warn',
+				`[CUE] Dropped ${droppedMissingSubscription} persisted queue row(s) whose subscription is no longer in any agent's config`,
+				{
+					type: 'queueDropped',
+					count: droppedMissingSubscription,
+					reason: 'subscription-missing',
 				} satisfies CueLogPayload
 			);
 		}

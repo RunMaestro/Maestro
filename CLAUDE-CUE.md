@@ -247,6 +247,8 @@ Single SQLite database, WAL mode. Tables:
 
 `cue_event_queue` does NOT carry `pipelineName` - restored runs degrade to legacy labels.
 
+Restore at start (`cue-queue-persistence.ts` `restoreAll`) drops, records in `cue_events` and logs a row whose agent is no longer registered (`session-missing`), whose subscription is in no registered agent's config (`subscription-missing`: across ALL agents, because a fan-out row runs on a target whose own config lacks the owner's subscription), that is malformed, or that is stale.
+
 Outside the engine process (`maestro-cli cue engine status` / `inspect`), never call `initCueDb()`: it creates, migrates, chmods and sets WAL. Use `readCueDbStatusFigures()`, which opens its own `readonly` handle, reads and closes, and returns a reason instead of throwing when the file, its `-wal`/`-shm` sidecars or permission are missing.
 
 ## Process spawning
