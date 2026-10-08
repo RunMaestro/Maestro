@@ -338,6 +338,15 @@ export const MODAL_PRIORITIES = {
 	/** Pianola dashboard modal (autonomous manager: rules + decision log) */
 	PIANOLA_MODAL: 459,
 
+	/** Agent Profiles management modal (named model/effort/role bundles). Sits
+	 * above BOARD_MODAL (457) because the Board's empty state opens it, so Escape
+	 * must close Profiles first and leave the Board up. 458-466 are taken
+	 * by SSH Remote, Pianola, Cue, and its child dialogs, hence 467. */
+	PROFILES_MODAL: 467,
+
+	/** Board kanban modal (task DAG; depends on Maestro Cue) */
+	BOARD_MODAL: 457,
+
 	/** Pianola rule editor (above the Pianola dashboard so Escape closes it first) */
 	PIANOLA_RULE_EDITOR: 461,
 

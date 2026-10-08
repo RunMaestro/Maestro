@@ -1272,6 +1272,15 @@ describe('modalStore', () => {
 			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
 		});
 
+		it('keeps the Board open while editing its agent profiles', () => {
+			const store = useModalStore.getState();
+			store.openModal('boardModal');
+			store.openModal('profilesModal');
+			expect(useModalStore.getState().isOpen('boardModal')).toBe(true);
+			store.closeModal('profilesModal');
+			expect(useModalStore.getState().isOpen('boardModal')).toBe(true);
+		});
+
 		it('a non-destination modal never evicts a destination', () => {
 			const store = useModalStore.getState();
 			store.openModal('usageDashboard');

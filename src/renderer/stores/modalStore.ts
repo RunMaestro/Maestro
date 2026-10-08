@@ -424,6 +424,10 @@ export type ModalId =
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
 	| 'pianolaModal'
+	// Board (task DAG kanban; depends on Maestro Cue)
+	| 'boardModal'
+	// Agent Profiles (the assignees a board card names; ships with Board)
+	| 'profilesModal'
 	// Concerto (agent-composed views)
 	| 'concertoStage';
 
@@ -462,6 +466,7 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'directorNotes',
 	'symphony',
 	'cueModal',
+	'boardModal',
 	'marketplace',
 	'processMonitor',
 	// Main-panel destinations - these replace the whole center workspace, so an
@@ -1217,6 +1222,13 @@ export function getModalActions() {
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
 
+		// Board Modal (task DAG kanban; gated on Board + Maestro Cue Encore flags)
+		setBoardModalOpen: (open: boolean) =>
+			open ? openModal('boardModal') : closeModal('boardModal'),
+
+		// Agent Profiles Modal (board card assignees; same Encore gate as Board)
+		setProfilesModalOpen: (open: boolean) =>
+			open ? openModal('profilesModal') : closeModal('profilesModal'),
 		// Concerto stage. This one flag is the whole truth about whether the stage
 		// is up: the movement store reads it back rather than keeping its own
 		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
@@ -1328,6 +1340,8 @@ export function useModalActions() {
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
 	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
 	const pianolaModalOpen = useModalStore(selectModalOpen('pianolaModal'));
+	const boardModalOpen = useModalStore(selectModalOpen('boardModal'));
+	const profilesModalOpen = useModalStore(selectModalOpen('profilesModal'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1542,6 +1556,12 @@ export function useModalActions() {
 
 		// Pianola Modal (autonomous manager)
 		pianolaModalOpen,
+
+		// Board Modal (task DAG kanban)
+		boardModalOpen,
+
+		// Agent Profiles Modal (board card assignees)
+		profilesModalOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,
