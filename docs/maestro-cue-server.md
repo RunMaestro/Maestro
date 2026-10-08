@@ -469,7 +469,7 @@ For a subscription without `signature_header`, send the secret in `X-Maestro-Cue
 | `404`  | No subscription listens on that path                                                      |
 | `405`  | Not a `POST`                                                                              |
 | `413`  | The body is over 1 MiB                                                                    |
-| `503`  | Cue is off or stopping. Nothing was recorded; retry after the `Retry-After` seconds       |
+| `503`  | The engine is stopping. Nothing was recorded; retry after the `Retry-After` seconds       |
 | `502`  | From the proxy: no listener, because the engine is stopped or has no webhook subscription |
 
 ### What a 2xx means
@@ -484,7 +484,7 @@ Before the `2xx`, nothing is recorded. A crash while Maestro is still checking a
 
 ### Limits
 
-- While Cue is off or stopping, including after a second stop signal cuts the drain short, a delivery is answered `503` with `Retry-After: 30` and nothing is recorded, so the sender should retry. A stopped engine has no listener at all, and the connection is refused (a proxy answers `502`).
+- From the stop signal until the engine exits, including after a second stop signal cuts the drain short, the listener stays open: a delivery to a path it listens on (with the right secret or signature) is answered `503` with `Retry-After: 30` and nothing is recorded, so the sender should retry. The listener closes as the engine exits. A stopped engine has no listener at all, and the connection is refused (a proxy answers `502`).
 - The SusFactor check runs before the answer, so a slow 0DIN call delays it (each call gives up after 3 to 5 seconds). A sender that stops waiting first (GitHub waits 10 seconds) records a failure although the delivery runs; its retry is then a duplicate and fires nothing.
 - A full queue drops its oldest event, and `queue_size: 0` drops a delivery that arrives while the agent is busy. A subscription with no prompt, or a fan-out target that does not exist, does not run. Each of these is logged, and the delivery still counts as handled.
 - After a crash (not a drain), a queued delivery that has waited longer than its subscription's `timeout_minutes` by the time Maestro is back is dropped as stale and shown as timed out in the activity log. A drain stamps the queue so that rule does not apply.

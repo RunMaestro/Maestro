@@ -67,6 +67,7 @@ import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './c
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
 import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
+import { holdCueWebhookListener } from './cue-webhook-server';
 import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
 import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
 import * as yaml from 'js-yaml';
@@ -934,7 +935,10 @@ export class CueEngine {
 		const queuedCount = () =>
 			[...this.runManager.getQueueStatus().values()].reduce((a, b) => a + b, 0);
 
-		// (a) Accept no new work.
+		// (a) Accept no new work. The webhook listener stays bound until the
+		// drain ends, answering 503 with Retry-After instead of refusing the
+		// connection (released in the `finally` below, forced or not).
+		const releaseWebhookListener = holdCueWebhookListener();
 		this.runManager.setDraining(true);
 		const disarmed = this.sessionRuntimeService.disarmAll();
 		const inFlight = this.runManager.getActiveRuns().length;
@@ -1017,6 +1021,7 @@ export class CueEngine {
 			return report;
 		} finally {
 			for (const timer of timers) clearTimeout(timer);
+			releaseWebhookListener();
 		}
 	}
 

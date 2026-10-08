@@ -401,7 +401,8 @@ processes.
    The docs (Webhooks behind a proxy, Limits) say "while Cue is off or
    stopping ... a delivery is answered 503 with Retry-After: 30". Nothing is
    acknowledged either way, so a sender retries; the docs overstate it.
-   Pre-existing; not changed.
+   Fixed later the same day; see
+   [Rerun of the webhook during a drain](#rerun-of-the-webhook-during-a-drain-after-the-fix).
 4. **Non-JSON text on stdout under `--log-format json`.** A `cue.yaml` reload
    (here the `time.once` added by `cue schedule` and its self-destruct) prints
    multi-line `[CueDebug] engine:refreshSession:...` objects
@@ -462,6 +463,35 @@ same `(session, sub, HH:MM)` key as the 60 s poll. Both clock behaviors and
 both orders are covered with fake timers in `cue-catch-up-once.test.ts`, which
 fails 8 of its 11 cases on the code before the fix. A real host suspend was
 still not run.
+
+### Rerun of the webhook during a drain after the fix
+
+Same day, against the fix for Finding 3 (the drain holds the webhook listener
+until it ends; committed together with this entry). The rig of the pause rerun
+with one subscription: `slowhook`, `webhook.received` on `slow-hook`, HMAC in
+`X-Hub-Signature-256` with a random `LIVE_HOOK_SECRET` from
+`CREDENTIALS_DIRECTORY`, a shell command that runs `sleep 30`. Same start
+flags. Each delivery was a signed `POST` from a fresh connection with its own
+`X-GitHub-Delivery`.
+
+| Step                             | Clean drain                                           | Second signal                                    |
+| -------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
+| Delivery A before the stop       | `202 {"accepted":1}`, `slowhook` runs `sleep 30`      | `202 {"accepted":1}`, `slowhook` runs `sleep 30` |
+| SIGTERM                          | `disarmed`, `waiting up to 90s for 1 run(s)`          | same                                             |
+| Delivery B, 1 s later            | `503`, `Retry-After: 30`, `{"accepted":0,"failed":1}` | same                                             |
+| Delivery C, 6 s later            | `503`, `Retry-After: 30`                              | `503`, `Retry-After: 30`                         |
+| Second SIGTERM                   | -                                                     | `forced`, drain finished in 0.1 s                |
+| Engine exit                      | 0, when the `sleep 30` run finished                   | 1 (measured from the shell that ran node)        |
+| Delivery D, right after the exit | Connection refused                                    | Connection refused                               |
+
+**Pass**: during the drain a delivery is answered `503` with `Retry-After: 30`
+instead of a refused connection, and the listener closes as the engine exits,
+forced or not. Each 503 logged `not taken (Cue is stopping) - answered 503 so
+the sender retries`; only deliveries A started a run (`ops.log` has one
+`slowhook-start` per run, and B and C never ran). Stdout empty, every stderr
+line JSON. A first measurement of the forced exit code read 0: it came from
+the driver's `wait` on the `env` wrapper, not from the engine; rerun with the
+code taken directly it is 1, as documented.
 
 ### Observations
 

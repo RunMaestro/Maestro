@@ -10,7 +10,11 @@
  *
  * Lifecycle is refcounted: the socket is opened on the first registration and
  * closed once the last one unregisters, so a user with no webhook pipelines
- * never has a listening port at all.
+ * never has a listening port at all. The exception is a hold
+ * ({@link holdCueWebhookListener}): while an engine drains, a registration
+ * that unregisters stays behind as a stand-in that authenticates as before
+ * and answers 503 with `Retry-After`, and the socket stays bound until the
+ * hold is released.
  *
  * Security posture:
  *  - Binds to 127.0.0.1 unless `MAESTRO_CUE_WEBHOOK_HOST` says otherwise. To
@@ -136,6 +140,10 @@ let boundPort: number | null = null;
 /** Set once we fail to bind so a broken port doesn't log on every delivery
  *  attempt or retry-storm across session refreshes. */
 let bindFailed = false;
+/** Open holds; see {@link holdCueWebhookListener}. */
+let holds = 0;
+/** Stand-ins for registrations released while held (see `registerCueWebhook`). */
+const standIns = new Set<CueWebhookRegistration>();
 
 /**
  * Configured listener port. Invalid env values fall back to the default.
@@ -639,6 +647,42 @@ export function registerCueWebhook(reg: CueWebhookRegistration): () => void {
 		if (released) return; // idempotent - trigger source stop() may repeat
 		released = true;
 		registrations.delete(reg);
+		if (holds > 0 && server) {
+			// Same path and secret, so a delivery still authenticates, but it is
+			// never taken: the 503 path answers it and nothing is recorded.
+			const standIn: CueWebhookRegistration = {
+				...reg,
+				onDelivery: () => {
+					throw new CueWebhookUnavailableError('Cue is stopping');
+				},
+			};
+			registrations.add(standIn);
+			standIns.add(standIn);
+			return;
+		}
+		stopServerIfIdle();
+	};
+}
+
+/**
+ * Keep the listener bound while an engine drains. A drain disarms every
+ * trigger source first, which would otherwise close the socket and leave a
+ * sender with a refused connection (a 502 behind a proxy) for the rest of
+ * the drain. Held, each released registration answers 503 with
+ * `Retry-After` instead, until the returned release function is called; it
+ * drops the stand-ins and closes the socket if nothing else is registered.
+ * The release is idempotent.
+ */
+export function holdCueWebhookListener(): () => void {
+	holds += 1;
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		holds -= 1;
+		if (holds > 0) return;
+		for (const standIn of standIns) registrations.delete(standIn);
+		standIns.clear();
 		stopServerIfIdle();
 	};
 }
@@ -646,6 +690,8 @@ export function registerCueWebhook(reg: CueWebhookRegistration): () => void {
 /** Test-only: drop all registrations and close the socket. */
 export function resetCueWebhookServerForTests(): void {
 	registrations.clear();
+	standIns.clear();
+	holds = 0;
 	inFlightDeliveries.clear();
 	bindFailed = false;
 	boundPort = null;

@@ -13,6 +13,7 @@ import { EventEmitter } from 'events';
 import * as http from 'http';
 import {
 	handleCueWebhookRequest,
+	holdCueWebhookListener,
 	registerCueWebhook,
 	resetCueWebhookServerForTests,
 	type CueWebhookDelivery,
@@ -493,5 +494,41 @@ describe('cue-webhook-server', () => {
 
 		expect(res.status).toBe(404);
 		expect(deliveries).toHaveLength(0);
+	});
+
+	describe('holdCueWebhookListener (an engine drain)', () => {
+		const post = (headers: Record<string, string>) => {
+			const res = makeResponse();
+			return handleCueWebhookRequest(
+				makeRequest({ url: '/cue/my-hook', headers, body: '{}' }),
+				res as unknown as http.ServerResponse
+			).then(() => res);
+		};
+
+		it('answers a released registration 503 until the hold is released, recording nothing', async () => {
+			const { deliveries, onLog, unregister } = register();
+			const release = holdCueWebhookListener();
+			unregister();
+
+			const held = await post({ 'x-maestro-cue-secret': 's3cret', 'x-github-delivery': 'd1' });
+			expect(held.status).toBe(503);
+			expect(held.body).toEqual({ accepted: 0, failed: 1 });
+			expect((await post({ 'x-maestro-cue-secret': 'nope' })).status).toBe(401);
+			expect(deliveries).toHaveLength(0);
+			expect(onLog).toHaveBeenCalledWith('warn', expect.stringContaining('Cue is stopping'));
+
+			release();
+			release(); // idempotent
+			expect((await post({ 'x-maestro-cue-secret': 's3cret' })).status).toBe(404);
+		});
+
+		it('leaves a live registration alone and is a no-op with nothing registered', async () => {
+			const release = holdCueWebhookListener();
+			const { deliveries } = register();
+			expect((await post({ 'x-maestro-cue-secret': 's3cret' })).status).toBe(202);
+			expect(deliveries).toHaveLength(1);
+			release();
+			expect((await post({ 'x-maestro-cue-secret': 's3cret' })).status).toBe(202);
+		});
 	});
 });
