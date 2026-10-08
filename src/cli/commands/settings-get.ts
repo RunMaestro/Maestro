@@ -1,3 +1,4 @@
+import { getMediaToolStatus, resolveMediaRuntime } from '../../main/plugins/plugin-media-tools';
 // Get a single setting value
 // Supports dot-notation for nested keys, --json, --verbose
 
@@ -79,5 +80,21 @@ export function settingsGet(key: string, options: SettingsGetOptions): void {
 			console.error(formatError(message));
 		}
 		process.exit(1);
+	}
+}
+
+/** Uses the same runtime resolver as the Host Media settings surface. */
+export async function settingsMediaStatus(): Promise<void> {
+	try {
+		console.log(
+			JSON.stringify(
+				getMediaToolStatus(await resolveMediaRuntime(readSettingValue('mediaModelDirectory')))
+			)
+		);
+	} catch (error) {
+		console.error(
+			JSON.stringify({ error: error instanceof Error ? error.message : 'Media status unavailable' })
+		);
+		process.exitCode = 1;
 	}
 }

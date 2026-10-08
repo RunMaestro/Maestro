@@ -1901,6 +1901,16 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('host media directory', () => {
+		it.each([undefined, null, 42])(
+			'keeps a controlled empty value for a malformed persisted directory: %s',
+			async (persisted) => {
+				vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
+				vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(persisted);
+				expect(await useSettingsStore.getState().setMediaModelDirectory('/models')).toBe(true);
+				expect(useSettingsStore.getState().mediaModelDirectory).toBe('');
+			}
+		);
+
 		it('updates state only after successful persistence and reads the canonical path', async () => {
 			vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(false);
 			expect(await useSettingsStore.getState().setMediaModelDirectory('/bad')).toBe(false);
