@@ -21,6 +21,7 @@ vi.mock('../../../../main/stores/sessions-store-file', async (importOriginal) =>
 import { exportCueBundle } from '../../../../main/cue/bundle/cue-bundle-exporter';
 import {
 	CueBundleImportError,
+	findSharedWorkspaceRoot,
 	importCueBundle,
 	planCueBundleImport,
 	type CueBundleImportOptions,
@@ -695,6 +696,165 @@ describe('importCueBundle against a fixture bundle', () => {
 			subscriptions: Array<{ name: string }>;
 		};
 		expect(doc.subscriptions.map((s) => s.name)).toEqual(['legacy', 'tick', 'hook']);
+	});
+
+	describe('workspace folders', () => {
+		const OTHER_CUE = 'workspaces/other/.maestro/cue.yaml';
+		/** The fixture plus a second workspace "other" with its own subscription and `extra` files. */
+		const withOther = (
+			extra: Record<string, string> = {}
+		): Parameters<typeof writeCueBundle>[1] => ({
+			files: (files) => {
+				files.set(
+					OTHER_CUE,
+					yaml.dump({
+						subscriptions: [
+							{
+								name: 'other-tick',
+								event: 'time.heartbeat',
+								interval_minutes: 10,
+								prompt: 'Other.',
+							},
+						],
+					})
+				);
+				for (const [p, content] of Object.entries(extra)) files.set(p, content);
+			},
+			manifest: (manifest) => {
+				manifest.workspaces.push({ key: 'other', name: 'other', cueConfig: OTHER_CUE });
+			},
+		});
+		const claudeConfigDir = () => path.join(tmp, 'claude');
+		const subNames = (file: string) =>
+			(
+				yaml.load(fs.readFileSync(file, 'utf-8')) as { subscriptions: Array<{ name: string }> }
+			).subscriptions.map((s) => s.name);
+
+		/** A refusal must leave everything under the temp dir alone, the dry run included. */
+		async function refusedAll(opts: CueBundleImportOptions): Promise<CueBundleImportError> {
+			const before = snapshot(tmp);
+			const error = await importError(opts);
+			const dryRun = await importError({ ...opts, dryRun: true });
+			expect({ code: dryRun.code, message: dryRun.message }).toEqual({
+				code: error.code,
+				message: error.message,
+			});
+			expect(snapshot(tmp)).toEqual(before);
+			return error;
+		}
+
+		it('refuses two workspaces mapped to the same folder, naming both', async () => {
+			const error = await refusedAll(
+				options(withOther(), { workspaces: { proj: projRoot, other: projRoot } })
+			);
+			expect(error.code).toBe('INVALID_OPTIONS');
+			expect(error.message).toContain('"proj" and "other"');
+			expect(error.message).toContain(projRoot);
+			expect(error.details.workspaces).toEqual(['proj', 'other']);
+		});
+
+		// Skipped on Windows like the other symlink tests here.
+		it.skipIf(process.platform === 'win32')(
+			"refuses a second workspace mapped through a symlink to the first one's folder",
+			async () => {
+				const link = path.join(tmp, 'proj-link');
+				fs.symlinkSync(projRoot, link);
+				const error = await refusedAll(
+					options(withOther(), { workspaces: { proj: projRoot, other: link } })
+				);
+				expect(error.code).toBe('INVALID_OPTIONS');
+				expect(error.message).toContain('"proj" and "other"');
+			}
+		);
+
+		it('treats a different-case spelling as the same folder under win32 rules', () => {
+			const roots = new Map([
+				['proj', projRoot],
+				['other', path.join(tmp, 'PROJ')],
+			]);
+			expect(findSharedWorkspaceRoot(roots, 'win32')).toEqual({
+				keys: ['proj', 'other'],
+				folder: projRoot,
+			});
+		});
+
+		it('imports workspaces nested one inside the other, each into its own cue.yaml', async () => {
+			const sub = path.join(projRoot, 'sub');
+			fs.mkdirSync(sub);
+			const opts = options(withOther(), { workspaces: { proj: projRoot, other: sub } });
+			const result = await importCueBundle(opts);
+			expect(result.applied).toBe(true);
+			expect(subNames(path.join(projRoot, '.maestro/cue.yaml'))).toEqual(['tick', 'hook']);
+			expect(subNames(path.join(sub, '.maestro/cue.yaml'))).toEqual(['other-tick']);
+
+			// Re-importing the same bundle leaves both files as they are.
+			const again = await importCueBundle({ ...opts, force: true });
+			expect(again.plan.cueConfigs.map((c) => c.unchanged)).toEqual([
+				['tick', 'hook'],
+				['other-tick'],
+			]);
+		});
+
+		it.each([
+			['an ordinary file', 'workspaces/proj/sub/notes.md', 'workspaces/other/notes.md'],
+			['.mcp.json', 'workspaces/proj/sub/.mcp.json', 'workspaces/other/.mcp.json'],
+			['cue.yaml', 'workspaces/proj/sub/.maestro/cue.yaml', undefined],
+		])(
+			'refuses two entries that resolve to one target in nested folders (%s)',
+			async (_label, first, second) => {
+				fs.mkdirSync(path.join(projRoot, 'sub'));
+				const mcp = JSON.stringify({ mcpServers: {} });
+				const extra: Record<string, string> = {
+					[first]: first.endsWith('.mcp.json') ? mcp : 'x',
+				};
+				if (second) extra[second] = second.endsWith('.mcp.json') ? mcp : 'y';
+				const error = await refusedAll(
+					options(withOther(extra), {
+						workspaces: { proj: projRoot, other: path.join(projRoot, 'sub') },
+					})
+				);
+				expect(error.code).toBe('INVALID_OPTIONS');
+				expect(error.message).toContain(first);
+				expect(error.message).toContain(second ?? OTHER_CUE);
+				expect([...(error.details.workspaces as string[])].sort()).toEqual(['other', 'proj']);
+			}
+		);
+
+		it('refuses two workspaces whose Claude memory lands in the same folder', async () => {
+			// Claude encodes every non-alphanumeric character as "-", so these share a memory folder.
+			const dotted = path.join(tmp, 'a.b');
+			const dashed = path.join(tmp, 'a-b');
+			fs.mkdirSync(dotted);
+			fs.mkdirSync(dashed);
+			const error = await refusedAll(
+				options(
+					withOther({
+						'claude-memory/proj/MEMORY.md': '# One',
+						'claude-memory/other/MEMORY.md': '# Two',
+					}),
+					{ workspaces: { proj: dotted, other: dashed }, claudeConfigDir: claudeConfigDir() }
+				)
+			);
+			expect(error.code).toBe('INVALID_OPTIONS');
+			expect(error.message).toContain('claude-memory/proj/MEMORY.md');
+			expect(error.message).toContain('claude-memory/other/MEMORY.md');
+		});
+
+		it('refuses a bundle file at the legacy cue.yaml path the merge removes', async () => {
+			write(
+				path.join(projRoot, 'maestro-cue.yaml'),
+				yaml.dump({
+					subscriptions: [
+						{ name: 'legacy', event: 'time.heartbeat', interval_minutes: 9, prompt: 'p' },
+					],
+				})
+			);
+			const error = await refusedAll(
+				options({ files: (files) => files.set('workspaces/proj/maestro-cue.yaml', 'x') })
+			);
+			expect(error.code).toBe('BUNDLE_INVALID');
+			expect(error.message).toContain('workspaces/proj/maestro-cue.yaml');
+		});
 	});
 
 	describe('provider binary paths', () => {

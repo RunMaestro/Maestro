@@ -217,7 +217,7 @@ Notes:
 
 ## Import
 
-Each workspace in a bundle is bound to a folder that must already exist, usually a clone of the project. `bundle inspect` lists the workspace keys. `bundle import --dry-run` prints the plan, including every shell command the bundle runs, and writes nothing.
+Each workspace in a bundle is bound to a folder that must already exist, usually a clone of the project. Each workspace needs its own folder: mapping two workspaces to the same folder (directly or through a symlink) is refused, since both would write the same `cue.yaml`. A workspace folder may sit inside another one's, as long as no two bundle files land on the same path. `bundle inspect` lists the workspace keys. `bundle import --dry-run` prints the plan, including every shell command the bundle runs, and writes nothing.
 
 ### Import on a VM
 

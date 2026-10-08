@@ -1285,7 +1285,7 @@ bundle
 	)
 	.option(
 		'-w, --workspace <key=path>',
-		'Map a bundle workspace to a local folder (repeatable, one per workspace)',
+		'Map a bundle workspace to its own local folder (repeatable, one per workspace)',
 		(val: string, prev: string[]) => [...prev, val],
 		[] as string[]
 	)

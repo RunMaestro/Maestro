@@ -937,7 +937,7 @@ Import a bundle into the running app, or with it closed into a data directory, p
 
 | Option                       | Description                                                                             | Default |
 | ---------------------------- | --------------------------------------------------------------------------------------- | ------- |
-| `-w, --workspace <key=path>` | Map a bundle workspace to a local folder (repeatable, one per workspace)                | `[]`    |
+| `-w, --workspace <key=path>` | Map a bundle workspace to its own local folder (repeatable, one per workspace)          | `[]`    |
 | `--agent-path <tool=path>`   | Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable)     | `[]`    |
 | `--data-dir <path>`          | Import into this Maestro data directory instead of the default                          | -       |
 | `--dry-run`                  | Report everything the import would do, including conflicts; write nothing               | -       |

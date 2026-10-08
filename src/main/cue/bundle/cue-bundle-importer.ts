@@ -395,6 +395,46 @@ function realpathOrResolve(p: string): string {
 	}
 }
 
+/** True when `a` and `b` name the same path under `isWithin`'s rules (case folded on win32). */
+function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+	return isWithin(a, b, platform) && isWithin(b, a, platform);
+}
+
+/** Device and inode of an existing folder, or undefined when the volume reports none. */
+function folderIdentity(folder: string): string | undefined {
+	try {
+		const stat = fs.statSync(folder, { bigint: true });
+		return stat.ino === 0n ? undefined : `${stat.dev}:${stat.ino}`;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The first two workspace keys mapped to the same folder, or undefined. Two
+ * workspaces on one folder would each merge against the same cue.yaml and
+ * write it in turn, so the last write would drop the other's subscriptions.
+ * Real paths catch a symlink and `isWithin` folds case on win32; the folder's
+ * identity also catches another spelling on a case-insensitive volume
+ * elsewhere (macOS by default), which a path comparison cannot see.
+ */
+export function findSharedWorkspaceRoot(
+	roots: ReadonlyMap<string, string>,
+	platform: NodeJS.Platform = process.platform
+): { keys: [string, string]; folder: string } | undefined {
+	const seen: Array<{ key: string; real: string; identity?: string }> = [];
+	for (const [key, root] of roots) {
+		const real = realpathOrResolve(root);
+		const identity = folderIdentity(real);
+		const other = seen.find(
+			(s) => samePath(s.real, real, platform) || (!!identity && s.identity === identity)
+		);
+		if (other) return { keys: [other.key, key], folder: other.real };
+		seen.push({ key, real, identity });
+	}
+	return undefined;
+}
+
 function readJsonObject(filePath: string): Record<string, unknown> | undefined {
 	const raw = readIfExists(filePath);
 	if (!raw) return undefined;
@@ -657,6 +697,15 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			{ workspaces: missing }
 		);
 	}
+	const shared = findSharedWorkspaceRoot(roots);
+	if (shared) {
+		const [first, second] = shared.keys;
+		throw new CueBundleImportError(
+			'INVALID_OPTIONS',
+			`Workspaces "${first}" and "${second}" are both mapped to ${shared.folder}. Each workspace needs its own folder.`,
+			{ workspaces: shared.keys, folder: shared.folder }
+		);
+	}
 	for (const key of Object.keys(options.workspaces)) {
 		if (!manifest.workspaces.some((ws) => ws.key === key)) {
 			warnings.push(`Workspace "${key}" is not in this bundle; its mapping was ignored.`);
@@ -666,15 +715,44 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 	const conflicts: CueBundleImportConflict[] = [];
 	const writes: PlannedWrite[] = [];
 	const files: CueBundleImportFile[] = [];
-	const plannedTargets = new Set<string>();
+	/** Every target a write is planned for, with the bundle entry (and workspace) it comes from. */
+	const plannedTargets = new Map<string, { source: string; workspace?: string }>();
+	/**
+	 * Claim `target` for one planned write. Every write is computed against the
+	 * file as it is on disk, so a second write to the same file would silently
+	 * replace the first one's result; refuse the import instead, before anything
+	 * is written. Two workspaces that overlap (one nested in the other) are a
+	 * mapping problem; two entries of one workspace are the bundle's.
+	 */
+	const claimTarget = (target: string, source: string, workspace?: string) => {
+		for (const [planned, by] of plannedTargets) {
+			if (!samePath(planned, target)) continue;
+			const message = `${by.source} and ${source} would both write ${target}`;
+			if (workspace && by.workspace && workspace !== by.workspace) {
+				throw new CueBundleImportError(
+					'INVALID_OPTIONS',
+					`${message}. Map workspaces "${by.workspace}" and "${workspace}" to folders that do not share it.`,
+					{ workspaces: [by.workspace, workspace], path: target, sources: [by.source, source] }
+				);
+			}
+			throw new CueBundleImportError('BUNDLE_INVALID', message, {
+				errors: [{ code: 'target-collision', message, file: source }],
+				path: target,
+				sources: [by.source, source],
+			});
+		}
+		plannedTargets.set(target, { source, ...(workspace ? { workspace } : {}) });
+	};
 
 	const planFile = (
 		kind: CueBundleImportFileKind,
 		source: string,
 		target: string,
 		bytes: Buffer,
-		executable = false
+		executable = false,
+		workspace?: string
 	) => {
+		claimTarget(target, source, workspace);
 		const before = fileBefore(target);
 		let action: CueBundleImportFile['action'] = 'create';
 		if (before) {
@@ -692,7 +770,6 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			}
 		}
 		files.push({ kind, source, target, action });
-		plannedTargets.add(target);
 		// Same bytes but missing its executable bit still needs the write's chmod.
 		// Windows reports no executable bits on any file, so there is nothing to fix there.
 		const lacksExec =
@@ -713,7 +790,8 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 	 * added to the ones already there, and a same-named server that differs is
 	 * a conflict.
 	 */
-	const planMcpConfig = (source: string, target: string, bytes: Buffer) => {
+	const planMcpConfig = (source: string, target: string, bytes: Buffer, workspace: string) => {
+		claimTarget(target, source, workspace);
 		const before = fileBefore(target);
 		let content: string;
 		let action: CueBundleImportFile['action'];
@@ -738,7 +816,6 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			});
 		}
 		files.push({ kind: 'workspace', source, target, action });
-		plannedTargets.add(target);
 		if (action !== 'unchanged') writes.push({ target, content, before, via: 'file' });
 	};
 	const claudeConfigDir = options.claudeConfigDir ?? resolveClaudeConfigDir(options.env);
@@ -960,7 +1037,7 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		const ws = /^workspaces\/([^/]+)\/(.+)$/.exec(source);
 		if (ws && roots.has(ws[1]) && ws[2] === MCP_CONFIG_FILE) {
 			const target = containedTarget(roots.get(ws[1])!, ws[2], source);
-			planMcpConfig(source, target, bytes);
+			planMcpConfig(source, target, bytes, ws[1]);
 			for (const name of mcpSecretsByWorkspace.get(ws[1]) ?? []) {
 				mcpSecrets.push([name, `mcp:${ws[1]}`]);
 			}
@@ -972,14 +1049,22 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 				source,
 				containedTarget(roots.get(ws[1])!, ws[2], source),
 				bytes,
-				entry.executable === true
+				entry.executable === true,
+				ws[1]
 			);
 			continue;
 		}
 		const memory = new RegExp(`^${CUE_BUNDLE_CLAUDE_MEMORY_DIR}/([^/]+)/([^/]+)$`).exec(source);
 		if (memory && roots.has(memory[1]) && isClaudeMemoryFileName(memory[2])) {
 			const dir = claudeMemoryDir(claudeConfigDir, realpathOrResolve(roots.get(memory[1])!));
-			planFile('claude-memory', source, containedTarget(dir, memory[2], source), bytes);
+			planFile(
+				'claude-memory',
+				source,
+				containedTarget(dir, memory[2], source),
+				bytes,
+				false,
+				memory[1]
+			);
 			continue;
 		}
 		const auto = /^autorun\/([^/]+)\/(.+)$/.exec(source);
@@ -1107,12 +1192,8 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			settingsKept: merge.settingsKept,
 			...(legacy ? { legacyRemoved: legacy } : {}),
 		});
-		if (plannedTargets.has(canonical)) {
-			throw new CueBundleImportError(
-				'BUNDLE_INVALID',
-				`${canonical} is both a bundle file and a merged cue.yaml`
-			);
-		}
+		claimTarget(canonical, ws.cueConfig, ws.key);
+		if (legacy) claimTarget(legacy, `${ws.cueConfig} (removes ${legacy})`, ws.key);
 		// Nothing to add: leave the file alone rather than rewrite it, since a
 		// rewrite drops every comment below its header.
 		const changes =
