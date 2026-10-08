@@ -652,6 +652,7 @@ export class CueEngine {
 			onDispatch: (sessionId, sub, event) => {
 				this.dispatchService.dispatchSubscription(sessionId, sub, event, sessionId);
 			},
+			firedRecord: this.registry,
 			getCueHistoryRetentionDays: deps.getCueHistoryRetentionDays,
 		});
 	}

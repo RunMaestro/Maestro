@@ -523,7 +523,7 @@ The engine logs one JSON object per line. On a VM they go to the journal (`journ
 
 ### Sleep and pause
 
-If the host sleeps or the engine is paused (a VM suspend, a closed laptop lid, `kill -STOP`) for 2 minutes or more, the engine notices within 30 seconds of waking and catches up: each interval (`time.heartbeat`) and scheduled (`time.scheduled`) trigger that came due during the gap runs once, however many times it came due, and GitHub triggers poll straight away. The log shows one `Sleep detected` line with the length of the gap. A clock set backward catches up nothing, and neither does an engine that is stopping.
+If the host sleeps or the engine is paused (a VM suspend, a closed laptop lid, `kill -STOP`) for 2 minutes or more, the engine notices within 30 seconds of waking and catches up: each interval (`time.heartbeat`) and scheduled (`time.scheduled`) trigger that came due during the gap runs once, however many times it came due, and GitHub triggers poll straight away. A trigger whose own timer already ran after the wake is not run a second time, and an interval trigger's next run comes one interval after its catch-up. The log shows one `Sleep detected` line with the length of the gap. A clock set backward catches up nothing, and neither does an engine that is stopping.
 
 ### Add or replace agents and pipelines
 

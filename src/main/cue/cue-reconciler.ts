@@ -14,6 +14,7 @@
  * via `pollNow()` rather than synthesizing events here.
  */
 
+import type { CueSessionRegistry } from './cue-session-registry';
 import { createCueEvent, type CueConfig, type CueEvent, type CueSubscription } from './cue-types';
 
 export interface ReconcileSessionInfo {
@@ -33,6 +34,24 @@ export interface ReconcileConfig {
 	 * so a catch-up on top of it runs the same subscription twice in a row.
 	 */
 	skipHeartbeats?: boolean;
+	/**
+	 * The record each time trigger source keeps of its own runs. The catch-up
+	 * reads and writes the same record, so after a sleep or pause one missed
+	 * window runs once whether the trigger's own timer fires before the
+	 * catch-up, after it, or not at all:
+	 *  - `time.heartbeat`: no catch-up when the subscription already ran less
+	 *    than one interval ago (its overdue timer beat the catch-up); otherwise
+	 *    the catch-up is recorded, and the trigger source restarts its interval
+	 *    from it (`cue-heartbeat-trigger-source.ts`).
+	 *  - `time.scheduled`: a slot in the minute of the wake is claimed through
+	 *    the same `(session, sub, HH:MM)` key the live poll uses, so only the
+	 *    first of the two runs it. An older slot cannot match the live poll.
+	 * Omitted, nothing is deduplicated.
+	 */
+	firedRecord?: Pick<
+		CueSessionRegistry,
+		'markHeartbeatFired' | 'heartbeatFiredAt' | 'markScheduledFired'
+	>;
 }
 
 const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
@@ -49,7 +68,8 @@ const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
  * one being acted on) so prompts can branch on backlog size if they care.
  */
 export function reconcileMissedTimeEvents(config: ReconcileConfig): void {
-	const { sleepStartMs, wakeTimeMs, sessions, onDispatch, onLog, skipHeartbeats } = config;
+	const { sleepStartMs, wakeTimeMs, sessions, onDispatch, onLog, skipHeartbeats, firedRecord } =
+		config;
 	const gapMs = wakeTimeMs - sleepStartMs;
 
 	if (gapMs <= 0) return;
@@ -60,9 +80,25 @@ export function reconcileMissedTimeEvents(config: ReconcileConfig): void {
 
 			if (sub.event === 'time.heartbeat') {
 				if (skipHeartbeats) continue;
-				reconcileHeartbeat(sessionId, sub, sleepStartMs, wakeTimeMs, onDispatch, onLog);
+				reconcileHeartbeat(
+					sessionId,
+					sub,
+					sleepStartMs,
+					wakeTimeMs,
+					onDispatch,
+					onLog,
+					firedRecord
+				);
 			} else if (sub.event === 'time.scheduled') {
-				reconcileScheduled(sessionId, sub, sleepStartMs, wakeTimeMs, onDispatch, onLog);
+				reconcileScheduled(
+					sessionId,
+					sub,
+					sleepStartMs,
+					wakeTimeMs,
+					onDispatch,
+					onLog,
+					firedRecord
+				);
 			}
 		}
 	}
@@ -74,7 +110,8 @@ function reconcileHeartbeat(
 	sleepStartMs: number,
 	wakeTimeMs: number,
 	onDispatch: ReconcileConfig['onDispatch'],
-	onLog: ReconcileConfig['onLog']
+	onLog: ReconcileConfig['onLog'],
+	firedRecord: ReconcileConfig['firedRecord']
 ): void {
 	if (!sub.interval_minutes || sub.interval_minutes <= 0) return;
 
@@ -83,6 +120,19 @@ function reconcileHeartbeat(
 	const missedCount = Math.floor(gapMs / intervalMs);
 
 	if (missedCount === 0) return;
+
+	const lastRunMs = firedRecord?.heartbeatFiredAt(sessionId, sub.name);
+	if (lastRunMs !== undefined) {
+		const sinceLastRunMs = wakeTimeMs - lastRunMs;
+		if (sinceLastRunMs >= 0 && sinceLastRunMs < intervalMs) {
+			onLog(
+				'cue',
+				`[CUE] Not reconciling "${sub.name}": it already ran ${Math.round(sinceLastRunMs / 1000)}s ago, inside this interval`
+			);
+			return;
+		}
+	}
+	firedRecord?.markHeartbeatFired(sessionId, sub.name, wakeTimeMs);
 
 	onLog(
 		'cue',
@@ -105,7 +155,8 @@ function reconcileScheduled(
 	sleepStartMs: number,
 	wakeTimeMs: number,
 	onDispatch: ReconcileConfig['onDispatch'],
-	onLog: ReconcileConfig['onLog']
+	onLog: ReconcileConfig['onLog'],
+	firedRecord: ReconcileConfig['firedRecord']
 ): void {
 	const times = sub.schedule_times ?? [];
 	if (times.length === 0) return;
@@ -121,6 +172,17 @@ function reconcileScheduled(
 	const mostRecentDate = new Date(mostRecentSlotMs);
 	const matchedTime = `${pad2(mostRecentDate.getHours())}:${pad2(mostRecentDate.getMinutes())}`;
 	const matchedDay = DAY_NAMES[mostRecentDate.getDay()];
+
+	// A slot in the wake's own minute is one the live poll can still match (a
+	// slot is on :00, so the wake is in its minute when less than 60s later).
+	if (
+		firedRecord &&
+		wakeTimeMs - mostRecentSlotMs < 60_000 &&
+		!firedRecord.markScheduledFired(sessionId, sub.name, matchedTime)
+	) {
+		onLog('cue', `[CUE] Not reconciling "${sub.name}": ${matchedTime} already ran after the wake`);
+		return;
+	}
 
 	onLog(
 		'cue',

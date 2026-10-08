@@ -16,6 +16,9 @@
  *   false if already fired. `engine.stop()` calls `clearAllStartupKeys()` to
  *   reset the dedup set so that the next `start('system-boot')` re-fires
  *   startup subscriptions for all sessions.
+ * - markHeartbeatFired / heartbeatFiredAt
+ *   - when each `time.heartbeat` last ran (wall clock), shared by its trigger
+ *   source and the sleep catch-up so one interval window runs once
  * - clear - drops all sessions and `time.scheduled` dedup state; `app.startup`
  *   keys are NOT cleared by `clear()` (they remain valid within the current
  *   engine cycle). To reset startup keys, call `clearAllStartupKeys()` or
@@ -77,6 +80,17 @@ export interface CueSessionRegistry {
 	 */
 	markOnceFired(sessionId: string, subName: string, fireAt: string): boolean;
 
+	// ── time.heartbeat last run ──────────────────────────────────────────
+	/**
+	 * Record that a `time.heartbeat` subscription ran (or took its turn and was
+	 * filtered) at `atMs` (wall clock). Written by the trigger source on every
+	 * fire and by the sleep catch-up, so whichever comes second for the same
+	 * interval window can see the first and stand down.
+	 */
+	markHeartbeatFired(sessionId: string, subName: string, atMs: number): void;
+	/** Wall-clock ms of the subscription's last recorded run, or `undefined`. */
+	heartbeatFiredAt(sessionId: string, subName: string): number | undefined;
+
 	/**
 	 * Drop all sessions and clear `time.scheduled` dedup state.
 	 * `app.startup` keys are cleared separately via `clearAllStartupKeys()` when
@@ -97,12 +111,17 @@ export function createCueSessionRegistry(): CueSessionRegistry {
 	const scheduledFiredKeys = new Set<string>();
 	const startupFiredKeys = new Set<string>();
 	const onceFiredKeys = new Set<string>();
+	const heartbeatFiredAtMs = new Map<string, number>();
 
 	function scheduledKey(sessionId: string, subName: string, time: string): string {
 		return `${sessionId}:${subName}:${time}`;
 	}
 
 	function startupKey(sessionId: string, subName: string): string {
+		return `${sessionId}:${subName}`;
+	}
+
+	function heartbeatKey(sessionId: string, subName: string): string {
 		return `${sessionId}:${subName}`;
 	}
 
@@ -117,6 +136,10 @@ export function createCueSessionRegistry(): CueSessionRegistry {
 
 		unregister(sessionId) {
 			sessions.delete(sessionId);
+			const prefix = `${sessionId}:`;
+			for (const key of heartbeatFiredAtMs.keys()) {
+				if (key.startsWith(prefix)) heartbeatFiredAtMs.delete(key);
+			}
 		},
 
 		get(sessionId) {
@@ -188,9 +211,18 @@ export function createCueSessionRegistry(): CueSessionRegistry {
 			return true;
 		},
 
+		markHeartbeatFired(sessionId, subName, atMs) {
+			heartbeatFiredAtMs.set(heartbeatKey(sessionId, subName), atMs);
+		},
+
+		heartbeatFiredAt(sessionId, subName) {
+			return heartbeatFiredAtMs.get(heartbeatKey(sessionId, subName));
+		},
+
 		clear() {
 			sessions.clear();
 			scheduledFiredKeys.clear();
+			heartbeatFiredAtMs.clear();
 		},
 
 		sweepStaleScheduledKeys(currentTime: string): number {

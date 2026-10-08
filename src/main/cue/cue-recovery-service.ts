@@ -24,7 +24,11 @@ import {
 	initCueDb,
 	pruneCueEvents,
 } from './cue-db';
-import { reconcileMissedTimeEvents, type ReconcileSessionInfo } from './cue-reconciler';
+import {
+	reconcileMissedTimeEvents,
+	type ReconcileConfig,
+	type ReconcileSessionInfo,
+} from './cue-reconciler';
 import { captureException } from '../utils/sentry';
 import type { CueConfig, CueEvent, CueSubscription } from './cue-types';
 
@@ -53,6 +57,12 @@ export interface CueRecoveryServiceDeps {
 	getSessions: () => Map<string, { config: CueConfig; sessionName: string }>;
 	/** Dispatch a missed event back through the engine's normal execution path. */
 	onDispatch: (sessionId: string, sub: CueSubscription, event: CueEvent) => void;
+	/**
+	 * The trigger sources' record of their own runs (the session registry), so
+	 * a catch-up and the trigger's own timer never both run one missed window.
+	 * See `ReconcileConfig.firedRecord`.
+	 */
+	firedRecord?: ReconcileConfig['firedRecord'];
 	/**
 	 * The user's `cueHistoryRetentionDays` setting, read fresh on every `init()`
 	 * so a change takes effect at the next engine start without an app restart.
@@ -146,6 +156,7 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 				sessions: reconcileSessions,
 				// At engine start every heartbeat fires on its own; see ReconcileConfig.
 				skipHeartbeats: options.atEngineStart === true,
+				firedRecord: deps.firedRecord,
 				onDispatch: (sessionId, sub, event) => {
 					deps.onDispatch(sessionId, sub, event);
 				},

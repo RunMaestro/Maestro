@@ -393,10 +393,8 @@ processes.
    (Sleep and pause) says each interval "runs once, however many times it came
    due". A real suspend on Linux or macOS stops the monotonic clock, so the
    interval timer is not overdue there; SIGSTOP and a VM pause that keeps the
-   guest's monotonic clock running are affected. Not fixed: it needs the
-   recovery service to reset each interval source's timer after a catch-up,
-   which also touches the desktop's resume path, so it is not small.
-   Reported for a decision.
+   guest's monotonic clock running are affected. Fixed later the same day; see
+   [Rerun of the pause catch-up](#rerun-of-the-pause-catch-up-after-the-fix).
 3. **No 503 during a drain.** A delivery sent while the engine drains is
    refused at the TCP level (a proxy answers 502): the drain stops every
    trigger source and the listener closes with the last webhook subscription.
@@ -413,6 +411,49 @@ processes.
    stderr both reach the journal, so they would land between the JSON lines.
    The unit and the image do not set `MAESTRO_CUE_DEBUG=0`. Pre-existing; not
    changed.
+
+### Rerun of the pause catch-up after the fix
+
+Same day, against the fix for Finding 2 (uncommitted on top of `3bc48cbe9`,
+committed together with this entry). A fresh `dist/server/maestro-server` with
+the same plain-Node `better-sqlite3`, a new data dir with one agent
+(`LiveOps`, the same `cue-pipeline-layout.json`) and one subscription: `beat`,
+`time.heartbeat`, 2 minutes, the same `echo` into `$MAESTRO_LIVE_LOG`. Same
+start flags (`--require-ready --log-format json`, status port 7434). The
+driver started the engine, sent `kill -STOP` 60 s later, `kill -CONT` 150 s
+after that, and ran `cue engine stop` 370 s after the resume.
+
+| Time after start | What happened                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 0.6 s            | `beat` (initial)                                                                                                          |
+| 60.0 s           | SIGSTOP                                                                                                                   |
+| 210.0 s          | SIGCONT. `Sleep detected (gap: 3m)`, `Reconciling "beat": 1 interval(s) missed during sleep, firing catch-up`, one `beat` |
+| 330.0 s          | `beat`, 120.000 s after the catch-up                                                                                      |
+| 450.0 s          | `beat`, +120.001 s                                                                                                        |
+| 570.0 s          | `beat`, +120.000 s                                                                                                        |
+| 580.5 s          | `cue engine stop`, engine exit 0                                                                                          |
+
+**Pass**: one run for the missed window, where the run above had two. The
+overdue interval timer that used to fire 13 ms after the catch-up found the
+catch-up in the registry and re-armed for the rest of the window, so the
+interval now runs from the catch-up. Five `beat` runs in total, five `Executing
+shell run` lines, 36 stderr lines all JSON, nothing on stdout.
+
+How the fix covers the other causes: the catch-up and the trigger source share
+a per-subscription record of the last run (the session registry). A catch-up is
+skipped when the heartbeat already ran less than one interval ago (its timer
+fired first), and a timer tick that finds a newer catch-up re-arms instead of
+firing (catch-up first). That holds whether the timer is overdue on resume
+(SIGSTOP, a VM pause, and Windows sleep, where libuv's timer clock is
+QueryPerformanceCounter, which keeps counting through sleep per Microsoft's
+documentation, not checked on a Windows machine) or still waiting (a Linux or
+macOS suspend, where the old code ran a second time when the timer's remaining
+delay ran out, inside the same window). `time.scheduled` had the same double
+fire when the wake landed in the slot's own minute; its catch-up now claims the
+same `(session, sub, HH:MM)` key as the 60 s poll. Both clock behaviors and
+both orders are covered with fake timers in `cue-catch-up-once.test.ts`, which
+fails 8 of its 11 cases on the code before the fix. A real host suspend was
+still not run.
 
 ### Observations
 
@@ -444,5 +485,5 @@ this stage does not take. The other nine of the twelve ran.
   hand here.
 - The container.
 - Codex (not installed).
-- A real host suspend (only SIGSTOP), which is the case Finding 2 does not
-  affect on Linux.
+- A real host suspend (only SIGSTOP). Finding 2 affected it too, later in the
+  window rather than at resume; covered by fake-timer tests only.
