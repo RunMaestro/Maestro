@@ -169,6 +169,16 @@ export interface ParsedEvent {
 	isReasoning?: boolean;
 
 	/**
+	 * Reasoning that arrived alongside this event rather than as its own line.
+	 * StdoutHandler emits it as a thinking chunk BEFORE handling the event, so
+	 * it reads in order. Antigravity uses it: its stream carries thinking only as
+	 * a token count, and the text is read from its conversation store when a
+	 * model step first appears - on a line that is already a text delta or a
+	 * usage tick.
+	 */
+	reasoningText?: string;
+
+	/**
 	 * Tool use blocks extracted from the message (for agents with mixed content)
 	 * When a message contains both text and tool_use, text goes in 'text' field
 	 * and tool_use blocks are here. Process-manager emits tool-execution for each.

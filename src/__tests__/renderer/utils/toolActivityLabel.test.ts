@@ -14,6 +14,49 @@ import {
 } from '../../../renderer/utils/toolActivityLabel';
 
 describe('describeToolActivity', () => {
+	// Shapes from live grok 1.0.41 and agy 1.2.16 runs. Before these were
+	// mapped, the feed read "Used run_terminal_command" / "Ran" with no command.
+	describe('Grok and Antigravity tool shapes', () => {
+		it('labels Grok run_terminal_command and search_replace', () => {
+			expect(
+				describeToolActivity('run_terminal_command', { command: 'ls -la', description: 'List' })
+			).toEqual({ verb: 'Ran', target: 'ls -la', targetIsCode: true });
+			expect(
+				describeToolActivity('search_replace', {
+					file_path: '/w/hello.txt',
+					old_string: 'bravo',
+					new_string: 'BRAVO',
+				})
+			).toEqual({ verb: 'Edited', target: '/w/hello.txt', targetIsCode: true });
+		});
+
+		it("reads Antigravity's PascalCase parameters", () => {
+			expect(describeToolActivity('run_command', { CommandLine: 'false' })).toEqual({
+				verb: 'Ran',
+				target: 'false',
+				targetIsCode: true,
+			});
+			expect(describeToolActivity('view_file', { AbsolutePath: '/w/hello.txt' })).toEqual({
+				verb: 'Read',
+				target: '/w/hello.txt',
+				targetIsCode: true,
+			});
+			expect(describeToolActivity('write_to_file', { TargetFile: '/w/out.txt' })).toEqual({
+				verb: 'Wrote',
+				target: '/w/out.txt',
+				targetIsCode: true,
+			});
+			expect(describeToolActivity('replace_file_content', { TargetFile: '/w/a.ts' }).verb).toBe(
+				'Edited'
+			);
+			expect(describeToolActivity('find_by_name', { Pattern: '*.md' })).toEqual({
+				verb: 'Looked for files matching',
+				target: '*.md',
+				targetIsCode: true,
+			});
+		});
+	});
+
 	describe('file reads', () => {
 		it('labels Claude Code Read with the file path', () => {
 			expect(describeToolActivity('Read', { file_path: 'src/App.tsx' })).toEqual({

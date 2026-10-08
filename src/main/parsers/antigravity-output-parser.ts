@@ -17,14 +17,23 @@
  *    {"event":"result","result":{"conversation_id":"...","status":"...","response":"...","error":"...",
  *      "duration_seconds":1.2,"num_turns":1,"usage":{...}}}
  *
- * Derived from the published headless-mode contract, not from a captured live run.
+ * Checked against captured agy 1.2.16 runs. The stream gives thinking only as a
+ * token count and settles every tool step `DONE` with no exit code, so the
+ * thinking summary and each command's exit status are read from agy's own
+ * conversation store (see antigravity-step-store.ts).
  * @see https://antigravity.google/docs/cli/headless
  */
 
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
-import { compactToolOutput } from '../../shared/toolOutput';
+import { cleanToolOutputText } from '../../shared/toolOutput';
+import {
+	antigravityStepStore,
+	commandExitCode,
+	storedResultSummary,
+	type AntigravityStepStore,
+} from './antigravity-step-store';
 
 /** Token metrics reported on step_update and on the terminal result envelope. */
 interface AntigravityUsage {
@@ -139,6 +148,28 @@ function isAntigravityStreamMessage(data: unknown): data is AntigravityStreamMes
 export class AntigravityOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'antigravity';
 
+	/**
+	 * The model step whose thinking was last looked up, per conversation. An
+	 * answer step streams many lines, and the store is read once for it (twice
+	 * when its first line found nothing, since DONE is the last chance). Only
+	 * the current step is kept and a result drops the entry, so this stays one
+	 * small record per live conversation.
+	 */
+	private readonly thinkingChecked = new Map<string, { step: number; final: boolean }>();
+
+	/**
+	 * The last model call's usage per conversation. agy reports usage per model
+	 * step and again as the turn total on `result` (the sum of the steps), and
+	 * every usage event Maestro sees is ADDED to the session totals, so emitting
+	 * both counted each turn twice. Only the result now carries usage; this
+	 * remembers the last step so the result can attach it as `absoluteUsage`, the
+	 * real context occupancy (a sum across calls is not, and overran the window).
+	 * One entry per conversation, overwritten by every model step.
+	 */
+	private readonly lastStepUsage = new Map<string, AntigravityUsage>();
+
+	constructor(private readonly stepStore: AntigravityStepStore = antigravityStepStore) {}
+
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) {
 			return null;
@@ -207,13 +238,33 @@ export class AntigravityOutputParser implements AgentOutputParser {
 		}
 
 		const sessionId = step.conversation_id;
-		const usage = this.normalizeUsage(step.usage);
+		if (step.usage && sessionId) this.lastStepUsage.set(sessionId, step.usage);
 
 		// Tool steps: surface the tool name and its lifecycle state so the UI can
 		// render an in-progress / settled tool card.
 		if (step.step_type === 'tool' || step.tool_name || step.tool_info) {
 			const toolInfo = step.tool_info;
 			const errorMessage = toolInfo?.error?.message || toolInfo?.error?.type;
+			let status = toolStatusFromStepState(step.state, errorMessage);
+			// agy settles a failed command as plain DONE; its exit code only exists
+			// in the result text it stored for the model. Read once, at the settle.
+			const stored =
+				status !== 'running' && sessionId && typeof step.step_index === 'number'
+					? this.stepStore.readToolResult(sessionId, step.step_index)
+					: '';
+			const exitCode = commandExitCode(toolInfo?.name || step.tool_name, stored);
+			if (exitCode !== undefined && exitCode !== 0) status = 'failed';
+			const streamOutput =
+				typeof toolInfo?.output === 'string' ? cleanToolOutputText(toolInfo.output) : '';
+			// The stream's own output wins (run_command's text, view_file's "4 lines,
+			// 20 bytes"); edits and silent failures fall back to what was stored.
+			// A failing step's message goes in `output` rather than a field of its
+			// own: `LogEntry.metadata.toolState` is {status,input,output}, so an
+			// `error` key would round-trip through the merge and render nowhere.
+			const output =
+				status === 'running'
+					? ''
+					: streamOutput || errorMessage || (stored ? storedResultSummary(stored) : '');
 			return {
 				type: 'tool_use',
 				sessionId,
@@ -231,26 +282,23 @@ export class AntigravityOutputParser implements AgentOutputParser {
 							: String(step.step_index)
 						: undefined,
 				toolState: {
-					status: toolStatusFromStepState(step.state, errorMessage),
+					status,
 					// The parameters and output were being dropped on the floor: the
 					// badge is what shows the user WHICH command ran and what it
 					// printed, and a badge with neither is a name and a spinner.
 					...(toolInfo?.parameters !== undefined ? { input: toolInfo.parameters } : {}),
-					// A failing step's message goes in `output` rather than a field of
-					// its own: `LogEntry.metadata.toolState` is {status,input,output},
-					// so an `error` key would round-trip through the merge and render
-					// nowhere - the badge would say failed and show nothing. A step
-					// that produced real output keeps it.
-					...(typeof toolInfo?.output === 'string'
-						? { output: compactToolOutput(toolInfo.output).output }
-						: errorMessage
-							? { output: errorMessage }
-							: {}),
+					...(output ? { output } : {}),
+					...(exitCode !== undefined ? { exitCode } : {}),
 				},
-				usage,
 				raw,
 			};
 		}
+
+		// A model step's thinking rides on whatever this line already is, so it
+		// lands in the transcript before the step's own text.
+		const reasoning =
+			step.step_type === 'agent_response' ? this.readStepThinking(sessionId, step) : '';
+		const withReasoning = reasoning ? { reasoningText: `${reasoning}\n\n` } : {};
 
 		// Assistant prose arrives as deltas; emit each one as partial text so the
 		// renderer appends rather than replaces.
@@ -260,18 +308,34 @@ export class AntigravityOutputParser implements AgentOutputParser {
 				sessionId,
 				text: step.text_delta,
 				isPartial: true,
-				usage,
+				...withReasoning,
 				raw,
 			};
 		}
 
-		// Usage-only tick (no text, no tool) - keep the token counts, drop the noise.
-		if (usage) {
-			return { type: 'usage', sessionId, usage, raw };
-		}
+		// Usage-only ticks and bookkeeping steps (user_input echo, checkpoint) are
+		// not user-facing content. Usage is reported once, on the result.
+		return { type: 'system', sessionId, ...withReasoning, raw };
+	}
 
-		// Bookkeeping steps (user_input echo, checkpoint) are not user-facing content.
-		return { type: 'system', sessionId, raw };
+	/**
+	 * The stored thinking for a model step, the first time a line for that step
+	 * is seen (and once more at DONE if the first look found nothing).
+	 */
+	private readStepThinking(
+		conversationId: string | undefined,
+		step: AntigravityStepUpdate
+	): string {
+		if (!conversationId || typeof step.step_index !== 'number') return '';
+		const done = step.state === 'DONE';
+		const checked = this.thinkingChecked.get(conversationId);
+		if (checked?.step === step.step_index && (checked.final || !done)) return '';
+		const thinking = this.stepStore.readThinking(conversationId, step.step_index);
+		this.thinkingChecked.set(conversationId, {
+			step: step.step_index,
+			final: done || thinking.length > 0,
+		});
+		return thinking;
 	}
 
 	/**
@@ -283,13 +347,15 @@ export class AntigravityOutputParser implements AgentOutputParser {
 		result: AntigravityResult | undefined,
 		raw: AntigravityStreamMessage
 	): ParsedEvent {
+		if (result?.conversation_id) this.thinkingChecked.delete(result.conversation_id);
+		const usage = this.turnUsage(result);
 		const errorText = this.extractErrorText(result);
 		if (errorText) {
 			return {
 				type: 'error',
 				sessionId: result?.conversation_id,
 				text: errorText,
-				usage: this.normalizeUsage(result?.usage),
+				usage,
 				raw,
 			};
 		}
@@ -298,8 +364,30 @@ export class AntigravityOutputParser implements AgentOutputParser {
 			type: 'result',
 			sessionId: result?.conversation_id,
 			text: result?.response ?? '',
-			usage: this.normalizeUsage(result?.usage),
+			usage,
 			raw,
+		};
+	}
+
+	/** The turn's usage: result totals, plus the last model call as occupancy. */
+	private turnUsage(result: AntigravityResult | undefined): ParsedEvent['usage'] | undefined {
+		const totals = this.normalizeUsage(result?.usage);
+		const conversationId = result?.conversation_id;
+		// Read, never consumed: StdoutHandler can parse the same result line twice
+		// (once to settle a held error notice) and only the second parse is used.
+		const last = conversationId ? this.lastStepUsage.get(conversationId) : undefined;
+		// A result without totals still reports the last call it saw, rather than nothing.
+		if (!totals) return last ? this.normalizeUsage(last) : undefined;
+		if (!last) return totals;
+		return {
+			...totals,
+			absoluteUsage: {
+				inputTokens: last.input_tokens || 0,
+				outputTokens: last.output_tokens || 0,
+				cacheReadInputTokens: last.cache_read_tokens || 0,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: last.thinking_tokens || 0,
+			},
 		};
 	}
 

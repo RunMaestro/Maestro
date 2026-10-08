@@ -1289,6 +1289,49 @@ describe('MainPanel', () => {
 				Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth);
 			}
 		});
+
+		it('should not display a $0.00 cost tracker when the provider reported tokens but no cost', () => {
+			// A grok-compatible custom binary: supportsCostTracking is true for the provider,
+			// but this binary reports tokens only. "$0.00" would be a wrong answer.
+			const originalOffsetWidth = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'offsetWidth'
+			);
+			Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+				configurable: true,
+				value: 800,
+			});
+
+			const session = createSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'grok-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+						usageStats: {
+							inputTokens: 12164,
+							outputTokens: 32,
+							cacheReadInputTokens: 3200,
+							cacheCreationInputTokens: 0,
+							totalCostUsd: 0,
+							contextWindow: 500000,
+						},
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			renderMainPanel({ activeSession: session });
+
+			expect(screen.queryByText(/\$\d+\.\d+/)).not.toBeInTheDocument();
+
+			if (originalOffsetWidth) {
+				Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth);
+			}
+		});
 	});
 
 	describe('Context window widget', () => {

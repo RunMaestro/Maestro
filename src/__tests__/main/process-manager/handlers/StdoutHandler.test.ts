@@ -2610,7 +2610,7 @@ describe('StdoutHandler - single JSON parse per line', () => {
 	});
 
 	describe('Grok thinking-chunk vs streamedText routing', () => {
-		it('emits thinking-chunk only for thought deltas; assistant text goes to streamedText', async () => {
+		it('streams assistant text as it arrives and does not repeat it at end', async () => {
 			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
 			const parser = new GrokOutputParser();
 			const { handler, emitter, sessionId, proc, bufferManager } = createTestContext({
@@ -2623,6 +2623,7 @@ describe('StdoutHandler - single JSON parse per line', () => {
 
 			handler.handleData(sessionId, '{"type":"thought","data":"planning..."}\n');
 			handler.handleData(sessionId, '{"type":"text","data":"{\\"confidence\\":40"}\n');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, '{"confidence":40');
 			handler.handleData(
 				sessionId,
 				'{"type":"text","data":",\\"ready\\":false,\\"message\\":\\"hi\\"}"}\n'
@@ -2635,12 +2636,42 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			// Only reasoning deltas hit thinking-chunk (not assistant JSON fragments)
 			expect(thinkingSpy).toHaveBeenCalledTimes(1);
 			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'planning...');
-			// Assistant text accumulates for the final result emit
+			// Assistant text remains available for diagnostics, but each delta is emitted once.
 			expect(proc.streamedText).toBe('{"confidence":40,"ready":false,"message":"hi"}');
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledTimes(2);
+			expect(bufferManager.emitDataBuffered).toHaveBeenNthCalledWith(
+				2,
 				sessionId,
-				'{"confidence":40,"ready":false,"message":"hi"}'
+				',"ready":false,"message":"hi"}'
 			);
+		});
+
+		it('emits only reasoningText as Antigravity thinking: the answer stays out of the thinking block', async () => {
+			const { AntigravityOutputParser } =
+				await import('../../../../main/parsers/antigravity-output-parser');
+			const parser = new AntigravityOutputParser({
+				readThinking: () => 'Uppercasing keeps the order.',
+				readToolResult: () => '',
+			});
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'antigravity',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			handler.handleData(
+				sessionId,
+				'{"event":"step_update","step_update":{"conversation_id":"c-1","step_index":5,"state":"ACTIVE","step_type":"agent_response","text_delta":"Yes, "}}\n'
+			);
+
+			// The answer delta used to be copied into thinking too, so a sticky
+			// thinking block printed every agy answer a second time.
+			expect(thinkingSpy.mock.calls.map((call) => call[1])).toEqual([
+				'Uppercasing keeps the order.\n\n',
+			]);
+			expect(proc.streamedText).toBe('Yes, ');
 		});
 
 		it('still emits thinking-chunk for Factory Droid assistant partials without isReasoning', async () => {

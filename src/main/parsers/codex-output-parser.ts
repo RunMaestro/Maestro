@@ -11,8 +11,9 @@
  *    - response_item: Structured items (message, function_call, function_call_output, reasoning, custom_tool_call)
  *    - turn_context: Turn metadata (model, context window, etc.)
  *
- * 2. Legacy stdout format (older Codex versions):
+ * 2. `codex exec --json` thread events (still current: verified on codex 0.160.0):
  *    - thread.started, turn.started, item.started, item.completed, turn.completed
+ *    - tool items: command_execution, file_change, mcp_tool_call, web_search, todo_list
  *
  * Key schema details:
  * - Session IDs are in session_meta payload.id (current) or thread_id (legacy)
@@ -27,6 +28,7 @@ import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { captureException } from '../utils/sentry';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { cleanToolOutputText } from '../../shared/toolOutput';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -236,9 +238,19 @@ interface CodexPayload {
  */
 interface CodexItem {
 	id?: string;
-	type?: 'reasoning' | 'agent_message' | 'tool_call' | 'tool_result' | 'command_execution';
+	type?:
+		| 'reasoning'
+		| 'agent_message'
+		| 'tool_call'
+		| 'tool_result'
+		| 'command_execution'
+		| 'file_change'
+		| 'mcp_tool_call'
+		| 'web_search'
+		| 'todo_list';
 	text?: string;
-	// Legacy tool_call/tool_result fields (Codex < v0.111.0)
+	// Legacy tool_call/tool_result fields (Codex < v0.111.0); `tool` is also the
+	// tool name on an mcp_tool_call.
 	tool?: string;
 	args?: Record<string, unknown>;
 	output?: string | number[];
@@ -247,6 +259,17 @@ interface CodexItem {
 	aggregated_output?: string;
 	exit_code?: number | null;
 	status?: 'in_progress' | 'completed' | 'failed';
+	// file_change: one entry per file the patch touched
+	changes?: Array<{ path?: string; kind?: string }>;
+	// mcp_tool_call
+	server?: string;
+	arguments?: unknown;
+	result?: { content?: Array<{ type?: string; text?: string }>; structured_content?: unknown };
+	error?: { message?: string };
+	// web_search
+	query?: string;
+	// todo_list
+	items?: Array<{ text?: string; completed?: boolean }>;
 }
 
 /**
@@ -291,6 +314,67 @@ function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
 		typeof obj.message === 'string' &&
 		/^Reconnecting\.\.\./.test(obj.message)
 	);
+}
+
+/**
+ * Badge status for a Codex tool item. A non-zero exit code is a failure even
+ * when Codex says `completed`, and `failed` is never shown as success: the
+ * badge used to draw a check mark next to `false` (exit 1, status failed).
+ */
+function codexItemStatus(
+	item: CodexItem,
+	completedLine: boolean
+): 'running' | 'completed' | 'failed' {
+	if (item.status === 'failed' || item.error?.message) return 'failed';
+	if (typeof item.exit_code === 'number' && item.exit_code !== 0) return 'failed';
+	if (item.status === 'in_progress') return 'running';
+	// web_search and todo_list carry no status word; item.completed is the signal.
+	return completedLine || item.status === 'completed' ? 'completed' : 'running';
+}
+
+/**
+ * The command a user would recognize, out of the login-shell wrapper Codex runs
+ * every command through (`/bin/zsh -lc 'cat hello.txt'` -> `cat hello.txt`).
+ * Anything that is not exactly `<sh> -c <one word>` comes back unchanged, so
+ * an unexpected shape degrades to the old full string, never to a wrong one.
+ */
+export function unwrapShellCommand(command: string): string {
+	const match = /^(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+([\s\S]+)$/.exec(command.trim());
+	if (!match) return command;
+	const word = readSingleShellWord(match[1]);
+	return word ? word : command;
+}
+
+/** POSIX-unquote `text` if it is exactly one shell word, else null. */
+function readSingleShellWord(text: string): string | null {
+	let word = '';
+	let i = 0;
+	while (i < text.length) {
+		const ch = text[i];
+		if (ch === "'") {
+			const end = text.indexOf("'", i + 1);
+			if (end < 0) return null;
+			word += text.slice(i + 1, end);
+			i = end + 1;
+		} else if (ch === '"') {
+			i++;
+			while (i < text.length && text[i] !== '"') {
+				if (text[i] === '\\' && '\\$`"\n'.includes(text[i + 1] ?? '')) i++;
+				word += text[i++];
+			}
+			if (i >= text.length) return null;
+			i++;
+		} else if (ch === '\\' && i + 1 < text.length) {
+			word += text[i + 1];
+			i += 2;
+		} else if (/\s/.test(ch)) {
+			return null; // a second word: not the single argument of -c
+		} else {
+			word += ch;
+			i++;
+		}
+	}
+	return word;
 }
 
 /**
@@ -811,28 +895,98 @@ export class CodexOutputParser implements AgentOutputParser {
 	 * Codex v0.111.0+ emits item.started for command_execution when a tool begins running
 	 */
 	private transformItemStarted(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
-		if (item.type === 'command_execution') {
-			return {
-				type: 'tool_use',
-				toolName: 'shell',
-				// item.started and item.completed describe the SAME item, so its id
-				// correlates them. Every command_execution badge is named 'shell',
-				// so without an id two parallel commands are indistinguishable to
-				// the renderer's name-matching fallback (issue #1485).
-				...(item.id ? { toolCallId: item.id } : {}),
-				toolState: {
-					status: 'running',
-					input: { command: item.command },
-				},
-				raw: msg,
-			};
-		}
+		// Unknown item.started types are preserved as system events
+		return this.toolItemEvent(item, msg, false) ?? { type: 'system', raw: msg };
+	}
 
-		// Unknown item.started type - preserve as system event
+	/**
+	 * The tool badge for a Codex `exec --json` tool item, from item.started or
+	 * item.completed. Both lines describe the SAME item, so its id correlates
+	 * them. Without an id, two parallel calls of one tool are indistinguishable
+	 * to the renderer's name-matching fallback (issue #1485).
+	 *
+	 * Returns null for item types that are not tool calls.
+	 */
+	private toolItemEvent(
+		item: CodexItem,
+		msg: CodexRawMessage,
+		completedLine: boolean
+	): ParsedEvent | null {
+		const tool = this.describeToolItem(item);
+		if (!tool) return null;
+		const status = codexItemStatus(item, completedLine);
 		return {
-			type: 'system',
+			type: 'tool_use',
+			toolName: tool.name,
+			...(item.id ? { toolCallId: item.id } : {}),
+			toolState: {
+				status,
+				input: tool.input,
+				...(status !== 'running' && tool.output ? { output: tool.output } : {}),
+				...(item.exit_code !== undefined ? { exitCode: item.exit_code } : {}),
+			},
 			raw: msg,
 		};
+	}
+
+	/** Name, input, and finished output of a tool item, or null if it is not one. */
+	private describeToolItem(
+		item: CodexItem
+	): { name: string; input: unknown; output?: string } | null {
+		switch (item.type) {
+			case 'command_execution': {
+				const output = cleanToolOutputText(this.decodeToolOutput(item.aggregated_output));
+				// A silent failure (`false`, a test runner that only sets $?) would
+				// otherwise settle as a red badge with nothing under it.
+				const exitNote =
+					typeof item.exit_code === 'number' && item.exit_code !== 0 && !output
+						? `Exit code ${item.exit_code}`
+						: '';
+				return {
+					name: 'shell',
+					input: { command: unwrapShellCommand(item.command ?? '') },
+					output: output || exitNote,
+				};
+			}
+			case 'file_change': {
+				// One line per file: `<path> (<add|update|delete>)`. A raw string
+				// input, like the apply_patch body Codex sends on other paths, so the
+				// badge prints it as-is and the activity feed reads "Edited <path>".
+				const lines = (item.changes ?? [])
+					.filter((change) => change.path)
+					.map((change) => (change.kind ? `${change.path} (${change.kind})` : change.path!));
+				return { name: 'apply_patch', input: lines.join('\n') };
+			}
+			case 'mcp_tool_call': {
+				const text = (item.result?.content ?? [])
+					.map((block) => (block.type === 'text' && block.text ? block.text : ''))
+					.filter(Boolean)
+					.join('\n');
+				return {
+					// The `mcp__server__tool` shape every MCP-capable provider uses,
+					// so the activity feed reads "Called <server> <tool>".
+					name: `mcp__${item.server || 'mcp'}__${item.tool || 'tool'}`,
+					input: item.arguments ?? {},
+					output: item.error?.message || cleanToolOutputText(text),
+				};
+			}
+			case 'web_search':
+				return { name: 'web_search', input: { query: item.query ?? '' } };
+			case 'todo_list':
+				// `plan` with `step`/`status` is the shape Codex's update_plan tool
+				// uses, which the inline checklist card already renders.
+				return {
+					name: 'update_plan',
+					input: {
+						plan: (item.items ?? []).map((todo) => ({
+							step: todo.text ?? '',
+							status: todo.completed ? 'completed' : 'pending',
+						})),
+					},
+				};
+			default:
+				return null;
+		}
 	}
 
 	/**
@@ -874,21 +1028,12 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'command_execution':
-				// Codex v0.111.0+ unified command execution (replaces tool_call/tool_result)
-				// status: "completed" or "failed" means execution finished
-				return {
-					type: 'tool_use',
-					toolName: 'shell',
-					// Same id as the item.started above - see transformItemStarted.
-					...(item.id ? { toolCallId: item.id } : {}),
-					toolState: {
-						status: item.status === 'in_progress' ? 'running' : 'completed',
-						input: { command: item.command },
-						output: this.decodeToolOutput(item.aggregated_output),
-						exitCode: item.exit_code,
-					},
-					raw: msg,
-				};
+			case 'file_change':
+			case 'mcp_tool_call':
+			case 'web_search':
+			case 'todo_list':
+				// Same id as the item.started line - see toolItemEvent.
+				return this.toolItemEvent(item, msg, true) ?? { type: 'system', raw: msg };
 
 			case 'tool_call':
 				// Legacy: Agent is using a tool - store tool name for the subsequent tool_result

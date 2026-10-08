@@ -167,6 +167,20 @@ export interface AgentConfig extends BaseAgentConfig {
  */
 export type AgentDefinition = Omit<AgentConfig, 'available' | 'path' | 'capabilities'>;
 
+/**
+ * Image prefix for agents that have no attachment flag but CAN open an image
+ * file with their own file-reading tool (Grok `read_file`, Antigravity
+ * `view_file`). The temp file's absolute path is all they need: verified live
+ * on grok 1.0.41 and agy 1.2.16, fresh and resumed, with the image outside the
+ * workspace, which is where `saveImageToTempFile` and the SSH builder put it.
+ * Plain paths, not Copilot's `@mentions`: both CLIs read `@` as literal text.
+ */
+function plainPathImagePrompt(imagePaths: string[]): string {
+	return imagePaths.length > 0
+		? `Use these attached images as context:\n${imagePaths.join('\n')}\n\n`
+		: '';
+}
+
 // ============ Agent Definitions ============
 
 /**
@@ -401,9 +415,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		readOnlyCliEnforced: false,
 		yoloModeArgs: ['--dangerously-skip-permissions'],
 		// No working-directory flag; the CLI takes its workspace from the spawn cwd
-		// (echoed back as `init.cwd`). No documented image attachment flag either.
+		// (echoed back as `init.cwd`).
 		workingDirArgs: undefined,
+		// No attachment flag, and `--input-format stream-json` rejects any block
+		// that is not text. `view_file` opens an image path named in the prompt.
 		imageArgs: undefined,
+		imagePromptBuilder: plainPathImagePrompt,
 		modelArgs: (modelId: string) => ['--model', modelId],
 		promptArgs: (prompt: string) => ['-p', prompt],
 		configOptions: [
@@ -870,6 +887,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Do not add noToolsArgs unless grok ships a verified all-off flag.
 		yoloModeArgs: ['--always-approve'],
 		workingDirArgs: (dir: string) => ['--cwd', dir], // Set working directory
+		// No attachment flag. `--prompt-json` takes inline base64 image blocks but
+		// only as one argv string (a screenshot overruns ARG_MAX) and conflicts
+		// with -p, so the image path rides in the prompt and `read_file` opens it.
+		imagePromptBuilder: plainPathImagePrompt,
 		// modelArgs and configOptions.model.argBuilder both emit -m; trim both
 		// so desktop spawn and settings UI stay aligned.
 		modelArgs: (modelId: string) => {
