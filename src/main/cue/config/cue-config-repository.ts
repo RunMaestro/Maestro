@@ -405,10 +405,13 @@ export function watchCueConfigFile(
 		try {
 			const current = readCueConfigFile(projectRoot);
 			const loaded = opts?.getLoadedConfigFile?.();
-			const baseline = loaded === undefined ? observed : loaded;
+			// An installed runtime getter returning undefined means its load failed,
+			// not that the watcher snapshot was successfully consumed.
+			const baseline = opts?.getLoadedConfigFile ? loaded : observed;
 			lastReadError = null;
 			if (
 				!reloadPending &&
+				baseline !== undefined &&
 				current?.filePath === baseline?.filePath &&
 				current?.raw === baseline?.raw
 			)

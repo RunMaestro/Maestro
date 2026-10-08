@@ -73,7 +73,7 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 		root = fs.mkdtempSync(path.resolve('.build/cue-reload-test-'));
 		fs.mkdirSync(path.join(root, '.maestro'));
 		fs.writeFileSync(path.join(root, '.maestro/cue.yaml'), 'subscriptions: []\n');
-		// Mira's real topology: another agent precedes the explicitly targeted agent.
+		// Shared-root topology: another agent precedes the explicitly targeted agent.
 		const other = createMockSession({ id: 'other', projectRoot: root });
 		const target = createMockSession({ id: 'target', name: 'Target', projectRoot: root });
 		readSessions.mockReturnValue([other, target]);
@@ -235,5 +235,26 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			expect.objectContaining({ type: 'triggerHealthWarning' })
 		);
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
+	});
+	it('retries an initial runtime read failure even when the watcher snapshot succeeded', async () => {
+		runtime.clearAll();
+		watcherReady.length = 0;
+		await cueSchedule({
+			agent: 'target',
+			every: '15m',
+			prompt: 'inert test',
+			name: 'completion',
+			json: true,
+		});
+		ioFaults.afterRead = () => {
+			ioFaults.failedReads = 1;
+		};
+		expect(() => runtime.initSession(readSessions()[1], { reason: 'system-boot' })).toThrow(
+			'transient config read failure'
+		);
+		await Promise.all(watcherReady);
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), { timeout: 4000 });
+		expect(registry.get('target')?.triggerSources).toHaveLength(1);
+		expect(watcherReady).toHaveLength(1);
 	});
 });
