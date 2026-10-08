@@ -32,8 +32,13 @@ vi.mock('../../../main/agents/opencode-config', async () => {
 
 // Make readFileSync mockable for ESM - vi.spyOn on ESM namespace fails
 // Also mock fs.promises.access to prevent real filesystem probing
-const { _readFileSync, _fsAccess } = vi.hoisted(() => ({
+const { _readFileSync, _readdirSync, _fsAccess } = vi.hoisted(() => ({
 	_readFileSync: vi.fn(),
+	// Claude Code model discovery lists ~/.claude/cache/model-catalog. Mock it so
+	// the suite never reads the developer's real catalog.
+	_readdirSync: vi.fn(() => {
+		throw new Error('ENOENT: no such file or directory');
+	}),
 	_fsAccess: vi.fn().mockRejectedValue(new Error('ENOENT: no such file or directory')),
 }));
 vi.mock('fs', async () => {
@@ -43,6 +48,7 @@ vi.mock('fs', async () => {
 	const mod: Record<string, unknown> = {};
 	for (const key of Reflect.ownKeys(actual) as string[]) {
 		if (key === 'readFileSync') continue;
+		if (key === 'readdirSync') continue;
 		if (key === 'promises') continue;
 		try {
 			mod[key] = (actual as any)[key];
@@ -51,6 +57,7 @@ vi.mock('fs', async () => {
 		}
 	}
 	mod.readFileSync = _readFileSync;
+	mod.readdirSync = _readdirSync;
 	// Clone promises with overridden access
 	const promMod: Record<string, unknown> = {};
 	for (const key of Reflect.ownKeys(actual.promises) as string[]) {
@@ -84,6 +91,9 @@ describe('agent-detector', () => {
 		// Reset fs.promises.access mock to always fail (set up via vi.mock above).
 		// This ensures tests rely on 'which'/'where' command mocking instead of actual filesystem.
 		_fsAccess.mockRejectedValue(new Error('ENOENT: no such file or directory'));
+		_readdirSync.mockImplementation(() => {
+			throw new Error('ENOENT: no such file or directory');
+		});
 		detector = new AgentDetector();
 		// Default: no binaries found
 		mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 1 });
@@ -1050,8 +1060,8 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 		});
 
-		it('should discover models for Claude Code from stats-cache.json', async () => {
-			// Setup: claude-code is available
+		/** Make claude-code resolve so discoverModels() reaches the discovery branch. */
+		const mockClaudeAvailable = () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];
 				if (binaryName === 'claude') {
@@ -1062,17 +1072,27 @@ describe('agent-detector', () => {
 				}
 				return { stdout: '', stderr: 'not found', exitCode: 1 };
 			});
+		};
 
-			// Mock fs.readFileSync to return stats-cache.json with model usage
-			const statsData = JSON.stringify({
-				modelUsage: {
-					'claude-opus-4-6': { inputTokens: 100 },
-					'claude-sonnet-4-6': { inputTokens: 200 },
+		/** A model catalog shaped like the one the Claude Code CLI caches. */
+		const catalogWith = (...ids: string[]) =>
+			JSON.stringify({
+				document: {
+					surfaces: {
+						// Other surfaces carry different model lists; only `cc` is Claude Code.
+						chat: { model_selector_config: [{ models: [{ id: 'chat-only-model' }] }] },
+						cc: { model_selector_config: [{ models: ids.map((id) => ({ id })) }] },
+					},
 				},
 			});
+
+		it('should discover models from the Claude Code model catalog', async () => {
+			mockClaudeAvailable();
+
+			_readdirSync.mockReturnValue(['published-floor.json', 'published-abc123.json']);
 			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
-				if (typeof filePath === 'string' && filePath.includes('stats-cache.json')) {
-					return statsData;
+				if (typeof filePath === 'string' && filePath.includes('published-abc123.json')) {
+					return catalogWith('claude-opus-5-5', 'claude-sonnet-5-5');
 				}
 				throw new Error('ENOENT');
 			});
@@ -1081,33 +1101,82 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 
 			const models = await detector.discoverModels('claude-code');
-			// Should include aliases + [1m] variants + historical models
-			expect(models).toContain('fable');
-			expect(models).toContain('sonnet');
-			expect(models).toContain('opus');
-			expect(models).toContain('haiku');
-			expect(models).toContain('opus[1m]');
-			expect(models).toContain('sonnet[1m]');
-			expect(models).toContain('claude-opus-4-6');
-			expect(models).toContain('claude-sonnet-4-6');
-			expect(logger.info).toHaveBeenCalledWith(
-				expect.stringContaining('Discovered 8 models'),
-				'AgentDetector',
-				expect.any(Object)
+			// Aliases stay at the head of the list, full IDs follow.
+			expect(models.slice(0, 6)).toEqual([
+				'fable',
+				'sonnet',
+				'opus',
+				'haiku',
+				'opus[1m]',
+				'sonnet[1m]',
+			]);
+			expect(models).toContain('claude-opus-5-5');
+			expect(models).toContain('claude-sonnet-5-5');
+			// published-floor.json is an index, not a catalog.
+			expect(_readFileSync).not.toHaveBeenCalledWith(
+				expect.stringContaining('published-floor.json'),
+				expect.anything()
 			);
+			// Another surface's models must not leak into the Claude Code list.
+			expect(models).not.toContain('chat-only-model');
 		});
 
-		it('should return aliases when Claude stats-cache.json is missing', async () => {
-			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
-				const binaryName = args[0];
-				if (binaryName === 'claude') {
-					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+		it('should surface models the user has run that the catalog does not list', async () => {
+			mockClaudeAvailable();
+
+			// The catalog carries only published models; a limited-access model is
+			// reachable solely because this user has already run it.
+			_readdirSync.mockReturnValue(['published-abc123.json']);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath !== 'string') {
+					throw new Error('ENOENT');
 				}
-				if (binaryName === 'bash') {
-					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				if (filePath.includes('published-abc123.json')) {
+					return catalogWith('claude-opus-5-5');
 				}
-				return { stdout: '', stderr: 'not found', exitCode: 1 };
+				if (filePath.endsWith('.claude.json')) {
+					return JSON.stringify({
+						projects: {
+							'/home/dev/a': { lastModelUsage: { 'claude-preview-9': { inputTokens: 1 } } },
+							// Already in the catalog - must not be duplicated.
+							'/home/dev/b': { lastModelUsage: { 'claude-opus-5-5': { inputTokens: 2 } } },
+						},
+					});
+				}
+				throw new Error('ENOENT');
 			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toContain('claude-preview-9');
+			expect(models.filter((m) => m === 'claude-opus-5-5')).toHaveLength(1);
+		});
+
+		it('should skip a corrupt catalog file without losing the others', async () => {
+			mockClaudeAvailable();
+
+			_readdirSync.mockReturnValue(['published-broken.json', 'published-good.json']);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('published-broken.json')) {
+					return '{ not json';
+				}
+				if (typeof filePath === 'string' && filePath.includes('published-good.json')) {
+					return catalogWith('claude-opus-5-5');
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toContain('claude-opus-5-5');
+		});
+
+		it('should return aliases when no Claude Code state is on disk', async () => {
+			mockClaudeAvailable();
 
 			_readFileSync.mockImplementation(() => {
 				throw new Error('ENOENT');

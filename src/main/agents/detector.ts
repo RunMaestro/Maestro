@@ -84,6 +84,123 @@ async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
 	}
 }
 
+// ============ Claude Code model discovery ============
+
+/**
+ * Tier aliases Claude Code always accepts, each resolving to the current model
+ * in that tier. `[1m]` variants select the 1M extended context window and need
+ * extra usage enabled at claude.ai/settings/usage; the CLI offers them for opus
+ * and sonnet only.
+ *
+ * Not every model has an alias - limited-access models are reachable only by
+ * their full ID - so this list is a floor, never the whole picture. The sources
+ * below fill in the rest.
+ */
+const CLAUDE_MODEL_ALIASES = ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
+
+/** Model catalog the Claude Code CLI caches to render its own `/model` picker. */
+const CLAUDE_CATALOG_DIR = ['.claude', 'cache', 'model-catalog'];
+
+/**
+ * Surface key for Claude Code inside the catalog. The document also carries
+ * `chat`, `cowork` and others, whose model lists differ.
+ */
+const CLAUDE_CATALOG_SURFACE = 'cc';
+
+interface ClaudeCatalogFile {
+	document?: {
+		surfaces?: Record<
+			string,
+			{ model_selector_config?: Array<{ models?: Array<{ id?: string }> }> }
+		>;
+	};
+}
+
+interface ClaudeConfigFile {
+	projects?: Record<string, { lastModelUsage?: Record<string, unknown> }>;
+}
+
+/**
+ * Model IDs from the CLI's cached model catalog.
+ *
+ * This is the list Claude Code's own `/model` picker renders. Anthropic
+ * publishes the catalog and the CLI refreshes it on its own schedule, so new
+ * models reach the dropdown without a Maestro release.
+ *
+ * Returns an empty list when the cache is missing or unreadable - it is written
+ * lazily, so a fresh install legitimately has none.
+ */
+function readClaudeCatalogModelIds(): string[] {
+	const dir = path.join(os.homedir(), ...CLAUDE_CATALOG_DIR);
+	let entries: string[];
+	try {
+		// `published-floor.json` is an index, not a catalog; the catalogs
+		// themselves are `published-<hash>.json`.
+		entries = fs
+			.readdirSync(dir)
+			.filter(
+				(name) =>
+					name.startsWith('published-') && name.endsWith('.json') && name !== 'published-floor.json'
+			);
+	} catch {
+		logger.debug('No Claude model catalog cache for model discovery', LOG_CONTEXT);
+		return [];
+	}
+
+	const ids: string[] = [];
+	for (const entry of entries) {
+		try {
+			const catalog = parseJsonWithBom<ClaudeCatalogFile>(
+				fs.readFileSync(path.join(dir, entry), 'utf8')
+			);
+			const configs =
+				catalog.document?.surfaces?.[CLAUDE_CATALOG_SURFACE]?.model_selector_config ?? [];
+			for (const config of configs) {
+				for (const model of config.models ?? []) {
+					if (typeof model?.id === 'string' && model.id && !ids.includes(model.id)) {
+						ids.push(model.id);
+					}
+				}
+			}
+		} catch {
+			// A half-written or superseded catalog file should not cost us the others.
+			logger.debug(`Could not read Claude model catalog ${entry}`, LOG_CONTEXT);
+		}
+	}
+	return ids;
+}
+
+/**
+ * Model IDs this user has actually run, across every project.
+ *
+ * Read from `~/.claude.json`, where the CLI records per-project usage as
+ * `projects.<cwd>.lastModelUsage`. This is what surfaces a model the published
+ * catalog does not list - preview and limited-access models - once it has been
+ * used at least once.
+ *
+ * The legacy `stats-cache.json` this once read is not written at this path by
+ * current Claude Code versions, so it is no longer consulted.
+ */
+function readClaudeUsedModelIds(): string[] {
+	const ids: string[] = [];
+	try {
+		const config = parseJsonWithBom<ClaudeConfigFile>(
+			fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8')
+		);
+		for (const project of Object.values(config.projects ?? {})) {
+			for (const modelId of Object.keys(project?.lastModelUsage ?? {})) {
+				if (modelId && !ids.includes(modelId)) {
+					ids.push(modelId);
+				}
+			}
+		}
+	} catch {
+		// Absent on a fresh install, and unreadable is not worth failing over.
+		logger.debug('Could not read ~/.claude.json for model discovery', LOG_CONTEXT);
+	}
+	return ids;
+}
+
 // ============ Agent Detector Class ============
 
 /** Default cache TTL: 5 minutes (model lists don't change frequently) */
@@ -383,30 +500,33 @@ export class AgentDetector {
 			// Agent-specific model discovery commands
 			switch (agentId) {
 				case 'claude-code': {
-					// Claude Code: no CLI listing command.
-					// Discover models dynamically from two sources:
-					// 1. Well-known aliases (always valid, resolve to latest in each tier)
-					//    Includes [1m] variants for 1M extended context window
-					//    (requires extra usage enabled at claude.ai/settings/usage).
-					//    fable has no [1m] variant (Claude Code exposes 1M only for opus/sonnet).
-					// 2. Historical model usage from ~/.claude/stats-cache.json
-					const models: string[] = ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
-					try {
-						const statsPath = path.join(os.homedir(), '.claude', 'stats-cache.json');
-						const statsContent = fs.readFileSync(statsPath, 'utf8');
-						const stats = JSON.parse(statsContent);
-						// modelUsage keys are full model IDs the user has used
-						if (stats.modelUsage && typeof stats.modelUsage === 'object') {
-							for (const modelId of Object.keys(stats.modelUsage)) {
-								if (!models.includes(modelId)) {
-									models.push(modelId);
-								}
-							}
+					// Claude Code: no CLI listing command, so the list is assembled from
+					// whatever the CLI itself leaves on disk. Every source is optional and
+					// fails soft; the aliases alone are always a usable list.
+					//
+					// Ordering is deliberate: aliases first (short and the common case),
+					// then full IDs, so the top of the dropdown stays stable.
+					const models: string[] = [...CLAUDE_MODEL_ALIASES];
+					const add = (modelId: unknown): void => {
+						if (typeof modelId === 'string' && modelId && !models.includes(modelId)) {
+							models.push(modelId);
 						}
-					} catch {
-						// stats-cache.json may not exist yet (fresh install)
-						logger.debug('Could not read Claude stats-cache.json for model discovery', LOG_CONTEXT);
+					};
+
+					// 1. The CLI's own model catalog - the same list its `/model` picker
+					//    renders. Anthropic publishes it, the CLI caches it, so new models
+					//    appear here without a Maestro release.
+					for (const modelId of readClaudeCatalogModelIds()) {
+						add(modelId);
 					}
+
+					// 2. Models this user has actually run. Covers anything the published
+					//    catalog does not carry (limited-access and preview models), which
+					//    the catalog alone would never surface.
+					for (const modelId of readClaudeUsedModelIds()) {
+						add(modelId);
+					}
+
 					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, { models });
 					return models;
 				}
