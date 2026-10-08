@@ -87,6 +87,17 @@ describe('modalPriorities', () => {
 			);
 		});
 
+		it('SNOOZE_HISTORY should have higher priority than SNOOZED_TABS (opens from within)', () => {
+			// Snooze History opens from the Snoozed Tabs list; ranked below it,
+			// Escape closed the list and dropped the user out of both
+			expect(MODAL_PRIORITIES.SNOOZE_HISTORY).toBeGreaterThan(MODAL_PRIORITIES.SNOOZED_TABS);
+		});
+
+		it('SNOOZE_TAB should have higher priority than SNOOZED_TABS (opens from within)', () => {
+			// The reschedule picker opens from the Snoozed Tabs list
+			expect(MODAL_PRIORITIES.SNOOZE_TAB).toBeGreaterThan(MODAL_PRIORITIES.SNOOZED_TABS);
+		});
+
 		it('SSH_REMOTE should have higher priority than SETTINGS (opens from within)', () => {
 			// SSH Remote config opens from Settings modal
 			expect(MODAL_PRIORITIES.SSH_REMOTE).toBeGreaterThan(MODAL_PRIORITIES.SETTINGS);

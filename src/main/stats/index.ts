@@ -6,7 +6,7 @@
  * - Migration system for schema evolution
  * - CRUD operations for query events, auto-run sessions/tasks, and session lifecycle
  * - Aggregated statistics for the Usage Dashboard
- * - Data management (cleanup, CSV export)
+ * - Data management (cleanup); the dashboard export lives in usage-export.ts
  * - Singleton instance management
  * - Performance metrics API
  *
@@ -34,6 +34,12 @@ export { StatsDB } from './stats-db';
 
 // ============ Singleton & Lifecycle ============
 export { getStatsDB, initializeStatsDB, closeStatsDB } from './singleton';
+
+// ============ Multi-Window Telemetry ============
+export {
+	wireMultiWindowTelemetry,
+	type MultiWindowTelemetryDependencies,
+} from './multi-window-telemetry';
 
 // ============ Performance Metrics API ============
 export {

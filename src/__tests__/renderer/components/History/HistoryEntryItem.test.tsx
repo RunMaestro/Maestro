@@ -402,7 +402,37 @@ describe('HistoryEntryItem', () => {
 		const sessionButton = screen.getByTitle('session-abc-123');
 		fireEvent.click(sessionButton);
 
-		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project');
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project', undefined);
+	});
+
+	// The pill is the only place the closed session's name still exists: the tab
+	// that carried it is gone, and the origins fallback resume falls back to is
+	// Claude-only and only ever written by a synopsis. Dropping it here is what
+	// made a restore come back as the bare id octet.
+	it('hands the entry name to onOpenSessionAsTab so the restored tab keeps it', () => {
+		const onOpenSessionAsTab = vi.fn();
+		const entry = createMockEntry({
+			agentSessionId: 'session-abc-123',
+			sessionName: 'PP Farm Meta Data',
+		});
+		render(
+			<HistoryEntryItem
+				entry={entry}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+				onOpenSessionAsTab={onOpenSessionAsTab}
+			/>
+		);
+
+		fireEvent.click(screen.getByTitle('PP Farm Meta Data'));
+
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith(
+			'session-abc-123',
+			'/test/project',
+			'PP Farm Meta Data'
+		);
 	});
 
 	it('shows elapsed time when present', () => {
@@ -493,6 +523,59 @@ describe('HistoryEntryItem', () => {
 		// Should call onOpenAboutModal but NOT onOpenDetailModal (stopPropagation)
 		expect(onOpenAboutModal).toHaveBeenCalled();
 		expect(onOpenDetailModal).not.toHaveBeenCalled();
+	});
+
+	/**
+	 * Web Login sender pill.
+	 *
+	 * A turn a logged-in browser sent is attributed to that account, and the
+	 * footer pill is where that attribution surfaces on the row. A turn typed
+	 * at the desktop carries no account at all, so it must draw no pill - an
+	 * empty one would claim somebody signed in for it.
+	 */
+	describe('sender pill', () => {
+		it('renders the account display name for a turn a browser sent', () => {
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ userName: 'pedram', userDisplayName: 'Pedram A' })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByTitle('Sent by pedram')).toBeInTheDocument();
+			expect(screen.getByText('Pedram A')).toBeInTheDocument();
+		});
+
+		it('falls back to the username when the account has no display name', () => {
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ userName: 'pedram' })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('pedram')).toBeInTheDocument();
+		});
+
+		it('draws no pill for a turn typed at the desktop', () => {
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry()}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+
+			expect(screen.queryByTitle(/^Sent by /)).not.toBeInTheDocument();
+		});
 	});
 
 	/**

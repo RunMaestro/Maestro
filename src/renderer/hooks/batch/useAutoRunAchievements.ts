@@ -6,8 +6,11 @@
  *   - Badge unlock triggers standing ovation overlay
  *   - Peak usage stats tracker (max agents, concurrent queries, queue depth)
  *
- * Reads from: sessionStore (sessions), settingsStore (autoRunStats, usageStats),
+ * Reads from: sessionStore (usagePeaksKey via sessions), settingsStore (autoRunStats, usageStats),
  *             batchStore (activeBatchSessionIds), modalStore (setStandingOvationData)
+ *
+ * PERF: Does not subscribe to full sessions[]. Peak-stats use a narrow count signature;
+ * streaming log/token flushes must not wake App via this hook.
  */
 
 import { useEffect, useRef } from 'react';
@@ -37,8 +40,19 @@ export interface UseAutoRunAchievementsDeps {
 export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	const { activeBatchSessionIds } = deps;
 
-	// --- Reactive subscriptions ---
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Peak-stats signature only - do not subscribe to full sessions[]. Streaming
+	// log/token flushes must not wake App; re-run when agent/busy/queue counts shift.
+	const usagePeaksKey = useSessionStore((s) => {
+		let nonTerminal = 0;
+		let busy = 0;
+		let queueDepth = 0;
+		for (const sess of s.sessions) {
+			if (sess.toolType !== 'terminal') nonTerminal++;
+			if (sess.state === 'busy') busy++;
+			queueDepth += sess.executionQueue?.length || 0;
+		}
+		return `${nonTerminal}|${busy}|${queueDepth}`;
+	});
 	// The peak-usage effect below is a no-op until settings hydrate (the store
 	// would otherwise max against zeroed defaults). Subscribing here re-runs it
 	// on the render after hydration, so the sample taken during load is not lost.
@@ -147,6 +161,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		// Nothing sampled before hydration is trustworthy as a peak, and the
 		// store would be comparing it against zeros. Wait for the real baseline.
 		if (!settingsLoaded) return;
+		const sessions = useSessionStore.getState().sessions;
 
 		// Count current active agents (non-terminal sessions)
 		const activeAgents = sessions.filter((s) => s.toolType !== 'terminal').length;
@@ -168,5 +183,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 			maxSimultaneousQueries: busySessions,
 			maxQueueDepth: totalQueueDepth,
 		});
-	}, [sessions, activeBatchSessionIds, settingsLoaded]);
+		// usagePeaksKey encodes the same counts read above; include it so peaks
+		// refresh when agent/busy/queue shift without a full sessions[] sub.
+	}, [usagePeaksKey, activeBatchSessionIds, settingsLoaded]);
 }

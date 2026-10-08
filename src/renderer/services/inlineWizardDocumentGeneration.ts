@@ -10,11 +10,14 @@
  */
 
 import type { ToolType } from '../types';
-import type { InlineWizardMessage, InlineGeneratedDocument } from '../hooks/batch/useInlineWizard';
+import type {
+	InlineGeneratedDocument,
+	InlineWizardMessage,
+} from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
-import { getStdinFlags } from '../utils/spawnHelpers';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
+import { extractGrokTextFromJsonl, getGrokTextDelta } from '../utils/grokWizard';
 
 let cachedWizardDocumentGenerationPrompt: string | null = null;
 let cachedWizardInlineIterateGenerationPrompt: string | null = null;
@@ -114,6 +117,12 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 				if (msg.type === 'message' && msg.text) {
 					textParts.push(msg.text);
 				}
+			}
+
+			// Grok streaming-json: text deltas only (skip thought/reasoning)
+			else if (agentType === 'grok') {
+				const data = getGrokTextDelta(msg);
+				if (data) textParts.push(data);
 			}
 		} catch {
 			// Ignore non-JSON lines or parse errors
@@ -741,6 +750,12 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 		}
 
+		// For Grok: join text deltas (end event has no body)
+		if (agentType === 'grok') {
+			const grokText = extractGrokTextFromJsonl(lines);
+			if (grokText) return grokText;
+		}
+
 		// For Claude Code: look for result message
 		for (const line of lines) {
 			if (!line.trim()) continue;
@@ -1130,13 +1145,6 @@ export async function generateInlineDocuments(
 				// For remote sessions, we use the agent type name since the agent is installed on the remote host
 				const commandToUse = agent?.path || agent?.command || agentType;
 
-				const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
-					getStdinFlags({
-						isSshSession: !!config.sessionSshRemoteConfig?.enabled,
-						supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Document generation never sends images
-					});
-
 				window.maestro.process
 					.spawn({
 						sessionId,
@@ -1145,8 +1153,6 @@ export async function generateInlineDocuments(
 						command: commandToUse,
 						args: argsForSpawn,
 						prompt,
-						sendPromptViaStdin: sendViaStdin,
-						sendPromptViaStdinRaw: sendViaStdinRaw,
 						// Pass SSH config for remote execution
 						sessionSshRemoteConfig: config.sessionSshRemoteConfig,
 						// Pass session-level overrides

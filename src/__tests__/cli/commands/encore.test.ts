@@ -51,7 +51,15 @@ describe('encore commands', () => {
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(parsed.features.symphony).toBe(true);
-		expect(parsed.features.maestroCue).toBe(false);
+		expect(parsed.features.pianola).toBe(false);
+	});
+
+	it('list falls back to the shipped default for a flag never saved', () => {
+		vi.mocked(readSettingValue).mockReturnValue({ symphony: true, directorNotes: false });
+		encoreList({ json: true });
+		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(parsed.features.maestroCue).toBe(true);
+		expect(parsed.features.directorNotes).toBe(false);
 	});
 
 	it('list falls back to the shipped defaults for keys the user never stored', () => {
@@ -60,11 +68,13 @@ describe('encore commands', () => {
 		vi.mocked(readSettingValue).mockReturnValue(undefined);
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+		// rc's CLI also exposes Pianola, which has not graduated and ships off.
 		expect(parsed.features).toEqual({
 			directorNotes: true,
 			usageStats: true,
 			symphony: true,
 			maestroCue: true,
+			pianola: false,
 		});
 	});
 
@@ -87,6 +97,23 @@ describe('encore commands', () => {
 		const getPayload = mockSend({ success: true });
 		await encoreSet('group-chat', true, {});
 		expect((getPayload().value as Record<string, boolean>).symphony).toBe(true);
+	});
+
+	it('lists pianola, defaulting off when unset', () => {
+		encoreList({ json: true });
+		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(parsed.features).toHaveProperty('pianola');
+		expect(parsed.features.pianola).toBe(false);
+	});
+
+	it('resolves pianola aliases (e.g. "auto-pilot" / "manager" -> pianola)', async () => {
+		const getPayload = mockSend({ success: true });
+		await encoreSet('auto-pilot', true, {});
+		expect((getPayload().value as Record<string, boolean>).pianola).toBe(true);
+
+		const getPayload2 = mockSend({ success: true });
+		await encoreSet('manager', true, {});
+		expect((getPayload2().value as Record<string, boolean>).pianola).toBe(true);
 	});
 
 	it('rejects an unknown feature without connecting', async () => {

@@ -37,6 +37,31 @@ describe('useBrowserTabHandlers', () => {
 		expect(getSession().activeBrowserTabId).toBe(browserTab.id);
 	});
 
+	it('leaves an active tiled group when creating a new browser tab', () => {
+		// A new standalone browser tab must take over the panel; if the group stays
+		// active it keeps winning the render precedence and focus never shifts.
+		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })], activeGroupId: 'group-1' });
+		const { result } = renderHook(() => useBrowserTabHandlers());
+
+		act(() => {
+			result.current.handleNewBrowserTab();
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+		expect(getSession().activeBrowserTabId).toBe(getSession().browserTabs[0].id);
+	});
+
+	it('leaves an active tiled group when opening an explicit URL', () => {
+		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })], activeGroupId: 'group-1' });
+		const { result } = renderHook(() => useBrowserTabHandlers());
+
+		act(() => {
+			result.current.handleOpenBrowserTabAt('https://example.com/');
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+	});
+
 	it('opens an explicit URL and ignores empty URLs', () => {
 		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
 		const { result } = renderHook(() => useBrowserTabHandlers());

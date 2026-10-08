@@ -7,13 +7,15 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { Keyboard, MessageSquare, X } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
 import { shortcutKeysEqual, findReservedShortcutCombo } from '../../../../shared/shortcutKeys';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
+import { GhostIconButton } from '../../ui/GhostIconButton';
 import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
+import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import type { Theme, Shortcut } from '../../../types';
 
 export interface ShortcutsTabProps {
@@ -189,6 +191,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 							backgroundColor:
 								recordingId === sc.id ? theme.colors.accentDim : theme.colors.bgActivity,
 							color: recordingId === sc.id ? theme.colors.accent : theme.colors.textDim,
+							opacity: recordingId !== sc.id && sc.keys.length === 0 ? 0.6 : 1,
 							'--tw-ring-color': theme.colors.accent,
 						} as React.CSSProperties
 					}
@@ -197,22 +200,20 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						? 'Press keys...'
 						: sc.keys?.length
 							? formatShortcutKeys(sc.keys)
-							: // An unassigned action renders a word, not an empty box. A blank
-								// button reads as a rendering bug and gives the user nothing to
-								// aim at.
-								'Unassigned'}
+							: // An action registered with no default chord (keys: []) formats to an
+								// empty string, which renders as a blank button the user cannot tell
+								// is clickable. Label it so it reads as "assign one here".
+								'Not set'}
 				</button>
 				{sc.keys?.length && recordingId !== sc.id ? (
-					<button
-						type="button"
+					<GhostIconButton
 						onClick={() => clearShortcut(sc.id, sc.isTabShortcut)}
-						aria-label={`Clear ${sc.label} shortcut`}
+						ariaLabel={`Clear ${sc.label} shortcut`}
 						title="Clear shortcut"
-						className="p-1 rounded opacity-60 hover:opacity-100 transition-opacity"
-						style={{ color: theme.colors.textDim }}
+						color={theme.colors.textDim}
 					>
 						<X className="w-3.5 h-3.5" />
-					</button>
+					</GhostIconButton>
 				) : (
 					// Hold the slot so the key buttons stay in one column whether or
 					// not a row has anything to clear.
@@ -302,7 +303,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					{conflictMessage}
 				</p>
 			)}
-			<p className="text-xs opacity-50 mb-3" style={{ color: theme.colors.textDim }}>
+			<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
 				Not all shortcuts can be modified. Press{' '}
 				<kbd
 					className="px-1.5 py-0.5 rounded font-mono"
@@ -312,16 +313,11 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 				</kbd>{' '}
 				from the main interface to view the full list of keyboard shortcuts.
 			</p>
-			<div className="space-y-4 flex-1 overflow-y-auto pr-2 scrollbar-thin">
+			<div className="space-y-5 flex-1 overflow-y-auto pr-2 scrollbar-thin">
 				{/* General Shortcuts Section */}
 				{generalShortcuts.length > 0 && (
 					<div>
-						<h3
-							className="text-xs font-bold uppercase mb-2 px-1"
-							style={{ color: theme.colors.textDim }}
-						>
-							General
-						</h3>
+						<SettingsSectionHeading icon={Keyboard}>General</SettingsSectionHeading>
 						<div className="space-y-2">{generalShortcuts.map(renderShortcutItem)}</div>
 					</div>
 				)}
@@ -329,12 +325,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 				{/* AI Tab Shortcuts Section */}
 				{tabShortcutsFiltered.length > 0 && (
 					<div>
-						<h3
-							className="text-xs font-bold uppercase mb-2 px-1"
-							style={{ color: theme.colors.textDim }}
-						>
-							AI Tab
-						</h3>
+						<SettingsSectionHeading icon={MessageSquare}>AI Tab</SettingsSectionHeading>
 						<div className="space-y-2">{tabShortcutsFiltered.map(renderShortcutItem)}</div>
 					</div>
 				)}

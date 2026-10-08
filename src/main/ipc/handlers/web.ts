@@ -22,16 +22,21 @@
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
+import { isWebContentsAvailable } from '../../utils/safe-send';
 import { WebServer } from '../../web-server';
+import type { WebServerOptions } from '../../web-server/WebServer';
 import type { AITabData } from '../../web-server/services/broadcastService';
+import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
+import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
 import type { SettingsStoreInterface } from '../../stores/types';
 import {
 	writeCliServerInfo,
 	deleteCliServerInfo,
 	readCliServerInfo,
 } from '../../../shared/cli-server-discovery';
+import { getCliSecret } from '../../web-server/auth/cli-secret';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -49,7 +54,7 @@ const SERVER_STARTUP_POLL_INTERVAL_MS = 100;
 export interface WebHandlerDependencies {
 	getWebServer: () => WebServer | null;
 	setWebServer: (server: WebServer | null) => void;
-	createWebServer: () => WebServer;
+	createWebServer: (options?: WebServerOptions) => WebServer;
 	settingsStore: SettingsStoreInterface;
 }
 
@@ -64,6 +69,9 @@ function refreshCliDiscoveryFile(port: number, token: string): void {
 		token,
 		pid: process.pid,
 		startedAt: Date.now(),
+		// What lets the CLI through the Web Login gate. Per boot, so a stale
+		// file from a previous run cannot open this one.
+		cliSecret: getCliSecret(),
 		// Stamp the running build's version so the CLI can detect version skew
 		// (e.g. a freshly-built CLI talking to an older still-running app).
 		version: app.getVersion(),
@@ -87,8 +95,10 @@ const ENSURE_CLI_MAX_ATTEMPTS = 3;
  * Ensure the CLI server is running and the discovery file is published.
  *
  * Called during app initialization to make the web server always available
- * for CLI IPC connections. The server binds to 0.0.0.0 - this is intentional
- * for LAN accessibility; the UUID security token prevents unauthorized access.
+ * for CLI IPC connections. The server it creates binds 127.0.0.1 only: the URL
+ * token is a capability anyone who sees it can use, so it must not be on the
+ * network unless the user turned on Live Mode (`live:startServer`). An
+ * already-running Live Mode server is left as it is.
  *
  * Retries on any failure (port collision, transient fs error, etc.) and
  * verifies the discovery file is actually present on disk after each attempt.
@@ -153,7 +163,7 @@ export async function ensureCliServer(deps: WebHandlerDependencies): Promise<boo
 	}
 
 	logger.error(
-		`Gave up starting CLI server after ${ENSURE_CLI_MAX_ATTEMPTS} attempts — maestro-cli will be unavailable until Live Mode is toggled`,
+		`Gave up starting CLI server after ${ENSURE_CLI_MAX_ATTEMPTS} attempts - maestro-cli will be unavailable until Live Mode is toggled`,
 		'CliServer'
 	);
 	return false;
@@ -209,7 +219,7 @@ export function startCliDiscoveryWatchdog(
 		if (discoveryFileMatches(port, token)) {
 			return;
 		}
-		logger.warn('CLI discovery file is missing or stale — watchdog republishing', 'CliServer');
+		logger.warn('CLI discovery file is missing or stale - watchdog republishing', 'CliServer');
 		try {
 			refreshCliDiscoveryFile(port, token);
 		} catch (err: any) {
@@ -229,6 +239,69 @@ export function stopCliDiscoveryWatchdog(): void {
 	if (cliDiscoveryWatchdog) {
 		clearInterval(cliDiscoveryWatchdog);
 		cliDiscoveryWatchdog = null;
+	}
+}
+
+/**
+ * True when this invoke arrived over the web-desktop WebSocket bridge rather
+ * than from an Electron renderer.
+ *
+ * `handleBridgeInvoke` dispatches to the registered `ipcMain` handler with a
+ * synthetic event (`FAKE_EVENT` in `web-server/handlers/bridgeHandlers.ts`)
+ * stamped `type: 'bridge'`; a real `IpcMainInvokeEvent` has no `type`. This is
+ * the only thing that tells main WHICH client owns an Auto Run, and the whole
+ * echo-safety of the forward below rests on it.
+ */
+function isBridgeOriginatedInvoke(event: unknown): boolean {
+	return (event as { type?: unknown } | null)?.type === 'bridge';
+}
+
+/**
+ * Mirror a web-owned Auto Run into the Electron desktop windows.
+ *
+ * Auto Run is renderer-owned state, so a run started in a web-desktop browser
+ * tab lives entirely in that tab. #1508 taught the browser to RENDER a run
+ * owned by the desktop (`autorun_state` -> `remote:autoRunStateMirror`), but
+ * only in that direction: the desktop is not a WebSocket client, so nothing
+ * carried the reverse. The desktop drew the agent as idle for the whole run.
+ *
+ * Two deliberate narrowings:
+ *
+ * 1. **Bridge-originated frames only.** A desktop-owned run must never be
+ *    forwarded, or the owning window would receive its own state back and
+ *    `applyAutoRunMirrorFrame` could stamp its own live run `mirrored: true` -
+ *    which disables Stop, Skip, Resume and Abort on the window that is actually
+ *    driving the run. The renderer has an ownership guard of its own, but the
+ *    cheapest way to be sure is not to send the echo in the first place.
+ *
+ * 2. **Not `safeSend`.** `safeSend` fans every push out to the bridge as well,
+ *    which would deliver this frame to web clients a second time on a second
+ *    channel - they already receive it as `autorun_state`. The desktop windows
+ *    are the entire audience for this message, so it goes straight to them.
+ *
+ * Still out of scope: desktop window A does not mirror into desktop window B.
+ * That needs the same echo reasoning applied per-window and is not what #1519
+ * reports.
+ */
+function forwardAutoRunStateToDesktopWindows(
+	event: unknown,
+	sessionId: string,
+	state: AutoRunBroadcastState | null
+): void {
+	if (!isBridgeOriginatedInvoke(event)) return;
+
+	for (const win of BrowserWindow.getAllWindows()) {
+		try {
+			if (isWebContentsAvailable(win)) {
+				win.webContents.send('remote:autoRunStateMirror', sessionId, state);
+			}
+		} catch (error) {
+			// A window closing mid-broadcast is routine, not a fault. Keep going so
+			// one dead window never costs the others their frame.
+			logger.debug('Failed to mirror Auto Run state to a desktop window', 'WebHandlers', {
+				error: String(error),
+			});
+		}
 	}
 }
 
@@ -258,24 +331,31 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 	// Broadcast AutoRun state to web clients (called when batch processing state changes)
 	// Always store state even if no clients are connected, so new clients get initial state
+	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string) => {
+		return getAutoRunStateTracker().tryClaimStart(sessionId);
+	});
+	ipcMain.handle('web:releaseAutoRunStartClaim', async (_, sessionId: string) => {
+		return getAutoRunStateTracker().releaseStartClaim(sessionId);
+	});
+
 	ipcMain.handle(
 		'web:broadcastAutoRunState',
-		async (
-			_,
-			sessionId: string,
-			state: {
-				isRunning: boolean;
-				totalTasks: number;
-				completedTasks: number;
-				currentTaskIndex: number;
-				isStopping?: boolean;
-				// Multi-document progress fields
-				totalDocuments?: number;
-				currentDocumentIndex?: number;
-				totalTasksAcrossAllDocs?: number;
-				completedTasksAcrossAllDocs?: number;
-			} | null
-		) => {
+		async (event, sessionId: string, state: AutoRunBroadcastState | null) => {
+			// Feed the first-party main-process tracker FIRST, unconditionally.
+			// The web-server branch below returns early when Live Mode is off, so
+			// anything downstream of it (dispatch callbacks, and later Cue's
+			// agent.completed) would otherwise never learn that an Auto Run batch
+			// finished. Auto Run finality is main-process state now, not a
+			// web-broadcast side effect.
+			getAutoRunStateTracker().update(sessionId, state);
+
+			// A run OWNED by a web-desktop browser client has to reach the desktop
+			// windows too, or the desktop renders the agent as idle for the whole
+			// run. Web clients are already served by the `autorun_state` packet
+			// below; the desktop is not a WebSocket client, so this is its only
+			// path to the frame.
+			forwardAutoRunStateToDesktopWindows(event, sessionId, state);
+
 			const webServer = getWebServer();
 			if (webServer) {
 				// Always call broadcastAutoRunState - it stores the state for new clients
@@ -288,12 +368,23 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	);
 
 	// Broadcast tab changes to web clients
+	ipcMain.handle('web:requestNewTab', async (_, sessionId: string, background = false) => {
+		const webServer = getWebServer();
+		return webServer?.requestNewTab(sessionId, background) ?? null;
+	});
+
 	ipcMain.handle(
 		'web:broadcastTabsChange',
-		async (_, sessionId: string, aiTabs: AITabData[], activeTabId: string) => {
+		async (
+			_,
+			sessionId: string,
+			aiTabs: AITabData[],
+			activeTabId: string,
+			activeTabChanged = false
+		) => {
 			const webServer = getWebServer();
 			if (webServer && webServer.getWebClientCount() > 0) {
-				webServer.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+				webServer.broadcastTabsChange(sessionId, aiTabs, activeTabId, activeTabChanged);
 				return true;
 			}
 			return false;
@@ -377,9 +468,12 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		};
 	});
 
+	// Only a Live Mode (LAN) server has a dashboard. The loopback CLI server's
+	// URL is not one: auto-start reads a non-null answer as "Live is already
+	// on" and would never open the server to the LAN.
 	ipcMain.handle('live:getDashboardUrl', async () => {
 		const webServer = getWebServer();
-		if (!webServer) {
+		if (!webServer || !webServer.isActive() || !webServer.isLanAccessible()) {
 			return null;
 		}
 		return webServer.getSecureUrl();
@@ -410,8 +504,11 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			// server (spun up by ensureCliServer) keeps the previous token -
 			// reusing it on the next Live ON would silently leak the prior URL.
 			// Tear it down so createWebServer() mints a fresh ephemeral token.
+			// The CLI-only server is also bound to loopback, so it has to be
+			// replaced by a LAN server either way; a persistent token survives
+			// the swap because the factory reads it from settings.
 			const persistentWebLink = settingsStore.get<boolean>('persistentWebLink', false);
-			if (webServer && !persistentWebLink) {
+			if (webServer && (!persistentWebLink || !webServer.isLanAccessible())) {
 				try {
 					await webServer.stop();
 				} catch (err: any) {
@@ -431,8 +528,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 			// Create web server if it doesn't exist
 			if (!webServer) {
-				logger.info('Creating web server', 'WebServer');
-				webServer = createWebServer();
+				logger.info('Creating LAN web server for Live Mode', 'WebServer');
+				webServer = createWebServer({ lanAccess: true });
 				setWebServer(webServer);
 			}
 
@@ -489,9 +586,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			return { success: false, error: error.message };
 		}
 
-		// Bring the CLI server back up on a fresh port + token. The user
-		// turned off Live Mode (closing the public URL) but the CLI server
-		// must remain reachable for maestro-cli.
+		// Bring the CLI server back up on a fresh port + token, bound to
+		// loopback. The user turned off Live Mode (closing the LAN URL) but
+		// the CLI server must remain reachable for maestro-cli.
 		await ensureCliServer(deps);
 		return { success: true };
 	});
@@ -575,8 +672,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			return { success: false, count, error: error.message };
 		}
 
-		// Bring the CLI server back up on a fresh port + token so maestro-cli
-		// continues working after Live Mode is fully disabled.
+		// Bring the CLI server back up on a fresh port + token, bound to
+		// loopback, so maestro-cli keeps working after Live Mode is disabled.
 		await ensureCliServer(deps);
 		return { success: true, count };
 	});

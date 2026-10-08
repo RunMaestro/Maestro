@@ -38,11 +38,45 @@ export interface BaseLayer {
 	/** Whether this layer captures keyboard focus */
 	capturesFocus: boolean;
 
+	/**
+	 * Whether this layer suppresses the app's global keyboard shortcuts while it
+	 * is open. Defaults to true (treat an undefined value as true) because that
+	 * is what a real dialog needs.
+	 *
+	 * Set it to `false` for a PASSIVE surface - a floating inspector or log
+	 * viewer that renders alongside the app, takes no focus, and only registers a
+	 * layer so Escape can close it at the right priority. Without this, such a
+	 * panel makes the whole keyboard go dead: `hasOpenLayers()` and
+	 * `hasOpenModal()` both trip on any registered layer, so Cmd+K, Opt+Cmd+T,
+	 * and the file-tree keys stop working until the user closes the panel. The
+	 * fix used to be to skip layer registration entirely, which bought working
+	 * shortcuts at the price of Escape-to-close.
+	 */
+	blocksAppShortcuts?: boolean;
+
 	/** Focus trapping behavior */
 	focusTrap: FocusTrapMode;
 
 	/** Optional ARIA label for accessibility */
 	ariaLabel?: string;
+
+	/**
+	 * What had keyboard focus before this layer took it, for the stack to hand
+	 * the caret back to on close.
+	 *
+	 * Omit it and the stack reads `document.activeElement` itself at
+	 * registration time. That default is only correct for a surface that has
+	 * not already focused its own content: registration happens in a passive
+	 * effect, so a host that focuses itself in an EARLIER passive effect makes
+	 * the stack snapshot the layer's own element, which is torn down with the
+	 * layer and leaves the caret on `document.body`. `useModalLayer` passes
+	 * this explicitly from a layout effect for exactly that reason, so the
+	 * order the host happens to call its hooks in cannot change the answer.
+	 *
+	 * `null` means "nothing had focus" and is distinct from omitting the field:
+	 * it suppresses the self-read rather than falling back to it.
+	 */
+	focusOrigin?: HTMLElement | null;
 }
 
 /**

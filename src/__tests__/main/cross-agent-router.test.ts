@@ -1,0 +1,583 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+import {
+	serializeTranscript,
+	buildCrossAgentPrompt,
+	startCrossAgentRequest,
+	cancelCrossAgentRequestsForSource,
+	type CrossAgentTargetSession,
+} from '../../main/cross-agent/cross-agent-router';
+import type {
+	CrossAgentRequest,
+	CrossAgentResponseChunk,
+	CrossAgentTranscriptEntry,
+} from '../../shared/crossAgentTypes';
+import { spawnGroupChatAgent } from '../../main/group-chat/spawnGroupChatAgent';
+
+// The router's spawn + output-parse collaborators are mocked so these tests
+// exercise the dispatch lifecycle (timers, settlement, spawn-failure) rather
+// than the agent CLI. The parser is an identity fn: the buffer IS the answer.
+vi.mock('../../main/group-chat/spawnGroupChatAgent', () => ({
+	spawnGroupChatAgent: vi.fn(async () => ({ pid: 123, success: true })),
+}));
+vi.mock('../../main/group-chat/output-parser', () => ({
+	extractTextFromStreamJson: vi.fn((raw: string) => raw),
+}));
+vi.mock('../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+vi.mock('../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+/**
+ * Pure prompt-assembly tests for the cross-agent router. The dispatch itself
+ * (spawn + stream) needs a live ProcessManager and is exercised end-to-end.
+ */
+
+const entry = (source: string, text?: string): CrossAgentTranscriptEntry => ({ source, text });
+
+function request(overrides: Partial<CrossAgentRequest> = {}): CrossAgentRequest {
+	return {
+		requestId: 'r1',
+		sourceSessionId: 'src',
+		sourceTabId: 'tab',
+		targetSessionId: 'tgt',
+		userPrompt: 'What is your take?',
+		transcript: [],
+		strategy: { kind: 'full' },
+		createdAt: 0,
+		...overrides,
+	};
+}
+
+describe('serializeTranscript', () => {
+	it('labels user and assistant turns', () => {
+		const out = serializeTranscript([entry('user', 'Hi'), entry('ai', 'Hello there')]);
+		expect(out).toBe('**User:** Hi\n**Assistant:** Hello there');
+	});
+
+	it('drops entries with no visible text', () => {
+		const out = serializeTranscript([
+			entry('user', 'Question'),
+			entry('ai', '   '),
+			entry('ai', undefined),
+			entry('tool'),
+		]);
+		expect(out).toBe('**User:** Question');
+	});
+
+	it('keeps tool/thinking entries only when they carry visible text', () => {
+		const out = serializeTranscript([
+			entry('thinking', 'pondering...'),
+			entry('tool', 'ran a search'),
+		]);
+		expect(out).toContain('pondering...');
+		expect(out).toContain('ran a search');
+	});
+
+	it('returns an empty string for an empty transcript', () => {
+		expect(serializeTranscript([])).toBe('');
+	});
+});
+
+describe('buildCrossAgentPrompt', () => {
+	it('prepends the consult header, then transcript, then the relayed question', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({
+				transcript: [entry('user', 'Hi'), entry('ai', 'Yo')],
+				userPrompt: 'Thoughts?',
+			})
+		);
+		expect(prompt).toMatch(/^You are being consulted by another agent in Maestro\./);
+		expect(prompt).toContain('**User:** Hi');
+		expect(prompt).toContain('**Assistant:** Yo');
+		expect(prompt).toContain(
+			'**Question from the user (relayed via the source agent):**\nThoughts?'
+		);
+		// The header comes before the transcript, which comes before the question.
+		expect(prompt.indexOf('consulted')).toBeLessThan(prompt.indexOf('**User:** Hi'));
+		expect(prompt.indexOf('**Assistant:** Yo')).toBeLessThan(
+			prompt.indexOf('Question from the user')
+		);
+	});
+
+	it('omits the transcript block entirely when there is nothing to forward', () => {
+		const prompt = buildCrossAgentPrompt(request({ transcript: [], userPrompt: 'Just this' }));
+		expect(prompt).toContain('You are being consulted');
+		expect(prompt).toContain('Just this');
+		// No stray blank transcript section: header flows straight into the question.
+		expect(prompt).not.toContain('**User:**');
+	});
+
+	it('does not announce a transcript when none was forwarded', () => {
+		// `maestro-cli ask` sends a self-contained question with no transcript.
+		// Telling the target to read "the conversation transcript so far" sends it
+		// hunting for context that is not in the prompt.
+		const prompt = buildCrossAgentPrompt(request({ transcript: [], userPrompt: 'Just this' }));
+		expect(prompt).toContain('no prior conversation to read');
+		expect(prompt).not.toContain('conversation transcript so far');
+	});
+
+	it('still announces the transcript when one was forwarded', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ transcript: [entry('user', 'Hi')], userPrompt: 'Thoughts?' })
+		);
+		expect(prompt).toContain('conversation transcript so far');
+		expect(prompt).not.toContain('no prior conversation to read');
+	});
+
+	it('grants read access to the source cwd when forwarded, before the question', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Look at the config' })
+		);
+		expect(prompt).toContain('`/Users/me/proj`');
+		expect(prompt).toContain('permission to READ');
+		expect(prompt).toContain('Do NOT modify or create files');
+		// The grant rides with the header, ahead of the relayed question.
+		expect(prompt.indexOf('/Users/me/proj')).toBeLessThan(prompt.indexOf('Look at the config'));
+	});
+
+	it('omits the cwd grant entirely when no source cwd is forwarded', () => {
+		const prompt = buildCrossAgentPrompt(request({ sourceCwd: undefined }));
+		expect(prompt).not.toContain('permission to READ');
+	});
+
+	it('tells the target how to lift the read-only restriction when read-only', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' })
+		);
+		expect(prompt).toContain('Settings > General > Cross-Agent Mentions');
+		// The remedy has to name the setting as the user sees it in Settings, or
+		// the target sends them hunting for a control that is labeled otherwise.
+		expect(prompt).toContain('Consult or Delegate');
+	});
+
+	it('names the read-only mode a consult so the target can say which mode it is in', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' })
+		);
+		expect(prompt).toContain('consults (read-only)');
+		expect(prompt).not.toContain('DELEGATION');
+	});
+
+	it('grants write access and drops the prohibition when writable is opted into', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' }),
+			true
+		);
+		expect(prompt).toContain('permission to READ and MODIFY');
+		expect(prompt).not.toContain('Do NOT modify or create files');
+		expect(prompt).not.toContain('Settings > General > Cross-Agent Mentions');
+	});
+
+	it('names the writable mode a delegation so the target knows it may apply changes', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' }),
+			true
+		);
+		expect(prompt).toContain('DELEGATION');
+	});
+});
+
+const IDLE_MS = 10 * 60 * 1000;
+const HARD_MS = 30 * 60 * 1000;
+
+/** Minimal ProcessManager stand-in: the router only uses on/off/kill. */
+class FakeProcessManager extends EventEmitter {
+	kill = vi.fn();
+}
+
+const targetSession = (): CrossAgentTargetSession => ({
+	id: 'tgt',
+	name: 'Maestro Marketing',
+	toolType: 'claude-code',
+	cwd: '/proj',
+});
+
+function harness(
+	overrides: {
+		getTargetSession?: () => CrossAgentTargetSession | null;
+		writable?: boolean;
+	} = {}
+) {
+	const processManager = new FakeProcessManager();
+	const chunks: CrossAgentResponseChunk[] = [];
+	const dispatch = () =>
+		startCrossAgentRequest(request(), {
+			processManager: processManager as never,
+			agentDetector: {
+				getAgent: async () => ({
+					id: 'claude-code',
+					name: 'Claude Code',
+					command: 'claude',
+					path: 'claude',
+					args: [],
+					available: true,
+					// Mirrors the real claude-code definition. Both permission branches
+					// have to be present or `buildAgentArgs` emits nothing either way
+					// and the flag assertions below silently pass on any input.
+					fullAccessArgs: ['--dangerously-skip-permissions'],
+					readOnlyArgs: ['--permission-mode', 'plan'],
+					readOnlyCliEnforced: true,
+				}),
+			} as never,
+			sshStore: null,
+			getTargetSession: overrides.getTargetSession ?? targetSession,
+			writable: overrides.writable,
+			onChunk: (c) => chunks.push(c),
+		});
+	// The router keys its listeners on `cross-agent-<requestId>`; request() uses 'r1'.
+	const emitData = (text: string) => processManager.emit('data', 'cross-agent-r1', text);
+	const emitExit = (code: number) => processManager.emit('exit', 'cross-agent-r1', code);
+	// A `--print` claude run signals progress through these, NOT through `data`.
+	const emitThinking = (text: string) =>
+		processManager.emit('thinking-chunk', 'cross-agent-r1', text);
+	const emitTool = () => processManager.emit('tool-execution', 'cross-agent-r1', { name: 'Read' });
+	const emitUsage = () => processManager.emit('usage', 'cross-agent-r1', { inputTokens: 1 });
+	return {
+		processManager,
+		chunks,
+		dispatch,
+		emitData,
+		emitExit,
+		emitThinking,
+		emitTool,
+		emitUsage,
+	};
+}
+
+describe('startCrossAgentRequest dispatch lifecycle', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.mocked(spawnGroupChatAgent).mockResolvedValue({ pid: 123, success: true });
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+	});
+
+	it('spawns the consult read-only and caps maestro-p idle wait to the idle budget', async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		// The consult prompt promises the target it will not write; the spawn is what
+		// actually enforces it.
+		expect(config.readOnlyMode).toBe(true);
+		expect(config.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+		expect(config.maxWaitSeconds).toBe(IDLE_MS / 1000);
+	});
+
+	it('spawns a writable delegation with FULL access, not merely "not read-only"', async () => {
+		const { dispatch } = harness({ writable: true });
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.readOnlyMode).toBe(false);
+		// The regression this guards: turning read-only OFF selects buildAgentArgs'
+		// standard branch, which emits no permission flags and leaves the agent on
+		// its interactive default. A `--print` run has no approver, so the first
+		// write tool call blocks forever - no output, no exit - while the prompt has
+		// already told the agent it may apply changes directly.
+		expect(config.args).toContain('--dangerously-skip-permissions');
+		expect(config.args).not.toContain('plan');
+	});
+
+	it('spawns the binary the agent is configured with, not the auto-detected one', async () => {
+		// Detection probes known install dirs before PATH, so a stale nvm stub can
+		// win over the codex the user pointed the agent at. The tab honors
+		// customPath; the consult must too, or the two run different binaries.
+		const { dispatch } = harness({
+			getTargetSession: () => ({ ...targetSession(), customPath: '/opt/custom/claude' }),
+		});
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.command).toBe('/opt/custom/claude');
+	});
+
+	it('falls back to the detected binary when the agent has no customPath', async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.command).toBe('claude');
+	});
+
+	it('does not kill a target that keeps streaming past the idle budget', async () => {
+		const { chunks, dispatch, emitData } = harness();
+		await dispatch();
+
+		// Nine minutes of silence, a byte of output, then nine more: a wall-clock
+		// budget would have fired by now. The idle budget must not.
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		emitData('still working');
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	// Regression: a `--print` stream-json consult emits `data` ONLY at the terminal
+	// result message - intermediate progress goes to thinking-chunk /
+	// tool-execution / usage. Arming the silence budget on `data` alone made it a
+	// hard N-minute deadline that killed agents which were working perfectly.
+	it('does not kill a target that is thinking but has emitted no data', async () => {
+		const { chunks, dispatch, emitThinking } = harness();
+		await dispatch();
+
+		for (let elapsed = 0; elapsed < HARD_MS - IDLE_MS; elapsed += IDLE_MS - 60_000) {
+			vi.advanceTimersByTime(IDLE_MS - 60_000);
+			emitThinking('reasoning...');
+		}
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('does not kill a target that is running tools but has emitted no data', async () => {
+		const { chunks, dispatch, emitTool } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		emitTool();
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('treats a usage report as proof of life', async () => {
+		const { chunks, dispatch, emitUsage } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		emitUsage();
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('ignores liveness signals belonging to a different session', async () => {
+		// The ProcessManager emitter is shared app-wide; another agent's activity
+		// must not keep a genuinely wedged consult alive forever.
+		const { chunks, dispatch, processManager } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		processManager.emit('thinking-chunk', 'some-other-session', 'not ours');
+		vi.advanceTimersByTime(60_000);
+
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].error).toContain('went silent');
+	});
+
+	it('still stops a target that is truly wedged on every channel', async () => {
+		const { chunks, dispatch, processManager } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS);
+
+		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
+		expect(chunks[0].error).toContain('went silent');
+	});
+
+	it('removes every liveness listener once the consult settles', async () => {
+		// These attach to the shared ProcessManager; leaking one per consult would
+		// accumulate for the life of the app.
+		const { dispatch, emitExit, processManager } = harness();
+		await dispatch();
+
+		const before = ['data', 'thinking-chunk', 'tool-execution', 'usage', 'exit'].map((e) =>
+			processManager.listenerCount(e)
+		);
+		expect(before.every((n) => n > 0)).toBe(true);
+
+		emitExit(0);
+
+		for (const evt of ['data', 'thinking-chunk', 'tool-execution', 'usage', 'exit']) {
+			expect(processManager.listenerCount(evt)).toBe(0);
+		}
+	});
+
+	it('kills the target and flushes partial output once it goes silent', async () => {
+		const { chunks, dispatch, emitData, processManager } = harness();
+		await dispatch();
+
+		emitData('half an answer');
+		vi.advanceTimersByTime(IDLE_MS);
+
+		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
+		expect(chunks).toHaveLength(1);
+		// The work the target DID do survives; it is stamped as a failure, not dropped.
+		expect(chunks[0].chunk).toBe('half an answer');
+		expect(chunks[0].done).toBe(true);
+		expect(chunks[0].error).toContain('went silent');
+		// A killed run must not seed a resume id for the next consult.
+		expect(chunks[0].targetAgentSessionId).toBeUndefined();
+	});
+
+	it('stops a chattering target at the hard ceiling even though it never idles', async () => {
+		const { chunks, dispatch, emitData } = harness();
+		await dispatch();
+
+		// Output every five minutes forever: the idle timer never fires.
+		for (let elapsed = 0; elapsed < HARD_MS; elapsed += 5 * 60 * 1000) {
+			vi.advanceTimersByTime(5 * 60 * 1000);
+			emitData('.');
+		}
+
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].error).toContain('exceeded the 30-minute limit');
+	});
+
+	it('settles once: a timeout after exit does not emit a second chunk', async () => {
+		const { chunks, dispatch, emitData, emitExit } = harness();
+		await dispatch();
+
+		emitData('the answer');
+		emitExit(0);
+		vi.advanceTimersByTime(HARD_MS * 2);
+
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].error).toBeUndefined();
+		expect(chunks[0].chunk).toBe('the answer');
+	});
+
+	it('fails fast when the spawner reports failure instead of throwing', async () => {
+		vi.mocked(spawnGroupChatAgent).mockResolvedValue({ pid: -1, success: false });
+		const { chunks, dispatch } = harness();
+		await dispatch();
+
+		// A spawner that returns `success: false` emits no 'exit' event. Without an
+		// explicit check the user waits out the full budget for a process that never
+		// existed, so the error must land immediately - before any timer advances.
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].done).toBe(true);
+		expect(chunks[0].error).toContain('could not be started');
+	});
+
+	it('stops the timers when the spawn fails, so no late chunk follows', async () => {
+		vi.mocked(spawnGroupChatAgent).mockResolvedValue({ pid: -1, success: false });
+		const { chunks, dispatch } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(HARD_MS * 2);
+		expect(chunks).toHaveLength(1);
+	});
+});
+
+/**
+ * Stop is an AGENT-level action, and a `@mention` fans one turn out across an
+ * ephemeral `cross-agent-*` process per consulted target. None of those carry
+ * the source agent's process id, so cancellation is addressed by SOURCE agent.
+ */
+describe('cancelCrossAgentRequestsForSource', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.mocked(spawnGroupChatAgent).mockResolvedValue({ pid: 123, success: true });
+	});
+	afterEach(() => {
+		// Leave no live consult behind for the next test to cancel.
+		cancelCrossAgentRequestsForSource('src');
+		vi.useRealTimers();
+		vi.clearAllMocks();
+	});
+
+	it('kills a running consult and settles it as canceled, not as a failure', async () => {
+		const { chunks, dispatch, processManager, emitData } = harness();
+		await dispatch();
+		emitData('half an answer');
+
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+
+		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].done).toBe(true);
+		expect(chunks[0].canceled).toBe(true);
+		// The user stopping a consult is not the target failing to answer, so the
+		// bubble must not be stamped with an error.
+		expect(chunks[0].error).toBeUndefined();
+		// Whatever the target managed to say before the plug was pulled is kept.
+		expect(chunks[0].chunk).toBe('half an answer');
+	});
+
+	it('leaves consults belonging to another source agent alone', async () => {
+		const { chunks, dispatch, processManager } = harness();
+		await dispatch();
+
+		expect(cancelCrossAgentRequestsForSource('some-other-agent')).toBe(0);
+		expect(processManager.kill).not.toHaveBeenCalled();
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('is a no-op for a consult that already finished', async () => {
+		const { chunks, dispatch, emitData, emitExit } = harness();
+		await dispatch();
+		emitData('the answer');
+		emitExit(0);
+
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(0);
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].canceled).toBeUndefined();
+	});
+
+	it('settles only once when Stop is pressed twice', async () => {
+		const { chunks, dispatch } = harness();
+		await dispatch();
+
+		cancelCrossAgentRequestsForSource('src');
+		cancelCrossAgentRequestsForSource('src');
+
+		expect(chunks).toHaveLength(1);
+	});
+
+	it('emits no late chunk after a cancel, even past both budgets', async () => {
+		const { chunks, dispatch } = harness();
+		await dispatch();
+
+		cancelCrossAgentRequestsForSource('src');
+		vi.advanceTimersByTime(HARD_MS * 2);
+
+		expect(chunks).toHaveLength(1);
+	});
+
+	it('cancels a consult that has not reached the spawn yet', async () => {
+		// Stop can land while the target agent's binary is still being resolved.
+		// The consult is registered before that await precisely so this lands.
+		const { chunks, dispatch } = harness();
+		const pending = dispatch();
+
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+		await pending;
+
+		expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].canceled).toBe(true);
+	});
+
+	it('kills a process that finished spawning after the Stop that ended it', async () => {
+		// The other side of the same race: Stop lands once the timers are armed but
+		// while `spawnGroupChatAgent` is still in flight. The terminal path already
+		// killed a process id that did not exist yet, so the one that arrives a
+		// moment later has to be killed on the way out or it outlives its own Stop.
+		const { chunks, dispatch, processManager } = harness();
+		let releaseSpawn: () => void = () => {};
+		vi.mocked(spawnGroupChatAgent).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					releaseSpawn = () => resolve({ pid: 123, success: true } as never);
+				})
+		);
+
+		const pending = dispatch();
+		// Let the binary resolve so the real cancel path is live, then stop.
+		await vi.waitFor(() => expect(spawnGroupChatAgent).toHaveBeenCalled());
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+		processManager.kill.mockClear();
+
+		releaseSpawn();
+		await pending;
+
+		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
+		// Still exactly one terminal chunk - the late spawn must not produce a second.
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].canceled).toBe(true);
+	});
+});

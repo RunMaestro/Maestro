@@ -35,6 +35,13 @@ vi.mock('../../../../../renderer/utils/platformUtils', () => ({
 	isLinuxPlatform: vi.fn(() => false),
 }));
 
+vi.mock('../../../../../shared/platformDetection', () => ({
+	isLinux: vi.fn(() => false),
+	isMacOS: vi.fn(() => false),
+	isWindows: vi.fn(() => false),
+	getWhichCommand: vi.fn(() => 'which'),
+}));
+
 // Shared mock fns so tests can assert on useSettings setters
 const mockSetConductorProfile = vi.fn();
 const mockSetDefaultShell = vi.fn();
@@ -45,8 +52,12 @@ const mockSetGhPath = vi.fn();
 const mockSetLogLevel = vi.fn();
 const mockSetEnterToSendAI = vi.fn();
 const mockSetEnterToSendAIExpanded = vi.fn();
+const mockSetAutoResumeOnLimit = vi.fn();
+const mockSetAutoResumeCheckIntervalHours = vi.fn();
+const mockSetAutoResumeGiveUpDays = vi.fn();
 const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
+const mockSetShowToolCalls = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
 const mockSetPreventSleepEnabled = vi.fn();
 const mockSetPreventDisplaySleepEnabled = vi.fn();
@@ -85,10 +96,18 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setEnterToSendAI: mockSetEnterToSendAI,
 		enterToSendAIExpanded: false,
 		setEnterToSendAIExpanded: mockSetEnterToSendAIExpanded,
+		autoResumeOnLimit: false,
+		setAutoResumeOnLimit: mockSetAutoResumeOnLimit,
+		autoResumeCheckIntervalHours: 6,
+		setAutoResumeCheckIntervalHours: mockSetAutoResumeCheckIntervalHours,
+		autoResumeGiveUpDays: 21,
+		setAutoResumeGiveUpDays: mockSetAutoResumeGiveUpDays,
 		defaultSaveToHistory: true,
 		setDefaultSaveToHistory: mockSetDefaultSaveToHistory,
 		defaultShowThinking: 'off',
 		setDefaultShowThinking: mockSetDefaultShowThinking,
+		showToolCalls: true,
+		setShowToolCalls: mockSetShowToolCalls,
 		// Tab naming
 		automaticTabNamingEnabled: true,
 		setAutomaticTabNamingEnabled: mockSetAutomaticTabNamingEnabled,
@@ -154,6 +173,7 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('System Log Level')).toBeInTheDocument();
 			expect(screen.getByText('GitHub CLI (gh) Path')).toBeInTheDocument();
 			expect(screen.getByText('Input Send Behavior')).toBeInTheDocument();
+			expect(screen.getByText('Auto-Resume on Limit')).toBeInTheDocument();
 			expect(screen.getByText('Default History Toggle')).toBeInTheDocument();
 			expect(screen.getByText('Default Thinking Mode')).toBeInTheDocument();
 			expect(screen.getByText('Tab Behavior')).toBeInTheDocument();
@@ -205,6 +225,7 @@ describe('GeneralTab', () => {
 
 			const textarea = screen.getByPlaceholderText(/I'm a senior developer/);
 			expect(textarea).toBeInTheDocument();
+			expect(screen.getByRole('textbox', { name: 'Conductor Profile' })).toBe(textarea);
 		});
 
 		it('should display character count as 0/5000 when empty', async () => {
@@ -932,6 +953,85 @@ describe('GeneralTab', () => {
 		});
 	});
 
+	describe('Tool Calls', () => {
+		it('renders the tool calls toggle under the thinking-mode section', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			expect(screen.getByText('Show tool calls in responses')).toBeInTheDocument();
+			// The tool-calls control is now grouped inside the Default Thinking Mode
+			// section rather than its own heading.
+			const toolCalls = screen
+				.getByText('Show tool calls in responses')
+				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
+			expect(toolCalls.closest('[data-setting-id="general-thinking-mode"]')).not.toBeNull();
+		});
+
+		it('calls setShowToolCalls when toggled', async () => {
+			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'on' };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			fireEvent.click(screen.getByRole('switch', { name: 'Show tool calls in responses' }));
+			// Clicking the switch fires exactly once; the wrapper onClick must not
+			// also fire (ToggleSwitch stops propagation).
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(false);
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
+		});
+
+		it('toggles once when the row is activated by keyboard', async () => {
+			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'on' };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			const section = screen
+				.getByText('Show tool calls in responses')
+				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
+			// Enter on the row toggles once; the target-guard in onKeyDown keeps a
+			// focused nested switch from also triggering the row handler.
+			fireEvent.keyDown(within(section).getByRole('button'), { key: 'Enter' });
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
+		});
+
+		it('stays usable when the default thinking mode is off', async () => {
+			// The two settings are independent: tool-call visibility must be
+			// controllable whatever the thinking mode is, so the switch is never
+			// ghosted and both the switch and the row still toggle it.
+			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'off' };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			const toggle = screen.getByRole('switch', { name: 'Show tool calls in responses' });
+			expect(toggle).not.toBeDisabled();
+			expect(toggle).toBeChecked();
+			fireEvent.click(toggle);
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(false);
+
+			mockSetShowToolCalls.mockClear();
+			const section = screen
+				.getByText('Show tool calls in responses')
+				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
+			fireEvent.keyDown(within(section).getByRole('button'), { key: 'Enter' });
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
+		});
+
+		it('reflects the off state independently of the thinking mode', async () => {
+			mockUseSettingsOverrides = { showToolCalls: false, defaultShowThinking: 'sticky' };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			const toggle = screen.getByRole('switch', { name: 'Show tool calls in responses' });
+			expect(toggle).not.toBeChecked();
+			fireEvent.click(toggle);
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(true);
+		});
+	});
+
 	// =========================================================================
 	// 12. Auto-scroll
 	// =========================================================================
@@ -1026,8 +1126,8 @@ describe('GeneralTab', () => {
 		});
 
 		it('should show Linux-specific note when on Linux platform', async () => {
-			const { isLinuxPlatform } = await import('../../../../../renderer/utils/platformUtils');
-			vi.mocked(isLinuxPlatform).mockReturnValue(true);
+			const { isLinux } = await import('../../../../../shared/platformDetection');
+			vi.mocked(isLinux).mockReturnValue(true);
 
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 
@@ -1039,7 +1139,7 @@ describe('GeneralTab', () => {
 				screen.getByText(/limited support on some Linux desktop environments/)
 			).toBeInTheDocument();
 
-			vi.mocked(isLinuxPlatform).mockReturnValue(false);
+			vi.mocked(isLinux).mockReturnValue(false);
 		});
 
 		it('should not show Linux-specific note on non-Linux platforms', async () => {

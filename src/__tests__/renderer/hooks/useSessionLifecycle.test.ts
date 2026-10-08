@@ -24,8 +24,9 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, AITab } from '../../../renderer/types';
-import { createMockAITab } from '../../helpers/mockTab';
+import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
@@ -99,6 +100,7 @@ beforeEach(() => {
 		initialLoadComplete: false,
 		groups: [],
 		groupsLoaded: false,
+		sessionsReadOk: false,
 	});
 
 	useModalStore.setState({ modals: new Map() });
@@ -175,6 +177,7 @@ describe('useSessionLifecycle', () => {
 					'--arg1',
 					{ MY_VAR: 'value' },
 					'gpt-4',
+					'high',
 					8000,
 					{ enabled: true, remoteId: 'remote-1', workingDirOverride: '/remote' }
 				);
@@ -188,6 +191,7 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customArgs).toBe('--arg1');
 			expect(updated.customEnvVars).toEqual({ MY_VAR: 'value' });
 			expect(updated.customModel).toBe('gpt-4');
+			expect(updated.customEffort).toBe('high');
 			expect(updated.customContextWindow).toBe(8000);
 			expect(updated.sessionSshRemoteConfig).toEqual({
 				enabled: true,
@@ -216,6 +220,7 @@ describe('useSessionLifecycle', () => {
 					undefined, // customArgs
 					{ LIVE: 'a' },
 					undefined, // customModel
+					undefined, // customEffort
 					undefined, // customContextWindow
 					undefined, // sessionSshRemoteConfig
 					undefined, // enableMaestroP
@@ -223,6 +228,8 @@ describe('useSessionLifecycle', () => {
 					undefined, // maestroPMode
 					undefined, // retryOnAvailabilityErrors
 					undefined, // retryOnTokenExhaustion
+					undefined, // additionalDirectories
+					undefined, // contextWindowSource
 					{ PARKED: 'b' }
 				);
 			});
@@ -287,6 +294,7 @@ describe('useSessionLifecycle', () => {
 				undefined, // customArgs
 				undefined, // customEnvVars
 				undefined, // customModel
+				undefined, // customEffort
 				undefined, // customContextWindow
 				undefined, // sessionSshRemoteConfig
 				undefined, // enableMaestroP
@@ -294,6 +302,8 @@ describe('useSessionLifecycle', () => {
 				undefined, // maestroPMode
 				undefined, // retryOnAvailabilityErrors
 				undefined, // retryOnTokenExhaustion
+				undefined, // additionalDirectories
+				undefined, // contextWindowSource
 				undefined, // customEnvVarsDisabled
 				workingDirectory
 			);
@@ -368,6 +378,7 @@ describe('useSessionLifecycle', () => {
 				customEnvVars: { OLD_KEY: 'old' },
 				customEnvVarsDisabled: { OLD_PARKED: 'old' },
 				customModel: 'sonnet',
+				customEffort: 'high',
 				customContextWindow: 200000,
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -410,6 +421,7 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customEnvVars).toBeUndefined();
 			expect(updated.customEnvVarsDisabled).toBeUndefined();
 			expect(updated.customModel).toBeUndefined();
+			expect(updated.customEffort).toBeUndefined();
 			expect(updated.customContextWindow).toBeUndefined();
 
 			// A running turn is codified at send, so nothing is killed.
@@ -561,6 +573,50 @@ describe('useSessionLifecycle', () => {
 				'agent-123',
 				'New Tab Name'
 			);
+		});
+
+		// A terminal tile inside a tiled group renames through this same modal, so the
+		// commit must land on terminalTabs[].name (the tile title reads it back).
+		it('renames a terminal tab that lives in a tiled group', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				terminalTabs: [{ id: 'term-1', name: null } as any],
+				activeGroupId: 'group-1',
+				tabGroups: [
+					{
+						id: 'group-1',
+						name: 'Group: Terminal 1',
+						focusedPaneId: 'leaf-term',
+						createdAt: 0,
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [
+								{ kind: 'leaf', id: 'leaf-ai', tab: { type: 'ai', id: 'tab-1' } },
+								{ kind: 'leaf', id: 'leaf-term', tab: { type: 'terminal', id: 'term-1' } },
+							],
+						},
+					} as any,
+				],
+			});
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'term-1', initialName: '' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('Build Logs');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.terminalTabs[0].name).toBe('Build Logs');
+			// The group itself is untouched - only the tile was renamed.
+			expect(updated.tabGroups?.[0].name).toBe('Group: Terminal 1');
 		});
 
 		it('persists to agentSessions for non-claude agents', () => {
@@ -723,6 +779,47 @@ describe('useSessionLifecycle', () => {
 			expect(updated.title).toBe('Example Domain');
 		});
 
+		it('locks a file tab name via customName without touching name', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', name: 'service' });
+			const session = createMockSession({ id: 'session-1', filePreviewTabs: [fileTab] });
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'file-1', initialName: '' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('  My File  ');
+			});
+
+			const updated = useSessionStore.getState().sessions[0].filePreviewTabs[0];
+			expect(updated.customName).toBe('My File');
+			// Underlying filename is preserved so it reappears once the name is cleared
+			expect(updated.name).toBe('service');
+		});
+
+		it('clears a file tab custom name when renamed to empty', () => {
+			const fileTab = createMockFileTab({
+				id: 'file-1',
+				name: 'service',
+				customName: 'My File',
+			});
+			const session = createMockSession({ id: 'session-1', filePreviewTabs: [fileTab] });
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'file-1', initialName: 'My File' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('   ');
+			});
+
+			const updated = useSessionStore.getState().sessions[0].filePreviewTabs[0];
+			expect(updated.customName).toBeUndefined();
+			expect(updated.name).toBe('service');
+		});
+
 		it('returns early if no active session', () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: '' });
 
@@ -747,6 +844,77 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.logger.log).not.toHaveBeenCalled();
+		});
+
+		it('renames a tiled tab group when renameTabId is a group id', () => {
+			const tabA = createMockAITab({ id: 'tab-a', name: 'Alpha' });
+			const tabB = createMockAITab({ id: 'tab-b', name: 'Beta' });
+			const group = createGroupFromTabRefs(
+				[
+					{ type: 'ai', id: 'tab-a' },
+					{ type: 'ai', id: 'tab-b' },
+				],
+				'Old Group'
+			);
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tabA, tabB],
+				tabGroups: [group],
+				activeGroupId: group.id,
+			});
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore
+				.getState()
+				.openModal('renameTab', { tabId: group.id, initialName: 'Old Group' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('New Group');
+			});
+
+			const renamed = useSessionStore
+				.getState()
+				.sessions[0].tabGroups.find((g) => g.id === group.id);
+			expect(renamed?.name).toBe('New Group');
+			// Group renames don't touch agent session storage.
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+		});
+
+		it('falls back to an auto name when a group is renamed to blank', () => {
+			const tabA = createMockAITab({ id: 'tab-a', name: 'Alpha' });
+			const tabB = createMockAITab({ id: 'tab-b', name: 'Beta' });
+			const group = createGroupFromTabRefs(
+				[
+					{ type: 'ai', id: 'tab-a' },
+					{ type: 'ai', id: 'tab-b' },
+				],
+				'Old Group'
+			);
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tabA, tabB],
+				tabGroups: [group],
+				activeGroupId: group.id,
+			});
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore
+				.getState()
+				.openModal('renameTab', { tabId: group.id, initialName: 'Old Group' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('   ');
+			});
+
+			const renamed = useSessionStore
+				.getState()
+				.sessions[0].tabGroups.find((g) => g.id === group.id);
+			expect(renamed?.name.trim().length).toBeGreaterThan(0);
+			expect(renamed?.name).not.toBe('Old Group');
 		});
 	});
 

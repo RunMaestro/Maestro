@@ -13,6 +13,8 @@ import {
 	Copy,
 	FolderInput,
 	FolderUp,
+	FileText,
+	HardDrive,
 	AlertTriangle,
 	ExternalLink,
 } from 'lucide-react';
@@ -21,6 +23,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { getOpenInLabel, fileManagerName } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -98,7 +101,37 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
-	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
+	// Two ways to fit the toolbar in a narrow panel, by what is scarce: a narrow
+	// DESKTOP panel (`compact`) drops the icons and keeps the words for a mouse
+	// user; a PHONE (`iconOnly`) drops the words and keeps the icons, with the
+	// label living on in each button's title.
+	const phone = usePhoneLayout();
+	const iconOnly = phone;
+	const compact = !phone && rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
+
+	const [isTouchPointer, setIsTouchPointer] = useState<boolean>(() =>
+		typeof window !== 'undefined' && window.matchMedia
+			? window.matchMedia('(pointer: coarse)').matches
+			: false
+	);
+	const longPressTimerRef = useRef<number | null>(null);
+	const longPressFiredRef = useRef(false);
+
+	useEffect(() => {
+		if (typeof window === 'undefined' || !window.matchMedia) return;
+		const mql = window.matchMedia('(pointer: coarse)');
+		const handler = (e: MediaQueryListEvent) => setIsTouchPointer(e.matches);
+		mql.addEventListener?.('change', handler);
+		return () => mql.removeEventListener?.('change', handler);
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			if (longPressTimerRef.current) {
+				window.clearTimeout(longPressTimerRef.current);
+			}
+		};
+	}, []);
 
 	// Live git status comes from GitStatusProvider, which polls per session via
 	// useGitStatusPolling. The legacy session.changedFiles field is never
@@ -364,6 +397,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		isMultiDeleting,
 		contextMenuRef,
 		contextMenuPos,
+		openContextMenuAt,
 		openContextMenu,
 		openRootContextMenu,
 		handleCopyPath,
@@ -374,6 +408,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenInExplorer,
 		handleOpenNewFile,
 		handleOpenNewFolder,
+		handleNewAgentHere,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
@@ -561,7 +596,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						title={`Find Files (${formatShortcutKeys(shortcuts.filterFiles?.keys ?? ['Meta', 'f'])})`}
 					>
 						{!compact && <Search className="w-3 h-3" />}
-						Find
+						{!iconOnly && 'Find'}
 					</button>
 					{/* Open in file manager - local sessions only */}
 					{!sshRemoteId && (
@@ -578,7 +613,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							title={getOpenInLabel(window.maestro?.platform || 'darwin')}
 						>
 							{!compact && <FolderOpen className="w-3 h-3" />}
-							Open
+							{!iconOnly && 'Open'}
 						</button>
 					)}
 					{/* Show/hide dotfiles */}
@@ -597,7 +632,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						>
 							{!compact &&
 								(showHiddenFiles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />)}
-							.files
+							{!iconOnly && '.files'}
 						</button>
 					)}
 					{/* Refresh */}
@@ -620,7 +655,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						}
 					>
 						{!compact && <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />}
-						Refresh
+						{!iconOnly && 'Refresh'}
 					</button>
 					{/* Expand all */}
 					<button
@@ -861,9 +896,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											fileTreeFilter={fileTreeFilter}
 											htmlDoubleClickOpensInBrowser={htmlDoubleClickOpensInBrowser}
 											sshRemoteId={sshRemoteId}
+											isTouchPointer={isTouchPointer}
+											longPressTimerRef={longPressTimerRef}
+											longPressFiredRef={longPressFiredRef}
 											lastClickedUnderFilterRef={lastClickedUnderFilterRef}
 											setActiveFocus={setActiveFocus}
 											handleRowSelectionClick={handleRowSelectionClick}
+											openContextMenuAt={openContextMenuAt}
 											handleContextMenu={openContextMenu}
 											handleFolderDragEnter={handleFolderDragEnter}
 											handleFolderDragOver={handleFolderDragOver}
@@ -989,34 +1028,47 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				</div>
 			)}
 
-			{/* Status bar */}
+			{/* Status bar. `file-stats-container` enables the container query in index.css
+			    that swaps the label words for icons on narrow widths so the bar never wraps. */}
 			{session.fileTreeStats && (
 				<div
-					className="flex-shrink-0 flex items-center justify-center gap-3 px-3 py-1.5 text-xs rounded mt-3 mb-[7px]"
+					className="file-stats-container flex-shrink-0 flex items-center justify-center gap-3 px-3 py-1.5 text-xs rounded mt-3 mb-[7px] whitespace-nowrap"
 					style={{
 						backgroundColor: theme.colors.bgActivity,
 						border: `1px solid ${theme.colors.border}`,
 						color: theme.colors.textDim,
 					}}
 				>
-					<span>
+					<span
+						className="flex items-center gap-1"
+						title={`${session.fileTreeStats.fileCount.toLocaleString()} file${session.fileTreeStats.fileCount !== 1 ? 's' : ''}`}
+					>
+						<FileText className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span style={{ color: theme.colors.accent }}>
 							{session.fileTreeStats.fileCount.toLocaleString()}
 						</span>
-						<span className="opacity-60">
-							{' '}
-							file{session.fileTreeStats.fileCount !== 1 ? 's' : ''},{' '}
+						<span className="file-stats-label opacity-60">
+							file{session.fileTreeStats.fileCount !== 1 ? 's' : ''},
 						</span>
+					</span>
+					<span
+						className="flex items-center gap-1"
+						title={`${session.fileTreeStats.folderCount.toLocaleString()} folder${session.fileTreeStats.folderCount !== 1 ? 's' : ''}`}
+					>
+						<Folder className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span style={{ color: theme.colors.accent }}>
 							{session.fileTreeStats.folderCount.toLocaleString()}
 						</span>
-						<span className="opacity-60">
-							{' '}
+						<span className="file-stats-label opacity-60">
 							folder{session.fileTreeStats.folderCount !== 1 ? 's' : ''}
 						</span>
 					</span>
-					<span>
-						<span className="opacity-60">Size:</span>{' '}
+					<span
+						className="flex items-center gap-1"
+						title={`Total size: ${formatBytes(session.fileTreeStats.totalSize)}`}
+					>
+						<HardDrive className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
+						<span className="file-stats-label opacity-60">Size:</span>
 						<span style={{ color: theme.colors.accent }}>
 							{formatBytes(session.fileTreeStats.totalSize)}
 						</span>
@@ -1048,6 +1100,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenInExplorer={handleOpenInExplorer}
 					onOpenNewFile={handleOpenNewFile}
 					onOpenNewFolder={handleOpenNewFolder}
+					onNewAgentHere={handleNewAgentHere}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					autoRunStagedCount={autoRunStagedDocs.length}

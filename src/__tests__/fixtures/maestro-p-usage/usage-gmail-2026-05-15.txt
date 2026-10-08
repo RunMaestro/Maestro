@@ -32,7 +32,7 @@ Currentweek(Sonnetonly)
                                                   0%used
 
 What'scontributingtoyourlimitsusage?
-Approximate,basedonlocalsessionsonthismachine—doesnotincludeotherdevicesorclaude.ai
+Approximate,basedonlocalsessionsonthismachine\u2014doesnotincludeotherdevicesorclaude.ai
 
 Scanninglocalsessions…
 

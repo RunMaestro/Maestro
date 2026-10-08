@@ -160,6 +160,11 @@ vi.mock('lucide-react', () => ({
 			📁
 		</span>
 	),
+	Bot: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="bot-icon" className={className} style={style}>
+			🤖
+		</span>
+	),
 	Network: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="network-icon" className={className} style={style}>
 			🕸️
@@ -168,6 +173,11 @@ vi.mock('lucide-react', () => ({
 	Files: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="files-icon" className={className} style={style}>
 			🗂️
+		</span>
+	),
+	HardDrive: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="hard-drive-icon" className={className} style={style}>
+			💾
 		</span>
 	),
 	FileArchive: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -3776,7 +3786,10 @@ describe('FileExplorerPanel', () => {
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
 			fireEvent.keyDown(window, { key: 'Escape' });
-			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			// Scoped to keydown: the panel is still mounted here, so the viewport
+			// hook's resize/orientationchange subscriptions are live by design. The
+			// unmount case below is the unscoped, stricter check.
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy, ['keydown']);
 			spies.restore();
 		});
 
@@ -3790,6 +3803,42 @@ describe('FileExplorerPanel', () => {
 			unmount();
 			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
 			spies.restore();
+		});
+	});
+
+	describe('Stats bar (files/folders/size footer)', () => {
+		const statsSession = () =>
+			createMockSession({
+				fileTreeStats: { fileCount: 3356, folderCount: 398, totalSize: 111 * 1024 * 1024 },
+			});
+
+		it('renders counts, labels, and the responsive class hooks', () => {
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={statsSession()} />
+			);
+			// The container-query wrapper drives the narrow-width icon swap in index.css
+			const bar = container.querySelector('.file-stats-container');
+			expect(bar).not.toBeNull();
+			expect(bar!.textContent).toContain('3,356');
+			expect(bar!.textContent).toContain('398');
+			// Label words carry the drop class; icons carry the show class
+			expect(bar!.querySelectorAll('.file-stats-label').length).toBe(3);
+			expect(bar!.querySelectorAll('.file-stats-icon').length).toBe(3);
+		});
+
+		it('gives each stats segment a tooltip so icon-only mode stays legible', () => {
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={statsSession()} />
+			);
+			const bar = container.querySelector('.file-stats-container')!;
+			expect(bar.querySelector('[title="3,356 files"]')).not.toBeNull();
+			expect(bar.querySelector('[title="398 folders"]')).not.toBeNull();
+			expect(bar.querySelector('[title^="Total size:"]')).not.toBeNull();
+		});
+
+		it('does not render the stats bar without fileTreeStats', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			expect(container.querySelector('.file-stats-container')).toBeNull();
 		});
 	});
 });

@@ -147,6 +147,11 @@ vi.mock('../../../renderer/services/leaderboard', () => ({
 	reportLeaderboardDrift: (...args: unknown[]) => mockReportDrift(...(args as [])),
 }));
 
+// No WindowProvider in these tests; the hook treats that as the main window.
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindowContextOptional: () => null,
+}));
+
 vi.mock('../../../renderer/services/openspec', () => ({
 	getOpenSpecCommands: vi.fn(() => Promise.resolve(mockOpenspecCommands)),
 }));

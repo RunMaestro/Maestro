@@ -78,6 +78,20 @@ export interface TabNamingHandlerDependencies {
 const TAB_NAMING_TIMEOUT_MS = 120 * 1000;
 
 /**
+ * Spawn failures that mean "the configured agent binary is unusable on this
+ * machine", not "Maestro has a bug": a missing/renamed CLI, a path pointing at
+ * a non-executable (EFTYPE on Windows when the resolved target is a script or
+ * a broken shim), or one the user can't execute. Tab naming is cosmetic and
+ * degrades to leaving the tab unnamed, so these shouldn't page us. (MAESTRO-X4)
+ */
+const EXPECTED_SPAWN_ERROR_CODES = new Set(['ENOENT', 'EFTYPE', 'EACCES', 'EPERM', 'ENOEXEC']);
+
+function isExpectedSpawnFailure(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && EXPECTED_SPAWN_ERROR_CODES.has(code);
+}
+
+/**
  * Interval for checking partial output for a valid tab name.
  * Allows resolving as soon as the agent outputs the name,
  * without waiting for the full process to exit.
@@ -136,11 +150,18 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 				});
 
 				try {
+					// Resolve the agent: use the utility agent if configured, otherwise the
+					// session agent. Null/empty leaves behavior unchanged (session agent).
+					const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
+					const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
+					const effectiveAgentType = utilityAgentId || config.agentType;
+
 					// Get the agent configuration
-					const agent = await agentDetector.getAgent(config.agentType);
+					const agent = await agentDetector.getAgent(effectiveAgentType);
 					if (!agent) {
 						logger.warn('Agent not found for tab naming', LOG_CONTEXT, {
-							agentType: config.agentType,
+							agentType: effectiveAgentType,
+							isUtilityAgent: !!utilityAgentId,
 						});
 						return null;
 					}
@@ -160,6 +181,8 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						prompt: fullPrompt,
 						cwd: config.cwd,
 						readOnlyMode: true, // Always read-only since we're not modifying anything
+						// Only apply the model override when a utility agent is actually in use.
+						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
 					});
 
 					// Apply config overrides from store.
@@ -174,7 +197,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// exactly the behaviour it had before.
 					const cheapNaming = cheapTurnSettings(config.agentType as ToolType);
 					const allConfigs = agentConfigsStore.get('configs', {});
-					const agentConfigValues = allConfigs[config.agentType] || {};
+					const agentConfigValues = allConfigs[effectiveAgentType] || {};
 					const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 						agentConfigValues,
 						readOnlyMode: true,
@@ -208,9 +231,14 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						string,
 						string
 					>;
+					// The session's env overrides belong to the SESSION's agent (its
+					// API keys, its base URL). Layering them onto a different utility
+					// agent points that agent at the wrong provider, so they are only
+					// merged when the two are the same agent. `configResolution` is
+					// already keyed by `effectiveAgentType` and always applies.
 					let customEnvVars: Record<string, string> | undefined = {
 						...(configResolution.effectiveCustomEnvVars ?? {}),
-						...(config.sessionCustomEnvVars ?? {}),
+						...(effectiveAgentType === config.agentType ? (config.sessionCustomEnvVars ?? {}) : {}),
 					};
 
 					// Resolve the triggering agent's Claude token source ONCE, up front,
@@ -397,6 +425,13 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						});
 					}
 
+					// A TUI (maestro-p) naming spawn emits a plain terminal transcript,
+					// not stream-json, so the raw-output fallback in extraction would
+					// scrape live thinking/response prose onto the tab. Require
+					// structured output on that path. Covers both the local wrap above
+					// and the remote maestro-p case, which share the same decision mode.
+					const requireStructuredOutput = claudeSpawnDecision?.mode === 'interactive';
+
 					// Create a promise that resolves when we get the tab name
 					return new Promise<string | null>((resolve) => {
 						let output = '';
@@ -442,7 +477,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// without waiting for the full process to exit.
 						const earlyExtractIntervalId = setInterval(() => {
 							if (resolved || !output.trim()) return;
-							const earlyResult = extractTabNameFromOutput(config.agentType, output);
+							const earlyResult = extractTabNameFromOutput(
+								effectiveAgentType,
+								output,
+								requireStructuredOutput
+							);
 							if (earlyResult.name) {
 								resolveWith(earlyResult.name, 'resolved early from partial output');
 							}
@@ -482,7 +521,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								return;
 							}
 
-							const extraction = extractTabNameFromOutput(config.agentType, output);
+							const extraction = extractTabNameFromOutput(
+								effectiveAgentType,
+								output,
+								requireStructuredOutput
+							);
 							if (!extraction.name) {
 								logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 									sessionId,
@@ -502,30 +545,56 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// cmd.exe's ~8KB command-line limit (ENAMETOOLONG on spawn).
 						// Tab naming concatenates a multi-KB system prompt with the user
 						// message, so a long first message easily exceeds the limit.
-						const sendPromptViaStdinRaw = isWindows() && !config.sessionSshRemoteConfig?.enabled;
+						// Only for CLIs that actually read stdin - one that takes the
+						// prompt positionally (omp) would run with no prompt and name
+						// nothing.
+						const sendPromptViaStdinRaw =
+							isWindows() &&
+							!config.sessionSshRemoteConfig?.enabled &&
+							(agent.capabilities?.supportsPromptViaStdin ?? false);
 
 						// Spawn the process
 						// When using SSH with stdin, pass the flag so ChildProcessSpawner
 						// sends the prompt via stdin instead of command line args
-						processManager.spawn({
-							sessionId,
-							toolType: config.agentType,
-							cwd,
-							command,
-							args: finalArgs,
-							prompt: fullPrompt,
-							// Global shell env vars (Settings -> Shell Configuration) are the
-							// lowest env layer the chat applies; without them a subscription
-							// auth carried via CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY never
-							// reaches the naming spawn and claude exits "Not logged in".
-							shellEnvVars: globalShellEnvVars,
-							customEnvVars,
-							promptArgs: agent.promptArgs,
-							noPromptSeparator: agent.noPromptSeparator,
-							sendPromptViaStdin: shouldSendPromptViaStdin,
-							sendPromptViaStdinRaw,
-							promptAlreadyInArgs,
-						});
+						//
+						// child_process.spawn throws synchronously for a bad binary or an
+						// over-long argv. This runs in the Promise executor, so an escaping
+						// throw rejects the naming promise and surfaces as a hard IPC
+						// failure - the outer try/catch can't see it, because the promise is
+						// returned rather than awaited. Bail to null like every other
+						// failure path here so a cosmetic feature can't break the send.
+						try {
+							processManager.spawn({
+								sessionId,
+								toolType: effectiveAgentType,
+								cwd,
+								command,
+								args: finalArgs,
+								prompt: fullPrompt,
+								// Global shell env vars (Settings -> Shell Configuration) are the
+								// lowest env layer the chat applies; without them a subscription
+								// auth carried via CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY never
+								// reaches the naming spawn and claude exits "Not logged in".
+								shellEnvVars: globalShellEnvVars,
+								customEnvVars,
+								promptArgs: agent.promptArgs,
+								noPromptSeparator: agent.noPromptSeparator,
+								sendPromptViaStdin: shouldSendPromptViaStdin,
+								sendPromptViaStdinRaw,
+								promptAlreadyInArgs,
+							});
+						} catch (error) {
+							if (!isExpectedSpawnFailure(error)) {
+								void captureException(error);
+							}
+							logger.warn('Tab naming spawn failed', LOG_CONTEXT, {
+								sessionId,
+								command,
+								code: (error as NodeJS.ErrnoException).code,
+								error: String(error),
+							});
+							resolveWith(null, 'spawn failed');
+						}
 					});
 				} catch (error) {
 					void captureException(error);
@@ -620,9 +689,13 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 		if (event.type === 'result') {
 			// The final result carries the complete response; last one wins.
 			resultText = event.text;
-		} else if (event.type === 'text') {
+		} else if (event.type === 'text' && !event.isReasoning) {
 			// Streaming assistant chunks - accumulate so early extraction can
-			// resolve before the terminating result event arrives.
+			// resolve before the terminating result event arrives. Reasoning
+			// deltas (grok `thought`, codex/copilot reasoning) are excluded:
+			// they stream BEFORE the answer, so mining them would let early
+			// extraction resolve with a thinking fragment ("This is a simple
+			// task") instead of the generated name.
 			assistantText += event.text;
 		}
 	}
@@ -636,9 +709,27 @@ function extractAgentResponseText(agentType: string, output: string): string | n
  * Extract a tab name from raw agent process output, normalizing structured
  * (stream-json) output via the agent's parser first and falling back to
  * plain-text extraction over the raw output.
+ *
+ * `structuredOnly` disables that raw-output fallback. Pass it when the naming
+ * spawn drives the maestro-p TUI (Claude token mode = TUI/dynamic): maestro-p
+ * strips the headless-only flags, including the `--tools ""` guard, so the
+ * model runs a real agentic turn and `output` is a live terminal transcript of
+ * thinking and response prose rather than stream-json. Scraping that buffer
+ * lifts an arbitrary sentence fragment onto the tab, which is what users see as
+ * "the response is streaming into the tab name" (issue #1110). Prose has no
+ * angle brackets, so STRUCTURAL_NOISE_RE can't catch it - the only safe answer
+ * is to decline. Returning null costs nothing: the send-side trigger retries
+ * naming on the next message, so the tab keeps its placeholder and self-heals.
  */
-function extractTabNameFromOutput(agentType: string, output: string): TabNameExtractionResult {
+function extractTabNameFromOutput(
+	agentType: string,
+	output: string,
+	structuredOnly = false
+): TabNameExtractionResult {
 	const responseText = extractAgentResponseText(agentType, output);
+	if (responseText === null && structuredOnly) {
+		return { name: null, reason: 'structured_only_no_json' };
+	}
 	return extractTabName(responseText ?? output);
 }
 

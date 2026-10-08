@@ -21,7 +21,17 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { ExternalLink, Maximize2, Minimize2, HelpCircle, X, GitCompare } from 'lucide-react';
+import { Diff, Hunk } from 'react-diff-view';
+import 'react-diff-view/style/index.css';
+import {
+	ExternalLink,
+	Maximize2,
+	Minimize2,
+	HelpCircle,
+	X,
+	GitCompare,
+	FileDiff,
+} from 'lucide-react';
 import type { Theme } from '../../../constants/themes';
 import { refreshRendererPrompts } from '../../../services/promptInit';
 import { captureException, captureMessage } from '../../../utils/sentry';
@@ -38,7 +48,8 @@ import { FilterInput } from '../../ui/FilterInput';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { Markdown } from '../../Markdown';
 import { MarkdownEditor, type MarkdownEditorHandle } from '../../FilePreview/markdownEditor';
-import { generateProseStyles } from '../../../utils/markdownConfig';
+import { generateDiffViewStyles, generateProseStyles } from '../../../utils/markdownConfig';
+import { buildSyntheticGitDiff, parseGitDiff } from '../../../utils/gitDiffParser';
 import { searchMatchRanges } from '../../../utils/highlightMatches';
 import { useDebouncedValue } from '../../../hooks/utils/useThrottle';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
@@ -46,7 +57,12 @@ import { eventMatchesShortcutKeys } from '../../../utils/shortcutMatch';
 import { isTextInputTarget } from '../../../utils/messageScrollNavigation';
 import { PROMPT_IDS } from '../../../../shared/promptDefinitions';
 import { estimateTokenCount } from '../../../../shared/formatters';
+import { usePluginContributions } from '../../../hooks/usePluginContributions';
 import './MaestroPromptsTab.css';
+
+// Category key for plugin-contributed prompts. They are read-only (a plugin owns
+// their content), shown for reference/insertion, never edited via this tab.
+const PLUGIN_PROMPT_CATEGORY = 'plugin';
 
 interface CorePrompt {
 	id: string;
@@ -66,6 +82,15 @@ interface MaestroPromptsTabProps {
 
 /** Which half of the Preview/Edit switch is showing. */
 type PromptViewMode = 'preview' | 'edit';
+
+/**
+ * A read-only comparison that takes over the editor pane:
+ * - `default`: the current bundled default as source, offered when an app
+ *   update changed the default under a customization.
+ * - `diff`: what this prompt changes relative to the bundled default, opened
+ *   from the Modified badge.
+ */
+type PromptComparisonView = 'default' | 'diff';
 
 // Same order as the Memory Viewer so the two switches read alike; the DEFAULT
 // differs (`edit`), because this pane exists to change a prompt rather than to
@@ -101,6 +126,7 @@ const CATEGORY_INFO: Record<string, { label: string }> = {
 	'group-chat': { label: 'Group Chat' },
 	includes: { label: 'Includes' },
 	'inline-wizard': { label: 'Inline Wizard' },
+	[PLUGIN_PROMPT_CATEGORY]: { label: 'Plugin Prompts' },
 	system: { label: 'System' },
 	wizard: { label: 'Wizard' },
 };
@@ -110,19 +136,21 @@ const CATEGORY_HELP: Record<string, string> = {
 	wizard:
 		'Prompts used by the Wizard feature for AI-guided conversations, document generation, and continuation flows.',
 	'inline-wizard':
-		'Prompts for the Inline Wizard that operates within the editor — new sessions, iterations, and generation.',
+		'Prompts for the Inline Wizard that operates within the editor - new sessions, iterations, and generation.',
 	autorun:
-		'Prompts controlling Auto Run behavior — the default execution prompt and synopsis generation for Auto Run documents.',
+		'Prompts controlling Auto Run behavior - the default execution prompt and synopsis generation for Auto Run documents.',
 	'group-chat':
-		'Prompts for Group Chat sessions — moderator system/synthesis prompts, participant behavior, and participant request formatting.',
+		'Prompts for Group Chat sessions - moderator system/synthesis prompts, participant behavior, and participant request formatting.',
 	context:
-		'Prompts for context management — grooming (trimming context), transferring context between sessions, and summarization.',
+		'Prompts for context management - grooming (trimming context), transferring context between sessions, summarization, and handing a cross-agent consult reply back to the agent that asked.',
 	commands:
-		'Prompts for built-in commands — image-only message handling and git commit message generation.',
+		'Prompts for built-in commands - image-only message handling and git commit message generation.',
 	includes:
 		'Reusable blocks referenced from other prompts. Two directives consume them: {{INCLUDE:name}} fully inlines the content at assembly time (use for foundational rules every agent must have); {{REF:name}} expands to a one-line pointer that tells the agent to fetch it on demand via `maestro-cli prompts get <name>` (use for heavy reference material only some sessions need). Keeps shared content (history format, Auto Run spec, CLI reference, Cue model, file-access rules) in one place so every agent that needs it gets the same wording.',
 	system:
-		"System-level prompts — the Maestro system context injected into agents, tab naming, Director's Notes, and feedback.",
+		"System-level prompts - the Maestro system context injected into agents, tab naming, Director's Notes, and feedback.",
+	[PLUGIN_PROMPT_CATEGORY]:
+		'Read-only prompts contributed by installed plugins. Their content is owned by the plugin and cannot be edited here.',
 };
 
 // Group template variables by prefix for the help panel
@@ -172,7 +200,7 @@ function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => vo
 					code.
 				</p>
 				<p className="prompts-help-text" style={{ color: theme.colors.textDim }}>
-					Changes take effect immediately — no restart required. Use the{' '}
+					Changes take effect immediately - no restart required. Use the{' '}
 					<strong style={{ color: theme.colors.textMain }}>Reset to Default</strong> button to
 					revert any prompt to its bundled original.
 				</p>
@@ -226,7 +254,7 @@ function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => vo
 					>
 						.md
 					</code>{' '}
-					(native separators for the host OS) — nothing else, no description or formatting. Wrap the
+					(native separators for the host OS) - nothing else, no description or formatting. Wrap the
 					directive with whatever prose, list markers, or context you want; the agent reads the file
 					directly. Use this for heavy reference material only some sessions need. The path resolves
 					to bundled content; to honor your customizations on this tab, agents should fetch via{' '}
@@ -330,11 +358,13 @@ export function MaestroPromptsTab({
 	const [viewMode, setViewMode] = useState<PromptViewMode>('edit');
 	const [previewContent, setPreviewContent] = useState('');
 	const [isBuildingPreview, setIsBuildingPreview] = useState(false);
-	// "Show bundled default" overlay: read-only view of the current bundled
-	// content, surfaced when the user's customization has drifted from the
-	// default after an app update. Mutually exclusive with preview mode.
-	const [isShowingDefault, setIsShowingDefault] = useState(false);
+	// Comparison overlays against the bundled default (see PromptComparisonView).
+	// Mutually exclusive with each other and with preview mode.
+	const [comparisonView, setComparisonView] = useState<PromptComparisonView | null>(null);
+	const isShowingDefault = comparisonView === 'default';
 	const [bundledDefaultContent, setBundledDefaultContent] = useState('');
+	const [bundledDefaultError, setBundledDefaultError] = useState<string | null>(null);
+	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const [isLoadingBundledDefault, setIsLoadingBundledDefault] = useState(false);
 
 	// Keyword filter over id, description, and body. Everything is already in
@@ -357,6 +387,33 @@ export function MaestroPromptsTab({
 	if (initialRecalledPromptIdRef.current === undefined) {
 		initialRecalledPromptIdRef.current = lastSelectedPromptId ?? null;
 	}
+
+	// Plugin-contributed prompts (read-only). Empty when the plugins Encore flag
+	// is off. Shaped like CorePrompt so they slot into the same list/editor, but
+	// flagged via pluginPromptIds so save/reset/editing stay disabled for them.
+	const pluginContributions = usePluginContributions();
+	const pluginPromptItems = useMemo<CorePrompt[]>(
+		() =>
+			pluginContributions.prompts.map((p) => ({
+				id: p.id,
+				filename: '',
+				description: p.description ?? `Plugin prompt from ${p.pluginId}`,
+				category: PLUGIN_PROMPT_CATEGORY,
+				content: p.content,
+				isModified: false,
+				hasDefaultDrifted: false,
+			})),
+		[pluginContributions.prompts]
+	);
+	const pluginPromptIds = useMemo(
+		() => new Set(pluginPromptItems.map((p) => p.id)),
+		[pluginPromptItems]
+	);
+	const allPrompts = useMemo(
+		() => [...prompts, ...pluginPromptItems],
+		[prompts, pluginPromptItems]
+	);
+	const isSelectedPluginPrompt = selectedPrompt ? pluginPromptIds.has(selectedPrompt.id) : false;
 
 	const autocomplete = useEditorTemplateAutocomplete({
 		editorRef: editorRef as React.RefObject<MarkdownEditorHandle>,
@@ -405,8 +462,8 @@ export function MaestroPromptsTab({
 			setShowHelp(false);
 			return true;
 		}
-		if (isShowingDefault) {
-			setIsShowingDefault(false);
+		if (comparisonView) {
+			setComparisonView(null);
 			return true;
 		}
 		if (isEditorExpanded) {
@@ -460,7 +517,7 @@ export function MaestroPromptsTab({
 	 * screen and read as a dead control.
 	 */
 	const changeViewMode = useCallback((mode: PromptViewMode) => {
-		setIsShowingDefault(false);
+		setComparisonView(null);
 		setViewMode(mode);
 	}, []);
 
@@ -469,7 +526,7 @@ export function MaestroPromptsTab({
 		if (!eventMatchesShortcutKeys(e, toggleModeKeys)) return;
 		e.preventDefault();
 		e.stopPropagation();
-		setIsShowingDefault(false);
+		setComparisonView(null);
 		setViewMode((mode) => (mode === 'preview' ? 'edit' : 'preview'));
 	});
 
@@ -491,10 +548,10 @@ export function MaestroPromptsTab({
 		}
 	}, [viewMode, showHelp, focusList]);
 
-	// Exit the bundled-default overlay when switching prompts - it describes the
-	// prompt you were looking at, not the one you just opened.
+	// Exit the bundled-default comparison when switching prompts - it describes
+	// the prompt you were looking at, not the one you just opened.
 	useEffect(() => {
-		setIsShowingDefault(false);
+		setComparisonView(null);
 	}, [selectedPrompt?.id]);
 
 	/**
@@ -559,36 +616,79 @@ export function MaestroPromptsTab({
 		};
 	}, [viewMode, selectedPrompt?.id, activeSession, conductorProfile]);
 
-	const handleToggleShowDefault = useCallback(async () => {
-		if (isShowingDefault) {
-			setIsShowingDefault(false);
-			return;
-		}
-		if (!selectedPrompt) return;
-		// The bundled default is a comparison view of the SOURCE, so it takes
-		// over the editor pane rather than sitting beside the rendered preview.
-		setViewMode('edit');
-		setIsLoadingBundledDefault(true);
-		try {
-			const result = await window.maestro.prompts.getBundledDefault(selectedPrompt.id);
-			if (result.success && typeof result.content === 'string') {
-				setBundledDefaultContent(result.content);
-				setIsShowingDefault(true);
-			} else {
-				const msg = result.error || 'Failed to load bundled default';
-				setBundledDefaultContent(`Failed to load bundled default: ${msg}`);
-				setIsShowingDefault(true);
+	/**
+	 * Open (or, if it is already showing, close) a comparison against the
+	 * bundled default. Both views read the same bundled text, fetched fresh on
+	 * every open so a view never compares against a stale copy.
+	 */
+	const toggleComparison = useCallback(
+		async (view: PromptComparisonView) => {
+			if (comparisonView === view) {
+				setComparisonView(null);
+				return;
 			}
-		} catch (err) {
-			captureException(err instanceof Error ? err : new Error(String(err)), {
-				extra: { context: 'MaestroPromptsTab.toggleShowDefault', promptId: selectedPrompt.id },
-			});
-			setBundledDefaultContent(`Failed to load bundled default: ${String(err)}`);
-			setIsShowingDefault(true);
-		} finally {
-			setIsLoadingBundledDefault(false);
-		}
-	}, [isShowingDefault, selectedPrompt]);
+			if (!selectedPrompt) return;
+			// A comparison is of the SOURCE, so it takes over the editor pane
+			// rather than sitting beside the rendered preview.
+			setViewMode('edit');
+			setIsLoadingBundledDefault(true);
+			try {
+				const result = await window.maestro.prompts.getBundledDefault(selectedPrompt.id);
+				if (result.success && typeof result.content === 'string') {
+					setBundledDefaultContent(result.content);
+					setBundledDefaultError(null);
+				} else {
+					setBundledDefaultContent('');
+					setBundledDefaultError(result.error || 'Failed to load bundled default');
+				}
+			} catch (err) {
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: {
+						context: 'MaestroPromptsTab.toggleComparison',
+						view,
+						promptId: selectedPrompt.id,
+					},
+				});
+				setBundledDefaultContent('');
+				setBundledDefaultError(String(err));
+			} finally {
+				setComparisonView(view);
+				setIsLoadingBundledDefault(false);
+			}
+		},
+		[comparisonView, selectedPrompt]
+	);
+
+	const handleToggleShowDefault = useCallback(
+		() => toggleComparison('default'),
+		[toggleComparison]
+	);
+	const handleToggleDiff = useCallback(() => toggleComparison('diff'), [toggleComparison]);
+
+	/**
+	 * The bundled default against the text in the editor. The editor, not the
+	 * saved copy, is the "new" side: it is what Save would write, so unsaved
+	 * edits show up here instead of being silently left out of the comparison.
+	 * `null` while no diff is showing; an empty list when there is nothing to
+	 * show.
+	 */
+	const promptDiffFiles = useMemo(() => {
+		if (comparisonView !== 'diff' || bundledDefaultError) return null;
+		if (bundledDefaultContent === editedContent) return [];
+		return parseGitDiff(
+			buildSyntheticGitDiff(
+				selectedPrompt?.filename ?? 'prompt.md',
+				bundledDefaultContent,
+				editedContent
+			)
+		);
+	}, [
+		comparisonView,
+		bundledDefaultError,
+		bundledDefaultContent,
+		editedContent,
+		selectedPrompt?.filename,
+	]);
 
 	// Auto-dismiss success message after 3 seconds
 	useEffect(() => {
@@ -647,7 +747,7 @@ export function MaestroPromptsTab({
 	 * matching only the names would leave the whole point of the box undone.
 	 */
 	const filteredPrompts = useMemo(() => {
-		const sorted = [...prompts].sort((a, b) => a.id.localeCompare(b.id));
+		const sorted = [...allPrompts].sort((a, b) => a.id.localeCompare(b.id));
 		if (!filterQueryTrimmed) return sorted.map((prompt) => ({ prompt, snippet: undefined }));
 		const q = filterQueryTrimmed.toLowerCase();
 		return sorted
@@ -664,7 +764,7 @@ export function MaestroPromptsTab({
 				snippet: matchingLine(prompt.content, filterQueryTrimmed),
 			}))
 			.filter((entry) => entry.matches);
-	}, [prompts, filterQueryTrimmed, hasUnsavedChanges, selectedPrompt?.id]);
+	}, [allPrompts, filterQueryTrimmed, hasUnsavedChanges, selectedPrompt?.id]);
 
 	// Read at filter time to hand focus back to the list; a ref keeps the
 	// Escape ladder off the filtered list's identity.
@@ -702,7 +802,7 @@ export function MaestroPromptsTab({
 
 	const handleSelectPrompt = useCallback(
 		(id: string) => {
-			const prompt = prompts.find((p) => p.id === id);
+			const prompt = allPrompts.find((p) => p.id === id);
 			if (!prompt) return;
 			if (hasUnsavedChanges) {
 				const discard = window.confirm('You have unsaved changes. Discard them?');
@@ -759,7 +859,7 @@ export function MaestroPromptsTab({
 						? { ...prev, content: editedContent, isModified: true, hasDefaultDrifted: false }
 						: null
 				);
-				setIsShowingDefault(false);
+				setComparisonView(null);
 				setHasUnsavedChanges(false);
 				setSuccessMessage('Changes saved');
 			} else {
@@ -807,7 +907,7 @@ export function MaestroPromptsTab({
 						: null
 				);
 				setEditedContent(result.content);
-				setIsShowingDefault(false);
+				setComparisonView(null);
 				setHasUnsavedChanges(false);
 				setSuccessMessage('Reset to default');
 			} else {
@@ -827,8 +927,30 @@ export function MaestroPromptsTab({
 		}
 	}, [selectedPrompt]);
 
+	const canDiffAgainstDefault = !!selectedPrompt?.isModified || hasUnsavedChanges;
+	const diffButtonTitle =
+		comparisonView === 'diff'
+			? 'Exit diff view'
+			: 'Show what you changed compared to the bundled default';
+
 	const editorHeaderActions = (
 		<>
+			{canDiffAgainstDefault && (
+				<button
+					className="expand-toggle-button"
+					onClick={handleToggleDiff}
+					disabled={isLoadingBundledDefault}
+					title={diffButtonTitle}
+					aria-pressed={comparisonView === 'diff'}
+					data-testid="prompt-diff-toggle"
+					style={{
+						color: comparisonView === 'diff' ? theme.colors.accent : theme.colors.textDim,
+						borderColor: comparisonView === 'diff' ? theme.colors.accent : theme.colors.border,
+					}}
+				>
+					<FileDiff className="w-3.5 h-3.5" />
+				</button>
+			)}
 			{selectedPrompt?.hasDefaultDrifted && (
 				<button
 					className="expand-toggle-button"
@@ -875,20 +997,91 @@ export function MaestroPromptsTab({
 	 * a find bar, so there is no cursor into the results.
 	 */
 	useEffect(() => {
-		if (viewMode !== 'edit' || isShowingDefault) return;
+		if (viewMode !== 'edit' || comparisonView) return;
 		editorRef.current?.setSearchMatches(searchMatchRanges(editedContent, filterQueryTrimmed), -1);
-	}, [viewMode, isShowingDefault, editedContent, filterQueryTrimmed]);
+	}, [viewMode, comparisonView, editedContent, filterQueryTrimmed]);
 
 	const renderEditorBody = useCallback(() => {
+		// A plugin owns its prompt's content, so it is shown in the same editor
+		// with writing switched off - readable and copyable, never saveable.
+		if (isSelectedPluginPrompt) {
+			return (
+				<div className="prompt-editor-shell" style={{ borderColor: theme.colors.border }}>
+					<MarkdownEditor
+						key={`plugin-${selectedPrompt?.id ?? 'none'}`}
+						value={editedContent}
+						onChange={() => {}}
+						readOnly
+						language="markdown"
+						theme={theme}
+					/>
+				</div>
+			);
+		}
+
 		// The bundled default is a read-only comparison view, so it takes the
 		// editor's place rather than opening beside it - and it is shown as
 		// SOURCE, since the point is to diff wording against your own copy.
+		if (comparisonView === 'diff') {
+			return (
+				<div
+					className="prompt-diff"
+					// Focusable for the same reason as the preview: the arrow keys
+					// should scroll it without a click first.
+					tabIndex={0}
+					style={{
+						borderColor: theme.colors.accent,
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+					data-testid="prompt-diff"
+				>
+					<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
+					<div className="prompt-diff-legend font-mono" style={{ color: theme.colors.textDim }}>
+						<span>- bundled default</span>
+						<span>
+							+ your version
+							{hasUnsavedChanges ? ' (including unsaved edits)' : ''}
+						</span>
+					</div>
+					{bundledDefaultError ? (
+						<p className="prompt-diff-empty" style={{ color: theme.colors.error }}>
+							Failed to load bundled default: {bundledDefaultError}
+						</p>
+					) : !promptDiffFiles || promptDiffFiles.length === 0 ? (
+						<p className="prompt-diff-empty" style={{ color: theme.colors.textDim }}>
+							No differences from the bundled default.
+						</p>
+					) : (
+						<div className="font-mono text-sm">
+							{promptDiffFiles.map((file) =>
+								file.parsedDiff.map((parsedFile, index) => (
+									<Diff
+										key={`${file.newPath}-${index}`}
+										viewType="unified"
+										diffType={parsedFile.type}
+										hunks={parsedFile.hunks}
+									>
+										{(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+									</Diff>
+								))
+							)}
+						</div>
+					)}
+				</div>
+			);
+		}
+
 		if (isShowingDefault) {
 			return (
 				<div className="prompt-editor-shell" style={{ borderColor: theme.colors.warning }}>
 					<MarkdownEditor
 						key={`default-${selectedPrompt?.id ?? 'none'}`}
-						value={bundledDefaultContent}
+						value={
+							bundledDefaultError
+								? `Failed to load bundled default: ${bundledDefaultError}`
+								: bundledDefaultContent
+						}
 						onChange={() => {}}
 						readOnly
 						language="markdown"
@@ -962,8 +1155,14 @@ export function MaestroPromptsTab({
 			</>
 		);
 	}, [
+		isSelectedPluginPrompt,
+		comparisonView,
 		isShowingDefault,
 		bundledDefaultContent,
+		bundledDefaultError,
+		promptDiffFiles,
+		hasUnsavedChanges,
+		colorBlindMode,
 		viewMode,
 		previewContent,
 		isBuildingPreview,
@@ -987,7 +1186,7 @@ export function MaestroPromptsTab({
 			{!isEditorExpanded && (
 				<div className="prompts-tab-header-text">
 					<div className="text-xs font-bold opacity-70 uppercase mb-1">Core System Prompts</div>
-					<p className="text-xs opacity-50">
+					<p className="text-xs opacity-70">
 						Customize the system prompts used by Maestro features. Changes take effect immediately.
 						Use <code className="text-xs opacity-70">{'{{INCLUDE:name}}'}</code> to reference other
 						prompt files.
@@ -1064,6 +1263,8 @@ export function MaestroPromptsTab({
 				editorTokenCount={editorTokenCount}
 				editorHeaderActions={editorHeaderActions}
 				showModifiedBadge={selectedPrompt?.isModified}
+				onModifiedBadgeClick={handleToggleDiff}
+				modifiedBadgeTitle={diffButtonTitle}
 				showDefaultDriftedBadge={selectedPrompt?.hasDefaultDrifted}
 				renderEditorBody={renderEditorBody}
 				successMessage={successMessage}
@@ -1071,7 +1272,7 @@ export function MaestroPromptsTab({
 				primaryAction={{
 					label: isSaving ? 'Saving...' : 'Save',
 					loading: isSaving,
-					disabled: !hasUnsavedChanges,
+					disabled: !hasUnsavedChanges || isSelectedPluginPrompt,
 					onClick: handleSave,
 				}}
 				secondaryAction={{

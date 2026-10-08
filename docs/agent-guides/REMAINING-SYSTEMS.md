@@ -192,7 +192,7 @@ export interface FileNode {
 
 ## 3. Web Utilities (`src/web/utils/`, ~300 lines)
 
-Utilities for the web/mobile interface (PWA). These serve the `src/web/` subsystem only and have no overlap with renderer utilities.
+Utilities that once served the legacy `src/web/` browser subsystem. After the Phase 06 mobile retirement, only `serviceWorker.ts` (and its `logger.ts` dependency) is still load-bearing - it registers the PWA service worker from `src/web-desktop/bootstrap.ts`. The rest (`config.ts`, `cssCustomProperties.ts`, `viewState.ts`) is orphaned dead code documented here for reference; the browser interface is now the web-desktop bundle, which reuses the renderer's own utilities. See [WEB-MOBILE.md](WEB-MOBILE.md).
 
 ### config.ts (152 lines)
 
@@ -304,7 +304,9 @@ Returns: `{ success, draftPrUrl, draftPrNumber, autoRunPath, isFork, forkSlug }`
 - **Auto Run** - Symphony sets up Auto Run documents, then the actual document processing happens via the standard batch/Auto Run system in the renderer (useBatchProcessor, batchStateMachine). Symphony Runner only does the git/PR scaffolding.
 - **CLI** - No overlap. The CLI has its own playbook processing (`src/cli/services/playbooks.ts`) which is independent.
 - **Group Chat** - No direct connection. Symphony sessions can participate in group chats, but the runner itself has no group chat logic.
-- **IPC integration** - Called from `src/main/ipc/handlers/symphony.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
+- **IPC integration** - Called from `src/main/ipc/handlers/symphony/contributionStart.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
+
+- **IPC integration** - Called from `src/main/ipc/handlers/symphony/contributionStart.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
 
 ---
 

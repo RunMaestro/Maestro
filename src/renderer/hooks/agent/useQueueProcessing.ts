@@ -7,7 +7,13 @@
  *   - Recovers stuck queued items from previous app session on startup
  *   - Polls a stuck queue back to life (see QUEUE_DRAIN_RECHECK_MS)
  *
- * Reads from: sessionStore (sessionsLoaded, sessions), agentStore, settingsStore
+ * PERF: Does not subscribe to the full `sessions` array. A compact
+ * `idleQueuedSignature` string only changes when an idle session gains or
+ * loses a runnable queue item, so MaestroConsoleInner is not re-rendered on
+ * log/token/busy streaming updates. Session objects are read via getState()
+ * inside effects at event time.
+ *
+ * Reads from: sessionStore (sessionsLoaded, idle-queue signature), agentStore
  */
 
 import { useEffect, useRef, useCallback } from 'react';
@@ -18,16 +24,21 @@ import type {
 	SpecKitCommand,
 	OpenSpecCommand,
 	BmadCommand,
+	Session,
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useAgentStore } from '../../stores/agentStore';
+import { useAgentStore, type ProcessQueuedItemDeps } from '../../stores/agentStore';
 import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
-import { hasPendingRetry, useRetryStore } from '../../stores/retryStore';
+import {
+	hasPendingRetry,
+	registerDispatchDepsProvider,
+	useRetryStore,
+} from '../../stores/retryStore';
 import { queueIsHeldByRetry } from './internal/helpers/exitDequeue';
 import { logger } from '../../utils/logger';
 
@@ -78,48 +89,72 @@ export interface UseQueueProcessingReturn {
 const QUEUE_DRAIN_RECHECK_MS = 4000;
 
 // ============================================================================
+// Selectors
+// ============================================================================
+
+/**
+ * Stable string that changes only when the set of idle sessions with a
+ * runnable queue item changes (session id + next runnable item id).
+ */
+export function selectIdleQueuedSignature(state: { sessions: Session[] }): string {
+	return state.sessions
+		.filter((sess) => sess.state === 'idle' && hasRunnableQueueItem(sess.executionQueue ?? []))
+		.map((sess) => {
+			const item = nextRunnableQueueItem(sess.executionQueue ?? []);
+			return `${sess.id}:${item?.id ?? ''}`;
+		})
+		.join('|');
+}
+
+/** The deps `processQueuedItem` needs, read from the hook's live refs. */
+function buildDispatchDeps(d: UseQueueProcessingDeps): ProcessQueuedItemDeps {
+	return {
+		conductorProfile: d.conductorProfile,
+		customAICommands: d.customAICommandsRef.current ?? [],
+		speckitCommands: d.speckitCommandsRef.current ?? [],
+		openspecCommands: d.openspecCommandsRef.current ?? [],
+		bmadCommands: d.bmadCommandsRef?.current ?? [],
+	};
+}
+
+// ============================================================================
 // Hook implementation
 // ============================================================================
 
 export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProcessingReturn {
-	const {
-		conductorProfile,
-		customAICommandsRef,
-		speckitCommandsRef,
-		openspecCommandsRef,
-		bmadCommandsRef,
-	} = deps;
+	const depsRef = useRef(deps);
+	depsRef.current = deps;
 
-	// --- Reactive subscriptions ---
+	// --- Narrow reactive subscriptions (not the full sessions array) ---
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
-	const sessions = useSessionStore((s) => s.sessions);
+	const idleQueuedSignature = useSessionStore(selectIdleQueuedSignature);
 	// Runtime recovery holds the queue while a retry counts down (see
 	// dispatchQueuedItem). Subscribing to the retry entries re-runs that effect
 	// the moment one clears - cancelled, recovered, or superseded - so a held
 	// queue drains then instead of waiting for an unrelated session change.
 	const retries = useRetryStore((s) => s.retries);
 
-	// --- Store actions (stable via getState) ---
-	const { setSessions } = useSessionStore.getState();
-
 	// --- Refs ---
 	const processQueuedItemRef = useRef<
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
 
-	// Process a queued item - delegates to agentStore action
-	const processQueuedItem = useCallback(
-		async (sessionId: string, item: QueuedItem) => {
-			await useAgentStore.getState().processQueuedItem(sessionId, item, {
-				conductorProfile,
-				customAICommands: customAICommandsRef.current ?? [],
-				speckitCommands: speckitCommandsRef.current ?? [],
-				openspecCommands: openspecCommandsRef.current ?? [],
-				bmadCommands: bmadCommandsRef?.current ?? [],
-			});
-		},
-		[conductorProfile, bmadCommandsRef]
-	);
+	// Process a queued item - delegates to agentStore action.
+	// Stable identity: conductor profile + command refs read from depsRef.
+	const processQueuedItem = useCallback(async (sessionId: string, item: QueuedItem) => {
+		await useAgentStore
+			.getState()
+			.processQueuedItem(sessionId, item, buildDispatchDeps(depsRef.current));
+	}, []);
+
+	// Agent Resilience replays through processQueuedItem, so a prompt spawned by
+	// any OTHER path (the composer's idle send, remote dispatch) needs these same
+	// deps on its snapshot. Registering the one builder here keeps every snapshot
+	// resolving slash commands exactly as a queued send would.
+	useEffect(() => {
+		registerDispatchDepsProvider(() => buildDispatchDeps(depsRef.current));
+		return () => registerDispatchDepsProvider(null);
+	}, []);
 
 	// Update ref for processQueuedItem so batch exit handler can use it
 	processQueuedItemRef.current = processQueuedItem;
@@ -134,6 +169,8 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// back. `drainIdleQueues` does exactly that.
 	const dispatchQueuedItem = useCallback(
 		(session: { id: string; executionQueue: QueuedItem[] }): boolean => {
+			const { setSessions } = useSessionStore.getState();
+
 			// Skip paused items: dispatch the first runnable one. If all items are
 			// held, there's nothing to do.
 			const firstItem = nextRunnableQueueItem(session.executionQueue);
@@ -231,43 +268,23 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			const dispatchedOntoTabId: string | null = dequeuedOntoTabId;
 			if (!dispatchedOntoTabId) return false;
 
-			// Process the item
+			// Process the item. Releasing the tab and putting the prompt back is
+			// `agentStore.processQueuedItem`'s job - it releases only the tab this
+			// dispatch marked busy (the old sweep over every busy tab also cleared
+			// tabs running turns of their own, which told this effect the agent was
+			// free: it dispatched the next queued item into the same live process,
+			// failed the same way, and walked the whole queue into the ground one
+			// message per render).
 			processQueuedItem(session.id, firstItem).catch((err) => {
-				console.error(`[QueueProcessing] Failed for session ${session.id}:`, err);
-				// Reset busy state and re-queue the failed item so it isn't lost
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== session.id) return s;
-						// Clear ONLY the tab this dispatch marked busy. The old sweep over
-						// every busy tab also cleared tabs running turns of their own, which
-						// told the recovery effect the agent was free: it dispatched the next
-						// queued item into the same live process, failed the same way, and
-						// walked the whole queue into the ground one message per render.
-						const aiTabs = s.aiTabs.map((tab) =>
-							tab.id === dispatchedOntoTabId && tab.state === 'busy'
-								? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-								: tab
-						);
-						// Likewise the agent only goes idle if nothing else is still working.
-						const stillBusy = aiTabs.some((tab) => tab.state === 'busy');
-						return {
-							...s,
-							...(stillBusy
-								? {}
-								: {
-										state: 'idle' as SessionState,
-										busySource: undefined,
-										thinkingStartTime: undefined,
-									}),
-							executionQueue: [firstItem, ...s.executionQueue],
-							aiTabs,
-						};
-					})
+				logger.error(
+					`[QueueProcessing] Dispatch failed for session ${session.id}, item returned to queue`,
+					undefined,
+					err
 				);
 			});
 			return true;
 		},
-		[processQueuedItem, setSessions]
+		[processQueuedItem]
 	);
 
 	// --- Stuck-queue watchdog ---
@@ -353,13 +370,27 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// while items remain in the queue. This handles cases where onExit skipped queue
 	// processing because the session was in error state (e.g., agent errored then exited,
 	// user clears the error → session goes idle but nobody dispatches the queue).
+	//
+	// This is also the standard-query auto-resume path for a limit pause: the
+	// execution queue is preserved and persisted across the pause, so the
+	// auto-resume coordinator (Phase 3) only has to clear the paused error and let
+	// the session fall back to idle - this effect then re-dispatches the queued
+	// item that the limit interrupted. A direct (non-queued) send that hit the
+	// limit isn't in the queue, so it's captured separately as
+	// `recoveryAction.lastUserPrompt` in useAgentErrorListener for the coordinator
+	// to re-fire.
+	//
+	// Triggered by idleQueuedSignature (not full sessions) so streaming updates
+	// do not re-enter this effect or re-render MaestroConsoleInner.
 	useEffect(() => {
 		if (!sessionsLoaded || !startupRecoveryComplete.current) return;
 		drainIdleQueues();
-		// `retries` is not read here: it is a re-run trigger so a queue held by
-		// `dispatchQueuedItem`'s resilience check gets a fresh look the moment the
-		// retry that held it goes away.
-	}, [sessionsLoaded, sessions, retries, drainIdleQueues]);
+		// Neither `idleQueuedSignature` nor `retries` is read in the body: both are
+		// re-run triggers. The signature fires when a session goes idle holding a
+		// runnable item, and `retries` fires when a queue held by
+		// `dispatchQueuedItem`'s resilience check gets a fresh look because the
+		// retry that held it went away - cancelled, recovered, or superseded.
+	}, [sessionsLoaded, idleQueuedSignature, retries, drainIdleQueues]);
 
 	return {
 		processQueuedItem,

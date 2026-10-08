@@ -12,10 +12,12 @@ import type {
 	FeedbackAttachmentPayload,
 	FeedbackAuthResponse,
 	FeedbackConversationSubmitPayload,
+	FeedbackDraft,
 	FeedbackGhLoginCommand,
 	FeedbackIssueSearchResponse,
 	FeedbackSubmissionPayload,
 	FeedbackSubmitResponse,
+	SubmittedIssue,
 } from '../../shared/feedback';
 import type { FeedbackAccountsResponse } from '../../shared/feedbackAccounts';
 
@@ -24,8 +26,14 @@ export type {
 	FeedbackAuthResponse,
 	FeedbackCategory,
 	FeedbackConversationSubmitPayload,
+	FeedbackDraft,
+	FeedbackDraftAttachment,
+	FeedbackDraftMessage,
+	FeedbackDraftResponse,
+	FeedbackDraftStructured,
 	FeedbackSubmissionPayload,
 	FeedbackSubmitResponse,
+	SubmittedIssue,
 } from '../../shared/feedback';
 
 /**
@@ -67,6 +75,20 @@ export interface FeedbackApi {
 	 * Subscribe to an existing issue (+1 reaction) and optionally comment
 	 */
 	subscribeIssue: (issueNumber: number, comment?: string) => Promise<FeedbackSubmitResponse>;
+	/**
+	 * Persisted, resumable feedback drafts (list / upsert / delete)
+	 */
+	drafts: {
+		list: () => Promise<{ drafts: FeedbackDraft[] }>;
+		save: (draft: FeedbackDraft) => Promise<{ draft: FeedbackDraft }>;
+		delete: (id: string) => Promise<Record<string, never>>;
+	};
+	/** Persisted history of issues the user has submitted (list / delete / refresh state) */
+	issues: {
+		list: () => Promise<{ issues: SubmittedIssue[] }>;
+		delete: (issueNumber: number) => Promise<Record<string, never>>;
+		refreshStates: () => Promise<{ issues: SubmittedIssue[] }>;
+	};
 	/**
 	 * Accounts the feedback chat can run as, checked and in pick order
 	 */
@@ -112,6 +134,21 @@ export function createFeedbackApi(): FeedbackApi {
 
 		subscribeIssue: (issueNumber: number, comment?: string): Promise<FeedbackSubmitResponse> =>
 			ipcRenderer.invoke('feedback:subscribe-issue', { issueNumber, comment }),
+
+		drafts: {
+			list: (): Promise<{ drafts: FeedbackDraft[] }> => ipcRenderer.invoke('feedback:drafts:list'),
+			save: (draft: FeedbackDraft): Promise<{ draft: FeedbackDraft }> =>
+				ipcRenderer.invoke('feedback:drafts:save', draft),
+			delete: (id: string): Promise<Record<string, never>> =>
+				ipcRenderer.invoke('feedback:drafts:delete', { id }),
+		},
+		issues: {
+			list: (): Promise<{ issues: SubmittedIssue[] }> => ipcRenderer.invoke('feedback:issues:list'),
+			delete: (issueNumber: number): Promise<Record<string, never>> =>
+				ipcRenderer.invoke('feedback:issues:delete', { number: issueNumber }),
+			refreshStates: (): Promise<{ issues: SubmittedIssue[] }> =>
+				ipcRenderer.invoke('feedback:issues:refresh-states'),
+		},
 
 		listAccounts: (): Promise<FeedbackAccountsResponse> =>
 			ipcRenderer.invoke('feedback:list-accounts'),

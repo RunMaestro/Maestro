@@ -14,6 +14,17 @@ vi.mock('../../../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: (keys: string[]) => keys.join('+'),
 }));
 
+// The Document Graph entries are gated on room, not capability, so the phone
+// branch is the only thing these tests need to steer. Spread the real module so
+// any other consumer in the tree keeps its genuine implementation.
+const { mockUsePhoneLayout } = vi.hoisted(() => ({ mockUsePhoneLayout: vi.fn(() => false) }));
+vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../../../renderer/hooks/ui/useViewportBreakpoint')
+	>()),
+	usePhoneLayout: () => mockUsePhoneLayout(),
+}));
+
 const theme = {
 	colors: {
 		bgSidebar: '#1a1a1a',
@@ -25,7 +36,7 @@ const theme = {
 	},
 } as any;
 
-const contextMenuPos = { top: 100, left: 200, ready: true };
+const contextMenuPos = { top: 100, left: 200, maxHeight: 600, ready: true };
 
 const fileNode: FileNode = { name: 'App.tsx', type: 'file' };
 const folderNode: FileNode = {
@@ -63,6 +74,7 @@ const defaultProps = {
 	onOpenInExplorer: vi.fn(),
 	onOpenNewFile: vi.fn(),
 	onOpenNewFolder: vi.fn(),
+	onNewAgentHere: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
 	onStageForAutoRun: vi.fn(),
@@ -81,6 +93,7 @@ const origMaestro = (window as any).maestro;
 describe('FileTreeContextMenu', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockUsePhoneLayout.mockReturnValue(false);
 		(window as any).maestro = { platform: 'darwin' };
 	});
 
@@ -127,6 +140,45 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Preview All 2 Files in Folder')).toBeTruthy();
 		expect(screen.getByText('Copy Path')).toBeTruthy();
 		expect(screen.queryByText('Preview')).toBeNull();
+	});
+
+	it('shows New Agent Here for a folder and fires the callback', () => {
+		const onNewAgentHere = vi.fn();
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				onNewAgentHere={onNewAgentHere}
+				contextMenu={makeContextMenu(folderNode)}
+			/>
+		);
+		fireEvent.click(screen.getByText('New Agent Here'));
+		expect(onNewAgentHere).toHaveBeenCalledTimes(1);
+	});
+
+	it('hides New Agent Here for files and for the empty-space root menu', () => {
+		const { unmount } = render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+		unmount();
+
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={{ x: 1, y: 2, node: null, path: '' }} />
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+	});
+
+	it('hides New Agent Here over SSH, where the folder path is remote', () => {
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				sshRemoteId="remote-1"
+				contextMenu={makeContextMenu(folderNode)}
+			/>
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+		// The rest of the folder menu is unaffected.
+		expect(screen.getByText('New Folder')).toBeTruthy();
 	});
 
 	it('offers Compress on a folder, including one with nothing to preview', () => {
@@ -337,6 +389,91 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Reveal in Finder')).toBeTruthy();
 	});
 
+	// -----------------------------------------------------------------------
+	// Document Graph is hidden on a phone
+	// -----------------------------------------------------------------------
+	describe('Document Graph on a phone', () => {
+		// A pan-and-zoom canvas needs room to be worth opening. It is not broken
+		// at 390px, it is just useless there, and it costs rows in a menu that
+		// already overflows the screen. All three routes to it are dropped.
+		const onGraphFolder = vi.fn();
+		const onGraphSelection = vi.fn();
+
+		it('hides the per-file entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />);
+			expect(screen.queryByText('Document Graph')).toBeNull();
+		});
+
+		it('hides the folder entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					onGraphFolder={onGraphFolder}
+				/>
+			);
+			expect(screen.queryByText('Open in Document Graph')).toBeNull();
+		});
+
+		it('hides the multi-selection entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={3}
+					selectedMarkdownCount={3}
+					onGraphSelection={onGraphSelection}
+				/>
+			);
+			expect(screen.queryByText('Open 3 in Document Graph')).toBeNull();
+		});
+
+		it('leaves the rest of the menu alone', () => {
+			// The gate must drop exactly three rows, not thin the menu out.
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />);
+			expect(screen.getByText('Preview')).toBeTruthy();
+			expect(screen.getByText('Copy Path')).toBeTruthy();
+			expect(screen.getByText('Rename')).toBeTruthy();
+			expect(screen.getByText('Delete')).toBeTruthy();
+		});
+
+		it('keeps all three entries on a desktop viewport', () => {
+			mockUsePhoneLayout.mockReturnValue(false);
+			const { unmount } = render(
+				<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />
+			);
+			expect(screen.getByText('Document Graph')).toBeTruthy();
+			unmount();
+
+			const folder = render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					onGraphFolder={onGraphFolder}
+				/>
+			);
+			expect(screen.getByText('Open in Document Graph')).toBeTruthy();
+			folder.unmount();
+
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={3}
+					selectedMarkdownCount={3}
+					onGraphSelection={onGraphSelection}
+				/>
+			);
+			expect(screen.getByText('Open 3 in Document Graph')).toBeTruthy();
+		});
+	});
+
 	describe('media actions', () => {
 		it('says Play rather than Preview, since media never becomes a tab', () => {
 			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mediaNode)} />);
@@ -397,7 +534,7 @@ describe('FileTreeContextMenu', () => {
 			<FileTreeContextMenu
 				{...defaultProps}
 				contextMenu={makeContextMenu(fileNode)}
-				contextMenuPos={{ top: 0, left: 0, ready: false }}
+				contextMenuPos={{ top: 0, left: 0, maxHeight: 600, ready: false }}
 			/>
 		);
 		const menu = document.body.querySelector('.fixed') as HTMLElement;

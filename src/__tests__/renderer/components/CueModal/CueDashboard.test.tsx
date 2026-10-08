@@ -4,8 +4,12 @@ import { CueDashboard } from '../../../../renderer/components/CueModal/CueDashbo
 import type { Theme } from '../../../../renderer/types';
 
 // Stub child components to isolate CueDashboard behavior
+const sessionsTableSpy = vi.fn();
 vi.mock('../../../../renderer/components/CueModal/SessionsTable', () => ({
-	SessionsTable: () => <div data-testid="sessions-table" />,
+	SessionsTable: (props: Record<string, unknown>) => {
+		sessionsTableSpy(props);
+		return <div data-testid="sessions-table" />;
+	},
 }));
 vi.mock('../../../../renderer/components/CueModal/ActiveRunsList', () => ({
 	ActiveRunsList: () => <div data-testid="active-runs" />,
@@ -62,6 +66,98 @@ function makeProps(
 describe('CueDashboard', () => {
 	beforeEach(() => {
 		statsSpy.mockClear();
+		sessionsTableSpy.mockClear();
+	});
+
+	// Right-clicking one agent opens a table of every Cue-enabled agent, so the
+	// id has to reach the table for the asked-for row to be marked.
+	describe('focused agent', () => {
+		function warned(id: string, name: string) {
+			return {
+				sessionId: id,
+				sessionName: name,
+				toolType: 'claude-code',
+				projectRoot: '/shared',
+				enabled: true,
+				subscriptionCount: 0,
+				activeRuns: 0,
+				ownershipWarning: 'A sibling agent owns this cue.yaml',
+			};
+		}
+		function plain(id: string, name: string) {
+			return {
+				sessionId: id,
+				sessionName: name,
+				toolType: 'claude-code',
+				projectRoot: '/shared',
+				enabled: true,
+				subscriptionCount: 2,
+				activeRuns: 0,
+			};
+		}
+
+		it('passes the focused agent down to the table', () => {
+			render(
+				<CueDashboard
+					{...makeProps({ sessions: [plain('s1', 'A'), plain('s2', 'B')], focusSessionId: 's2' })}
+				/>
+			);
+
+			expect(sessionsTableSpy).toHaveBeenLastCalledWith(
+				expect.objectContaining({ focusSessionId: 's2' })
+			);
+		});
+
+		// Ownership-warning rows are hidden behind the "Show N flagged" toggle by
+		// default. Highlighting one without revealing it scrolls to a row that was
+		// never rendered.
+		it('reveals flagged rows when the focused agent is one of them', () => {
+			render(
+				<CueDashboard
+					{...makeProps({
+						sessions: [plain('s1', 'Owner'), warned('s2', 'Sibling')],
+						focusSessionId: 's2',
+					})}
+				/>
+			);
+
+			const passed = sessionsTableSpy.mock.calls.at(-1)?.[0] as {
+				sessions: Array<{ sessionId: string }>;
+			};
+			expect(passed.sessions.map((s) => s.sessionId)).toContain('s2');
+		});
+
+		it('leaves flagged rows hidden when the focused agent is not flagged', () => {
+			render(
+				<CueDashboard
+					{...makeProps({
+						sessions: [plain('s1', 'Owner'), warned('s2', 'Sibling')],
+						focusSessionId: 's1',
+					})}
+				/>
+			);
+
+			const passed = sessionsTableSpy.mock.calls.at(-1)?.[0] as {
+				sessions: Array<{ sessionId: string }>;
+			};
+			expect(passed.sessions.map((s) => s.sessionId)).toEqual(['s1']);
+		});
+
+		// Hotkey / command palette / Settings open with no agent in hand.
+		it('is unchanged for the global entry points', () => {
+			render(
+				<CueDashboard
+					{...makeProps({ sessions: [plain('s1', 'Owner'), warned('s2', 'Sibling')] })}
+				/>
+			);
+
+			const passed = sessionsTableSpy.mock.calls.at(-1)?.[0] as {
+				sessions: Array<{ sessionId: string }>;
+				focusSessionId?: string;
+			};
+			expect(passed.focusSessionId).toBeUndefined();
+			expect(passed.sessions.map((s) => s.sessionId)).toEqual(['s1']);
+		});
 	});
 
 	it('loading=true renders loading indicator', () => {

@@ -1,31 +1,63 @@
-import React, { memo } from 'react';
-import { Brain, Eye, History, ImageIcon, Keyboard, PenLine, Pin } from 'lucide-react';
+import React, { memo, useCallback, useState } from 'react';
+import {
+	ArrowUp,
+	Brain,
+	Eye,
+	History,
+	ImageIcon,
+	Keyboard,
+	Mic,
+	MoreHorizontal,
+	PenLine,
+	Pin,
+	X,
+} from 'lucide-react';
 import type { Shortcut, Session, Theme, ThinkingMode } from '../../../types';
 import { formatEnterToSend, formatEnterToSendTooltip } from '../../../utils/shortcutFormatter';
-import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../../../shared/agentMetadata';
+import {
+	getPermissionModeLabel,
+	getPermissionModeTooltip,
+	resolveTabPermissionMode,
+} from '../../../../shared/agentMetadata';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { shortcutSuffix } from '../../ui/ShortcutHint';
+import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
+import { isCoarsePointer } from '../../../utils/touch';
+import { useViewportBreakpoint } from '../../../hooks/ui';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
+import {
+	nextPermissionMode,
+	permissionModeFields,
+	setShowThinkingFields,
+} from '../../../utils/tabHelpers';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
+import { ComposerOptionsSheet } from './ComposerOptionsSheet';
 import { ModelEffortPills } from './ModelEffortPills';
 
 interface ToolbarControlsProps {
 	session: Session;
 	theme: Theme;
 	isTerminalMode: boolean;
-	isReadOnlyMode: boolean;
 	canAttachImages: boolean;
 	hasReadOnlyCapability: boolean;
+	/** Whether `standard` mode is functional for this agent (has a working relay). */
+	hasStandardCapability: boolean;
 	enterToSend: boolean;
 	setEnterToSend: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
+	/** Whether the browser supports the Web Speech API (from useVoiceInput). */
+	voiceSupported?: boolean;
+	/** Whether voice dictation is currently listening. */
+	isVoiceListening?: boolean;
+	/** Toggle voice dictation on/off. Stable identity (see InputArea). */
+	onToggleVoiceInput?: () => void;
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
 	tabSaveToHistory: boolean;
 	onToggleTabSaveToHistory?: () => void;
-	onToggleTabReadOnlyMode?: () => void;
 	tabShowThinking: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
 	supportsThinking: boolean;
@@ -41,24 +73,32 @@ interface ToolbarControlsProps {
 	effortMenuOpen: boolean;
 	setEffortMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	effortMenuRef: React.RefObject<HTMLDivElement>;
+	/**
+	 * Send the composer's contents. Only used on a phone, where the send button
+	 * moves into this row (see the phone branch below); the desktop keeps it in
+	 * the column beside the composer.
+	 */
+	processInput?: () => void;
 }
 
 export const ToolbarControls = memo(function ToolbarControls({
 	session,
 	theme,
 	isTerminalMode,
-	isReadOnlyMode,
 	canAttachImages,
 	hasReadOnlyCapability,
+	hasStandardCapability,
 	enterToSend,
 	setEnterToSend,
 	setStagedImages,
+	voiceSupported,
+	isVoiceListening,
+	onToggleVoiceInput,
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
 	tabSaveToHistory,
 	onToggleTabSaveToHistory,
-	onToggleTabReadOnlyMode,
 	tabShowThinking,
 	onToggleTabShowThinking,
 	supportsThinking,
@@ -74,8 +114,32 @@ export const ToolbarControls = memo(function ToolbarControls({
 	effortMenuOpen,
 	setEffortMenuOpen,
 	effortMenuRef,
+	processInput,
 }: ToolbarControlsProps) {
 	const isAiMode = session.inputMode === 'ai';
+	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
+	const phone = usePhoneLayout();
+	const [toolbarExpanded, setToolbarExpanded] = useState(false);
+	const [optionsSheetOpen, setOptionsSheetOpen] = useState(false);
+	// On a phone every toggle moves into the options sheet, so the inline group
+	// never renders there however the "..." was last left.
+	const showToggleGroup = !phone && (!isNarrowViewport || toolbarExpanded);
+
+	// Voice dictation is a primary touch affordance, so it stays in the always-
+	// visible left action group (next to attach-image) rather than the collapsing
+	// toggle group - burying it behind the "..." overflow on the exact phones it
+	// targets would defeat the point. Shown only when the Web Speech API is
+	// supported AND the primary pointer is coarse (touch), so mouse/keyboard
+	// desktop users never see it.
+	const showVoiceButton = isAiMode && !!voiceSupported && !!onToggleVoiceInput && isCoarsePointer();
+
+	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
+	const rawPermissionMode: 'full' | 'standard' | 'readonly' = resolveTabPermissionMode(activeTab);
+	// Hide `standard` for agents without a working relay: if a stale tab is
+	// somehow in `standard`, display it as `full` so we never surface a
+	// non-functional mode.
+	const currentPermissionMode: 'full' | 'standard' | 'readonly' =
+		rawPermissionMode === 'standard' && !hasStandardCapability ? 'full' : rawPermissionMode;
 
 	// Advertise the full-screen model/effort switcher from inside the dropdowns
 	// the user already opened, which is where they are thinking about the
@@ -83,6 +147,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// binding is rebindable, its display differs per platform, and on a build
 	// that has no such shortcut this resolves to undefined so no hint renders
 	// instead of pointing at a key combo that does nothing.
+	// Handed to ModelEffortPills as raw keys rather than a formatted string:
+	// a shortcut the user has cleared is present in the map with an EMPTY key
+	// list, not absent from it - the store rebuilds the map from the bundled
+	// defaults on every load, so the entry always exists here. ShortcutHint and
+	// shortcutSuffix both render nothing for an empty list, which is what keeps
+	// a cleared binding from drawing a bare "Try: ".
 	const modelEffortKeys = shortcuts?.openModelEffort?.keys;
 
 	// The three tab-scoped toggles below are all bindable chords. Read them live
@@ -90,12 +160,205 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// tooltip: a user who rebinds one should see their own chord, not ours.
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
+	const activeTabId = activeTab?.id;
+
+	// One hidden file input, rendered by BOTH the phone row and the desktop row.
+	// The attach button reaches it by element id, so a second copy would give two
+	// elements the same id and the click would resolve to whichever mounted first.
+	const imageFileInput = (
+		<input
+			id="image-file-input"
+			type="file"
+			accept="image/*"
+			multiple
+			className="hidden"
+			onChange={(e) => {
+				const files = Array.from(e.target.files || []);
+				files.forEach((file) => {
+					const reader = new FileReader();
+					reader.onload = (event) => {
+						if (event.target?.result) {
+							const imageData = event.target.result as string;
+							setStagedImages((prev) =>
+								addStagedImageIfUnique(prev, imageData, showFlashNotification)
+							);
+						}
+					};
+					reader.onerror = (event) => {
+						captureException(reader.error ?? event, {
+							extra: {
+								component: 'InputArea.ToolbarControls',
+								action: 'attachImage.readError',
+								fileName: file.name,
+								fileType: file.type,
+								fileSize: file.size,
+							},
+						});
+						showFlashNotification?.('Failed to attach image');
+					};
+					reader.onabort = (event) => {
+						captureException(new Error('Image attachment read aborted'), {
+							extra: {
+								component: 'InputArea.ToolbarControls',
+								action: 'attachImage.readAbort',
+								fileName: file.name,
+								fileType: file.type,
+								fileSize: file.size,
+								eventType: event.type,
+							},
+						});
+						showFlashNotification?.('Image attachment canceled');
+					};
+					reader.readAsDataURL(file);
+				});
+				e.target.value = '';
+			}}
+		/>
+	);
+
+	// The sheet NAMES a mode rather than stepping to the next one, so both
+	// writes go through the shared field patches instead of a second inline copy
+	// of "keep readOnlyMode and permissionMode in lockstep" / "clear the
+	// thinking logs when the mode goes off".
+	const handlePermissionModeChange = useCallback(
+		(mode: 'full' | 'standard' | 'readonly') => {
+			if (!activeTabId) return;
+			updateSessionWith(session.id, (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) =>
+					t.id === activeTabId ? { ...t, ...permissionModeFields(mode) } : t
+				),
+			}));
+		},
+		[session.id, activeTabId]
+	);
+
+	const handleThinkingModeChange = useCallback(
+		(mode: ThinkingMode) => {
+			if (!activeTabId) return;
+			updateSessionWith(session.id, (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) =>
+					t.id === activeTabId ? { ...t, ...setShowThinkingFields(t, mode) } : t
+				),
+			}));
+		},
+		[session.id, activeTabId]
+	);
+
+	// Phone: the row holds only what a thumb reaches for mid-sentence - attach an
+	// image, send, and the "..." that opens every other setting as a half-screen
+	// sheet. The prompt composer and the notification bell are dropped outright
+	// (both open surfaces of their own, neither belongs on a 390px composer),
+	// the model and effort pills move into the sheet, and the send button moves
+	// here from the column beside the composer so the three controls sit on one
+	// reachable line.
+	if (phone) {
+		return (
+			<>
+				<div className="flex min-w-0 items-center gap-1 px-2 pb-2 pt-1">
+					{isTerminalMode && (
+						<div
+							className="text-xs font-mono opacity-60 px-2 truncate min-w-0 flex-1"
+							style={{ color: theme.colors.textDim }}
+						>
+							{formatTerminalCwd(session)}
+						</div>
+					)}
+					{isAiMode && canAttachImages && (
+						<button
+							onClick={() => document.getElementById('image-file-input')?.click()}
+							className="flex h-9 w-9 items-center justify-center rounded opacity-70"
+							title="Attach Image"
+							aria-label="Attach Image"
+						>
+							<ImageIcon className="w-5 h-5" />
+						</button>
+					)}
+					{showVoiceButton && (
+						<button
+							type="button"
+							onClick={onToggleVoiceInput}
+							className={`flex h-9 w-9 items-center justify-center rounded transition-colors ${
+								isVoiceListening ? 'animate-pulse' : 'opacity-70'
+							}`}
+							style={
+								isVoiceListening
+									? { color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }
+									: undefined
+							}
+							title={isVoiceListening ? 'Stop voice input' : 'Voice input'}
+							aria-label={isVoiceListening ? 'Stop voice input' : 'Start voice input'}
+							aria-pressed={!!isVoiceListening}
+						>
+							<Mic className="w-5 h-5" />
+						</button>
+					)}
+					{imageFileInput}
+					{/* Send sits in the MIDDLE, between the left actions and the "...", so
+					    it is the one control at the centre of the thumb's arc. */}
+					{processInput && (
+						<button
+							type="button"
+							onClick={() => processInput()}
+							className="mx-auto flex h-9 w-14 items-center justify-center rounded-lg shadow-sm transition-all"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.accentForeground,
+							}}
+							title={isTerminalMode ? 'Run command' : 'Send message'}
+							aria-label={isTerminalMode ? 'Run command' : 'Send message'}
+						>
+							<ArrowUp className="w-5 h-5" />
+						</button>
+					)}
+					<button
+						type="button"
+						onClick={() => setOptionsSheetOpen(true)}
+						className="flex h-9 w-9 items-center justify-center rounded-full transition-all opacity-70"
+						style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
+						title="More options"
+						aria-label="More options"
+						aria-haspopup="dialog"
+						aria-expanded={optionsSheetOpen}
+						data-testid="composer-options-button"
+					>
+						<MoreHorizontal className="w-5 h-5" />
+					</button>
+				</div>
+				{isAiMode && (
+					<ComposerOptionsSheet
+						open={optionsSheetOpen}
+						onClose={() => setOptionsSheetOpen(false)}
+						theme={theme}
+						agentId={session.toolType}
+						tabSaveToHistory={tabSaveToHistory}
+						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
+						hasReadOnlyCapability={hasReadOnlyCapability}
+						hasStandardCapability={hasStandardCapability}
+						permissionMode={currentPermissionMode}
+						onPermissionModeChange={handlePermissionModeChange}
+						supportsThinking={supportsThinking}
+						tabShowThinking={tabShowThinking}
+						onThinkingModeChange={onToggleTabShowThinking ? handleThinkingModeChange : undefined}
+						currentModel={currentModel}
+						availableModels={availableModels}
+						onModelChange={onModelChange}
+						currentEffort={currentEffort}
+						availableEfforts={availableEfforts}
+						onEffortChange={onEffortChange}
+					/>
+				)}
+			</>
+		);
+	}
+
 	return (
-		<div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
-			<div className="flex gap-1 items-center">
+		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
+			<div className="flex min-w-0 flex-1 gap-1 items-center">
 				{isTerminalMode && (
 					<div
-						className="text-xs font-mono opacity-60 px-2"
+						className="text-xs font-mono opacity-60 px-2 truncate"
 						style={{ color: theme.colors.textDim }}
 					>
 						{formatTerminalCwd(session)}
@@ -119,54 +382,26 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<ImageIcon className="w-4 h-4" />
 					</button>
 				)}
-				<input
-					id="image-file-input"
-					type="file"
-					accept="image/*"
-					multiple
-					className="hidden"
-					onChange={(e) => {
-						const files = Array.from(e.target.files || []);
-						files.forEach((file) => {
-							const reader = new FileReader();
-							reader.onload = (event) => {
-								if (event.target?.result) {
-									const imageData = event.target.result as string;
-									setStagedImages((prev) =>
-										addStagedImageIfUnique(prev, imageData, showFlashNotification)
-									);
-								}
-							};
-							reader.onerror = (event) => {
-								captureException(reader.error ?? event, {
-									extra: {
-										component: 'InputArea.ToolbarControls',
-										action: 'attachImage.readError',
-										fileName: file.name,
-										fileType: file.type,
-										fileSize: file.size,
-									},
-								});
-								showFlashNotification?.('Failed to attach image');
-							};
-							reader.onabort = (event) => {
-								captureException(new Error('Image attachment read aborted'), {
-									extra: {
-										component: 'InputArea.ToolbarControls',
-										action: 'attachImage.readAbort',
-										fileName: file.name,
-										fileType: file.type,
-										fileSize: file.size,
-										eventType: event.type,
-									},
-								});
-								showFlashNotification?.('Image attachment canceled');
-							};
-							reader.readAsDataURL(file);
-						});
-						e.target.value = '';
-					}}
-				/>
+				{showVoiceButton && (
+					<button
+						type="button"
+						onClick={onToggleVoiceInput}
+						className={`p-1 rounded transition-colors ${
+							isVoiceListening ? 'animate-pulse' : 'hover:bg-white/10 opacity-50 hover:opacity-100'
+						}`}
+						style={
+							isVoiceListening
+								? { color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }
+								: undefined
+						}
+						title={isVoiceListening ? 'Stop voice input' : 'Voice input'}
+						aria-label={isVoiceListening ? 'Stop voice input' : 'Start voice input'}
+						aria-pressed={!!isVoiceListening}
+					>
+						<Mic className="w-4 h-4" />
+					</button>
+				)}
+				{imageFileInput}
 				<ModelEffortPills
 					isVisible={isAiMode}
 					theme={theme}
@@ -186,11 +421,34 @@ export const ToolbarControls = memo(function ToolbarControls({
 				/>
 			</div>
 
-			<div className="flex items-center gap-2 ml-auto" data-tour="toolbar-toggles">
+			{isNarrowViewport && (
+				<button
+					type="button"
+					onClick={() => setToolbarExpanded((v) => !v)}
+					className="ml-auto flex h-7 w-7 items-center justify-center rounded-full transition-all opacity-60 hover:opacity-100"
+					style={{
+						color: theme.colors.textDim,
+						border: `1px solid ${theme.colors.border}`,
+					}}
+					title={toolbarExpanded ? 'Hide options' : 'Show options'}
+					aria-label={toolbarExpanded ? 'Hide toolbar options' : 'Show toolbar options'}
+				>
+					{toolbarExpanded ? (
+						<X className="w-3.5 h-3.5" />
+					) : (
+						<MoreHorizontal className="w-3.5 h-3.5" />
+					)}
+				</button>
+			)}
+
+			<div
+				className={`flex items-center gap-2 ${isNarrowViewport ? '' : 'ml-auto'} ${showToggleGroup ? '' : 'hidden'}`}
+				data-tour="toolbar-toggles"
+			>
 				{isAiMode && onToggleTabSaveToHistory && (
 					<button
 						onClick={onToggleTabSaveToHistory}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
+						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 							tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
 						}`}
 						style={{
@@ -206,31 +464,49 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<span>History</span>
 					</button>
 				)}
-				{isAiMode && onToggleTabReadOnlyMode && hasReadOnlyCapability && (
+				{isAiMode && hasReadOnlyCapability && (
 					<button
-						onClick={onToggleTabReadOnlyMode}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
-							isReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
+						onClick={() =>
+							handlePermissionModeChange(
+								nextPermissionMode(currentPermissionMode, hasStandardCapability)
+							)
+						}
+						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
+							currentPermissionMode === 'standard' ? 'opacity-40 hover:opacity-70' : ''
 						}`}
 						style={{
-							backgroundColor: isReadOnlyMode ? `${theme.colors.warning}25` : 'transparent',
-							color: isReadOnlyMode ? theme.colors.warning : theme.colors.textDim,
-							border: isReadOnlyMode
-								? `1px solid ${theme.colors.warning}50`
-								: '1px solid transparent',
+							backgroundColor:
+								currentPermissionMode === 'readonly'
+									? `${theme.colors.warning}25`
+									: currentPermissionMode === 'full'
+										? `${theme.colors.accent}25`
+										: 'transparent',
+							color:
+								currentPermissionMode === 'readonly'
+									? theme.colors.warning
+									: currentPermissionMode === 'full'
+										? theme.colors.accent
+										: theme.colors.textDim,
+							border:
+								currentPermissionMode === 'readonly'
+									? `1px solid ${theme.colors.warning}50`
+									: currentPermissionMode === 'full'
+										? `1px solid ${theme.colors.accent}50`
+										: '1px solid transparent',
 						}}
-						title={`${getReadOnlyModeTooltip(session.toolType)}${shortcutSuffix(
-							tabShortcuts.toggleReadOnlyMode?.keys
-						)}`}
+						title={`${getPermissionModeTooltip(
+							currentPermissionMode,
+							session.toolType
+						)}${shortcutSuffix(tabShortcuts.toggleReadOnlyMode?.keys)}`}
 					>
 						<Eye className="w-3 h-3" />
-						<span>{getReadOnlyModeLabel(session.toolType)}</span>
+						<span>{getPermissionModeLabel(currentPermissionMode, session.toolType)}</span>
 					</button>
 				)}
 				{isAiMode && supportsThinking && onToggleTabShowThinking && (
 					<button
 						onClick={onToggleTabShowThinking}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
+						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 							tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
 						}`}
 						style={{

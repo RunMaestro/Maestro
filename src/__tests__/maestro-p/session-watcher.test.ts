@@ -6,14 +6,12 @@
  * whose creation time is at or after the recorded spawn timestamp.
  *
  * Strategy: drive against real temp directories with `fs.mkdtempSync`
- * for isolation and a small poll interval for snappy assertions. No
- * fake timers - the watcher's contract is fundamentally about real
- * filesystem behavior (birthtime, readdir, ENOENT recovery), and these
- * tests should fail if cross-platform fs semantics change in an
- * incompatible way.
+ * for isolation and a small poll interval for snappy assertions. Terminal
+ * timeout cases fake only scheduler time; positive filesystem behavior keeps
+ * native timers so birthtime, readdir, and ENOENT recovery stay exercised.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -30,6 +28,23 @@ const FAST_POLL_MS = 10;
 
 async function sleep(ms: number): Promise<void> {
 	await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function expectDiscoveryRejection(
+	promise: Promise<unknown>,
+	message: RegExp | string
+): Promise<void> {
+	return promise.then(
+		() => {
+			throw new Error('Expected session discovery to reject');
+		},
+		(error: unknown) => {
+			expect(error).toBeInstanceOf(Error);
+			if (error instanceof Error) {
+				expect(error.message).toMatch(message);
+			}
+		}
+	);
 }
 
 describe('session-watcher', () => {
@@ -251,19 +266,28 @@ describe('session-watcher', () => {
 			const spawnTimestamp = Date.now();
 			// A different session shows up, but never the expected one.
 			writeJsonl('some-other-id');
-			await expect(
-				discoverSessionId({
+			vi.useFakeTimers();
+			try {
+				const discoveryPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					expectSessionId: 'never-written-id',
 					timeoutMs: 250,
 					pollIntervalMs: FAST_POLL_MS,
-				})
-			).rejects.toThrow(/never-written-id\.jsonl did not appear/);
+				});
+				const rejection = expectDiscoveryRejection(
+					discoveryPromise,
+					/never-written-id\.jsonl did not appear/
+				);
+				await vi.advanceTimersByTimeAsync(250);
+				await rejection;
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
-		it('tolerates the projects dir not existing yet — picks up the file once it appears', async () => {
+		it('tolerates the projects dir not existing yet - picks up the file once it appears', async () => {
 			const spawnTimestamp = Date.now();
 			// Kick off discovery before the directory exists. Claude lazily
 			// creates `projects/<slug>/` on the first session for a cwd.
@@ -326,15 +350,21 @@ describe('session-watcher', () => {
 
 		it('rejects with a descriptive error when no file appears within the timeout', async () => {
 			const spawnTimestamp = Date.now();
-			await expect(
-				discoverSessionId({
+			vi.useFakeTimers();
+			try {
+				const discoveryPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 100,
 					pollIntervalMs: FAST_POLL_MS,
-				})
-			).rejects.toThrow(/no new \.jsonl appeared/);
+				});
+				const rejection = expectDiscoveryRejection(discoveryPromise, /no new \.jsonl appeared/);
+				await vi.advanceTimersByTimeAsync(100);
+				await rejection;
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('rejects when only pre-spawn files exist (i.e., none satisfy the timestamp filter)', async () => {
@@ -342,15 +372,21 @@ describe('session-watcher', () => {
 			writeJsonl('stale-session');
 			await sleep(20);
 			const spawnTimestamp = Date.now();
-			await expect(
-				discoverSessionId({
+			vi.useFakeTimers();
+			try {
+				const discoveryPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 100,
 					pollIntervalMs: FAST_POLL_MS,
-				})
-			).rejects.toThrow(/no new \.jsonl appeared/);
+				});
+				const rejection = expectDiscoveryRejection(discoveryPromise, /no new \.jsonl appeared/);
+				await vi.advanceTimersByTimeAsync(100);
+				await rejection;
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('builds the watch path from configDir + projects/ + cwdSlug(cwd)', async () => {
@@ -361,31 +397,36 @@ describe('session-watcher', () => {
 			await sleep(5);
 			fs.writeFileSync(path.join(otherSlugDir, 'wrong-session.jsonl'), '');
 
-			await expect(
-				discoverSessionId({
+			vi.useFakeTimers();
+			try {
+				const wrongPathPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 100,
 					pollIntervalMs: FAST_POLL_MS,
-				})
-			).rejects.toThrow(/no new \.jsonl appeared/);
+				});
+				const wrongPathRejection = expectDiscoveryRejection(
+					wrongPathPromise,
+					/no new \.jsonl appeared/
+				);
+				await vi.advanceTimersByTimeAsync(100);
+				await wrongPathRejection;
 
-			// And the error mentions the correct (expected) directory.
-			let caught: Error | null = null;
-			try {
-				await discoverSessionId({
+				// And the error mentions the correct (expected) directory.
+				const expectedPathPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 50,
 					pollIntervalMs: FAST_POLL_MS,
 				});
-			} catch (err) {
-				caught = err as Error;
+				const expectedPathRejection = expectDiscoveryRejection(expectedPathPromise, expectedSlug);
+				await vi.advanceTimersByTimeAsync(50);
+				await expectedPathRejection;
+			} finally {
+				vi.useRealTimers();
 			}
-			expect(caught).not.toBeNull();
-			expect(caught!.message).toContain(expectedSlug);
 		});
 	});
 });

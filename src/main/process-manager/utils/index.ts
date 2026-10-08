@@ -1,4 +1,5 @@
 export { appendToBuffer } from './bufferUtils';
+export { getChildProcesses, isPidAlive, type ChildProcessInfo } from './childProcessInfo';
 export { settleProvisionalAgentError } from './provisionalAgentError';
 export { parseDataUrl, saveImageToTempFile, cleanupTempFiles } from './imageUtils';
 export { buildStreamJsonMessage } from './streamJsonBuilder';

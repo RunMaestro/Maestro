@@ -542,6 +542,97 @@ describe('CodexOutputParser', () => {
 		});
 	});
 
+	describe('call_id correlation', () => {
+		const functionCall = (name: string, callId: string, args: string) =>
+			JSON.stringify({
+				type: 'response_item',
+				payload: { type: 'function_call', name, arguments: args, call_id: callId },
+			});
+		const functionCallOutput = (callId: string, output: string) =>
+			JSON.stringify({
+				type: 'response_item',
+				payload: { type: 'function_call_output', call_id: callId, output },
+			});
+
+		it('forwards call_id as toolCallId on both halves of a call', () => {
+			// Without an id the renderer merges a completion onto whichever
+			// same-named badge is still running (issue #1485).
+			const p = new CodexOutputParser();
+
+			const call = p.parseJsonLine(functionCall('shell', 'call_a', '{"command":"ls"}'));
+			const output = p.parseJsonLine(functionCallOutput('call_a', 'a.txt'));
+
+			expect(call?.toolCallId).toBe('call_a');
+			expect(output?.toolCallId).toBe('call_a');
+			expect(output?.toolName).toBe('shell');
+		});
+
+		it('attributes parallel calls to their own tools regardless of settle order', () => {
+			// The single lastToolName slot labeled the FIRST output to arrive with
+			// the SECOND call's tool name.
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(functionCall('read_file', 'call_a', '{"path":"one.ts"}'));
+			p.parseJsonLine(functionCall('run_tests', 'call_b', '{}'));
+
+			const settleB = p.parseJsonLine(functionCallOutput('call_b', 'ok'));
+			const settleA = p.parseJsonLine(functionCallOutput('call_a', 'contents'));
+
+			expect(settleB).toMatchObject({ toolCallId: 'call_b', toolName: 'run_tests' });
+			expect(settleA).toMatchObject({ toolCallId: 'call_a', toolName: 'read_file' });
+		});
+
+		it('still carries the name over for a payload with no call_id', () => {
+			// Legacy/id-less payloads keep the lastToolName fallback.
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: { type: 'function_call', name: 'shell', arguments: '{}' },
+				})
+			);
+			const output = p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: { type: 'function_call_output', output: 'done' },
+				})
+			);
+
+			expect(output?.toolName).toBe('shell');
+			expect(output?.toolCallId).toBeUndefined();
+		});
+
+		it('correlates a command_execution across item.started and item.completed by item id', () => {
+			// Every command_execution badge is named 'shell', so the id is the only
+			// thing telling two parallel commands apart.
+			const p = new CodexOutputParser();
+
+			const started = p.parseJsonLine(
+				JSON.stringify({
+					type: 'item.started',
+					item: { id: 'item_1', type: 'command_execution', command: 'npm test' },
+				})
+			);
+			const completed = p.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						id: 'item_1',
+						type: 'command_execution',
+						command: 'npm test',
+						status: 'completed',
+						aggregated_output: 'ok',
+						exit_code: 0,
+					},
+				})
+			);
+
+			expect(started?.toolCallId).toBe('item_1');
+			expect(completed?.toolCallId).toBe('item_1');
+		});
+	});
+
 	describe('tool output truncation', () => {
 		it('should truncate tool output exceeding 10000 chars', () => {
 			const p = new CodexOutputParser();
@@ -835,6 +926,62 @@ describe('CodexOutputParser', () => {
 				})
 			);
 			expect(usageEvent?.usage?.contextWindow).toBe(200000);
+			// The window came from Codex's own turn_context, so it is authoritative
+			// even though it happens to equal the static fallback constant.
+			expect(usageEvent?.usage?.contextWindowReported).toBe(true);
+		});
+
+		it('should not flag the config/static-table seed as provider-reported', () => {
+			const p = new CodexOutputParser();
+
+			// No turn_context and no model_context_window anywhere: the window can
+			// only be the constructor's config / lookup-table seed.
+			const usageEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(usageEvent?.usage?.contextWindow).toBeGreaterThan(0);
+			expect(usageEvent?.usage?.contextWindowReported).toBe(false);
+		});
+
+		// Review of PR #1356 (item 2). `turn_context` cached the reported window on
+		// the instance but `token_count` did not, so when Codex carried
+		// `model_context_window` in `token_count` only, a single turn produced two
+		// different denominators: token_count reported the real window with the
+		// flag set (renderer rank 2), then turn.completed fell back to the
+		// constructor seed with the flag clear (rank 3, stored override wins). The
+		// gauge changed denominator mid-turn.
+		it('should cache a context window reported by token_count, not just turn_context', () => {
+			const p = new CodexOutputParser();
+
+			// No turn_context at all - the window arrives only on token_count.
+			const tokenCountEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {
+							model_context_window: 272000,
+							total_token_usage: { input_tokens: 100, output_tokens: 50 },
+						},
+					},
+				})
+			);
+			expect(tokenCountEvent?.usage?.contextWindow).toBe(272000);
+			expect(tokenCountEvent?.usage?.contextWindowReported).toBe(true);
+
+			// The very next event of the same turn must agree. Before the fix this
+			// returned the seed with contextWindowReported false.
+			const completedEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(completedEvent?.usage?.contextWindow).toBe(272000);
+			expect(completedEvent?.usage?.contextWindowReported).toBe(true);
 		});
 
 		it('should handle turn_context without payload', () => {
@@ -935,6 +1082,7 @@ describe('CodexOutputParser', () => {
 				expect(event?.usage?.cacheReadTokens).toBe(3000);
 				expect(event?.usage?.cacheCreationTokens).toBe(0);
 				expect(event?.usage?.contextWindow).toBe(400000);
+				expect(event?.usage?.contextWindowReported).toBe(true);
 				expect(event?.usage?.reasoningTokens).toBe(200);
 			});
 
@@ -958,6 +1106,8 @@ describe('CodexOutputParser', () => {
 
 				// Should fall back to cached context window (default model)
 				expect(event?.usage?.contextWindow).toBeGreaterThan(0);
+				// ...and that fallback is NOT provider-reported.
+				expect(event?.usage?.contextWindowReported).toBe(false);
 			});
 
 			it('should handle token_count with zero values', () => {
@@ -1308,6 +1458,48 @@ describe('CodexOutputParser', () => {
 					})
 				);
 				expect(orphan?.toolName).toBeUndefined();
+			});
+
+			it('keeps an id-less call named when an id-correlated one finishes first', () => {
+				// Interleaving: a legacy id-less call is still open when a correlated
+				// call starts and completes. The id-less output must still know its own
+				// name. Two things used to break it - every function_call overwrote
+				// `lastToolName`, and every completion cleared it - so this output
+				// arrived either mislabeled with the other tool or with no name at all.
+				const p = new CodexOutputParser();
+
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call', name: 'legacy_tool', arguments: '{}' },
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'correlated_tool',
+							arguments: '{}',
+							call_id: 'c9',
+						},
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c9', output: 'done' },
+					})
+				);
+
+				const idless = p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', output: 'legacy output' },
+					})
+				);
+
+				expect(idless?.toolName).toBe('legacy_tool');
 			});
 
 			it('should handle function_call_output with undefined output', () => {

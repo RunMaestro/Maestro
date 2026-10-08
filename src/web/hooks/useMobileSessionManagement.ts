@@ -148,6 +148,13 @@ export interface MobileSessionHandlers {
 	onCustomCommands: (commands: CustomCommand[]) => void;
 	onAutoRunStateChange: (sessionId: string, state: AutoRunState | null) => void;
 	onTabsChanged: (sessionId: string, aiTabs: AITabData[], newActiveTabId: string) => void;
+	onRenameTabResult: (
+		sessionId: string,
+		tabId: string,
+		success: boolean,
+		newName: string,
+		error?: string
+	) => void;
 }
 
 /**
@@ -796,6 +803,30 @@ export function useMobileSessionManagement(
 					activeTabIdRef.current = newActiveTabId;
 					setActiveTabId(newActiveTabId);
 				}
+			},
+			onRenameTabResult: (
+				sessionId: string,
+				tabId: string,
+				success: boolean,
+				newName: string,
+				error?: string
+			) => {
+				if (!success) {
+					webLogger.warn(`Rename tab failed: ${error || 'unknown error'}`, 'Mobile');
+					return;
+				}
+
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs?.map((tab) =>
+								tab.id === tabId ? { ...tab, name: newName || null } : tab
+							),
+						};
+					})
+				);
 			},
 		}),
 		[

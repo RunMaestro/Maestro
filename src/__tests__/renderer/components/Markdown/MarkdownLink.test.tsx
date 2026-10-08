@@ -10,9 +10,13 @@ vi.mock('../../../../renderer/utils/openUrl', () => ({
 vi.mock('../../../../renderer/utils/openMaestroLink', () => ({
 	openMaestroLink: vi.fn(),
 }));
+vi.mock('../../../../renderer/stores/notificationStore', () => ({
+	notifyToast: vi.fn(),
+}));
 
 import { openUrl } from '../../../../renderer/utils/openUrl';
 import { openMaestroLink } from '../../../../renderer/utils/openMaestroLink';
+import { notifyToast } from '../../../../renderer/stores/notificationStore';
 
 const theme = { colors: { accent: '#3366ff', accentText: '#88aaff' } } as any;
 
@@ -46,6 +50,21 @@ beforeEach(() => {
 });
 
 describe('createMarkdownLink - shared targets', () => {
+	it('reports when a Concerto chip points to an unavailable Movement', async () => {
+		const el = renderLink(
+			{ theme },
+			{ href: 'maestro://concerto/movement/missing', children: 'open it' }
+		);
+
+		el.props.onClick(makeEvent());
+
+		await vi.waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Concerto unavailable', color: 'orange' })
+			)
+		);
+	});
+
 	it('routes maestro:// through openMaestroLink', () => {
 		const el = renderLink({ theme }, { href: 'maestro://settings', children: 'x' });
 		el.props.onClick(makeEvent());

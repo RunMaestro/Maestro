@@ -5,7 +5,15 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { normalizeMentionName, mentionMatches } from '../../shared/group-chat-types';
+import {
+	findUniqueMentionMatch,
+	getMentionNameForContext,
+	getMentionMatchPriority,
+	mentionMatches,
+	normalizeLegacyMentionName,
+	normalizeMentionName,
+	stripUnmatchedTrailingClosers,
+} from '../../shared/group-chat-types';
 import type {
 	GroupChatParticipant,
 	GroupChat,
@@ -41,6 +49,20 @@ describe('normalizeMentionName', () => {
 		expect(normalizeMentionName('Very Long Agent Name')).toBe('Very-Long-Agent-Name');
 	});
 
+	it('should remove bracket punctuation from mention-safe names', () => {
+		expect(normalizeMentionName('CIA Agent (Super Cool)')).toBe('CIA-Agent-Super-Cool');
+		expect(normalizeMentionName('Review Bot [Linux]')).toBe('Review-Bot-Linux');
+	});
+
+	it('should keep legacy aliases available for bracketed names', () => {
+		expect(normalizeLegacyMentionName('CIA Agent (Super Cool)')).toBe('CIA-Agent-(Super-Cool)');
+		expect(normalizeLegacyMentionName('Review Bot [Linux]')).toBe('Review-Bot-[Linux]');
+	});
+
+	it('should normalize unicode compatibility forms', () => {
+		expect(normalizeMentionName('ＣＩＡ Agent')).toBe('CIA-Agent');
+	});
+
 	it('should handle leading and trailing spaces', () => {
 		expect(normalizeMentionName(' Agent ')).toBe('-Agent-');
 		expect(normalizeMentionName('  Test  ')).toBe('-Test-');
@@ -52,6 +74,24 @@ describe('normalizeMentionName', () => {
 
 	it('should handle spaces only', () => {
 		expect(normalizeMentionName('   ')).toBe('-');
+	});
+});
+
+describe('stripUnmatchedTrailingClosers', () => {
+	it('drops an unmatched trailing closer', () => {
+		expect(stripUnmatchedTrailingClosers('Client)')).toBe('Client');
+		expect(stripUnmatchedTrailingClosers('plan.md)')).toBe('plan.md');
+	});
+
+	it('keeps balanced trailing brackets', () => {
+		expect(stripUnmatchedTrailingClosers('CIA-Agent-(Super-Cool)')).toBe('CIA-Agent-(Super-Cool)');
+		expect(stripUnmatchedTrailingClosers('Phase-01-(Setup).md')).toBe('Phase-01-(Setup).md');
+	});
+
+	it('strips only the wrapper when an earlier closer is unmatched', () => {
+		// A global bracket count would over-strip the balanced "(1)" here; the
+		// positional scan keeps it and removes only the trailing wrapper ")".
+		expect(stripUnmatchedTrailingClosers('foo)-bar(1))')).toBe('foo)-bar(1)');
 	});
 });
 
@@ -74,6 +114,39 @@ describe('mentionMatches', () => {
 	it('should match hyphenated mention to spaced name', () => {
 		expect(mentionMatches('My-Agent', 'My Agent')).toBe(true);
 		expect(mentionMatches('Test-Name', 'Test Name')).toBe(true);
+	});
+
+	it('should match mention-safe names for actual names with parentheses', () => {
+		expect(mentionMatches('CIA-Agent-Super-Cool', 'CIA Agent (Super Cool)')).toBe(true);
+	});
+
+	it('should match legacy parenthesized aliases for actual names with parentheses', () => {
+		expect(mentionMatches('CIA-Agent-(Super-Cool)', 'CIA Agent (Super Cool)')).toBe(true);
+	});
+
+	it('should match unicode composed and decomposed names', () => {
+		expect(mentionMatches('Café-Agent', 'Café Agent')).toBe(true);
+	});
+
+	it('should ignore trailing sentence punctuation on extracted mentions', () => {
+		expect(mentionMatches('Client.', 'Client')).toBe(true);
+		expect(mentionMatches('Client)', 'Client')).toBe(true);
+		expect(mentionMatches('Client]', 'Client')).toBe(true);
+		expect(mentionMatches('CIA-Agent-(Super-Cool).', 'CIA Agent (Super Cool)')).toBe(true);
+		expect(mentionMatches('CIA-Agent-(Super-Cool))', 'CIA Agent (Super Cool)')).toBe(true);
+	});
+
+	it('matches a mention captured from Markdown link text', () => {
+		// `[@Client](https://example.com)` is scanned as `Client](https` because
+		// brackets and `(` stay in the mention token; the link tail must be dropped.
+		expect(mentionMatches('Client](https', 'Client')).toBe(true);
+		expect(mentionMatches('CIA-Agent-(Super-Cool)](https', 'CIA Agent (Super Cool)')).toBe(true);
+	});
+
+	it('should rank exact and legacy matches above normalized safe matches', () => {
+		expect(getMentionMatchPriority('CIA-Agent-(Super-Cool)', 'CIA Agent (Super Cool)')).toBe(3);
+		expect(getMentionMatchPriority('CIA-Agent-Super-Cool', 'CIA Agent (Super Cool)')).toBe(2);
+		expect(getMentionMatchPriority('CIA-Agent-(Super-Cool)', 'CIA Agent Super Cool')).toBe(1);
 	});
 
 	it('should match hyphenated mention to spaced name case-insensitively', () => {
@@ -100,6 +173,58 @@ describe('mentionMatches', () => {
 	it('should handle already hyphenated actual names', () => {
 		expect(mentionMatches('test-agent', 'test-agent')).toBe(true);
 		expect(mentionMatches('Test-Agent', 'test-agent')).toBe(true);
+	});
+});
+
+describe('findUniqueMentionMatch', () => {
+	it('returns the unique highest-priority legacy alias match when safe aliases collide', () => {
+		const participants = [{ name: 'CIA Agent Super Cool' }, { name: 'CIA Agent (Super Cool)' }];
+
+		expect(
+			findUniqueMentionMatch(
+				'CIA-Agent-(Super-Cool)',
+				participants,
+				(participant) => participant.name
+			)
+		).toBe(participants[1]);
+	});
+
+	it('rejects ambiguous mention-safe aliases instead of returning the first match', () => {
+		const participants = [{ name: 'Review Bot [Linux]' }, { name: 'Review Bot (Linux)' }];
+
+		expect(
+			findUniqueMentionMatch('Review-Bot-Linux', participants, (participant) => participant.name)
+		).toBeUndefined();
+	});
+});
+
+describe('getMentionNameForContext', () => {
+	it('returns the plain safe alias for a unique name', () => {
+		expect(getMentionNameForContext('My Agent', ['My Agent'])).toBe('My-Agent');
+		expect(getMentionNameForContext('CIA Agent (Super Cool)', ['CIA Agent (Super Cool)'])).toBe(
+			'CIA-Agent-Super-Cool'
+		);
+	});
+
+	it('keeps a disambiguating bracketed alias when safe aliases collide', () => {
+		const peers = ['Review Bot [Linux]', 'Review Bot (Linux)'];
+		expect(getMentionNameForContext('Review Bot [Linux]', peers)).toBe('Review-Bot-[Linux]');
+		expect(getMentionNameForContext('Review Bot (Linux)', peers)).toBe('Review-Bot-(Linux)');
+	});
+
+	it('round-trips each disambiguated alias back to its own session', () => {
+		const peers = ['Review Bot [Linux]', 'Review Bot (Linux)'];
+		const aliasA = getMentionNameForContext('Review Bot [Linux]', peers);
+		const aliasB = getMentionNameForContext('Review Bot (Linux)', peers);
+		expect(findUniqueMentionMatch(aliasA, peers, (p) => p)).toBe('Review Bot [Linux]');
+		expect(findUniqueMentionMatch(aliasB, peers, (p) => p)).toBe('Review Bot (Linux)');
+	});
+
+	it('falls back to the safe alias when nothing disambiguates', () => {
+		// Identical names cannot be told apart; fall back to the safe alias so the
+		// mention safely no-ops instead of targeting an arbitrary peer.
+		const peers = ['My Agent', 'My Agent'];
+		expect(getMentionNameForContext('My Agent', peers)).toBe('My-Agent');
 	});
 });
 

@@ -16,10 +16,15 @@
 import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
-import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import {
+	cycleShowThinkingFields,
+	moveActiveUnifiedTabToEdge,
+	resolveQueuedItemTarget,
+	toggleReadOnlyModeFields,
+} from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
-import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import type { Session } from '../../types';
+import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { MainPanelHandle } from '../../components/MainPanel';
@@ -44,8 +49,6 @@ export interface UseQuickActionsHandlersDeps {
 	processQueuedItem: (sessionId: string, item: any) => Promise<void>;
 	/** Close the current tab */
 	handleCloseCurrentTab: () => void;
-	/** Reorder unified tabs (AI + file + terminal tabs) */
-	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
 	/** Copy tab context to clipboard */
 	handleCopyContext: (tabId: string) => void;
 	/** Export tab as HTML */
@@ -101,23 +104,6 @@ export interface UseQuickActionsHandlersReturn {
 // Hook implementation
 // ============================================================================
 
-/** Returns the UnifiedTabRef for the currently active tab (AI, file, terminal, or browser). */
-function getActiveUnifiedRef(session: Session): UnifiedTabRef | null {
-	if (session.inputMode === 'terminal' && session.activeTerminalTabId) {
-		return { type: 'terminal', id: session.activeTerminalTabId };
-	}
-	if (session.activeFileTabId) {
-		return { type: 'file', id: session.activeFileTabId };
-	}
-	if (session.activeBrowserTabId) {
-		return { type: 'browser', id: session.activeBrowserTabId };
-	}
-	if (session.activeTabId) {
-		return { type: 'ai', id: session.activeTabId };
-	}
-	return null;
-}
-
 export function useQuickActionsHandlers(
 	deps: UseQuickActionsHandlersDeps
 ): UseQuickActionsHandlersReturn {
@@ -129,16 +115,15 @@ export function useQuickActionsHandlers(
 		handleSummarizeAndContinue,
 		processQueuedItem,
 		handleCloseCurrentTab,
-		handleUnifiedTabReorder,
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
 		handleReloadFileTab,
 	} = deps;
 
-	// --- Reactive subscriptions ---
-	const activeSession = useSessionStore(selectActiveSession);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. All Quick Actions handlers resolve the active
+	// agent at event time via getState().
 	const markdownEditMode = useSettingsStore((s) => s.markdownEditMode);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 
@@ -148,72 +133,37 @@ export function useQuickActionsHandlers(
 	const { setSuccessFlashNotification } = useUIStore.getState();
 
 	const handleQuickActionsToggleReadOnlyMode = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
-						),
-					};
-				})
-			);
+			updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+				...tab,
+				...toggleReadOnlyModeFields(tab),
+			}));
 		}
-	}, [activeSession]);
+	}, []);
 
 	const handleQuickActionsToggleTabEnterToSend = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode !== 'ai' || !activeSession.activeTabId) return;
 		const globalDefault = useSettingsStore.getState().enterToSendAI;
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSession.id) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === s.activeTabId
-							? { ...tab, enterToSend: !(tab.enterToSend ?? globalDefault) }
-							: tab
-					),
-				};
-			})
-		);
-	}, [activeSession]);
+		updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+			...tab,
+			enterToSend: !(tab.enterToSend ?? globalDefault),
+		}));
+	}, []);
 
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			// Cycle through: off -> on -> sticky -> off
-			const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
-				if (!current || current === 'off') return 'on';
-				if (current === 'on') return 'sticky';
-				return 'off';
-			};
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) => {
-							if (tab.id !== s.activeTabId) return tab;
-							const newMode = cycleThinkingMode(tab.showThinking);
-							// When turning OFF, clear any thinking/tool logs
-							if (newMode === 'off') {
-								return {
-									...tab,
-									showThinking: 'off',
-									logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
-								};
-							}
-							return { ...tab, showThinking: newMode };
-						}),
-					};
-				})
-			);
+			updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+				...tab,
+				...cycleShowThinkingFields(tab),
+			}));
 		}
-	}, [activeSession]);
+	}, []);
 
 	const handleQuickActionsRefreshGitFileState = useCallback(async () => {
+		const activeSessionId = useSessionStore.getState().activeSessionId;
 		if (activeSessionId) {
 			// In file preview mode the visible content is a snapshot read from disk,
 			// so the refresh chord re-reads it too. Unsaved edits win over freshness:
@@ -245,10 +195,12 @@ export function useQuickActionsHandlers(
 			);
 			setTimeout(() => setSuccessFlashNotification(null), 2000);
 		}
-	}, [activeSessionId, refreshGitFileState, refreshWorktreeState, handleReloadFileTab]);
+	}, [handleReloadFileTab, refreshGitFileState, refreshWorktreeState]);
 
 	const handleQuickActionsDebugReleaseQueuedItem = useCallback(() => {
-		if (!activeSession) return;
+		const { activeSessionId } = useSessionStore.getState();
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (!activeSession || !activeSessionId) return;
 		const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
 			activeSession.executionQueue
 		);
@@ -293,43 +245,25 @@ export function useQuickActionsHandlers(
 		);
 		// Process the item. `processQueuedItem` rejects on a dispatch failure (see
 		// agentStore), so the rejection needs an owner - unhandled, it would surface
-		// as a crash report rather than a logged failure. The item was already
-		// removed from the queue above, so put it back and release the tab.
-		processQueuedItem(activeSessionId!, nextItem).catch((err) => {
-			logger.error('[QuickActions] Dispatch failed, re-queueing item', undefined, err);
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionId) return s;
-					const aiTabs = s.aiTabs.map((tab) =>
-						tab.id === nextItem.tabId
-							? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-							: tab
-					);
-					// The agent only goes idle if no OTHER tab is still working.
-					const stillWorking = aiTabs.some((tab) => tab.state === 'busy');
-					return {
-						...s,
-						...(stillWorking
-							? {}
-							: { state: 'idle' as const, busySource: undefined, thinkingStartTime: undefined }),
-						executionQueue: [nextItem, ...s.executionQueue],
-						aiTabs,
-					};
-				})
-			);
+		// as a crash report rather than a logged failure. Putting the prompt back is
+		// agentStore's job, not this hook's: it is the only caller-independent place
+		// that can tell a transient spawn collision from a real failure.
+		processQueuedItem(activeSessionId, nextItem).catch((err) => {
+			logger.error('[QuickActions] Dispatch failed, item returned to queue', undefined, err);
 		});
-	}, [activeSession, activeSessionId, processQueuedItem, setSessions]);
+	}, [processQueuedItem, setSessions]);
 
 	const handleQuickActionsToggleMarkdownEditMode = useCallback(() => {
 		// Toggle the appropriate mode based on context:
 		// - If file tab is active: toggle file edit mode (markdownEditMode)
 		// - If no file tab: toggle chat raw text mode (chatRawTextMode)
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.activeFileTabId) {
 			setMarkdownEditMode(!markdownEditMode);
 		} else {
 			setChatRawTextMode(!chatRawTextMode);
 		}
-	}, [activeSession?.activeFileTabId, markdownEditMode, chatRawTextMode]);
+	}, [markdownEditMode, chatRawTextMode]);
 
 	const handleQuickActionsSummarizeAndContinue = useCallback(
 		() => handleSummarizeAndContinue(),
@@ -356,30 +290,27 @@ export function useQuickActionsHandlers(
 		handleCloseCurrentTab();
 	}, [handleCloseCurrentTab]);
 
-	const handleQuickActionsMoveTabToFirst = useCallback(() => {
-		if (!activeSession) return;
-		// Find the active tab's index in the unified tab order (supports AI, file, and terminal tabs)
-		const activeRef = getActiveUnifiedRef(activeSession);
-		if (!activeRef) return;
-		const idx = activeSession.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+	// Move the active tab to the strip's first / last slot. Same helper the
+	// Cmd+Shift+Left / Right shortcuts use, so the palette and the keyboard cannot
+	// disagree about where the tab lands (supports AI, file, browser, and terminal
+	// tabs, since it operates on unifiedTabOrder).
+	const moveActiveTabToEdge = useCallback((edge: 'start' | 'end') => {
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		if (!activeSessionId) return;
+		setSessions((prev: Session[]) =>
+			prev.map((s) => (s.id === activeSessionId ? moveActiveUnifiedTabToEdge(s, edge) : s))
 		);
-		if (idx > 0) {
-			handleUnifiedTabReorder(idx, 0);
-		}
-	}, [activeSession, handleUnifiedTabReorder]);
+	}, []);
 
-	const handleQuickActionsMoveTabToLast = useCallback(() => {
-		if (!activeSession) return;
-		const activeRef = getActiveUnifiedRef(activeSession);
-		if (!activeRef) return;
-		const idx = activeSession.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
-		);
-		if (idx >= 0 && idx < activeSession.unifiedTabOrder.length - 1) {
-			handleUnifiedTabReorder(idx, activeSession.unifiedTabOrder.length - 1);
-		}
-	}, [activeSession, handleUnifiedTabReorder]);
+	const handleQuickActionsMoveTabToFirst = useCallback(
+		() => moveActiveTabToEdge('start'),
+		[moveActiveTabToEdge]
+	);
+
+	const handleQuickActionsMoveTabToLast = useCallback(
+		() => moveActiveTabToEdge('end'),
+		[moveActiveTabToEdge]
+	);
 
 	const handleQuickActionsCopyTabContext = useCallback(
 		(tabId: string) => handleCopyContext(tabId),

@@ -227,6 +227,30 @@ how a blank `CLAUDE_CONFIG_DIR` used to kill Claude Code before it made a single
 API call. To keep a genuinely empty string, you cannot - use the eye button to
 park the variable instead, or delete the row.
 
+### Selecting a Provider Account
+
+Three providers keep their credentials and transcripts in a directory their CLI
+lets you relocate, so setting one variable on an agent is how you put that agent
+on a different account:
+
+```env
+CLAUDE_CONFIG_DIR=/Users/john/.claude-work     (default ~/.claude)
+CODEX_HOME=/Users/john/.codex-project-acc-1    (default ~/.codex)
+COPILOT_HOME=/Users/john/.copilot-work         (default ~/.copilot)
+```
+
+Set any of these on the agent to move just that agent, or on the provider (in
+**Settings** -> **Agents**) to move every agent of that type that does not set
+its own. Remember the layering rule above: an agent's own set of variables
+REPLACES the provider-level set rather than merging with it.
+
+Maestro reads these the same way everywhere, so an agent's account is what the
+Agents tab provider filter narrows on, what the Context Window tooltip's
+**Profile** row names, and what the Usage Dashboard's Tokens tab bills the
+tokens to. See [Multiple Accounts](/multi-provider) for the full per-provider
+table, the per-provider setup recipes, and the providers that ship no such
+variable.
+
 ### Inspecting the Effective Environment
 
 Because each layer is edited in a different pane, no single settings screen shows

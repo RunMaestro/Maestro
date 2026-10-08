@@ -16,12 +16,20 @@ import { render, screen, fireEvent, act, waitFor, within } from '@testing-librar
 import { SessionList } from '../../../renderer/components/SessionList';
 import type { Session, Group, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { seedSidebarNav, resetSidebarNavStore } from '../../helpers/seedSidebarNav';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 
 // Deep-cloned default autoRunStats captured from a fresh store (no longer exported).
 const DEFAULT_AUTO_RUN_STATS = JSON.parse(JSON.stringify(useSettingsStore.getState().autoRunStats));
+const DEFAULT_ENCORE_FEATURES = { ...useSettingsStore.getState().encoreFeatures };
+
+const enableGroupsPlus = () =>
+	useSettingsStore.setState({
+		encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, groupsPlus: true },
+	});
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
@@ -29,13 +37,16 @@ import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackSto
 import { requestSidebarReveal } from '../../../renderer/utils/sidebarReveal';
 import type { BatchRunState } from '../../../renderer/types';
 
+const LEGACY_WORKTREE_EMOJI = String.fromCodePoint(0x1f333);
+
 // Mock QRCodeSVG to avoid complex rendering
 vi.mock('qrcode.react', () => ({
 	QRCodeSVG: ({ value }: { value: string }) => <div data-testid="qr-code">{value}</div>,
 }));
 
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	Wand2: ({ className }: { className?: string }) => (
 		<span data-testid="icon-wand" className={className} />
 	),
@@ -56,7 +67,9 @@ vi.mock('lucide-react', () => ({
 	ExternalLink: () => <span data-testid="icon-external-link" />,
 	PanelLeftClose: () => <span data-testid="icon-panel-left-close" />,
 	PanelLeftOpen: () => <span data-testid="icon-panel-left-open" />,
-	Folder: () => <span data-testid="icon-folder" />,
+	Folder: ({ style }: { style?: { color?: string } }) => (
+		<span data-testid="icon-folder" style={style} />
+	),
 	Info: () => <span data-testid="icon-info" />,
 	FileText: () => <span data-testid="icon-file-text" />,
 	GitBranch: () => <span data-testid="icon-git-branch" />,
@@ -99,6 +112,11 @@ vi.mock('lucide-react', () => ({
 	ArrowUp: () => <span data-testid="icon-arrow-up" />,
 	ArrowDownToLine: () => <span data-testid="icon-arrow-down-to-line" />,
 	ArrowUpFromLine: () => <span data-testid="icon-arrow-up-from-line" />,
+}));
+
+vi.mock('../../../renderer/components/plugins/PluginUiItemsSlot', () => ({
+	PluginUiItemsSlot: ({ surface }: { surface: string }) =>
+		surface === 'groupHeaderBadge' ? <button type="button">Plugin group action</button> : null,
 }));
 
 // Mock gitService
@@ -156,6 +174,8 @@ const mockModalActions = {
 	setRenameGroupId: vi.fn(),
 	setRenameGroupValue: vi.fn(),
 	setRenameGroupEmoji: vi.fn(),
+	setRenameGroupIcon: vi.fn(),
+	setRenameGroupColor: vi.fn(),
 };
 
 vi.mock('../../../renderer/stores/modalStore', async (importActual) => {
@@ -185,8 +205,7 @@ const defaultTheme: Theme = {
 };
 
 // Default shortcuts
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const defaultShortcuts: Record<string, any> = {
+const defaultShortcuts = {
 	help: { keys: ['?'], description: 'Show help' },
 	settings: { keys: ['meta', ','], description: 'Settings' },
 	systemLogs: { keys: ['meta', 'shift', 'l'], description: 'System logs' },
@@ -194,6 +213,22 @@ const defaultShortcuts: Record<string, any> = {
 	usageDashboard: { keys: ['alt', 'meta', 'u'], description: 'Usage dashboard' },
 	toggleSidebar: { keys: ['meta', 'b'], description: 'Toggle sidebar' },
 	filterUnreadAgents: { keys: ['alt', 'u'], description: 'Filter unread agents' },
+};
+
+const EMPTY_PLUGIN_CONTRIBUTIONS: AggregatedContributions = {
+	themes: [],
+	prompts: [],
+	settings: [],
+	commandMacros: [],
+	cueTriggers: [],
+	commands: [],
+	panels: [],
+	agents: [],
+	tools: [],
+	keybindings: [],
+	uiItems: [],
+	groupings: [],
+	errorsByPlugin: {},
 };
 
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
@@ -220,51 +255,78 @@ const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
 });
 
 // Create default handler props (state is read from stores)
-const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]> = {}) => ({
-	theme: defaultTheme,
-	sortedSessions: [] as Session[],
-	isLiveMode: false,
-	webInterfaceUrl: null,
-	showSessionJumpNumbers: false,
-	visibleSessions: [] as Session[],
-	starredItems: [],
-	activateStarredItem: vi.fn(),
-	toggleGlobalLive: vi.fn(),
-	restartWebServer: vi.fn().mockResolvedValue(null),
-	toggleGroup: vi.fn(),
-	handleDragStart: vi.fn(),
-	handleDragOver: vi.fn(),
-	handleDropOnGroup: vi.fn(),
-	handleDropOnUngrouped: vi.fn(),
-	finishRenamingGroup: vi.fn(),
-	finishRenamingSession: vi.fn(),
-	startRenamingGroup: vi.fn(),
-	startRenamingSession: vi.fn(),
-	showConfirmation: vi.fn(),
-	createNewGroup: vi.fn(),
-	onCreateGroupAndMove: vi.fn(),
-	addNewSession: vi.fn(),
-	onDeleteWorktreeGroup: vi.fn(),
-	onEditAgent: vi.fn(),
-	onNewAgentSession: vi.fn(),
-	onToggleWorktreeExpanded: vi.fn(),
-	onOpenCreatePR: vi.fn(),
-	onQuickCreateWorktree: vi.fn(),
-	onOpenWorktreeConfig: vi.fn(),
-	onDeleteWorktree: vi.fn(),
-	openWizard: vi.fn(),
-	startTour: vi.fn(),
-	onOpenGroupChat: vi.fn(),
-	onNewGroupChat: vi.fn(),
-	onEditGroupChat: vi.fn(),
-	onRenameGroupChat: vi.fn(),
-	onDeleteGroupChat: vi.fn(),
-	...overrides,
-});
+type SessionListNavOverrides = {
+	sortedSessions?: Session[];
+	visibleSessions?: Session[];
+	starredItems?: any[];
+	activateStarredItem?: (...args: any[]) => any;
+};
+
+const createDefaultProps = (
+	overrides: Partial<Parameters<typeof SessionList>[0]> & SessionListNavOverrides = {}
+) => {
+	const {
+		sortedSessions = [],
+		visibleSessions = sortedSessions,
+		starredItems = [],
+		activateStarredItem = vi.fn(),
+		...rest
+	} = overrides;
+	seedSidebarNav({
+		sortedSessions,
+		visibleSessions,
+		navSessions: sortedSessions,
+		starredItems,
+		activateStarredItem,
+	});
+	return {
+		theme: defaultTheme,
+		isLiveMode: false,
+		webInterfaceUrl: null,
+		showSessionJumpNumbers: false,
+		toggleGlobalLive: vi.fn(),
+		restartWebServer: vi.fn().mockResolvedValue(null),
+		toggleGroup: vi.fn(),
+		handleDragStart: vi.fn(),
+		handleDragOver: vi.fn(),
+		handleDropOnGroup: vi.fn(),
+		handleDropOnUngrouped: vi.fn(),
+		finishRenamingGroup: vi.fn(),
+		finishRenamingSession: vi.fn(),
+		startRenamingGroup: vi.fn(),
+		startRenamingSession: vi.fn(),
+		showConfirmation: vi.fn(),
+		createNewGroup: vi.fn(),
+		setGroupParent: vi.fn(),
+		onCreateGroupAndMove: vi.fn(),
+		addNewSession: vi.fn(),
+		onDeleteWorktreeGroup: vi.fn(),
+		onEditAgent: vi.fn(),
+		onNewAgentSession: vi.fn(),
+		onToggleWorktreeExpanded: vi.fn(),
+		onOpenCreatePR: vi.fn(),
+		onQuickCreateWorktree: vi.fn(),
+		onOpenWorktreeConfig: vi.fn(),
+		onDeleteWorktree: vi.fn(),
+		openWizard: vi.fn(),
+		startTour: vi.fn(),
+		onOpenGroupChat: vi.fn(),
+		onNewGroupChat: vi.fn(),
+		onEditGroupChat: vi.fn(),
+		onRenameGroupChat: vi.fn(),
+		onDeleteGroupChat: vi.fn(),
+		...rest,
+	};
+};
 
 describe('SessionList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		resetSidebarNavStore();
+		vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
+		vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([]);
+		vi.mocked(window.maestro.plugins.onChanged).mockImplementation(() => () => {});
+		vi.mocked(window.maestro.plugins.onGroupingsChanged).mockImplementation(() => () => {});
 		// Reset all stores to clean test state
 		useUIStore.setState({
 			leftSidebarOpen: true,
@@ -276,6 +338,7 @@ describe('SessionList', () => {
 			draggingSessionId: null,
 			bookmarksCollapsed: false,
 			sessionFilterOpen: false,
+			showUnreadAgentsOnly: false,
 			// The filter text and the archived-chat toggle live in uiStore now (the
 			// Cmd+[ / Cmd+] cycle has to see them). Reset them here or the "filters
 			// sessions by name" test leaves a query behind and every later test
@@ -294,6 +357,7 @@ describe('SessionList', () => {
 			ungroupedCollapsed: false,
 			groupChatsExpanded: false,
 			autoRunStats: { ...DEFAULT_AUTO_RUN_STATS },
+			encoreFeatures: { ...DEFAULT_ENCORE_FEATURES },
 		});
 		useBatchStore.setState({ batchRunStates: {} });
 		useGroupChatStore.setState({
@@ -352,6 +416,63 @@ describe('SessionList', () => {
 	// Basic Rendering Tests
 	// ============================================================================
 
+	// ============================================================================
+	// Narrow-viewport drawer
+	// ============================================================================
+
+	describe('narrow-viewport drawer', () => {
+		const originalWidth = window.innerWidth;
+		const setViewportWidth = (width: number) => {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				writable: true,
+				value: width,
+			});
+		};
+
+		afterEach(() => {
+			setViewportWidth(originalWidth);
+		});
+
+		const renderWithSession = (activeSessionId: string) => {
+			const sessions = [createMockSession({ id: 's1', name: 'Frontend Project' })];
+			useSessionStore.setState({ sessions, activeSessionId });
+			useUIStore.setState({ leftSidebarOpen: true });
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+		};
+
+		it('closes the drawer when an agent row is tapped', () => {
+			setViewportWidth(390);
+			renderWithSession('');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		});
+
+		it('closes the drawer even when the tapped agent is already active', () => {
+			// The case an effect keyed on the activeSessionId transition cannot see:
+			// nothing changes, so the drawer used to stay over the agent.
+			setViewportWidth(390);
+			renderWithSession('s1');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		});
+
+		it('leaves the sidebar open on a wide viewport', () => {
+			setViewportWidth(1440);
+			renderWithSession('');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+		});
+	});
+
 	describe('Basic Rendering', () => {
 		it('renders the MAESTRO branding header when expanded', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -403,21 +524,21 @@ describe('SessionList', () => {
 			expect(addNewSession).toHaveBeenCalled();
 		});
 
-		it('toggles sidebar open/closed', () => {
+		it('collapses the sidebar on collapse-button click', () => {
 			const session = createMockSession();
 			useSessionStore.setState({ sessions: [session] });
-			useUIStore.setState({ leftSidebarOpen: true });
-			const setLeftSidebarOpen = vi.spyOn(useUIStore.getState(), 'setLeftSidebarOpen');
+			useUIStore.setState({ leftSidebarOpen: true, leftSidebarHidden: false });
 			const props = createDefaultProps({
 				sortedSessions: [session],
 			});
 			render(<SessionList {...props} />);
 
-			// Find collapse button by its title
-			const collapseButton = screen.getByTitle(/Collapse.*Sidebar/i);
+			// The sidebar button is a two-state toggle: open collapses to the
+			// status strip, collapsed expands back out.
+			const collapseButton = screen.getByTitle(/Collapse Sidebar/i);
 			fireEvent.click(collapseButton);
 
-			expect(setLeftSidebarOpen).toHaveBeenCalledWith(false);
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
 		});
 	});
 
@@ -814,6 +935,63 @@ describe('SessionList', () => {
 		});
 	});
 
+	describe('Pianola Pinned Agent', () => {
+		const enablePianola = () =>
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
+			});
+
+		it('keeps Pianola pinned when the unread agents filter is active', () => {
+			enablePianola();
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			expect(screen.getByText('Maestro Pianola')).toBeInTheDocument();
+		});
+
+		it('renders Pianola above the unread-filter empty state so it is not pushed down', () => {
+			enablePianola();
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			const pianolaRow = screen.getByText('Maestro Pianola');
+			const emptyState = screen.getByText('No unread, working, or errored agents');
+			// Pianola (a plain block) must come before the flex-1 empty state in DOM
+			// order; otherwise the empty state grows and shoves Pianola to the bottom.
+			expect(
+				pianolaRow.compareDocumentPosition(emptyState) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('hides Pianola when the pianola Encore flag is off, even under the unread filter', () => {
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			expect(screen.queryByText('Maestro Pianola')).toBeNull();
+		});
+	});
+
 	// ============================================================================
 	// Groups Section Tests
 	// ============================================================================
@@ -837,6 +1015,108 @@ describe('SessionList', () => {
 			expect(screen.getByText('Session in Group')).toBeInTheDocument();
 		});
 
+		it('renders a selected standard icon and label color', () => {
+			enableGroupsPlus();
+			const group = createMockGroup({
+				id: 'g1',
+				name: 'My Group',
+				emoji: '',
+				icon: 'folder',
+				color: '#22C55E',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Session in Group', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByTestId('icon-folder')).toHaveStyle({ color: '#22C55E' });
+			expect(screen.getByText('My Group')).toHaveStyle({ color: '#22C55E' });
+		});
+
+		it('flattens persisted nested groups and ignores stored appearance while Groups+ is off', () => {
+			const parent = createMockGroup({ id: 'company', name: 'Company', collapsed: true });
+			const child = createMockGroup({
+				id: 'project',
+				name: 'Project',
+				emoji: '',
+				icon: 'folder',
+				color: '#22C55E',
+				parentGroupId: 'company',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Project Agent', groupId: 'project' })];
+			useSessionStore.setState({ sessions, groups: [parent, child] });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByText('Project').closest('[data-group-depth="0"]')).not.toHaveClass('ml-4');
+			expect(screen.getByText('Project Agent')).toBeInTheDocument();
+			expect(screen.getByTestId('icon-folder')).not.toHaveStyle({ color: '#22C55E' });
+			expect(screen.getByText('Project')).not.toHaveStyle({ color: '#22C55E' });
+		});
+
+		it('renders child groups indented beneath their parent', () => {
+			enableGroupsPlus();
+			const parent = createMockGroup({ id: 'company', name: 'Company' });
+			const child = createMockGroup({
+				id: 'project',
+				name: 'Project',
+				parentGroupId: 'company',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Project Agent', groupId: 'project' })];
+			useSessionStore.setState({ sessions, groups: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByText('Project').closest('[data-group-depth="1"]')).toHaveClass('ml-4');
+			expect(screen.getByText('Project Agent')).toBeInTheDocument();
+		});
+
+		it('hides child groups and their agents when the parent is collapsed', () => {
+			enableGroupsPlus();
+			const parent = createMockGroup({ id: 'company', name: 'Company', collapsed: true });
+			const child = createMockGroup({
+				id: 'project',
+				name: 'Project',
+				parentGroupId: 'company',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Project Agent', groupId: 'project' })];
+			useSessionStore.setState({ sessions, groups: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByText('Company')).toBeInTheDocument();
+			expect(screen.queryByText('Project')).toBeNull();
+			expect(screen.queryByText('Project Agent')).toBeNull();
+		});
+
+		it('shows a child group with unread agents even when its parent is collapsed', () => {
+			enableGroupsPlus();
+			const parent = createMockGroup({ id: 'company', name: 'Company', collapsed: true });
+			const child = createMockGroup({
+				id: 'project',
+				name: 'Project',
+				parentGroupId: 'company',
+			});
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Project Agent',
+					groupId: 'project',
+					state: 'busy',
+				}),
+			];
+			useSessionStore.setState({ sessions, groups: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByText('Project')).toBeInTheDocument();
+			expect(screen.getByText('Project Agent')).toBeInTheDocument();
+		});
+
 		it('toggles group collapse on click', () => {
 			const toggleGroup = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', collapsed: false });
@@ -855,6 +1135,19 @@ describe('SessionList', () => {
 			// Click on group header
 			fireEvent.click(screen.getByText('My Group'));
 			expect(toggleGroup).toHaveBeenCalledWith('g1');
+		});
+
+		it.each(['Enter', ' '])('does not toggle a group for %s on a contributed action', (key) => {
+			const toggleGroup = vi.fn();
+			const group = createMockGroup({ id: 'g1', name: 'My Group', collapsed: false });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions, toggleGroup })} />);
+
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Plugin group action' }), { key });
+			expect(toggleGroup).not.toHaveBeenCalled();
 		});
 
 		it('shows delete button for empty groups on hover', () => {
@@ -958,6 +1251,118 @@ describe('SessionList', () => {
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 			// The New Group button still renders so the user can keep organizing.
 			expect(screen.getByText('New Group')).toBeInTheDocument();
+		});
+
+		it('renders plugin virtual groups without persisted group controls and falls back to Manual', async () => {
+			let notifyPluginChange: (() => void) | undefined;
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				...EMPTY_PLUGIN_CONTRIBUTIONS,
+				groupings: [
+					{
+						id: 'com.acme/by-agent-type',
+						localId: 'by-agent-type',
+						pluginId: 'com.acme',
+						pluginName: 'Agent Classifier',
+						label: 'Group by agent type',
+						rules: [
+							{
+								match: { toolType: 'claude-code' },
+								group: 'Claude',
+								parentGroup: 'AI Agents',
+							},
+						],
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.onChanged).mockImplementation((callback) => {
+				notifyPluginChange = callback;
+				return () => {};
+			});
+			const persistedGroup = createMockGroup({ id: 'persisted', name: 'Persisted Group' });
+			const sessions = [
+				createMockSession({
+					id: 'claude',
+					name: 'Claude Agent',
+					toolType: 'claude-code',
+					groupId: 'persisted',
+				}),
+				createMockSession({ id: 'codex', name: 'Codex Agent', toolType: 'codex' }),
+			];
+			useSessionStore.setState({ sessions, groups: [persistedGroup] });
+			useSettingsStore.setState({
+				encoreFeatures: { ...DEFAULT_ENCORE_FEATURES, groupsPlus: false },
+			});
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			const selector = await screen.findByRole('combobox', { name: 'Session grouping mode' });
+			fireEvent.change(selector, { target: { value: 'com.acme/by-agent-type' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('Claude')).toBeInTheDocument();
+				expect(screen.getByText('Other')).toBeInTheDocument();
+			});
+			expect(screen.getByText('Claude').closest('.ml-4')).not.toBeNull();
+			expect(screen.getAllByText('from Agent Classifier')).toHaveLength(3);
+			expect(screen.queryByText('Persisted Group')).not.toBeInTheDocument();
+			expect(screen.queryByText('New Group')).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions[0].groupId).toBe('persisted');
+			expect(useSessionStore.getState().groups).toEqual([persistedGroup]);
+
+			fireEvent.contextMenu(screen.getByText('Claude Agent'), { clientX: 100, clientY: 100 });
+			expect(screen.queryByText('Move to Group')).not.toBeInTheDocument();
+
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
+			act(() => notifyPluginChange?.());
+			await waitFor(() => {
+				expect(screen.getByText('Persisted Group')).toBeInTheDocument();
+				expect(screen.getByText('New Group')).toBeInTheDocument();
+			});
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				'leftSidebarGroupingMode',
+				'manual'
+			);
+		});
+
+		it('renders every session from a sparse computed snapshot by placing extras in Other', async () => {
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				...EMPTY_PLUGIN_CONTRIBUTIONS,
+				groupings: [
+					{
+						id: 'com.acme/by-agent-type',
+						localId: 'by-agent-type',
+						pluginId: 'com.acme',
+						pluginName: 'Agent Classifier',
+						label: 'Group by agent type',
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([
+				{
+					id: 'com.acme/by-agent-type',
+					pluginId: 'com.acme',
+					localId: 'by-agent-type',
+					groups: [{ id: 'claude', label: 'Claude' }],
+					assignments: { claude: 'claude' },
+				},
+			]);
+			const sessions = [
+				createMockSession({ id: 'claude', name: 'Claude Agent' }),
+				createMockSession({ id: 'unassigned', name: 'Unassigned Agent' }),
+			];
+			useSessionStore.setState({ sessions });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			const selector = await screen.findByRole('combobox', { name: 'Session grouping mode' });
+			fireEvent.change(selector, { target: { value: 'com.acme/by-agent-type' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('Claude')).toBeInTheDocument();
+				expect(screen.getByText('Other')).toBeInTheDocument();
+				expect(screen.getByText('Claude Agent')).toBeInTheDocument();
+				expect(screen.getByText('Unassigned Agent')).toBeInTheDocument();
+			});
 		});
 	});
 
@@ -1069,7 +1474,11 @@ describe('SessionList', () => {
 		});
 
 		it('shows "Remove Group and Agents" for a non-empty worktree group', () => {
-			const group = createMockGroup({ id: 'g1', name: 'Worktree Group', emoji: '🌳' });
+			const group = createMockGroup({
+				id: 'g1',
+				name: 'Worktree Group',
+				emoji: LEGACY_WORKTREE_EMOJI,
+			});
 			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
 			useSessionStore.setState({ sessions, groups: [group] });
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -1440,8 +1849,44 @@ describe('SessionList', () => {
 			expect(menuContainer).toBeInTheDocument();
 			expect(menuContainer).toHaveClass('overflow-y-auto');
 			expect(menuContainer).toHaveClass('scrollbar-thin');
-			// Verify max-height is set via inline style for scroll support
-			expect(menuContainer?.style.maxHeight).toBe('calc(100vh - 120px)');
+			// Verify the max-height cap (scroll support) - a utility class since
+			// the HamburgerDropdown extraction.
+			expect(menuContainer).toHaveClass('max-h-[calc(100vh-120px)]');
+		});
+
+		it('renders the hamburger menu as a full-screen sheet with a close button on phones', () => {
+			// Drive useViewportBreakpoint to xs; the dropdown becomes a body-portal
+			// full-screen sheet there (the drawer's CSS transform would trap a
+			// fixed-position dropdown inside the ~320px drawer box).
+			const originalWidth = window.innerWidth;
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				writable: true,
+				value: 390,
+			});
+			try {
+				useUIStore.setState({ leftSidebarOpen: true });
+				const props = createDefaultProps({});
+				render(<SessionList {...props} />);
+
+				fireEvent.click(screen.getByTitle('Menu'));
+
+				const sheet = document.querySelector('[data-hamburger-sheet]') as HTMLElement;
+				expect(sheet).toBeInTheDocument();
+				expect(sheet).toHaveClass('fixed');
+				expect(sheet).toHaveClass('inset-0');
+
+				// The sheet closes via its own X button (no outside-click exists on
+				// a full-screen surface).
+				fireEvent.click(screen.getByLabelText('Close menu'));
+				expect(document.querySelector('[data-hamburger-sheet]')).toBeNull();
+			} finally {
+				Object.defineProperty(window, 'innerWidth', {
+					configurable: true,
+					writable: true,
+					value: originalWidth,
+				});
+			}
 		});
 
 		it("shows Director's Notes menu item in hamburger menu", () => {
@@ -1677,6 +2122,25 @@ describe('SessionList', () => {
 			expect(handleDropOnGroup).toHaveBeenCalledWith('g1');
 		});
 
+		it('nests a dragged group header under another group header', () => {
+			enableGroupsPlus();
+			const setGroupParent = vi.fn();
+			const parent = createMockGroup({ id: 'company', name: 'Company' });
+			const child = createMockGroup({ id: 'project', name: 'Project' });
+			useSessionStore.setState({ sessions: [], groups: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ setGroupParent })} />);
+
+			const dataTransfer = { effectAllowed: '', setData: vi.fn() };
+			fireEvent.dragStart(screen.getByText('Project').closest('[draggable="true"]')!, {
+				dataTransfer,
+			});
+			fireEvent.drop(screen.getByText('Company'));
+
+			expect(setGroupParent).toHaveBeenCalledWith('project', 'company');
+		});
+
 		it('shows the compact ungroup drop-zone when dragging and all sessions are grouped', () => {
 			const handleDropOnUngrouped = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
@@ -1747,17 +2211,18 @@ describe('SessionList', () => {
 			const resizeHandle = container.querySelector('.cursor-col-resize');
 			expect(resizeHandle).toBeInTheDocument();
 
-			// Simulate drag
-			fireEvent.mouseDown(resizeHandle!, { clientX: 300 });
+			// Simulate a pointer drag. The handle captures the pointer, so move /
+			// up events are dispatched on the handle itself (not document).
+			fireEvent.pointerDown(resizeHandle!, { clientX: 300, pointerId: 1 });
 
-			// Move mouse (direct DOM update for performance, no state call yet)
-			fireEvent.mouseMove(document, { clientX: 350 });
+			// Move pointer (direct DOM update for performance, no state call yet)
+			fireEvent.pointerMove(resizeHandle!, { clientX: 350 });
 
-			// State is only updated on mouseUp for performance (avoids ~60 re-renders/sec)
+			// State is only updated on pointer up for performance (avoids ~60 re-renders/sec)
 			expect(setLeftSidebarWidthState).not.toHaveBeenCalled();
 
 			// End resize - state is updated
-			fireEvent.mouseUp(document);
+			fireEvent.pointerUp(resizeHandle!);
 			expect(setLeftSidebarWidthState).toHaveBeenCalled();
 		});
 	});
@@ -1926,6 +2391,22 @@ describe('SessionList', () => {
 
 			const input = screen.getByDisplayValue('Original Name');
 			expect(input).toBeInTheDocument();
+		});
+
+		it('does not make the group header draggable while renaming', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Original Name' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				editingGroupId: 'g1',
+			});
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [] })} />);
+
+			expect(screen.getByDisplayValue('Original Name').closest('[role="button"]')).toHaveAttribute(
+				'draggable',
+				'false'
+			);
 		});
 
 		it('calls finishRenamingGroup on blur', () => {
@@ -2156,17 +2637,15 @@ describe('SessionList', () => {
 
 			expect(screen.getByText('Move to Group')).toBeInTheDocument();
 
-			// Hover over Move to Group - find the parent div
+			// Hover the row that owns the submenu
 			const moveToGroupButton = screen.getByText('Move to Group');
-			const parentDiv = moveToGroupButton.closest('.relative');
-			fireEvent.mouseEnter(parentDiv!);
+			fireEvent.mouseEnter(moveToGroupButton.closest('div')!);
 
-			// Submenu should show group name - there may be multiple since it appears in groups section too
-			const submenuTargets = screen.getAllByText('Submenu Target');
-			expect(submenuTargets.length).toBeGreaterThan(0);
-			// The "Ungrouped" option in the submenu should be visible (may appear multiple times)
-			const ungroupedElements = screen.getAllByText('Ungrouped');
-			expect(ungroupedElements.length).toBeGreaterThan(0);
+			// The flyout is portaled out of the menu (the menu scrolls, which would
+			// otherwise clip it away), so assert against the flyout itself.
+			const flyout = within(screen.getByTestId('session-context-flyout'));
+			expect(flyout.getByText('Submenu Target')).toBeInTheDocument();
+			expect(flyout.getByText('Ungrouped')).toBeInTheDocument();
 		});
 
 		it('moves session to group when submenu item clicked', () => {
@@ -2189,16 +2668,14 @@ describe('SessionList', () => {
 
 			expect(screen.getByText('Move to Group')).toBeInTheDocument();
 
-			// Hover and click group - find within context menu
+			// Hover the row that owns the submenu
 			const moveToGroupButton = screen.getByText('Move to Group');
-			const parentDiv = moveToGroupButton.closest('.relative');
-			fireEvent.mouseEnter(parentDiv!);
+			fireEvent.mouseEnter(moveToGroupButton.closest('div')!);
 
-			// Get all elements with the group name, click the one in the submenu (inside fixed positioned menu)
-			const groupButtons = screen.getAllByText('Click Target');
-			// The submenu item should be in a button within the fixed positioned context menu
-			const submenuButton = groupButtons.find((el) => el.closest('button')?.closest('.absolute'));
-			fireEvent.click(submenuButton || groupButtons[groupButtons.length - 1]);
+			// The group name also appears in the Left Bar, so scope the click to the
+			// portaled flyout rather than guessing which copy is the menu item.
+			const flyout = within(screen.getByTestId('session-context-flyout'));
+			fireEvent.click(flyout.getByText('Click Target'));
 
 			expect(setSessions).toHaveBeenCalled();
 		});
@@ -2419,7 +2896,7 @@ describe('SessionList', () => {
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
 			// Active session should have accent border color
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
@@ -2440,7 +2917,7 @@ describe('SessionList', () => {
 				sidebarExtraSelection: { kind: 'starred', key: 'open:s1:t1' },
 			});
 			const props = createDefaultProps({ sortedSessions: sessions });
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
 			const agentRow = screen.getByText('Active Session').closest('[style*="border"]');
 			// Border must NOT be the accent color (active styling suppressed).
@@ -3153,7 +3630,6 @@ describe('SessionList', () => {
 				activeFocus: 'sidebar',
 			});
 			const setGroups = vi.spyOn(useSessionStore.getState(), 'setGroups');
-			const setBookmarksCollapsed = vi.spyOn(useUIStore.getState(), 'setBookmarksCollapsed');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
@@ -3311,21 +3787,20 @@ describe('SessionList', () => {
 	describe('Resize Handle', () => {
 		it('saves sidebar width on mouseup', async () => {
 			const mockSettingsSet = vi.fn();
-			(window.maestro.settings.set as ReturnType<typeof vi.fn>).mockImplementation(mockSettingsSet);
+			vi.mocked(window.maestro.settings.set).mockImplementation(mockSettingsSet);
 
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({ leftSidebarWidth: 300 });
-			const setLeftSidebarWidthState = vi.spyOn(useSettingsStore.getState(), 'setLeftSidebarWidth');
 			const props = createDefaultProps({});
 			const { container } = render(<SessionList {...props} />);
 
 			const resizeHandle = container.querySelector('.cursor-col-resize');
 			expect(resizeHandle).toBeInTheDocument();
 
-			// Simulate full drag cycle
-			fireEvent.mouseDown(resizeHandle!, { clientX: 300 });
-			fireEvent.mouseMove(document, { clientX: 350 });
-			fireEvent.mouseUp(document);
+			// Simulate full pointer drag cycle (move / up route to the captured handle)
+			fireEvent.pointerDown(resizeHandle!, { clientX: 300, pointerId: 1 });
+			fireEvent.pointerMove(resizeHandle!, { clientX: 350 });
+			fireEvent.pointerUp(resizeHandle!);
 
 			expect(mockSettingsSet).toHaveBeenCalledWith('leftSidebarWidth', expect.any(Number));
 		});
@@ -3340,10 +3815,10 @@ describe('SessionList', () => {
 			const resizeHandle = container.querySelector('.cursor-col-resize');
 
 			// Try to drag beyond max (600px)
-			fireEvent.mouseDown(resizeHandle!, { clientX: 300 });
-			fireEvent.mouseMove(document, { clientX: 1000 });
-			// State is only updated on mouseUp for performance
-			fireEvent.mouseUp(document);
+			fireEvent.pointerDown(resizeHandle!, { clientX: 300, pointerId: 1 });
+			fireEvent.pointerMove(resizeHandle!, { clientX: 1000 });
+			// State is only updated on pointer up for performance
+			fireEvent.pointerUp(resizeHandle!);
 
 			// Should be clamped to 600
 			expect(setLeftSidebarWidthState).toHaveBeenCalledWith(600);
@@ -3355,10 +3830,10 @@ describe('SessionList', () => {
 			}); // Reset for second drag
 
 			// Try to drag below min (280px)
-			fireEvent.mouseDown(resizeHandle!, { clientX: 300 });
-			fireEvent.mouseMove(document, { clientX: 100 });
-			// State is only updated on mouseUp for performance
-			fireEvent.mouseUp(document);
+			fireEvent.pointerDown(resizeHandle!, { clientX: 300, pointerId: 1 });
+			fireEvent.pointerMove(resizeHandle!, { clientX: 100 });
+			// State is only updated on pointer up for performance
+			fireEvent.pointerUp(resizeHandle!);
 
 			// Should be clamped to 280
 			expect(setLeftSidebarWidthState).toHaveBeenCalledWith(280);
@@ -3382,7 +3857,6 @@ describe('SessionList', () => {
 				activeSessionId: 's1',
 			});
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
 			const setActiveSessionId = vi.spyOn(useSessionStore.getState(), 'setActiveSessionId');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
@@ -3412,7 +3886,6 @@ describe('SessionList', () => {
 				activeSessionId: 's1',
 			});
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
 			const setActiveSessionId = vi.spyOn(useSessionStore.getState(), 'setActiveSessionId');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
@@ -3993,6 +4466,32 @@ describe('SessionList', () => {
 			expect(band.contains(screen.getByTestId('icon-radio'))).toBe(true);
 			expect(band.contains(screen.getByTestId('now-playing-indicator'))).toBe(true);
 			expect(band.contains(screen.getByTestId('icon-trophy'))).toBe(true);
+		});
+
+		// Minimizing is a promise that the widget is parked somewhere reachable,
+		// and the pill is the only place it parks. The collapsed rail used to skip
+		// it on the grounds that a 64px strip belongs to the agents, which made
+		// minimize equal vanish there: no pill, no widget, and the only route back
+		// an unbound shortcut.
+		it('keeps the minimized player reachable on the collapsed rail', () => {
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			showNowPlayingPill();
+			render(<SessionList {...createDefaultProps({})} />);
+
+			const pill = screen.getByTestId('now-playing-indicator');
+			expect(pill).toBeTruthy();
+			// Compact: the rail is 64px, so the filename is dropped rather than
+			// clipped, leaving the transport and the way back.
+			expect(pill.textContent).toBe('');
+			expect(screen.getByTestId('now-playing-restore')).toBeTruthy();
+		});
+
+		it('leaves the collapsed rail alone when nothing is minimized', () => {
+			// Self-gating: someone who never opened the player sees no change.
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
 		});
 
 		it('shows the wordmark on a wide sidebar', () => {

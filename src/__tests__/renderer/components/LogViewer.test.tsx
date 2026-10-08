@@ -1738,3 +1738,45 @@ describe('LogViewer', () => {
 		});
 	});
 });
+
+// Phone: the header keeps a short title and drops the entry count so the
+// action buttons fit; a Search button stands in for Cmd+F; the footer legend
+// carries data-shortcut-hint so the phone stylesheet can hide it.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('LogViewer on a phone', () => {
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('shortens the title and drops the entry count', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText('System Logs')).toBeInTheDocument();
+		});
+		expect(screen.queryByText('Maestro System Logs')).not.toBeInTheDocument();
+		expect(screen.queryByText(/entr(y|ies)$/)).not.toBeInTheDocument();
+	});
+
+	it('opens search from a button, not only from Cmd+F', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText('Maestro System Logs')).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Search logs' }));
+		expect(screen.getByPlaceholderText('Search logs...')).toBeInTheDocument();
+	});
+
+	it('tags the Cmd+F legend as a shortcut hint', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText(/to search/)).toBeInTheDocument();
+		});
+		expect(screen.getByText(/to search/)).toHaveAttribute('data-shortcut-hint');
+	});
+});

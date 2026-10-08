@@ -6,13 +6,14 @@ import {
 	Clock,
 	Award,
 	Server,
+	User,
 	ChevronDown,
 	ChevronRight,
 } from 'lucide-react';
 import type { Theme, HistoryEntry } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
-import { DoubleCheck, getPillColor, getEntryIcon } from './historyConstants';
+import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './historyConstants';
 import { formatCount, formatTimestamp } from '../../../shared/formatters';
 import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
@@ -20,15 +21,13 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { CueGroupRuns } from './CueGroupRuns';
 import type { CueGroupExpansionApi } from '../../hooks/history/useExpandedCueGroups';
 
-const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
-
 export interface HistoryEntryItemProps {
 	entry: HistoryEntry;
 	index: number;
 	isSelected: boolean;
 	theme: Theme;
 	onOpenDetailModal: (entry: HistoryEntry, index: number) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 	onOpenAboutModal?: () => void;
 	/** When true, displays the agentName field prominently in the entry header (used in unified history view) */
 	showAgentName?: boolean;
@@ -138,7 +137,9 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath);
+								// Hand the label on this pill to the restore: it IS the tab's name,
+								// and nothing downstream can recover it once the tab is closed.
+								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath, entry.sessionName);
 							}}
 							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
 							style={{
@@ -155,6 +156,26 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						</button>
 					)}
 
+					{/*
+					 * Static label when there is no provider session to jump to. A failed
+					 * consult never captures an agentSessionId, so gating the pill above
+					 * on it silently dropped the subject line the writer had already
+					 * computed - the exact entries where "what was this?" matters most.
+					 */}
+					{!entry.agentSessionId && entry.sessionName && (
+						<span
+							className="px-2 py-0.5 rounded-full text-2xs font-bold min-w-0 flex-shrink truncate"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title={entry.sessionName}
+						>
+							{entry.sessionName}
+						</span>
+					)}
+
 					{/* Trigger name for a collapsed group of Cue runs */}
 					{cueGroup && (
 						<h3
@@ -166,47 +187,45 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						</h3>
 					)}
 
-					{/* Success/Failure Indicator for AUTO and CUE entries. Suppressed
-					    on a grouped row: one run's outcome cannot speak for the
-					    group, whose tally is on the meta line below instead. */}
-					{!cueGroup &&
-						(entry.type === 'AUTO' || entry.type === 'CUE') &&
-						entry.success !== undefined && (
-							<span
-								className="flex items-center justify-center w-5 h-5 rounded-full flex-shrink-0"
-								style={{
-									backgroundColor: entry.success
-										? entry.validated
-											? theme.colors.success
-											: theme.colors.success + '20'
-										: theme.colors.error + '20',
-									border: `1px solid ${
-										entry.success
-											? entry.validated
-												? theme.colors.success
-												: theme.colors.success + '40'
-											: theme.colors.error + '40'
-									}`,
-								}}
-								title={
+					{/* Success/Failure Indicator for dispatched work (AUTO / CUE / AGENT).
+					    Suppressed on a grouped row: one run's outcome cannot speak for
+					    the group, whose tally is on the meta line below instead. */}
+					{!cueGroup && hasRunOutcome(entry.type) && entry.success !== undefined && (
+						<span
+							className="flex items-center justify-center w-5 h-5 rounded-full flex-shrink-0"
+							style={{
+								backgroundColor: entry.success
+									? entry.validated
+										? theme.colors.success
+										: theme.colors.success + '20'
+									: theme.colors.error + '20',
+								border: `1px solid ${
 									entry.success
 										? entry.validated
-											? 'Task completed successfully, and you marked it as checked'
-											: 'Task completed successfully'
-										: 'Task failed'
-								}
-							>
-								{entry.success ? (
-									entry.validated ? (
-										<DoubleCheck className="w-3 h-3" style={{ color: '#ffffff' }} />
-									) : (
-										<Check className="w-3 h-3" style={{ color: theme.colors.success }} />
-									)
+											? theme.colors.success
+											: theme.colors.success + '40'
+										: theme.colors.error + '40'
+								}`,
+							}}
+							title={
+								entry.success
+									? entry.validated
+										? 'Task completed successfully, and you marked it as checked'
+										: 'Task completed successfully'
+									: 'Task failed'
+							}
+						>
+							{entry.success ? (
+								entry.validated ? (
+									<DoubleCheck className="w-3 h-3" style={{ color: '#ffffff' }} />
 								) : (
-									<X className="w-3 h-3" style={{ color: theme.colors.error }} />
-								)}
-							</span>
-						)}
+									<Check className="w-3 h-3" style={{ color: theme.colors.success }} />
+								)
+							) : (
+								<X className="w-3 h-3" style={{ color: theme.colors.error }} />
+							)}
+						</span>
+					)}
 
 					{/* Type Pill */}
 					<span
@@ -224,7 +243,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 
 				{/* Timestamp */}
 				<span className="text-2xs flex-shrink-0" style={{ color: theme.colors.textDim }}>
-					{formatTime(entry.timestamp)}
+					{formatTimestamp(entry.timestamp, 'smart')}
 				</span>
 			</div>
 
@@ -284,11 +303,12 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 				)
 			)}
 
-			{/* Footer Row - Time, Cost, Token Source, Achievement Action, and Remote Origin */}
+			{/* Footer Row - Time, Cost, Token Source, Achievement Action, Sender, and Remote Origin */}
 			{(entry.elapsedTimeMs !== undefined ||
 				(entry.usageStats && entry.usageStats.totalCostUsd > 0) ||
 				tokenPill ||
 				entry.achievementAction ||
+				entry.userName ||
 				entry.hostname) && (
 				<div
 					className="flex items-center gap-3 mt-2 pt-2 border-t"
@@ -349,10 +369,25 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							View Achievements
 						</button>
 					)}
+					{/* Sender pill - shown for turns a logged-in browser sent */}
+					{entry.userName && (
+						<span
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-mono font-bold ${entry.achievementAction ? '' : 'ml-auto'}`}
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title={`Sent by ${entry.userName}`}
+						>
+							<User className="w-2.5 h-2.5" />
+							{entry.userDisplayName ?? entry.userName}
+						</span>
+					)}
 					{/* Remote hostname pill - shown for entries from other hosts */}
 					{entry.hostname && (
 						<span
-							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-mono font-bold ${entry.achievementAction ? '' : 'ml-auto'}`}
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-mono font-bold ${entry.achievementAction || entry.userName ? '' : 'ml-auto'}`}
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textDim,

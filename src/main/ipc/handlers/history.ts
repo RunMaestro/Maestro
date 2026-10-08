@@ -27,6 +27,8 @@ import {
 	paginateEntries,
 } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
+import { getActingUser } from '../../web-server/auth/acting-user';
+import { resolveTurnActor } from '../../web-server/auth/turn-attribution';
 import {
 	writeEntryRemote,
 	writeEntryLocal,
@@ -44,6 +46,7 @@ import {
 	type CachedGraphBucket,
 } from '../../utils/history-bucket-cache';
 import { buildBucketAggregate, LOCAL_HOST_AGG_KEY } from '../../utils/history-bucket-builder';
+import type { PluginEvent } from '../../../shared/plugins/events';
 import type {
 	CueHistoryBucket,
 	CueHistoryBucketQuery,
@@ -86,6 +89,7 @@ export interface HistoryGraphData {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	/**
 	 * Per-host entry counts in the same window the buckets cover. Key is
 	 * the entry's `hostname`, or `"__local__"` for entries with no
@@ -107,6 +111,7 @@ interface BucketAggregateLike {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	hostCounts: Record<string, number>;
 }
 
@@ -124,6 +129,7 @@ function aggregateToGraphData(
 		autoCount: agg.autoCount,
 		userCount: agg.userCount,
 		cueCount: agg.cueCount,
+		agentCount: agg.agentCount,
 		hostCounts: agg.hostCounts,
 		cached,
 	};
@@ -139,6 +145,7 @@ function cachedToGraphData(
 		autoCount: number;
 		userCount: number;
 		cueCount: number;
+		agentCount: number;
 		hostCounts: Record<string, number>;
 	},
 	fromCache: boolean
@@ -152,6 +159,7 @@ function cachedToGraphData(
 		autoCount: cached.autoCount,
 		userCount: cached.userCount,
 		cueCount: cached.cueCount,
+		agentCount: cached.agentCount,
 		hostCounts: cached.hostCounts,
 		cached: fromCache,
 	};
@@ -171,6 +179,15 @@ export interface HistoryHandlerDependencies {
 	 * (typically via SSH) can see it.
 	 */
 	getSessionById?: (id: string) => Record<string, unknown> | undefined;
+	/**
+	 * Optional sink for the metadata-only `history.entryAdded` plugin event
+	 * (ids/classification only - never `summary`/`fullResponse`). Wired to
+	 * `pluginEventBus.emit` in index.ts; undefined in tests / when the plugin
+	 * subsystem is absent, in which case the emit is simply skipped. Delivery
+	 * is re-authorized per plugin against live grants (`events:subscribe` +
+	 * `history:read`) by the bus itself.
+	 */
+	emitPluginEvent?: (event: PluginEvent) => void;
 	/**
 	 * Every session record, used only to resolve which agents a project-wide or
 	 * global read covers. `cue_events` rows know their agent but not its
@@ -616,6 +633,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						autoCount: agg.autoCount,
 						userCount: agg.userCount,
 						cueCount: agg.cueCount,
+						agentCount: agg.agentCount,
 						hostCounts: agg.hostCounts,
 						computedAt: Date.now(),
 					});
@@ -731,7 +749,27 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 		'history:add',
 		withIpcErrorLogging(
 			handlerOpts('add'),
-			async (entry: HistoryEntry, sharedContext?: SharedHistoryContext) => {
+			async (incoming: HistoryEntry, sharedContext?: SharedHistoryContext) => {
+				// Web Login attribution. The caller almost never knows the answer:
+				// this entry is written by the DESKTOP renderer's exit listener even
+				// when a browser sent the turn, so `getActingUser()` is undefined
+				// here and the account has to come from what the spawn noted (see
+				// web-server/auth/turn-attribution). A call that DOES carry an acting
+				// user came over the bridge, and that user is the answer whatever the
+				// payload claims - a browser must not be able to file its work under
+				// another account. Only the desktop's own calls may name a user
+				// outright. A turn nobody signed in for stays bare.
+				const entry = ((): HistoryEntry => {
+					const acting = getActingUser();
+					if (!acting && incoming.userName) return incoming;
+					const actor = acting ?? resolveTurnActor(incoming.sessionId ?? '', incoming.tabId);
+					if (!actor) return incoming;
+					return {
+						...incoming,
+						userName: actor.username,
+						userDisplayName: actor.displayName,
+					};
+				})();
 				const sessionId = entry.sessionId || ORPHANED_SESSION_ID;
 				const maxEntries = deps.getMaxEntries?.();
 				await historyManager.addEntry(sessionId, entry.projectPath, entry, maxEntries);
@@ -766,6 +804,22 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 
 				// Broadcast to renderer for real-time Director's Notes streaming
 				deps.safeSend('history:entryAdded', entry, sessionId);
+
+				// Surface a metadata-only history.entryAdded to subscribed plugins.
+				// ids/classification ONLY per events.ts - never summary/fullResponse
+				// or any other free-form content. The bus re-authorizes each delivery
+				// against live grants (events:subscribe + history:read).
+				deps.emitPluginEvent?.({
+					topic: 'history.entryAdded',
+					at: new Date().toISOString(),
+					payload: {
+						entryId: entry.id,
+						...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+						...(entry.projectPath ? { projectPath: entry.projectPath } : {}),
+						kind: entry.type,
+						createdAt: entry.timestamp,
+					},
+				});
 
 				return true;
 			}

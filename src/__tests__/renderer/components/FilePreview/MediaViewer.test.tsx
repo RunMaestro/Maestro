@@ -6,7 +6,7 @@
  * codec for either - which reads as a broken build rather than a deleted file.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { MediaViewer } from '../../../../renderer/components/FilePreview/MediaViewer';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -84,5 +84,43 @@ describe('MediaViewer failure states', () => {
 		renderViewer('/tmp/remote.mp3');
 
 		expect(await screen.findByText('Cannot Play This File')).toBeInTheDocument();
+	});
+});
+
+describe('MediaViewer Escape handling', () => {
+	beforeEach(() => {
+		readFile.mockResolvedValue(buildMediaStreamUrl('token', '/tmp/ok.mp3'));
+		stat.mockResolvedValue({ size: 1024, isDirectory: false });
+	});
+
+	/** The speed button is the only thing in the transport that opens a menu. */
+	const openRateMenu = async () => {
+		const button = await screen.findByLabelText('Playback speed');
+		fireEvent.click(button);
+		return button;
+	};
+
+	it('closes the speed menu and stops there', async () => {
+		const { container } = renderViewer('/tmp/ok.mp3');
+		await openRateMenu();
+		expect(screen.getByText('1.5x')).toBeInTheDocument();
+
+		const player = container.firstElementChild as HTMLElement;
+		const escape = fireEvent.keyDown(player, { key: 'Escape' });
+
+		expect(screen.queryByText('1.5x')).not.toBeInTheDocument();
+		// Handled here, so the surface around the player does not ALSO act on it -
+		// otherwise one Escape would close the menu and minimize the widget.
+		expect(escape).toBe(false);
+	});
+
+	it('lets Escape through when there is no menu to close', async () => {
+		// The player owns nothing else Escape could mean, so the floating widget
+		// around it gets to minimize on the same keypress.
+		const { container } = renderViewer('/tmp/ok.mp3');
+		await screen.findByLabelText('Playback speed');
+
+		const player = container.firstElementChild as HTMLElement;
+		expect(fireEvent.keyDown(player, { key: 'Escape' })).toBe(true);
 	});
 });

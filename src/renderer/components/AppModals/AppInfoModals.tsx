@@ -25,6 +25,9 @@ const ProcessMonitor = lazy(() =>
 const UsageDashboardModal = lazy(() =>
 	import('../UsageDashboard').then((m) => ({ default: m.UsageDashboardModal }))
 );
+const AgentRunDashboardModal = lazy(() =>
+	import('../AgentRunDashboard').then((m) => ({ default: m.AgentRunDashboardModal }))
+);
 
 /**
  * Props for the AppInfoModals component
@@ -74,6 +77,9 @@ export interface AppInfoModalsProps {
 	defaultStatsTimeRange?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 	/** Enable colorblind-friendly colors for dashboard charts */
 	colorBlindMode?: boolean;
+	// AgentRun Dashboard Modal
+	agentRunDashboardOpen: boolean;
+	onCloseAgentRunDashboard: () => void;
 }
 
 /**
@@ -126,6 +132,9 @@ export const AppInfoModals = memo(function AppInfoModals({
 	onCloseUsageDashboard,
 	defaultStatsTimeRange,
 	colorBlindMode,
+	// AgentRun Dashboard Modal
+	agentRunDashboardOpen,
+	onCloseAgentRunDashboard,
 }: AppInfoModalsProps) {
 	return (
 		<>
@@ -203,6 +212,18 @@ export const AppInfoModals = memo(function AppInfoModals({
 						usageStats={usageStats}
 						handsOnTimeMs={handsOnTimeMs}
 						leaderboardRegistration={leaderboardRegistration}
+					/>
+				</Suspense>
+			)}
+
+			{/* --- AGENTRUN DASHBOARD MODAL (lazy-loaded) --- */}
+			{agentRunDashboardOpen && (
+				<Suspense fallback={null}>
+					<AgentRunDashboardModal
+						isOpen={agentRunDashboardOpen}
+						onClose={onCloseAgentRunDashboard}
+						theme={theme}
+						onNavigateToSession={onNavigateToSession}
 					/>
 				</Suspense>
 			)}

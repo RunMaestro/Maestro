@@ -249,9 +249,13 @@ export function availabilityDelayMs(attempt: number): number {
  * Best-effort, in descending order of confidence: a structured retry/reset hint
  * on `parsedJson`, a `retry after N seconds/minutes` phrase, the legacy
  * `usage limit reached|<epoch>` marker, then a wall-clock reset that names its
- * own IANA timezone ("resets 11:40am (America/Chicago)"). Returns `undefined`
- * when nothing parseable is found: the poll cadence governs from there, and
- * inventing a reset time would put the caller back on a blind sleep.
+ * own IANA timezone ("resets 11:40am (America/Chicago)").
+ *
+ * Returns `undefined` when nothing parseable is found. That is a real answer,
+ * not a failure: the caller polls regardless (see
+ * {@link tokenExhaustionDelayMs}), so an unparsed reset costs nothing but a
+ * missing "Resets at" line on the outage card. It used to return `now + 1h`,
+ * which the caller then slept through in one go.
  *
  * A bare wall-clock phrase like "resets at 3pm" is still ignored: without a
  * zone the guess can be hours off. Claude Code's own notice carries the zone in

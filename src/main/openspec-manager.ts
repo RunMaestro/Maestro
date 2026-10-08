@@ -21,6 +21,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from './utils/logger';
+import { fetchWithTimeout } from './utils/fetchWithTimeout';
 import {
 	createSpecCommandManager,
 	SpecCommand,
@@ -29,6 +30,9 @@ import {
 } from './spec-command-manager';
 
 const LOG_CONTEXT = '[OpenSpec]';
+
+/** Request budget for OpenSpec workflow refreshes from GitHub. */
+const OPENSPEC_FETCH_TIMEOUT_MS = 15_000;
 
 // All bundled OpenSpec commands with their metadata
 const OPENSPEC_COMMANDS: readonly SpecCommandDefinition[] = [
@@ -169,11 +173,12 @@ export async function refreshOpenSpecPrompts(): Promise<OpenSpecMetadata> {
 	// First, get the latest release info to get the version
 	let version = 'main';
 	try {
-		const releaseResponse = await fetch(
+		const releaseResponse = await fetchWithTimeout(
 			'https://api.github.com/repos/Fission-AI/OpenSpec/releases/latest',
 			{
 				headers: { 'User-Agent': 'Maestro-OpenSpec-Refresher' },
-			}
+			},
+			OPENSPEC_FETCH_TIMEOUT_MS
 		);
 		if (releaseResponse.ok) {
 			const releaseInfo = (await releaseResponse.json()) as { tag_name: string };
@@ -192,9 +197,13 @@ export async function refreshOpenSpecPrompts(): Promise<OpenSpecMetadata> {
 	let extractedCount = 0;
 	for (const { id, sourceFile } of UPSTREAM_COMMANDS) {
 		const url = `https://raw.githubusercontent.com/Fission-AI/OpenSpec/${version}/${WORKFLOWS_BASE_PATH}/${sourceFile}`;
-		const response = await fetch(url, {
-			headers: { 'User-Agent': 'Maestro-OpenSpec-Refresher' },
-		});
+		const response = await fetchWithTimeout(
+			url,
+			{
+				headers: { 'User-Agent': 'Maestro-OpenSpec-Refresher' },
+			},
+			OPENSPEC_FETCH_TIMEOUT_MS
+		);
 		if (!response.ok) {
 			throw new Error(`Failed to fetch ${sourceFile}: ${response.statusText}`);
 		}

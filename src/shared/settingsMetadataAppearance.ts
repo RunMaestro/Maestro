@@ -209,6 +209,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	tabBarWheelScroll: {
+		description:
+			'Pan an overflowing tab strip horizontally with the mouse wheel while hovering over the tab bar.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
 	autoHideMenuBar: {
 		description: 'Auto-hide the menu bar (press Alt to show). Only applies on Windows/Linux.',
 		type: 'boolean',

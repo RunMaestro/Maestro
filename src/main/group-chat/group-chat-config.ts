@@ -87,14 +87,17 @@ export function getWindowsSpawnConfig(
 		customShellPath: getCustomShellPath(),
 	});
 
-	// Determine stdin mode based on agent capabilities
+	// Determine stdin mode based on agent capabilities. A CLI that only accepts
+	// the prompt as a positional argument (omp) keeps it in argv - handing it
+	// stdin instead makes it run with no prompt at all.
 	const capabilities = getAgentCapabilities(agentId);
 	const supportsStreamJson = capabilities.supportsStreamJsonInput;
+	const supportsPromptViaStdin = capabilities.supportsPromptViaStdin;
 
 	return {
 		shell: shellConfig.shell,
 		runInShell: shellConfig.useShell,
-		sendPromptViaStdin: supportsStreamJson,
-		sendPromptViaStdinRaw: !supportsStreamJson,
+		sendPromptViaStdin: supportsPromptViaStdin && supportsStreamJson,
+		sendPromptViaStdinRaw: supportsPromptViaStdin && !supportsStreamJson,
 	};
 }

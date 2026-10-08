@@ -54,6 +54,7 @@ import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
+import { useThoughtStreamStore, selectActivityCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { useEditorTemplateAutocomplete } from '../../hooks/input/useEditorTemplateAutocomplete';
@@ -72,12 +73,17 @@ import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
 import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
-import { Maximize2, Edit as EditIcon, Eye, Search } from 'lucide-react';
+import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../../hooks/batch/useAutoRunStateMirror';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -131,11 +137,27 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 ) {
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isAutoRunActive = batchRunState?.isRunning || false;
+	// Mirrored from another Maestro window - visible, but not steerable here.
+	const isMirroredRun = useIsMirroredBatchRun(sessionId);
 	const isRunningRef = useRef(isAutoRunActive);
 	useEffect(() => {
 		isRunningRef.current = isAutoRunActive;
 	}, [isAutoRunActive]);
 	const isStopping = batchRunState?.isStopping || false;
+
+	// Thought Stream reopen affordance. While a run is active the brain /
+	// "View Thoughts" button lives on the Right Panel's active-run card, but that
+	// card is gated on `isRunning` and disappears once the run completes - which
+	// is exactly when someone wants to read back why the run did what it did.
+	// The buffer outlives the run, so once the run is done we surface the entry
+	// point here for as long as there is something buffered to read.
+	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
+	const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
+	// Reasoning AND tool calls: a run that only acted and never narrated still
+	// has a feed worth reopening, so this gate must not be thoughts-only.
+	const bufferedActivity = useThoughtStreamStore(selectActivityCount(sessionId));
+	const showOpenThoughtStream =
+		!isAutoRunActive && bufferedActivity > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
 	// Subscribes to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
@@ -225,6 +247,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 	const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+
+	// Phone: the editor mode bar goes icon-only (each button keeps its title as
+	// the accessible name) so its four or five buttons fit a 390px drawer.
+	const phone = usePhoneLayout();
 
 	// Search state and effects
 	const {
@@ -741,6 +767,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					isHumanGate={batchError.type === 'hitl_gate'}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
+					disabledReason={isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : undefined}
 				/>
 			)}
 
@@ -887,8 +914,14 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							style={{
 								borderColor: theme.colors.border,
 								color: theme.colors.textMain,
-								// The prose styles size everything else in `em`, so scaling the
-								// container carries headings, code, and lists with it.
+								// This IS a file preview - the same markdown the File Preview tab
+								// renders, in a different frame - so it follows that surface's
+								// font and size rather than a hard-coded 13px. Tailwind's
+								// `prose-sm` pins an absolute rem size, so the explicit size
+								// here is what actually wins; everything inside is in `em` and
+								// follows, so the pane's zoom carries headings, code, and lists
+								// with it. Rounded to a tenth of a px so a scaled size does not
+								// carry float noise into the style string.
 								fontFamily: previewTypography.fontFamily,
 								fontSize: `${Math.round(previewTypography.fontSize * previewFontScale.fontScale * 10) / 10}px`,
 							}}
@@ -934,7 +967,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							title={`Expand to full screen${shortcuts?.toggleAutoRunExpanded ? ` (${formatShortcutKeys(shortcuts.toggleAutoRunExpanded.keys)})` : ''}`}
 						>
 							<Maximize2 className="w-3 h-3" />
-							Expand
+							{!phone && 'Expand'}
 						</button>
 					)}
 					{/* Search button */}
@@ -949,7 +982,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						title={`Search (${formatShortcutKeys(['Meta', 'f'])})`}
 					>
 						<Search className="w-3 h-3" />
-						Search
+						{!phone && 'Search'}
 					</button>
 					{/* Edit / Preview toggle */}
 					<button
@@ -978,31 +1011,52 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						{mode === 'edit' ? (
 							<>
 								<Eye className="w-3 h-3" />
-								Preview
+								{!phone && 'Preview'}
 							</>
 						) : (
 							<>
 								<EditIcon className="w-3 h-3" />
-								Edit
+								{!phone && 'Edit'}
 							</>
 						)}
 					</button>
+					{/* Thought Stream restore: a temporary home for a minimized stream once the run completes and the Right Panel's active-run card (with its brain button) is gone. Vanishes when dismissed via the panel's X (which clears panelSessionId). */}
+					{showOpenThoughtStream && (
+						<button
+							onClick={() => openThoughtStream(sessionId)}
+							className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							style={{
+								color: theme.colors.accent,
+								border: `1px solid ${theme.colors.accent}40`,
+								backgroundColor: `${theme.colors.accent}15`,
+							}}
+							title={`Read this run's ${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'}`}
+						>
+							<Brain className="w-3 h-3" />
+							{!phone && 'Thoughts'}
+						</button>
+					)}
 				</div>
 			)}
 
-			{/* Bottom Panel - shown when folder selected AND (there are tasks, unsaved changes, or content with token count) */}
-			{folderPath && (taskCounts.total > 0 || (isDirty && !isLocked) || tokenCount !== null) && (
-				<AutoRunBottomPanel
-					theme={theme}
-					taskCounts={taskCounts}
-					tokenCount={tokenCount}
-					isDirty={isDirty}
-					isLocked={isLocked}
-					onSave={handleSave}
-					onRevert={handleRevert}
-					onOpenResetTasksModal={() => setResetTasksModalOpen(true)}
-				/>
-			)}
+			{/* Bottom Panel - shown when folder selected AND (there are tasks, unsaved
+			    changes, or content with token count). Suppressed during goal runs:
+			    the active-run card in the Right Panel already shows goal % +
+			    rationale, so this footer would only restate it. */}
+			{folderPath &&
+				!batchRunState?.goalMode &&
+				(taskCounts.total > 0 || (isDirty && !isLocked) || tokenCount !== null) && (
+					<AutoRunBottomPanel
+						theme={theme}
+						taskCounts={taskCounts}
+						tokenCount={tokenCount}
+						isDirty={isDirty}
+						isLocked={isLocked}
+						onSave={handleSave}
+						onRevert={handleRevert}
+						onOpenResetTasksModal={() => setResetTasksModalOpen(true)}
+					/>
+				)}
 
 			{/* Help Modal */}
 			{helpModalOpen && (
@@ -1054,6 +1108,11 @@ export const AutoRun = memo(AutoRunInner, (prevProps, nextProps) => {
 		prevProps.batchRunState?.isStopping === nextProps.batchRunState?.isStopping &&
 		prevProps.batchRunState?.currentTaskIndex === nextProps.batchRunState?.currentTaskIndex &&
 		prevProps.batchRunState?.totalTasks === nextProps.batchRunState?.totalTasks &&
+		// Goal-Driven progress fields drive the bottom-panel goal readout
+		prevProps.batchRunState?.goalMode === nextProps.batchRunState?.goalMode &&
+		prevProps.batchRunState?.goalProgress === nextProps.batchRunState?.goalProgress &&
+		prevProps.batchRunState?.goalIteration === nextProps.batchRunState?.goalIteration &&
+		prevProps.batchRunState?.goalRationale === nextProps.batchRunState?.goalRationale &&
 		// Error state is read directly from Zustand store (not props), so no comparison needed here.
 		// Session state affects UI (busy disables Run button)
 		prevProps.sessionState === nextProps.sessionState &&

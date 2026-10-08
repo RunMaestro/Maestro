@@ -123,6 +123,27 @@ describe('HistoryDetailModal', () => {
 			// The timestamp should be formatted (month, day, time)
 			expect(screen.getByText(/Jun/i)).toBeInTheDocument();
 		});
+
+		it('should render the sender pill for a turn a browser sent', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ userName: 'pedram', userDisplayName: 'Pedram A' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByTitle('Sent by pedram')).toBeInTheDocument();
+			expect(screen.getByText('Pedram A')).toBeInTheDocument();
+		});
+
+		it('should draw no sender pill for a turn typed at the desktop', () => {
+			render(
+				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
+			);
+
+			expect(screen.queryByTitle(/^Sent by /)).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Entry Types', () => {
@@ -420,7 +441,11 @@ describe('HistoryDetailModal', () => {
 			render(
 				<HistoryDetailModal
 					theme={mockTheme}
-					entry={createMockEntry({ agentSessionId: sessionId })}
+					entry={createMockEntry({
+						agentSessionId: sessionId,
+						projectPath: '/test/project',
+						sessionName: 'PP Farm Meta Data',
+					})}
 					onClose={mockOnClose}
 					onResumeSession={mockOnResumeSession}
 				/>
@@ -428,7 +453,13 @@ describe('HistoryDetailModal', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
 
-			expect(mockOnResumeSession).toHaveBeenCalledWith(sessionId);
+			// The name travels with the id: the restored tab is otherwise named
+			// after the id octet even though this modal was showing the real name.
+			expect(mockOnResumeSession).toHaveBeenCalledWith(
+				sessionId,
+				'/test/project',
+				'PP Farm Meta Data'
+			);
 			expect(mockOnClose).toHaveBeenCalled();
 		});
 
@@ -686,7 +717,9 @@ describe('HistoryDetailModal', () => {
 
 	describe('Context Color', () => {
 		it('should show success color for usage < 70%', () => {
-			const { container } = render(
+			// The modal renders through a body portal (it escapes the transformed
+			// right-panel drawer), so query via baseElement, not container.
+			const { baseElement } = render(
 				<HistoryDetailModal
 					theme={mockTheme}
 					entry={createMockEntry({
@@ -704,12 +737,14 @@ describe('HistoryDetailModal', () => {
 			);
 
 			// 5% usage should show success color
-			const progressBar = container.querySelector('[class*="transition-all"]');
+			const progressBar = baseElement.querySelector('[class*="transition-all"]');
 			expect(progressBar).toHaveStyle({ backgroundColor: mockTheme.colors.success });
 		});
 
 		it('should show warning color for usage 70-89%', () => {
-			const { container } = render(
+			// The modal renders through a body portal (it escapes the transformed
+			// right-panel drawer), so query via baseElement, not container.
+			const { baseElement } = render(
 				<HistoryDetailModal
 					theme={mockTheme}
 					entry={createMockEntry({
@@ -815,12 +850,14 @@ describe('HistoryDetailModal', () => {
 		});
 
 		it('should call onClose when X button in header is clicked', () => {
-			const { container } = render(
+			// The modal renders through a body portal (it escapes the transformed
+			// right-panel drawer), so query via baseElement, not container.
+			const { baseElement } = render(
 				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
 			);
 
 			// Find the X button in the header (first button with hover:bg-white/10)
-			const xButton = container.querySelector('button.hover\\:bg-white\\/10');
+			const xButton = baseElement.querySelector('button.hover\\:bg-white\\/10');
 			if (xButton) {
 				fireEvent.click(xButton);
 				expect(mockOnClose).toHaveBeenCalled();
@@ -828,12 +865,14 @@ describe('HistoryDetailModal', () => {
 		});
 
 		it('should call onClose when backdrop is clicked', () => {
-			const { container } = render(
+			// The modal renders through a body portal (it escapes the transformed
+			// right-panel drawer), so query via baseElement, not container.
+			const { baseElement } = render(
 				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
 			);
 
 			// Find the backdrop (absolute inset-0 bg-black/60)
-			const backdrop = container.querySelector('.bg-black\\/60');
+			const backdrop = baseElement.querySelector('.bg-black\\/60');
 			if (backdrop) {
 				fireEvent.click(backdrop);
 				expect(mockOnClose).toHaveBeenCalled();
@@ -1133,7 +1172,11 @@ describe('HistoryDetailModal', () => {
 		// has to keep working once you are inside it - otherwise the shortcut
 		// silently stops halfway through the flow it belongs to.
 		it('should jump to the entry session with Cmd+Enter and close', () => {
-			const entry = createMockEntry({ agentSessionId: 'abc12345-def6-7890' });
+			const entry = createMockEntry({
+				agentSessionId: 'abc12345-def6-7890',
+				projectPath: '/test/project',
+				sessionName: 'Named Session',
+			});
 			render(
 				<HistoryDetailModal
 					theme={mockTheme}
@@ -1148,7 +1191,11 @@ describe('HistoryDetailModal', () => {
 
 			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
 
-			expect(mockOnResumeSession).toHaveBeenCalledWith('abc12345-def6-7890');
+			expect(mockOnResumeSession).toHaveBeenCalledWith(
+				'abc12345-def6-7890',
+				'/test/project',
+				'Named Session'
+			);
 			expect(mockOnClose).toHaveBeenCalled();
 		});
 
@@ -1471,7 +1518,9 @@ describe('HistoryDetailModal', () => {
 		});
 
 		it('should prevent event propagation on modal content click', () => {
-			const { container } = render(
+			// The modal renders through a body portal (it escapes the transformed
+			// right-panel drawer), so query via baseElement, not container.
+			const { baseElement } = render(
 				<HistoryDetailModal
 					theme={mockTheme}
 					entry={createMockEntry()}
@@ -1484,7 +1533,7 @@ describe('HistoryDetailModal', () => {
 			fireEvent.click(screen.getByTitle('Delete this history entry'));
 
 			// Find the confirmation modal content
-			const modalContent = container.querySelector('.w-\\[400px\\]');
+			const modalContent = baseElement.querySelector('.modal-w-xs');
 			if (modalContent) {
 				fireEvent.click(modalContent);
 				// Modal should still be open
@@ -1687,11 +1736,13 @@ describe('HistoryDetailModal', () => {
 
 	describe('Theme Styling', () => {
 		it('should apply theme colors to modal', () => {
-			const { container } = render(
+			// The modal renders through a body portal (it escapes the transformed
+			// right-panel drawer), so query via baseElement, not container.
+			const { baseElement } = render(
 				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
 			);
 
-			const modal = container.querySelector('[data-modal-resize-key="history-detail"]');
+			const modal = baseElement.querySelector('[data-modal-resize-key="history-detail"]');
 			expect(modal).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
 		});
 
@@ -1732,6 +1783,39 @@ describe('HistoryDetailModal', () => {
 
 			const closeButton = screen.getByRole('button', { name: 'Close' });
 			expect(closeButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+		});
+	});
+
+	describe('phone layout class hooks (xs full-screen rules in index.css)', () => {
+		// index.css expands `.history-detail-modal` to full-screen at data-bp='xs',
+		// tightens `.hdm-footer`, and hides `.hdm-btn-label`. Guard the hooks so a
+		// markup refactor cannot silently detach the phone layout.
+		it('modal root carries history-detail-modal and the footer carries hdm-footer', () => {
+			// The modal renders through a body portal (it escapes the transformed
+			// right-panel drawer), so query via baseElement, not container.
+			const { baseElement } = render(
+				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
+			);
+			expect(baseElement.querySelector('.history-detail-modal')).not.toBeNull();
+			expect(baseElement.querySelector('.hdm-footer')).not.toBeNull();
+		});
+
+		it('Delete, Prev, and Next button labels carry hdm-btn-label', () => {
+			const entries = [createMockEntry({ id: 'a' }), createMockEntry({ id: 'b' })];
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={entries[0]}
+					onClose={mockOnClose}
+					onDelete={mockOnDelete}
+					filteredEntries={entries}
+					currentIndex={0}
+					onNavigate={mockOnNavigate}
+				/>
+			);
+			expect(screen.getByText('Delete')).toHaveClass('hdm-btn-label');
+			expect(screen.getByText('Prev')).toHaveClass('hdm-btn-label');
+			expect(screen.getByText('Next')).toHaveClass('hdm-btn-label');
 		});
 	});
 });

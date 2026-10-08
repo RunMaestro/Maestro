@@ -137,6 +137,12 @@ export interface FeedbackConversationSubmitPayload {
 	attachments?: FeedbackAttachmentPayload[];
 	/** Generate a support package and link it from the issue. */
 	includeDebugPackage?: boolean;
+	/**
+	 * Absolute path to a temp performance-trace .zip captured via
+	 * debug:stopProfilingToFile. When present, it is uploaded and linked in the
+	 * issue body, then deleted.
+	 */
+	performanceTracePath?: string;
 }
 
 /** One possible duplicate returned by the issue search. */
@@ -153,4 +159,69 @@ export interface FeedbackIssueMatch {
 
 export interface FeedbackIssueSearchResponse {
 	issues: FeedbackIssueMatch[];
+}
+
+export interface FeedbackDraftAttachment {
+	id: string;
+	name: string;
+	dataUrl: string;
+	sizeBytes: number;
+}
+
+export interface FeedbackDraftMessage {
+	role: 'user' | 'assistant' | 'system';
+	content: string;
+	timestamp: number;
+	confidence?: number;
+	category?: FeedbackCategory;
+	summary?: string;
+}
+
+export interface FeedbackDraftStructured {
+	expectedBehavior: string;
+	actualBehavior: string;
+	reproductionSteps: string;
+	additionalContext: string;
+}
+
+/**
+ * The parsed assistant response captured when a draft reaches the submit-ready
+ * state. Persisting it lets a resumed draft stay submittable without forcing
+ * the user to send another message to regenerate the structured fields.
+ */
+export interface FeedbackDraftResponse {
+	confidence: number;
+	ready: boolean;
+	message: string;
+	category: FeedbackCategory;
+	summary: string;
+	structured: FeedbackDraftStructured;
+}
+
+/** A persisted, resumable Send Feedback conversation. */
+export interface FeedbackDraft {
+	id: string;
+	suggestedName: string;
+	category: FeedbackCategory;
+	summary: string;
+	confidence: number;
+	agentType: string;
+	messages: FeedbackDraftMessage[];
+	attachments: FeedbackDraftAttachment[];
+	inputDraft: string;
+	includeDebugPackage: boolean;
+	createdAt: number;
+	updatedAt: number;
+	lastResponse?: FeedbackDraftResponse | null;
+}
+
+/** One issue the user filed, kept locally so the modal can list its state. */
+export interface SubmittedIssue {
+	number: number;
+	url: string;
+	title: string;
+	category: FeedbackCategory;
+	submittedAt: number;
+	state: 'open' | 'closed';
+	lastCheckedAt: number;
 }

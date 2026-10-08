@@ -77,6 +77,16 @@ export interface TriggerNodeData {
 		/** Per-item re-trigger cap. See `CueSubscription.max_notifications`.
 		 *  `0` in the wire format = unlimited; the UI renders this as "∞". */
 		max_notifications?: number;
+		/** Listener config for `webhook.received` triggers. See `CueWebhookConfig`. */
+		webhook_path?: string;
+		webhook_secret_env?: string;
+		webhook_signature_header?: string;
+		/** Literal secret carried through from hand-written YAML. The config
+		 *  panel renders it read-only and never offers a way to type one in -
+		 *  the editor always writes `secret_env` for new triggers. It is still
+		 *  hydrated and re-emitted so that opening and saving a pipeline in the
+		 *  editor doesn't silently strip a working secret off disk. */
+		webhook_secret?: string;
 		/** `time.once` only: ISO-8601 instant the one-shot fires at. See
 		 *  `CueSubscription.fire_at`. The editor does not offer a date picker
 		 *  yet, but this MUST round-trip: `maestro-cli cue schedule --at` and

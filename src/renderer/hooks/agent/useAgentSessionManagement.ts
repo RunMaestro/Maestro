@@ -1,7 +1,12 @@
 import { useCallback, useRef } from 'react';
-import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
-import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
-import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
+import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
+import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
+import {
+	aiTabFocusFields,
+	createTab,
+	getActiveTab,
+	isSessionIdLabel,
+} from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
@@ -24,13 +29,19 @@ export { isSynopsisRequest };
  * History entry for the addHistoryEntry function.
  */
 export interface HistoryEntryInput {
-	type: 'AUTO' | 'USER' | 'CUE';
+	type: HistoryEntryType;
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
 	usageStats?: UsageStats;
 	/** Optional override for background operations (prevents cross-agent bleed) */
 	sessionId?: string;
+	/**
+	 * Which AI tab the turn ran in. Carried so main can attribute the entry to
+	 * the Web Login account that STARTED the turn - the account is known only at
+	 * spawn time, and main keys what it noted by agent + tab.
+	 */
+	tabId?: string;
 	/** Optional override for background operations (prevents cross-agent bleed) */
 	projectPath?: string;
 	/** Optional override for background operations (prevents cross-agent bleed) */
@@ -49,14 +60,18 @@ export interface HistoryEntryInput {
 	tokenSource?: 'interactive' | 'api';
 	/** Claude-only, per-turn token source reason override. See {@link tokenSource}. */
 	tokenSourceReason?: 'auto' | 'limit';
+	/**
+	 * Cross-agent attribution: the calling agent's display name, stamped when this
+	 * entry records a consult the agent answered (so its History shows who
+	 * consulted it).
+	 */
+	sourceAgentName?: string;
 }
 
 /**
  * Dependencies for the useAgentSessionManagement hook.
  */
 export interface UseAgentSessionManagementDeps {
-	/** Current active session (null if none selected) */
-	activeSession: Session | null;
 	/** Session state setter */
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Agent session ID setter */
@@ -106,9 +121,9 @@ export interface UseAgentSessionManagementReturn {
 export interface ResumeSessionOptions {
 	/**
 	 * Resume into a specific Maestro agent (Session.id) resolved fresh from the
-	 * store, rather than the closure's active session. Required when jumping
-	 * across agents (e.g. the Left Bar "Starred Sessions" list), where the active
-	 * session has just switched and the closure value is stale.
+	 * store, rather than the current active session. Required when jumping
+	 * across agents (e.g. the Left Bar "Starred Sessions" list), where the target
+	 * agent isn't the one currently active.
 	 */
 	targetSessionId?: string;
 	/**
@@ -127,6 +142,10 @@ export interface ResumeSessionOptions {
  * - Jumping to Agent sessions in the browser
  * - Resuming saved Agent sessions as tabs
  *
+ * The active session is not passed in as a dep; each callback resolves it
+ * fresh from the store (`selectActiveSession(useSessionStore.getState())`) at
+ * call time, so callers never risk acting on a stale closure value.
+ *
  * @param deps - Hook dependencies
  * @returns Session management functions and refs
  */
@@ -134,7 +153,6 @@ export function useAgentSessionManagement(
 	deps: UseAgentSessionManagementDeps
 ): UseAgentSessionManagementReturn {
 	const {
-		activeSession,
 		setSessions,
 		setActiveAgentSessionId,
 		setAgentSessionsOpen,
@@ -153,6 +171,8 @@ export function useAgentSessionManagement(
 	 */
 	const addHistoryEntry = useCallback(
 		async (entry: HistoryEntryInput) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
+
 			// Use provided values or fall back to activeSession
 			const targetSessionId = entry.sessionId || activeSession?.id;
 			const targetProjectPath = entry.projectPath || activeSession?.cwd;
@@ -206,6 +226,8 @@ export function useAgentSessionManagement(
 					fullResponse: entry.fullResponse,
 					agentSessionId: entry.agentSessionId,
 					sessionId: targetSessionId,
+					// Lets main resolve which Web Login account started this turn.
+					...(entry.tabId ? { tabId: entry.tabId } : {}),
 					sessionName: sessionName,
 					projectPath: targetProjectPath,
 					// Claude-only per-turn token source (TUI vs API); omitted otherwise
@@ -224,6 +246,8 @@ export function useAgentSessionManagement(
 					success: entry.success,
 					// Pass through task execution time
 					elapsedTimeMs: entry.elapsedTimeMs,
+					// Cross-agent attribution: which agent consulted this one (if any)
+					...(entry.sourceAgentName ? { sourceAgentName: entry.sourceAgentName } : {}),
 				},
 				buildSharedHistoryContext(activeSession)
 			);
@@ -231,7 +255,7 @@ export function useAgentSessionManagement(
 			// Refresh history panel to show the new entry
 			rightPanelRef.current?.refreshHistoryPanel();
 		},
-		[activeSession, rightPanelRef]
+		[rightPanelRef]
 	);
 
 	/**
@@ -239,6 +263,8 @@ export function useAgentSessionManagement(
 	 */
 	const handleJumpToAgentSession = useCallback(
 		(agentSessionId: string) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
+
 			// Set the agent session ID and load its messages
 			if (activeSession) {
 				setActiveAgentSessionId(agentSessionId);
@@ -246,7 +272,7 @@ export function useAgentSessionManagement(
 				setAgentSessionsOpen(true);
 			}
 		},
-		[activeSession, setActiveAgentSessionId, setAgentSessionsOpen]
+		[setActiveAgentSessionId, setAgentSessionsOpen]
 	);
 
 	/**
@@ -265,8 +291,9 @@ export function useAgentSessionManagement(
 		): Promise<boolean> => {
 			// Resolve the agent to resume into. When a targetSessionId is provided
 			// (cross-agent jump, e.g. starred sessions), read it fresh from the store
-			// because the active session may have just switched and the `activeSession`
-			// closure is stale. Otherwise operate on the current active session.
+			// by id. Otherwise fall back to the current active session, also resolved
+			// fresh so it can't be a stale closure value.
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			const targetSession = opts?.targetSessionId
 				? (selectSessionById(opts.targetSessionId)(useSessionStore.getState()) ?? null)
 				: activeSession;
@@ -343,7 +370,13 @@ export function useAgentSessionManagement(
 
 				// Look up starred status, session name, and context usage from stores if not provided
 				let isStarred = starred ?? false;
-				let name = sessionName ?? null;
+				// A caller's `sessionName` is a RECORDED display name (a history entry's
+				// pill, a starred session's label), so an unnamed tab recorded its own id
+				// fallback. Writing that back as `tab.name` would look identical while
+				// permanently opting the tab out of auto-naming, so drop it and let the
+				// tab stay genuinely unnamed.
+				let name =
+					sessionName && !isSessionIdLabel(sessionName, agentSessionId) ? sessionName : null;
 				let storedContextUsage: number | undefined;
 				let finalUsageStats = usageStats;
 
@@ -455,17 +488,7 @@ export function useAgentSessionManagement(
 				return false;
 			}
 		},
-		[
-			activeSession?.projectRoot,
-			activeSession?.id,
-			activeSession?.aiTabs,
-			activeSession?.toolType,
-			setSessions,
-			setActiveAgentSessionId,
-			defaultSaveToHistory,
-			defaultShowThinking,
-			showFlash,
-		]
+		[setSessions, setActiveAgentSessionId, defaultSaveToHistory, defaultShowThinking, showFlash]
 	);
 
 	// Update refs for slash command functions (so other handlers can access latest versions)

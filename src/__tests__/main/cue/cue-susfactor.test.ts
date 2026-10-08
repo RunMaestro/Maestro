@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const fetchWithTimeout = vi.fn();
-vi.mock('../../../main/cue/cue-telemetry', () => ({
+vi.mock('../../../main/utils/fetchWithTimeout', () => ({
 	fetchWithTimeout: (...args: unknown[]) => fetchWithTimeout(...args),
 }));
 

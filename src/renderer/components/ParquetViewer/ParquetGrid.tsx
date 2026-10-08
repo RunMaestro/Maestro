@@ -24,6 +24,7 @@ import type {
 } from '../../../shared/parquet/types';
 import type { Theme } from '../../types';
 import { columnAlignment, columnTypeBadge, formatCell, quoteColumnName } from './parquetFormat';
+import { isCoarsePointer } from '../../utils/touch';
 
 /** Height of one data row, in pixels. Fixed so the virtualizer never measures. */
 const ROW_HEIGHT = 26;
@@ -320,6 +321,13 @@ export function ParquetGrid({
 								onMouseDown={(event) => {
 									if (event.detail > 1) event.preventDefault();
 								}}
+								// A finger cannot double-tap (iOS reserves the gesture), so on a
+								// coarse pointer one tap opens the record view. A mouse keeps
+								// the double-click, since a single click on a grid row is how
+								// the user selects text in it.
+								onClick={() => {
+									if (isCoarsePointer()) onOpenRow(virtualRow.index);
+								}}
 								onDoubleClick={() => onOpenRow(virtualRow.index)}
 								data-testid={`parquet-row-${virtualRow.index}`}
 							>
@@ -346,8 +354,13 @@ export function ParquetGrid({
 													columnAlignment(column.kind) === 'right' ? 'flex-end' : 'flex-start',
 												borderRight: `1px solid ${theme.colors.border}40`,
 												color: value === null ? theme.colors.textDim : theme.colors.textMain,
-												fontFamily:
-													'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+												// Inherits the File Preview font rather than pinning a
+												// monospace stack, so the setting reaches a parquet file
+												// like every other previewed document. `tabular-nums`
+												// is what actually keeps the numeric columns aligned,
+												// and it does so in ANY face - the mono stack was doing
+												// that job by side effect while overriding the setting.
+												fontVariantNumeric: 'tabular-nums',
 												fontStyle: value === null ? 'italic' : 'normal',
 												opacity: value === null ? 0.55 : 1,
 											}}
