@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import type React from 'react';
 import { Gauge, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
@@ -49,6 +49,8 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	setEffortMenuOpen,
 	effortMenuRef,
 }: ModelEffortPillsProps) {
+	const [typedModel, setTypedModel] = useState('');
+
 	if (!isVisible) {
 		return null;
 	}
@@ -102,6 +104,38 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 										</button>
 									)
 								)}
+							</div>
+							{/*
+							 * Escape hatch for a model discovery cannot know about: a preview or
+							 * limited-access model that the CLI's published catalog does not list
+							 * and that this machine has never run. Typing it once is enough - the
+							 * CLI records the usage, and discovery offers it from then on.
+							 */}
+							<div className="border-t px-3 py-1.5" style={{ borderColor: theme.colors.border }}>
+								<input
+									type="text"
+									value={typedModel}
+									onChange={(e) => setTypedModel(e.target.value)}
+									onKeyDown={(e) => {
+										// The composer and the global shortcuts both listen for plain
+										// keys; typing a model ID must not reach them.
+										e.stopPropagation();
+										if (e.key !== 'Enter') {
+											return;
+										}
+										const next = typedModel.trim();
+										if (!next) {
+											return;
+										}
+										onModelChange(next);
+										setTypedModel('');
+										setModelMenuOpen(false);
+									}}
+									placeholder="Or type a model ID"
+									aria-label="Use a model ID that is not listed"
+									className="w-full bg-transparent text-xs font-mono outline-none placeholder:opacity-50"
+									style={{ color: theme.colors.textMain }}
+								/>
 							</div>
 						</div>
 					)}

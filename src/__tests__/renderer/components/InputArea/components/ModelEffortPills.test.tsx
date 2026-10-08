@@ -110,4 +110,58 @@ describe('ModelEffortPills', () => {
 			);
 		});
 	});
+	describe('typing a model ID that is not in the list', () => {
+		// The motivating case: a limited-access model the CLI accepts but that
+		// discovery cannot see, so it never reaches availableModels.
+		const UNLISTED = 'claude-mythos-5-1';
+
+		it('applies the typed model and closes the menu on Enter', () => {
+			const onModelChange = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange, setModelMenuOpen });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: UNLISTED } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onModelChange).toHaveBeenCalledWith(UNLISTED);
+			expect(setModelMenuOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('trims surrounding whitespace', () => {
+			const onModelChange = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: `  ${UNLISTED}  ` } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onModelChange).toHaveBeenCalledWith(UNLISTED);
+		});
+
+		it('ignores Enter on an empty or whitespace-only entry', () => {
+			const onModelChange = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange, setModelMenuOpen });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.keyDown(input, { key: 'Enter' });
+			fireEvent.change(input, { target: { value: '   ' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onModelChange).not.toHaveBeenCalled();
+			expect(setModelMenuOpen).not.toHaveBeenCalled();
+		});
+
+		it('does not apply the model on other keys', () => {
+			const onModelChange = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: UNLISTED } });
+			fireEvent.keyDown(input, { key: 'a' });
+
+			expect(onModelChange).not.toHaveBeenCalled();
+		});
+	});
 });
