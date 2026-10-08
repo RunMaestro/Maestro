@@ -621,6 +621,12 @@ export class CueEngine {
 			onFailure: (payload) => {
 				this.meteredOnLog('warn', '[CUE] Heartbeat write failing', payload);
 			},
+			// Standalone only: no Electron powerMonitor 'resume' there, so a
+			// late tick is the wake signal. The desktop already reconciles on
+			// resume and must not do it twice.
+			...(deps.runnerMode === 'standalone'
+				? { onWallClockGap: () => this.reconcileAfterWake() }
+				: {}),
 		});
 		this.recoveryService = createCueRecoveryService({
 			onLog: meteredOnLog,
@@ -1304,7 +1310,11 @@ export class CueEngine {
 	 * check short-circuits without firing duplicate catch-ups. Multiple resume
 	 * events from the same wake (lid + display + monitor) are absorbed.
 	 *
-	 * No-op when the engine is disabled.
+	 * Callers: the desktop's powerMonitor 'resume' handler, and in the
+	 * standalone engine the heartbeat's wall-clock gap check, which runs before
+	 * that tick writes `last_seen` (see `CueHeartbeatHooks.onWallClockGap`).
+	 *
+	 * No-op when the engine is disabled or draining.
 	 */
 	reconcileAfterWake(): void {
 		if (!this.enabled || this.drainInProgress) return;

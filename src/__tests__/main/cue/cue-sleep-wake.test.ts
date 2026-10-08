@@ -48,6 +48,10 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	clearPersistedQueue: vi.fn(),
 	safePersistQueuedEvent: vi.fn(),
 	safeRemoveQueuedEvent: vi.fn(),
+	// Standalone engines persist fan-in progress.
+	getFanInState: vi.fn(() => []),
+	safePersistFanInSource: vi.fn(),
+	safeRemoveFanInState: vi.fn(),
 }));
 
 // Track reconciler calls
@@ -311,6 +315,134 @@ describe('CueEngine sleep/wake detection', () => {
 		const sessionInfo = sessions.get('session-1') as { config: CueConfig; sessionName: string };
 		expect(sessionInfo.sessionName).toBe('Test Session');
 		expect(sessionInfo.config.subscriptions).toHaveLength(1);
+
+		engine.stop();
+	});
+});
+
+/**
+ * The standalone engine has no Electron powerMonitor, so its heartbeat tick is
+ * the wake signal. The trap: after a suspend, the heartbeat is the first timer
+ * to fire, and a write before detection would leave a gap of about zero.
+ */
+describe('CueEngine standalone: catch-up after the host slept or paused', () => {
+	/** The heartbeat row, as the real cue_heartbeat table would hold it. */
+	let storedHeartbeat: number | null;
+
+	/** Move the wall clock without firing timers, as a suspend does to Date.now(). */
+	function jumpWallClock(ms: number): void {
+		vi.setSystemTime(Date.now() + ms);
+	}
+
+	function startEngine(runnerMode: 'standalone' | 'desktop' = 'standalone'): CueEngine {
+		const engine = new CueEngine(createMockDeps({ runnerMode }));
+		engine.start();
+		return engine;
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-10-08T09:00:00.000Z'));
+		mockInitCueDb.mockReset();
+		mockWatchCueYaml.mockReturnValue(vi.fn());
+		mockLoadCueConfig.mockReturnValue(createMockConfig());
+		storedHeartbeat = null;
+		mockUpdateHeartbeat.mockImplementation(() => {
+			storedHeartbeat = Date.now();
+		});
+		mockGetLastHeartbeat.mockImplementation(() => storedHeartbeat);
+	});
+
+	afterEach(() => {
+		mockUpdateHeartbeat.mockReset();
+		mockGetLastHeartbeat.mockReset();
+		vi.useRealTimers();
+	});
+
+	it('reconciles once over the slept window when the heartbeat fires first after the jump', () => {
+		const engine = startEngine();
+		const sleptAt = storedHeartbeat;
+		expect(sleptAt).toBe(Date.now());
+
+		jumpWallClock(10 * 60_000);
+		vi.advanceTimersByTime(30_000);
+
+		expect(mockReconcileMissedTimeEvents).toHaveBeenCalledTimes(1);
+		expect(mockReconcileMissedTimeEvents.mock.calls[0][0]).toMatchObject({
+			sleepStartMs: sleptAt,
+			wakeTimeMs: sleptAt! + 10 * 60_000 + 30_000,
+			skipHeartbeats: false,
+		});
+		// The wake restarted the heartbeat, which wrote the new time.
+		expect(storedHeartbeat).toBe(Date.now());
+
+		for (let i = 0; i < 5; i++) vi.advanceTimersByTime(30_000);
+		expect(mockReconcileMissedTimeEvents).toHaveBeenCalledTimes(1);
+
+		engine.stop();
+	});
+
+	it('logs the gap once through the engine logger', () => {
+		const deps = createMockDeps({ runnerMode: 'standalone' });
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		jumpWallClock(10 * 60_000);
+		vi.advanceTimersByTime(30_000);
+
+		const sleepLines = vi
+			.mocked(deps.onLog)
+			.mock.calls.filter(([, message]) => String(message).includes('Sleep detected'));
+		expect(sleepLines).toEqual([['cue', expect.stringContaining('Sleep detected (gap: 11m)')]]);
+
+		engine.stop();
+	});
+
+	it('does nothing for a jump below the threshold', () => {
+		const engine = startEngine();
+
+		jumpWallClock(60_000);
+		for (let i = 0; i < 4; i++) vi.advanceTimersByTime(30_000);
+
+		expect(mockReconcileMissedTimeEvents).not.toHaveBeenCalled();
+		engine.stop();
+	});
+
+	it('does nothing when the clock moved backward', () => {
+		const engine = startEngine();
+
+		jumpWallClock(-60 * 60_000);
+		for (let i = 0; i < 4; i++) vi.advanceTimersByTime(30_000);
+
+		expect(mockReconcileMissedTimeEvents).not.toHaveBeenCalled();
+		engine.stop();
+	});
+
+	it('does nothing while a drain is in progress', () => {
+		const engine = startEngine();
+		void engine.drain({ timeoutMs: 60_000 });
+		mockUpdateHeartbeat.mockClear();
+
+		jumpWallClock(10 * 60_000);
+		vi.advanceTimersByTime(30_000);
+
+		// The tick ran (and wrote), but the drain suppressed the catch-up.
+		expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
+		expect(mockReconcileMissedTimeEvents).not.toHaveBeenCalled();
+		engine.forceStop();
+	});
+
+	it('leaves the desktop to powerMonitor: a jump alone reconciles nothing there', () => {
+		const engine = startEngine('desktop');
+
+		jumpWallClock(10 * 60_000);
+		vi.advanceTimersByTime(30_000);
+		expect(mockReconcileMissedTimeEvents).not.toHaveBeenCalled();
+
+		// The resume handler's call then finds the heartbeat the tick just wrote.
+		engine.reconcileAfterWake();
+		expect(mockReconcileMissedTimeEvents).not.toHaveBeenCalled();
 
 		engine.stop();
 	});
