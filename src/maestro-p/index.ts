@@ -22,7 +22,7 @@ import * as fs from 'node:fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { isRateLimitErrorRow } from './api-error-row';
+import { isRateLimitErrorRow, terminalApiErrorTag } from './api-error-row';
 import { parseArgs, type ParsedArgs } from './args';
 import { diagnoseApiUsageBilling } from './billing-mode';
 import { buildChildEnv } from './child-env';
@@ -488,6 +488,21 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// api-error-row.ts).
 		if (isRateLimitErrorRow(e)) {
 			markLimitHit();
+			return;
+		}
+
+		// A bad model, rejected credential, or refused request is the same kind
+		// of synthetic row, and claude goes idle after it just the same. Fail now
+		// with claude's own wording rather than waiting out `--max-wait` and
+		// reporting a timeout (#1753). Exit 7 rather than 2: replaying the turn
+		// under `claude --print` cannot fix a model name that does not exist.
+		const apiErrorTag = terminalApiErrorTag(e);
+		if (apiErrorTag !== null) {
+			const errorText = collectAssistantText(message).trim() || apiErrorTag;
+			process.stderr.write(
+				`maestro-p: claude reported a terminal API error (${apiErrorTag}): ${errorText}\n`
+			);
+			finalize({ isError: true, error: errorText, exitCode: 7 });
 			return;
 		}
 
