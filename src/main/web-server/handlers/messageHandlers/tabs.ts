@@ -646,7 +646,17 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command, ...(rawInputRequired === true && { inputRequired: true }) }, { background })
+		.openTerminalTab(
+			sessionId,
+			{
+				cwd: resolvedCwd,
+				shell,
+				name,
+				command,
+				...(rawInputRequired === true && { inputRequired: true }),
+			},
+			{ background }
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',
