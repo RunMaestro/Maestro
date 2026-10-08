@@ -474,6 +474,36 @@ describe('AntigravityOutputParser with the conversation store', () => {
 		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
 	});
 
+	it('falls back to the last model call when the result carries no usage', () => {
+		const { parser } = parserWith({});
+		parser.parseJsonObject(
+			step({
+				step_index: 1,
+				state: 'DONE',
+				step_type: 'agent_response',
+				usage: {
+					input_tokens: 900,
+					output_tokens: 40,
+					thinking_tokens: 12,
+					cache_read_tokens: 300,
+				},
+			})
+		);
+		const result = {
+			event: 'result',
+			result: { conversation_id: CONV, status: 'SUCCESS', response: 'ok' },
+		};
+		const expected = {
+			inputTokens: 900,
+			outputTokens: 40,
+			cacheReadTokens: 300,
+			reasoningTokens: 12,
+		};
+		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
+		// Read, never consumed: a second parse of the same line agrees.
+		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
+	});
+
 	it('reads an answer step once, on its first delta, so thinking precedes the text', () => {
 		const { parser, reads } = parserWith({ thinking: { 5: 'Uppercasing keeps the order.' } });
 

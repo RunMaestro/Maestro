@@ -1236,6 +1236,8 @@ Every store is opened through `openAntigravityDb()`: read-only when agy's WAL si
 exist, read-write with `query_only` when they do not. A plain read-only open of a finished
 store CREATES sidecars it cannot remove (one listing left 397 pairs), and a plain
 read-write close would checkpoint a WAL agy left behind into its `.db`.
+`getSessionPath()` returns `null`, which keeps Antigravity out of the starred-transcript
+mirror: the mirror copies one file, and a WAL store's newest steps can still sit in `-wal`.
 
 **Known Limitations:**
 

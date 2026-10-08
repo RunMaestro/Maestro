@@ -252,7 +252,7 @@ export class AntigravityOutputParser implements AgentOutputParser {
 				status !== 'running' && sessionId && typeof step.step_index === 'number'
 					? this.stepStore.readToolResult(sessionId, step.step_index)
 					: '';
-			const exitCode = commandExitCode(stored);
+			const exitCode = commandExitCode(toolInfo?.name || step.tool_name, stored);
 			if (exitCode !== undefined && exitCode !== 0) status = 'failed';
 			const streamOutput =
 				typeof toolInfo?.output === 'string' ? cleanToolOutputText(toolInfo.output) : '';
@@ -376,7 +376,9 @@ export class AntigravityOutputParser implements AgentOutputParser {
 		// Read, never consumed: StdoutHandler can parse the same result line twice
 		// (once to settle a held error notice) and only the second parse is used.
 		const last = conversationId ? this.lastStepUsage.get(conversationId) : undefined;
-		if (!totals || !last) return totals;
+		// A result without totals still reports the last call it saw, rather than nothing.
+		if (!totals) return last ? this.normalizeUsage(last) : undefined;
+		if (!last) return totals;
 		return {
 			...totals,
 			absoluteUsage: {

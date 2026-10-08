@@ -8,16 +8,30 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { tmpdir } from 'os';
+import { pathToFileURL } from 'url';
 import { DatabaseSync } from 'node:sqlite';
 import { canLoadNodeSqlite, nodeSqliteBetterSqlite3Mock } from '../../helpers/nodeSqlite';
 
 const home = vi.hoisted(() => ({ dir: '' }));
+/** Every store the storage opened, so a test can prove a cache hit never touched one. */
+const opened = vi.hoisted(() => ({ files: [] as string[] }));
 
 vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
 vi.mock('electron', () => ({ app: { getPath: () => home.dir } }));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock('../../../main/parsers/antigravity-step-store', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../main/parsers/antigravity-step-store')>();
+	return {
+		...actual,
+		openAntigravityDb: (file: string) => {
+			opened.files.push(file);
+			return actual.openAntigravityDb(file);
+		},
+	};
+});
 vi.mock('os', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('os')>();
 	return {
@@ -27,14 +41,19 @@ vi.mock('os', async (importOriginal) => {
 	};
 });
 
-import { AntigravitySessionStorage } from '../../../main/storage/antigravity-session-storage';
+import {
+	AntigravitySessionStorage,
+	parseConversationSteps,
+} from '../../../main/storage/antigravity-session-storage';
 import {
 	SessionInfoCache,
 	setSessionInfoCacheForTest,
 } from '../../../main/storage/session-info-cache';
 
-const PROJECT = '/Users/test/project';
-const OTHER = '/Users/test/other';
+// Real absolute paths on the OS running the test (a drive letter on Windows),
+// written into the index the way agy writes them, as file:// URLs.
+const PROJECT = path.resolve('/Users/test/project');
+const OTHER = path.resolve('/Users/test/other');
 const INDEXED = '11111111-1111-4111-8111-111111111111';
 const BY_LAST_MAP = '22222222-2222-4222-8222-222222222222';
 const BY_COMMAND_CWD = '33333333-3333-4333-8333-333333333333';
@@ -113,7 +132,14 @@ function writeConversation(id: string, steps: Array<[number, Uint8Array]>): void
 }
 
 function writeIndex(
-	rows: Array<{ id: string; title: string; steps: number; workspace?: string; parent?: string }>
+	rows: Array<{
+		id: string;
+		title: string;
+		steps: number;
+		workspace?: string;
+		uris?: string[];
+		parent?: string;
+	}>
 ): void {
 	const db = new DatabaseSync(
 		path.join(home.dir, '.gemini', 'antigravity-cli', 'conversation_summaries.db')
@@ -128,7 +154,11 @@ function writeIndex(
 			row.title,
 			row.steps,
 			'2026-10-06 14:05:09.248083+00:00',
-			row.workspace ? JSON.stringify([`file://${row.workspace}`]) : '',
+			row.uris
+				? JSON.stringify(row.uris)
+				: row.workspace
+					? JSON.stringify([pathToFileURL(row.workspace).href])
+					: '',
 			row.parent ?? ''
 		);
 	}
@@ -233,7 +263,9 @@ describe.skipIf(!canLoadNodeSqlite())('AntigravitySessionStorage', () => {
 				id: INDEXED,
 				title: 'Listing Files',
 				steps: 5,
-				workspace: PROJECT,
+				// The first URI cannot become a local path (a host on POSIX); it must not
+				// cost the row the URI that does.
+				uris: ['file://otherhost/share/x', pathToFileURL(PROJECT).href],
 			},
 			{ id: BY_LAST_MAP, title: 'From Last Map', steps: 2 },
 			{ id: BY_COMMAND_CWD, title: 'From Command Cwd', steps: 3 },
@@ -331,18 +363,28 @@ describe.skipIf(!canLoadNodeSqlite())('AntigravitySessionStorage', () => {
 			'conversations',
 			`${INDEXED}.db`
 		);
-		// Unreadable but unchanged (size and mtime hold): the fingerprint holds,
-		// so the store is never opened and the session is still listed.
-		fs.chmodSync(store, 0o000);
+
+		// Unchanged (same index row, size and mtime): served without opening the store.
+		opened.files.length = 0;
 		expect((await storage.listSessions(PROJECT)).map((s) => s.sessionId)).toContain(INDEXED);
-		fs.chmodSync(store, 0o644);
+		expect(opened.files).not.toContain(store);
 
 		// A different size moves the fingerprint: re-read, unreadable, dropped.
 		fs.writeFileSync(store, 'not a database any more');
+		opened.files.length = 0;
 		expect((await storage.listSessions(PROJECT)).map((s) => s.sessionId)).not.toContain(INDEXED);
+		expect(opened.files).toContain(store);
 	});
 
-	it('is local only, points the starred mirror at the store, and refuses message deletion', async () => {
+	it.runIf(process.platform === 'win32')(
+		'matches the project folder case-insensitively on Windows',
+		async () => {
+			const sessions = await new AntigravitySessionStorage().listSessions(PROJECT.toUpperCase());
+			expect(sessions.map((s) => s.sessionId)).toContain(INDEXED);
+		}
+	);
+
+	it('is local only, opts out of the transcript mirror, and refuses message deletion', async () => {
 		const storage = new AntigravitySessionStorage();
 		const ssh = {
 			id: 'r',
@@ -354,10 +396,49 @@ describe.skipIf(!canLoadNodeSqlite())('AntigravitySessionStorage', () => {
 			enabled: true,
 		};
 		expect(await storage.listSessions(PROJECT, ssh)).toEqual([]);
-		expect(storage.getSessionPath(PROJECT, INDEXED)).toBe(
-			path.join(home.dir, '.gemini', 'antigravity-cli', 'conversations', `${INDEXED}.db`)
-		);
-		expect(storage.getSessionPath(PROJECT, 'nope')).toBeNull();
+		// The mirror copies one file, and a WAL store is not one self-contained file.
+		expect(storage.getSessionPath()).toBeNull();
 		expect((await storage.deleteMessagePair()).success).toBe(false);
+	});
+});
+
+describe('parseConversationSteps', () => {
+	// One real view_file result contained agy's status sentence; it must not read as failed.
+	it('reads an exit code only from a run_command result', () => {
+		const viewArgs = { AbsolutePath: '/w/notes.md' };
+		const { messages } = parseConversationSteps([
+			{ idx: 0, step_type: 14, step_payload: userStep(T0, 'Read notes.md') },
+			{
+				idx: 1,
+				step_type: 15,
+				step_payload: modelStep(T0 + 1, '', [{ id: 'v', name: 'view_file', args: viewArgs }], {
+					input: 10,
+					output: 1,
+					cacheRead: 0,
+				}),
+			},
+			{
+				idx: 2,
+				step_type: 132,
+				step_payload: toolStep(
+					T0 + 2,
+					'v',
+					'view_file',
+					viewArgs,
+					'File Path: `file:///w/notes.md`\nThe command exited with code 1.\nOutput:\nfrom an old log\n'
+				),
+			},
+		]);
+		expect(messages[1].toolUse).toEqual([
+			{
+				tool: 'view_file',
+				args: JSON.stringify(viewArgs),
+				state: {
+					status: 'completed',
+					input: viewArgs,
+					output: 'File Path: `file:///w/notes.md`',
+				},
+			},
+		]);
 	});
 });

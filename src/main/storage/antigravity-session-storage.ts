@@ -94,23 +94,33 @@ function normalizePath(value: string): string {
 	return trimmed.replace(/^\/private(\/(?:var|tmp|etc))(\/|$)/, '$1$2');
 }
 
+/**
+ * Whether a workspace is the project or a folder inside it. `path.relative`
+ * does the separator and case work: on Windows agy's `file:///C:/...` URIs
+ * come back with backslashes, and win32 paths compare case-insensitively.
+ */
 function matchesProject(workspace: string, projectPath: string): boolean {
-	const a = normalizePath(workspace);
-	const b = normalizePath(projectPath);
-	return a === b || a.startsWith(`${b}/`);
+	const rel = path.relative(normalizePath(projectPath), normalizePath(workspace));
+	return rel === '' || (!path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`));
 }
 
 /** Local paths out of a `workspace_uris` JSON array; non-file URIs are dropped. */
 function workspacePaths(json: string): string[] {
+	let uris: unknown;
 	try {
-		const uris = JSON.parse(json) as unknown;
-		if (!Array.isArray(uris)) return [];
-		return uris
-			.filter((uri): uri is string => typeof uri === 'string' && uri.startsWith('file://'))
-			.map((uri) => fileURLToPath(uri));
+		uris = JSON.parse(json);
 	} catch {
 		return [];
 	}
+	if (!Array.isArray(uris)) return [];
+	return uris.flatMap((uri) => {
+		if (typeof uri !== 'string' || !uri.startsWith('file://')) return [];
+		try {
+			return [fileURLToPath(uri)];
+		} catch {
+			return []; // e.g. a drive-less file URL on Windows; the row's other URIs still count
+		}
+	});
 }
 
 /** A step's creation time (5 -> 1 {seconds, nanos}) in ms, or 0. */
@@ -211,7 +221,7 @@ export function parseConversationSteps(
 			const entry = pending.get(utf8(fieldAt(payload, [5, 4, 1])));
 			if (!entry) continue;
 			const result = toolResultFromStepPayload(payload);
-			const exitCode = commandExitCode(result);
+			const exitCode = commandExitCode(entry.tool, result);
 			entry.state = {
 				...entry.state,
 				status: exitCode !== undefined && exitCode !== 0 ? 'failed' : 'completed',
@@ -378,6 +388,9 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 			refs,
 			async (ref) => {
 				const { row, workspace } = ref as (typeof refs)[number];
+				// Each read is synchronous SQLite on the main process: yield first, so a
+				// cold listing over hundreds of stores never blocks IPC for its whole run.
+				await new Promise((resolve) => setImmediate(resolve));
 				const parsed = readConversation(row.conversation_id);
 				if (!parsed || parsed.messages.length === 0) return null;
 				const indexedMs = Date.parse(row.last_modified_time) || 0;
@@ -441,14 +454,16 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 			}));
 	}
 
-	/** The conversation's store: what the starred-transcript mirror copies and restores. */
-	getSessionPath(
-		_projectPath: string,
-		sessionId: string,
-		sshConfig?: SshRemoteConfig
-	): string | null {
-		if (sshConfig || !ANTIGRAVITY_CONVERSATION_ID.test(sessionId)) return null;
-		return antigravityConversationDbPath(sessionId);
+	/**
+	 * None, on purpose. The starred-transcript mirror copies the one file this
+	 * returns and freshness-checks its mtime, but agy's stores are WAL-mode:
+	 * recent steps can still sit in `-wal`, so a copy of the `.db` alone is a
+	 * stale snapshot, and restoring it beside a `-wal` it does not match could
+	 * corrupt agy's own store. Opting out keeps the mirror away until it can
+	 * snapshot through SQLite's backup API.
+	 */
+	getSessionPath(): string | null {
+		return null;
 	}
 
 	async deleteMessagePair(): Promise<{ success: boolean; error?: string }> {

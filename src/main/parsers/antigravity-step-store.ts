@@ -150,9 +150,17 @@ export function toolResultFromStepPayload(payload: Uint8Array): string {
 	return utf8(fieldAt(payload, [140, 2, 1]));
 }
 
-/** Exit code from a run_command result agy fed back to the model. */
-export function commandExitCode(result: string): number | undefined {
-	const match = /The command exited with code (-?\d+)/.exec(result);
+/**
+ * agy's status line, which opens every run_command result (all 5,203 in one
+ * real store set, after a leading newline). Anchored, because a file that
+ * merely contains this sentence must not read as a failed command.
+ */
+const COMMAND_STATUS = /^\s*The command exited with code (-?\d+)\./;
+
+/** Exit code from a run_command result agy fed back to the model; other tools have none. */
+export function commandExitCode(toolName: string | undefined, result: string): number | undefined {
+	if (toolName !== 'run_command') return undefined;
+	const match = COMMAND_STATUS.exec(result);
 	return match ? Number(match[1]) : undefined;
 }
 
@@ -167,8 +175,12 @@ export function storedResultSummary(result: string): string {
 		(match) => match[1].trimEnd()
 	);
 	if (diffs.length > 0) return cleanToolOutputText(diffs.join('\n'));
-	// run_command: "...exited with code N.\nOutput:\n<out>" or "...\nStdout:\n<out>\nStderr:\n<err>"
-	const printed = /\n(?:Output|Stdout):\n([\s\S]*?)(?:\nStderr:\n([\s\S]*))?$/.exec(result);
+	// run_command: "...exited with code N.\nOutput:\n<out>" or "...\nStdout:\n<out>\nStderr:\n<err>".
+	// Anchored to the status line so a file that contains "Output:" is not mistaken for it.
+	const printed =
+		/^\s*The command exited with code -?\d+\.\n(?:Output|Stdout):\n([\s\S]*?)(?:\nStderr:\n([\s\S]*))?$/.exec(
+			result
+		);
 	const body = printed ? [printed[1], printed[2]].map((part) => part?.trim()).filter(Boolean) : [];
 	if (body.length > 0) return cleanToolOutputText(body.join('\n'));
 	return cleanToolOutputText(result.split('\n').find((line) => line.trim()) ?? '');

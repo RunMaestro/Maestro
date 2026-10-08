@@ -4,7 +4,7 @@
  * read off real conversations (`protoc --decode_raw`).
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { tmpdir } from 'os';
@@ -26,6 +26,7 @@ vi.mock('os', async (importOriginal) => {
 import {
 	antigravityStepStore,
 	commandExitCode,
+	openAntigravityDb,
 	storedResultSummary,
 	thinkingFromStepPayload,
 	toolResultFromStepPayload,
@@ -111,13 +112,13 @@ describe('thinkingFromStepPayload / toolResultFromStepPayload', () => {
 describe('storedResultSummary / commandExitCode', () => {
 	it('shows what a command printed, cleaned of CRLF', () => {
 		const result = '\nThe command exited with code 0.\nOutput:\ntotal 8\r\nhello.txt\r\n\n';
-		expect(commandExitCode(result)).toBe(0);
+		expect(commandExitCode('run_command', result)).toBe(0);
 		expect(storedResultSummary(result)).toBe('total 8\nhello.txt');
 	});
 
 	it("falls back to the result's first line when a failed command printed nothing", () => {
 		const result = '\nThe command exited with code 1.\nStdout:\n\nStderr:\n\n';
-		expect(commandExitCode(result)).toBe(1);
+		expect(commandExitCode('run_command', result)).toBe(1);
 		expect(storedResultSummary(result)).toBe('The command exited with code 1.');
 	});
 
@@ -130,8 +131,85 @@ describe('storedResultSummary / commandExitCode', () => {
 	it('shows the diff an edit applied, not the instructions around it', () => {
 		const result =
 			"The following changes were made by the replace_file_content tool to: /w/hello.txt. Don't ask for permission.\n[diff_block_start]\n@@ -1,2 +1,2 @@\n alpha\n-bravo\n+BRAVO\n[diff_block_end]\n\nPlease note that the above snippet only shows the MODIFIED lines.";
-		expect(commandExitCode(result)).toBeUndefined();
+		expect(commandExitCode('run_command', result)).toBeUndefined();
 		expect(storedResultSummary(result)).toBe('@@ -1,2 +1,2 @@\n alpha\n-bravo\n+BRAVO');
+	});
+
+	// A file that merely contains agy's status sentence must not turn a
+	// successful read or edit into a failed badge (one real view_file result did).
+	it('reads an exit code only from the status line that opens a run_command result', () => {
+		const status = '\nThe command exited with code 1.\nOutput:\n';
+		expect(commandExitCode('view_file', status)).toBeUndefined();
+		expect(commandExitCode('replace_file_content', status)).toBeUndefined();
+		expect(commandExitCode(undefined, status)).toBeUndefined();
+		expect(
+			commandExitCode('run_command', '\nOutput:\nThe command exited with code 1.\n')
+		).toBeUndefined();
+	});
+
+	it('does not read a non-command result that contains "Output:" as command output', () => {
+		expect(storedResultSummary('File Path: `file:///w/log.txt`\nOutput:\nsecret\n')).toBe(
+			'File Path: `file:///w/log.txt`'
+		);
+	});
+});
+
+// The promise openAntigravityDb makes: read agy's WAL-mode stores and leave its
+// folder exactly as it was. The better-sqlite3 stand-in honors `readonly`, and
+// a read-only open of a finished WAL store creates sidecars it cannot remove.
+describe.skipIf(!canLoadNodeSqlite())('openAntigravityDb', () => {
+	let dir = '';
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(tmpdir(), 'agy-wal-'));
+	});
+	afterEach(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	/** A WAL store whose committed rows stay in `-wal` while the writer is open. */
+	function walStore(file: string): DatabaseSync {
+		const writer = new DatabaseSync(file);
+		writer.exec(
+			'PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE steps (idx integer PRIMARY KEY); INSERT INTO steps VALUES (0), (1)'
+		);
+		return writer;
+	}
+	const stepCount = (db: NonNullable<ReturnType<typeof openAntigravityDb>>) =>
+		(db.prepare('SELECT count(*) AS n FROM steps').get() as { n: number }).n;
+
+	it('reads a store agy is still writing, through its WAL, without changing a file', () => {
+		const file = path.join(dir, 'live.db');
+		const writer = walStore(file);
+		const dbBytes = fs.readFileSync(file);
+		const walBytes = fs.readFileSync(`${file}-wal`);
+
+		const db = openAntigravityDb(file);
+		expect(db && stepCount(db)).toBe(2);
+		db?.close();
+
+		expect(fs.readFileSync(file).equals(dbBytes)).toBe(true);
+		expect(fs.readFileSync(`${file}-wal`).equals(walBytes)).toBe(true);
+		expect(fs.existsSync(`${file}-shm`)).toBe(true);
+		writer.close();
+	});
+
+	it('reads a finished store, refuses writes, and leaves no sidecar files behind', () => {
+		const file = path.join(dir, 'done.db');
+		walStore(file).close();
+		expect(fs.readdirSync(dir)).toEqual(['done.db']);
+		const dbBytes = fs.readFileSync(file);
+
+		const db = openAntigravityDb(file);
+		expect(db && stepCount(db)).toBe(2);
+		expect(() => db?.prepare('DELETE FROM steps').run()).toThrow();
+		db?.close();
+
+		expect(fs.readdirSync(dir)).toEqual(['done.db']);
+		expect(fs.readFileSync(file).equals(dbBytes)).toBe(true);
+	});
+
+	it('returns null for a missing store', () => {
+		expect(openAntigravityDb(path.join(dir, 'missing.db'))).toBeNull();
 	});
 });
 
