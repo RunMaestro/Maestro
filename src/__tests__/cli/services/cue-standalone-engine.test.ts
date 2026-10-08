@@ -76,6 +76,55 @@ describe('buildStandaloneCueEngineDeps', () => {
 	});
 });
 
+describe('a run stopped while the executors are still loading', () => {
+	it.each([
+		['prompt', {}],
+		['shell command', { action: 'command', command: { mode: 'shell', shell: 'echo hi' } }],
+		[
+			'maestro-cli command',
+			{ action: 'command', command: { mode: 'cli', cli: { command: 'send', target: 'x' } } },
+		],
+	] as const)('starts no %s run', async (_label, extra) => {
+		vi.clearAllMocks();
+		// A fresh module, so its executor load is the first and the test holds it open.
+		vi.resetModules();
+		let finishLoad!: () => void;
+		initializeOutputParsers.mockImplementationOnce(
+			() =>
+				new Promise<void>((resolve) => {
+					finishLoad = resolve;
+				})
+		);
+		const { buildStandaloneCueEngineDeps: build } =
+			await import('../../../cli/services/cue-standalone-engine');
+		const shell = await import('../../../main/cue/cue-shell-executor');
+		const cli = await import('../../../main/cue/cue-cli-executor');
+		const prompt = await import('../../../main/cue/cue-executor');
+		const deps = build({ onLog: vi.fn() });
+		const controller = new AbortController();
+
+		const pending = deps.onCueRun({
+			runId: 'run-1',
+			sessionId: 'agent-1',
+			prompt: 'Say pong',
+			subscriptionName: 'ask',
+			event,
+			timeoutMs: 1000,
+			signal: controller.signal,
+			...extra,
+		} as Parameters<typeof deps.onCueRun>[0]);
+		await vi.waitFor(() => expect(finishLoad).toBeTypeOf('function'));
+		controller.abort();
+		finishLoad();
+		const result = await pending;
+
+		expect(result.status).toBe('stopped');
+		expect(prompt.executeCuePrompt).not.toHaveBeenCalled();
+		expect(shell.executeCueShell).not.toHaveBeenCalled();
+		expect(cli.executeCueCli).not.toHaveBeenCalled();
+	});
+});
+
 describe('engine log sinks (--log-format)', () => {
 	it('picks text by default, JSON on request, and the stderr-only text form under --json', () => {
 		expect(cueLogForFormat(undefined)).toBe(consoleCueLog);

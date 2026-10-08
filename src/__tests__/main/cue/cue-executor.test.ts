@@ -710,6 +710,51 @@ describe('cue-executor', () => {
 			});
 		});
 
+		describe('a run stopped before its process starts', () => {
+			it('spawns nothing when stopped while the SSH resolution is awaited', async () => {
+				let resolveWrap!: (value: unknown) => void;
+				mockWrapSpawnWithSsh.mockImplementationOnce(
+					() =>
+						new Promise((resolve) => {
+							resolveWrap = resolve;
+						})
+				);
+				const controller = new AbortController();
+				const resultPromise = executeCuePrompt(
+					createExecutionConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+						sshStore: sshStoreWithRemotes(),
+						signal: controller.signal,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+
+				controller.abort();
+				resolveWrap({
+					command: 'ssh',
+					args: ['user@host'],
+					cwd: '/Users/test',
+					customEnvVars: undefined,
+					prompt: undefined,
+					sshRemoteUsed: { id: 'remote-1', name: 'My Server', host: 'host.example.com' },
+				});
+				const result = await resultPromise;
+
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(getActiveProcesses().size).toBe(0);
+				expect(result).toMatchObject({ status: 'stopped', stdout: '', stderr: '', exitCode: null });
+			});
+
+			it('spawns nothing when the signal is already aborted', async () => {
+				const controller = new AbortController();
+				controller.abort();
+				const result = await executeCuePrompt(createExecutionConfig({ signal: controller.signal }));
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(result.status).toBe('stopped');
+			});
+		});
+
 		describe('SSH remote execution', () => {
 			it('should call wrapSpawnWithSsh when SSH is enabled', async () => {
 				const mockSshStore = sshStoreWithRemotes();

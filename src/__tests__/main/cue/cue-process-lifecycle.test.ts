@@ -186,6 +186,19 @@ describe('cue-process-lifecycle', () => {
 	});
 
 	describe('runProcess', () => {
+		it('neither spawns nor registers a process for a run already stopped', async () => {
+			const controller = new AbortController();
+			controller.abort();
+			const result = await runProcess(
+				'stopped-run',
+				createSpec(),
+				createOptions({ signal: controller.signal })
+			);
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(getActiveProcessMap().has('stopped-run')).toBe(false);
+			expect(result).toMatchObject({ status: 'stopped', exitCode: null, stdout: '', stderr: '' });
+		});
+
 		it('spawns process with correct command, args, and cwd', async () => {
 			const spec = createSpec();
 			const resultPromise = runProcess('run-1', spec, createOptions());

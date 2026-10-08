@@ -137,6 +137,12 @@ export interface CueRunManagerDeps {
 		action?: CueSubscription['action'];
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
+		/**
+		 * Aborted when the run is stopped. A launch that has not spawned its
+		 * process yet checks it before spawning and returns `stopped` instead
+		 * (see `cue-launch-cancel.ts`); both phases of a two-phase run get it.
+		 */
+		signal?: AbortSignal;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -255,6 +261,13 @@ export interface CueRunManager {
 	/** Resolves once no run is active (immediately when none is). */
 	whenIdle(): Promise<void>;
 	/**
+	 * Runs already stopped (or discarded) whose launch has not returned yet:
+	 * one still awaiting its executor, spawn spec or SSH probe, or one whose
+	 * process has not exited. Not in `getActiveRuns()`, so the drain waits on
+	 * this before it releases the lock.
+	 */
+	getUnsettledStoppedRunCount(): number;
+	/**
 	 * Re-persist every queued entry stamped with `drainedAt`, so restore can
 	 * tell deferred work from a crash leftover (see cue-queue-persistence).
 	 * Returns how many entries were written.
@@ -298,6 +311,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 	 * drain keeps `stopped`. (A desktop manual stop is left as it was.)
 	 */
 	const drainStoppedRuns = new Set<string>();
+	/**
+	 * Runs removed from `activeRuns` by a stop (or a reset) while their
+	 * `doExecuteCueRun` is still awaiting `onCueRun`. Their signal is aborted,
+	 * so a launch that has not spawned yet will not, but until it returns it
+	 * is visible neither to `getActiveRuns()` nor to the process registry.
+	 * Deleted when `doExecuteCueRun` returns.
+	 */
+	const unsettledStoppedRuns = new Set<string>();
+	/** Abort a run that is leaving `activeRuns` and cover its launch until it settles. */
+	function cancelLaunch(runId: string, run: ActiveRun): void {
+		unsettledStoppedRuns.add(runId);
+		run.abortController?.abort();
+	}
 	/** Callers of `whenIdle()` waiting for the last active run to leave. */
 	let idleWaiters: Array<() => void> = [];
 	function notifyIfIdle(): void {
@@ -570,6 +596,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				action,
 				command,
 				notify,
+				signal: abortController.signal,
 			});
 			if (!activeRuns.has(runId)) {
 				// Engine was stopped (or run was cleared) while onCueRun was in
@@ -679,6 +706,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						subscriptionName: `${subscriptionName}:output`,
 						event: outputEvent,
 						timeoutMs,
+						// The same signal: a stop during this phase cancels its launch too.
+						signal: abortController.signal,
 					});
 					outputStatus = outputResult.status;
 				} finally {
@@ -812,6 +841,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			result.status = 'failed';
 			result.stderr = error instanceof Error ? error.message : String(error);
 		} finally {
+			// A stopped run's launch has returned: nothing of it is left to spawn.
+			unsettledStoppedRuns.delete(runId);
 			// Only clean up if the run is still tracked. If it was already removed
 			// (by stopRun or reset), that caller handled its own cleanup.
 			if (activeRuns.has(runId)) {
@@ -1044,7 +1075,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			if (run.processRunId && run.processRunId !== runId) {
 				deps.onStopCueRun?.(run.processRunId);
 			}
-			run.abortController?.abort();
+			// A launch with no process yet is cancelled here: it checks the
+			// signal before spawning (see cue-launch-cancel.ts).
+			cancelLaunch(runId, run);
 
 			// Finalize the result for immediate UI feedback
 			run.result.status = 'stopped';
@@ -1112,6 +1145,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			return new Promise<void>((resolve) => idleWaiters.push(resolve));
 		},
 
+		getUnsettledStoppedRunCount(): number {
+			return unsettledStoppedRuns.size;
+		},
+
 		persistQueueForRestart(drainedAt: number): number {
 			const persistence = deps.queuePersistence;
 			if (!persistence) return 0;
@@ -1140,7 +1177,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		},
 
 		discardInMemory(): void {
-			for (const runId of activeRuns.keys()) {
+			for (const [runId, run] of activeRuns) {
+				cancelLaunch(runId, run);
 				deps.onAllowSleep?.(`cue:run:${runId}`);
 			}
 			activeRuns.clear();
@@ -1202,7 +1240,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		},
 
 		reset(): void {
-			for (const runId of activeRuns.keys()) {
+			// A run forgotten here must not start a process afterwards either.
+			for (const [runId, run] of activeRuns) {
+				cancelLaunch(runId, run);
 				deps.onAllowSleep?.(`cue:run:${runId}`);
 			}
 			activeRuns.clear();

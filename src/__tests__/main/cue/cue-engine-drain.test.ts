@@ -61,6 +61,7 @@ vi.mock('../../../main/cue/cue-task-scanner', () => ({
 }));
 
 import { CueEngine } from '../../../main/cue/cue-engine';
+import { BACKGROUND_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
 import { createMockSession, createMockDeps } from './cue-test-helpers';
 
 const alpha = createMockSession({ id: 's-alpha', name: 'Alpha', projectRoot: '/p/a', cwd: '/p/a' });
@@ -343,6 +344,9 @@ describe('CueEngine.drain', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		const drained = engine.drain({ timeoutMs: 1_000 });
 		await vi.advanceTimersByTimeAsync(1_000);
+		// This executor never answers the stop, so the drain covers both
+		// launches until its bound (ladder grace + margin), then lets go.
+		await vi.advanceTimersByTimeAsync(BACKGROUND_STOP_GRACE_MS + 2_000);
 		const report = await drained;
 
 		expect(report).toMatchObject({ forced: false, completed: 0, stopped: 2, persistedQueue: 0 });
@@ -394,11 +398,14 @@ describe('CueEngine.drain', () => {
 	it('does not kill when the processes exit within the grace', async () => {
 		let live = 1;
 		const killAllCueProcessesNow = vi.fn();
-		const { engine } = boot({ countLiveCueProcesses: () => live, killAllCueProcessesNow });
+		const { engine, exec } = boot({ countLiveCueProcesses: () => live, killAllCueProcessesNow });
 		await vi.advanceTimersByTimeAsync(0);
 		const drained = engine.drain({ timeoutMs: 1_000 });
 		await vi.advanceTimersByTimeAsync(1_000);
+		// The processes exit from the ladder's signal; their runs report it.
 		live = 0;
+		exec.finish('tick', 'stopped');
+		exec.finish('beat-b', 'stopped');
 		await vi.advanceTimersByTimeAsync(200);
 		await drained;
 		expect(killAllCueProcessesNow).not.toHaveBeenCalled();
@@ -433,6 +440,122 @@ describe('CueEngine.drain', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		expect(engine.isEnabled()).toBe(false);
 		expect(killAllCueProcessesNow).toHaveBeenCalledTimes(1);
+	});
+
+	describe('a launch still pending when its run is stopped', () => {
+		/**
+		 * An executor shaped like the real launch path: it awaits something it
+		 * cannot cancel (the executor load, an SSH probe), then checks the
+		 * run's signal before it would spawn.
+		 */
+		function pendingLaunchExecutor() {
+			let release!: () => void;
+			const loaded = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			const spawned: string[] = [];
+			const onCueRun = vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
+				await loaded;
+				const status: CueRunResult['status'] = request.signal?.aborted ? 'stopped' : 'completed';
+				if (status === 'completed') spawned.push(request.subscriptionName);
+				return {
+					runId: request.runId,
+					sessionId: request.sessionId,
+					sessionName: '',
+					subscriptionName: request.subscriptionName,
+					event: request.event,
+					status,
+					stdout: '',
+					stderr: '',
+					exitCode: null,
+					durationMs: 0,
+					startedAt: new Date().toISOString(),
+					endedAt: new Date().toISOString(),
+				};
+			});
+			return { onCueRun, release, spawned };
+		}
+
+		it('waits for it to settle before releasing the lock, and it spawns nothing', async () => {
+			const launch = pendingLaunchExecutor();
+			const killAllCueProcessesNow = vi.fn();
+			const { engine, onLog } = boot({
+				onCueRun: launch.onCueRun,
+				countLiveCueProcesses: () => 0,
+				killAllCueProcessesNow,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(launch.onCueRun).toHaveBeenCalledTimes(2);
+
+			let done = false;
+			const drained = engine.drain({ timeoutMs: 1_000 }).then((report) => {
+				done = true;
+				return report;
+			});
+			await vi.advanceTimersByTimeAsync(1_000);
+			// Both runs are stopped, no process is live, yet the launches have
+			// not returned: the lock is still held.
+			expect(engine.getActiveRuns()).toEqual([]);
+			await vi.advanceTimersByTimeAsync(1_000);
+			expect(done).toBe(false);
+			expect(lockCalls.released).toBe(0);
+
+			launch.release();
+			await vi.advanceTimersByTimeAsync(200);
+			const report = await drained;
+			expect(report).toMatchObject({ forced: false, stopped: 2 });
+			expect(launch.spawned).toEqual([]);
+			expect(killAllCueProcessesNow).not.toHaveBeenCalled();
+			expect(lockCalls.released).toBe(1);
+			// Recorded stopped, never failed, and no row left running.
+			expect(eventStatuses().sort()).toEqual(['stopped', 'stopped']);
+			const finished = onLog.mock.calls
+				.map((call) => call[2] as { type?: string; status?: string } | undefined)
+				.filter((data) => data?.type === 'runFinished');
+			expect(finished.every((data) => data!.status === 'stopped')).toBe(true);
+		});
+
+		it('gives up on a launch that never settles at the bound', async () => {
+			const launch = pendingLaunchExecutor();
+			const { engine } = boot({ onCueRun: launch.onCueRun, countLiveCueProcesses: () => 0 });
+			await vi.advanceTimersByTimeAsync(0);
+			let done = false;
+			const drained = engine.drain({ timeoutMs: 1_000 }).then(() => {
+				done = true;
+			});
+			await vi.advanceTimersByTimeAsync(1_000 + BACKGROUND_STOP_GRACE_MS + 1_000);
+			expect(done).toBe(false);
+			await vi.advanceTimersByTimeAsync(1_100);
+			await drained;
+			expect(lockCalls.released).toBe(1);
+			// Settling after the lock went still spawns nothing.
+			launch.release();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(launch.spawned).toEqual([]);
+			expect(eventStatuses()).not.toContain('running');
+		});
+
+		it('a second signal ends the drain at once; the launch still spawns nothing', async () => {
+			const launch = pendingLaunchExecutor();
+			const killAllCueProcessesNow = vi.fn();
+			const { engine } = boot({
+				onCueRun: launch.onCueRun,
+				countLiveCueProcesses: () => 0,
+				killAllCueProcessesNow,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			const drained = engine.drain({ timeoutMs: 60_000 });
+			await vi.advanceTimersByTimeAsync(0);
+			engine.forceStop();
+			const report = await drained;
+			expect(report).toMatchObject({ forced: true, stopped: 2 });
+			expect(lockCalls.released).toBe(1);
+			expect(killAllCueProcessesNow).toHaveBeenCalledTimes(1);
+
+			launch.release();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(launch.spawned).toEqual([]);
+		});
 	});
 
 	it('returns the same promise when called twice, and resolves at once when not running', async () => {

@@ -22,6 +22,7 @@ import { buildSpawnPath } from '../utils/spawnPath';
 import { filterServerProcessEnv, isServerModeActive } from '../../shared/maestro-lib/launch/env';
 import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
 import type { StopHandle } from '../../shared/maestro-lib/control/termination';
+import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 
 export interface CueShellExecutionConfig {
 	runId: string;
@@ -44,6 +45,8 @@ export interface CueShellExecutionConfig {
 	sshStore?: SshRemoteSettingsStore;
 	/** Inherit only the server-mode env allowlist (see `filterServerProcessEnv`). */
 	isServerMode?: boolean;
+	/** Aborted when the run is stopped: a command not yet spawned returns `stopped` (see cue-launch-cancel.ts). */
+	signal?: AbortSignal;
 }
 
 /**
@@ -65,6 +68,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		sshRemoteConfig,
 		sshStore,
 		isServerMode,
+		signal,
 	} = config;
 
 	const startedAt = new Date().toISOString();
@@ -162,6 +166,21 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 			);
 		}
 		spawnEnv.PATH = shellPath || buildSpawnPath();
+	}
+
+	// Stopped while the SSH wrap or the PATH probe was awaited. Checked after
+	// the last await, so nothing can stop the run between here and the spawn
+	// without also reaching the registered child.
+	if (isLaunchCancelled(signal)) {
+		return stoppedBeforeLaunchResult({
+			runId,
+			sessionId: session.id,
+			sessionName: session.name,
+			subscriptionName: subscription.name,
+			pipelineName: subscription.pipeline_name,
+			event,
+			startedAt,
+		});
 	}
 
 	return new Promise<CueRunResult>((resolve) => {

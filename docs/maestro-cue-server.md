@@ -519,7 +519,7 @@ The engine logs one JSON object per line. On a VM they go to the journal (`journ
 
 ### Stop
 
-`sudo systemctl stop maestro-cue` and `docker stop -t 120 maestro-cue` drain: new events are queued, active runs get up to 90 seconds to finish, and whatever is queued runs after the next start. A second stop signal cuts the drain short. A script that stops the engine with `maestro-cli cue engine stop` should pass `--wait-ms 120000`, since that command waits only 5 seconds by default.
+`sudo systemctl stop maestro-cue` and `docker stop -t 120 maestro-cue` drain: new events are queued, active runs get up to 90 seconds to finish, and whatever is queued runs after the next start. A run still starting when it is stopped (loading, or waiting on its SSH connection) is cancelled and never starts its agent, and the engine waits for it before it exits. A second stop signal cuts the drain short. A script that stops the engine with `maestro-cli cue engine stop` should pass `--wait-ms 120000`, since that command waits only 5 seconds by default.
 
 ### Add or replace agents and pipelines
 

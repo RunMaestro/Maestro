@@ -102,6 +102,8 @@ export interface CueEngineDeps {
 		action?: CueSubscription['action'];
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
+		/** Aborted when the run is stopped; see `CueRunManagerDeps.onCueRun`. */
+		signal?: AbortSignal;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -956,9 +958,16 @@ export class CueEngine {
 			}
 			for (const runId of remaining) this.runManager.stopRun(runId);
 			const live = this.deps.countLiveCueProcesses ?? (() => 0);
-			if (!forced && live() > 0) {
+			// A stopped run whose launch had not spawned yet (executor load,
+			// spawn spec, SSH probe) has no process to count, but it is still
+			// settling: keep the lock until its launch returns. Its signal is
+			// aborted, so it returns `stopped` without spawning. A launch still
+			// pending at the deadline (or after a second signal) cannot spawn
+			// either; it re-checks the signal right before spawning.
+			const busy = () => live() > 0 || this.runManager.getUnsettledStoppedRunCount() > 0;
+			if (!forced && busy()) {
 				const deadline = Date.now() + BACKGROUND_STOP_GRACE_MS + DRAIN_PROCESS_EXIT_MARGIN_MS;
-				while (live() > 0 && Date.now() < deadline && !forced) {
+				while (busy() && Date.now() < deadline && !forced) {
 					await Promise.race([after(DRAIN_PROCESS_POLL_MS), forcedSignal]);
 				}
 			}

@@ -147,6 +147,14 @@ describe('cue-cli-executor', () => {
 		mockIsWindows.mockReturnValue(false);
 	});
 
+	it('spawns nothing for a run already stopped', async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const result = await executeCueCli(createConfig({ signal: controller.signal }) as any);
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ status: 'stopped', exitCode: null, stderr: '' });
+	});
+
 	it('substitutes {{CUE_FROM_AGENT}} in target before invoking maestro-cli dispatch', async () => {
 		const config = createConfig();
 		const promise = executeCueCli(config as any);

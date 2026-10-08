@@ -30,6 +30,7 @@ import {
 	type StopHandle,
 } from '../../shared/maestro-lib/control/termination';
 import { startTurn, type TurnHandle } from '../../shared/maestro-lib/run/start-turn';
+import { isLaunchCancelled } from './cue-launch-cancel';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -97,6 +98,11 @@ export interface ProcessRunOptions {
 	 * throw - it fires on every chunk, and the callee debounces.
 	 */
 	onActivity?: () => void;
+	/**
+	 * Aborted when the run is stopped. Checked synchronously right before the
+	 * spawn: a stopped run never starts a process (see cue-launch-cancel.ts).
+	 */
+	signal?: AbortSignal;
 }
 
 // ─── Module State ────────────────────────────────────────────────────────────
@@ -395,6 +401,19 @@ export async function runProcess(
 ): Promise<ProcessRunResult> {
 	const { toolType, timeoutMs, sshRemoteEnabled, sshStdinScript, stdinPrompt, onLog, onActivity } =
 		options;
+
+	// The last check before the spawn; nothing below awaits until the child
+	// is started and registered, so a stop cannot slip in between.
+	if (isLaunchCancelled(options.signal)) {
+		return {
+			stdout: '',
+			stderr: '',
+			exitCode: null,
+			status: 'stopped',
+			providerSessionId: null,
+			usage: null,
+		};
+	}
 
 	let stdout = '';
 	let stderr = '';

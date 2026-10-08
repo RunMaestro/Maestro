@@ -55,6 +55,7 @@ import { createCueFanInTracker } from '../../../main/cue/cue-fan-in-tracker';
 import type { CueFanInPersistence } from '../../../main/cue/cue-fan-in-persistence';
 import { CueEngine } from '../../../main/cue/cue-engine';
 import { createMockSession, createMockDeps } from './cue-test-helpers';
+import { BACKGROUND_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
 
 // ─── Tracker level ──────────────────────────────────────────────────────────
 
@@ -450,6 +451,9 @@ describe('CueEngine fan-in durability', () => {
 		first.exec.finish('tick');
 		await flush();
 		await vi.advanceTimersByTimeAsync(60_000);
+		// beat-b is stopped at the timeout and its mock never answers, so the
+		// drain covers that launch up to its bound (ladder grace + margin).
+		await vi.advanceTimersByTimeAsync(BACKGROUND_STOP_GRACE_MS + 2_000);
 		const report = await drained;
 		expect(report.partialFanIns).toBe(1);
 		expect(fanInRows()).toHaveLength(1);

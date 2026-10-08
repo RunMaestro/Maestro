@@ -25,6 +25,7 @@ import { buildCueTemplateContext } from './cue-template-context-builder';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
 import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
+import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 
 /** Timeout for a single maestro-cli send invocation. */
 const CLI_SEND_TIMEOUT_MS = 30_000;
@@ -57,6 +58,8 @@ export interface CueCliExecutionConfig {
 	templateContext: TemplateContext;
 	timeoutMs: number;
 	onLog: (level: string, message: string) => void;
+	/** Aborted when the run is stopped: a call not yet spawned returns `stopped` (see cue-launch-cancel.ts). */
+	signal?: AbortSignal;
 }
 
 export interface CliSendResult {
@@ -235,7 +238,8 @@ export async function runMaestroCliSend(
  * `target` + `message` with template variables then invokes maestro-cli.
  */
 export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueRunResult> {
-	const { runId, session, subscription, event, cli, templateContext, timeoutMs, onLog } = config;
+	const { runId, session, subscription, event, cli, templateContext, timeoutMs, onLog, signal } =
+		config;
 
 	const startedAt = new Date().toISOString();
 	const startTime = Date.now();
@@ -296,6 +300,18 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		}
 		const clampedTimeout =
 			timeoutMs > 0 ? Math.min(timeoutMs, CLI_SEND_TIMEOUT_MS) : CLI_SEND_TIMEOUT_MS;
+		// Last check before the spawn: runMaestroCliSend spawns synchronously.
+		if (isLaunchCancelled(signal)) {
+			return stoppedBeforeLaunchResult({
+				runId,
+				sessionId: session.id,
+				sessionName: session.name,
+				subscriptionName: subscription.name,
+				pipelineName: subscription.pipeline_name,
+				event,
+				startedAt,
+			});
+		}
 		const result = await runMaestroCliSend(resolvedTarget, resolvedMessage, clampedTimeout, runId);
 		const status = result.timedOut ? 'timeout' : result.ok ? 'completed' : 'failed';
 		if (result.timedOut) {

@@ -35,6 +35,7 @@ import type { TemplateContext } from '../../shared/templateVariables';
 import type { CueRunResult } from '../../shared/cue/contracts';
 import type { ToolType } from '../../shared/types';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 
 /** What `CueEngine` hands its `onCueRun` dependency for one run. */
 export type OnCueRunParams = Parameters<CueEngineDeps['onCueRun']>[0];
@@ -107,12 +108,25 @@ export async function executeCueRunAction(
 		action,
 		command,
 		notify,
+		signal,
 	}: OnCueRunParams
 ): Promise<CueRunResult> {
 	const storedSession = deps.findSession(sessionId);
 	if (!storedSession) {
 		throw new Error(`Cue target session not found: ${sessionId}`);
 	}
+	// Stopped while the runner was still getting here (the standalone runner
+	// awaits its executor load first): start nothing. Each executor checks
+	// again right before it spawns.
+	const stoppedResult = () =>
+		stoppedBeforeLaunchResult({
+			runId,
+			sessionId,
+			sessionName: storedSession.name,
+			subscriptionName,
+			event,
+		});
+	if (isLaunchCancelled(signal)) return stoppedResult();
 
 	const projectRoot =
 		storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
@@ -208,6 +222,7 @@ export async function executeCueRunAction(
 					sshRemoteConfig: storedSession.sessionSshRemoteConfig,
 					sshStore: deps.sshStore,
 					isServerMode: deps.isServerMode,
+					signal,
 				})
 			: deps.executeCueCli({
 					runId,
@@ -223,6 +238,7 @@ export async function executeCueRunAction(
 					// sessions managed by this app), so SSH wrapping would
 					// point at the wrong daemon and `maestro-cli.js` may not
 					// exist on the remote host.
+					signal,
 				});
 	}
 
@@ -237,6 +253,7 @@ export async function executeCueRunAction(
 			: undefined;
 	if (!resolvedAgentPath && deps.resolveAgentPath) {
 		resolvedAgentPath = (await deps.resolveAgentPath(storedSession.toolType)) || undefined;
+		if (isLaunchCancelled(signal)) return stoppedResult();
 	}
 
 	const result = await deps.executeCuePrompt({
@@ -271,6 +288,7 @@ export async function executeCueRunAction(
 		sshStore: deps.sshStore,
 		agentConfigValues,
 		isServerMode: deps.isServerMode,
+		signal,
 	});
 
 	// Cue spawns agents outside the ProcessManager, so a failed run is the

@@ -195,3 +195,71 @@ describe('executeCueRunAction', () => {
 		expect(second).toBe('second');
 	});
 });
+
+describe('executeCueRunAction with a stopped run', () => {
+	it.each([
+		['prompt', {}],
+		['shell command', { action: 'command', command: { mode: 'shell', shell: 'echo hi' } }],
+		[
+			'maestro-cli command',
+			{ action: 'command', command: { mode: 'cli', cli: { command: 'send', target: 'x' } } },
+		],
+		['notify', { action: 'notify' }],
+	] as const)(
+		'hands no %s run to an executor once the signal is aborted',
+		async (_label, extra) => {
+			const deps = makeDeps();
+			const controller = new AbortController();
+			controller.abort();
+			const result = await executeCueRunAction(
+				deps,
+				params({ ...(extra as Partial<OnCueRunParams>), signal: controller.signal })
+			);
+			expect(result).toMatchObject({ runId: 'run-1', status: 'stopped', sessionName: 'Builder' });
+			expect(deps.executeCuePrompt).not.toHaveBeenCalled();
+			expect(deps.executeCueShell).not.toHaveBeenCalled();
+			expect(deps.executeCueCli).not.toHaveBeenCalled();
+			expect(deps.onNotify).not.toHaveBeenCalled();
+		}
+	);
+
+	it('stops a prompt run whose agent path probe was still pending', async () => {
+		let finishProbe!: (path: string) => void;
+		const deps = makeDeps({
+			resolveAgentPath: vi.fn(
+				() =>
+					new Promise<string>((resolve) => {
+						finishProbe = resolve;
+					})
+			),
+		});
+		const controller = new AbortController();
+		const pending = executeCueRunAction(deps, params({ signal: controller.signal }));
+		await vi.waitFor(() => expect(finishProbe).toBeTypeOf('function'));
+		controller.abort();
+		finishProbe('/detected/claude');
+		expect((await pending).status).toBe('stopped');
+		expect(deps.executeCuePrompt).not.toHaveBeenCalled();
+	});
+
+	it('passes the signal on to every executor', async () => {
+		const deps = makeDeps();
+		const { signal } = new AbortController();
+		await executeCueRunAction(deps, params({ signal }));
+		await executeCueRunAction(
+			deps,
+			params({ signal, action: 'command', command: { mode: 'shell', shell: 'echo hi' } })
+		);
+		await executeCueRunAction(
+			deps,
+			params({
+				signal,
+				action: 'command',
+				command: { mode: 'cli', cli: { command: 'send', target: 'x' } },
+			})
+		);
+		expect(deps.executeCuePrompt).toHaveBeenCalledWith(expect.objectContaining({ signal }));
+		expect(deps.executeCueShell).toHaveBeenCalledWith(expect.objectContaining({ signal }));
+		expect(deps.executeCueCli).toHaveBeenCalledWith(expect.objectContaining({ signal }));
+	});
+});
