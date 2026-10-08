@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import {
 	ArrowDown,
 	ArrowDownToLine,
@@ -19,9 +20,13 @@ import {
 	Edit3,
 	Zap,
 	Fingerprint,
+	AppWindow,
+	Plus,
+	Pencil,
+	Check,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
-import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
@@ -29,6 +34,8 @@ import { GitRunningBadge, PR_RUNNING_TITLE } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import type { WindowMoveTarget } from '../../utils/windowTargets';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -49,7 +56,143 @@ interface SessionContextMenuProps {
 	onConfigureWorktrees?: () => void;
 	onDeleteWorktree?: () => void;
 	onCreateGroup?: () => void;
+	/** Hide persisted-group mutation controls in a virtual grouping mode. */
+	showGroupActions?: boolean;
 	onConfigureCue?: () => void;
+	/**
+	 * Multi-window: every window this agent can move into, labeled by number
+	 * ("Main Window" for the primary, "Window N" for secondaries, or a custom
+	 * name), with the current owner flagged. Omitted or empty in a single-window
+	 * app, where the "Move to Window" submenu is hidden.
+	 */
+	windowTargets?: WindowMoveTarget[];
+	/** Detach this agent into a brand-new window. */
+	onMoveToNewWindow?: () => void;
+	/** Move this agent into the given existing window. */
+	onMoveToWindow?: (windowId: string) => void;
+	/**
+	 * Rename a window (empty string clears back to the generic label). Enables the
+	 * inline pencil-rename affordance on each secondary window row in the Move to
+	 * Window submenu. Omitted in a single-window app.
+	 */
+	onRenameWindow?: (windowId: string, name: string) => void;
+}
+
+/** Grace period before a flyout closes, so the pointer can cross the gap. */
+const FLYOUT_CLOSE_DELAY_MS = 300;
+
+/**
+ * Hover/focus open state for a nested context-menu submenu, with a grace timeout
+ * so the pointer can travel from the parent row into the flyout. Shared by the
+ * Move-to-Group and Move-to-Window submenus so neither reimplements it.
+ * Placement lives in `ContextMenuFlyout` below.
+ * The return type is inferred so `anchorRef` stays exactly `useRef`'s type
+ * (directly ref-assignable, avoiding a null-variance mismatch on the JSX ref).
+ */
+function useFlyoutSubmenu() {
+	const anchorRef = useRef<HTMLDivElement>(null);
+	// The flyout is portaled out of the menu, so the menu's click-outside check
+	// needs this ref too or selecting an item would dismiss before the click lands.
+	const flyoutRef = useRef<HTMLDivElement>(null);
+	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [show, setShow] = useState(false);
+
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current);
+				timeoutRef.current = null;
+			}
+		};
+	}, []);
+
+	const open = () => {
+		if (timeoutRef.current) {
+			clearTimeout(timeoutRef.current);
+			timeoutRef.current = null;
+		}
+		setShow(true);
+	};
+
+	const scheduleClose = () => {
+		if (timeoutRef.current) clearTimeout(timeoutRef.current);
+		timeoutRef.current = setTimeout(() => {
+			setShow(false);
+			timeoutRef.current = null;
+		}, FLYOUT_CLOSE_DELAY_MS);
+	};
+
+	const close = () => setShow(false);
+
+	return { anchorRef, flyoutRef, show, open, scheduleClose, close };
+}
+
+interface ContextMenuFlyoutProps {
+	/** The menu row the flyout hangs off. */
+	anchorRef: RefObject<HTMLDivElement>;
+	/** The flyout panel itself; the parent menu excludes it from click-outside. */
+	flyoutRef: RefObject<HTMLDivElement>;
+	theme: Theme;
+	/** Keep the flyout open while the pointer or focus is inside it. */
+	onKeepOpen: () => void;
+	/** Start the close timer when the pointer or focus leaves it. */
+	onScheduleClose: () => void;
+	children: ReactNode;
+}
+
+/**
+ * A nested submenu panel, portaled to `<body>` and positioned beside its row.
+ *
+ * It cannot be an `absolute; left: 100%` child of the menu: the menu carries
+ * `overflow-y: auto` so a long one scrolls, and CSS computes `overflow-x` to
+ * `auto` the moment the other axis is not `visible` - which clipped the whole
+ * flyout out of view, so hovering "Move to Group" or "Move to Window" appeared
+ * to do nothing at all.
+ *
+ * Portaling breaks the DOM containment the hover logic relied on (the pointer
+ * entering the flyout used to be "still inside the row"), so the panel repeats
+ * the row's enter/leave handlers to hold itself open.
+ */
+function ContextMenuFlyout({
+	anchorRef,
+	flyoutRef,
+	theme,
+	onKeepOpen,
+	onScheduleClose,
+	children,
+}: ContextMenuFlyoutProps) {
+	const { left, top, maxHeight, ready } = useAnchoredMenuPosition(flyoutRef, anchorRef, {
+		gap: 4,
+		placement: 'right',
+		flip: true,
+	});
+
+	return createPortal(
+		<div
+			ref={flyoutRef}
+			data-testid="session-context-flyout"
+			// Above the z-50 context menu it hangs off: portaled to body, it no
+			// longer inherits that menu's stacking position.
+			className="fixed z-[60] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			style={{
+				left,
+				top,
+				maxHeight,
+				overflowY: 'auto',
+				opacity: ready ? 1 : 0,
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				minWidth: '8.75rem',
+			}}
+			onMouseEnter={onKeepOpen}
+			onMouseLeave={onScheduleClose}
+			onFocus={onKeepOpen}
+			onBlur={onScheduleClose}
+		>
+			{children}
+		</div>,
+		document.body
+	);
 }
 
 export function SessionContextMenu({
@@ -71,16 +214,20 @@ export function SessionContextMenu({
 	onConfigureWorktrees,
 	onDeleteWorktree,
 	onCreateGroup,
+	showGroupActions = true,
 	onConfigureCue,
+	windowTargets,
+	onMoveToNewWindow,
+	onMoveToWindow,
+	onRenameWindow,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
-	const moveToGroupRef = useRef<HTMLDivElement>(null);
-	const submenuTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
-	const [submenuPosition, setSubmenuPosition] = useState<{
-		vertical: 'below' | 'above';
-		horizontal: 'right' | 'left';
-	}>({ vertical: 'below', horizontal: 'right' });
+
+	// Inline window-rename state. While a row is being renamed, the Move to Window
+	// flyout must NOT auto-close on mouse-leave (it would unmount the input
+	// mid-edit), so the container's close is guarded on this being null.
+	const [renamingWindowId, setRenamingWindowId] = useState<string | null>(null);
+	const [renameValue, setRenameValue] = useState('');
 
 	// Same ordering the Left Bar uses for its group headers, so the submenu
 	// reads in the order the user already scans the sidebar in.
@@ -92,7 +239,15 @@ export function SessionContextMenu({
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
-	useClickOutside(menuRef, onDismiss);
+	// One flyout state machine per submenu (Move to Group, Move to Window).
+	// Extracted so the two flyouts do not duplicate the hover/timeout logic.
+	const moveToGroup = useFlyoutSubmenu();
+	const moveToWindow = useFlyoutSubmenu();
+
+	// The flyouts are portaled to <body>, so they are outside `menuRef` in the
+	// DOM: without listing them here, mousedown on a submenu item would dismiss
+	// the menu before the click ever landed on the item.
+	useClickOutside([menuRef, moveToGroup.flyoutRef, moveToWindow.flyoutRef], onDismiss);
 
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -104,49 +259,30 @@ export function SessionContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	// Cleanup submenu timeout on unmount
-	useEffect(() => {
-		return () => {
-			if (submenuTimeoutRef.current) {
-				clearTimeout(submenuTimeoutRef.current);
-				submenuTimeoutRef.current = null;
-			}
-		};
-	}, []);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y);
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+	// "Move to Window" appears only in a multi-window-capable app: a mover handler
+	// plus at least one enumerated window (empty before the registry hydrates).
+	const showMoveToWindow = !!onMoveToNewWindow && !!windowTargets && windowTargets.length > 0;
 
-	const handleMoveToGroupHover = () => {
-		if (submenuTimeoutRef.current) {
-			clearTimeout(submenuTimeoutRef.current);
-			submenuTimeoutRef.current = null;
-		}
-		setShowMoveSubmenu(true);
-
-		if (moveToGroupRef.current) {
-			const rect = moveToGroupRef.current.getBoundingClientRect();
-			const itemHeight = 28;
-			const submenuHeight = (groups.length + 1) * itemHeight + 16 + (groups.length > 0 ? 8 : 0);
-			const submenuWidth = 160;
-			const spaceBelow = window.innerHeight - rect.top;
-			const spaceRight = window.innerWidth - rect.right;
-
-			const vertical = spaceBelow < submenuHeight && rect.top > submenuHeight ? 'above' : 'below';
-			const horizontal = spaceRight < submenuWidth && rect.left > submenuWidth ? 'left' : 'right';
-
-			setSubmenuPosition({ vertical, horizontal });
-		}
+	// Enter inline rename for a window row (seed the input with its current custom
+	// name, or empty so the generic label shows as the placeholder).
+	const beginRenameWindow = (windowId: string, currentName?: string) => {
+		setRenameValue(currentName ?? '');
+		setRenamingWindowId(windowId);
+		moveToWindow.open();
 	};
-
-	const handleMoveToGroupLeave = () => {
-		if (submenuTimeoutRef.current) {
-			clearTimeout(submenuTimeoutRef.current);
-		}
-		submenuTimeoutRef.current = setTimeout(() => {
-			setShowMoveSubmenu(false);
-			submenuTimeoutRef.current = null;
-		}, 300);
+	// Commit the rename and dismiss the whole menu (the new label shows on next
+	// open, in the OS title, and in any other window via the name-changed broadcast).
+	const commitRenameWindow = () => {
+		if (!renamingWindowId) return;
+		const id = renamingWindowId;
+		setRenamingWindowId(null);
+		onRenameWindow?.(id, renameValue.trim());
+		onDismiss();
 	};
+	// Abandon the edit without renaming; keep the menu open.
+	const cancelRenameWindow = () => setRenamingWindowId(null);
 
 	// Git actions (log / pull / push / change branch / PR). Same hook the header
 	// branch pill's dropdown uses, so both entry points behave identically -
@@ -171,10 +307,16 @@ export function SessionContextMenu({
 	return (
 		<div
 			ref={menuRef}
+			data-testid="session-context-menu"
 			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -193,18 +335,20 @@ export function SessionContextMenu({
 			</div>
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
-			<button
-				type="button"
-				onClick={() => {
-					onRename();
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
-			>
-				<Edit3 className="w-3.5 h-3.5" />
-				Rename
-			</button>
+			{!session.isPianola && (
+				<button
+					type="button"
+					onClick={() => {
+						onRename();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Edit3 className="w-3.5 h-3.5" />
+					Rename
+				</button>
+			)}
 
 			<button
 				type="button"
@@ -219,20 +363,22 @@ export function SessionContextMenu({
 				Edit Agent...
 			</button>
 
-			<button
-				type="button"
-				onClick={() => {
-					onDuplicate();
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
-			>
-				<Copy className="w-3.5 h-3.5" />
-				Duplicate...
-			</button>
+			{!session.isPianola && (
+				<button
+					type="button"
+					onClick={() => {
+						onDuplicate();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Copy className="w-3.5 h-3.5" />
+					Duplicate...
+				</button>
+			)}
 
-			{!session.parentSessionId && (
+			{!session.parentSessionId && !session.isPianola && (
 				<button
 					type="button"
 					onClick={() => {
@@ -247,22 +393,21 @@ export function SessionContextMenu({
 				</button>
 			)}
 
-			{!session.parentSessionId && (
+			{showGroupActions && !session.parentSessionId && !session.isPianola && (
 				<div
-					ref={moveToGroupRef}
-					className="relative"
+					ref={moveToGroup.anchorRef}
 					tabIndex={0}
-					onMouseEnter={handleMoveToGroupHover}
-					onMouseLeave={handleMoveToGroupLeave}
-					onFocus={handleMoveToGroupHover}
-					onBlur={handleMoveToGroupLeave}
+					onMouseEnter={moveToGroup.open}
+					onMouseLeave={moveToGroup.scheduleClose}
+					onFocus={moveToGroup.open}
+					onBlur={moveToGroup.scheduleClose}
 					onKeyDown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
 							e.preventDefault();
-							handleMoveToGroupHover();
-						} else if (e.key === 'Escape' && showMoveSubmenu) {
+							moveToGroup.open();
+						} else if (e.key === 'Escape' && moveToGroup.show) {
 							e.stopPropagation();
-							setShowMoveSubmenu(false);
+							moveToGroup.close();
 						}
 					}}
 				>
@@ -278,18 +423,13 @@ export function SessionContextMenu({
 						<ChevronRight className="w-3 h-3" />
 					</button>
 
-					{showMoveSubmenu && (
-						<div
-							className="absolute py-1 rounded-md shadow-xl border whitespace-nowrap"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
-								minWidth: '8.75rem',
-								...(submenuPosition.vertical === 'above' ? { bottom: 0 } : { top: 0 }),
-								...(submenuPosition.horizontal === 'left'
-									? { right: '100%', marginRight: 4 }
-									: { left: '100%', marginLeft: 4 }),
-							}}
+					{moveToGroup.show && (
+						<ContextMenuFlyout
+							anchorRef={moveToGroup.anchorRef}
+							flyoutRef={moveToGroup.flyoutRef}
+							theme={theme}
+							onKeepOpen={moveToGroup.open}
+							onScheduleClose={moveToGroup.scheduleClose}
 						>
 							<button
 								type="button"
@@ -348,7 +488,165 @@ export function SessionContextMenu({
 									Create New Group
 								</button>
 							)}
-						</div>
+						</ContextMenuFlyout>
+					)}
+				</div>
+			)}
+
+			{showMoveToWindow && (
+				<div
+					ref={moveToWindow.anchorRef}
+					tabIndex={0}
+					onMouseEnter={moveToWindow.open}
+					// Don't auto-close while a row is being renamed - it would unmount the
+					// input mid-edit. The commit (Enter/blur) clears editing, after which
+					// normal close resumes.
+					onMouseLeave={() => {
+						if (!renamingWindowId) moveToWindow.scheduleClose();
+					}}
+					onFocus={moveToWindow.open}
+					onBlur={() => {
+						if (!renamingWindowId) moveToWindow.scheduleClose();
+					}}
+					onKeyDown={(e) => {
+						if (renamingWindowId) return; // let the rename input own key handling
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							moveToWindow.open();
+						} else if (e.key === 'Escape' && moveToWindow.show) {
+							e.stopPropagation();
+							moveToWindow.close();
+						}
+					}}
+				>
+					<button
+						type="button"
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between"
+						style={{ color: theme.colors.textMain }}
+					>
+						<span className="flex items-center gap-2">
+							<AppWindow className="w-3.5 h-3.5" />
+							Move to Window
+						</span>
+						<ChevronRight className="w-3 h-3" />
+					</button>
+
+					{moveToWindow.show && (
+						<ContextMenuFlyout
+							anchorRef={moveToWindow.anchorRef}
+							flyoutRef={moveToWindow.flyoutRef}
+							theme={theme}
+							onKeepOpen={moveToWindow.open}
+							// Same rename guard as the row: closing mid-edit would unmount
+							// the input before it could commit.
+							onScheduleClose={() => {
+								if (!renamingWindowId) moveToWindow.scheduleClose();
+							}}
+						>
+							<button
+								type="button"
+								onClick={() => {
+									onMoveToNewWindow?.();
+									onDismiss();
+								}}
+								className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+								style={{ color: theme.colors.accent }}
+							>
+								<Plus className="w-3.5 h-3.5" />
+								New Window
+							</button>
+
+							<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
+							{windowTargets?.map((target) =>
+								renamingWindowId === target.windowId ? (
+									// Inline rename: an input replaces the row. Enter/blur commit,
+									// Escape cancels. stopPropagation on keys so the parent menu's
+									// Escape-to-close and the flyout's key nav don't fire.
+									<div key={target.windowId} className="flex items-center gap-1 px-2 py-1">
+										<AppWindow
+											className="w-3.5 h-3.5 shrink-0"
+											style={{ color: theme.colors.textDim }}
+										/>
+										<input
+											type="text"
+											autoFocus
+											value={renameValue}
+											placeholder={target.label}
+											onChange={(e) => setRenameValue(e.target.value)}
+											onKeyDown={(e) => {
+												e.stopPropagation();
+												if (e.key === 'Enter') {
+													e.preventDefault();
+													commitRenameWindow();
+												} else if (e.key === 'Escape') {
+													e.preventDefault();
+													cancelRenameWindow();
+												}
+											}}
+											onBlur={commitRenameWindow}
+											className="flex-1 min-w-0 bg-transparent border rounded px-1.5 py-0.5 text-xs outline-none"
+											style={{
+												color: theme.colors.textMain,
+												borderColor: theme.colors.accent,
+											}}
+										/>
+										<button
+											type="button"
+											onMouseDown={(e) => {
+												// mouseDown (before the input's blur) so the click lands.
+												e.preventDefault();
+												commitRenameWindow();
+											}}
+											className="shrink-0 p-0.5 rounded hover:bg-white/10"
+											title="Save window name"
+											style={{ color: theme.colors.accent }}
+										>
+											<Check className="w-3.5 h-3.5" />
+										</button>
+									</div>
+								) : (
+									<div
+										key={target.windowId}
+										className={`w-full flex items-center hover:bg-white/5 transition-colors ${target.isCurrentOwner ? 'opacity-50' : ''}`}
+									>
+										<button
+											type="button"
+											onClick={() => {
+												if (target.isCurrentOwner) return;
+												onMoveToWindow?.(target.windowId);
+												onDismiss();
+											}}
+											className="flex-1 min-w-0 text-left pl-3 pr-1 py-1.5 text-xs flex items-center gap-2"
+											style={{ color: theme.colors.textMain }}
+											disabled={target.isCurrentOwner}
+										>
+											<AppWindow className="w-3.5 h-3.5 shrink-0" />
+											<span className="truncate">{target.label}</span>
+											{target.isCurrentOwner && (
+												<span className="text-2xs opacity-50 shrink-0">(current)</span>
+											)}
+										</button>
+										{/* Rename affordance - secondary windows only; the primary keeps
+										    the stable "Main Window" label. */}
+										{onRenameWindow && !target.isMain && (
+											<button
+												type="button"
+												onClick={(e) => {
+													e.stopPropagation();
+													beginRenameWindow(target.windowId, target.customName);
+												}}
+												className="shrink-0 p-1 mr-1.5 rounded hover:bg-white/10 opacity-60 hover:opacity-100"
+												title="Rename window"
+												style={{ color: theme.colors.textDim }}
+											>
+												<Pencil className="w-3 h-3" />
+											</button>
+										)}
+									</div>
+								)
+							)}
+						</ContextMenuFlyout>
 					)}
 				</div>
 			)}
@@ -572,6 +870,8 @@ export function SessionContextMenu({
 				</>
 			)}
 
+			<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" onActivate={onDismiss} />
+
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
 			<button
@@ -589,7 +889,7 @@ export function SessionContextMenu({
 				Copy Agent GUID to Clipboard
 			</button>
 
-			{!session.parentSessionId && (
+			{!session.parentSessionId && !session.isPianola && (
 				<button
 					type="button"
 					onClick={() => {

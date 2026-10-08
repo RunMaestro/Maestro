@@ -195,6 +195,18 @@ export function calculateModelCost(tokens: TokenCounts, modelId?: string | null)
 	return calculateWithPricing(tokens, resolveModelPricing(modelId));
 }
 
+/** Token counts plus a rate-table cost for a single model. */
+export interface ModelCost {
+	/** Raw model id as it appeared in the transcript (empty string when absent). */
+	model: string;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	/** USD cost priced with this model's rate. */
+	costUsd: number;
+}
+
 /** Grand-total token counts plus a per-model-accurate cost for a Claude session. */
 export interface ClaudeUsageBreakdown {
 	inputTokens: number;
@@ -202,6 +214,12 @@ export interface ClaudeUsageBreakdown {
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
 	costUsd: number;
+	/**
+	 * Per-model split (tokens + rate-table cost) the grand totals were summed
+	 * from. Sessions can mix models, so this preserves the breakdown callers need
+	 * for a by-model view instead of collapsing straight to totals.
+	 */
+	byModel: ModelCost[];
 }
 
 interface TokenBucket {
@@ -274,8 +292,18 @@ export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 	}
 
 	let costUsd = 0;
+	const byModelCosts: ModelCost[] = [];
 	for (const [model, bucket] of byModel) {
-		costUsd += calculateModelCost(bucket, model || undefined);
+		const modelCost = calculateModelCost(bucket, model || undefined);
+		costUsd += modelCost;
+		byModelCosts.push({
+			model,
+			inputTokens: bucket.inputTokens,
+			outputTokens: bucket.outputTokens,
+			cacheReadTokens: bucket.cacheReadTokens,
+			cacheCreationTokens: bucket.cacheCreationTokens,
+			costUsd: modelCost,
+		});
 	}
 
 	return {
@@ -284,5 +312,6 @@ export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 		cacheReadTokens: totals.cacheReadTokens,
 		cacheCreationTokens: totals.cacheCreationTokens,
 		costUsd,
+		byModel: byModelCosts,
 	};
 }

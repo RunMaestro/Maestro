@@ -16,7 +16,7 @@
 		     violation whenever the renderer boots under Vite. -->
 		<meta
 			http-equiv="Content-Security-Policy"
-			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https: blob: maestro-image:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; media-src 'self' blob: maestro-media:;"
+			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https: blob: maestro-image:; connect-src 'self' https: wss: ws:; frame-src 'self' maestro-concerto:; worker-src 'self' blob:; media-src 'self' blob: maestro-media:;"
 		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Maestro - Agent Orchestration Command Center</title>
@@ -107,6 +107,10 @@
 			   a logo, so it is pinned here and in SessionList's <h1> and never
 			   follows the user's fontFamily setting. */
 			.splash-title {
+				/* Fixed on purpose: the brand mark never follows the interface font.
+				   Kept in sync by hand with WORDMARK_FONT_STACK in
+				   src/shared/fontStack.ts - this paints before any JavaScript runs
+				   and cannot import it. Do not swap this for the CSS variable. */
 				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 				font-weight: 700;
 				font-size: 36px;

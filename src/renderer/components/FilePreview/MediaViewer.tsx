@@ -27,6 +27,7 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import { formatMediaTime } from '../../utils/mediaItems';
+import { resolveMediaStreamSrc } from '../../utils/mediaStreamSrc';
 import { MEDIA_PLAYBACK_RATES, isMediaStreamUrl, type MediaKind } from '../../../shared/mediaTypes';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
@@ -269,7 +270,9 @@ export const MediaViewer = memo(function MediaViewer({
 					setLoadState('error');
 					return;
 				}
-				setSrc(resolved);
+				// The scheme URL is what the desktop plays; web-desktop maps it onto
+				// the web server's media route, since a browser cannot load the scheme.
+				setSrc(resolveMediaStreamSrc(resolved));
 			} catch {
 				if (!cancelled) setLoadState('error');
 			}
@@ -490,6 +493,14 @@ export const MediaViewer = memo(function MediaViewer({
 			if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
 
 			switch (e.key) {
+				// Escape closes the speed menu and goes no further. Anywhere else it
+				// is left to bubble, because the surface AROUND the player owns what
+				// Escape means there (the floating widget minimizes on it) and an
+				// open menu is the only thing the player itself has to dismiss.
+				case 'Escape':
+					if (!rateMenuOpen) return;
+					setRateMenuOpen(false);
+					break;
 				case ' ':
 				case 'k':
 					togglePlay();
@@ -539,6 +550,7 @@ export const MediaViewer = memo(function MediaViewer({
 			stepRate,
 			isVideo,
 			enterFullscreen,
+			rateMenuOpen,
 		]
 	);
 
@@ -626,6 +638,9 @@ export const MediaViewer = memo(function MediaViewer({
 					<video
 						ref={mediaRef as React.RefObject<HTMLVideoElement>}
 						{...mediaProps}
+						// iPhone Safari otherwise hijacks every play() into its own
+						// fullscreen player; inert everywhere else.
+						playsInline
 						className="max-w-full max-h-full"
 						onDoubleClick={enterFullscreen}
 					/>

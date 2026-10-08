@@ -71,6 +71,39 @@ describe('GhostIconButton', () => {
 		expect(screen.getByRole('button', { name: 'Pad' })).toHaveClass('p-2');
 	});
 
+	it('announces its state when used as a toggle', () => {
+		const { rerender } = render(
+			<GhostIconButton pressed ariaLabel="Show tool calls">
+				<span>x</span>
+			</GhostIconButton>
+		);
+		expect(screen.getByRole('button', { name: 'Show tool calls' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+
+		rerender(
+			<GhostIconButton pressed={false} ariaLabel="Show tool calls">
+				<span>x</span>
+			</GhostIconButton>
+		);
+		expect(screen.getByRole('button', { name: 'Show tool calls' })).toHaveAttribute(
+			'aria-pressed',
+			'false'
+		);
+	});
+
+	it('stays a plain button when `pressed` is omitted', () => {
+		// `aria-pressed="false"` on a button that does not toggle is a lie about
+		// what it does, so an ordinary action button must carry no attribute.
+		render(
+			<GhostIconButton ariaLabel="Close">
+				<span>x</span>
+			</GhostIconButton>
+		);
+		expect(screen.getByRole('button', { name: 'Close' })).not.toHaveAttribute('aria-pressed');
+	});
+
 	it('stops propagation when stopPropagation is true', () => {
 		const parentClick = vi.fn();
 		const onClick = vi.fn();

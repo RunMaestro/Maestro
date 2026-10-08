@@ -192,6 +192,29 @@ describe('run-playbook command', () => {
 			expect(formatRunEvent).toHaveBeenCalled();
 		});
 
+		it('should forward --ignore-model-hints to the engine and say so', async () => {
+			const playbook = mockPlaybook();
+			const agent = mockSession();
+
+			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+			vi.mocked(getSessionById).mockReturnValue(agent);
+			vi.mocked(executePlaybook).mockReturnValue(
+				mockEventGenerator([
+					{ type: 'complete', totalTasksCompleted: 0, totalElapsedMs: 0, timestamp: Date.now() },
+				])
+			);
+
+			await runPlaybook('pb-123', { model: 'opus', ignoreModelHints: true });
+
+			expect(executePlaybook).toHaveBeenCalledWith(
+				agent,
+				playbook,
+				'/path/to/playbooks',
+				expect.objectContaining({ model: 'opus', ignoreModelHints: true })
+			);
+			expect(formatInfo).toHaveBeenCalledWith('Model hints in documents: ignored (this run only)');
+		});
+
 		it('should execute a playbook with JSON output', async () => {
 			const playbook = mockPlaybook();
 			const agent = mockSession();
@@ -406,9 +429,7 @@ describe('run-playbook command', () => {
 			await expect(runPlaybook('pb-123', {})).rejects.toThrow('process.exit(1)');
 
 			expect(formatError).toHaveBeenCalledWith(
-				expect.stringContaining(
-					'Agent "Test Agent" is busy: Running playbook "Other Playbook" from CLI'
-				)
+				expect.stringContaining('Agent "Test Agent" is busy: Running "Other Playbook" from CLI')
 			);
 		});
 

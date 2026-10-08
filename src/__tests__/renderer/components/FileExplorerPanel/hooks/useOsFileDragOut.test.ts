@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useOsFileDragOut } from '../../../../../renderer/components/FileExplorerPanel/hooks/useOsFileDragOut';
+import { isWebDesktop } from '../../../../../renderer/utils/runtimeContext';
 import type { FileNode } from '../../../../../renderer/types/fileTree';
 
 vi.mock('../../../../../renderer/utils/sentry', () => ({
 	captureException: vi.fn(),
+}));
+
+vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: vi.fn(() => false),
 }));
 
 const session = {
@@ -32,6 +37,25 @@ function makeDragEvent(altKey: boolean): React.DragEvent {
 describe('useOsFileDragOut', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isWebDesktop).mockReturnValue(false);
+	});
+
+	it('web-desktop: never takes over the gesture, even for an Alt-drag', () => {
+		// The web-server bridge cannot dispatch the `fs:startDragOut` ipcMain.on
+		// channel and there is no host desktop to drop onto, so the hook must fall
+		// through to the normal in-app drag instead of erroring.
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		const { result } = renderHook(() =>
+			useOsFileDragOut({ session, sshRemoteId: undefined, onShowFlash: vi.fn() })
+		);
+		const e = makeDragEvent(true);
+		let handled = true;
+		act(() => {
+			handled = result.current.handleOsDragStart(e, ['src/a.ts', 'notes.md']);
+		});
+		expect(handled).toBe(false);
+		expect(e.preventDefault).not.toHaveBeenCalled();
+		expect(startDragOut).not.toHaveBeenCalled();
 	});
 
 	it('returns false and does nothing for a plain (non-Alt) drag', () => {

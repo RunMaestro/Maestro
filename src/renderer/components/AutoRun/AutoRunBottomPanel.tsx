@@ -72,7 +72,7 @@ export const AutoRunBottomPanel = memo(function AutoRunBottomPanel({
 				<div />
 			)}
 
-			{/* Center info: Reset button, Task count, and/or Token count */}
+			{/* Center info: Reset button, task progress, and/or Token count */}
 			<div className="flex items-center gap-3">
 				{/* Reset button - only show when there are completed tasks */}
 				{taskCounts.completed > 0 && !isLocked && (

@@ -21,6 +21,8 @@ import * as historyManagerModule from '../../../../main/history-manager';
 import * as sharedHistoryModule from '../../../../main/shared-history-manager';
 import type { HistoryManager } from '../../../../main/history-manager';
 import type { CueHistoryGroup, HistoryEntry } from '../../../../shared/types';
+import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
+import { noteTurnActor, resetTurnActors } from '../../../../main/web-server/auth/turn-attribution';
 
 // Mock electron's ipcMain. `app.getPath` is here for the activity-graph
 // bucket cache, which resolves its directory in the constructor.
@@ -1147,6 +1149,126 @@ describe('history IPC handlers', () => {
 			expect(mockSafeSend).toHaveBeenCalledWith('history:entryAdded', entry, 'session-1');
 		});
 
+		/**
+		 * Web Login attribution.
+		 *
+		 * The entry is written by the DESKTOP renderer's exit listener even when
+		 * a browser sent the turn, so there is no acting user in scope here and
+		 * the account has to come from what the spawn noted, keyed by agent +
+		 * tab. Reading `getActingUser()` at write time and expecting a browser
+		 * account is the failure these pin.
+		 */
+		describe('Web Login attribution', () => {
+			afterEach(() => {
+				resetTurnActors();
+			});
+
+			it('stamps the account the spawn noted for this agent and tab', async () => {
+				noteTurnActor('session-1', 'tab-3', {
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				const entry = createMockEntry({
+					sessionId: 'session-1',
+					tabId: 'tab-3',
+					projectPath: '/test',
+				});
+
+				const handler = handlers.get('history:add');
+				await handler!({} as any, entry);
+
+				expect(mockHistoryManager.addEntry).toHaveBeenCalledWith(
+					'session-1',
+					'/test',
+					expect.objectContaining({ userName: 'pedram', userDisplayName: 'Pedram A' }),
+					undefined
+				);
+				// The broadcast carries the same attributed copy, so a peer
+				// client renders the sender pill without waiting for a reload.
+				expect(mockSafeSend).toHaveBeenCalledWith(
+					'history:entryAdded',
+					expect.objectContaining({ userName: 'pedram' }),
+					'session-1'
+				);
+			});
+
+			it('leaves a desktop turn unattributed', async () => {
+				const entry = createMockEntry({
+					sessionId: 'session-1',
+					tabId: 'tab-3',
+					projectPath: '/test',
+				});
+
+				const handler = handlers.get('history:add');
+				await handler!({} as any, entry);
+
+				const written = vi.mocked(mockHistoryManager.addEntry).mock.calls[0][2] as HistoryEntry;
+				expect(written.userName).toBeUndefined();
+				expect(written.userDisplayName).toBeUndefined();
+			});
+
+			it('does not credit a turn from another tab of the same agent', async () => {
+				noteTurnActor('session-1', 'tab-3', {
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				const entry = createMockEntry({
+					sessionId: 'session-1',
+					tabId: 'tab-9',
+					projectPath: '/test',
+				});
+
+				const handler = handlers.get('history:add');
+				await handler!({} as any, entry);
+
+				const written = vi.mocked(mockHistoryManager.addEntry).mock.calls[0][2] as HistoryEntry;
+				expect(written.userName).toBeUndefined();
+			});
+
+			it('prefers a live acting user over the noted actor', async () => {
+				noteTurnActor('session-1', 'tab-3', {
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				const entry = createMockEntry({
+					sessionId: 'session-1',
+					tabId: 'tab-3',
+					projectPath: '/test',
+				});
+
+				const handler = handlers.get('history:add');
+				await runAsActingUser({ id: 'u2', username: 'raza', displayName: 'Raza' }, () =>
+					handler!({} as any, entry)
+				);
+
+				const written = vi.mocked(mockHistoryManager.addEntry).mock.calls[0][2] as HistoryEntry;
+				expect(written.userName).toBe('raza');
+			});
+
+			it('keeps a userName the caller supplied', async () => {
+				noteTurnActor('session-1', 'tab-3', {
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				const entry = createMockEntry({
+					sessionId: 'session-1',
+					tabId: 'tab-3',
+					projectPath: '/test',
+					userName: 'imported',
+				});
+
+				const handler = handlers.get('history:add');
+				await handler!({} as any, entry);
+
+				const written = vi.mocked(mockHistoryManager.addEntry).mock.calls[0][2] as HistoryEntry;
+				expect(written.userName).toBe('imported');
+			});
+		});
+
 		it('should use orphaned session ID when sessionId is missing', async () => {
 			const entry = createMockEntry({ sessionId: undefined, projectPath: '/test' });
 
@@ -1314,6 +1436,72 @@ describe('history IPC handlers', () => {
 			await addHandler({} as any, entry);
 
 			expect(sharedHistoryModule.writeEntryLocal).not.toHaveBeenCalled();
+		});
+
+		describe('history.entryAdded plugin event (FC4)', () => {
+			/** Register with an emit spy and return the freshly registered add handler. */
+			function registerWithPluginEmit(): {
+				emitPluginEvent: ReturnType<typeof vi.fn>;
+				addHandler: Function;
+			} {
+				const emitPluginEvent = vi.fn();
+				registerHistoryHandlers({ safeSend: mockSafeSend, emitPluginEvent });
+				const addCalls = vi
+					.mocked(ipcMain.handle)
+					.mock.calls.filter(([channel]) => channel === 'history:add');
+				const addHandler = addCalls[addCalls.length - 1][1];
+				return { emitPluginEvent, addHandler };
+			}
+
+			it('emits ids/classification only at the ingestion point - never summary/fullResponse', async () => {
+				const { emitPluginEvent, addHandler } = registerWithPluginEmit();
+				const entry = createMockEntry({
+					id: 'entry-42',
+					type: 'USER',
+					sessionId: 'session-1',
+					projectPath: '/test/project',
+					summary: 'SECRET user prompt text',
+					fullResponse: 'SECRET agent output body',
+				});
+
+				await addHandler({}, entry);
+
+				expect(emitPluginEvent).toHaveBeenCalledTimes(1);
+				const event = emitPluginEvent.mock.calls[0][0];
+				expect(event.topic).toBe('history.entryAdded');
+				expect(typeof event.at).toBe('string');
+				expect(event.payload).toEqual({
+					entryId: 'entry-42',
+					sessionId: 'session-1',
+					projectPath: '/test/project',
+					kind: 'USER',
+					createdAt: entry.timestamp,
+				});
+				expect(JSON.stringify(event.payload)).not.toContain('SECRET');
+			});
+
+			it('omits sessionId when the entry has none (orphaned entries)', async () => {
+				const { emitPluginEvent, addHandler } = registerWithPluginEmit();
+				const entry = createMockEntry({ id: 'entry-9', sessionId: undefined });
+
+				await addHandler({}, entry);
+
+				const event = emitPluginEvent.mock.calls[0][0];
+				expect(event.payload).not.toHaveProperty('sessionId');
+				expect(event.payload.entryId).toBe('entry-9');
+			});
+
+			it('still adds the entry and notifies the renderer when no emitter is wired', async () => {
+				// The default beforeEach registration passes no emitPluginEvent.
+				const handler = handlers.get('history:add');
+				const entry = createMockEntry({ sessionId: 'session-1' });
+
+				const result = await handler!({}, entry);
+
+				expect(result).toBe(true);
+				expect(mockHistoryManager.addEntry).toHaveBeenCalled();
+				expect(mockSafeSend).toHaveBeenCalledWith('history:entryAdded', entry, 'session-1');
+			});
 		});
 	});
 

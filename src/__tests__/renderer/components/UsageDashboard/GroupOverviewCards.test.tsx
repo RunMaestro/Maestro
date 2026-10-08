@@ -325,7 +325,7 @@ describe('GroupOverviewCards', () => {
 		renderCards();
 
 		expect(screen.getByTestId('group-overview-cards')).toHaveStyle({
-			gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))',
+			gridTemplateColumns: 'repeat(auto-fill, minmax(min(440px, 100%), 1fr))',
 		});
 	});
 
@@ -337,12 +337,12 @@ describe('GroupOverviewCards', () => {
 			const { unmount } = renderCards();
 
 			fireEvent.keyDown(window, { key: '+' });
-			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(484px, 100%), 1fr))');
 			expect(window.localStorage.getItem(GROUP_TILE_SCALE_KEY)).toBe('1.1');
 
 			unmount();
 			renderCards();
-			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(484px, 100%), 1fr))');
 		});
 
 		it('keeps its own size, independent of the agent grid', () => {
@@ -361,7 +361,7 @@ describe('GroupOverviewCards', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
 
-			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(484px, 100%), 1fr))');
 			expect(screen.queryByRole('button', { name: 'Reset tile size' })).toBeNull();
 		});
 	});

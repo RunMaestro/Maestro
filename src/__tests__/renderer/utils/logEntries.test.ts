@@ -50,6 +50,18 @@ describe('isSelfContainedCard', () => {
 				},
 			},
 		],
+		[
+			'agent delegation pill',
+			{
+				delegation: {
+					kind: 'dispatch' as const,
+					toSessionId: 'proxmox',
+					toAgentName: 'Proxmox',
+					toToolType: 'claude-code' as const,
+					subject: 'Fix the advisory bug',
+				},
+			},
+		],
 	])('is true for a %s', (_label, overrides) => {
 		expect(isSelfContainedCard(entry(overrides as Partial<LogEntry>))).toBe(true);
 	});

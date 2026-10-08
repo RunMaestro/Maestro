@@ -7,6 +7,9 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import {
 	processService,
+	probeSessionAiProcesses,
+	AI_PROCESS_PROBE_TIMEOUT_MS,
+	fetchLiveAiTurns,
 	ProcessConfig,
 	ProcessDataHandler,
 	ProcessExitHandler,
@@ -23,6 +26,7 @@ const mockProcess = {
 	onData: vi.fn(),
 	onExit: vi.fn(),
 	onSessionId: vi.fn(),
+	getActiveProcesses: vi.fn(),
 };
 
 // Setup mock before each test
@@ -503,5 +507,169 @@ describe('processService', () => {
 			};
 			handler('session', 'claude-id');
 		});
+	});
+});
+
+describe('probeSessionAiProcesses', () => {
+	const SESSION = 'sess-1';
+
+	function proc(sessionId: string, overrides: Record<string, unknown> = {}) {
+		return {
+			sessionId,
+			toolType: 'claude-code',
+			pid: 1,
+			cwd: '/x',
+			isTerminal: false,
+			startTime: 1000,
+			...overrides,
+		};
+	}
+
+	test('reports idle when nothing is running for this agent', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([proc('other-session-ai-tab-1')]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state).toEqual({
+			anyActive: false,
+			targetTabActive: false,
+			earliestStartTime: undefined,
+			probeFailed: false,
+		});
+		expect(mockProcess.getActiveProcesses).toHaveBeenCalledWith({ includeChildProcesses: false });
+	});
+
+	test('separates a turn on the asked-about tab from one on a sibling tab', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([proc(`${SESSION}-ai-tab-2`)]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		// The agent is busy, but not on this tab - the distinction the queue
+		// decision needs to allow read-only parallelism.
+		expect(state.anyActive).toBe(true);
+		expect(state.targetTabActive).toBe(false);
+	});
+
+	test('counts a forced-parallel turn as busy on its own tab', async () => {
+		// Forced-parallel runs get a `-fp-<n>` suffix on the same tab id.
+		mockProcess.getActiveProcesses.mockResolvedValue([proc(`${SESSION}-ai-tab-1-fp-2`)]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state.targetTabActive).toBe(true);
+	});
+
+	test('ignores terminal tabs and Cue runs, which hold no AI turn', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([
+			proc(`${SESSION}-ai-tab-1`, { isTerminal: true }),
+			proc(`${SESSION}-ai-tab-2`, { isCueRun: true }),
+		]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state.anyActive).toBe(false);
+		expect(state.targetTabActive).toBe(false);
+	});
+
+	test('returns the earliest start time across live turns', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([
+			proc(`${SESSION}-ai-tab-2`, { startTime: 5000 }),
+			proc(`${SESSION}-ai-tab-1`, { startTime: 2000 }),
+			proc(`${SESSION}-ai-tab-3`, { startTime: undefined }),
+		]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state.earliestStartTime).toBe(2000);
+	});
+
+	test('fails SAFE: an IPC failure reports busy, never idle', async () => {
+		// Unknown ownership must not read as idle - that is how a live process gets
+		// replaced and its response lost.
+		mockProcess.getActiveProcesses.mockRejectedValue(new Error('ipc down'));
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state).toEqual({ anyActive: true, targetTabActive: true, probeFailed: true });
+	});
+
+	test('a probe that never settles times out and reports busy', async () => {
+		// The web-desktop bridge parks an invoke with no deadline of its own and
+		// only a socket `close` rejects it, which iOS does not fire when it
+		// suspends a backgrounded socket. Without a deadline the whole send path
+		// stalls before it has drawn anything, so Enter produces no bubble, no
+		// queued card, and no error - a dead Send button.
+		vi.useFakeTimers();
+		try {
+			mockProcess.getActiveProcesses.mockReturnValue(new Promise(() => {}));
+
+			const pending = probeSessionAiProcesses(SESSION, 'tab-1');
+			await vi.advanceTimersByTimeAsync(AI_PROCESS_PROBE_TIMEOUT_MS + 1);
+
+			expect(await pending).toEqual({
+				anyActive: true,
+				targetTabActive: true,
+				probeFailed: true,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test('a probe that answers in time is not cut short by the deadline', async () => {
+		vi.useFakeTimers();
+		try {
+			mockProcess.getActiveProcesses.mockResolvedValue([proc(`${SESSION}-ai-tab-1`)]);
+
+			const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+			expect(state.probeFailed).toBe(false);
+			expect(state.targetTabActive).toBe(true);
+			// The deadline timer is cleared on the happy path, so a resolved probe
+			// leaves nothing pending behind on every keystroke-driven send.
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe('fetchLiveAiTurns', () => {
+	function proc(sessionId: string, overrides: Record<string, unknown> = {}) {
+		return {
+			sessionId,
+			toolType: 'claude-code',
+			pid: 7,
+			cwd: '/x',
+			isTerminal: false,
+			startTime: 1000,
+			...overrides,
+		};
+	}
+
+	test('resolves every live AI turn across all agents in one round trip', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([
+			proc('agent-a-ai-tab-1'),
+			proc('agent-b-ai-tab-9', { pid: 8 }),
+			proc('agent-a-terminal', { isTerminal: true }),
+		]);
+
+		await expect(fetchLiveAiTurns()).resolves.toEqual([
+			{ sessionId: 'agent-a', tabId: 'tab-1', pid: 7, startTime: 1000 },
+			{ sessionId: 'agent-b', tabId: 'tab-9', pid: 8, startTime: 1000 },
+		]);
+		expect(mockProcess.getActiveProcesses).toHaveBeenCalledWith({ includeChildProcesses: false });
+	});
+
+	test('returns null when the probe fails, so callers can tell it apart from "nothing running"', async () => {
+		mockProcess.getActiveProcesses.mockRejectedValue(new Error('bridge down'));
+
+		await expect(fetchLiveAiTurns()).resolves.toBeNull();
+	});
+
+	test('returns an empty array when main owns no AI turns', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([]);
+
+		await expect(fetchLiveAiTurns()).resolves.toEqual([]);
 	});
 });

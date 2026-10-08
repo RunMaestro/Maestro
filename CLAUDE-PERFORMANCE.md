@@ -344,32 +344,112 @@ instead of pairing raw `addEventListener` / `removeEventListener` inside a
 `useEffect`. The hook handles cleanup, ref-stable handlers, and SSR safety.
 See the canonical-utilities table in [[CLAUDE.md]] for the full rule.
 
-## CSS Animation Cost
+## Looping CSS Animations Must Be Compositable
 
-An `infinite` CSS animation is a permanent, unbounded cost. It runs at 60fps for
-as long as the class is present, whether or not the user is looking at it, and
-no task in a trace will be long enough to make it look like the problem.
+A CSS animation that loops `infinite` is not a one-off cost: it runs for as long
+as its element is on screen. If it animates a property the compositor cannot
+own, it asks the MAIN THREAD for a frame every frame, forever - style recalc,
+paint, and a layer-tree rebuild at 60fps while the user is doing nothing.
 
-Two rules, both learned from a field trace in which one 20px twinkling icon
-repainted a 772x2724 device-px sidebar gradient three times per frame for eleven
-seconds in which the user touched nothing:
+**Only these are composited.** Animate them and the main thread stays idle:
 
-1. **Animate only compositable properties.** `opacity` and `transform` run on the
-   compositor thread. `filter`, `box-shadow`, `background`, and color repaint on
-   the main thread every frame. So does a `transform` on an SVG sub-element -
-   Chrome does not composite those, so animating a `<path>` costs layout or paint
-   even though the same property on a `<div>` would be free.
-2. **When the repaint is unavoidable, confine it.** A main-thread repaint
-   invalidates the animated element's whole compositing layer, and a small icon
-   normally shares a layer with its entire parent surface. Add
-   `will-change: transform` to the animated element so it gets its own layer, and
-   scope the rule to the class that is only present _while_ animating, so nothing
-   is promoted at rest. Mirror it with `will-change: auto` in any
-   `prefers-reduced-motion` block that stops the animation.
+| Safe to animate | Runs on the main thread every frame                               |
+| --------------- | ----------------------------------------------------------------- |
+| `transform`     | `box-shadow`, `filter`, `background-position`, `background-color` |
+| `opacity`       | `width`, `height`, `top`, `left`, `margin`, `padding`, `border-*` |
 
-Lowering the animation's frequency does NOT help: a 1.5s pulse and a 0.2s one
-both repaint every frame. Working example: the wand sparkle/profiling rules in
+**A `transform` on an SVG sub-element is the exception.** Chrome does not
+composite those, so animating a `<path>` costs layout or paint even though the
+same property on a `<div>` is free - see the wand sparkle rules in
 `src/renderer/index.css`.
+
+The recurring mistake in this codebase has been reaching for the property that
+describes the effect (`box-shadow` for a glow, `filter` for a drop-shadow throb,
+`background-position` for a marching stripe) instead of the property that can be
+cheaply animated. **Draw the effect once at a fixed value, then animate its
+`opacity` or `transform`** - usually on an absolutely-positioned `::after`
+overlay so the static paint and the animated property live on different nodes:
+
+```css
+/* WRONG - repaints the element every frame, forever */
+@keyframes glow {
+	0%,
+	100% {
+		box-shadow: 0 0 4px var(--c);
+	}
+	50% {
+		box-shadow: 0 0 8px var(--c);
+	}
+}
+.badge {
+	animation: glow 2s ease-in-out infinite;
+}
+
+/* RIGHT - the shadow is painted once; only opacity animates */
+@keyframes glow {
+	0%,
+	100% {
+		opacity: 0.45;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+.badge {
+	position: relative;
+}
+.badge::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow: inset 0 0 8px var(--c);
+	animation: glow 2s ease-in-out infinite;
+	will-change: opacity;
+}
+```
+
+Measured: `background-position` stripes on a single 240x12px progress bar drove
+**744 main-thread frames in 4 seconds** (~186fps of pointless work) against a
+27-frame idle floor. The rewritten `transform` version measured at the floor.
+
+### When the Repaint Is Unavoidable, Confine It
+
+Some effects cannot be expressed in `opacity` and `transform` alone. A
+main-thread repaint invalidates the animated element's whole compositing layer,
+and a small icon normally shares a layer with its entire parent surface - so the
+cost is not the icon, it is everything drawn beside it. Add `will-change:
+transform` to the animated element so it gets a layer of its own, and scope that
+rule to the class that is present only WHILE animating, so nothing is promoted
+at rest. Mirror it with `will-change: auto` in any `prefers-reduced-motion`
+block that stops the animation.
+
+Measured: one 20px twinkling wand icon repainted the Left Bar's 772x2724
+device-px `.chrome-sheen` gradient three times per frame, at a locked 60fps,
+through eleven seconds in which the user touched nothing - 0.63ms of paint plus
+0.47ms of PaintArtifactCompositor per frame. The class driving it is set
+whenever any agent is busy, so that was the steady state of an ordinary working
+session, not a profiling artifact.
+
+**Lowering the animation's frequency does not help.** A 1.5s pulse and a 0.2s
+one both repaint every frame; only the property and the layer decide the cost.
+
+Notes:
+
+- **Use an inset shadow on an overlay when the host is `overflow-hidden`**, or
+  the parent clips a shadow drawn by a child.
+- **Add `will-change` to the animated property** so the layer is promoted before
+  the first frame rather than during it, and reset it to `auto` wherever the
+  animation is disabled.
+- **Name the pseudo-element in the `prefers-reduced-motion` block.**
+  `.thing { animation: none }` does NOT stop `.thing::after` - the reduced-motion
+  opt-out silently stops working when an animation moves onto an overlay.
+- Verify rather than assume. Trace the page and count
+  `ProxyMain::BeginMainFrame`: a composited animation produces none while it
+  plays. Chromium's compositing rules change between versions, so a property
+  that was main-thread-bound in an older engine may not be today - and vice
+  versa. Do not refactor a working animation on theory alone; measure first.
 
 ## Performance Profiling
 
@@ -530,6 +610,13 @@ agent activity. Do not add in-app trace parsing.
    is fine. Do not "simplify" it back to `JSON.parse(readFileSync(...))`: a real
    field trace is routinely past V8's 512MB max string length, and that is
    exactly how this script used to fail on every capture worth reading.
+
+   > **Known limit:** the script reads the whole trace into one string, so a
+   > `trace.json` over ~512MB fails with `Cannot create a string longer than
+0x1fffffe8 characters`. A full-buffer capture can easily exceed that. Until
+   > it streams, analyze a trace that large by reading `trace.json` line by line
+   > (Chromium emits one event per line) with `readline` and aggregating
+   > yourself.
 
 3. **For frame-level detail**, load `trace.json` into <https://ui.perfetto.dev>
    (or `chrome://tracing`) and jump to the task start times the script reported.

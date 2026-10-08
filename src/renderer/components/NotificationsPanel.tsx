@@ -19,6 +19,7 @@ import { TOAST_POSITIONS, TOAST_POSITION_LABELS } from '../../shared/toastPositi
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { logger } from '../utils/logger';
+import { showOsNotification } from '../stores/notificationStore';
 
 interface NotificationsPanelProps {
 	osNotificationsEnabled: boolean;
@@ -137,10 +138,7 @@ export function NotificationsPanel({
 				/>
 				<button
 					onClick={() =>
-						window.maestro.notification.show(
-							'Maestro',
-							'Test notification - notifications are working!'
-						)
+						showOsNotification('Maestro', 'Test notification - notifications are working!')
 					}
 					className="mt-2 px-3 py-1.5 rounded text-xs font-medium transition-all"
 					style={{
@@ -551,7 +549,7 @@ export function NotificationsPanel({
 				>
 					<strong>Tip:</strong> The default Command Chain uses TTS (text-to-speech), but you can
 					leverage any notification stack you prefer. Chain commands together with pipes to mix and
-					match—for example, log to a file while also speaking aloud.
+					match - for example, log to a file while also speaking aloud.
 				</div>
 			</div>
 		</div>

@@ -162,28 +162,28 @@ describe('group-chat/session-recovery', () => {
 			expect(detectSessionNotFoundError(output)).toBe(true);
 		});
 
-		it('should return true for raw pattern "session was not found"', () => {
+		it('should NOT match "session was not found" (words separated by other text)', () => {
 			mockedGetErrorPatterns.mockReturnValue({});
 			mockedMatchErrorPattern.mockReturnValue(null);
 
 			const output = 'The session was not found in the system';
-			expect(detectSessionNotFoundError(output)).toBe(true);
+			expect(detectSessionNotFoundError(output)).toBe(false);
 		});
 
-		it('should return true for raw pattern "invalid session id"', () => {
+		it('should NOT match "invalid session id"', () => {
 			mockedGetErrorPatterns.mockReturnValue({});
 			mockedMatchErrorPattern.mockReturnValue(null);
 
 			const output = 'Error: invalid session id provided';
-			expect(detectSessionNotFoundError(output)).toBe(true);
+			expect(detectSessionNotFoundError(output)).toBe(false);
 		});
 
-		it('should return true for raw pattern "Invalid Session ID" (case insensitive)', () => {
+		it('should NOT match "Invalid Session ID" (case insensitive)', () => {
 			mockedGetErrorPatterns.mockReturnValue({});
 			mockedMatchErrorPattern.mockReturnValue(null);
 
 			const output = 'Invalid Session ID: abc-123';
-			expect(detectSessionNotFoundError(output)).toBe(true);
+			expect(detectSessionNotFoundError(output)).toBe(false);
 		});
 
 		it('should return false when output contains unrelated errors', () => {
@@ -199,7 +199,7 @@ describe('group-chat/session-recovery', () => {
 			mockedMatchErrorPattern.mockReturnValue(null);
 
 			// The raw patterns test against the full output string
-			const output = 'Line 1: some normal output\nLine 2: invalid session id found\nLine 3: done';
+			const output = 'Line 1: some normal output\nLine 2: Session not found\nLine 3: done';
 			expect(detectSessionNotFoundError(output)).toBe(true);
 		});
 

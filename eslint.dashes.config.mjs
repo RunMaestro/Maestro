@@ -38,6 +38,9 @@ export default tseslint.config({
 		sourceType: 'module',
 		parserOptions: {
 			ecmaFeatures: { jsx: true },
+			// Pin this repo. Sibling git worktrees otherwise look like extra
+			// TSConfig roots and the parser refuses to guess.
+			tsconfigRootDir: import.meta.dirname,
 		},
 	},
 	// The typescript-eslint plugin is registered but none of its rules are

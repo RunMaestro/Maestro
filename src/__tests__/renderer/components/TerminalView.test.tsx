@@ -9,8 +9,8 @@
  */
 
 import React from 'react';
-import { render, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, act, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalView } from '../../../renderer/components/TerminalView';
 import type { Session, TerminalTab } from '../../../renderer/types';
 import type { Theme } from '../../../renderer/types';
@@ -181,7 +181,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('TerminalView — isVisible repaint behaviour', () => {
+describe('TerminalView - isVisible repaint behaviour', () => {
 	it('calls refresh() and focus() when isVisible becomes true', async () => {
 		const tab = makeTab({ pid: 1234, state: 'idle' });
 		const session = makeSession([tab]);
@@ -289,7 +289,7 @@ describe('TerminalView — isVisible repaint behaviour', () => {
 	});
 });
 
-describe('TerminalView — auto-close on shell exit', () => {
+describe('TerminalView - auto-close on shell exit', () => {
 	it('calls closeTerminalTab when a tab transitions to exited state after 2s', async () => {
 		vi.useFakeTimers();
 		// Tab created >2s ago - normal exit should auto-close
@@ -497,7 +497,7 @@ describe('TerminalView — auto-close on shell exit', () => {
 // so only the signal distinguishes it from the user typing `exit`. (#1184)
 // ---------------------------------------------------------------------------
 
-describe('TerminalView — killed shell keeps the tab (issue #1184)', () => {
+describe('TerminalView - killed shell keeps the tab (issue #1184)', () => {
 	/** Renders, delivers a process:exit through the real onExit subscription, then
 	 *  rerenders with the tab flipped to 'exited' as the store would. */
 	function exitPlainTabWith(code: number, signal?: number) {
@@ -559,7 +559,74 @@ describe('TerminalView — killed shell keeps the tab (issue #1184)', () => {
 	});
 });
 
-describe('TerminalView — SSH terminal working directory (regression)', () => {
+describe('TerminalView - tiled panes spawn their PTY (regression)', () => {
+	// A terminal that is a leaf in the active tab group is on screen without ever
+	// being `activeTerminalTabId`. Spawning used to be gated on the active tab
+	// alone, so a tiled terminal sat on "Starting terminal..." forever - the one
+	// tab kind that broke when tiled. The visible set, not the active tab, is what
+	// drives spawning.
+
+	it('spawns a PTY for a terminal that only has a pane rect', async () => {
+		const tiled = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		// Empty active terminal tab: the panel is showing the group, not a single tab.
+		const session = makeSession([tiled], '');
+		const paneRects = new Map([['tiled-1', { top: 0, left: 0, width: 400, height: 300 }]]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-terminal-tiled-1' })
+		);
+	});
+
+	it('spawns a PTY for every terminal in the group, not just one', async () => {
+		const first = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		const second = makeTab({ id: 'tiled-2', pid: 0, state: 'idle' });
+		const session = makeSession([first, second], '');
+		const paneRects = new Map([
+			['tiled-1', { top: 0, left: 0, width: 400, height: 150 }],
+			['tiled-2', { top: 150, left: 0, width: 400, height: 150 }],
+		]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		const spawnedIds = maestro()
+			.process.spawnTerminalTab.mock.calls.map((c: [{ sessionId: string }]) => c[0].sessionId)
+			.sort();
+		expect(spawnedIds).toEqual(['session-1-terminal-tiled-1', 'session-1-terminal-tiled-2']);
+	});
+
+	it('leaves a terminal that is neither active nor tiled alone', async () => {
+		const tiled = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		const offscreen = makeTab({ id: 'offscreen-1', pid: 0, state: 'idle' });
+		const session = makeSession([tiled, offscreen], '');
+		const paneRects = new Map([['tiled-1', { top: 0, left: 0, width: 400, height: 300 }]]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledTimes(1);
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-terminal-tiled-1' })
+		);
+	});
+});
+
+describe('TerminalView - SSH terminal working directory (regression)', () => {
 	// Regression test suite: SSH terminals must cd to the correct remote directory.
 	// The workingDirOverride in sessionSshRemoteConfig must follow the fallback chain:
 	//   1. sessionSshRemoteConfig.workingDirOverride (explicit)
@@ -680,7 +747,7 @@ describe('TerminalView — SSH terminal working directory (regression)', () => {
 	});
 });
 
-describe('TerminalView — selection context menu wiring', () => {
+describe('TerminalView - selection context menu wiring', () => {
 	it('forwards onCopySelection to XTerminal unchanged', () => {
 		const onCopySelection = vi.fn();
 		const tab = makeTab({ id: 'tab-1', pid: 1234, state: 'idle' });
@@ -737,7 +804,7 @@ describe('TerminalView — selection context menu wiring', () => {
 	});
 });
 
-describe('TerminalView — clearActiveTerminal sends Ctrl+L to the PTY', () => {
+describe('TerminalView - clearActiveTerminal sends Ctrl+L to the PTY', () => {
 	// xterm.clear() only removes scrollback above the current prompt line, which feels
 	// like a no-op when the prompt was already at the top. Sending \x0c (Ctrl+L) to the
 	// PTY makes the shell redraw the prompt on a fresh screen, matching iTerm/VSCode
@@ -775,12 +842,98 @@ describe('TerminalView — clearActiveTerminal sends Ctrl+L to the PTY', () => {
 	});
 });
 
-describe('TerminalView — no refresh when no tabs', () => {
+describe('TerminalView - no refresh when no tabs', () => {
 	it('renders empty state without calling refresh when there are no terminal tabs', () => {
 		const session = makeSession([]);
 		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
 		// With no tabs there are no XTerminal instances to refresh
 		expect(mockRefresh).not.toHaveBeenCalled();
+	});
+});
+
+describe('TerminalView - touch key bar (coarse pointer)', () => {
+	const originalMatchMedia = window.matchMedia;
+
+	// isCoarsePointer() reads window.matchMedia('(pointer: coarse)'); drive it so
+	// the touch-only key bar renders. jsdom's default mock returns matches:false.
+	function setCoarsePointer(coarse: boolean) {
+		Object.defineProperty(window, 'matchMedia', {
+			writable: true,
+			configurable: true,
+			value: (query: string) => ({
+				matches: coarse,
+				media: query,
+				onchange: null,
+				addEventListener: vi.fn(),
+				removeEventListener: vi.fn(),
+				addListener: vi.fn(),
+				removeListener: vi.fn(),
+				dispatchEvent: vi.fn(),
+			}),
+		});
+	}
+
+	afterEach(() => {
+		Object.defineProperty(window, 'matchMedia', {
+			writable: true,
+			configurable: true,
+			value: originalMatchMedia,
+		});
+	});
+
+	it('does not render the key bar on a fine (mouse) pointer', () => {
+		setCoarsePointer(false);
+		const session = makeSession([makeTab()]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+		expect(screen.queryByLabelText('Escape')).toBeNull();
+	});
+
+	it('renders the key bar on a coarse pointer and writes Esc to the active tab PTY', () => {
+		setCoarsePointer(true);
+		maestro().process.write = vi.fn().mockResolvedValue(undefined);
+		const session = makeSession([makeTab({ id: 'tab-1' })]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		const escBtn = screen.getByLabelText('Escape');
+		fireEvent.pointerDown(escBtn);
+
+		expect(maestro().process.write).toHaveBeenCalledWith('session-1-terminal-tab-1', '\x1b');
+	});
+
+	it('routes arrow keys to the active tab PTY as CSI cursor sequences', () => {
+		setCoarsePointer(true);
+		maestro().process.write = vi.fn().mockResolvedValue(undefined);
+		const session = makeSession([makeTab({ id: 'tab-1' })]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		fireEvent.pointerDown(screen.getByLabelText('Up'));
+		expect(maestro().process.write).toHaveBeenCalledWith('session-1-terminal-tab-1', '\x1b[A');
+	});
+
+	it('passes a sticky-Ctrl bridge to the active terminal that arms and disarms', () => {
+		setCoarsePointer(true);
+		const session = makeSession([makeTab({ id: 'tab-1' })]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		// The bridge object is stable across renders; isActive() reads the latest
+		// armed state, so a reference captured now stays valid after re-renders.
+		const bridge = xtermPropsBySessionId.get('session-1-terminal-tab-1')?.stickyCtrl as
+			| { isActive: () => boolean; onConsume: () => void }
+			| undefined;
+		expect(bridge).toBeDefined();
+		expect(bridge?.isActive()).toBe(false);
+
+		// Tap Ctrl to arm.
+		act(() => {
+			fireEvent.pointerDown(screen.getByLabelText('Control'));
+		});
+		expect(bridge?.isActive()).toBe(true);
+
+		// Consuming (as XTerminal does after the next keystroke) disarms.
+		act(() => {
+			bridge?.onConsume();
+		});
+		expect(bridge?.isActive()).toBe(false);
 	});
 });
 

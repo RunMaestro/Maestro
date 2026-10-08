@@ -10,8 +10,15 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from './agent-spawner';
-import { addHistoryEntry, readGroups } from './storage';
+import { captureCliRun } from './agent-run-capture';
+import { addHistoryEntry, readGroups, readHistory } from './storage';
+import {
+	aggregateAutoRunHistoryTotals,
+	mergeFinalSummaryTotals,
+	type FinalSummaryTotals,
+} from '../../shared/autoRunHistoryReconciliation';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
+import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
 import { parseSynopsis } from '../../shared/synopsis';
@@ -25,10 +32,17 @@ import { findActiveModelHint, countTasksUnderActiveHint } from '../../shared/aut
 import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
 import { cheapTurnSettings } from '../../shared/modelTiers';
 
-// Halt detection moved to `shared/autorunMarkers` so the desktop renderer can
-// draw a pill for a marker that would block the next run. Re-exported because
-// this module is where the CLI engine and its tests reach for it.
-import { detectHaltMarker, findHaltMarker, findPendingHitlGate } from '../../shared/autorunMarkers';
+// Halt detection lives in `shared/autorunMarkers` so the desktop renderer can
+// both share it and draw a pill for a marker that would block the next run.
+// Re-exported because this module is where the CLI engine and its tests reach
+// for it.
+import {
+	describeUnresolvedHaltMarker,
+	detectHaltMarker,
+	findHaltMarker,
+	findPendingHitlGate,
+	type HaltMarker,
+} from '../../shared/autorunMarkers';
 import { countMarkdownTasks } from '../../shared/markdownTaskScan';
 import {
 	MAX_CONSECUTIVE_NO_CHANGES,
@@ -50,6 +64,18 @@ export async function* runPlaybook(
 		debug?: boolean;
 		verbose?: boolean;
 		skipSynopsis?: boolean;
+		/**
+		 * Run-scoped model override. Wins over `session.customModel` for every
+		 * spawn this run makes; the stored session is never modified.
+		 */
+		model?: string;
+		/** Run-scoped reasoning effort override (same contract as `model`). */
+		effort?: string;
+		/**
+		 * Skip the documents' MAESTRO:MODEL markers, so every task runs at the run
+		 * override, then the agent's settings. Same run-scoped contract.
+		 */
+		ignoreModelHints?: boolean;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
 	const {
@@ -58,6 +84,9 @@ export async function* runPlaybook(
 		debug = false,
 		verbose = false,
 		skipSynopsis = false,
+		model: runModel,
+		effort: runEffort,
+		ignoreModelHints = false,
 	} = options;
 	const batchStartTime = Date.now();
 	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
@@ -125,7 +154,7 @@ export async function* runPlaybook(
 		// re-running. Folding both checks into one scan keeps the read count
 		// per-document stable for callers/mocks.
 		let initialTotalTasks = 0;
-		let preExistingHalt: { document: string; reason?: string; line: number } | null = null;
+		let preExistingHalt: { document: string; halt: HaltMarker } | null = null;
 		for (const doc of playbook.documents) {
 			const { taskCount, content } = readDocAndCountTasks(folderPath, doc.filename);
 			if (debug) {
@@ -140,7 +169,7 @@ export async function* runPlaybook(
 			if (!preExistingHalt) {
 				const halt = findHaltMarker(content);
 				if (halt) {
-					preExistingHalt = { document: doc.filename, reason: halt.reason, line: halt.line };
+					preExistingHalt = { document: doc.filename, halt };
 				}
 			}
 		}
@@ -169,11 +198,7 @@ export async function* runPlaybook(
 			yield {
 				type: 'error',
 				timestamp: Date.now(),
-				message: `Document "${preExistingHalt.document}" contains an unresolved halt marker on line ${
-					preExistingHalt.line + 1
-				}${
-					preExistingHalt.reason ? `: ${preExistingHalt.reason}` : ''
-				}. Remove the <!-- maestro:halt --> marker before re-running. If the playbook only means to DESCRIBE when a run should stop, wrap the marker in backticks or a code fence so it reads as an example.`,
+				message: describeUnresolvedHaltMarker(preExistingHalt.document, preExistingHalt.halt),
 				code: 'HALT_MARKER_PRESENT',
 			};
 			return;
@@ -317,24 +342,67 @@ export async function* runPlaybook(
 			addHistoryEntry(historyEntry);
 		};
 
-		// Helper to create total Auto Run summary
-		const createAutoRunSummary = (): void => {
-			if (!writeHistory) return;
-			// Only write if we completed multiple loops or if looping was enabled
-			if (!playbook.loopEnabled && loopIteration === 0) return;
+		// Reconcile in-memory counters with persisted history entries.
+		//
+		// In-memory counters (totalCompletedTasks/tokens/cost) reset whenever the
+		// Auto Run spans a process boundary: an app/CLI restart, a resume, or a
+		// kill mid-run. The per-task history entries persist on disk, so we
+		// reconstruct cumulative totals from history and take Math.max with the
+		// live counters. This uses the exact same shared logic as desktop Auto Run
+		// (aggregateAutoRunHistoryTotals scopes to entries after the last final
+		// "Auto Run ..." summary, so it spans restarts without absorbing earlier
+		// completed runs on the same session). Reading history is an expected,
+		// recoverable failure mode: fall back to the in-memory counters and warn.
+		const reconcileTotals = (): FinalSummaryTotals => {
+			const runtimeTotals: FinalSummaryTotals = {
+				totalCompletedTasks,
+				totalElapsedMs: Date.now() - batchStartTime,
+				totalInputTokens,
+				totalOutputTokens,
+				totalCost,
+			};
+			try {
+				const historyEntries = readHistory(undefined, session.id);
+				return mergeFinalSummaryTotals(
+					runtimeTotals,
+					aggregateAutoRunHistoryTotals(historyEntries)
+				);
+			} catch (historyError) {
+				logger.warn('History reconciliation failed, using in-memory counters', session.name, {
+					sessionId: session.id,
+					error: String(historyError),
+				});
+				return runtimeTotals;
+			}
+		};
 
-			const totalElapsedMs = Date.now() - batchStartTime;
+		// Helper to create total Auto Run summary from reconciled totals.
+		//
+		// Written for EVERY run, including a single-pass non-looping one. Besides
+		// matching desktop Auto Run (`buildFinalSummary` is unconditional there),
+		// this row is the run BOUNDARY that `aggregateAutoRunHistoryTotals` scans
+		// back to. Skipping it for non-loop runs - as this did - left the next run
+		// with no boundary, so its aggregation swept up the previous run's task
+		// rows and reported the two runs added together.
+		const createAutoRunSummary = (reconciled: FinalSummaryTotals, outcome?: string): void => {
+			if (!writeHistory) return;
+
 			const loopsCompleted = loopIteration + 1;
-			const summary = `Auto Run completed: ${totalCompletedTasks} tasks in ${loopsCompleted} loop${loopsCompleted !== 1 ? 's' : ''}`;
+			// Must keep matching FINAL_AUTORUN_SUMMARY_RE in
+			// shared/autoRunHistoryReconciliation.ts, or the row stops being
+			// recognized as a boundary and the double-counting returns silently.
+			const summary = outcome
+				? `Auto Run ${outcome}`
+				: `Auto Run completed: ${reconciled.totalCompletedTasks} tasks in ${loopsCompleted} loop${loopsCompleted !== 1 ? 's' : ''}`;
 
 			const totalUsageStats: UsageStats | undefined =
-				totalInputTokens > 0 || totalOutputTokens > 0
+				reconciled.totalInputTokens > 0 || reconciled.totalOutputTokens > 0
 					? {
-							inputTokens: totalInputTokens,
-							outputTokens: totalOutputTokens,
+							inputTokens: reconciled.totalInputTokens,
+							outputTokens: reconciled.totalOutputTokens,
 							cacheReadInputTokens: 0,
 							cacheCreationInputTokens: 0,
-							totalCostUsd: totalCost,
+							totalCostUsd: reconciled.totalCost,
 							contextWindow: 0, // Set to 0 for summaries - these are cumulative totals, not per-task context
 						}
 					: undefined;
@@ -342,13 +410,13 @@ export async function* runPlaybook(
 			const details = [
 				`**Auto Run Summary**`,
 				'',
-				`- **Total Tasks Completed:** ${totalCompletedTasks}`,
+				`- **Total Tasks Completed:** ${reconciled.totalCompletedTasks}`,
 				`- **Loops Completed:** ${loopsCompleted}`,
-				`- **Total Duration:** ${formatElapsedTime(totalElapsedMs)}`,
-				totalInputTokens > 0 || totalOutputTokens > 0
-					? `- **Total Tokens:** ${(totalInputTokens + totalOutputTokens).toLocaleString()} (${totalInputTokens.toLocaleString()} in / ${totalOutputTokens.toLocaleString()} out)`
+				`- **Total Duration:** ${formatElapsedTime(reconciled.totalElapsedMs)}`,
+				reconciled.totalInputTokens > 0 || reconciled.totalOutputTokens > 0
+					? `- **Total Tokens:** ${(reconciled.totalInputTokens + reconciled.totalOutputTokens).toLocaleString()} (${reconciled.totalInputTokens.toLocaleString()} in / ${reconciled.totalOutputTokens.toLocaleString()} out)`
 					: '',
-				totalCost > 0 ? `- **Total Cost:** $${totalCost.toFixed(4)}` : '',
+				reconciled.totalCost > 0 ? `- **Total Cost:** $${reconciled.totalCost.toFixed(4)}` : '',
 			]
 				.filter((line) => line !== '')
 				.join('\n');
@@ -362,7 +430,7 @@ export async function* runPlaybook(
 				projectPath: session.cwd,
 				sessionId: session.id,
 				success: true,
-				elapsedTimeMs: totalElapsedMs,
+				elapsedTimeMs: reconciled.totalElapsedMs,
 				usageStats: totalUsageStats,
 			};
 			addHistoryEntry(historyEntry);
@@ -491,12 +559,14 @@ export async function* runPlaybook(
 					// Same content and baseline the model hint is resolved from below, so
 					// the boundary the prompt names and the settings the run uses cannot
 					// disagree.
-					const hintSegment = countTasksUnderActiveHint(
-						expandedDocContent,
-						session.toolType,
-						session.customModel,
-						session.customEffort
-					);
+					const hintSegment = ignoreModelHints
+						? undefined
+						: countTasksUnderActiveHint(
+								expandedDocContent,
+								session.toolType,
+								runModel ?? session.customModel,
+								runEffort ?? session.customEffort
+							);
 					const selectionBlock = await getCliTaskSelectionBlock(
 						playbook.taskSelectionMode,
 						hintSegment
@@ -507,8 +577,13 @@ export async function* runPlaybook(
 					);
 
 					// Combine prompt with document content - agent works on what it's given
-					// Include explicit file path so agent knows where to save changes
-					const finalPrompt = `${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`;
+					// Include explicit file path so agent knows where to save changes.
+					// Each task spawns a fresh provider session, so prefix the agent's
+					// New Session Message onto every spawn (matches interactive behavior).
+					const finalPrompt = prependNewSessionMessage(
+						`${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`,
+						session.newSessionMessage
+					);
 
 					// Emit verbose event with full prompt
 					if (verbose) {
@@ -531,12 +606,15 @@ export async function* runPlaybook(
 					// prompt and re-sending would waste tokens.
 					// Resolve the document's model hint for THIS task. Recomputed per
 					// dispatch rather than carried as run state, so editing the document
-					// mid-run takes effect on the next task.
+					// mid-run takes effect on the next task. The run-scoped --model /
+					// --effort goes in as the baseline the hint overrides, matching the
+					// desktop engine's precedence: document hint, then run override, then
+					// the agent's own value.
 					const turnSettings = resolveTurnSettings(
 						session.toolType,
-						findActiveModelHint(expandedDocContent),
-						session.customModel,
-						session.customEffort
+						ignoreModelHints ? null : findActiveModelHint(expandedDocContent),
+						runModel ?? session.customModel,
+						runEffort ?? session.customEffort
 					);
 					// Its own event type rather than `verbose`: a hint that could not be
 					// honored has to reach the operator whether or not they passed
@@ -556,21 +634,33 @@ export async function* runPlaybook(
 						};
 					}
 
-					const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
-						customModel: turnSettings.model,
-						customEffort: turnSettings.effort,
-						customArgs: session.customArgs,
-						customEnvVars: session.customEnvVars,
-						sshRemoteConfig: session.sessionSshRemoteConfig,
-						appendSystemPrompt: playbookSystemPrompt,
-						// This is Auto Run, not someone typing. Marks the turn so delegation
-						// reporting downstream of the spawn does not count it as hands-on work.
-						querySource: 'auto',
-						// Honor the agent's Claude token source for Auto Run task turns.
-						enableMaestroP: session.enableMaestroP,
-						maestroPMode: session.maestroPMode,
-						maestroPPath: session.maestroPPath,
-					});
+					const result = await captureCliRun(
+						{
+							sessionId: session.id,
+							toolType: session.toolType,
+							cwd: session.cwd,
+							prompt: finalPrompt,
+							source: 'cli:autorun',
+						},
+						() =>
+							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
+								customModel: turnSettings.model,
+								customEffort: turnSettings.effort,
+								customArgs: session.customArgs,
+								additionalDirectories: session.additionalDirectories,
+								customEnvVars: session.customEnvVars,
+								sshRemoteConfig: session.sessionSshRemoteConfig,
+								appendSystemPrompt: playbookSystemPrompt,
+								// This is Auto Run, not someone typing. Marks the turn so delegation
+								// reporting downstream of the spawn does not count it as hands-on work.
+								querySource: 'auto',
+								// Honor the agent's Claude token source for Auto Run task turns.
+								enableMaestroP: session.enableMaestroP,
+								maestroPMode: session.maestroPMode,
+								maestroPPath: session.maestroPPath,
+							}),
+						(r) => (r.success ? 0 : 1)
+					);
 
 					const elapsedMs = Date.now() - taskStartTime;
 
@@ -624,29 +714,44 @@ export async function* runPlaybook(
 
 					if (result.success && result.agentSessionId && !skipSynopsis) {
 						// Request synopsis from the agent
-						const synopsisResult = await spawnAgent(
-							session.toolType,
-							session.cwd,
-							await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
-							result.agentSessionId,
+						const synopsisResult = await captureCliRun(
 							{
-								// A synopsis is a throwaway summarization of work that already
-								// happened, so it runs at the bottom of both ladders regardless of
-								// what the task ran at. On a long playbook this is one premium turn
-								// per task saved. Safe because the synopsis is a leaf: its returned
-								// agentSessionId is discarded, so the downgrade cannot follow the
-								// conversation into the next real turn.
-								customModel: cheapSynopsis.model ?? session.customModel,
-								customEffort: cheapSynopsis.effort ?? session.customEffort,
-								customArgs: session.customArgs,
-								customEnvVars: session.customEnvVars,
-								sshRemoteConfig: session.sessionSshRemoteConfig,
-								querySource: 'auto',
-								// Honor the token source for the Auto Run synopsis turn too.
-								enableMaestroP: session.enableMaestroP,
-								maestroPMode: session.maestroPMode,
-								maestroPPath: session.maestroPPath,
-							}
+								sessionId: result.agentSessionId ?? session.id,
+								toolType: session.toolType,
+								cwd: session.cwd,
+								source: 'cli:autorun-synopsis',
+							},
+							async () =>
+								spawnAgent(
+									session.toolType,
+									session.cwd,
+									await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
+									result.agentSessionId,
+									{
+										// A synopsis is a throwaway summarization of work that already
+										// happened, so it runs at the bottom of both ladders regardless of
+										// what the task ran at. On a long playbook this is one premium turn
+										// per task saved. Safe because the synopsis is a leaf: its returned
+										// agentSessionId is discarded, so the downgrade cannot follow the
+										// conversation into the next real turn.
+										// The `??` fallbacks matter on providers with no tier mapping
+										// (codex, opencode): there is nothing to downgrade TO, so the
+										// synopsis inherits, and it must inherit the same value the task
+										// ran under - the run override, not just the session's.
+										customModel: cheapSynopsis.model ?? runModel ?? session.customModel,
+										customEffort: cheapSynopsis.effort ?? runEffort ?? session.customEffort,
+										customArgs: session.customArgs,
+										additionalDirectories: session.additionalDirectories,
+										customEnvVars: session.customEnvVars,
+										sshRemoteConfig: session.sessionSshRemoteConfig,
+										querySource: 'auto',
+										// Honor the token source for the Auto Run synopsis turn too.
+										enableMaestroP: session.enableMaestroP,
+										maestroPMode: session.maestroPMode,
+										maestroPPath: session.maestroPPath,
+									}
+								),
+							(r) => (r.success ? 0 : 1)
 						);
 
 						if (synopsisResult.success && synopsisResult.response) {
@@ -687,6 +792,9 @@ export async function* runPlaybook(
 							success: result.success,
 							usageStats: result.usageStats,
 							elapsedTimeMs: elapsedMs,
+							// Stamp the checkbox count so cross-restart reconciliation can
+							// reconstruct exact cumulative totals (matches desktop Auto Run).
+							completedTaskCount: tasksCompletedThisRun,
 						};
 						addHistoryEntry(historyEntry);
 						if (debug) {
@@ -722,13 +830,21 @@ export async function* runPlaybook(
 						createFinalLoopEntry(`Halted by agent: ${haltReason}`);
 						unregisterCliActivity(session.id);
 
+						// A halt is still an end-of-run, so it reconciles like one. Emitting
+						// the raw in-memory counters here would undercount any run that
+						// crossed a restart before halting, and - because the halt returns
+						// early - would also leave no final summary row, so the NEXT run's
+						// aggregation would absorb this one's task entries.
+						const haltReconciled = reconcileTotals();
+						createAutoRunSummary(haltReconciled, `halted: ${haltReason}`);
+
 						yield {
 							type: 'complete',
 							timestamp: Date.now(),
 							success: false,
-							totalTasksCompleted: totalCompletedTasks,
-							totalElapsedMs: Date.now() - batchStartTime,
-							totalCost,
+							totalTasksCompleted: haltReconciled.totalCompletedTasks,
+							totalElapsedMs: haltReconciled.totalElapsedMs,
+							totalCost: haltReconciled.totalCost,
 							halted: true,
 							haltReason,
 						};
@@ -982,17 +1098,23 @@ export async function* runPlaybook(
 		// Unregister CLI activity - session is no longer busy
 		unregisterCliActivity(session.id);
 
-		// Add total Auto Run summary (only if looping was used)
-		createAutoRunSummary();
+		// Reconcile cumulative totals against persisted history so a run that
+		// spanned a restart/resume reports its full stats, not just this
+		// process's in-memory slice.
+		const reconciled = reconcileTotals();
 
-		// Emit complete event
+		// Add total Auto Run summary (only if looping was used)
+		createAutoRunSummary(reconciled);
+
+		// Emit complete event with the reconciled totals so resumed runs report
+		// cumulative stats to JSONL consumers, not just the persisted summary entry.
 		yield {
 			type: 'complete',
 			timestamp: Date.now(),
 			success: true,
-			totalTasksCompleted: totalCompletedTasks,
-			totalElapsedMs: Date.now() - batchStartTime,
-			totalCost,
+			totalTasksCompleted: reconciled.totalCompletedTasks,
+			totalElapsedMs: reconciled.totalElapsedMs,
+			totalCost: reconciled.totalCost,
 		};
 	} finally {
 		// Ensure CLI activity is always unregistered even if the generator throws

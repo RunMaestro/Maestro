@@ -9,7 +9,10 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { canonKey } from '../../helpers/pathExpect';
 
 const { sampleCodexUsageMock, loggerWarnMock, loggerInfoMock, captureExceptionMock } = vi.hoisted(
 	() => ({
@@ -183,8 +186,9 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 		const accessSpy = vi.spyOn(fs.promises, 'access').mockResolvedValue(undefined);
 
 		try {
+			// The sweep joins onto the home dir, so the separator is the platform's.
 			await expect(discoverCodexHomes('/Users/test')).resolves.toEqual([
-				'/Users/test/.codex-linked',
+				path.join('/Users/test', '.codex-linked'),
 			]);
 		} finally {
 			readdirSpy.mockRestore();
@@ -213,7 +217,9 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 			});
 
 		try {
-			await expect(discoverCodexHomes('/Users/test')).resolves.toEqual(['/Users/test/.codex-good']);
+			await expect(discoverCodexHomes('/Users/test')).resolves.toEqual([
+				path.join('/Users/test', '.codex-good'),
+			]);
 			expect(captureExceptionMock).not.toHaveBeenCalled();
 		} finally {
 			readdirSpy.mockRestore();
@@ -232,8 +238,8 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 			await expect(discoverCodexHomes('/Users/test')).rejects.toThrow('disk failure');
 			expect(captureExceptionMock).toHaveBeenCalledWith(unexpected, {
 				operation: 'codexUsage:discoverCodexHomes.access',
-				codexHome: '/Users/test/.codex-broken',
-				authPath: '/Users/test/.codex-broken/auth.json',
+				codexHome: path.join('/Users/test', '.codex-broken'),
+				authPath: path.join('/Users/test', '.codex-broken', 'auth.json'),
 			});
 		} finally {
 			readdirSpy.mockRestore();
@@ -244,7 +250,9 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 
 describe('codexUsageStore → resolveCodexHomeKey', () => {
 	it('falls back to the default CODEX_HOME for an empty env value', () => {
-		expect(resolveCodexHomeKey({ CODEX_HOME: '' })).toBe('/Users/test/.codex');
+		expect(resolveCodexHomeKey({ CODEX_HOME: '' })).toBe(
+			canonKey(path.join(os.homedir(), '.codex'))
+		);
 	});
 });
 
@@ -278,7 +286,9 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 			agentDetector: makeDetector(FAKE_AGENT) as never,
 		});
 
-		expect(sampleCodexUsageMock).toHaveBeenCalledWith({ codexHome: '/Users/test/.codex' });
+		expect(sampleCodexUsageMock).toHaveBeenCalledWith({
+			codexHome: path.join(os.homedir(), '.codex'),
+		});
 		expect(getAllCodexUsageSnapshots()).toHaveProperty('/Users/test/.codex');
 	});
 
@@ -321,7 +331,7 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 			expect.stringContaining('Failed to sample Codex usage snapshot'),
 			expect.any(String),
 			expect.objectContaining({
-				codexHomeKey: '/Users/test/.codex-broken',
+				codexHomeKey: canonKey('/Users/test/.codex-broken'),
 				error: 'timed out',
 			})
 		);
@@ -366,13 +376,13 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 		expect(captureExceptionMock).toHaveBeenCalledWith(unexpected, {
 			operation: 'codexUsage:runCodexUsageSampling.sample',
 			codexHome: '/Users/test/.codex-broken',
-			codexHomeKey: '/Users/test/.codex-broken',
+			codexHomeKey: canonKey('/Users/test/.codex-broken'),
 		});
 		expect(loggerWarnMock).toHaveBeenCalledWith(
 			expect.stringContaining('Unexpected failure while sampling Codex usage snapshot'),
 			expect.any(String),
 			expect.objectContaining({
-				codexHomeKey: '/Users/test/.codex-broken',
+				codexHomeKey: canonKey('/Users/test/.codex-broken'),
 				error: 'boom',
 			})
 		);
@@ -395,7 +405,11 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 			agentDetector: makeDetector(FAKE_AGENT) as never,
 		});
 
-		expect(getRememberedQuotaAccountKeys('codex')).toContain('/Users/test/.codex-work');
+		// `resolveCodexHomeKey` ends in `path.resolve`, so the remembered key
+		// carries a drive letter on Windows.
+		expect(getRememberedQuotaAccountKeys('codex')).toContain(
+			path.resolve('/Users/test/.codex-work')
+		);
 	});
 
 	it('samples a remembered home the discovery sweep cannot see', async () => {

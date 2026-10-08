@@ -1,43 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 const REPO_ROOT = path.join(__dirname, '../../..');
 
-/**
- * Files this backport owns. rc's scan covers the whole renderer plus the web
- * client because those trees were already converted to rem. This branch still
- * has the legacy `src/web` PWA and many chrome files with frozen px sizes;
- * converting those is a later sweep, not this typography port.
- */
-const SCALED_ROOTS = [
-	'src/renderer/App.tsx',
-	'src/renderer/utils/applyTypographyVars.ts',
-	'src/renderer/components/OnboardingSeriesHost.tsx',
-	'src/renderer/components/TypographyChoiceModal.tsx',
-	'src/renderer/components/ThemeChoiceModal.tsx',
-	'src/renderer/components/UpdatesChoiceModal.tsx',
-	'src/renderer/components/AgentPowersModal.tsx',
-	'src/renderer/components/ui/ModalBackButton.tsx',
-	'src/renderer/components/Settings/tabs/DisplayTypography',
-];
-
 function tsxFiles(): string[] {
-	const files: string[] = [];
-	for (const root of SCALED_ROOTS) {
-		const abs = path.join(REPO_ROOT, root);
-		if (!existsSync(abs)) continue;
-		if (statSync(abs).isDirectory()) {
-			for (const file of readdirSync(abs, { recursive: true, encoding: 'utf8' })) {
-				if (file.endsWith('.tsx') || file.endsWith('.ts')) {
-					files.push(path.join(root, file));
-				}
-			}
-		} else {
-			files.push(root);
-		}
-	}
-	return files;
+	return ['src/renderer', 'src/web'].flatMap((root) =>
+		readdirSync(path.join(REPO_ROOT, root), { recursive: true, encoding: 'utf8' })
+			.filter((file) => file.endsWith('.tsx'))
+			.map((file) => path.join(root, file))
+	);
 }
 
 /**
@@ -53,7 +25,7 @@ function tsxFiles(): string[] {
  * component to find one, and would still miss the ones behind a conditional.
  */
 describe('font sizes scale with the interface', () => {
-	it('declares no fontSize in px on the surfaces this port wired', () => {
+	it('declares no fontSize in px anywhere in the renderer or web client', () => {
 		const offenders: string[] = [];
 
 		for (const file of tsxFiles()) {

@@ -3,7 +3,19 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 import type { Theme } from '../types';
 import { highlightMatches } from '../utils/highlightMatches';
 import { CsvRowDetailModal } from './CsvRowDetailModal';
+import { isCoarsePointer } from '../utils/touch';
 
+/**
+ * Typography note: this viewer sets no font-family and sizes everything in
+ * `em`, on purpose.
+ *
+ * It renders INSIDE the File Preview pane, which already applies the File
+ * Preview font and size to its content box - so inheriting is what makes that
+ * setting reach a CSV file. It previously hard-coded a monospace stack and
+ * px sizes, which meant the setting silently did nothing here and Cmd+= did
+ * not resize it. Every size below is relative to the pane, so both follow
+ * automatically.
+ */
 interface CsvTableRendererProps {
 	content: string;
 	theme: Theme;
@@ -239,8 +251,7 @@ export function CsvTableRenderer({
 					className="w-full"
 					style={{
 						borderCollapse: 'collapse',
-						fontSize: '13px',
-						fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+						fontSize: '1em',
 					}}
 				>
 					<thead>
@@ -255,7 +266,7 @@ export function CsvTableRenderer({
 									borderRight: `1px solid ${theme.colors.border}`,
 									color: theme.colors.textDim,
 									fontWeight: 'normal',
-									fontSize: '11px',
+									fontSize: '0.85em',
 									position: 'sticky',
 									top: 0,
 									userSelect: 'none',
@@ -318,6 +329,11 @@ export function CsvTableRenderer({
 								onMouseDown={(e) => {
 									if (e.detail > 1) e.preventDefault();
 								}}
+								// One tap opens the row on a coarse pointer: a finger cannot
+								// double-tap, and a phone has no keyboard to fall back on.
+								onClick={() => {
+									if (isCoarsePointer()) setDetailRowIndex(rowIdx);
+								}}
 								onDoubleClick={() => setDetailRowIndex(rowIdx)}
 							>
 								{/* Row number */}
@@ -327,7 +343,7 @@ export function CsvTableRenderer({
 										textAlign: 'right',
 										borderRight: `1px solid ${theme.colors.border}`,
 										color: theme.colors.textDim,
-										fontSize: '11px',
+										fontSize: '0.85em',
 										userSelect: 'none',
 									}}
 								>

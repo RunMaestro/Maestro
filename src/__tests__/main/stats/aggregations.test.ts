@@ -424,8 +424,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		});
 	});
 
-	describe('exportToCsv time range calculations', () => {
-		it('should export CSV for "day" range only', async () => {
+	describe('getQueryEvents time range calculations', () => {
+		it('should query events for the "day" range only', async () => {
 			const now = Date.now();
 			const oneDayMs = 24 * 60 * 60 * 1000;
 
@@ -433,7 +433,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			db.exportToCsv('day');
+			db.getQueryEvents('day');
 
 			const allCalls = mockStatement.all.mock.calls;
 			expect(allCalls.length).toBeGreaterThan(0);
@@ -445,12 +445,12 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
 		});
 
-		it('should export CSV for "all" range', async () => {
+		it('should query events for the "all" range', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 			db.initialize();
 
-			db.exportToCsv('all');
+			db.getQueryEvents('all');
 
 			const allCalls = mockStatement.all.mock.calls;
 			expect(allCalls.length).toBeGreaterThan(0);
@@ -1369,6 +1369,47 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 	});
 
+	describe('bySessionLastQuery', () => {
+		it('should map each session to its most recent query timestamp', async () => {
+			mockStatement.get.mockReturnValue({ count: 3, total_duration: 300 });
+			// queryBySessionLastQuery is the 11th .all call in getAggregatedStats.
+			mockStatement.all
+				.mockReturnValueOnce([]) // 1: byAgent
+				.mockReturnValueOnce([]) // 2: bySource
+				.mockReturnValueOnce([]) // 3: byLocation
+				.mockReturnValueOnce([]) // 4: byDay
+				.mockReturnValueOnce([]) // 5: byAgentByDay
+				.mockReturnValueOnce([]) // 6: byHour
+				.mockReturnValueOnce([]) // 7: sessionsByAgent
+				.mockReturnValueOnce([]) // 8: sessionsByDay
+				.mockReturnValueOnce([]) // 9: bySessionByDay
+				.mockReturnValueOnce([]) // 10: bySessionSource
+				.mockReturnValueOnce([
+					{ session_id: 'a', last_query: 1700000000000 },
+					{ session_id: 'b', last_query: 1700000500000 },
+				]); // 11: bySessionLastQuery
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('week');
+
+			expect(stats.bySessionLastQuery).toEqual({ a: 1700000000000, b: 1700000500000 });
+		});
+
+		it('should return an empty map when no queries exist in range', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			expect(db.getAggregatedStats('day').bySessionLastQuery).toEqual({});
+		});
+	});
+
 	describe('byWorktreeStatus breakdown calculations', () => {
 		it('should return correct worktree vs parent counts and durations', async () => {
 			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
@@ -1385,11 +1426,12 @@ describe('Aggregation queries return correct calculations', () => {
 				.mockReturnValueOnce([]) // 8: sessionsByDay (from querySessionStats)
 				.mockReturnValueOnce([]) // 9: bySessionByDay
 				.mockReturnValueOnce([]) // 10: bySessionSource
-				.mockReturnValueOnce([]) // 11: bySessionTokens
+				.mockReturnValueOnce([]) // 11: bySessionLastQuery
+				.mockReturnValueOnce([]) // 12: bySessionTokens
 				.mockReturnValueOnce([
 					{ is_worktree: 0, count: 70, duration: 350000 },
 					{ is_worktree: 1, count: 30, duration: 150000 },
-				]); // 12: byWorktreeStatus
+				]); // 13: byWorktreeStatus
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1438,7 +1480,8 @@ describe('Aggregation queries return correct calculations', () => {
 				.mockReturnValueOnce([]) // 8: sessionsByDay
 				.mockReturnValueOnce([]) // 9: bySessionByDay
 				.mockReturnValueOnce([]) // 10: bySessionSource
-				.mockReturnValueOnce([]) // 11: bySessionTokens
+				.mockReturnValueOnce([]) // 11: bySessionLastQuery
+				.mockReturnValueOnce([]) // 12: bySessionTokens
 				.mockReturnValueOnce([{ is_worktree: 0, count: 50, duration: 250000 }]); // 12
 
 			const { StatsDB } = await import('../../../main/stats');

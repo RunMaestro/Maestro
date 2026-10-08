@@ -276,6 +276,19 @@ describe('ExecutionQueueIndicator', () => {
 	});
 
 	describe('tab grouping and pills', () => {
+		it('should render the tab name in the interface font, not the code face', () => {
+			// A tab name is prose - typed by the user, or auto-named from their
+			// prompt. `font-mono` resolves to the CODE face now, which put these
+			// labels in a different font from every other label around them once
+			// the interface went proportional.
+			const session = createSession({
+				executionQueue: [createQueuedItem({ tabName: 'MyTab' })],
+			});
+			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
+
+			expect(screen.getByText('MyTab').className).not.toContain('font-mono');
+		});
+
 		it('should display tab name in pill', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem({ tabName: 'MyTab' })],

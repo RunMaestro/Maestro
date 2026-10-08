@@ -2,6 +2,7 @@
  * SessionsTable - Table of Cue-enabled sessions with status, pipeline info, and actions.
  */
 
+import { useEffect, useRef } from 'react';
 import { AlertTriangle, FileCode, GitFork, Play, Trash2 } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueSessionStatus } from '../../hooks/useCue';
@@ -21,6 +22,13 @@ import { triggerGroupKey } from '../../../shared/cue';
 
 interface SessionsTableProps {
 	sessions: CueSessionStatus[];
+	/**
+	 * Agent to highlight and scroll into view. Set when the dashboard was opened
+	 * from one agent's right-click menu, which promises a single agent while
+	 * this table shows them all. Undefined for the global entry points, which
+	 * have nothing to disambiguate.
+	 */
+	focusSessionId?: string;
 	theme: Theme;
 	onViewInGraph: (session: CueSessionStatus) => void;
 	onEditYaml: (session: CueSessionStatus) => void;
@@ -33,6 +41,7 @@ interface SessionsTableProps {
 
 export function SessionsTable({
 	sessions,
+	focusSessionId,
 	theme,
 	onViewInGraph,
 	onEditYaml,
@@ -42,6 +51,17 @@ export function SessionsTable({
 	pipelines,
 	graphSessions,
 }: SessionsTableProps) {
+	const focusedRowRef = useRef<HTMLTableRowElement>(null);
+
+	// Bring the right-clicked agent into view. `block: 'nearest'` so a row that
+	// is already visible does not jump the table, and the effect keys on the id
+	// rather than firing once on mount - the rows arrive asynchronously with the
+	// status query, and re-opening for a different agent must re-scroll.
+	useEffect(() => {
+		if (!focusSessionId) return;
+		focusedRowRef.current?.scrollIntoView({ block: 'nearest' });
+	}, [focusSessionId, sessions]);
+
 	if (sessions.length === 0) {
 		return (
 			<div className="text-center py-8 text-sm" style={{ color: theme.colors.textDim }}>
@@ -70,11 +90,20 @@ export function SessionsTable({
 			<tbody>
 				{sessions.map((s) => {
 					const status = !s.enabled ? 'paused' : s.subscriptionCount > 0 ? 'active' : 'none';
+					const isFocused = !!focusSessionId && s.sessionId === focusSessionId;
 					return (
 						<tr
 							key={s.sessionId}
+							ref={isFocused ? focusedRowRef : undefined}
+							data-focused={isFocused || undefined}
+							data-testid={isFocused ? 'cue-session-row-focused' : undefined}
 							className="border-b last:border-b-0"
-							style={{ borderColor: theme.colors.border }}
+							style={{
+								borderColor: theme.colors.border,
+								// Tint rather than a border: the row already owns its
+								// bottom border, and swapping that would shift the table.
+								backgroundColor: isFocused ? `${theme.colors.accent}1a` : undefined,
+							}}
 						>
 							<td className="py-2" style={{ color: theme.colors.textMain }}>
 								<span className="inline-flex items-center gap-1.5">

@@ -28,6 +28,7 @@ import {
 	QuotaVisibilityToggle,
 	type QuotaTabStatus,
 } from './quota/quotaPrimitives';
+import { CodexResetCredits } from './quota/CodexResetCredits';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
 import { buildQuotaSummary } from './footerSummary';
@@ -210,6 +211,19 @@ const AccountRow = memo(function AccountRow({
 					<span style={{ color: theme.colors.accent }}>○</span>
 					<span>Quota endpoint returned no rate-limit windows for this account.</span>
 				</div>
+			)}
+
+			{/* Reset credits sit under the bars they act on, and only for an
+			    authenticated account: an account we cannot read quota for cannot
+			    redeem either, and offering the button there is a dead control. */}
+			{snapshot.authState === 'authenticated' && (
+				<CodexResetCredits
+					codexHomeKey={codexHomeKey}
+					accountLabel={deriveDisplayName(codexHomeKey)}
+					snapshotCounts={snapshot.resetCredits}
+					theme={theme}
+					testIdPrefix={`${TEST_ID_PREFIX}-${shortName}`}
+				/>
 			)}
 		</div>
 	);

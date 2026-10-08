@@ -1,14 +1,16 @@
 import React, { useState, useCallback, useEffect, useRef, memo, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { X, Star, Pencil, Loader2, AlertCircle, MessageSquare } from 'lucide-react';
 import type { AITab as AITabType, Theme } from '../../types';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { setTabDragImage } from '../../utils/tabDragImage';
 import { getTabKindColor } from './tabBarUtils';
 import { getConnectingColor } from '../../utils/theme';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
+import { TabOverlayPortal } from './TabOverlayPortal';
+import { LongPressable } from '../shared/LongPressable';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
 import { useTabHasActiveOutage } from '../../stores/retryStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -30,6 +32,13 @@ export interface AITabProps {
 	onClose: (tabId: string) => void;
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
+	/**
+	 * Stable callback - continuous drag sampling (HTML5 `onDrag`) used for
+	 * cross-window drag-out detection. No tabId: the dragged tab is already known
+	 * from onDragStart, and drag-out concerns the whole agent/window. Optional, so
+	 * tab types that can't be detached simply omit it.
+	 */
+	onDrag?: (e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
@@ -103,6 +112,7 @@ export const AITab = memo(function AITab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -153,6 +163,7 @@ export const AITab = memo(function AITab({
 		setOverlayRef,
 		positionReady,
 		setTabRef,
+		openOverlay,
 		handleMouseEnter,
 		handleMouseLeave,
 		overlayMouseEnter,
@@ -162,7 +173,8 @@ export const AITab = memo(function AITab({
 		shouldOpen: () => {
 			// Only show overlay if there's something meaningful to show:
 			// - Tabs with sessions or logs: always show (for session/context actions)
-			// - Tabs without sessions or logs: show if there are move actions available
+			// - Tabs without sessions or logs: show only when a reorder action is
+			//   available (not the sole tab)
 			if (!tab.agentSessionId && !tab.logs?.length && isFirstTab && isLastTab) return false;
 			return true;
 		},
@@ -374,15 +386,31 @@ export const AITab = memo(function AITab({
 	);
 
 	// Handlers for drag events using stable tabId
+	// A tap selects, on any tab, active or not. Touch has no hover, so the action
+	// overlay opens on a LONG-PRESS instead (the chip is a LongPressable below);
+	// it used to open on a tap of the already-active tab, which read as the tab
+	// refusing to switch. Mouse/keyboard are unaffected.
 	const handleTabSelect = useCallback(() => {
 		onSelect(tabId);
 	}, [onSelect, tabId]);
 
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => {
+			// Floating themed preview that follows the cursor across windows / empty
+			// space during a drag-out (the OS renders it, unlike a clipped fixed div).
+			// getTabDisplayName is used inline rather than the memoized `displayName`
+			// below to avoid a temporal-dead-zone read in this earlier-declared callback.
+			setTabDragImage(e, { label: getTabDisplayName(tab, sessionAgentSessionId), theme });
 			onDragStart(tabId, e);
 		},
-		[onDragStart, tabId]
+		[onDragStart, tabId, tab, sessionAgentSessionId, theme]
+	);
+
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag?.(e);
+		},
+		[onDrag]
 	);
 
 	const handleTabDragOver = useCallback(
@@ -451,8 +479,9 @@ export const AITab = memo(function AITab({
 	// Browser-style tab: all tabs have borders, active tab "connects" to content
 	// Active tab is bright and obvious, inactive tabs are more muted
 	return (
-		<div
-			ref={setTabRef}
+		<LongPressable
+			innerRef={setTabRef}
+			onLongPress={openOverlay}
 			data-tab-id={tab.id}
 			tabIndex={0}
 			role="tab"
@@ -477,6 +506,7 @@ export const AITab = memo(function AITab({
 			}}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
@@ -571,6 +601,7 @@ export const AITab = memo(function AITab({
 
 			{/* Tab name - always show the full name; the bar scrolls when crowded */}
 			<span
+				data-tab-label
 				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
@@ -581,6 +612,7 @@ export const AITab = memo(function AITab({
 			{canClose && (isHovered || isActive) && (
 				<button
 					onClick={handleCloseClick}
+					data-tab-close
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
 					title={`Close tab${shortcutSuffix(closeTabKeys)}`}
 				>
@@ -588,65 +620,60 @@ export const AITab = memo(function AITab({
 				</button>
 			)}
 
-			{/* Hover overlay with session info and actions - rendered via portal to escape stacking context */}
-			{overlayOpen &&
-				overlayPosition &&
-				createPortal(
-					<div
-						ref={setOverlayRef}
-						className="fixed z-[100]"
-						style={{
-							top: overlayPosition.top,
-							left: overlayPosition.left,
-							opacity: positionReady ? 1 : 0,
-						}}
-						onClick={(e) => e.stopPropagation()}
-						onMouseEnter={overlayMouseEnter}
-						onMouseLeave={overlayMouseLeave}
-					>
-						<AITabOverlayMenu
-							tab={tab}
-							tabId={tabId}
-							sessionId={sessionId}
-							theme={theme}
-							showCopied={showCopied}
-							totalTabs={totalTabs}
-							tabIndex={tabIndex}
-							onCopySessionId={handleCopySessionId}
-							onCopyDeepLink={handleCopyDeepLink}
-							onStarClick={handleStarClick}
-							onRenameClick={handleRenameClick}
-							onMarkUnreadClick={handleMarkUnreadClick}
-							onExportHtmlClick={handleExportHtmlClick}
-							onSnoozeClick={handleSnoozeClick}
-							onCopyContextClick={handleCopyContextClick}
-							onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
-							onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
-							onMergeWithClick={handleMergeWithClick}
-							onSendToAgentClick={handleSendToAgentClick}
-							onPublishGistClick={handlePublishGistClick}
-							onMoveToFirstClick={handleMoveToFirstClick}
-							onMoveToLastClick={handleMoveToLastClick}
-							onCloseTabClick={handleCloseTabClick}
-							onCloseOtherTabsClick={handleCloseOtherTabsClick}
-							onCloseTabsLeftClick={handleCloseTabsLeftClick}
-							onCloseTabsRightClick={handleCloseTabsRightClick}
-							onMergeWith={onMergeWith}
-							onSendToAgent={onSendToAgent}
-							onSummarizeAndContinue={onSummarizeAndContinue}
-							onCopyContext={onCopyContext}
-							onExportHtml={onExportHtml}
-							onSnooze={onSnooze}
-							onPublishGist={onPublishGist}
-							onMoveToFirst={onMoveToFirst}
-							onMoveToLast={onMoveToLast}
-							onCloseOtherTabs={onCloseOtherTabs}
-							onCloseTabsLeft={onCloseTabsLeft}
-							onCloseTabsRight={onCloseTabsRight}
-						/>
-					</div>,
-					document.body
-				)}
-		</div>
+			{/* Hover / long-press overlay with session info and actions - a portal
+			    (anchored popover on desktop, bottom sheet on a phone) to escape the
+			    tab bar's stacking context */}
+			<TabOverlayPortal
+				open={overlayOpen}
+				position={overlayPosition}
+				positionReady={positionReady}
+				setOverlayRef={setOverlayRef}
+				onMouseEnter={overlayMouseEnter}
+				onMouseLeave={overlayMouseLeave}
+				onClose={() => setOverlayOpen(false)}
+				theme={theme}
+			>
+				<AITabOverlayMenu
+					tab={tab}
+					tabId={tabId}
+					sessionId={sessionId}
+					theme={theme}
+					showCopied={showCopied}
+					totalTabs={totalTabs}
+					tabIndex={tabIndex}
+					onCopySessionId={handleCopySessionId}
+					onCopyDeepLink={handleCopyDeepLink}
+					onStarClick={handleStarClick}
+					onRenameClick={handleRenameClick}
+					onMarkUnreadClick={handleMarkUnreadClick}
+					onExportHtmlClick={handleExportHtmlClick}
+					onSnoozeClick={handleSnoozeClick}
+					onCopyContextClick={handleCopyContextClick}
+					onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
+					onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
+					onMergeWithClick={handleMergeWithClick}
+					onSendToAgentClick={handleSendToAgentClick}
+					onPublishGistClick={handlePublishGistClick}
+					onMoveToFirstClick={handleMoveToFirstClick}
+					onMoveToLastClick={handleMoveToLastClick}
+					onCloseTabClick={handleCloseTabClick}
+					onCloseOtherTabsClick={handleCloseOtherTabsClick}
+					onCloseTabsLeftClick={handleCloseTabsLeftClick}
+					onCloseTabsRightClick={handleCloseTabsRightClick}
+					onMergeWith={onMergeWith}
+					onSendToAgent={onSendToAgent}
+					onSummarizeAndContinue={onSummarizeAndContinue}
+					onCopyContext={onCopyContext}
+					onExportHtml={onExportHtml}
+					onSnooze={onSnooze}
+					onPublishGist={onPublishGist}
+					onMoveToFirst={onMoveToFirst}
+					onMoveToLast={onMoveToLast}
+					onCloseOtherTabs={onCloseOtherTabs}
+					onCloseTabsLeft={onCloseTabsLeft}
+					onCloseTabsRight={onCloseTabsRight}
+				/>
+			</TabOverlayPortal>
+		</LongPressable>
 	);
 });

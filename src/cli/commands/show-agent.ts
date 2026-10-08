@@ -72,6 +72,9 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			groupId: agent.groupId,
 			groupName: group?.name,
 			autoRunFolderPath: agent.autoRunFolderPath,
+			// Where this agent's worktrees go (Git menu -> Configure Worktrees).
+			// Null when unset; `create-worktree` then picks the desktop default.
+			worktreeBasePath: agent.worktreeConfig?.basePath ?? null,
 			// Left Bar bookmark state (settable with `maestro-cli bookmark` /
 			// `unbookmark`, or `update-agent --bookmark`).
 			bookmarked: !!agent.bookmarked,

@@ -162,6 +162,103 @@ describe('useContextMenuPosition', () => {
 		document.body.removeChild(el);
 	});
 
+	it('remeasures when menu content changes', () => {
+		setupViewport(800, 600);
+		let menuHeight = 100;
+		Element.prototype.getBoundingClientRect = function () {
+			return {
+				width: 160,
+				height: menuHeight,
+				top: 0,
+				left: 0,
+				right: 160,
+				bottom: menuHeight,
+				x: 0,
+				y: 0,
+				toJSON: () => ({}),
+			};
+		};
+
+		const el = document.createElement('div');
+		document.body.appendChild(el);
+		const { result, rerender } = renderHook(
+			({ submenuOpen }: { submenuOpen: boolean }) => {
+				const ref = useRef<HTMLDivElement>(el);
+				return useContextMenuPosition(ref, 100, 500, 8, submenuOpen);
+			},
+			{ initialProps: { submenuOpen: false } }
+		);
+
+		expect(result.current.top).toBe(492);
+
+		menuHeight = 200;
+		rerender({ submenuOpen: true });
+
+		expect(result.current.top).toBe(392);
+		document.body.removeChild(el);
+	});
+
+	/**
+	 * A menu taller than the viewport is the case that used to be silently
+	 * broken: clamping POSITION alone pins it to the top edge and lets it run
+	 * off the bottom, and the containers are `overflow-hidden`, so those items
+	 * cannot be reached at all - a context menu does not scroll the page.
+	 */
+	describe('maxHeight budget', () => {
+		it('caps a menu taller than the viewport to what fits', () => {
+			setupViewport(1200, 600);
+			mockMenuSize(200, 900);
+
+			const el = document.createElement('div');
+			document.body.appendChild(el);
+			const { result } = renderHook(() => {
+				const ref = useRef<HTMLDivElement>(el);
+				return useContextMenuPosition(ref, 100, 400);
+			});
+
+			// Pinned to the top padding, because maxTop went negative.
+			expect(result.current.top).toBe(8);
+			// Everything from there to the bottom padding is usable, and nothing
+			// beyond it is - which is what the caller turns into a scroller.
+			expect(result.current.maxHeight).toBe(600 - 8 - 8);
+			document.body.removeChild(el);
+		});
+
+		it('measures the budget from where the menu LANDS, not from the click', () => {
+			// A short menu near the bottom is pushed UP by the position clamp, so
+			// it has more room than the click point suggests. Budgeting from `y`
+			// would under-report and add a scrollbar to a menu that fits.
+			setupViewport(1200, 600);
+			mockMenuSize(200, 100);
+
+			const el = document.createElement('div');
+			document.body.appendChild(el);
+			const { result } = renderHook(() => {
+				const ref = useRef<HTMLDivElement>(el);
+				return useContextMenuPosition(ref, 100, 580);
+			});
+
+			expect(result.current.top).toBe(492);
+			expect(result.current.maxHeight).toBe(600 - 492 - 8);
+			document.body.removeChild(el);
+		});
+
+		it('never reports a negative budget', () => {
+			setupViewport(1200, 10);
+			mockMenuSize(200, 900);
+
+			const el = document.createElement('div');
+			document.body.appendChild(el);
+			const { result } = renderHook(() => {
+				const ref = useRef<HTMLDivElement>(el);
+				return useContextMenuPosition(ref, 100, 5);
+			});
+
+			expect(result.current.maxHeight).toBeGreaterThanOrEqual(0);
+			document.body.removeChild(el);
+		});
+	});
+
 	it('returns ready=false when ref has no element', () => {
 		const { result } = renderHook(() => {
 			const ref = useRef<HTMLDivElement>(null);

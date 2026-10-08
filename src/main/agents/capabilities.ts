@@ -38,6 +38,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	'claude-code': {
 		supportsResume: true, // --resume flag
 		supportsReadOnlyMode: true, // --permission-mode plan
+		supportsStandardPermissionMode: true, // standard mode via the permission relay (--permission-prompt-tool)
 		supportsJsonOutput: true, // --output-format stream-json
 		supportsSessionId: true, // session_id in JSON output
 		supportsImageInput: true, // Supports image attachments
@@ -52,6 +53,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // "result" event type
 		supportsModelSelection: true, // --model flag (aliases: sonnet, opus, haiku, or full model names)
 		supportsStreamJsonInput: true, // --input-format stream-json for images via stdin
+		supportsPromptViaStdin: true, // `claude -p` reads the prompt from stdin
 		supportsThinkingDisplay: true, // Emits streaming assistant messages
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
@@ -61,6 +63,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false, // Claude has separate input/output limits
 		supportsAppendSystemPrompt: true, // --append-system-prompt flag
 		supportsProjectMemory: true, // ~/.claude/projects/<path>/memory/
+		supportsAdditionalDirectories: true, // --add-dir <directories...> (verified against the installed CLI)
 	},
 
 	/**
@@ -84,6 +87,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false,
 		supportsModelSelection: false,
 		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: false, // Terminal sessions have no prompt to deliver
 		supportsThinkingDisplay: false, // Terminal is not an AI agent
 		supportsContextMerge: false, // Terminal is not an AI agent
 		supportsContextExport: false, // Terminal has no AI context
@@ -93,6 +97,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false,
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false,
 	},
 
 	/**
@@ -124,6 +129,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false, // All messages are agent_message type (no distinct result) - Verified
 		supportsModelSelection: true, // -m, --model flag - Documented
 		supportsStreamJsonInput: false, // Uses -i, --image flag instead
+		supportsPromptViaStdin: true, // `codex exec` reads the prompt from stdin
 		supportsThinkingDisplay: true, // Emits reasoning tokens (o3/o4-mini)
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
@@ -133,6 +139,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: true, // OpenAI models use combined context window
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
+		supportsAdditionalDirectories: true, // --add-dir <DIR>, repeatable. Codex scopes it to WRITABLE roots.
 		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},
 
@@ -159,6 +166,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false,
 		supportsModelSelection: false, // Not yet investigated
 		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: true, // Gemini CLI reads the prompt from stdin
 		supportsThinkingDisplay: false, // Not yet investigated
 		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
 		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
@@ -168,40 +176,194 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false, // PLACEHOLDER
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // Unverified - no Gemini CLI available to probe
 	},
 
 	/**
-	 * Qwen3 Coder - Alibaba's Qwen coding model
+	 * Antigravity CLI (`agy`) - Google's terminal coding agent, the CLI surface of
+	 * Antigravity and the successor to the Gemini CLI effort above.
 	 *
-	 * PLACEHOLDER: Most capabilities set to false until Qwen3 Coder CLI is available
-	 * and can be tested. Update this configuration when integrating the agent.
+	 * Capabilities below are derived from the published headless-mode contract
+	 * (https://antigravity.google/docs/cli/headless) rather than from a live run,
+	 * so the agent ships as beta. Anything the docs do not state outright is left
+	 * false rather than guessed at.
+	 */
+	antigravity: {
+		supportsResume: true, // --conversation <id>
+		supportsReadOnlyMode: false, // No flag makes it read-only; workspace writes stay auto-allowed
+		supportsJsonOutput: true, // --output-format stream-json
+		supportsSessionId: true, // conversation_id on init/step_update/result
+		supportsImageInput: false, // No documented attachment flag
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false, // Slash commands are TUI-only, not exposed to headless runs
+		supportsSessionStorage: false, // On-disk conversation format is undocumented
+		supportsCostTracking: false, // usage reports tokens only, no cost
+		supportsUsageStats: true, // usage: input/output/thinking/cache_read/total tokens
+		supportsBatchMode: true, // -p / --print / --prompt
+		requiresPromptToStart: true, // Headless runs require -p; there is no idle non-interactive mode
+		supportsStreaming: true, // stream-json emits step_update deltas
+		supportsResultMessages: true, // Terminal `result` event
+		supportsModelSelection: true, // --model <slug>
+		supportsStreamJsonInput: false, // No stdin stream-json input format
+		supportsThinkingDisplay: false, // thinking_tokens are counted, but no reasoning text step type is documented
+		supportsContextMerge: true, // Context can be delivered through the prompt
+		supportsContextExport: false, // Requires session storage
+		supportsWizard: false, // Structured-output wizard flow unverified against a live CLI
+		supportsGroupChatModeration: false, // Unverified
+		usesJsonLineOutput: true, // stream-json is newline-delimited JSON
+		usesCombinedContextWindow: false, // Gemini reports input and output separately
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+		supportsPromptViaStdin: false, // Docs give the prompt as `-p "<text>"`; stdin delivery is unstated
+		supportsAdditionalDirectories: false, // No documented flag for extra workspace roots
+	},
+
+	/**
+	 * Qwen3 Coder - Alibaba's Qwen coding agent (Qwen Code CLI)
+	 *
+	 * Qwen Code is a Gemini CLI fork that exposes the same stream-json headless
+	 * interface. Capabilities mirror the Gemini/Claude stream-json integration.
+	 * Session storage is deferred until verified against a live
+	 * Coding-plan account (beta scope).
 	 */
 	'qwen3-coder': {
+		supportsResume: true, // --resume <sessionId> headless resume (resumeArgs wired)
+		supportsReadOnlyMode: false, // Prompt-only enforcement via -y
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: false, // No image CLI args wired (imageArgs undefined); enable when wired
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false, // Deferred to keep beta scope
+		supportsCostTracking: false, // Local/plan model - no cost
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: false,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: true, // Gemini CLI fork - same stdin prompt handling
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+	},
+
+	/**
+	 * Hermes - plain-text batch integration based on documented CLI behavior.
+	 * Structured output and session features remain gated because Hermes does not
+	 * expose a stable protocol Maestro can consume.
+	 */
+	hermes: {
 		supportsResume: false,
 		supportsReadOnlyMode: false,
 		supportsJsonOutput: false,
 		supportsSessionId: false,
-		supportsImageInput: false,
+		supportsImageInput: true,
 		supportsImageInputOnResume: false,
 		supportsSlashCommands: false,
 		supportsSessionStorage: false,
-		supportsCostTracking: false, // Local model - no cost
+		supportsCostTracking: false,
 		supportsUsageStats: false,
-		supportsBatchMode: false,
-		requiresPromptToStart: false, // Not yet investigated
-		supportsStreaming: true, // Likely streams
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
 		supportsResultMessages: false,
-		supportsModelSelection: false, // Not yet investigated
+		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
-		supportsThinkingDisplay: false, // Not yet investigated
-		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
-		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
-		supportsWizard: false, // PLACEHOLDER
-		supportsGroupChatModeration: false, // PLACEHOLDER
-		usesJsonLineOutput: false, // PLACEHOLDER
-		usesCombinedContextWindow: false, // PLACEHOLDER
+		supportsPromptViaStdin: true, // Requires --query-file -; bare stdin opens the interactive TUI (#1657)
+		supportsThinkingDisplay: false,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: false,
+		usesCombinedContextWindow: false,
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+	},
+
+	/**
+	 * Pi - JSONL batch integration based on the documented `--mode json` protocol.
+	 * Pi emits session IDs, message deltas, tool events, and usage statistics.
+	 * Pi accepts session IDs through `--session` and enforces read-only mode with a tool allowlist.
+	 */
+	pi: {
+		supportsResume: true,
+		supportsReadOnlyMode: true,
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: true,
+		supportsImageInputOnResume: true,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: true,
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+	},
+
+	/**
+	 * Oh My Pi - JSON event-stream batch integration via `omp -p --mode json`.
+	 * Oh My Pi emits a session id, streaming message deltas, tool lifecycle
+	 * events, and per-message usage/cost. It resumes sessions through `--resume`
+	 * and selects models with a fuzzy `--model` matcher.
+	 */
+	omp: {
+		supportsResume: true,
+		supportsReadOnlyMode: true, // --tools read,grep,glob restricts to read-only tools - Verified
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: true,
+		supportsImageInputOnResume: true,
+		supportsSlashCommands: false,
+		supportsSessionStorage: true, // ~/.omp/agent/sessions/<cwd-slug>/*.jsonl (local; SSH is a follow-up)
+		supportsCostTracking: true,
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: false, // VERIFIED: omp takes the prompt as a positional arg only; piping it to stdin makes the run exit 0 with no output
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
+		// omp exposes only the inline `--append-system-prompt` flag, not the
+		// `--append-system-prompt-file` variant that Maestro's Windows-local
+		// delivery path emits when this is true. Enabling it would break omp on
+		// Windows (unknown flag), and the flag name is not overridable per agent.
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // PLACEHOLDER - unverified
 	},
 
 	/**
@@ -228,6 +390,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // step_finish with part.reason:"stop" - Verified
 		supportsModelSelection: true, // --model provider/model (e.g., 'ollama/qwen3:8b') - Verified
 		supportsStreamJsonInput: false, // Uses positional arguments for prompt
+		supportsPromptViaStdin: true, // `opencode run` reads the prompt from stdin
 		supportsThinkingDisplay: true, // Emits streaming text chunks
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
@@ -237,6 +400,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false, // Depends on model provider
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // No directory-grant flag (--dir only relocates the cwd)
 	},
 
 	/**
@@ -262,6 +426,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // Can detect end of conversation
 		supportsModelSelection: true, // -m, --model flag - Verified
 		supportsStreamJsonInput: true, // --input-format stream-json - Verified
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
 		supportsThinkingDisplay: true, // Emits thinking content in messages - Verified
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session files are exportable
@@ -271,6 +436,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false, // Depends on model provider
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // Unverified - no Droid CLI available to probe
 	},
 
 	/**
@@ -297,6 +463,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // assistant.message with phase=final_answer
 		supportsModelSelection: true, // --model <model>
 		supportsStreamJsonInput: false, // Not verified
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
 		supportsThinkingDisplay: true, // assistant.reasoning events are rendered through Maestro's thinking-chunk pipeline
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
@@ -304,8 +471,51 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsGroupChatModeration: true, // Group chat moderation uses the standard batch-mode orchestration path
 		supportsAppendSystemPrompt: false, // No --append-system-prompt equivalent
 		supportsProjectMemory: false, // No project memory mechanism
+		supportsAdditionalDirectories: true, // --add-dir <directory>, repeatable (verified against the installed CLI)
 		usesJsonLineOutput: true, // --output-format json produces JSONL
 		usesCombinedContextWindow: true, // Copilot's own usage layer reports cumulative input (includes cache) regardless of underlying model, so the gauge math must follow the combined formula
+	},
+
+	/**
+	 * Grok CLI - xAI's Grok coding agent CLI
+	 *
+	 * Capabilities verified against captured output from grok v0.2.93
+	 * (streaming-json fixtures). Notable: the streaming-json stdout stream
+	 * carries NO token usage/cost; the session ID arrives only on the final
+	 * "end" event.
+	 *
+	 * 0.2.93 also emitted no tool events, but grok 1.x does
+	 * (`tool_call` / `tool_call_update`) and the parser reads them - see the
+	 * TOOL EVENTS note in grok-output-parser.ts.
+	 */
+	grok: {
+		supportsResume: true, // Verified: -r/--resume <sessionId>; resume turn preserved the same sessionId in the end event
+		supportsReadOnlyMode: true, // Verified: --permission-mode plan (grok --help v0.2.93)
+		supportsJsonOutput: true, // Verified: --output-format streaming-json emits one JSON object per line
+		supportsSessionId: true, // Verified: camelCase sessionId (UUIDv7) on the final end event (no init event exists)
+		supportsImageInput: false, // Conservative default: no image flag observed in grok --help
+		supportsImageInputOnResume: false, // Conservative default: follows supportsImageInput
+		supportsSlashCommands: false, // Conservative default: not investigated in headless mode
+		supportsSessionStorage: true, // Verified: GrokSessionStorage reads ~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/
+		supportsCostTracking: false, // Verified absent: no cost fields anywhere in the stream or on-disk session files
+		supportsUsageStats: false, // Verified absent: no token usage in the streaming-json stream (counts exist only in on-disk signals.json/updates.jsonl)
+		supportsBatchMode: true, // Verified: -p/--single <PROMPT> headless mode
+		requiresPromptToStart: true, // Verified: headless runs require -p <prompt>; no interactive PTY integration
+		supportsStreaming: true, // Verified: token-sized thought/text deltas stream on stdout
+		supportsResultMessages: true, // Verified: distinct final end event with stopReason/sessionId/requestId
+		supportsModelSelection: true, // Verified: -m/--model flag; grok models lists grok-4.5 and grok-composer-2.5-fast
+		supportsStreamJsonInput: false, // Conservative default: no --input-format stream-json equivalent in grok --help
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
+		supportsThinkingDisplay: true, // Verified: thought delta events precede text deltas
+		supportsContextMerge: false, // Conservative default: not yet exercised
+		supportsContextExport: true, // Verified: session storage reads full transcripts (chat_history.jsonl), same export path as siblings
+		supportsWizard: true, // Streaming-json text deltas carry structured JSON wizard replies; discovery uses --always-approve + --max-turns 8 + --no-subagents (not plan - plan blocks read/fetch needed for discovery)
+		supportsGroupChatModeration: false, // Conservative default: moderation flow not yet exercised
+		usesJsonLineOutput: true, // Verified: streaming-json is JSONL (one JSON object per line); also gates CLI batch spawning (spawnJsonLineAgent)
+		usesCombinedContextWindow: false, // Conservative default: on-disk signals.json reports a single contextTokensUsed but gauge math is unverified
+		supportsAppendSystemPrompt: false, // Verified absent: no --append-system-prompt equivalent in grok --help
+		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
+		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
 	},
 };
 

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<!-- Theme color for browser chrome (address bar, status bar). -->
+		<meta name="theme-color" content="#1a1a2e" />
+		<!-- iOS Safari: run full-screen when launched from the Home Screen and use a
+		     translucent status bar so content extends under the notch. -->
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+		<!-- Cross-browser standalone PWA hint. -->
+		<meta name="mobile-web-app-capable" content="yes" />
+		<!-- The product name, with no qualifier. "(Web Desktop)" named the BUILD
+		     rather than the product - an internal distinction between two bundles
+		     of the same app - and it surfaced in the browser tab and in the
+		     headline of every shared link preview, as though the recipient were
+		     being handed a variant. The social card's title is built from
+		     SOCIAL_TITLE in src/main/web-server/social-preview.ts; keep the two
+		     saying the same word. Open Graph tags are NOT declared here: they
+		     have to name an absolute origin, which only the request knows, so the
+		     server injects them when it serves this file. -->
+		<title>Maestro</title>
+		<!-- Load JetBrains Mono so this bundle matches the desktop app (the native
+		     app inherits it from the OS; iOS has no such install and depends on
+		     this web-font request). `display=swap` means text paints immediately in
+		     the fallback and swaps in when the font arrives, so a plain stylesheet
+		     link is already non-render-blocking here. Do NOT use the media="print"
+		     + onload swap trick: mobile Safari defers fetching print-media
+		     stylesheets until an actual print, so onload never fires and the font
+		     never loads, leaving the app in a serifed Courier fallback. -->
+		<style>
+			html,
+			body,
+			#root {
+				margin: 0;
+				padding: 0;
+				height: 100%;
+				background: #0a0a0a;
+				color: #eee;
+				/* Follows the interface font setting, same as the desktop shell.
+				   The literals are only the pre-React fallback for the splash. */
+				font-family: var(
+					--maestro-font-interface,
+					'JetBrains Mono',
+					'Fira Code',
+					ui-monospace,
+					'SF Mono',
+					SFMono-Regular,
+					Menlo,
+					Monaco,
+					'Courier New',
+					monospace
+				);
+				-webkit-font-smoothing: antialiased;
+				-moz-osx-font-smoothing: grayscale;
+			}
+
+			/* Pre-React branded splash. Lives inside #root and is replaced
+			   automatically when React mounts (createRoot clears the container on
+			   first render), so it never needs JS to dismiss and can't hang. */
+			.md-splash {
+				height: 100%;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				justify-content: center;
+				gap: 20px;
+			}
+			.md-splash__wordmark {
+				/* The brand mark never follows the interface font. Without this it
+				   inherits `body`, which resolves --maestro-font-interface, so the
+				   logo changed shape with the user's reading preference. Kept in
+				   sync by hand with WORDMARK_FONT_STACK in src/shared/fontStack.ts;
+				   this paints before any JavaScript runs and cannot import it. */
+				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+				font-weight: 700;
+				font-size: 22px;
+				letter-spacing: 0.35em;
+				/* Optical centering for the tracked-out wordmark. */
+				padding-left: 0.35em;
+				color: #f5f5f5;
+			}
+			.md-splash__spinner {
+				width: 28px;
+				height: 28px;
+				border: 3px solid rgba(255, 255, 255, 0.15);
+				border-top-color: rgba(255, 255, 255, 0.7);
+				border-radius: 50%;
+				animation: md-spin 0.8s linear infinite;
+			}
+			@keyframes md-spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+
+			/* Error surface - shown by the global handler below when the bundle
+			   fails to boot, so a failure reads as a real message instead of a
+			   blank screen or a browser's generic "Failed to load". */
+			.md-error {
+				min-height: 100vh;
+				box-sizing: border-box;
+				padding: 24px;
+				color: #f88;
+				background: #111;
+			}
+			.md-error h2 {
+				margin: 0 0 12px;
+				font-size: 16px;
+			}
+			.md-error pre {
+				white-space: pre-wrap;
+				word-break: break-word;
+				font-size: 12px;
+				color: #fbb;
+			}
+			.md-error__hint {
+				margin-top: 16px;
+				font-size: 12px;
+				color: #aaa;
+			}
+		</style>
+		<script>
+			// Surface boot failures on screen. Mobile Safari (and older WebKit) can
+			// fail to parse a lazily-loaded chunk or be unable to reach the LAN
+			// server, leaving only a blank page or a generic browser error. Both
+			// window 'error' (covers SyntaxError in the entry module, which a
+			// try/catch in bootstrap can't see) and 'unhandledrejection' (covers a
+			// rejected dynamic import) route here.
+			//
+			// These listeners must be registered before the entry module is parsed,
+			// which is why they live inline. They only decide anything themselves
+			// while the bundle is not yet running: once bootstrap.ts installs
+			// window.__maestroHandleLoadFailure, that takes over, because by then
+			// the failure could just as easily be a stale hashed chunk in a
+			// long-lived tab (recoverable by reloading) or an app-level bug the
+			// React error boundary should own - neither of which should wipe #root
+			// or blame the network. See src/web-desktop/loadFailure.ts.
+			(function () {
+				var shown = false;
+				var NETWORK_HINT =
+					'If this device is on a different Wi-Fi network than the computer running Maestro, or the network blocks device-to-device traffic, the page can fail to load. Confirm both are on the same network and retry.';
+				function escapeHtml(value) {
+					return String(value == null ? '' : value).replace(/[&<>]/g, function (c) {
+						return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+					});
+				}
+				function showError(title, detail, hint) {
+					if (shown) return;
+					shown = true;
+					var root = document.getElementById('root');
+					if (!root) return;
+					root.innerHTML =
+						'<div class="md-error"><h2>' +
+						escapeHtml(title) +
+						'</h2><pre>' +
+						escapeHtml(detail) +
+						'</pre><div class="md-error__hint">' +
+						escapeHtml(hint || NETWORK_HINT) +
+						'</div></div>';
+				}
+				function report(reason) {
+					var handle = window.__maestroHandleLoadFailure;
+					if (handle) {
+						handle(reason);
+						return;
+					}
+					// Bundle never got far enough to install the policy handler, so
+					// this really is a "couldn't load Maestro at all" failure and the
+					// network hint is the right guess.
+					showError(
+						'Maestro web-desktop failed to load',
+						(reason && (reason.stack || reason.message)) || String(reason)
+					);
+				}
+				window.addEventListener('error', function (e) {
+					// Ignore resource-load errors that bubble as generic Events with
+					// no error object (e.g. an image); only surface real script errors.
+					if (e && (e.error || e.message)) {
+						report(e.error || new Error(e.message));
+					}
+				});
+				window.addEventListener('unhandledrejection', function (e) {
+					report(e && e.reason);
+				});
+				window.__maestroShowBootError = showError;
+			})();
+		</script>
+	</head>
+	<body>
+		<div id="root">
+			<div class="md-splash">
+				<div class="md-splash__wordmark">MAESTRO</div>
+				<div class="md-splash__spinner"></div>
+			</div>
+		</div>
+		<script>
+			// Server may inject __MAESTRO_CONFIG__ via /<token>/desktop/config.js.
+			// If absent (e.g. dev or local file load), the shim derives URLs from
+			// window.location at runtime.
+		</script>
+		<script type="module" src="./bootstrap.ts"></script>
+	</body>
+</html>

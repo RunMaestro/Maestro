@@ -23,6 +23,11 @@ export interface QueryEvent {
 	/** Whether this query came from a worktree session (child of a parent agent) */
 	isWorktree?: boolean;
 	/**
+	 * Web Login account that sent the turn (username). Absent for turns typed at
+	 * the desktop, which is every turn when Web Login is off.
+	 */
+	userName?: string;
+	/**
 	 * Per-turn token and cost usage, when the provider reported any.
 	 *
 	 * These are DELTAS for the single turn this row represents, not the running
@@ -131,6 +136,12 @@ export interface StatsAggregation {
 	/** User vs auto query counts per Maestro session (for per-card auto% on the dashboard) */
 	bySessionSource: Record<string, { user: number; auto: number }>;
 	/**
+	 * Epoch ms of the most recent query per Maestro session, scoped to the
+	 * selected range. Day-bucketed `bySessionByDay` can only order agents to the
+	 * nearest calendar day, so the "Recent" sort reads this instead.
+	 */
+	bySessionLastQuery: Record<string, number>;
+	/**
 	 * Token and cost totals per Maestro session, for agent and group cost
 	 * rollups. `pricedQueries` is how many of that session's rows actually
 	 * carried usage data: rows written before the token columns landed report
@@ -181,6 +192,19 @@ export interface StatsFilters {
 export interface ShortcutUsageDay {
 	date: string;
 	count: number;
+}
+
+/**
+ * Aggregate multi-window usage over a time range. `windowsOpened` is the number
+ * of secondary windows spawned (the multi-window action - the always-present
+ * primary window is not counted); `peakConcurrent` is the maximum number of
+ * windows open simultaneously (counting the primary), so a value below 2 means
+ * the user never ran more than one window. Aggregate counters only - no agent or
+ * window identifiers are stored.
+ */
+export interface MultiWindowUsage {
+	windowsOpened: number;
+	peakConcurrent: number;
 }
 
 /**
@@ -243,11 +267,35 @@ export interface WizardRun {
 	documents: number;
 	/** Task checkboxes across those documents. */
 	tasks: number;
+	/**
+	 * Time actually spent in the wizard: agent turns in full, gaps waiting on the
+	 * user capped (see `src/renderer/services/wizardStats.ts`). Use this, never
+	 * `endedAt - startedAt`, which counts a tab left open for days. Absent on
+	 * rows recorded before it was measured.
+	 */
+	activeMs?: number;
 	/** Working directory the run targeted, when known. */
 	projectPath?: string;
 }
 
 /**
+ * File format for a Usage Dashboard export. `json` is one file holding every
+ * table plus the dashboard aggregation; `csv` is a zip with one CSV per table.
+ */
+export type UsageExportFormat = 'json' | 'csv';
+
+/** What a finished Usage Dashboard export reports back to the renderer. */
+export interface UsageExportResult {
+	/** Absolute path the export was written to. */
+	path: string;
+	format: UsageExportFormat;
+	/** Rows written per table, keyed by table name. */
+	rowCounts: Record<string, number>;
+	/** Plain-language notes on data the export could not include in full. */
+	notes: string[];
+}
+
+/**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 10;
+export const STATS_DB_VERSION = 13;

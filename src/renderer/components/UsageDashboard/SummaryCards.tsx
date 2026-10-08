@@ -34,16 +34,27 @@ import {
 	Trophy,
 	CalendarCheck,
 	PenLine,
+	Coins,
+	Split,
 } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import {
 	formatDurationHuman as formatDuration,
+	formatDurationWords,
+	formatElapsedTickerCompact,
 	formatNumber,
 	formatCost,
+	formatTokensCompact,
 } from '../../../shared/formatters';
+import { aggregateRangeUsage } from '../../../shared/usageStats';
+import { visibleAiTabs } from '../../utils/tabHelpers';
+import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { Sparkline } from './Sparkline';
+import { DelegationSplitBar } from './DelegationSplitBar';
+import type { DelegationTotals } from '../../../shared/delegation';
+import { delegationPercent, trackedMs } from '../../../shared/delegation';
 
 type ByDayEntry = StatsAggregation['byDay'][number];
 
@@ -208,6 +219,15 @@ interface SummaryCardsProps {
 	columns?: number;
 	/** Sessions array for accurate agent count (filters terminal sessions) */
 	sessions?: Session[];
+	/**
+	 * Interactive vs autonomous split for the same range, merged across the
+	 * stats DB and the Cue DB. Omit (or pass null) to hide the ratio card - it
+	 * is the one metric here that can't be derived from `data`, since Cue runs
+	 * are not query events and per-source durations are not in the aggregation.
+	 */
+	delegation?: DelegationTotals | null;
+	/** Enable colorblind-friendly colors in the ratio card's split bar. */
+	colorBlindMode?: boolean;
 }
 
 /**
@@ -453,6 +473,12 @@ export const MetricCard = memo(function MetricCard({
 					style={{
 						color: theme.colors.textMain,
 						fontSize: 'clamp(18px, 3vw, 28px)',
+						// A formatted figure carries no spaces, so without this a
+						// value too wide for its column (`~$39,605.06` in a 176px
+						// card on a phone) had nowhere to break and painted
+						// straight out past the card's own edge. Wrapping rather
+						// than truncating: the whole number is the point.
+						overflowWrap: 'anywhere',
 					}}
 					title={value}
 				>
@@ -541,15 +567,16 @@ export const ContextUsageBar = memo(function ContextUsageBar({
 	);
 });
 
-// Placeholder per-1K-token rates for current-cycle cost estimation.
-// `currentCycleTokens` does not split input vs output, so we apply a blended
-// rate that approximates Claude pricing ($3/M input, $15/M output).
-// TODO: replace with provider-specific rates and split when the parser exposes
-// input/output token counts for the in-flight cycle.
-const CURRENT_CYCLE_INPUT_RATE_PER_1K = 0.003;
-const CURRENT_CYCLE_OUTPUT_RATE_PER_1K = 0.015;
-const CURRENT_CYCLE_BLENDED_RATE_PER_1K =
-	(CURRENT_CYCLE_INPUT_RATE_PER_1K + CURRENT_CYCLE_OUTPUT_RATE_PER_1K) / 2;
+/**
+ * Blended $/token estimate for a live cycle. `currentCycleTokens` carries no
+ * input/output split, so we average the model's per-million input and output
+ * rates. Model-aware via `resolveModelPricing` - Opus is priced as Opus, Haiku
+ * as Haiku - instead of the previous single hardcoded Claude-ish constant.
+ */
+function blendedCycleRatePerToken(model?: string | null): number {
+	const p = resolveModelPricing(model);
+	return (p.INPUT_PER_MILLION + p.OUTPUT_PER_MILLION) / 2 / TOKENS_PER_MILLION;
+}
 
 interface TokenCostBadgeProps {
 	sessions: Session[];
@@ -558,7 +585,7 @@ interface TokenCostBadgeProps {
 
 /**
  * Aggregates `currentCycleTokens` across busy sessions and renders the total
- * with a blended-rate cost estimate plus a per-session breakdown.
+ * with a model-aware blended-rate cost estimate plus a per-session breakdown.
  */
 export const TokenCostBadge = memo(function TokenCostBadge({
 	sessions,
@@ -567,16 +594,18 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 	const { totalTokens, estimatedCost, breakdown } = useMemo(() => {
 		const busy = sessions.filter((s) => s.state === 'busy');
 		let total = 0;
+		let cost = 0;
 		const items: Array<{ id: string; name: string; tokens: number }> = [];
 		for (const s of busy) {
 			const tokens = s.currentCycleTokens ?? 0;
 			if (tokens > 0) {
 				total += tokens;
+				// Price each session's cycle by its own model, then sum.
+				cost += tokens * blendedCycleRatePerToken(s.customModel);
 				items.push({ id: s.id, name: s.name, tokens });
 			}
 		}
 		items.sort((a, b) => b.tokens - a.tokens);
-		const cost = (total / 1000) * CURRENT_CYCLE_BLENDED_RATE_PER_1K;
 		return { totalTokens: total, estimatedCost: cost, breakdown: items };
 	}, [sessions]);
 
@@ -588,7 +617,7 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 			<div className="flex items-baseline gap-2 mt-0.5">
 				<span
 					className="font-bold"
-					style={{ color: theme.colors.textMain, fontSize: '20px' }}
+					style={{ color: theme.colors.textMain, fontSize: '1.25rem' }}
 					title={`${totalTokens.toLocaleString()} tokens`}
 				>
 					{formatNumber(totalTokens)}
@@ -680,7 +709,9 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 		return () => window.clearInterval(interval);
 	}, [earliestThinkingStart]);
 
-	const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+	// Seconds below a minute, humanized segments past it - a long turn reads
+	// `20m 4s`, never `1203s`. The aria label spells the units out loud.
+	const elapsedLabel = formatElapsedTickerCompact(elapsedMs);
 	const isThinking = earliestThinkingStart !== null;
 	const activeCount = activeSessions.length;
 
@@ -737,10 +768,10 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 							className="mt-3 inline-flex items-center gap-1.5 text-xs-plus animate-pulse"
 							style={{ color: theme.colors.warning }}
 							data-testid="realtime-thinking-elapsed"
-							aria-label={`Thinking for ${elapsedSeconds} seconds`}
+							aria-label={`Thinking for ${formatDurationWords(elapsedMs)}`}
 						>
 							<Clock className="w-3 h-3" aria-hidden="true" />
-							Thinking: {elapsedSeconds}s
+							Thinking: {elapsedLabel}
 						</div>
 					)}
 				</div>
@@ -768,6 +799,8 @@ export const SummaryCards = memo(function SummaryCards({
 	theme,
 	columns = 3,
 	sessions,
+	delegation = null,
+	colorBlindMode = false,
 }: SummaryCardsProps) {
 	// Count agent sessions (exclude terminal-only sessions) for accurate total
 	const agentCount = useMemo(() => {
@@ -778,11 +811,28 @@ export const SummaryCards = memo(function SummaryCards({
 		return data.totalSessions;
 	}, [sessions, data.totalSessions]);
 
+	// Token & cost usage for the SELECTED RANGE, read from the aggregation's
+	// per-session totals.
+	//
+	// These cards used to sum each agent's persisted `usageStats`, which is a
+	// LIFETIME counter: it cannot move when the range selector does, so Tokens
+	// and Cost reported the same number on This Week as on This Year while every
+	// other card on the tab changed (issue #1399). `bySessionTokens` is already
+	// scoped to the range main filtered on, so the fix is to read it instead.
+	//
+	// The model lookup is what keeps the Cost card populated: the stats DB stores
+	// provider-REPORTED cost only, so agents on a provider that prices nothing
+	// itself fall back to the same rate-table estimate the lifetime path used.
+	const usageAgg = useMemo(() => {
+		const modelBySession = new Map((sessions ?? []).map((s) => [s.id, s.customModel]));
+		return aggregateRangeUsage(data.bySessionTokens, (id) => modelBySession.get(id));
+	}, [data.bySessionTokens, sessions]);
+
 	// Count open tabs across all sessions (AI + file preview)
 	const openTabCount = useMemo(() => {
 		if (!sessions) return 0;
 		return sessions.reduce((total, s) => {
-			const aiCount = s.aiTabs?.length ?? 0;
+			const aiCount = visibleAiTabs(s.aiTabs).length;
 			const fileCount = s.filePreviewTabs?.length ?? 0;
 			return total + aiCount + fileCount;
 		}, 0);
@@ -926,6 +976,29 @@ export const SummaryCards = memo(function SummaryCards({
 			value: queriesPerSession,
 		},
 		{
+			icon: <Coins className="w-4 h-4" />,
+			label: 'Tokens',
+			value: usageAgg.totalTokens > 0 ? formatTokensCompact(usageAgg.totalTokens) : '—',
+			extra:
+				usageAgg.totalTokens > 0 ? (
+					<div
+						className="text-2xs mt-1 uppercase tracking-wide"
+						style={{ color: theme.colors.textDim }}
+					>
+						{formatTokensCompact(usageAgg.inputTokens)} in /{' '}
+						{formatTokensCompact(usageAgg.outputTokens)} out
+					</div>
+				) : undefined,
+		},
+		{
+			icon: <DollarSign className="w-4 h-4" />,
+			label: usageAgg.costEstimated ? 'Est. Cost' : 'Cost',
+			value:
+				usageAgg.costUsd > 0
+					? `${usageAgg.costEstimated ? '~' : ''}${formatCost(usageAgg.costUsd)}`
+					: '—',
+		},
+		{
 			icon: <Clock className="w-4 h-4" />,
 			label: 'Total Time',
 			value: formatDuration(data.totalDuration),
@@ -952,7 +1025,7 @@ export const SummaryCards = memo(function SummaryCards({
 		{
 			icon: <Flame className="w-4 h-4" />,
 			label: 'Current Streak',
-			value: streaks.current === 0 ? '—' : `${streaks.current}d`,
+			value: streaks.current === 0 ? '-' : `${streaks.current}d`,
 			extra:
 				streaks.max > 0 ? (
 					<div
@@ -966,7 +1039,7 @@ export const SummaryCards = memo(function SummaryCards({
 		{
 			icon: <Trophy className="w-4 h-4" />,
 			label: 'Best Day',
-			value: bestDay ? formatNumber(bestDay.count) : '—',
+			value: bestDay ? formatNumber(bestDay.count) : '-',
 			extra: bestDay ? (
 				<div
 					className="text-2xs mt-1 uppercase tracking-wide"
@@ -984,9 +1057,37 @@ export const SummaryCards = memo(function SummaryCards({
 		{
 			icon: <PenLine className="w-4 h-4" />,
 			label: 'Image Annotations',
-			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '—',
+			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '-',
 		},
 	];
+
+	// Interactive vs autonomous, as a share of TIME rather than of turns: an
+	// Auto Run batch is a few long turns while an afternoon of chat is hundreds
+	// of short ones, so a turn-count ratio reports a heavily delegated range as
+	// barely delegated. Hidden entirely when the split failed to load, rather
+	// than shown as a confident "0 / 100".
+	if (delegation && trackedMs(delegation) > 0) {
+		const delegatedPct = Math.round(delegationPercent(delegation));
+		metrics.push({
+			icon: <Split className="w-4 h-4" />,
+			label: 'Interactive vs Auto',
+			value: `${100 - delegatedPct} / ${delegatedPct}`,
+			extra: (
+				<div className="mt-1.5" data-testid="summary-delegation-ratio">
+					<DelegationSplitBar
+						totals={delegation}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+						mergeDelegated
+						height={4}
+					/>
+					<div className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
+						{delegatedPct}% ran without you
+					</div>
+				</div>
+			),
+		});
+	}
 
 	return (
 		<div

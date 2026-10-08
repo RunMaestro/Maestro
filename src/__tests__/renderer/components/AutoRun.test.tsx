@@ -476,6 +476,9 @@ describe('AutoRun', () => {
 			const props = createDefaultProps({ mode: 'preview' });
 			const { container } = renderWithProvider(<AutoRun {...props} />);
 
+			// The base is the File Preview SURFACE size (this pane renders the same
+			// markdown that tab does), not a literal 13px, so the zoom multiplies
+			// whatever the user set there.
 			const preview = container.querySelector('.prose') as HTMLElement;
 			expect(parseFloat(preview.style.fontSize)).toBeCloseTo(14, 5);
 

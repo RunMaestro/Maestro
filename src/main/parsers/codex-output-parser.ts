@@ -178,6 +178,8 @@ interface CodexRawMessage {
 	item?: CodexItem;
 	usage?: CodexUsage;
 	error?: string | { message?: string; type?: string };
+	/** Text of the bare exec-JSON `error` event (`{"type":"error","message":"..."}`). */
+	message?: string;
 }
 
 /**
@@ -268,6 +270,30 @@ function extractErrorText(error: CodexRawMessage['error'], fallback = 'Unknown e
 }
 
 /**
+ * Whether a raw line is Codex announcing a retry it is about to make, rather
+ * than a failure of the turn.
+ *
+ * `codex exec --json` forwards every transient stream failure as a bare
+ * `{"type":"error","message":"Reconnecting... 2/5 (stream disconnected before
+ * completion: ...)"}`. Upstream, that notification carries `will_retry: true`,
+ * but the exec JSONL writer drops the flag, so the text is the only signal left.
+ * Codex core formats every retry notice as `Reconnecting... N/M` or
+ * `Reconnecting... waiting for network`, which is what this keys on.
+ *
+ * Treated like `stream_error` (see transformEventMsg): progress, never an error.
+ * Raising it put a turn Codex was still retrying into the blocking error state,
+ * and StdoutHandler's once-only `errorEmitted` latch then swallowed the real
+ * terminal error if the retries ran out (#1694).
+ */
+function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
+	return (
+		obj.type === 'error' &&
+		typeof obj.message === 'string' &&
+		/^Reconnecting\.\.\./.test(obj.message)
+	);
+}
+
+/**
  * Extract the human-readable reasoning text from a `response_item` reasoning payload.
  *
  * Codex emits `summary` in two shapes depending on the CLI version:
@@ -306,12 +332,37 @@ export class CodexOutputParser implements AgentOutputParser {
 
 	// Cached context window - read once from config
 	private contextWindow: number;
+	/**
+	 * Provenance of `contextWindow`: true only once Codex itself reported a
+	 * `model_context_window` (turn_context or token_count). The constructor seed
+	 * below is a config value or a static-table lookup, never provider truth, so
+	 * it deliberately leaves this false. Emitted as `usage.contextWindowReported`
+	 * so `StdoutHandler.buildUsageStats` can mark the window authoritative
+	 * (finding P1) without guessing from the number alone.
+	 */
+	private contextWindowReported = false;
 	private model: string;
 
 	// Track tool name from tool_call to carry over to tool_result
 	// (Codex emits tool_call and tool_result as separate item.completed events,
 	// but tool_result doesn't include the tool name)
 	private lastToolName: string | null = null;
+	/**
+	 * Tool name per open `call_id`.
+	 *
+	 * `function_call_output` carries the `call_id` but not the tool name, so the
+	 * name has to be carried forward from the matching `function_call`. The
+	 * single `lastToolName` slot below used to do that job for every call at
+	 * once, which is why two tools running in parallel mis-attributed their
+	 * completion: the second `function_call` overwrote the slot, so the first
+	 * output to arrive was labeled with the second tool's name and merged onto
+	 * its badge (issue #1485).
+	 *
+	 * `lastToolName` is kept as the fallback for legacy `tool_call`/`tool_result`
+	 * items, which carry no id at all and therefore cannot be correlated any
+	 * better than "the most recent one".
+	 */
+	private readonly toolNamesByCallId = new Map<string, string>();
 
 	constructor() {
 		// Read config once at initialization
@@ -390,6 +441,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (msg.type === 'turn_context' && msg.payload) {
 			if (msg.payload.model_context_window) {
 				this.contextWindow = msg.payload.model_context_window;
+				this.contextWindowReported = true;
 			}
 			if (msg.payload.model) {
 				this.model = msg.payload.model;
@@ -463,6 +515,18 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
+		// A retry Codex is about to make. Progress, not an error, and kept out of
+		// `streamedText` for the same reason as `stream_error` below.
+		if (isCodexRetryNotice(msg as Record<string, unknown>)) {
+			return {
+				type: 'text',
+				text: String(msg.message),
+				isPartial: true,
+				isReasoning: true,
+				raw: msg,
+			};
+		}
+
 		// Handle error messages
 		if (msg.type === 'error' || msg.error) {
 			return {
@@ -514,6 +578,19 @@ export class CodexOutputParser implements AgentOutputParser {
 			const reasoningOutputTokens = tokenUsage.reasoning_output_tokens || 0;
 			const totalOutputTokens = outputTokens + reasoningOutputTokens;
 
+			// Cache the window the same way `turn_context` does. Without this the
+			// denominator flaps inside a single turn whenever Codex carries
+			// `model_context_window` in `token_count` but not in an earlier
+			// `turn_context`: this event reports the real window with the flag set
+			// (renderer rank 2), then `turn.completed` falls back through
+			// `extractUsageFromRaw` to the constructor's config or lookup-table seed
+			// with the flag clear (rank 3, the stored override wins). The value-level
+			// flap predates the flag, but the flag makes it cross a precedence tier.
+			if (payload.info.model_context_window) {
+				this.contextWindow = payload.info.model_context_window;
+				this.contextWindowReported = true;
+			}
+
 			return {
 				type: 'usage',
 				usage: {
@@ -522,6 +599,12 @@ export class CodexOutputParser implements AgentOutputParser {
 					cacheReadTokens: cachedInputTokens,
 					cacheCreationTokens: 0,
 					contextWindow: payload.info.model_context_window || this.contextWindow,
+					// Authoritative when this payload carried the window itself, or when an
+					// earlier turn_context reported the cached one. A config / static-table
+					// seed leaves the flag off (see `contextWindowReported`).
+					contextWindowReported: payload.info.model_context_window
+						? true
+						: this.contextWindowReported,
 					reasoningTokens: reasoningOutputTokens,
 				},
 				raw: msg,
@@ -633,7 +716,17 @@ export class CodexOutputParser implements AgentOutputParser {
 		// function_call: tool invocation starting
 		if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
 			const toolName = payload.name || 'unknown';
-			this.lastToolName = toolName;
+			const callId = payload.call_id;
+			if (callId) {
+				this.toolNamesByCallId.set(callId, toolName);
+			} else {
+				// `lastToolName` is the fallback for calls that carry NO correlation
+				// id, so only an id-less call may write it. Setting it here for every
+				// call let an id-correlated one overwrite an id-less call that was
+				// still open, and its output then arrived labeled with the other
+				// tool's name - the same mis-attribution the id map exists to end.
+				this.lastToolName = toolName;
+			}
 			let parsedArgs: unknown;
 			try {
 				parsedArgs = JSON.parse(payload.arguments || '{}');
@@ -643,6 +736,10 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'tool_use',
 				toolName,
+				// Forwarding call_id is what lets the renderer merge this badge
+				// with its own output rather than with whichever same-named badge
+				// happens to still be running.
+				...(callId ? { toolCallId: callId } : {}),
 				toolState: {
 					status: 'running',
 					input: parsedArgs,
@@ -653,11 +750,28 @@ export class CodexOutputParser implements AgentOutputParser {
 
 		// function_call_output: tool execution completed
 		if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
-			const toolName = this.lastToolName || undefined;
-			this.lastToolName = null;
+			const callId = payload.call_id;
+			// An output that names its call id is answered from the map ALONE. It
+			// must not fall back to lastToolName: an id the map does not know is an
+			// output with no call to correlate to, and borrowing the most recent
+			// name there labels an orphan with an unrelated tool. The fallback is
+			// only for a payload that omits call_id entirely, which carries no
+			// correlation information at all.
+			const toolName = callId ? this.toolNamesByCallId.get(callId) : this.lastToolName || undefined;
+			if (callId) {
+				this.toolNamesByCallId.delete(callId);
+			} else {
+				// Only an id-less output consumes `lastToolName`. Clearing it on EVERY
+				// completion was wrong the moment an id-correlated call finished while
+				// an id-less one was still open: the id-correlated branch never reads
+				// the slot, so wiping it there strands the still-open legacy call, and
+				// its own output arrives with no name at all.
+				this.lastToolName = null;
+			}
 			return {
 				type: 'tool_use',
 				toolName,
+				...(callId ? { toolCallId: callId } : {}),
 				toolState: {
 					status: 'completed',
 					output: this.decodeToolOutput(payload.output),
@@ -701,6 +815,11 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'tool_use',
 				toolName: 'shell',
+				// item.started and item.completed describe the SAME item, so its id
+				// correlates them. Every command_execution badge is named 'shell',
+				// so without an id two parallel commands are indistinguishable to
+				// the renderer's name-matching fallback (issue #1485).
+				...(item.id ? { toolCallId: item.id } : {}),
 				toolState: {
 					status: 'running',
 					input: { command: item.command },
@@ -760,6 +879,8 @@ export class CodexOutputParser implements AgentOutputParser {
 				return {
 					type: 'tool_use',
 					toolName: 'shell',
+					// Same id as the item.started above - see transformItemStarted.
+					...(item.id ? { toolCallId: item.id } : {}),
 					toolState: {
 						status: item.status === 'in_progress' ? 'running' : 'completed',
 						input: { command: item.command },
@@ -894,8 +1015,13 @@ export class CodexOutputParser implements AgentOutputParser {
 			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
 			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			// Context window from Codex config (~/.codex/config.toml) or model lookup table
+			// Context window from Codex config (~/.codex/config.toml) or model lookup
+			// table, unless a turn_context or token_count already replaced it with
+			// Codex's own value. Both cache it now, so once either has reported a
+			// window this reads the real one for the rest of the session instead of
+			// dropping back to the seed mid-turn.
 			contextWindow: this.contextWindow,
+			contextWindowReported: this.contextWindowReported,
 			// Store reasoning tokens separately for UI display
 			reasoningTokens: reasoningOutputTokens,
 		};
@@ -979,6 +1105,10 @@ export class CodexOutputParser implements AgentOutputParser {
 				parsedJson = parsed;
 				errorText = payload.message;
 			}
+		} else if (isCodexRetryNotice(obj)) {
+			// Codex is retrying on its own. If the retries run out, the turn still
+			// ends on a terminal `error` / `turn.failed` line, which is caught here.
+			return null;
 		} else if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
 			parsedJson = parsed;
 			// Legacy shapes carry the text in `error`; the bare exec-JSON `error`

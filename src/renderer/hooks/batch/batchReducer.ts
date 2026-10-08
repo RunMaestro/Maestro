@@ -11,7 +11,8 @@
  * - Debug logging for state transition auditing
  */
 
-import type { BatchRunState, AgentError } from '../../types';
+import type { BatchRunState, AgentError, PlaybookStatus } from '../../types';
+import type { GoalExitReason } from '../../../shared/goalDriven/types';
 import {
 	transition,
 	canTransition,
@@ -144,6 +145,10 @@ export const DEFAULT_BATCH_STATE: BatchRunState = {
 	errorPaused: false,
 	errorDocumentIndex: undefined,
 	errorTaskDescription: undefined,
+	// Goal-Driven mode (only meaningful when goalMode is true)
+	goalMode: false,
+	goalProgress: 0,
+	goalIteration: 0,
 };
 
 /**
@@ -166,6 +171,10 @@ export interface StartBatchPayload {
 	worktreePath?: string;
 	worktreeBranch?: string;
 	customPrompt?: string;
+	// Per-run model override chosen in the launch modal (absent = session default).
+	runModelOverride?: string;
+	/** Resolved auto-resume policy; `null` when the run opted out. */
+	autoResumePolicy?: import('../../../shared/autorunAutoResume').AutoResumePolicy | null;
 	startTime: number;
 	// Time tracking
 	cumulativeTaskTimeMs: number;
@@ -192,6 +201,12 @@ export interface UpdateProgressPayload {
 	lastActiveTimestamp?: number | null;
 	// Loop mode
 	loopIteration?: number;
+	// Goal-Driven mode (only set by the goal runner; absent in document mode)
+	goalMode?: boolean;
+	goalProgress?: number;
+	goalRationale?: string;
+	goalIteration?: number;
+	goalExitReason?: GoalExitReason;
 }
 
 /**
@@ -226,7 +241,8 @@ export type BatchAction =
 	| { type: 'CLEAR_ERROR'; sessionId: string }
 	| { type: 'SET_COMPLETING'; sessionId: string } // RUNNING -> COMPLETING
 	| { type: 'COMPLETE_BATCH'; sessionId: string; finalSessionIds?: string[] }
-	| { type: 'INCREMENT_LOOP'; sessionId: string; newTotalTasks: number };
+	| { type: 'INCREMENT_LOOP'; sessionId: string; newTotalTasks: number }
+	| { type: 'UPDATE_PLAYBOOK_STATUS'; sessionId: string; status: PlaybookStatus | undefined };
 
 /**
  * Batch state reducer
@@ -283,6 +299,8 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					currentTaskIndex: 0,
 					originalContent: '',
 					customPrompt: payload.customPrompt,
+					runModelOverride: payload.runModelOverride,
+					autoResumePolicy: payload.autoResumePolicy,
 					sessionIds: [],
 					startTime: payload.startTime,
 					// Time tracking
@@ -360,6 +378,12 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					}),
 					// Loop iteration
 					...(payload.loopIteration !== undefined && { loopIteration: payload.loopIteration }),
+					// Goal-Driven mode fields (only set by the goal runner)
+					...(payload.goalMode !== undefined && { goalMode: payload.goalMode }),
+					...(payload.goalProgress !== undefined && { goalProgress: payload.goalProgress }),
+					...(payload.goalRationale !== undefined && { goalRationale: payload.goalRationale }),
+					...(payload.goalIteration !== undefined && { goalIteration: payload.goalIteration }),
+					...(payload.goalExitReason !== undefined && { goalExitReason: payload.goalExitReason }),
 				},
 			};
 		}
@@ -560,6 +584,20 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					totalTasksAcrossAllDocs: newTotalTasks + currentState.completedTasksAcrossAllDocs,
 					totalTasks: newTotalTasks + currentState.completedTasks,
 					processingState,
+				},
+			};
+		}
+
+		case 'UPDATE_PLAYBOOK_STATUS': {
+			const { sessionId, status } = action;
+			const currentState = state[sessionId];
+			if (!currentState) return state;
+
+			return {
+				...state,
+				[sessionId]: {
+					...currentState,
+					playbookStatus: status,
 				},
 			};
 		}

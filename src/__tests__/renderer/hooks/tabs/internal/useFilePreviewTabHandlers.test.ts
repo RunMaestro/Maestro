@@ -4,6 +4,7 @@ import { useFilePreviewTabHandlers } from '../../../../../renderer/hooks/tabs/in
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../../../renderer/stores/mediaPlaybackStore';
+import { useUIStore } from '../../../../../renderer/stores/uiStore';
 import {
 	createMockAITab,
 	createMockBrowserTab,
@@ -29,6 +30,114 @@ describe('useFilePreviewTabHandlers', () => {
 
 	afterEach(() => {
 		cleanup();
+	});
+
+	// -----------------------------------------------------------------------
+	// Narrow-viewport drawer
+	// -----------------------------------------------------------------------
+	describe('narrow-viewport right drawer', () => {
+		// On a phone the Files panel covers the whole screen, so opening a file
+		// from it has to dismiss it. The transition-keyed effect in App.tsx cannot
+		// do this alone: the two cases below move none of the active-tab ids it
+		// watches, so it sees nothing happen and the file opens behind the tree.
+		const originalWidth = window.innerWidth;
+		const setViewportWidth = (width: number) => {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				writable: true,
+				value: width,
+			});
+		};
+
+		afterEach(() => {
+			setViewportWidth(originalWidth);
+		});
+
+		it('closes the drawer when a file is opened', () => {
+			setViewportWidth(390);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useUIStore.getState().setRightPanelOpen(true);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/p/a.md', name: 'a.md', content: '# a' });
+			});
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('closes the drawer when the file is ALREADY the active tab', () => {
+			// The reported bug: long-press a file already open, tap Preview, and
+			// nothing moves - so the effect keyed on activeFileTabId never fires
+			// and the drawer stays over the preview.
+			setViewportWidth(390);
+			const existing = createMockFileTab({ id: 'file-1', path: '/p/a.md', name: 'a.md' });
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' })],
+				filePreviewTabs: [existing],
+				activeFileTabId: 'file-1',
+			});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+			const before = getSession().activeFileTabId;
+			useUIStore.getState().setRightPanelOpen(true);
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/p/a.md', name: 'a.md', content: '# a' });
+			});
+
+			// The active tab genuinely did not move - that is the whole problem.
+			expect(getSession().activeFileTabId).toBe(before);
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('closes the drawer for media, which never becomes a tab at all', () => {
+			setViewportWidth(390);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useUIStore.getState().setRightPanelOpen(true);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: 'maestro-media://stream/tok3n/2f66696c65732f612e6d7033',
+				});
+			});
+
+			expect(getSession().filePreviewTabs).toHaveLength(0);
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('leaves the drawer alone for a background open', () => {
+			// `activate: false` is the CLI / web `--background` path: it changes
+			// nothing on screen by definition, so it must not move the drawer.
+			setViewportWidth(390);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useUIStore.getState().setRightPanelOpen(true);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/p/a.md', name: 'a.md', content: '# a' },
+					{ activate: false }
+				);
+			});
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
+
+		it('leaves the Right Bar open on a wide viewport', () => {
+			setViewportWidth(1440);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useUIStore.getState().setRightPanelOpen(true);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/p/a.md', name: 'a.md', content: '# a' });
+			});
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
 	});
 
 	describe('media diversion', () => {
@@ -188,6 +297,116 @@ describe('useFilePreviewTabHandlers', () => {
 		});
 		expect(session.activeFileTabId).toBe(session.filePreviewTabs[0].id);
 		expect(session.unifiedTabOrder.map((ref) => ref.type)).toEqual(['ai', 'file']);
+	});
+
+	// Opening a file must take over the panel; a stale activeGroupId would keep the
+	// tiled group winning the render precedence so the file never shows / gets focus.
+	it('leaves an active tiled group when opening a new file tab (double-click default)', () => {
+		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })], activeGroupId: 'group-1' });
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab({ path: '/repo/b.ts', name: 'b.ts', content: 'b' });
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+		expect(getSession().activeFileTabId).toBe(getSession().filePreviewTabs[0].id);
+	});
+
+	it('leaves an active tiled group when re-opening an existing file tab by path', () => {
+		const existing = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', name: 'a' });
+		setupSession({ filePreviewTabs: [existing], activeGroupId: 'group-1' });
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab({ path: '/repo/a.ts', name: 'a.ts', content: 'a2' });
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+		expect(getSession().activeFileTabId).toBe('file-1');
+	});
+
+	// A file already open but tiled INSIDE a group has no standalone chip (it lives
+	// only as a leaf in the group layout). Re-opening it (e.g. double-clicking it in
+	// the file explorer) must activate its group and focus that pane, NOT clear
+	// activeGroupId - otherwise focus is stranded and nothing appears to happen.
+	it('focuses the group pane when re-opening a file already tiled into a group', () => {
+		const tiled = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', name: 'a' });
+		setupSession({
+			filePreviewTabs: [tiled],
+			activeGroupId: null,
+			activeTabId: 'ai-1',
+			// The file lives only inside the group; its standalone ref is not in the order.
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'group', id: 'g1' },
+			],
+			tabGroups: [
+				{
+					id: 'g1',
+					name: 'Group',
+					createdAt: 0,
+					focusedPaneId: 'leaf-ai',
+					layout: {
+						kind: 'split',
+						id: 'split-1',
+						direction: 'row',
+						sizes: [0.5, 0.5],
+						children: [
+							{ kind: 'leaf', id: 'leaf-ai', tab: { type: 'ai', id: 'ai-1' } },
+							{ kind: 'leaf', id: 'leaf-file', tab: { type: 'file', id: 'file-1' } },
+						],
+					},
+				},
+			] as never,
+		});
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab({ path: '/repo/a.ts', name: 'a.ts', content: 'a2' });
+		});
+
+		const s = getSession();
+		// Group is activated and its focused pane points at the file's leaf.
+		expect(s.activeGroupId).toBe('g1');
+		expect(s.tabGroups[0].focusedPaneId).toBe('leaf-file');
+		expect(s.activeFileTabId).toBe('file-1');
+		expect(s.inputMode).toBe('ai');
+		// The file must NOT be resurrected as a standalone ref in the strip order.
+		expect(s.unifiedTabOrder.some((ref) => ref.type === 'file' && ref.id === 'file-1')).toBe(false);
+		// Content is still refreshed on the tiled tab.
+		expect(s.filePreviewTabs.find((t) => t.id === 'file-1')?.content).toBe('a2');
+	});
+
+	it('leaves an active tiled group when replacing the current file tab in place', () => {
+		const existing = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', name: 'a' });
+		setupSession({
+			filePreviewTabs: [existing],
+			activeFileTabId: 'file-1',
+			activeGroupId: 'group-1',
+		});
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab(
+				{ path: '/repo/c.ts', name: 'c.ts', content: 'c' },
+				{ openInNewTab: false }
+			);
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+	});
+
+	it('leaves an active tiled group when creating a new untitled file tab', () => {
+		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })], activeGroupId: 'group-1' });
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleNewFileTab();
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+		expect(getSession().activeFileTabId).toBe(getSession().filePreviewTabs[0].id);
 	});
 
 	it('clears the active browser tab when opening a new file tab', () => {
@@ -396,6 +615,86 @@ describe('useFilePreviewTabHandlers', () => {
 			content: 'b-content',
 			scrollTop: 2,
 			navigationIndex: 1,
+		});
+	});
+
+	// A tiled file pane is not the active file tab (focusing a pane does not set
+	// activeFileTabId), so back / forward / breadcrumb-jump all take an explicit tab
+	// id. Without it a pane would navigate whichever other file tab was active.
+	describe('navigation addressed by tab id', () => {
+		const withTwoFileTabs = () => {
+			const history = [
+				{ path: '/repo/a.ts', name: 'a' },
+				{ path: '/repo/b.ts', name: 'b' },
+				{ path: '/repo/c.ts', name: 'c' },
+			];
+			setupSession({
+				filePreviewTabs: [
+					createMockFileTab({ id: 'active-tab', navigationHistory: history, navigationIndex: 0 }),
+					createMockFileTab({ id: 'pane-tab', navigationHistory: history, navigationIndex: 1 }),
+				],
+				activeFileTabId: 'active-tab',
+			});
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('loaded');
+		};
+
+		it('navigates back on the addressed tab, leaving the active one alone', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[1]).toMatchObject({
+				path: '/repo/a.ts',
+				navigationIndex: 0,
+			});
+			expect(getSession().filePreviewTabs[0].navigationIndex).toBe(0);
+		});
+
+		it('navigates forward on the addressed tab', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateForward('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[1]).toMatchObject({
+				path: '/repo/c.ts',
+				navigationIndex: 2,
+			});
+		});
+
+		it('still defaults to the active file tab when no id is given', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateForward();
+			});
+
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				navigationIndex: 1,
+			});
+			expect(getSession().filePreviewTabs[1].navigationIndex).toBe(1);
+		});
+
+		it('does nothing at either end of the history', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				// active-tab sits at index 0 (no back), pane-tab walked to the end below.
+				await result.current.handleFileTabNavigateBack('active-tab');
+				await result.current.handleFileTabNavigateToIndex(2, 'pane-tab');
+				await result.current.handleFileTabNavigateForward('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[0].navigationIndex).toBe(0);
+			expect(getSession().filePreviewTabs[1].navigationIndex).toBe(2);
 		});
 	});
 });

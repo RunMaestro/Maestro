@@ -222,7 +222,7 @@ describe('cue-spawn-builder', () => {
 
 			expect(mockBuildAgentArgs).toHaveBeenCalledWith(
 				expect.objectContaining({ id: 'claude-code' }),
-				expect.objectContaining({ yoloMode: true })
+				expect.objectContaining({ yoloMode: true, permissionMode: 'full' })
 			);
 		});
 

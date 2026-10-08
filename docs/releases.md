@@ -1,6 +1,7 @@
 ---
 title: Release Notes
 description: Version history and changelog for Maestro releases
+icon: tag
 ---
 
 # Release Notes
@@ -13,36 +14,28 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ---
 
-## v0.17.x - Maestro Cue
+## v0.17.x - Security Release
 
-**Latest: v0.17.5** | Released September 25, 2026
+**Latest: v0.17.8** | Released October 4, 2026
 
-# 0.17.5 Highlights
+# 0.17.8 Highlights
 
-📝 **Auto Run stops eating what you type.** Saving a document, or an agent touching it while you edit, used to reload it from disk and quietly delete whatever you had typed since. Your unsaved edits now stay put (Maestro warns you when the file changed underneath you), the caret stays where you left it, one `Cmd+Z` undoes one burst of typing instead of half a sentence, and Revert throws away everything since your last save, not just some of it.
+🔒 **This is a security release, and every user should install it.** Maestro runs a small built-in server so `maestro-cli` and the phone interface can drive the app. Until now that server listened on your whole network from the moment Maestro opened, even with Live off, and it answered requests from any web page. Anyone who got hold of its URL (someone on the same Wi-Fi while you used the phone link, a pairing link that leaked, or a web page that knew the URL) could run commands on your computer through it.
 
-🚦 **Human-in-the-loop gates let you through.** Pressing Resume on a gate used to pause the run again on the same gate, forever. The button now reads "Done, Resume", records that you did the step, and moves on. A run parked on a gate or an error also stops its clock, so a gate you answered the next morning no longer counts the night as run time.
+📡 **The server now stays on your computer until you turn Live on.** While the button reads OFFLINE it listens on 127.0.0.1 only, so nothing on your network can reach it, and `maestro-cli` works exactly as before. Turning Live on opens it to your LAN for your phone, and turning Live off closes it again with a fresh token. If a Persistent Web Link let you reach Maestro from your phone with Live off, turn Live on to use it now.
 
-📬 **Queued messages always go out.** A queue could stall with the agent sitting idle and your messages waiting behind nothing until you restarted Maestro. An idle agent now works through its queue until it is empty, and Recover Session tells you whether your click sent the prompt or queued it, so it no longer takes seven clicks to learn that it worked.
+🛡️ **Web pages can no longer drive Maestro, even with the URL.** The server refuses any browser request from a page it did not serve itself, WebSocket connections included, so a malicious site that learns your link gets nothing back. The file `maestro-cli` reads its token from is now readable by your user account only.
 
-🛟 **Maestro opens even when something on disk is broken.** A settings or sessions file cut off mid-write (a crash, a full disk, a cloud-sync folder) used to stop every launch; the damaged file is now set aside under a clearly named copy and Maestro starts. An agent whose project folder was deleted, renamed, or sits on an unplugged drive now refuses to start and names the missing folder, rather than crashing the app (on Windows, repeatedly) or quietly running somewhere else.
+## Also in 0.17.8
 
-🪟 **Windows SSH remotes explain themselves.** A remote whose OpenSSH hands commands to PowerShell or cmd.exe can never run an agent, and it used to fail with a wall of errors that looked like a key or network problem. Test Connection now names the Windows shell and gives you the one command that points OpenSSH at Git Bash.
-
-## Also in 0.17.5
-
-- 🏷️ **Named Claude sessions keep their names and stars** through every new turn, and Maestro restores the names it lost from your history on its next launch.
-- 📜 **History opens an SSH agent's sessions after a restart**, reading the transcript from the remote host instead of coming back empty.
-- 🏃 **The thinking pill counts Auto Runs on your other agents** and jumps straight to them, and a closed tab with nothing running no longer sits in it as "Thinking..." forever.
-- 💳 **A Codex workspace out of credits is treated as a usage limit**, so the agent resumes on its own when your quota resets.
-- 🔗 **Cue works across checkouts that share a symlinked `.maestro` folder**, instead of running every subscription with an empty prompt.
-- 🔀 **Deleting a project's `.git` folder clears its GIT pill** and its stale changed-file list on the next check.
-- 📎 **Right-click a file link outside your project** (a PDF in Downloads, say) for the full file menu, now with Copy File Name.
-- 🎯 **Refreshing Auto Run documents from `maestro-cli` leaves your view where it is** unless you ask it to move.
-- 🔒 **The update-check toggle spells out the anonymous install count it also controls**, and that switching it off stops both.
+- 🔁 **Running Maestro behind a reverse proxy?** Have it forward the original `Host` header (nginx: `proxy_set_header Host $host;`, Caddy does this already), or browser requests through it will be refused.
+- 🙏 **Thank you to CopperKoi and YoAm**, who found these problems and reported them responsibly. The full write-up is in advisory [GHSA-q8p2-cpg2-fhpc](https://github.com/RunMaestro/Maestro/security/advisories/GHSA-q8p2-cpg2-fhpc).
 
 ### Previous Releases in this Series
 
+- **v0.17.7** (October 4, 2026) - Maestro Cue
+- **v0.17.6** (October 2, 2026) - Maestro Cue
+- **v0.17.5** (September 25, 2026) - Maestro Cue
 - **v0.17.4** (September 21, 2026) - Maestro Cue
 - **v0.17.3** (July 4, 2026) - Maestro Cue
 - **v0.17.2** (June 27, 2026) - Maestro Cue

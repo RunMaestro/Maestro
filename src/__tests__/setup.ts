@@ -230,13 +230,54 @@ const mockMaestro = {
 	},
 	process: {
 		spawn: vi.fn().mockResolvedValue({ pid: 12345 }),
+		releaseConcertoHtmlDocument: vi.fn(),
+		restoreConcertoHtmlDocument: vi.fn().mockResolvedValue(1),
 		write: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
 		resize: vi.fn().mockResolvedValue(undefined),
 		getActiveProcesses: vi.fn().mockResolvedValue([]),
 		isTerminalBusy: vi.fn().mockResolvedValue(false),
+		broadcastUserInput: vi.fn().mockResolvedValue(undefined),
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
+		onUserInput: vi.fn().mockReturnValue(() => {}),
+		sendRemoteCommandReceipt: vi.fn(),
+	},
+	debug: {
+		createPackage: vi.fn().mockResolvedValue({ success: true }),
+		previewPackage: vi.fn().mockResolvedValue({}),
+		getAppStats: vi.fn().mockResolvedValue({}),
+		getProfilingStatus: vi.fn().mockResolvedValue({
+			success: true,
+			active: false,
+			startedAt: 0,
+			elapsedMs: 0,
+			categories: [],
+		}),
+		startProfiling: vi.fn().mockResolvedValue({
+			success: true,
+			active: true,
+			startedAt: 0,
+			elapsedMs: 0,
+			categories: [],
+		}),
+		stopProfiling: vi.fn().mockResolvedValue({
+			success: true,
+			path: null,
+			cancelled: true,
+			bundleSizeBytes: 0,
+			traceSizeBytes: 0,
+			durationMs: 0,
+		}),
+		stopProfilingToFile: vi.fn().mockResolvedValue({
+			success: true,
+			path: '/tmp/maestro-profile-test.zip',
+			bundleSizeBytes: 2048,
+			traceSizeBytes: 4096,
+			durationMs: 1000,
+		}),
+		discardTrace: vi.fn().mockResolvedValue({ success: true }),
+		onProfilingProgress: vi.fn(() => () => {}),
 	},
 	feedback: {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
@@ -250,12 +291,25 @@ const mockMaestro = {
 		submitConversation: vi.fn().mockResolvedValue({ success: true }),
 		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
 		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),
+		drafts: {
+			list: vi.fn().mockResolvedValue({ drafts: [] }),
+			save: vi.fn((draft: unknown) => Promise.resolve({ draft })),
+			delete: vi.fn().mockResolvedValue({}),
+		},
+		issues: {
+			list: vi.fn().mockResolvedValue({ issues: [] }),
+			delete: vi.fn().mockResolvedValue({}),
+			refreshStates: vi.fn().mockResolvedValue({ issues: [] }),
+		},
+		listAccounts: vi.fn().mockResolvedValue({ accounts: [], lastWorkingKey: null }),
+		rememberAccount: vi.fn().mockResolvedValue(undefined),
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),
 		status: vi.fn().mockResolvedValue({ files: [], branch: 'main', stdout: '' }),
 		diff: vi.fn().mockResolvedValue(''),
 		isRepo: vi.fn().mockResolvedValue(true),
+		commitAll: vi.fn().mockResolvedValue({ success: true, committed: true, commitHash: 'abc1234' }),
 		numstat: vi.fn().mockResolvedValue([]),
 		getStatus: vi.fn().mockResolvedValue({ branch: 'main', status: [] }),
 		worktreeSetup: vi.fn().mockResolvedValue({ success: true }),
@@ -267,6 +321,7 @@ const mockMaestro = {
 		worktreeInfo: vi.fn().mockResolvedValue({ success: true, exists: false, isWorktree: false }),
 		getRepoRoot: vi.fn().mockResolvedValue({ success: true, root: '/path/to/project' }),
 		log: vi.fn().mockResolvedValue({ entries: [], error: undefined }),
+		graph: vi.fn().mockResolvedValue({ nodes: [], error: undefined }),
 		commitCount: vi.fn().mockResolvedValue({ count: 0, error: null }),
 		show: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
 		getRemoteUrl: vi.fn().mockResolvedValue(null),
@@ -278,6 +333,16 @@ const mockMaestro = {
 			ahead: 0,
 			uncommittedChanges: 0,
 		}),
+	},
+	attachments: {
+		// Mirrors userData/attachments/{sessionId}/{filename} on the host.
+		save: vi.fn((sessionId: string, _base64: string, filename: string) =>
+			Promise.resolve({ success: true, path: `/userData/attachments/${sessionId}/${filename}` })
+		),
+		load: vi.fn().mockResolvedValue({ success: true, dataUrl: '' }),
+		delete: vi.fn().mockResolvedValue({ success: true }),
+		list: vi.fn().mockResolvedValue({ success: true, files: [] }),
+		getPath: vi.fn().mockResolvedValue({ success: true, path: '/userData/attachments' }),
 	},
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
@@ -302,6 +367,10 @@ const mockMaestro = {
 			folderCount: 10,
 		}),
 		homeDir: vi.fn().mockResolvedValue('/home/testuser'),
+	},
+	// Tab lifecycle notifications (renderer -> main); fire-and-forget
+	tabs: {
+		notifyAiTabClosed: vi.fn(),
 	},
 	agents: {
 		detect: vi.fn().mockResolvedValue([]),
@@ -345,12 +414,15 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		// Bulk capabilities used to prime the renderer capability cache
+		getAllCapabilities: vi.fn().mockResolvedValue({}),
 		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 		getRemoteMaestroPAvailable: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
 		getClaudeUsageAccountKeys: vi.fn().mockResolvedValue([]),
 		getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
 		getCodexUsageAccountKeys: vi.fn().mockResolvedValue([]),
+		getKnownAuthDirs: vi.fn().mockResolvedValue({ claudeConfigDirs: [], codexHomes: [] }),
 		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 		refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},
@@ -437,6 +509,53 @@ const mockMaestro = {
 		export: vi.fn().mockResolvedValue({ success: true }),
 		import: vi.fn().mockResolvedValue({ success: true, playbook: {} }),
 	},
+	plugins: {
+		list: vi.fn().mockResolvedValue({ plugins: [] }),
+		setEnabled: vi.fn().mockResolvedValue({ plugins: [] }),
+		install: vi.fn().mockResolvedValue({ success: true }),
+		update: vi.fn().mockResolvedValue({ plugins: [] }),
+		uninstall: vi.fn().mockResolvedValue({ success: true }),
+		contributions: vi.fn().mockResolvedValue({
+			themes: [],
+			iconPacks: [],
+			prompts: [],
+			settings: [],
+			commandMacros: [],
+			cueTriggers: [],
+			commands: [],
+			panels: [],
+			agents: [],
+			tools: [],
+			keybindings: [],
+			uiItems: [],
+			groupings: [],
+			errorsByPlugin: {},
+		}),
+		getGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
+		requestConsent: vi.fn().mockResolvedValue({ opened: true }),
+		revokeGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
+		setAgentAllowlist: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
+		invokeCommand: vi.fn().mockResolvedValue({ dispatched: true }),
+		invokeTool: vi.fn().mockResolvedValue({ result: null }),
+		getActivity: vi.fn().mockResolvedValue({}),
+		getGroupings: vi.fn().mockResolvedValue([]),
+		onChanged: vi.fn().mockReturnValue(() => {}),
+		onPanelData: vi.fn().mockReturnValue(() => {}),
+		onGroupingsChanged: vi.fn().mockReturnValue(() => {}),
+		onRunUiCommand: vi.fn().mockReturnValue(() => {}),
+	},
+	agentRun: {
+		list: vi.fn().mockResolvedValue({ success: true, runs: [] }),
+		record: vi.fn().mockResolvedValue({ success: true, run: null }),
+		show: vi.fn().mockResolvedValue({ success: true, run: null }),
+		events: vi.fn().mockResolvedValue({ success: true, events: [] }),
+		appendEvent: vi.fn().mockResolvedValue({ success: true, event: null }),
+		campaigns: {
+			list: vi.fn().mockResolvedValue({ success: true, campaigns: [] }),
+			record: vi.fn().mockResolvedValue({ success: true, campaign: null }),
+			show: vi.fn().mockResolvedValue({ success: true, campaign: null }),
+		},
+	},
 	marketplace: {
 		getManifest: vi.fn().mockResolvedValue({
 			success: true,
@@ -466,6 +585,8 @@ const mockMaestro = {
 		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
 	},
 	web: {
+		claimAutoRunStart: vi.fn().mockResolvedValue(true),
+		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
@@ -513,6 +634,31 @@ const mockMaestro = {
 	},
 	stats: {
 		recordQuery: vi.fn().mockResolvedValue({ success: true }),
+		getTokenUsage: vi.fn().mockResolvedValue({
+			totals: {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+				sessionCount: 0,
+			},
+			byAgent: [],
+			byModel: [],
+			byProject: [],
+			byAccount: [],
+			timeline: [],
+			series: {
+				byDay: {},
+				byHour: {},
+				byAgentByDay: {},
+				bySessionByDay: {},
+				bySource: { user: 0, auto: 0 },
+			},
+			coverageByAgent: {},
+			generatedAtMs: 0,
+		}),
 		getAggregation: vi.fn().mockResolvedValue({
 			totalQueries: 0,
 			totalDuration: 0,
@@ -521,13 +667,21 @@ const mockMaestro = {
 			bySource: { user: 0, auto: 0 },
 			byDay: [],
 		}),
+		// Interactive vs autonomous split (delegation surfaces). Zeroed so the
+		// dashboard renders the "nothing tracked yet" state rather than throwing.
+		getDelegationTotals: vi.fn().mockResolvedValue({
+			interactive: { count: 0, durationMs: 0 },
+			autoRun: { count: 0, durationMs: 0 },
+			cue: { count: 0, durationMs: 0 },
+		}),
+		getDelegationByDay: vi.fn().mockResolvedValue([]),
 		getStats: vi.fn().mockResolvedValue([]),
 		startAutoRun: vi.fn().mockResolvedValue('auto-run-id'),
 		endAutoRun: vi.fn().mockResolvedValue(true),
 		recordAutoTask: vi.fn().mockResolvedValue('task-id'),
 		getAutoRunSessions: vi.fn().mockResolvedValue([]),
 		getAutoRunTasks: vi.fn().mockResolvedValue([]),
-		exportCsv: vi.fn().mockResolvedValue(''),
+		exportUsage: vi.fn().mockResolvedValue({ path: '', format: 'json', rowCounts: {}, notes: [] }),
 		onStatsUpdate: vi.fn().mockReturnValue(() => {}),
 		recordResilience: vi.fn().mockResolvedValue('outage-id'),
 		getResilience: vi.fn().mockResolvedValue([]),
@@ -562,6 +716,16 @@ const mockMaestro = {
 			hosts: [],
 			configPath: '~/.ssh/config',
 		}),
+	},
+	crossAgent: {
+		// Cross-agent @mention dispatch bridge. `onChunk` returns an unsubscribe fn,
+		// mirroring the preload contract so useCrossAgentDispatch's mount effect
+		// (window.maestro.crossAgent.onChunk) doesn't throw under test.
+		send: vi.fn().mockResolvedValue({ requestId: 'test-cross-agent-request' }),
+		// Stop calls this for every interrupt in AI mode, so it has to exist or
+		// handleInterrupt throws before it ever signals a process.
+		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
+		onChunk: vi.fn().mockReturnValue(() => {}),
 	},
 	leaderboard: {
 		submit: vi.fn().mockResolvedValue({ success: true, rank: 1 }),
@@ -632,6 +796,20 @@ const mockMaestro = {
 		validateYaml: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
 		onActivityUpdate: vi.fn().mockReturnValue(() => {}),
 	},
+	// Pianola API (autonomous manager: rules + decision log)
+	pianola: {
+		getRules: vi.fn().mockResolvedValue({ rules: [], malformed: false }),
+		saveRules: vi.fn().mockImplementation((rules: unknown) => Promise.resolve(rules)),
+		getDecisions: vi.fn().mockResolvedValue([]),
+		getSuggestions: vi.fn().mockResolvedValue({
+			generatedAt: 0,
+			pairCount: 0,
+			proposals: [],
+			proposedProfile: '',
+			previousProfile: '',
+		}),
+		applySuggestion: vi.fn().mockImplementation(() => Promise.resolve({ rules: [] })),
+	},
 	// Core Prompts API (disk-based prompts loaded at runtime)
 	prompts: {
 		get: vi.fn().mockResolvedValue({ success: true, content: '' }),
@@ -641,6 +819,26 @@ const mockMaestro = {
 		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
 		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
+	},
+	// Multi-window API (window<->session ownership). Defaults model a single
+	// primary window that owns no agents; window tests override per-case.
+	windows: {
+		create: vi.fn().mockResolvedValue(null),
+		close: vi.fn().mockResolvedValue({ closed: true }),
+		list: vi.fn().mockResolvedValue([]),
+		getForSession: vi.fn().mockResolvedValue(null),
+		moveSession: vi.fn().mockResolvedValue({ moved: true }),
+		focusWindow: vi.fn().mockResolvedValue({ focused: true }),
+		getState: vi.fn().mockResolvedValue(null),
+		registerSession: vi.fn().mockResolvedValue({ registered: true }),
+		setPanelState: vi.fn().mockResolvedValue(undefined),
+		getBounds: vi.fn().mockResolvedValue(null),
+		findWindowAtPoint: vi.fn().mockResolvedValue(null),
+		highlightDropZone: vi.fn().mockResolvedValue(undefined),
+		// Returns an unsubscribe fn (default no-op) so WindowProvider's effect can
+		// clean up. Window tests capture the registered callback to fire broadcasts.
+		onSessionMoved: vi.fn(() => () => {}),
+		onHighlightDropZone: vi.fn(() => () => {}),
 	},
 	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
 	// test that sends a message doesn't accidentally rename tabs; tests that care

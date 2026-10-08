@@ -174,7 +174,18 @@ export const CREATE_SHORTCUT_USAGE_DAILY_SQL = `
 `;
 
 // ============================================================================
-// Resilience Events (Migration v9)
+// Multi-Window Usage Daily (Migration v8)
+// ============================================================================
+export const CREATE_MULTI_WINDOW_USAGE_DAILY_SQL = `
+  CREATE TABLE IF NOT EXISTS multi_window_usage_daily (
+    date TEXT PRIMARY KEY,
+    windows_opened INTEGER NOT NULL DEFAULT 0,
+    peak_concurrent INTEGER NOT NULL DEFAULT 0
+  )
+`;
+
+// ============================================================================
+// Resilience Events (Migration v10)
 // ============================================================================
 
 /**
@@ -229,7 +240,8 @@ export const CREATE_WIZARD_RUNS_SQL = `
     exchanges INTEGER NOT NULL,
     documents INTEGER NOT NULL,
     tasks INTEGER NOT NULL,
-    project_path TEXT
+    project_path TEXT,
+    active_ms INTEGER
   )
 `;
 

@@ -1,18 +1,19 @@
 import type React from 'react';
-import type { AgentConfig, Session, ToolType, Theme } from '../../types';
+import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
+import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
 export const NEW_SESSION_MESSAGE_MAX_LENGTH = 5000;
 
-// Supported agents that are fully implemented
-export const SUPPORTED_AGENTS = [
-	'claude-code',
-	'opencode',
-	'codex',
-	'factory-droid',
-	'copilot-cli',
-];
+/**
+ * Providers a user may pick in the New Agent modal.
+ *
+ * Re-exported from the shared picker registry rather than hand-written, so this
+ * list cannot drift from the wizard's tile strip or the Group Chat moderator
+ * dropdown the way it did while Grok and Qwen3 Coder were listed only here.
+ */
+export const SUPPORTED_AGENTS: readonly string[] = PICKABLE_AGENT_IDS;
 
 export interface AgentDebugInfo {
 	agentId: string;
@@ -56,12 +57,16 @@ export interface NewInstanceModalProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
 	sourceSession?: Session; // Optional session to duplicate from
 	presetGroupId?: string | null; // Group to place the new agent in (ignored when duplicating - duplicate inherits source's group)
+	presetWorkingDir?: string | null; // Working directory to seed, plus a default name from its basename (ignored when duplicating - duplicate inherits source's cwd)
 }
 
 export interface EditAgentModalProps {
@@ -77,6 +82,7 @@ export interface EditAgentModalProps {
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
+		customEffort?: string,
 		customContextWindow?: number,
 		sessionSshRemoteConfig?: SessionSshRemoteConfig,
 		enableMaestroP?: boolean,
@@ -84,9 +90,15 @@ export interface EditAgentModalProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited',
+		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
 		customEnvVarsDisabled?: Record<string, string>,
 		/** New working directory; `undefined` when the user left it unchanged. */
-		workingDirectory?: string
+		workingDirectory?: string,
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => void;
 	theme: Theme;
 	session: Session | null;
@@ -123,7 +135,16 @@ export interface AgentPickerGridProps {
 	theme: Theme;
 	loading: boolean;
 	sshConnectionError: string | null;
-	sortedAgents: AgentConfig[];
+	/** The rows to render - already sorted AND filtered by the availability toggle. */
+	visibleAgents: AgentConfig[];
+	/** Supported providers detected on the target machine, across the WHOLE list. */
+	availableProviderCount: number;
+	/** Supported providers in total. Never the length of `visibleAgents`. */
+	totalProviderCount: number;
+	/** Follows "available" in the summary - "locally" or "on <host>". */
+	providerLocationLabel: string;
+	showAllProviders: boolean;
+	onShowAllProvidersChange: (showAll: boolean) => void;
 	selectedAgent: string;
 	expandedAgent: string | null;
 	refreshingAgent: string | null;
@@ -159,4 +180,7 @@ export interface AgentPickerGridProps {
 	dynamicOptions?: Record<string, Record<string, string[]>>;
 	loadingDynamicOptions?: Record<string, boolean>;
 	onLoadDynamicOptionsForAgent?: (agentId: string) => void;
+	/** Codex automatic usage resets, per agent id. Defaults off when absent. */
+	codexAutoResetByAgent?: Record<string, boolean>;
+	onCodexAutoResetChange?: (agentId: string, value: boolean) => void;
 }

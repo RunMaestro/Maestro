@@ -27,9 +27,11 @@ export function QuitWhenIdleIndicator({ theme }: QuitWhenIdleIndicatorProps): JS
 		// Centered container with negative top margin to offset parent padding
 		// (matching ThinkingStatusPill). The extra bottom margin keeps a clean gap
 		// even when the thinking pill renders directly below with its own -mt-2.
-		<div className="relative flex justify-center pb-2 mb-2 -mt-2">
+		<div className="relative flex justify-center pb-2 mb-2 -mt-2 min-w-0 px-2">
+			{/* `max-w-full min-w-0` bounds the pill to the available width so the label
+			    truncates on narrow viewports instead of pushing Cancel off-screen. */}
 			<div
-				className="flex items-center gap-2.5 pl-4 pr-2 py-1.5 rounded-full"
+				className="flex items-center gap-2.5 pl-4 pr-2 py-1.5 rounded-full max-w-full min-w-0"
 				style={{
 					backgroundColor: theme.colors.warning + '20',
 					border: `1px solid ${theme.colors.border}`,
@@ -39,7 +41,11 @@ export function QuitWhenIdleIndicator({ theme }: QuitWhenIdleIndicatorProps): JS
 					className="w-3.5 h-3.5 shrink-0 animate-pulse"
 					style={{ color: theme.colors.warning }}
 				/>
-				<span className="text-xs font-medium shrink-0" style={{ color: theme.colors.textMain }}>
+				<span
+					className="text-xs font-medium truncate min-w-0"
+					style={{ color: theme.colors.textMain }}
+					title="Quitting When All Operations Finish"
+				>
 					Quitting When All Operations Finish
 				</span>
 				<button

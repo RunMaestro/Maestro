@@ -51,8 +51,16 @@ Tracks individual AI query/response cycles:
 | `project_path` | TEXT             | Normalized project path         |
 | `tab_id`       | TEXT             | AI tab that issued the query    |
 | `is_remote`    | INTEGER          | SSH remote flag (added in v2)   |
+| `is_worktree`  | INTEGER          | Worktree agent flag (v5)        |
+| `user_name`    | TEXT             | Web Login sender (v12)          |
 
-**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
+`user_name` is the Web Login account that SENT the turn, and NULL means "nobody
+was signed in" - a turn typed at the desktop, which is every turn while Web
+Login is off. It is stamped by `stats:record-query` from what the spawn noted
+(`resolveTurnActor`), never from the acting user at write time: the row is
+written by the desktop renderer's exit listener even for a turn a browser sent.
+
+**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
 
 Note there is deliberately **no index on `tab_id` and no aggregation that groups by it**. The one consumer, the Usage Dashboard's per-tab breakdown (`UsageDashboard/TabBreakdown.tsx`), groups client-side over the rows `AgentDetailModal` has already fetched for a single agent via `getStats('all', { sessionId })`. That set is one agent's events, not the whole table, so it stays cheap and needs no new IPC. Reach for a real index only if something ever needs to query by tab across all agents.
 
@@ -92,7 +100,7 @@ Tracks individual tasks within an Auto Run session:
 
 **Indexes**: `auto_run_session_id`, `start_time`
 
-#### `wizard_runs` (Migration v10)
+#### `wizard_runs` (Migration v11, `active_ms` v13)
 
 One row per Auto Run wizard conversation, powering the Wizard section of the dashboard's Auto Run tab:
 
@@ -110,16 +118,21 @@ One row per Auto Run wizard conversation, powering the Wizard section of the das
 | `documents`    | INTEGER NOT NULL | Auto Run documents produced                                |
 | `tasks`        | INTEGER NOT NULL | Task checkboxes across those documents                     |
 | `project_path` | TEXT             | Project path                                               |
+| `active_ms`    | INTEGER          | Time actually spent in the wizard (v13; NULL = not timed)  |
 
 **Indexes**: `started_at`, compound `(surface, started_at)`
 
 Unlike every other table here, a row is written **repeatedly** - once per milestone (opened, each
 exchange, documents written, closed), always under the same `id`, via `INSERT OR REPLACE`. The reason
 is that the payoff (documents) and the close are separated by however long the user reads the result,
-and many runs are never closed at all, so a single write at the end would lose whole runs. `ended_at`
-therefore means "last activity", which keeps `ended_at - started_at` an honest measure of time spent
-in the wizard whether or not the run was ever closed. The renderer side of that state machine is
-`src/renderer/services/wizardStats.ts`.
+and many runs are never closed at all, so a single write at the end would lose whole runs.
+
+Time spent is `active_ms`, never `ended_at - started_at`. A wizard tab can sit open for days, and the
+open-to-close window once logged 26 hours for a 9-message run. `active_ms` is accrued gap by gap
+between milestones: a gap while the agent works (a turn or a document generation) counts in full up
+to 60 minutes, and a gap while the wizard waits on the user counts at most 5 minutes. Rows from before
+v13 stay NULL rather than being backfilled from the window, and the dashboard leaves them out of time
+totals. The renderer side of that state machine is `src/renderer/services/wizardStats.ts`.
 
 #### `session_lifecycle` (Migration v3)
 
@@ -196,9 +209,12 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`    |
 | v6      | Add `image_annotations` table                                         |
 | v7      | Add `shortcut_usage_daily` table                                      |
-| v8      | Add per-turn token and cost columns to `query_events`                 |
-| v9      | Add `resilience_events` table                                         |
-| v10     | Add `wizard_runs` table                                               |
+| v8      | Add `multi_window_usage_daily` table                                  |
+| v9      | Add per-turn token and cost columns to `query_events`                 |
+| v10     | Add `resilience_events` table                                         |
+| v11     | Add `wizard_runs` table                                               |
+| v12     | Add `user_name` column to `query_events` for Web Login attribution    |
+| v13     | Add `active_ms` column to `wizard_runs`                               |
 
 To add a new migration:
 
@@ -325,7 +341,7 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 
 | Handler                             | Description                                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| `stats:export-csv`                  | Export query events to CSV for a time range                                          |
+| `stats:export`                      | Export every stats table, token usage, and Cue runs for a range as JSON or a CSV zip |
 | `stats:clear-old-data`              | Delete records older than N days (transactional across all tables)                   |
 | `stats:get-database-size`           | Get the database file size in bytes                                                  |
 | `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |
@@ -419,6 +435,31 @@ Located in `src/renderer/components/UsageDashboard/`:
 | `UsageDashboardFooter.tsx`      | Status bar: range label, per-tab summary, Esc hint          |
 | `footerSummary.ts`              | All footer summary copy, as pure builders (see below)       |
 | `useFooterSummary.ts`           | Store letting a panel publish its own footer line           |
+
+### Range-Scoped vs Lifetime Token Totals
+
+Two different numbers answer "how many tokens did this cost", and putting the
+wrong one under the dashboard's range selector is a bug that looks like a frozen
+counter:
+
+| Source                             | Scope                        | Helper                                           |
+| ---------------------------------- | ---------------------------- | ------------------------------------------------ |
+| `Session.usageStats`               | Lifetime, per agent, in-hand | `aggregateUsage()` in `src/shared/usageStats.ts` |
+| `StatsAggregation.bySessionTokens` | The selected time range      | `aggregateRangeUsage()` in the same module       |
+
+`usageStats` is a counter that only ever grows, so it **cannot** move when the
+range selector does. The Overview tab's Tokens and Cost cards were summing it,
+and reported the same figure on This Week as on This Year while every other card
+on the tab changed (issue #1399). Anything rendered under a range selector reads
+`bySessionTokens` through `aggregateRangeUsage()`; the per-agent detail modal,
+which has no range at all, legitimately keeps the lifetime figure.
+
+One catch `aggregateRangeUsage` handles so callers do not have to: the stats DB
+records provider-REPORTED cost per turn and nothing else, so an agent on a
+provider that prices nothing itself stores zero. Pass the optional
+`modelForSession` resolver and those sessions fall back to the same rate-table
+estimate `resolveUsageCost` applies to a live agent, with `costEstimated` set so
+the UI can mark the figure `~`.
 
 ### Footer Summaries (per-tab status line)
 

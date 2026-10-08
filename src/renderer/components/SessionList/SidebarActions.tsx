@@ -3,6 +3,8 @@ import { PanelLeftClose, PanelLeftOpen, Bell, Bot, MessageSquarePlus } from 'luc
 import type { Theme, Shortcut } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { useUIStore } from '../../stores/uiStore';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { CornerDot } from '../ui/CornerDot';
 
 interface SidebarActionsProps {
@@ -15,7 +17,6 @@ interface SidebarActionsProps {
 	sidebarWidth: number;
 	addNewSession: () => void;
 	openFeedback?: () => void;
-	setLeftSidebarOpen: (open: boolean) => void;
 	toggleShowUnreadAgentsOnly: () => void;
 }
 
@@ -29,11 +30,11 @@ export const SidebarActions = memo(function SidebarActions({
 	sidebarWidth,
 	addNewSession,
 	openFeedback,
-	setLeftSidebarOpen,
 	toggleShowUnreadAgentsOnly,
 }: SidebarActionsProps) {
 	const compact = sidebarWidth < 320;
 	const feedbackMinimized = useFeedbackDraftStore((s) => s.isMinimized);
+	const setLeftSidebarOpen = useUIStore((s) => s.setLeftSidebarOpen);
 	const toggleSidebarShortcutLabel = shortcuts.toggleSidebar?.keys?.length
 		? ` (${formatShortcutKeys(shortcuts.toggleSidebar.keys)})`
 		: '';
@@ -46,6 +47,7 @@ export const SidebarActions = memo(function SidebarActions({
 			className="p-2 border-t flex gap-2 items-center shrink-0"
 			style={{ borderColor: theme.colors.border }}
 		>
+			<PluginUiItemsSlot surface="sidebar" />
 			<button
 				type="button"
 				disabled={hasNoSessions && leftSidebarOpen}
@@ -57,6 +59,9 @@ export const SidebarActions = memo(function SidebarActions({
 						: `${leftSidebarOpen ? 'Collapse' : 'Expand'} Sidebar${toggleSidebarShortcutLabel}`
 				}
 			>
+				{/* The indicator is a two-state toggle: the icon flips to signal the
+				    next action. Open shows "close" (collapse to the 64px strip);
+				    the collapsed strip shows "open" (expand back out). */}
 				{leftSidebarOpen ? (
 					<PanelLeftClose className="w-4 h-4 opacity-50" />
 				) : (

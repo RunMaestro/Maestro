@@ -50,6 +50,11 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
 		activeTerminalTabId: null,
 		unifiedTabOrder: [],
 		unifiedClosedTabHistory: [],
+		// Tab tiling (split panes). Persistence is forward-compatible: the main-process
+		// StoredSession uses a `[key: string]: any` index signature, so these fields
+		// persist with no migration.
+		tabGroups: [],
+		activeGroupId: null,
 		...overrides,
 	} as Session;
 }

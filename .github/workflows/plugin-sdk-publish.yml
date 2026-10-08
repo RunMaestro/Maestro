@@ -1,0 +1,39 @@
+name: Publish plugin-sdk
+
+# Triggered by plugin-sdk release tags (trusted input) or a manual dispatch.
+on:
+  push:
+    tags:
+      - 'plugin-sdk-v*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build (type check + emit dist)
+        run: bunx tsc -p packages/plugin-sdk/tsconfig.json
+
+      - name: Test
+        run: bunx vitest run --config packages/plugin-sdk/vitest.config.ts
+
+      - name: Setup Node.js for publish
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm
+        working-directory: packages/plugin-sdk
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

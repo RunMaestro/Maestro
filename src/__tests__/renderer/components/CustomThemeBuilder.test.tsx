@@ -293,6 +293,44 @@ describe('CustomThemeBuilder', () => {
 					expect(setCustomThemeBaseId).toHaveBeenCalledWith('monokai');
 				});
 			});
+
+			it('should import valid theme when the Option constructor is unavailable', async () => {
+				const originalOption = window.Option;
+				Object.defineProperty(window, 'Option', {
+					configurable: true,
+					value: undefined,
+				});
+
+				try {
+					render(
+						<CustomThemeBuilder
+							theme={mockTheme}
+							customThemeColors={mockThemeColors}
+							setCustomThemeColors={setCustomThemeColors}
+							customThemeBaseId="dracula"
+							setCustomThemeBaseId={setCustomThemeBaseId}
+							isSelected={false}
+							onSelect={onSelect}
+							onImportError={onImportError}
+							onImportSuccess={onImportSuccess}
+						/>
+					);
+
+					const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+					const file = createFileFromJSON(createValidThemeJSON());
+					await simulateFileUpload(fileInput, file);
+
+					await waitFor(() => {
+						expect(setCustomThemeColors).toHaveBeenCalledWith(mockThemeColors);
+						expect(onImportSuccess).toHaveBeenCalledWith('Theme imported successfully');
+					});
+				} finally {
+					Object.defineProperty(window, 'Option', {
+						configurable: true,
+						value: originalOption,
+					});
+				}
+			});
 		});
 
 		describe('Color Validation', () => {

@@ -4,6 +4,7 @@ import { useSessionFilterMode } from '../../../renderer/hooks/session/useSession
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, Group } from '../../../renderer/types';
+import { resetStores } from '../../helpers';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,12 +50,9 @@ function makeGroup(overrides: Partial<Group> = {}): Group {
 	};
 }
 
-function resetStores(sessions: Session[] = [], groups: Group[] = []) {
-	useSessionStore.setState({ sessions, groups } as any);
-	useUIStore.setState({
-		sessionFilterOpen: false,
-		bookmarksCollapsed: false,
-	} as any);
+function seedStores(sessions: Session[] = [], groups: Group[] = []) {
+	resetStores(useSessionStore, useUIStore);
+	useSessionStore.setState({ sessions, groups });
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +62,7 @@ function resetStores(sessions: Session[] = [], groups: Group[] = []) {
 describe('useSessionFilterMode', () => {
 	beforeEach(() => {
 		idCounter = 0;
-		resetStores();
+		seedStores();
 	});
 
 	// -----------------------------------------------------------------------
@@ -96,7 +94,7 @@ describe('useSessionFilterMode', () => {
 		it('collapses all groups on first open (default behavior)', () => {
 			const g1 = makeGroup({ id: 'g1', collapsed: false });
 			const g2 = makeGroup({ id: 'g2', collapsed: false });
-			resetStores([], [g1, g2]);
+			seedStores([], [g1, g2]);
 
 			renderHook(() => useSessionFilterMode());
 
@@ -129,7 +127,7 @@ describe('useSessionFilterMode', () => {
 		it('restores original group collapse states', () => {
 			const g1 = makeGroup({ id: 'g1', collapsed: false });
 			const g2 = makeGroup({ id: 'g2', collapsed: true });
-			resetStores([], [g1, g2]);
+			seedStores([], [g1, g2]);
 
 			renderHook(() => useSessionFilterMode());
 
@@ -182,7 +180,7 @@ describe('useSessionFilterMode', () => {
 		it('remembers user changes to group states across filter open/close cycles', () => {
 			const g1 = makeGroup({ id: 'g1', collapsed: false });
 			const g2 = makeGroup({ id: 'g2', collapsed: false });
-			resetStores([], [g1, g2]);
+			seedStores([], [g1, g2]);
 
 			renderHook(() => useSessionFilterMode());
 
@@ -226,7 +224,7 @@ describe('useSessionFilterMode', () => {
 			const g2 = makeGroup({ id: 'g2', collapsed: true });
 			const s1 = makeSession({ name: 'API Work', groupId: 'g1' });
 			const s2 = makeSession({ name: 'UI Work', groupId: 'g2' });
-			resetStores([s1, s2], [g1, g2]);
+			seedStores([s1, s2], [g1, g2]);
 
 			// Open filter first
 			act(() => {
@@ -247,7 +245,7 @@ describe('useSessionFilterMode', () => {
 
 		it('expands bookmarks when matching bookmarked sessions exist', () => {
 			const s1 = makeSession({ name: 'API Work', bookmarked: true });
-			resetStores([s1]);
+			seedStores([s1]);
 			useUIStore.setState({ bookmarksCollapsed: true } as any);
 
 			// Open filter
@@ -266,7 +264,7 @@ describe('useSessionFilterMode', () => {
 
 		it('collapses all groups when filter is cleared but input is still open', () => {
 			const g1 = makeGroup({ id: 'g1', collapsed: false });
-			resetStores([makeSession({ name: 'Test', groupId: 'g1' })], [g1]);
+			seedStores([makeSession({ name: 'Test', groupId: 'g1' })], [g1]);
 
 			// Open filter
 			act(() => {
@@ -293,7 +291,7 @@ describe('useSessionFilterMode', () => {
 				groupId: 'g1',
 				aiTabs: [{ name: 'refactoring-session' } as any],
 			});
-			resetStores([s1], [g1]);
+			seedStores([s1], [g1]);
 
 			// Open filter
 			act(() => {

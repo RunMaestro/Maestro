@@ -99,12 +99,15 @@ describe('cue-task-scanner-trigger-source', () => {
 		source.stop();
 	});
 
-	it('start() does not forward an isActive visibility gate to the task scanner', () => {
+	it('start() does NOT pass an isActive visibility gate (task.pending must scan while hidden)', () => {
+		// Regression guard for #1164: task.pending is the unattended-automation
+		// case, so it must keep scanning while the window is hidden. Unlike the
+		// file.changed / github.* sources, it must not forward isCueActive.
 		const source = createCueTaskScannerTriggerSource({
 			session: makeSession(),
 			subscription: makeSub(),
 			registry: createCueSessionRegistry(),
-			enabled: () => false,
+			enabled: () => true,
 			onLog: vi.fn(),
 			emit: vi.fn(),
 		})!;
@@ -112,7 +115,7 @@ describe('cue-task-scanner-trigger-source', () => {
 		source.start();
 
 		expect(mockCreateCueTaskScanner).toHaveBeenCalledOnce();
-		const config = mockCreateCueTaskScanner.mock.calls[0][0] as { isActive?: unknown };
+		const config = mockCreateCueTaskScanner.mock.calls[0][0] as { isActive?: () => boolean };
 		expect(config.isActive).toBeUndefined();
 
 		source.stop();

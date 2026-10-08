@@ -687,6 +687,112 @@ describe('useQueueHandlers', () => {
 	});
 
 	// ========================================================================
+	// handleEditQueueItem
+	// ========================================================================
+	describe('handleEditQueueItem', () => {
+		// The consult for a queued `@mention` fires when the item dispatches, so the
+		// item's pending-consult flag has to track whatever the user last edited the
+		// text to - not what they originally typed.
+		it('sets the pending consult when an edit adds an @mention', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [createQueuedItem({ id: 'item-1', text: 'ship it' })],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: 'ship it, then ask @Backend to review',
+					images: [],
+				});
+			});
+
+			const item = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(item.text).toBe('ship it, then ask @Backend to review');
+			expect(item.crossAgentMention).toBe(true);
+		});
+
+		it('clears the pending consult when an edit removes the @mention', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'ask @Backend', crossAgentMention: true }),
+				],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: 'never mind, do it yourself',
+					images: [],
+				});
+			});
+
+			expect(useSessionStore.getState().sessions[0].executionQueue[0].crossAgentMention).toBe(
+				false
+			);
+		});
+
+		// Where the mention sits decides whether THIS agent answers at all, and an
+		// edit can move it. Re-deriving only `crossAgentMention` left the stale
+		// `crossAgentOnly` in charge of that half of the decision.
+		it('clears crossAgentOnly when an edit moves the mention off the front', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [
+					createQueuedItem({
+						id: 'item-1',
+						text: '@Backend review this',
+						crossAgentMention: true,
+						crossAgentOnly: true,
+					}),
+				],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: 'review this, and ask @Backend too',
+					images: [],
+				});
+			});
+
+			const item = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(item.crossAgentMention).toBe(true);
+			expect(item.crossAgentOnly).toBe(false);
+		});
+
+		it('sets crossAgentOnly when an edit moves the mention to the front', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [
+					createQueuedItem({
+						id: 'item-1',
+						text: 'review this, and ask @Backend too',
+						crossAgentMention: true,
+					}),
+				],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: '@Backend review this',
+					images: [],
+				});
+			});
+
+			const item = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(item.crossAgentMention).toBe(true);
+			expect(item.crossAgentOnly).toBe(true);
+		});
+	});
+
+	// ========================================================================
 	// handleForceSendQueueItem
 	// ========================================================================
 	describe('handleForceSendQueueItem', () => {
@@ -819,7 +925,11 @@ describe('useQueueHandlers', () => {
 			expect(processQueuedItem).not.toHaveBeenCalled();
 		});
 
-		it('re-queues the item and releases the tab when the dispatch fails', async () => {
+		// Recovery moved to `agentStore.processQueuedItem`, which is the only place
+		// that can tell a transient spawn collision from a real failure. Force Send
+		// must own the REJECTION (an unhandled one is a crash report) but must not
+		// re-queue on its own, or the prompt would come back twice.
+		it('owns the rejection without re-queueing when the dispatch fails', async () => {
 			processQueuedItem.mockRejectedValueOnce(new Error('spawn failed'));
 			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
 			useSessionStore.setState({
@@ -828,32 +938,19 @@ describe('useQueueHandlers', () => {
 
 			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
+			let threw = false;
 			await act(async () => {
-				result.current.handleForceSendQueueItem('sess-1', 'item-a');
+				try {
+					result.current.handleForceSendQueueItem('sess-1', 'item-a');
+				} catch {
+					threw = true;
+				}
 			});
 
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-a']);
-			expect(updated.state).toBe('idle');
-			expect(updated.aiTabs[0].state).toBe('idle');
-		});
-
-		it('leaves the agent busy on failure while another tab is still working', async () => {
-			processQueuedItem.mockRejectedValueOnce(new Error('spawn failed'));
-			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
-			const session = twoTabSession({ id: 'sess-1', executionQueue: [item] });
-			session.aiTabs[1].state = 'busy';
-			useSessionStore.setState({ sessions: [session] });
-
-			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
-
-			await act(async () => {
-				result.current.handleForceSendQueueItem('sess-1', 'item-a');
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('busy');
-			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(threw).toBe(false);
+			// The dispatch transition ran; the store is left exactly as agentStore's
+			// recovery (mocked out here) would find it, with no second re-queue.
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
 		});
 	});
 

@@ -6,9 +6,12 @@ import { describe, it, expect } from 'vitest';
 import {
 	getAgentDisplayName,
 	isBetaAgent,
+	getAgentLoginCommand,
 	getReadOnlyModeLabel,
 	getReadOnlyModeTooltip,
-	getAgentLoginCommand,
+	getPermissionModeLabel,
+	getPermissionModeTooltip,
+	resolveTabPermissionMode,
 	formatAgentLoginCommand,
 	loginShellSyntaxFor,
 	AGENT_DISPLAY_NAMES,
@@ -31,9 +34,12 @@ describe('agentMetadata', () => {
 			expect(AGENT_DISPLAY_NAMES['codex']).toBe('Codex');
 			expect(AGENT_DISPLAY_NAMES['opencode']).toBe('OpenCode');
 			expect(AGENT_DISPLAY_NAMES['factory-droid']).toBe('Factory Droid');
+			expect(AGENT_DISPLAY_NAMES['hermes']).toBe('Hermes');
+			expect(AGENT_DISPLAY_NAMES['pi']).toBe('Pi');
 			expect(AGENT_DISPLAY_NAMES['gemini-cli']).toBe('Gemini CLI');
 			expect(AGENT_DISPLAY_NAMES['qwen3-coder']).toBe('Qwen3 Coder');
 			expect(AGENT_DISPLAY_NAMES['copilot-cli']).toBe('Copilot-CLI');
+			expect(AGENT_DISPLAY_NAMES['omp']).toBe('Oh My Pi');
 			expect(AGENT_DISPLAY_NAMES['terminal']).toBe('Terminal');
 		});
 
@@ -79,7 +85,11 @@ describe('agentMetadata', () => {
 		it('should contain the expected beta agents', () => {
 			expect(BETA_AGENTS.has('opencode')).toBe(true);
 			expect(BETA_AGENTS.has('factory-droid')).toBe(true);
+			expect(BETA_AGENTS.has('hermes')).toBe(true);
+			expect(BETA_AGENTS.has('pi')).toBe(true);
 			expect(BETA_AGENTS.has('copilot-cli')).toBe(true);
+			expect(BETA_AGENTS.has('qwen3-coder')).toBe(true);
+			expect(BETA_AGENTS.has('omp')).toBe(true);
 		});
 
 		it('should not contain non-beta agents', () => {
@@ -87,7 +97,6 @@ describe('agentMetadata', () => {
 			expect(BETA_AGENTS.has('claude-code')).toBe(false);
 			expect(BETA_AGENTS.has('terminal')).toBe(false);
 			expect(BETA_AGENTS.has('gemini-cli')).toBe(false);
-			expect(BETA_AGENTS.has('qwen3-coder')).toBe(false);
 		});
 
 		it('should only contain valid agent IDs', () => {
@@ -101,7 +110,11 @@ describe('agentMetadata', () => {
 		it('should return true for beta agents', () => {
 			expect(isBetaAgent('opencode')).toBe(true);
 			expect(isBetaAgent('factory-droid')).toBe(true);
+			expect(isBetaAgent('hermes')).toBe(true);
+			expect(isBetaAgent('pi')).toBe(true);
 			expect(isBetaAgent('copilot-cli')).toBe(true);
+			expect(isBetaAgent('qwen3-coder')).toBe(true);
+			expect(isBetaAgent('omp')).toBe(true);
 		});
 
 		it('should return false for non-beta agents', () => {
@@ -109,7 +122,6 @@ describe('agentMetadata', () => {
 			expect(isBetaAgent('codex')).toBe(false);
 			expect(isBetaAgent('terminal')).toBe(false);
 			expect(isBetaAgent('gemini-cli')).toBe(false);
-			expect(isBetaAgent('qwen3-coder')).toBe(false);
 		});
 
 		it('should return false for unknown agents', () => {
@@ -151,11 +163,88 @@ describe('agentMetadata', () => {
 			expect(getReadOnlyModeTooltip('factory-droid')).toContain('Read-Only');
 		});
 	});
+
+	describe('getPermissionModeLabel', () => {
+		it('should return "Full Access" for full mode regardless of agent', () => {
+			expect(getPermissionModeLabel('full')).toBe('Full Access');
+			expect(getPermissionModeLabel('full', 'claude-code')).toBe('Full Access');
+		});
+
+		it('should return "Standard" for standard mode regardless of agent', () => {
+			expect(getPermissionModeLabel('standard')).toBe('Standard');
+			expect(getPermissionModeLabel('standard', 'claude-code')).toBe('Standard');
+		});
+
+		it('should return "Read Only" for readonly mode when no agentId is given', () => {
+			expect(getPermissionModeLabel('readonly')).toBe('Read Only');
+		});
+
+		it('should delegate to getReadOnlyModeLabel for readonly mode when agentId is given', () => {
+			expect(getPermissionModeLabel('readonly', 'claude-code')).toBe('Plan-Mode');
+			expect(getPermissionModeLabel('readonly', 'codex')).toBe('Read-Only');
+			expect(getPermissionModeLabel('readonly', 'factory-droid')).toBe('Read-Only');
+		});
+	});
+
+	describe('getPermissionModeTooltip', () => {
+		it('should return the generic full access tooltip regardless of agent', () => {
+			expect(getPermissionModeTooltip('full')).toContain('Full Access');
+			expect(getPermissionModeTooltip('full', 'claude-code')).toContain('Full Access');
+		});
+
+		it('should return the generic standard tooltip regardless of agent', () => {
+			expect(getPermissionModeTooltip('standard')).toContain('Standard');
+			expect(getPermissionModeTooltip('standard', 'claude-code')).toContain('Standard');
+		});
+
+		it('should return the generic readonly tooltip when no agentId is given', () => {
+			expect(getPermissionModeTooltip('readonly')).toContain('Read Only');
+		});
+
+		it('should delegate to getReadOnlyModeTooltip for readonly mode when agentId is given', () => {
+			expect(getPermissionModeTooltip('readonly', 'claude-code')).toContain('plan mode');
+			expect(getPermissionModeTooltip('readonly', 'codex')).toContain('Read-Only');
+			expect(getPermissionModeTooltip('readonly', 'factory-droid')).toContain('Read-Only');
+		});
+	});
+
+	describe('resolveTabPermissionMode', () => {
+		it('treats a nullish tab as full access', () => {
+			expect(resolveTabPermissionMode(undefined)).toBe('full');
+			expect(resolveTabPermissionMode(null)).toBe('full');
+		});
+
+		it('treats a tab with no stored permissionMode as full access', () => {
+			expect(resolveTabPermissionMode({})).toBe('full');
+		});
+
+		it('falls back to readonly only when the legacy readOnlyMode boolean is set', () => {
+			expect(resolveTabPermissionMode({ readOnlyMode: true })).toBe('readonly');
+			expect(resolveTabPermissionMode({ readOnlyMode: false })).toBe('full');
+		});
+
+		it('passes an explicit permissionMode through unchanged', () => {
+			expect(resolveTabPermissionMode({ permissionMode: 'full' })).toBe('full');
+			expect(resolveTabPermissionMode({ permissionMode: 'standard' })).toBe('standard');
+			expect(resolveTabPermissionMode({ permissionMode: 'readonly' })).toBe('readonly');
+		});
+
+		it('prefers an explicit permissionMode over the legacy readOnlyMode boolean', () => {
+			expect(resolveTabPermissionMode({ permissionMode: 'full', readOnlyMode: true })).toBe('full');
+		});
+	});
+
 	describe('getAgentLoginCommand', () => {
-		it('returns the provider login command for every non-terminal agent', () => {
+		it('knows the login flow for every agent that has one', () => {
+			// hermes, pi, and omp have no documented CLI login flow, and the
+			// terminal agent is a plain shell - all four are deliberately null.
+			const noLoginFlow = new Set(['terminal', 'hermes', 'pi', 'omp']);
 			for (const id of AGENT_IDS) {
-				if (id === 'terminal') continue;
 				const login = getAgentLoginCommand(id);
+				if (noLoginFlow.has(id)) {
+					expect(login, `${id} should have no login command`).toBeNull();
+					continue;
+				}
 				expect(login, `no login command for ${id}`).not.toBeNull();
 				expect(login!.binary.length).toBeGreaterThan(0);
 			}

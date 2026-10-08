@@ -24,9 +24,11 @@ import rehypeKatex from 'rehype-katex';
 import { svgSanitizeSchema } from './sanitizeSchema';
 import { remarkAlert } from './remarkAlert';
 import { remarkMaestroMarkers } from './remarkMaestroMarkers';
+import { remarkCodexDirectives } from './remarkCodexDirectives';
 import { REMARK_GFM_PLUGINS } from '../../../shared/markdownPlugins';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, type buildFileTreeIndices } from '../../utils/remarkFileLinks';
+import { remarkMentionChips } from '../../utils/remarkMentionChips';
 import { remarkPromoteDisplayMath } from '../../../shared/remarkPromoteDisplayMath';
 import { remarkStripHtmlComments } from '../../../shared/remarkStripHtmlComments';
 
@@ -61,8 +63,20 @@ export interface BuildMarkdownPluginsOptions {
 	 * why a chat message must keep rendering them as prose. Default false.
 	 */
 	autorunMarkers?: boolean;
+	/**
+	 * Render Codex's assistant directives (`:codex-followup[...]{...}`) as chips.
+	 * Chat surfaces only - see `remarkCodexDirectives` for why an authored
+	 * document must keep rendering them as the text its author wrote. Default
+	 * false.
+	 */
+	codexDirectives?: boolean;
 	/** When provided and active, adds the remarkFileLinks transform. */
 	fileLinks?: MarkdownFileLinkOptions;
+	/**
+	 * Chip-render `@file` / `@agent` mentions (chat surfaces, Encore-gated).
+	 * Runs BEFORE remarkFileLinks so it claims `@`-prefixed paths first.
+	 */
+	mentionChips?: boolean;
 	/** Extra remark plugins appended after the standard stack (e.g. FilePreview's remarkHighlight). */
 	extraRemarkPlugins?: PluggableList;
 	/** Extra rehype plugins appended after the standard stack (e.g. rehype-slug). */
@@ -96,7 +110,9 @@ export function buildMarkdownPlugins(
 		allowRawHtml = false,
 		alerts = true,
 		autorunMarkers = false,
+		codexDirectives = false,
 		fileLinks,
+		mentionChips = false,
 		extraRemarkPlugins,
 		extraRehypePlugins,
 	} = options;
@@ -120,6 +136,14 @@ export function buildMarkdownPlugins(
 		remarkPlugins.push(remarkMaestroMarkers);
 	}
 
+	// Runs before remark-breaks for the same reason, and it matters more here: a
+	// directive is matched against the ORIGINAL source by offset, so it has to
+	// still be one intact span rather than something a `<br>` has been spliced
+	// into.
+	if (codexDirectives) {
+		remarkPlugins.push(remarkCodexDirectives);
+	}
+
 	// Without rehype-raw, react-markdown renders every raw HTML node as visible
 	// text - which turns an HTML comment into body copy. Strip comment-only nodes
 	// here so they stay invisible, after remarkMaestroMarkers has claimed the
@@ -141,6 +165,12 @@ export function buildMarkdownPlugins(
 	if (chatMath) {
 		remarkPlugins.push([remarkMath, { singleDollarTextMath: false }]);
 		remarkPlugins.push(remarkPromoteDisplayMath);
+	}
+
+	// Mention chips run BEFORE file links so a `@src/main.ts` becomes a single
+	// file chip instead of `@` + a bare file link.
+	if (mentionChips) {
+		remarkPlugins.push(remarkMentionChips);
 	}
 
 	if (shouldAddFileLinks(fileLinks)) {

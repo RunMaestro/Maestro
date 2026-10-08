@@ -4,6 +4,22 @@ import { SkinnySidebar } from '../../../../renderer/components/SessionList/Skinn
 import type { Session, Group, Theme } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { createMockSession } from '../../../helpers';
+import {
+	useCrossAgentInFlightStore,
+	type InFlightCrossAgentRequest,
+} from '../../../../renderer/stores/crossAgentInFlightStore';
+
+function consult(targetSessionId: string): InFlightCrossAgentRequest {
+	return {
+		requestId: `req-${targetSessionId}`,
+		sourceSessionId: 'asker',
+		sourceTabId: 'tab-1',
+		targetSessionId,
+		targetAgentName: 'Target',
+		startedAt: Date.now(),
+	};
+}
 
 let idCounter = 0;
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -47,6 +63,7 @@ function createProps(overrides: Partial<Parameters<typeof SkinnySidebar>[0]> = {
 		getFileCount: vi.fn(() => 0),
 		setActiveSessionId: vi.fn(),
 		handleContextMenu: vi.fn(),
+		showUnreadAgentsOnly: false,
 		stuckOutageSignature: '',
 		...overrides,
 	};
@@ -55,6 +72,7 @@ function createProps(overrides: Partial<Parameters<typeof SkinnySidebar>[0]> = {
 describe('SkinnySidebar', () => {
 	beforeEach(() => {
 		idCounter = 0;
+		useCrossAgentInFlightStore.setState({ requests: {} });
 	});
 
 	it('renders nothing when there are no sessions', () => {
@@ -175,5 +193,93 @@ describe('SkinnySidebar', () => {
 		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
 		expect(dot.style.backgroundColor).toBe('transparent');
 		expect(dot.style.border).toContain('1.5px solid');
+	});
+	it('keeps an auto-running (batch) agent visible under the unread filter', () => {
+		const batch = createMockSession({ id: 'batch-s' });
+		const idle = createMockSession({ id: 'idle-s' });
+		const { container } = render(
+			<SkinnySidebar
+				{...createProps({
+					sortedSessions: [batch, idle],
+					activeSessionId: 'other',
+					activeBatchSessionIds: ['batch-s'],
+					showUnreadAgentsOnly: true,
+				})}
+			/>
+		);
+
+		expect(container.querySelectorAll('[aria-label^="Switch to "]').length).toBe(1);
+	});
+
+	it('keeps a stuck (outage) agent visible under the unread filter', () => {
+		const stuck = createMockSession({ id: 'stuck-s' });
+		const idle = createMockSession({ id: 'idle-s' });
+		const { container } = render(
+			<SkinnySidebar
+				{...createProps({
+					sortedSessions: [stuck, idle],
+					activeSessionId: 'other',
+					stuckOutageSignature: 'stuck-s',
+					showUnreadAgentsOnly: true,
+				})}
+			/>
+		);
+
+		expect(container.querySelectorAll('[aria-label^="Switch to "]').length).toBe(1);
+	});
+
+	it('hides idle agents under the unread filter', () => {
+		const idle1 = createMockSession({ id: 'idle-1' });
+		const idle2 = createMockSession({ id: 'idle-2' });
+		const { container } = render(
+			<SkinnySidebar
+				{...createProps({
+					sortedSessions: [idle1, idle2],
+					activeSessionId: 'other',
+					showUnreadAgentsOnly: true,
+				})}
+			/>
+		);
+
+		expect(container.querySelectorAll('[aria-label^="Switch to "]').length).toBe(0);
+	});
+	/**
+	 * A consult never touches `session.state` (hidden tab, synthetic process id),
+	 * so the rail folds the in-flight store in beside Auto Run. Without it a
+	 * consulted agent drew a green idle dot for the whole time it was working.
+	 */
+	it('paints a consulted agent as busy', () => {
+		const s1 = makeSession({ id: 'consulted' });
+		useCrossAgentInFlightStore.setState({ requests: { a: consult('consulted') } });
+
+		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
+
+		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
+		expect(dot.className).toContain('animate-pulse');
+		expect(dot.style.backgroundColor).toBeTruthy();
+		expect(dot.style.backgroundColor).not.toBe('transparent');
+	});
+
+	// An unopened Claude agent is the COMMON consult target, so the hollow dot
+	// would mask exactly the case the consult signal exists to show.
+	it('outranks the unbound-Claude hollow dot', () => {
+		const s1 = makeSession({ id: 'consulted', toolType: 'claude-code', agentSessionId: undefined });
+		useCrossAgentInFlightStore.setState({ requests: { a: consult('consulted') } });
+
+		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
+
+		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
+		expect(dot.style.backgroundColor).not.toBe('transparent');
+		expect(dot.className).toContain('animate-pulse');
+	});
+
+	it('leaves an agent nobody is consulting alone', () => {
+		const s1 = makeSession({ id: 'quiet' });
+		useCrossAgentInFlightStore.setState({ requests: { a: consult('someone-else') } });
+
+		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
+
+		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
+		expect(dot.className).not.toContain('animate-pulse');
 	});
 });

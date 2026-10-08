@@ -7,7 +7,7 @@
  *   - Watches folder for file changes and reloads data
  *   - Updates per-session autoRunContent when selected file changes
  *
- * Reads from: sessionStore (activeSession), batchStore (document setters)
+ * Reads from: sessionStore (narrow Auto Run fields), batchStore (document setters)
  */
 
 import { useEffect, useCallback, useRef } from 'react';
@@ -98,9 +98,17 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 	// (single-file content fetch).
 	const structureKeyRef = useRef<string | null>(null);
 
-	// --- Reactive subscriptions ---
-	const activeSession = useSessionStore(selectActiveSession);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. Subscribe only to Auto Run path fields that
+	// should re-run the loader / watcher. Use the resolved agent id (same
+	// fallback as selectActiveSession) so field reads and writes stay aligned.
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
+	const autoRunFolderPath = useSessionStore((s) => selectActiveSession(s)?.autoRunFolderPath);
+	const autoRunSelectedFile = useSessionStore((s) => selectActiveSession(s)?.autoRunSelectedFile);
+	const autoRunSshRemoteId = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session?.sshRemoteId || session?.sessionSshRemoteConfig?.remoteId || undefined;
+	});
 
 	// --- Store actions (stable via getState) ---
 	const { setSessions } = useSessionStore.getState();
@@ -146,7 +154,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 	useEffect(() => {
 		const currentLoadSequence = ++loadSequenceRef.current;
 
-		if (!activeSession?.autoRunFolderPath) {
+		if (!autoRunFolderPath || !activeSessionId) {
 			structureKeyRef.current = null;
 			setAutoRunDocumentList([]);
 			setAutoRunDocumentTree([]);
@@ -155,11 +163,10 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 			return;
 		}
 
-		const folderPath = activeSession.autoRunFolderPath;
-		const sshRemoteId =
-			activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
-		const selectedFile = activeSession.autoRunSelectedFile;
-		const sessionId = activeSession.id;
+		const folderPath = autoRunFolderPath;
+		const sshRemoteId = autoRunSshRemoteId;
+		const selectedFile = autoRunSelectedFile;
+		const sessionId = activeSessionId;
 
 		const structureKey = `${activeSessionId}|${folderPath}|${sshRemoteId ?? ''}`;
 		const structureChanged = structureKeyRef.current !== structureKey;
@@ -247,25 +254,16 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 
 		load();
 		// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
-	}, [
-		activeSessionId,
-		activeSession?.id,
-		activeSession?.autoRunFolderPath,
-		activeSession?.autoRunSelectedFile,
-		activeSession?.sshRemoteId,
-		activeSession?.sessionSshRemoteConfig?.remoteId,
-	]);
+	}, [activeSessionId, autoRunFolderPath, autoRunSelectedFile, autoRunSshRemoteId]);
 
 	// File watching for Auto Run - watch whenever a folder is configured
 	// Updates reflect immediately whether from batch runs, terminal commands, or external editors
 	// Note: For SSH remote sessions, file watching via chokidar is not available.
 	// The backend returns isRemote: true and the UI should use polling instead.
 	useEffect(() => {
-		const sessionId = activeSession?.id;
-		const folderPath = activeSession?.autoRunFolderPath;
-		// Get SSH remote ID for remote sessions (check both runtime and config values)
-		const sshRemoteId =
-			activeSession?.sshRemoteId || activeSession?.sessionSshRemoteConfig?.remoteId || undefined;
+		const sessionId = activeSessionId;
+		const folderPath = autoRunFolderPath;
+		const sshRemoteId = autoRunSshRemoteId;
 
 		// Only watch if folder is set
 		if (!folderPath || !sessionId) return;
@@ -368,13 +366,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 		// the latest selected file from the store at refresh time, so changing
 		// the selected doc shouldn't tear down and re-establish the watcher.
 		// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
-	}, [
-		activeSession?.id,
-		activeSession?.autoRunFolderPath,
-		activeSession?.sshRemoteId,
-		activeSession?.sessionSshRemoteConfig?.remoteId,
-		applySelectedContent,
-	]);
+	}, [activeSessionId, autoRunFolderPath, autoRunSshRemoteId, applySelectedContent]);
 
 	return { loadTaskCounts };
 }
