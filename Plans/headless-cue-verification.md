@@ -227,3 +227,54 @@ are Node built-ins and `../../dist/maestro-lib/index.js` only.
 None found. Everything the program needed is exported by the entry, so
 `MAESTRO_LIB_VERSION` stays 0.2.0. A provider's availability is read by
 planning a turn with an empty prompt, which starts nothing.
+
+## Today's verification
+
+Dated 2026-10-08, on Linux (Node 24.21.0 locally; CI runs Node 22), against
+`feat/cue-server`: the eleven commits on top of `89986c4f9` (the PR #1747 head
+the maintainer reviewed), `8d1e81b15` through `3336c5ac9`, plus the fix commit
+`611fd1cf5` below. Nothing was pushed.
+
+### Gates
+
+| Command                     | Result                                                                                |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| `npx prettier --check .`    | Pass: all matched files use Prettier code style                                       |
+| `npm run lint:eslint`       | Pass, including the dash pass over `src/__tests__` and `scripts`                      |
+| `npm run lint`              | Pass: `tsconfig.lint.json`, `tsconfig.main.json`, `tsconfig.cli.json`                 |
+| `npm run lint:doc-refs`     | Pass: all path references resolve across 40 docs                                      |
+| `npm run docs:verify`       | Pass: 690 asserted paths, 0 missing                                                   |
+| `npm run build:maestro-lib` | Pass: `dist/maestro-lib/index.js` 325.3 KB, maestro-lib 0.2.0                         |
+| `npm run test` (unsharded)  | Pass: 2066 files passed, 1 skipped; 46,992 tests passed, 90 skipped, 0 failed (801 s) |
+
+The full suite ran on `3336c5ac9`, before the fix commit. After the fix,
+Prettier, both ESLint passes and `npm run lint` were run again and pass, and the
+two touched test files pass (`cue-bundle-importer.test.ts` 45 tests,
+`cue-standalone-import-restart.test.ts` 2 tests). No gate failed, so nothing
+had to be checked against `89986c4f9`.
+
+### Windows review
+
+Read from `git diff 89986c4f9..HEAD`; nothing was run on a Windows host.
+
+| Area                                                           | Finding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cue-bundle-importer.ts` `folderIdentity` (3392fcd76)          | **Fixed in `611fd1cf5`.** ReFS (a Dev Drive) reports `FILE_INVALID_FILE_ID`, all ones, as the inode of every file whose id does not fit 64 bits, so two different folders matched and a valid import was refused. That value now counts as no identity, like 0 (network and FAT volumes). `statIdentity` is tested for both.                                                                                                                                                              |
+| `findSharedWorkspaceRoot`, `claimTarget` (3392fcd76)           | Reviewed, safe. `samePath` is `isWithin` both ways, which uses `path.win32` and lowercases on win32. The JS `realpathSync` keeps the spelling it was given and does not expand 8.3 short names, but on a local NTFS volume the `dev:ino` identity catches both. The different-case test passes `'win32'` explicitly, and on a Windows host `PROJ` also exists and matches by identity; either way the reported folder is the first entry's, which the test expects.                       |
+| `cue-standalone-import-restart.test.ts` (bb1d1084d)            | **Fixed in `611fd1cf5`.** The first test to start a real standalone engine, with chokidar watching temp folders. The watchers close asynchronously and Windows refuses to delete a watched folder (EBUSY / EPERM), so `afterEach` now retries `rmSync` (`maxRetries: 10, retryDelay: 50`), as `cue-engine-lock.test.ts` does.                                                                                                                                                             |
+| cmd.exe escaping and the windows-shell refusal (65c4b4577)     | Reviewed, safe. The escapers moved byte for byte and `shellEscape.ts` re-exports them, so desktop imports and mocks resolve unchanged. `applyWindowsShellRules` is a no-op off Windows, and for a spec that already names a shell. The pre-existing `turnProcessSpecFromPlan` test uses `/usr/local/bin/hermes`, which on a Windows host is an unreadable path with no extension, so no shell is chosen and the expected spec still holds. `session.test.ts` mocks `isWindows` both ways. |
+| `start-turn.test.ts` real `.cmd` shim (`runIf(win32)`)         | Read, **not run.** Node runs a `shell: true` spawn as `cmd.exe /d /s /c "<line>"`. The shim path is quoted, the four arguments carry no `%`, `^` or line break (`escapeCmdArg` doubles `"` inside quotes, which the CRT turns back into one `"`), and the hostile prompt goes over stdin. It runs only on windows-latest.                                                                                                                                                                 |
+| `cue-engine-drain.test.ts` pending launches (e2d831f19)        | Reviewed, safe. Fake timers throughout; a launch is held by a promise the test releases, and the `AbortSignal` is read after it. Nothing depends on wall time, so a slower runner changes nothing.                                                                                                                                                                                                                                                                                        |
+| `cue-shell-executor.test.ts` stop during the probe (e2d831f19) | Reviewed, safe. `getShellPath` and the SSH wrap are mocked, and the PATH probe is not platform-gated, so the same path runs on Windows.                                                                                                                                                                                                                                                                                                                                                   |
+| `cue-heartbeat.test.ts`, `cue-sleep-wake.test.ts` (247b04bb0)  | Reviewed, safe. Fake timers plus `vi.setSystemTime`. In production the gap is measured with `Date.now()` from the previous tick, so it is caught whether or not the host's timer clock advances during suspend: the first tick after the wake still sees the wall-clock jump.                                                                                                                                                                                                             |
+| `cue-db.test.ts` read-only (0df924926)                         | Reviewed, safe. better-sqlite3 is mocked there. The mode assertion is `skipIf(win32)`; `chmodSync(0o600)` on Windows only clears the read-only attribute, which is harmless.                                                                                                                                                                                                                                                                                                              |
+| Owner rule in readiness and export (6238d9155, 1978d3e2c)      | Reviewed, safe. `resolveConfigOwner` compares `projectRoot` strings exactly, as the runtime's `computeOwnershipWarning` already does, and both call sites key on the sessions' own `projectRoot`. They agree with the engine on every platform.                                                                                                                                                                                                                                           |
+| Line endings                                                   | Reviewed, safe. Every added file is LF in the index and has no CR. Nothing under `packaging/server` changed. `examples/maestro-lib-tui/*` is not under the `eol=lf` rule, so a Windows checkout with autocrlf gets CRLF; Node strips the shebang line either way, and the only test that runs the file is POSIX only.                                                                                                                                                                     |
+| POSIX-only tests                                               | Reviewed, skips are real. `tui-example.test.ts` and `built-entry.test.ts` start the fake agent through its shebang and send SIGINT, which Windows cannot do. In `tui-example.test.ts` every test is skipped on Windows, so Vitest skips the file and its build `beforeAll` too. Symlink tests stay `skipIf(win32)` as before.                                                                                                                                                             |
+
+### Not run
+
+- **A Windows host.** Everything above is from reading the code; windows-latest in CI is the first real run.
+- **The win32-only `.cmd` shim test** in `start-turn.test.ts`. It runs only on windows-latest.
+- **The real-SQLite tests in `cue-db-integration.test.ts`** (the existing round trip and the new read-only check). They skip on **every CI leg**, not just Windows: `postinstall` runs `electron-rebuild`, so better-sqlite3 is built for Electron and plain Node cannot load it. They also skipped here, and building a plain-Node copy failed because this machine has no network access. Today's read-only behavior is covered only by the mocked `cue-db.test.ts`.
+- CI's two-shard split was not reproduced; the suite ran as one process.
