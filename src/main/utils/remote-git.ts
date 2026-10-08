@@ -13,6 +13,7 @@ import { execFileNoThrow, ExecResult } from './execFile';
 import { buildSshCommand, RemoteCommandOptions } from './ssh-command-builder';
 import { logger } from './logger';
 import { isWorktreeAlreadyUsedError, parseWorktreePathForBranch } from '../../shared/gitUtils';
+import { shellEscapeRemotePath } from './shell-escape';
 
 const LOG_CONTEXT = '[RemoteGit]';
 
@@ -671,6 +672,144 @@ export interface RemoteWorktreeEntry extends Record<string, unknown> {
 	head: string;
 	branch: string | null;
 	isBare: boolean;
+	/** Retained registry entries whose worktree directory is no longer reachable. */
+	isPrunable?: boolean;
+}
+
+/** Resolve configured worktree directories on the remote host before comparing Git paths. */
+export async function resolveWorktreePathsRemote(
+	cwd: string,
+	basePath: string,
+	sshRemote: SshRemoteConfig,
+	sessionPaths: string[] = []
+): Promise<
+	RemoteGitResult<{
+		resolvedCwd: string;
+		resolvedBasePath: string;
+		resolvedSessionPaths?: Record<string, string>;
+		missingSessionPaths?: string[];
+		unresolvedSessionPaths?: string[];
+	}>
+> {
+	if (!cwd || !basePath) {
+		return { success: false, error: 'Missing remote worktree directory' };
+	}
+	// The line-based protocol cannot preserve these characters. Command
+	// substitution also strips trailing line feeds from physical path output.
+	if ([cwd, basePath].some((p) => /[\r\n\0]/.test(p))) {
+		return { success: false, error: 'Invalid remote worktree path characters' };
+	}
+	// Subshells keep relative paths relative to the same SSH login directory.
+	// pwd -P follows symlinks without depending on GNU realpath flags.
+	const result = await execShellRemote(
+		`(cd -P -- ${shellEscapeRemotePath(cwd)} && pwd -P) && (cd -P -- ${shellEscapeRemotePath(basePath)} && pwd -P)`,
+		sshRemote
+	);
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr?.trim() || 'Could not resolve remote worktree paths',
+		};
+	}
+	const paths = result.stdout.replace(/\n$/, '').split('\n');
+	if (paths.length !== 2 || paths.some((p) => !p.startsWith('/') || /[\r\0]/.test(p))) {
+		return { success: false, error: 'Invalid resolved remote worktree paths' };
+	}
+	const aliases = await resolveWorktreeAliasesRemote(sessionPaths, sshRemote);
+	if (!aliases.success || !aliases.data) {
+		return { success: false, error: aliases.error || 'Could not resolve remote worktree aliases' };
+	}
+	return {
+		success: true,
+		data: { resolvedCwd: paths[0], resolvedBasePath: paths[1], ...aliases.data },
+	};
+}
+
+/** Resolve saved or registered worktree aliases independently, preserving individual probe failures. */
+export async function resolveWorktreeAliasesRemote(
+	sessionPaths: string[],
+	sshRemote: SshRemoteConfig
+): Promise<
+	RemoteGitResult<{
+		resolvedSessionPaths?: Record<string, string>;
+		missingSessionPaths?: string[];
+		unresolvedSessionPaths?: string[];
+	}>
+> {
+	// A matching lexical base prefix does not establish physical identity:
+	// leaf or group symlinks can point elsewhere, including registry paths.
+	const uniqueSessionPaths = [...new Set(sessionPaths)];
+	const unresolvedSessionPaths = new Set(
+		uniqueSessionPaths.filter((p) => !p || /[\r\n\0]/.test(p))
+	);
+	const aliases = uniqueSessionPaths.filter((candidate) => !unresolvedSessionPaths.has(candidate));
+	let resolvedSessionPaths: Record<string, string> | undefined;
+	const missingSessionPaths: string[] = [];
+	if (aliases.length > 0) {
+		// A failed cd alone does not prove deletion: it may be a permission
+		// failure, an inaccessible alias ancestor, or a dangling symlink. Only
+		// derive a missing leaf's physical candidate from a reachable parent.
+		// Each path produces its own status, including unresolved errors. NUL
+		// framing keeps an invalid physical filename from corrupting sibling
+		// records. The marker retains filename-final line feeds across shell
+		// command substitution; those paths are preserved as unresolved below.
+		const probe = `for p in ${aliases.map(shellEscapeRemotePath).join(' ')}; do
+if physical=$(cd -P -- "$p" >/dev/null 2>&1 && pwd -P && printf '.'); then
+	physical=\${physical%.}; physical=\${physical%?}
+	printf 'resolved\\000%s\\000' "$physical"
+else
+	trimmed=$p
+	while [ "\${trimmed%/}" != "$trimmed" ]; do trimmed=\${trimmed%/}; done
+	leaf=\${trimmed##*/}
+	case "$leaf" in ''|.|..) printf 'unresolved\\000-\\000'; continue ;; esac
+	parent=\${trimmed%/*}
+	if [ "$parent" = "$trimmed" ]; then parent=.; fi
+	if [ -z "$parent" ]; then parent=/; fi
+	if physical=$(cd -P -- "$parent" >/dev/null 2>&1 || exit 1
+		if [ -e "./$leaf" ] || [ -L "./$leaf" ]; then exit 1; fi
+		pwd -P && printf '.'); then
+		physical=\${physical%.}; physical=\${physical%?}
+		printf 'missing\\000%s/%s\\000' "\${physical%/}" "$leaf"
+	else
+		printf 'unresolved\\000-\\000'
+	fi
+fi
+done`;
+		const resolved = await execShellRemote(probe, sshRemote);
+		const resolvedAliases = resolved.stdout.split('\0').slice(0, -1);
+		if (
+			resolved.exitCode !== 0 ||
+			!resolved.stdout.endsWith('\0') ||
+			resolvedAliases.length !== aliases.length * 2
+		) {
+			return {
+				success: false,
+				error: resolved.stderr?.trim() || 'Could not resolve existing remote worktree paths',
+			};
+		}
+		const resolvedEntries: [string, string][] = [];
+		aliases.forEach((alias, index) => {
+			const status = resolvedAliases[index * 2];
+			const path = resolvedAliases[index * 2 + 1];
+			if (!['resolved', 'missing'].includes(status) || !/^\/[^\r\n\0]*$/.test(path)) {
+				unresolvedSessionPaths.add(alias);
+				return;
+			}
+			if (status === 'missing') missingSessionPaths.push(alias);
+			resolvedEntries.push([alias, path]);
+		});
+		if (resolvedEntries.length > 0) resolvedSessionPaths = Object.fromEntries(resolvedEntries);
+	}
+	return {
+		success: true,
+		data: {
+			...(resolvedSessionPaths ? { resolvedSessionPaths } : {}),
+			...(missingSessionPaths.length > 0 ? { missingSessionPaths } : {}),
+			...(unresolvedSessionPaths.size > 0
+				? { unresolvedSessionPaths: [...unresolvedSessionPaths] }
+				: {}),
+		},
+	};
 }
 
 /**
@@ -690,17 +829,25 @@ export async function listWorktreesRemote(
 	});
 
 	if (result.exitCode !== 0) {
-		// Not a git repo or no worktree support
 		return {
-			success: true,
-			data: [],
+			success: false,
+			error: result.stderr?.trim() || `git worktree list failed: ${result.exitCode}`,
 		};
+	}
+	if (!result.stdout.trim()) {
+		return { success: false, error: 'git worktree list returned no worktrees' };
 	}
 
 	// Parse porcelain output
 	const worktrees: RemoteWorktreeEntry[] = [];
 	const lines = result.stdout.split('\n');
-	let current: { path?: string; head?: string; branch?: string | null; isBare?: boolean } = {};
+	let current: {
+		path?: string;
+		head?: string;
+		branch?: string | null;
+		isBare?: boolean;
+		isPrunable?: boolean;
+	} = {};
 
 	for (const line of lines) {
 		if (line.startsWith('worktree ')) {
@@ -714,12 +861,15 @@ export async function listWorktreesRemote(
 			current.isBare = true;
 		} else if (line === 'detached') {
 			current.branch = null;
+		} else if (line === 'prunable' || line.startsWith('prunable ')) {
+			current.isPrunable = true;
 		} else if (line === '' && current.path) {
 			worktrees.push({
 				path: current.path,
 				head: current.head || '',
 				branch: current.branch ?? null,
 				isBare: current.isBare || false,
+				...(current.isPrunable ? { isPrunable: true } : {}),
 			});
 			current = {};
 		}
@@ -732,7 +882,11 @@ export async function listWorktreesRemote(
 			head: current.head || '',
 			branch: current.branch ?? null,
 			isBare: current.isBare || false,
+			...(current.isPrunable ? { isPrunable: true } : {}),
 		});
+	}
+	if (worktrees.length === 0) {
+		return { success: false, error: 'git worktree list returned no valid worktrees' };
 	}
 
 	return {
