@@ -458,22 +458,30 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 	const pendingActions: ToastClickAction[] = [];
 	const readyRenderers = new WeakSet<Electron.WebContents>();
 	const flushActions = (): void => {
-		const target = deps?.getMainWindow();
-		if (!target || !isWebContentsAvailable(target) || !readyRenderers.has(target.webContents))
-			return;
-		if (pendingActions.length === 0) return;
-		if (target.isMinimized()) target.restore();
-		target.show();
-		target.focus();
-		while (pendingActions.length > 0) {
-			target.webContents.send('notification:clickAction', pendingActions.shift()!);
+		for (let index = 0; index < pendingActions.length; ) {
+			const action = pendingActions[index];
+			const target = resolveNotificationClickWindow(
+				'sessionId' in action ? action.sessionId : undefined,
+				deps
+			);
+			if (!isWebContentsAvailable(target) || !readyRenderers.has(target.webContents)) {
+				index++;
+				continue;
+			}
+			pendingActions.splice(index, 1);
+			if (target.isMinimized()) target.restore();
+			target.show();
+			target.focus();
+			target.webContents.send('notification:clickAction', action);
 		}
 	};
-	// The renderer announces readiness only after installing its click listener.
-	// A reopened window must not receive a queued action during initial loading.
+	// Accept readiness only from a host window, after its listener is installed.
 	ipcMain.handle('notification:ready', (event) => {
-		const target = deps?.getMainWindow();
-		if (!target || !isWebContentsAvailable(target) || event.sender !== target.webContents) return;
+		const targets = [deps?.getMainWindow(), ...BrowserWindow.getAllWindows()];
+		const target = targets.find(
+			(window) => isWebContentsAvailable(window) && event.sender === window.webContents
+		);
+		if (!target) return;
 		if (!readyRenderers.has(event.sender)) {
 			readyRenderers.add(event.sender);
 			event.sender.once('did-start-loading', () => readyRenderers.delete(event.sender));
@@ -518,7 +526,10 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 						notification.on('click', () => {
 							pendingActions.push(action);
 							if (pendingActions.length > NOTIFICATION_MAX_QUEUE_SIZE) pendingActions.shift();
-							const target = deps.getMainWindow();
+							const target = resolveNotificationClickWindow(
+								'sessionId' in action ? action.sessionId : undefined,
+								deps
+							);
 							if (!target || target.isDestroyed()) deps.ensureMainWindow?.();
 							flushActions();
 							releaseNotification();

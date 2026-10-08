@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 import { spawn } from 'child_process';
 
 // Create hoisted mocks for more reliable mocking
@@ -151,6 +151,7 @@ describe('Notification IPC Handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
 		mockGetMainWindow.mockReturnValue(null);
 		resetNotificationState();
 		handlers = new Map();
@@ -315,6 +316,114 @@ describe('Notification IPC Handlers', () => {
 				expect(send).toHaveBeenCalledTimes(2);
 			}
 		);
+
+		it.each([true, false])(
+			'routes terminal clicks to the owning renderer (already ready: %s)',
+			async (alreadyReady) => {
+				const mainWindow = {
+					isDestroyed: () => false,
+					isMinimized: () => false,
+					show: vi.fn(),
+					focus: vi.fn(),
+					webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => false },
+				} as unknown as Electron.BrowserWindow;
+				const ownerWindow = {
+					isDestroyed: () => false,
+					isMinimized: () => false,
+					show: vi.fn(),
+					focus: vi.fn(),
+					webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => false },
+				} as unknown as Electron.BrowserWindow;
+				const registry = makeFakeRegistry({ 'agent-7': 'win-owner' }, { 'win-owner': ownerWindow });
+				registerNotificationsHandlers({
+					getMainWindow: () => mainWindow,
+					getWindowRegistry: () => registry,
+				});
+				vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mainWindow, ownerWindow]);
+				handlers.get('notification:ready')!({ sender: mainWindow.webContents });
+				if (alreadyReady) handlers.get('notification:ready')!({ sender: ownerWindow.webContents });
+				const action = { kind: 'open-terminal' as const, sessionId: 'agent-7', tabRef: 'input' };
+				await handlers.get('notification:show')!(
+					{},
+					'Input needed',
+					'Prompt',
+					'agent-7',
+					undefined,
+					action
+				);
+				mocks.mockNotificationOn.mock.calls.find((call: any[]) => call[0] === 'click')![1]();
+				if (!alreadyReady) {
+					expect(ownerWindow.webContents.send).not.toHaveBeenCalled();
+					handlers.get('notification:ready')!({ sender: {} });
+					expect(ownerWindow.webContents.send).not.toHaveBeenCalled();
+					handlers.get('notification:ready')!({ sender: ownerWindow.webContents });
+				}
+				expect(ownerWindow.webContents.send).toHaveBeenCalledExactlyOnceWith(
+					'notification:clickAction',
+					action
+				);
+				expect(ownerWindow.focus).toHaveBeenCalledOnce();
+				expect(mainWindow.focus).not.toHaveBeenCalled();
+				expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+			}
+		);
+
+		it('does not let an unready secondary window block a ready primary action', async () => {
+			const mainWindow = {
+				isDestroyed: () => false,
+				isMinimized: () => false,
+				show: vi.fn(),
+				focus: vi.fn(),
+				webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => false },
+			} as unknown as Electron.BrowserWindow;
+			const ownerWindow = {
+				isDestroyed: () => false,
+				isMinimized: () => false,
+				show: vi.fn(),
+				focus: vi.fn(),
+				webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => false },
+			} as unknown as Electron.BrowserWindow;
+			const registry = makeFakeRegistry({ 'agent-7': 'win-owner' }, { 'win-owner': ownerWindow });
+			registerNotificationsHandlers({
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mainWindow, ownerWindow]);
+			handlers.get('notification:ready')!({ sender: mainWindow.webContents });
+			const remoteAction = {
+				kind: 'open-terminal' as const,
+				sessionId: 'agent-7',
+				tabRef: 'input',
+			};
+			const mainAction = {
+				kind: 'open-terminal' as const,
+				sessionId: 'main-agent',
+				tabRef: 'other',
+			};
+			for (const action of [remoteAction, mainAction]) {
+				await handlers.get('notification:show')!(
+					{},
+					'Input needed',
+					'Prompt',
+					action.sessionId,
+					undefined,
+					action
+				);
+				mocks.mockNotificationOn.mock.calls
+					.filter((call: any[]) => call[0] === 'click')
+					.at(-1)![1]();
+			}
+			expect(mainWindow.webContents.send).toHaveBeenCalledExactlyOnceWith(
+				'notification:clickAction',
+				mainAction
+			);
+			expect(ownerWindow.webContents.send).not.toHaveBeenCalled();
+			handlers.get('notification:ready')!({ sender: ownerWindow.webContents });
+			expect(ownerWindow.webContents.send).toHaveBeenCalledExactlyOnceWith(
+				'notification:clickAction',
+				remoteAction
+			);
+		});
 
 		it('should register close handler to prevent GC on all notifications', async () => {
 			const handler = handlers.get('notification:show')!;
