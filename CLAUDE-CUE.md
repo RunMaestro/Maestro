@@ -246,6 +246,8 @@ Single SQLite database, WAL mode. Tables:
 
 `cue_event_queue` does NOT carry `pipelineName` - restored runs degrade to legacy labels.
 
+Outside the engine process (`maestro-cli cue engine status` / `inspect`), never call `initCueDb()`: it creates, migrates, chmods and sets WAL. Use `readCueDbStatusFigures()`, which opens its own `readonly` handle, reads and closes, and returns a reason instead of throwing when the file, its `-wal`/`-shm` sidecars or permission are missing.
+
 ## Process spawning
 
 - **`cue-spawn-builder.ts`** builds the spawn spec: applies agent capabilities (`buildAgentArgs`), agent-config overrides (`applyAgentConfigOverrides`), forces batch mode, threads `customEnvVars` and `customArgs`. SSH wrapping happens here via `wrapSpawnWithSsh`.

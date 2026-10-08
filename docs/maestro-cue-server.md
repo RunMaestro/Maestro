@@ -511,7 +511,7 @@ curl -s http://127.0.0.1:7433/readyz
 docker exec maestro-cue node -e "fetch('http://127.0.0.1:7433/status').then(r=>r.text()).then(console.log)"
 ```
 
-`maestro-cli cue engine status` and `maestro-cli cue engine inspect` report the engine's lock, heartbeat and recent runs from the data directory.
+`maestro-cli cue engine status` and `maestro-cli cue engine inspect` report the engine's lock, heartbeat and event count from the data directory. They open the database read-only and change nothing on disk, so they are safe to run next to a live engine, as another user too. If the database cannot be read, they still show the lock and say why the figures are missing.
 
 ### Logs
 

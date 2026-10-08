@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 
 // Store parameters passed to mock statement methods
 const runCalls: unknown[][] = [];
@@ -40,6 +41,8 @@ const mockStatement = {
 };
 
 const prepareCalls: string[] = [];
+const constructorCalls: unknown[][] = [];
+let constructorError: Error | null = null;
 
 const mockDb = {
 	pragma: vi.fn((query: string) => {
@@ -108,8 +111,9 @@ const mockDb = {
 
 vi.mock('better-sqlite3', () => ({
 	default: class MockDatabase {
-		constructor() {
-			/* noop */
+		constructor(...args: unknown[]) {
+			constructorCalls.push(args);
+			if (constructorError) throw constructorError;
 		}
 		pragma = mockDb.pragma;
 		prepare = mockDb.prepare;
@@ -138,6 +142,7 @@ import {
 	claimWebhookDelivery,
 	isWebhookDeliveryClaimed,
 	WEBHOOK_DELIVERY_RETENTION_MS,
+	readCueDbStatusFigures,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -146,6 +151,8 @@ beforeEach(() => {
 	getCalls.length = 0;
 	allCalls.length = 0;
 	prepareCalls.length = 0;
+	constructorCalls.length = 0;
+	constructorError = null;
 	mockGetReturn = undefined;
 	mockAllReturn = [];
 
@@ -219,6 +226,136 @@ describe('cue-db lifecycle', () => {
 		initCueDb(undefined, path.join(os.tmpdir(), 'test-cue.db'));
 		closeCueDb();
 		expect(mockDb.close).toHaveBeenCalled();
+	});
+});
+
+describe('readCueDbStatusFigures (read-only, for status beside a live engine)', () => {
+	let dir: string;
+	let dbPath: string;
+
+	/** A cue.db with the sidecars a live engine's open connection keeps. */
+	function liveDbFiles(): void {
+		fs.writeFileSync(dbPath, 'db');
+		fs.chmodSync(dbPath, 0o600);
+		fs.writeFileSync(`${dbPath}-wal`, '');
+		fs.writeFileSync(`${dbPath}-shm`, '');
+	}
+
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-db-ro-'));
+		dbPath = path.join(dir, 'cue.db');
+	});
+
+	afterEach(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('opens read-only with fileMustExist and reads the figures', () => {
+		liveDbFiles();
+		mockGetReturn = { last_seen: 1234, c: 1234 };
+
+		expect(readCueDbStatusFigures(dbPath)).toEqual({
+			ok: true,
+			lastHeartbeatMs: 1234,
+			totalEvents: 1234,
+		});
+		expect(constructorCalls).toEqual([[dbPath, { readonly: true, fileMustExist: true }]]);
+		expect(mockDb.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('runs no schema, migration or journal-mode statement', () => {
+		liveDbFiles();
+		readCueDbStatusFigures(dbPath);
+
+		expect(mockDb.pragma).not.toHaveBeenCalled();
+		expect(mockStatement.run).not.toHaveBeenCalled();
+		expect(prepareCalls.length).toBeGreaterThan(0);
+		for (const sql of prepareCalls) expect(sql.trim()).toMatch(/^SELECT\b/);
+	});
+
+	it('creates no file beside the database', () => {
+		liveDbFiles();
+		const before = fs.readdirSync(dir).sort();
+
+		readCueDbStatusFigures(dbPath);
+
+		expect(fs.readdirSync(dir).sort()).toEqual(before);
+	});
+
+	// POSIX modes are largely ignored on NTFS.
+	it.skipIf(process.platform === 'win32')('leaves the mode of cue.db unchanged', () => {
+		liveDbFiles();
+		fs.chmodSync(dbPath, 0o640);
+
+		readCueDbStatusFigures(dbPath);
+
+		expect(fs.statSync(dbPath).mode & 0o777).toBe(0o640);
+	});
+
+	it('never becomes the module singleton a writer would reuse', () => {
+		liveDbFiles();
+		readCueDbStatusFigures(dbPath);
+
+		expect(isCueDbReady()).toBe(false);
+		expect(() => getLastHeartbeat()).toThrow('Cue database not initialized');
+	});
+
+	it('reports a missing cue.db without creating it or its folder', () => {
+		const missing = path.join(dir, 'nested', 'cue.db');
+
+		const result = readCueDbStatusFigures(missing);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('does not exist');
+		expect(constructorCalls).toHaveLength(0);
+		expect(fs.existsSync(path.dirname(missing))).toBe(false);
+	});
+
+	it('does not open a WAL database whose sidecars are gone (the open would create them)', () => {
+		fs.writeFileSync(dbPath, 'db');
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('no process has the database open');
+		expect(constructorCalls).toHaveLength(0);
+		expect(fs.readdirSync(dir)).toEqual(['cue.db']);
+	});
+
+	it('reports an open failure as a reason', () => {
+		liveDbFiles();
+		constructorError = Object.assign(new Error('unable to open database file'), {
+			code: 'SQLITE_CANTOPEN',
+		});
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result).toEqual({
+			ok: false,
+			reason: `could not read ${dbPath}: unable to open database file`,
+		});
+	});
+
+	it('reports a failed query as a reason and still closes the handle', () => {
+		liveDbFiles();
+		mockStatement.get.mockImplementationOnce(() => {
+			throw new Error('database is locked');
+		});
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('database is locked');
+		expect(mockDb.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('rethrows SqliteUnavailableError so the CLI reports it as before', () => {
+		liveDbFiles();
+		const unavailable = new Error('cannot load better-sqlite3');
+		unavailable.name = 'SqliteUnavailableError';
+		constructorError = unavailable;
+
+		expect(() => readCueDbStatusFigures(dbPath)).toThrow(unavailable);
 	});
 });
 

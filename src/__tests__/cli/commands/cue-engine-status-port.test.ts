@@ -74,9 +74,7 @@ vi.mock('../../../main/cue/cue-engine-lock', () => ({
 }));
 
 vi.mock('../../../main/cue/cue-db', () => ({
-	initCueDb: vi.fn(),
-	getLastHeartbeat: vi.fn(() => null),
-	countCueEvents: vi.fn(() => 0),
+	readCueDbStatusFigures: vi.fn(() => ({ ok: true, lastHeartbeatMs: null, totalEvents: 0 })),
 }));
 
 import { createStandaloneCueEngine } from '../../../cli/services/cue-standalone-engine';

@@ -400,6 +400,78 @@ export function isCueDbReady(): boolean {
 }
 
 // ============================================================================
+// Read-only access (outside the engine process)
+// ============================================================================
+
+/** What `maestro-cli cue engine status` reads from `cue.db`. */
+export type CueDbStatusFigures =
+	| { ok: true; lastHeartbeatMs: number | null; totalEvents: number }
+	| { ok: false; reason: string };
+
+/**
+ * Read the status figures from `cue.db` without writing to it, for a process
+ * that is not the engine (an operator's `status` next to a live engine,
+ * possibly as another user).
+ *
+ * Unlike {@link initCueDb} this never creates the folder or the file, never
+ * chmods, never sets the journal mode and never runs schema statements, so it
+ * cannot change the database under the engine that owns it. The read-only
+ * handle is opened, read and closed here; it is never the module singleton,
+ * so a writer in the same process can never pick it up.
+ *
+ * `cue.db` is always WAL (initCueDb sets it). SQLite opens a WAL database
+ * read-only only when its `-wal` and `-shm` files exist, and otherwise creates
+ * them if the folder is writable (files a user running under sudo would then
+ * own) or fails with SQLITE_CANTOPEN. Both exist while any connection has the
+ * database open, so their absence means nothing is using it and there is no
+ * live figure to read: that is reported as a reason instead of opened.
+ *
+ * Expected failures (missing file, permissions, busy, an older schema without
+ * a table) come back as `{ ok: false, reason }`. `SqliteUnavailableError` from
+ * the CLI's lazy loader is rethrown so callers report it as they already do.
+ */
+export function readCueDbStatusFigures(dbPathOverride?: string): CueDbStatusFigures {
+	const dbPath = dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
+	if (!fs.existsSync(dbPath)) {
+		return { ok: false, reason: `${dbPath} does not exist` };
+	}
+	const missingSidecar = ['-wal', '-shm'].find((suffix) => !fs.existsSync(dbPath + suffix));
+	if (missingSidecar) {
+		return {
+			ok: false,
+			reason: `${dbPath}${missingSidecar} does not exist, so no process has the database open`,
+		};
+	}
+
+	let handle: Database.Database | null = null;
+	try {
+		handle = new Database(dbPath, { readonly: true, fileMustExist: true });
+		return {
+			ok: true,
+			lastHeartbeatMs: lastHeartbeatIn(handle),
+			totalEvents: countCueEventsIn(handle),
+		};
+	} catch (err) {
+		if (isSqliteUnavailable(err)) throw err;
+		return { ok: false, reason: `could not read ${dbPath}: ${errorText(err)}` };
+	} finally {
+		handle?.close();
+	}
+}
+
+function errorText(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * `SqliteUnavailableError` lives in the CLI (`cli/utils/native-sqlite.ts`);
+ * matched by name so this module does not import from the CLI.
+ */
+function isSqliteUnavailable(err: unknown): boolean {
+	return err instanceof Error && err.name === 'SqliteUnavailableError';
+}
+
+// ============================================================================
 // Internal accessor
 // ============================================================================
 
@@ -649,7 +721,13 @@ export function safeUpdateCueEventStatus(
  */
 export function countCueEvents(): number {
 	if (!db) return 0;
-	const row = db.prepare(`SELECT COUNT(*) AS c FROM cue_events`).get() as { c: number } | undefined;
+	return countCueEventsIn(db);
+}
+
+function countCueEventsIn(database: Database.Database): number {
+	const row = database.prepare(`SELECT COUNT(*) AS c FROM cue_events`).get() as
+		| { c: number }
+		| undefined;
 	return row?.c ?? 0;
 }
 
@@ -1098,7 +1176,11 @@ export function updateHeartbeat(): void {
  * Read the last-seen heartbeat timestamp, or null if none exists.
  */
 export function getLastHeartbeat(): number | null {
-	const row = getDb().prepare(`SELECT last_seen FROM cue_heartbeat WHERE id = 1`).get() as
+	return lastHeartbeatIn(getDb());
+}
+
+function lastHeartbeatIn(database: Database.Database): number | null {
+	const row = database.prepare(`SELECT last_seen FROM cue_heartbeat WHERE id = 1`).get() as
 		| { last_seen: number }
 		| undefined;
 	return row?.last_seen ?? null;

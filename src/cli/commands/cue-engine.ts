@@ -9,8 +9,8 @@
  * that engine can and cannot do relative to the desktop app's own instance.
  * `stop` / `status` / `inspect` talk to that runner ONLY through the
  * on-disk state it shares with the desktop app (the cross-process lock file,
- * `cue.db`), so `status`/`inspect` report what was last PERSISTED (lock info,
- * DB heartbeat, recent history rows). The runner's live in-memory figures
+ * `cue.db`, opened read-only), so `status`/`inspect` report what was last
+ * PERSISTED (lock info, DB heartbeat, event count). The runner's live in-memory figures
  * (active runs, queue depth, readiness) are served by its own loopback status
  * server when started with `--status-port` (`src/main/cue/cue-status-server.ts`);
  * `status` reports that port from the lock file.
@@ -531,7 +531,12 @@ interface CueEngineStatusPayload {
 	uptimeMs?: number;
 	lastHeartbeatMs?: number | null;
 	lastHeartbeatAgeMs?: number | null;
-	totalEvents?: number;
+	totalEvents?: number | null;
+	/**
+	 * Why `lastHeartbeatMs` and `totalEvents` are null: `cue.db` is missing,
+	 * unreadable, busy, or not open by any process. Absent when they were read.
+	 */
+	dbUnavailableReason?: string;
 	/** Loopback port of the runner's status server, when it runs one. */
 	statusPort?: number;
 }
@@ -540,13 +545,12 @@ async function buildStatusPayload(): Promise<CueEngineStatusPayload> {
 	const lock = readCueEngineLock();
 	if (!lock) return { running: false };
 
-	// Read-only DB access for the status figures below - initCueDb() no-ops
-	// if a db handle already exists in THIS process, and opening it here
-	// never conflicts with the runner's own handle (SQLite/WAL supports
-	// multiple readers).
-	const { initCueDb, getLastHeartbeat, countCueEvents } = await import('../../main/cue/cue-db');
-	initCueDb();
-	const lastHeartbeatMs = getLastHeartbeat();
+	// Never initCueDb() here: status runs beside a live engine, often as
+	// another user, and must not create, migrate, chmod or re-journal the
+	// database it shares. A figure that cannot be read is null with a reason.
+	const { readCueDbStatusFigures } = await import('../../main/cue/cue-db');
+	const figures = readCueDbStatusFigures();
+	const lastHeartbeatMs = figures.ok ? figures.lastHeartbeatMs : null;
 
 	return {
 		running: true,
@@ -556,7 +560,8 @@ async function buildStatusPayload(): Promise<CueEngineStatusPayload> {
 		uptimeMs: Date.now() - Date.parse(lock.startedAt),
 		lastHeartbeatMs,
 		lastHeartbeatAgeMs: lastHeartbeatMs != null ? Date.now() - lastHeartbeatMs : null,
-		totalEvents: countCueEvents(),
+		totalEvents: figures.ok ? figures.totalEvents : null,
+		...(figures.ok ? {} : { dbUnavailableReason: figures.reason }),
 		...(lock.statusPort !== undefined ? { statusPort: lock.statusPort } : {}),
 	};
 }
@@ -580,10 +585,14 @@ export async function cueEngineStatus(options: CueEngineStatusOptions = {}): Pro
 	const lines = [
 		`[Cue] Running: ${payload.mode} (pid ${payload.pid})`,
 		`  Started: ${payload.startedAt} (${humanizeDuration(payload.uptimeMs ?? 0)} ago)`,
-		payload.lastHeartbeatAgeMs != null
-			? `  Last heartbeat: ${humanizeDuration(payload.lastHeartbeatAgeMs)} ago`
-			: '  Last heartbeat: none yet',
-		`  Total events recorded: ${payload.totalEvents ?? 0}`,
+		...(payload.dbUnavailableReason !== undefined
+			? [`  Database figures unavailable: ${payload.dbUnavailableReason}`]
+			: [
+					payload.lastHeartbeatAgeMs != null
+						? `  Last heartbeat: ${humanizeDuration(payload.lastHeartbeatAgeMs)} ago`
+						: '  Last heartbeat: none yet',
+					`  Total events recorded: ${payload.totalEvents ?? 0}`,
+				]),
 		payload.statusPort !== undefined
 			? `  Status server: http://127.0.0.1:${payload.statusPort}/status`
 			: '  Status server: not running (start with --status-port)',

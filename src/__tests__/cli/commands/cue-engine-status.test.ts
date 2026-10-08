@@ -2,10 +2,12 @@
  * @file cue-engine-status.test.ts
  * @description `maestro-cli cue engine status` when the database cannot be opened.
  *
- * Status reads its heartbeat and event count from `cue.db`. Under a Node whose
- * ABI no better-sqlite3 copy fits, that open throws `SqliteUnavailableError`;
- * the command must print the error's instructions and exit 1, not crash with
- * a stack trace.
+ * Status reads its heartbeat and event count from `cue.db`, read-only (see
+ * `readCueDbStatusFigures`). Under a Node whose ABI no better-sqlite3 copy
+ * fits, that open throws `SqliteUnavailableError`; the command must print the
+ * error's instructions and exit 1, not crash with a stack trace. A database
+ * that is missing or unreadable leaves the figures null with a reason, and
+ * the lock is still reported.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -23,8 +25,7 @@ vi.mock('../../../main/cue/cue-engine-lock', () => ({
 
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: vi.fn(),
-	getLastHeartbeat: vi.fn(() => null),
-	countCueEvents: vi.fn(() => 0),
+	readCueDbStatusFigures: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/cue-standalone-engine', () => ({
@@ -40,7 +41,7 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 
 import { cueEngineStatus } from '../../../cli/commands/cue-engine';
-import { initCueDb } from '../../../main/cue/cue-db';
+import { initCueDb, readCueDbStatusFigures } from '../../../main/cue/cue-db';
 import { SqliteUnavailableError } from '../../../cli/utils/native-sqlite';
 
 const UNAVAILABLE = new SqliteUnavailableError(
@@ -59,6 +60,12 @@ beforeEach(() => {
 	savedUserData = process.env.MAESTRO_USER_DATA;
 	process.env.MAESTRO_USER_DATA = dataDir;
 	vi.mocked(initCueDb).mockReset();
+	vi.mocked(readCueDbStatusFigures).mockReset();
+	vi.mocked(readCueDbStatusFigures).mockReturnValue({
+		ok: true,
+		lastHeartbeatMs: null,
+		totalEvents: 0,
+	});
 	logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 	process.exitCode = undefined;
@@ -75,7 +82,7 @@ afterEach(() => {
 
 describe('cue engine status', () => {
 	it('prints the database fix and exits 1 when better-sqlite3 cannot load', async () => {
-		vi.mocked(initCueDb).mockImplementation(() => {
+		vi.mocked(readCueDbStatusFigures).mockImplementation(() => {
 			throw UNAVAILABLE;
 		});
 
@@ -87,7 +94,7 @@ describe('cue engine status', () => {
 	});
 
 	it('reports the same failure as JSON with --json', async () => {
-		vi.mocked(initCueDb).mockImplementation(() => {
+		vi.mocked(readCueDbStatusFigures).mockImplementation(() => {
 			throw UNAVAILABLE;
 		});
 
@@ -101,7 +108,7 @@ describe('cue engine status', () => {
 	});
 
 	it('does not swallow other failures', async () => {
-		vi.mocked(initCueDb).mockImplementation(() => {
+		vi.mocked(readCueDbStatusFigures).mockImplementation(() => {
 			throw new Error('disk full');
 		});
 
@@ -112,6 +119,53 @@ describe('cue engine status', () => {
 		await cueEngineStatus();
 
 		expect(String(logSpy.mock.calls[0][0])).toContain('[Cue] Running: standalone (pid 4242)');
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it('never opens the database through the writer path', async () => {
+		await cueEngineStatus({ json: true });
+
+		expect(initCueDb).not.toHaveBeenCalled();
+		expect(readCueDbStatusFigures).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports the lock and null figures with a reason when cue.db cannot be read', async () => {
+		vi.mocked(readCueDbStatusFigures).mockReturnValue({
+			ok: false,
+			reason: '/data/cue.db does not exist',
+		});
+
+		await cueEngineStatus({ json: true });
+
+		expect(logSpy).toHaveBeenCalledTimes(1);
+		const payload = JSON.parse(String(logSpy.mock.calls[0][0]));
+		expect(payload).toMatchObject({
+			running: true,
+			mode: 'standalone',
+			pid: 4242,
+			startedAt: '2026-09-25T00:00:00.000Z',
+			lastHeartbeatMs: null,
+			lastHeartbeatAgeMs: null,
+			totalEvents: null,
+			dbUnavailableReason: '/data/cue.db does not exist',
+		});
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it('says why the figures are missing in the text output', async () => {
+		vi.mocked(readCueDbStatusFigures).mockReturnValue({
+			ok: false,
+			reason: 'could not read /data/cue.db: unable to open database file',
+		});
+
+		await cueEngineStatus();
+
+		const text = String(logSpy.mock.calls[0][0]);
+		expect(text).toContain('[Cue] Running: standalone (pid 4242)');
+		expect(text).toContain(
+			'Database figures unavailable: could not read /data/cue.db: unable to open database file'
+		);
+		expect(text).not.toContain('Total events recorded');
 		expect(process.exitCode).toBeUndefined();
 	});
 });

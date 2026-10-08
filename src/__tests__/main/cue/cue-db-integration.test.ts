@@ -633,3 +633,42 @@ describe.skipIf(!canLoadBetterSqlite3())('Phase 15B - real SQLite smoke test', (
 		}
 	});
 });
+
+describe.skipIf(!canLoadBetterSqlite3())('real SQLite: status reads cue.db read-only', () => {
+	it('reads a live engine database without changing its schema, mode or files', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-ro-'));
+		const dbPath = path.join(dir, 'cue.db');
+		const { default: Database } = await import('better-sqlite3');
+		const cueDb = await import('../../../main/cue/cue-db');
+		const schemaOf = () => {
+			const probe = new Database(dbPath, { readonly: true, fileMustExist: true });
+			try {
+				return probe.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY name').all();
+			} finally {
+				probe.close();
+			}
+		};
+		try {
+			// The engine's handle stays open, as it is while an engine runs.
+			cueDb.initCueDb(undefined, dbPath);
+			cueDb.updateHeartbeat();
+			const schemaBefore = schemaOf();
+			const filesBefore = fs.readdirSync(dir).sort();
+			const modeBefore = fs.statSync(dbPath).mode;
+
+			const figures = cueDb.readCueDbStatusFigures(dbPath);
+
+			expect(figures.ok).toBe(true);
+			if (figures.ok) {
+				expect(figures.lastHeartbeatMs).toEqual(expect.any(Number));
+				expect(figures.totalEvents).toBe(0);
+			}
+			expect(schemaOf()).toEqual(schemaBefore);
+			expect(fs.readdirSync(dir).sort()).toEqual(filesBefore);
+			if (process.platform !== 'win32') expect(fs.statSync(dbPath).mode).toBe(modeBefore);
+		} finally {
+			cueDb.closeCueDb();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
