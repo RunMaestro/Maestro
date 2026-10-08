@@ -113,7 +113,7 @@ beforeEach(async () => {
 afterEach(async () => {
 	tools.cleanupPlugin('p');
 	tools.cleanupPlugin('other');
-	await fs.rm(root, { recursive: true, force: true });
+	await fs.rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
