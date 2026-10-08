@@ -207,6 +207,16 @@
 	text-transform: uppercase;
 }
 
+.dual-pane-modified-badge-button {
+	border: none;
+	cursor: pointer;
+	line-height: inherit;
+}
+
+.dual-pane-modified-badge-button:hover {
+	filter: brightness(1.15);
+}
+
 .dual-pane-success-message,
 .dual-pane-error-message {
 	padding: 8px 12px;

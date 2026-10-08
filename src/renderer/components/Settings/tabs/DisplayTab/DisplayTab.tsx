@@ -7,6 +7,7 @@ import {
 	DocumentGraphSection,
 	FileEditPreviewSection,
 	FileIndexingSection,
+	FileTreeLinesSection,
 	FontsSection,
 	FontZoomSection,
 	GroupChatSection,
@@ -115,6 +116,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				fileExplorerIconTheme={settings.fileExplorerIconTheme}
 				setFileExplorerIconTheme={settings.setFileExplorerIconTheme}
+			/>
+			<FileTreeLinesSection
+				theme={theme}
+				fileTreeBranchConnectors={settings.fileTreeBranchConnectors}
+				setFileTreeBranchConnectors={settings.setFileTreeBranchConnectors}
 			/>
 			<WindowChromeSection
 				theme={theme}

@@ -29,6 +29,9 @@ vi.mock('../../../main/web-server/WebServer', () => {
 		WebServer: class MockWebServer {
 			port: number;
 			securityToken: string | undefined;
+			options: { lanAccess?: boolean } | undefined;
+			// Origin policy: the factory points this at the tunnel's public URL.
+			setTrustedOriginsProvider = vi.fn();
 			setGetSessionsCallback = vi.fn();
 			setGetSessionDetailCallback = vi.fn();
 			setGetThemeCallback = vi.fn();
@@ -145,15 +148,23 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetMovementDesignerInspectionCallback = vi.fn();
 			setInteractMovementDesignerCallback = vi.fn();
 
-			constructor(port: number, securityToken?: string) {
+			constructor(port: number, securityToken?: string, options?: { lanAccess?: boolean }) {
 				this.port = port;
 				this.securityToken = securityToken;
+				this.options = options;
 			}
 		},
 	};
 });
 
 // Mock themes
+// Mock the tunnel manager: the factory reads its URL for the origin policy.
+vi.mock('../../../main/tunnel-manager', () => ({
+	tunnelManager: {
+		getStatus: vi.fn().mockReturnValue({ isRunning: false, url: null, error: null }),
+	},
+}));
+
 vi.mock('../../../main/themes', () => ({
 	getThemeById: vi.fn().mockReturnValue({ id: 'dracula', name: 'Dracula' }),
 }));
@@ -204,6 +215,7 @@ import {
 	type WebServerFactoryDependencies,
 } from '../../../main/web-server/web-server-factory';
 import { WebServer } from '../../../main/web-server/WebServer';
+import { tunnelManager } from '../../../main/tunnel-manager';
 import { buildWebSettingsSnapshot } from '../../../main/web-server/web-settings-snapshot';
 import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
@@ -318,6 +330,29 @@ describe('web-server/web-server-factory', () => {
 
 			expect(server).toBeDefined();
 			expect(server).toBeInstanceOf(WebServer);
+		});
+
+		it('should create a loopback-only server unless LAN access is asked for', () => {
+			const createWebServer = createWebServerFactory(deps);
+
+			expect((createWebServer() as any).options).toEqual({});
+			expect((createWebServer({ lanAccess: true }) as any).options).toEqual({ lanAccess: true });
+		});
+
+		it('should trust the running tunnel origin and nothing when no tunnel is up', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+
+			expect(server.setTrustedOriginsProvider).toHaveBeenCalledTimes(1);
+			const provider = server.setTrustedOriginsProvider.mock.calls[0][0];
+			expect(provider()).toEqual([]);
+
+			vi.mocked(tunnelManager.getStatus).mockReturnValueOnce({
+				isRunning: true,
+				url: 'https://abc-def.trycloudflare.com',
+				error: null,
+			});
+			expect(provider()).toEqual(['https://abc-def.trycloudflare.com']);
 		});
 
 		it('should register a bionify reading mode callback sourced from settings', () => {

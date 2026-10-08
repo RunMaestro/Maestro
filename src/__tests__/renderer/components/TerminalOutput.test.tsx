@@ -22,6 +22,7 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
+import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -1140,6 +1141,65 @@ describe('TerminalOutput', () => {
 				expect(active?.detail).toBe('Copy this text');
 				expect(active?.color).toBe('theme');
 			});
+		});
+	});
+
+	describe('quote selection into the composer (#1663)', () => {
+		const renderWithReply = (text: string) => {
+			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		};
+
+		const selectContents = (el: Element) => {
+			const range = document.createRange();
+			range.selectNodeContents(el);
+			const selection = window.getSelection()!;
+			selection.removeAllRanges();
+			selection.addRange(range);
+		};
+
+		beforeEach(() => {
+			useComposerInputStore.getState().loadAiDraft('tab-1', '', 'off');
+		});
+
+		afterEach(() => {
+			window.getSelection()?.removeAllRanges();
+		});
+
+		it('offers Quote in Message on a right-click over selected reply text and appends a quote', () => {
+			renderWithReply('Passage to quote');
+			const passage = screen.getByText('Passage to quote');
+			selectContents(passage);
+
+			fireEvent.contextMenu(passage, { clientX: 10, clientY: 10 });
+			fireEvent.click(screen.getByText('Quote in Message'));
+
+			expect(useComposerInputStore.getState().aiValue).toBe('> Passage to quote\n\n');
+			expect(screen.queryByText('Quote in Message')).not.toBeInTheDocument();
+		});
+
+		it('keeps text already in the composer and leaves command mode', () => {
+			useComposerInputStore.getState().loadAiDraft('tab-1', 'first comment', 'shell');
+			renderWithReply('Second passage');
+			const passage = screen.getByText('Second passage');
+			selectContents(passage);
+
+			fireEvent.contextMenu(passage);
+			fireEvent.click(screen.getByText('Quote in Message'));
+
+			const state = useComposerInputStore.getState();
+			expect(state.aiValue).toBe('first comment\n\n> Second passage\n\n');
+			expect(state.aiCommandMode).toBe('off');
+		});
+
+		it('shows no menu when nothing is selected', () => {
+			renderWithReply('Unselected passage');
+			fireEvent.contextMenu(screen.getByText('Unselected passage'));
+			expect(screen.queryByText('Quote in Message')).not.toBeInTheDocument();
 		});
 	});
 

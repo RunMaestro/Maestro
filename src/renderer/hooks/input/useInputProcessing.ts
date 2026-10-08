@@ -7,6 +7,7 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 	AITab,
+	ConsultHoldTarget,
 } from '../../types';
 import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -28,7 +29,13 @@ import {
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
-import { hasRunnableQueueItem, hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
+import {
+	dropConsultHold,
+	hasConsultHoldForTab,
+	hasRunnableQueueItem,
+	hasWorkAheadOfNewMessage,
+} from '../../utils/executionQueue';
+import { withConsultPendingNote } from '../../services/crossAgentConsultHold';
 import { probeSessionAiProcesses } from '../../services/process';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
 import { hasPendingRetry, noteDirectDispatch } from '../../stores/retryStore';
@@ -68,6 +75,27 @@ function getImageOnlyPrompt(): string {
  * Uses `let` so the binding updates after loadInputProcessingPrompts() populates the cache.
  */
 export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
+
+/**
+ * Composer submits still waiting on their process-ownership probe, keyed
+ * `${sessionId}:${tabId}`, holding what each one took out of the composer. The
+ * probe is a bridge round trip (135ms in the field, up to its deadline on a
+ * stalled socket), and a second Enter inside that window - key repeat,
+ * dictation's Enter plus a manual one, the send button - is the same submit
+ * again. It used to read the same draft, resume after the first had marked the
+ * tab busy, and queue a duplicate.
+ *
+ * Taking the draft before the probe already makes the repeat read an empty box.
+ * This catches what that cannot: a render that has not landed yet, so the
+ * repeat still holds the same `stagedImages` array. It matches on CONTENT, not
+ * just on the tab, because a message the user typed after the first was taken
+ * is new and must go through (it queues behind the first) - ignoring every
+ * Enter for the length of a stalled probe would swallow it.
+ *
+ * Module scope, not a ref: a ref belongs to one hook instance, and the guard
+ * has to hold for the tab.
+ */
+const composerSubmitsInFlight = new Map<string, Array<{ text: string; images: string[] }>>();
 
 /**
  * Dependencies for the useInputProcessing hook.
@@ -172,7 +200,7 @@ export interface UseInputProcessingDeps {
 		message: string,
 		sourceSession: Session,
 		sourceTabId: string
-	) => void;
+	) => ConsultHoldTarget[] | void;
 }
 
 /**
@@ -608,6 +636,63 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			const currentMode = activeSession.inputMode;
 
+			// A submit straight from the composer (Enter, the send button), as
+			// opposed to a replay, Force Send, or recovery that hands its own text
+			// in. Only these read the draft, so only these can read it twice.
+			const isComposerSubmit = overrideInputValue === undefined;
+			const inFlightKey = `${activeSession.id}:${targetTabId ?? ''}`;
+			const submitted = { text: effectiveInputValue, images: effectiveImages };
+			const isRepeatOfInFlight = (composerSubmitsInFlight.get(inFlightKey) ?? []).some(
+				(prior) =>
+					(!submitted.text.trim() || submitted.text === prior.text) &&
+					(submitted.images === prior.images ||
+						(submitted.images.length === 0 && prior.images.length === 0))
+			);
+			if (currentMode === 'ai' && isComposerSubmit && isRepeatOfInFlight) {
+				logger.info(
+					'[processInput] Ignoring a repeat composer submit while the first is in flight'
+				);
+				return;
+			}
+
+			// The AI path takes the draft out of the composer BEFORE its ownership
+			// probe rather than after, so a second Enter during the probe reads an
+			// empty box instead of the same text. `composerTaken` tells the exits
+			// past the probe the composer is already clear: clearing again there
+			// would wipe whatever the user typed while the probe was out. Nothing
+			// past the probe returns without sending or queuing the message (and
+			// the probe resolves on failure rather than rejecting), so the taken
+			// draft never needs putting back.
+			let composerTaken = false;
+			const clearComposer = () => {
+				setInputValue('');
+				if (!usingOverrideImages) setStagedImages([]);
+				syncAiInputToSession('', syncTarget);
+				if (inputRef.current) inputRef.current.style.height = 'auto';
+			};
+			const clearComposerUnlessTaken = () => {
+				if (!composerTaken) clearComposer();
+			};
+			// The probe is the only await between Enter and the queue/send decision,
+			// and everything after it is synchronous, so the in-flight window is
+			// exactly the probe.
+			const probeForSubmit = async (tabId: string | undefined) => {
+				if (!isComposerSubmit) return probeSessionAiProcesses(activeSession.id, tabId);
+				const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
+				composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
+				try {
+					clearComposer();
+					composerTaken = true;
+					return await probeSessionAiProcesses(activeSession.id, tabId);
+				} finally {
+					const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
+						(entry) => entry !== submitted
+					);
+					if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
+					else composerSubmitsInFlight.delete(inFlightKey);
+				}
+			};
+
 			// Handle wizard mode - route messages to wizard sendMessage instead of normal AI processing
 			// This allows the wizard to have its own conversation without affecting the regular AI queue
 			if (currentMode === 'ai' && isWizardActive && onWizardSendMessage) {
@@ -717,7 +802,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// store can still read idle for a moment after a turn starts, and a
 					// consult fired in that window is exactly the premature ping this
 					// whole path exists to prevent.
-					const mentionProbe = await probeSessionAiProcesses(activeSession.id, mentionSourceTabId);
+					const mentionProbe = await probeForSubmit(mentionSourceTabId);
 					const liveMentionSession =
 						useSessionStore.getState().sessions.find((s) => s.id === activeSession.id) ??
 						activeSession;
@@ -765,10 +850,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							};
 						});
 
-						setInputValue('');
-						if (!usingOverrideImages) setStagedImages([]);
-						syncAiInputToSession('', syncTarget);
-						if (inputRef.current) inputRef.current.style.height = 'auto';
+						clearComposerUnlessTaken();
 						if (mentionProbe.probeFailed) {
 							requestWebBridgeReconcile();
 						}
@@ -830,10 +912,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						});
 
 					// Clear the composer.
-					setInputValue('');
-					if (!usingOverrideImages) setStagedImages([]);
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					clearComposerUnlessTaken();
 					return;
 				}
 			}
@@ -852,7 +931,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// and spawning another turn with the same id would replace the live
 				// process and discard its eventual response. A failed probe holds the
 				// message until bridge recovery can answer authoritatively.
-				const processState = await probeSessionAiProcesses(activeSession.id, activeTab?.id);
+				const processState = await probeForSubmit(activeTab?.id);
 				if (processState.probeFailed) {
 					logger.warn(
 						'[processInput] Failed to reconcile active processes before queue decision; holding the message for bridge recovery'
@@ -947,9 +1026,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					liveTab?.id || liveSession.activeTabId
 				);
 
+				// This tab's previous turn consulted another agent and is waiting on
+				// the reply to finish. A new message sent now would land between that
+				// turn and its conclusion, so it queues behind the hold - forced
+				// parallel included, since the hold is this tab's own unfinished turn.
+				const consultHoldsTab = hasConsultHoldForTab(
+					liveSession.executionQueue,
+					liveTab?.id || liveSession.activeTabId
+				);
+
 				const shouldQueue =
 					connectionHold ||
 					retryHoldsTab ||
+					consultHoldsTab ||
 					processStateRequiresQueue ||
 					(!forceParallel && queuedWorkAhead) ||
 					(forceParallel
@@ -972,6 +1061,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					connectionHold,
 					queuedWorkAhead,
 					retryHoldsTab,
+					consultHoldsTab,
 					shouldQueue,
 					queueLength: liveSession.executionQueue.length,
 				});
@@ -1032,11 +1122,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						};
 					});
 
-					// Clear input
-					setInputValue('');
-					if (!usingOverrideImages) setStagedImages([]);
-					syncAiInputToSession('', syncTarget); // Sync empty value to session state
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					clearComposerUnlessTaken();
 					if (processState.probeFailed) {
 						requestWebBridgeReconcile();
 					}
@@ -1045,15 +1131,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			}
 
 			// This message dispatches now, so its consults fire now too - just before
-			// the source agent's own turn, matching the order the user sees.
-			if (crossAgentMentionPlan) {
-				onDispatchCrossAgentMentions?.(
-					crossAgentMentionPlan,
-					effectiveInputValue,
-					activeSession,
-					mentionSourceTabId
-				);
-			}
+			// the source agent's own turn, matching the order the user sees. The
+			// returned targets are what this turn's consult hold is waiting on.
+			const consultTargets =
+				(crossAgentMentionPlan &&
+					onDispatchCrossAgentMentions?.(
+						crossAgentMentionPlan,
+						effectiveInputValue,
+						activeSession,
+						mentionSourceTabId
+					)) ||
+				[];
 
 			// Check if we're in read-only mode for the log entry (tab setting OR Auto Run without worktree).
 			// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an explicit user
@@ -1308,18 +1396,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			});
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
-			setInputValue('');
-			if (!usingOverrideImages) setStagedImages([]);
+			// An AI send already took the draft before its probe; clearing here again
+			// would wipe whatever the user typed while that probe was out.
+			if (!composerTaken) {
+				setInputValue('');
+				if (!usingOverrideImages) setStagedImages([]);
 
-			// Sync empty value to session state (prevents stale input restoration on blur)
-			if (isAiMode) {
-				syncAiInputToSession('', syncTarget);
-			} else {
-				syncTerminalInputToSession('');
+				// Sync empty value to session state (prevents stale input restoration on blur)
+				if (isAiMode) {
+					syncAiInputToSession('', syncTarget);
+				} else {
+					syncTerminalInputToSession('');
+				}
+
+				// Reset height
+				if (inputRef.current) inputRef.current.style.height = 'auto';
 			}
-
-			// Reset height
-			if (inputRef.current) inputRef.current.style.height = 'auto';
 
 			// Write to the appropriate process based on inputMode
 			// Each session has TWO processes: AI agent and terminal
@@ -1457,6 +1549,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							);
 						}
 
+						// A mid-message @mention is being answered by the consulted agent
+						// in parallel: tell this turn so it works without finishing, and
+						// waits for the reply its consult hold will deliver.
+						effectivePrompt = withConsultPendingNote(effectivePrompt, consultTargets);
+
 						// Prepare Maestro system prompt. Always send it; the main-process handler
 						// decides how to deliver it based on agent capabilities:
 						//  - Native --append-system-prompt agents (e.g. Claude Code): re-send every
@@ -1524,6 +1621,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						updateSessionWith(resolvedSessionId, (s) => {
 							const errorTabId = targetTabId ?? s.activeTabId;
 							const errorTab = s.aiTabs?.find((tab) => tab.id === errorTabId);
+							// This turn never started, so the consult hold it placed has no
+							// answer to finish. Left in place it would later run a
+							// continuation for a message the agent never received.
+							const executionQueue = dropConsultHold(s.executionQueue, errorTabId);
 							// A collision means the tab is BUSY with somebody else's turn.
 							// Clearing its state told every busy-based rule in the app that
 							// the agent was free while a live process kept streaming into
@@ -1533,7 +1634,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// it and writes the error the user can act on.
 							if (isSpawnCollision) {
 								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s);
-								return { ...s, executionQueue: [...s.executionQueue, requeued] };
+								return { ...s, executionQueue: [...executionQueue, requeued] };
 							}
 							// Reset target tab's state to 'idle' and add error log
 							const updatedAiTabs =
@@ -1555,6 +1656,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								busySource: undefined,
 								thinkingStartTime: undefined,
 								aiTabs: updatedAiTabs,
+								executionQueue,
 							};
 						});
 					}

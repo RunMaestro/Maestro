@@ -177,6 +177,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: null,
 		category: 'appearance',
 	},
+	feedbackAccountKey: {
+		description:
+			'Provider account (profile key) that last carried a Send Feedback conversation. The next conversation tries it first. Null until one succeeds. Set by hand with `maestro-cli feedback accounts --use <key>`.',
+		type: 'string',
+		default: null,
+		category: 'internal',
+	},
 	mediaPlaybackRate: {
 		description:
 			'Playback speed for audio and video files opened in the file preview. Persists across files and restarts. Range 0.25 to 4.',
@@ -357,6 +364,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or flat.',
 		type: 'string',
 		default: 'rich',
+		category: 'appearance',
+	},
+	fileTreeBranchConnectors: {
+		description:
+			"Draw elbow connectors from a folder's guide line into each of its children in the Files pane, and stop the guide at the folder's last child. Off by default, which draws plain full-height indent guides.",
+		type: 'boolean',
+		default: false,
 		category: 'appearance',
 	},
 	toastWidth: {

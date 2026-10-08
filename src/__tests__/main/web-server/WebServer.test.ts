@@ -10,6 +10,19 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 }));
 
+// The LAN address probe touches the real network; pin it. The address watcher
+// still needs the module's other exports.
+vi.mock('../../../main/utils/networkUtils', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/utils/networkUtils')>()),
+	getLocalIpAddress: vi.fn().mockResolvedValue('192.168.1.50'),
+}));
+
+// start() installs the IPC-bridge fanout, which needs Electron.
+vi.mock('../../../main/web-server/handlers/bridgeHandlers', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/web-server/handlers/bridgeHandlers')>()),
+	installWebContentsBridgeHook: vi.fn(),
+}));
+
 describe('WebServer PWA asset resolution', () => {
 	let tempRoot: string;
 
@@ -164,5 +177,108 @@ describe('WebServer Web Login revocation', () => {
 
 		vi.doUnmock('../../../main/web-server/auth/web-user-store');
 		vi.resetModules();
+	});
+});
+
+describe('WebServer network exposure', () => {
+	// start() with the route and store wiring stubbed out, so only the bind
+	// decision is under test.
+	async function startStubbed(server: WebServer) {
+		const internals = server as any;
+		internals.setupMiddleware = vi.fn();
+		internals.setupRoutes = vi.fn();
+		internals.setupMessageHandlerCallbacks = vi.fn();
+		internals.watchWebUserStore = vi.fn();
+		internals.startAddressWatcher = vi.fn();
+		const listen = vi.spyOn(server.getServer(), 'listen').mockResolvedValue('' as never);
+		const result = await server.start();
+		return { listen, result, internals };
+	}
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('listens on loopback only and advertises 127.0.0.1 by default', async () => {
+		const server = new WebServer(0);
+		const { listen, result, internals } = await startStubbed(server);
+
+		expect(server.isLanAccessible()).toBe(false);
+		expect(listen).toHaveBeenCalledWith({ port: 0, host: '127.0.0.1' });
+		expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:/);
+		expect(internals.startAddressWatcher).not.toHaveBeenCalled();
+	});
+
+	it('listens on every interface and advertises the LAN address when asked for LAN access', async () => {
+		const server = new WebServer(0, undefined, { lanAccess: true });
+		const { listen, result, internals } = await startStubbed(server);
+
+		expect(server.isLanAccessible()).toBe(true);
+		expect(listen).toHaveBeenCalledWith({ port: 0, host: '0.0.0.0' });
+		expect(result.url).toMatch(/^http:\/\/192\.168\.1\.50:/);
+		expect(internals.startAddressWatcher).toHaveBeenCalled();
+	});
+});
+
+describe('WebServer origin policy', () => {
+	let server: WebServer;
+
+	beforeEach(async () => {
+		server = new WebServer(0);
+		await (server as any).setupMiddleware();
+		server.getServer().get('/probe', async () => 'ok');
+		server.getServer().post('/probe', async () => 'ok');
+	});
+
+	afterEach(async () => {
+		await server.getServer().close();
+	});
+
+	function request(method: 'GET' | 'POST', headers: Record<string, string>) {
+		return server.getServer().inject({
+			method,
+			url: '/probe',
+			headers,
+			...(method === 'POST' ? { payload: '{"command":"echo pwned"}' } : {}),
+		});
+	}
+
+	it('serves requests with no Origin header (maestro-cli, same-origin GETs)', async () => {
+		const res = await request('GET', { host: '127.0.0.1:1234' });
+		expect(res.statusCode).toBe(200);
+	});
+
+	it('serves requests whose Origin is the host they were sent to', async () => {
+		const res = await request('GET', { host: '127.0.0.1:1234', origin: 'http://127.0.0.1:1234' });
+		expect(res.statusCode).toBe(200);
+	});
+
+	it('refuses a foreign Origin and sends no CORS grant', async () => {
+		const res = await request('GET', { host: '127.0.0.1:1234', origin: 'https://evil.example' });
+		expect(res.statusCode).toBe(403);
+		expect(res.headers['access-control-allow-origin']).toBeUndefined();
+	});
+
+	it('refuses the opaque "null" Origin a sandboxed iframe sends', async () => {
+		const res = await request('GET', { host: '127.0.0.1:1234', origin: 'null' });
+		expect(res.statusCode).toBe(403);
+	});
+
+	it('refuses a cross-origin POST outright instead of only hiding the response', async () => {
+		const res = await request('POST', {
+			host: '127.0.0.1:1234',
+			origin: 'https://evil.example',
+			'content-type': 'text/plain',
+		});
+		expect(res.statusCode).toBe(403);
+	});
+
+	it('serves the trusted tunnel origin even when the Host header differs', async () => {
+		server.setTrustedOriginsProvider(() => ['https://abc-def.trycloudflare.com']);
+		const res = await request('GET', {
+			host: '127.0.0.1:1234',
+			origin: 'https://abc-def.trycloudflare.com',
+		});
+		expect(res.statusCode).toBe(200);
 	});
 });

@@ -14,8 +14,8 @@
  *                                              [--main-agent <id>] [--rc-agent <id>] [--site-agent <id>]
  *   node scripts/release.mjs draft     --tag <tag> [--show] [--create] [--title <t>] [--notes-file <f>]
  *   node scripts/release.mjs tag       --branch main|rc [--sha <sha>] [--wait-min <n>]
- *   node scripts/release.mjs watch     --tag <tag> [--max-min <n>]
- *   node scripts/release.mjs verify    --tag <tag> [--repair]
+ *   node scripts/release.mjs watch     --tag <tag> [--max-min <n>] [--notes-file <approved>]
+ *   node scripts/release.mjs verify    --tag <tag> [--repair] [--notes-file <approved>]
  *   node scripts/release.mjs bump      --branch main|rc [--dry-run]
  *
  * Exit codes:
@@ -100,6 +100,13 @@ function run(cmd, args, { input, env } = {}) {
 }
 
 const git = (...args) => run('git', args);
+/** A file's exact contents at `rev`. `git()` trims, which drops the trailing newline. */
+const gitFileAt = (rev, file) =>
+	execFileSync('git', ['show', `${rev}:${file}`], {
+		cwd: ROOT,
+		encoding: 'utf-8',
+		maxBuffer: 64 * 1024 * 1024,
+	});
 const gh = (...args) => run('gh', args);
 const ghJson = (...args) => JSON.parse(gh(...args) || 'null');
 /** `gh api --paginate --jq '.[]'` style output: one JSON value per line. */
@@ -608,6 +615,10 @@ function draftCommand(opts) {
 	}
 	if (Object.keys(patch).length === 0)
 		misuse('Nothing to change: pass --title and/or --notes-file, or --show');
+	// A draft's tag does not exist yet, and GitHub resets tag_name to an
+	// `untagged-...` placeholder on any edit that leaves it out. The release run
+	// then cannot find the draft, so the tag always rides along.
+	patch.tag_name = tag;
 	target = ghApiWithBody('PATCH', `repos/${REPO}/releases/${target.id}`, patch);
 	console.log(`Updated draft ${target.id} for ${tag}: ${target.html_url}`);
 }
@@ -730,10 +741,10 @@ async function watchCommand(opts) {
 	if (kept.status !== 'completed') pending(`Release run still going: ${kept.url}\n${jobLines}`);
 	console.log(`Release run ${kept.conclusion}: ${kept.url}\n${jobLines}`);
 	if (kept.conclusion !== 'success') {
-		verifyCommand({ tag, quietFailure: true });
+		verifyCommand({ tag, notesFile: opts.notesFile, quietFailure: true });
 		fail(`Release run for ${tag} concluded ${kept.conclusion}`);
 	}
-	verifyCommand({ tag });
+	verifyCommand({ tag, notesFile: opts.notesFile });
 }
 
 // ---------------------------------------------------------------------------
@@ -838,6 +849,16 @@ function verifyCommand(opts) {
 			);
 		}
 		check(body.trim().length > 200, 'curated notes present');
+		if (typeof opts.notesFile === 'string') {
+			// The approved notes, compared exactly. Anything that edits a tagged draft
+			// (a scheduled digest job did, for v0.17.6) would otherwise ship bullets
+			// for code the build does not contain.
+			const normalize = (text) => text.replace(/\r\n/g, '\n').trim();
+			check(
+				normalize(body) === normalize(fs.readFileSync(opts.notesFile, 'utf-8')),
+				`notes match ${path.basename(opts.notesFile)}`
+			);
+		}
 	}
 
 	const tagCommit = remoteTagCommit(tag);
@@ -895,11 +916,11 @@ function bumpCommand(opts) {
 	if (branch === 'main' && /-rc/i.test(next)) misuse('main must never carry an -RC version');
 
 	const files = {
-		'package.json': replaceVersion(git('show', `${base}:package.json`), current, next, 1),
+		'package.json': replaceVersion(gitFileAt(base, 'package.json'), current, next, 1),
 	};
 	// Match past practice: main bumps also move the lockfile's two root fields;
 	// rc bumps have left the lockfile alone, so only follow it when it agrees.
-	const lockText = git('show', `${base}:package-lock.json`);
+	const lockText = gitFileAt(base, 'package-lock.json');
 	const lock = JSON.parse(lockText);
 	if (lock.version === current && lock.packages?.['']?.version === current) {
 		const bumped = replaceVersion(lockText, current, next, 2);

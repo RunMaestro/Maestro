@@ -275,6 +275,9 @@ export const MODAL_PRIORITIES = {
 	/** Feedback modal */
 	FEEDBACK: 595,
 
+	/** GitHub CLI login opened from Send Feedback. Above the Feedback modal. */
+	GH_LOGIN: 597,
+
 	/** Process monitor modal */
 	PROCESS_MONITOR: 550,
 

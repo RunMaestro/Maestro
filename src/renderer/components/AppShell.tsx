@@ -7,7 +7,7 @@
  */
 
 import React, { useEffect, type ComponentProps, type ReactNode } from 'react';
-import { isWebDesktop } from '../utils/runtimeContext';
+import { shouldShowAppTitleStrip } from '../utils/appTitleStrip';
 import { SessionList } from './SessionList';
 import { RightPanel, type RightPanelHandle } from './RightPanel';
 import { MainPanel, type MainPanelHandle } from './MainPanel';
@@ -135,8 +135,11 @@ export function AppShell({
 		useMovementStore.getState().clearItems();
 	}, [concertoEnabled]);
 
-	const showTitleBar =
-		!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop();
+	const showTitleBar = shouldShowAppTitleStrip({
+		isMobileLandscape,
+		useNativeTitleBar,
+		isMdDownViewport,
+	});
 
 	return (
 		<div

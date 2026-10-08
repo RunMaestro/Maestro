@@ -249,6 +249,11 @@ export function shouldRunSynopsisOnExit(
 	// Paused items won't auto-run, so a queue with only held items still counts
 	// as "done" for synopsis purposes.
 	if (hasRunnableQueueItem(session.executionQueue)) return false;
+	// A consult hold is NOT paused work: its continuation is coming as soon as
+	// the consulted agent replies, and it resumes this same provider session. A
+	// synopsis started now would be a second writer on that session when it
+	// lands. The synopsis runs after the continuation's turn instead.
+	if (session.executionQueue.some((item) => item.awaitingConsult)) return false;
 	const hasAgentSessionId = !!(completedTab?.agentSessionId || session.agentSessionId);
 	if (!hasAgentSessionId) return false;
 	const optedIn = !!(completedTab?.saveToHistory || session.pendingAICommandForSynopsis);

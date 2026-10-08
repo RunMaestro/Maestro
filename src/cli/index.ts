@@ -113,7 +113,9 @@ import {
 } from './commands/movement';
 import { supportPackage } from './commands/support-package';
 import {
+	feedbackAccounts,
 	feedbackAuth,
+	feedbackLogin,
 	feedbackSearch,
 	feedbackSubmit,
 	feedbackSubscribe,
@@ -181,6 +183,7 @@ import {
 	campaignShow,
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
+import { logger } from '../main/utils/logger';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -188,6 +191,11 @@ import { mcpServe } from './commands/mcp';
 declare const __MAESTRO_CLI_VERSION__: string;
 const cliVersion: string =
 	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
+
+// stdout carries command output (often JSON that scripts parse), so the
+// main-process logger shared with modules like the WakaTime manager must keep
+// its diagnostics on stderr. See #1698.
+logger.routeConsoleToStderr();
 
 const program = new Command();
 
@@ -2277,9 +2285,33 @@ const feedback = program
 
 feedback
 	.command('auth')
-	.description('Check that the GitHub CLI (gh) is installed and logged in (required to file)')
+	.description(
+		'Check that the GitHub CLI (gh) is installed, logged in, and allowed to file on the feedback repo (required to file); names the gh account, and prints the login command when signing in can fix it'
+	)
+	.option('--fresh', 'Skip the cached verdict (after logging in elsewhere)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackAuth);
+
+feedback
+	.command('login')
+	.description(
+		'Sign the GitHub CLI in for feedback (gh auth login, device code + browser), as the modal\'s "Log in to GitHub" does'
+	)
+	.option('--json', 'Output the result as JSON (for scripting)')
+	.action(feedbackLogin);
+
+feedback
+	.command('accounts')
+	.description(
+		'List the provider accounts the Feedback chat can run as, in the order it tries them (first usable one wins)'
+	)
+	.option(
+		'--use <key>',
+		'Make this account (a key from the list) the one the next chat tries first'
+	)
+	.option('--clear', 'Forget the remembered account and pick automatically again')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackAccounts);
 
 feedback
 	.command('search <query>')

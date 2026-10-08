@@ -47,15 +47,61 @@ export const MAX_FEEDBACK_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_FEEDBACK_SUMMARY_LENGTH = 120;
 export const MAX_FEEDBACK_FIELD_LENGTH = 5000;
 
+/**
+ * Arguments for signing the GitHub CLI in. The device-code web flow needs no
+ * typed password or token, so it works the same from the embedded terminal,
+ * a plain terminal, or an agent's non-interactive shell; the host and protocol
+ * flags skip the two questions gh would otherwise ask first.
+ */
+export const GH_LOGIN_ARGS: readonly string[] = [
+	'auth',
+	'login',
+	'--hostname',
+	'github.com',
+	'--git-protocol',
+	'https',
+	'--web',
+];
+
+/** The gh login to run, with the gh binary Feedback actually uses. */
+export interface FeedbackGhLoginCommand {
+	command: string;
+	args: string[];
+	/** The same thing as one posix command line, for messages. */
+	display: string;
+}
+
 export interface FeedbackAuthResponse {
 	authenticated: boolean;
 	message?: string;
+	/**
+	 * Why feedback cannot be filed. Absent when `authenticated`.
+	 * `no-repo-access`: gh is signed in, but GitHub refused this account an issue
+	 * on the feedback repo (an org's OAuth restriction, a missing scope, a token
+	 * the API rejects), so the check fails up front instead of at submit.
+	 */
+	reason?: 'not-installed' | 'not-authenticated' | 'no-repo-access';
+	/**
+	 * Whether signing gh in again can fix it. Always true for
+	 * `not-authenticated`; for `no-repo-access` only when the refusal is one a
+	 * fresh login addresses.
+	 */
+	needsGhLogin?: boolean;
+	/** How to sign gh in. Present whenever `needsGhLogin` is. */
+	login?: FeedbackGhLoginCommand;
+	/** The GitHub account gh acts as, when gh names one. Shown as a pill. */
+	account?: { host: string; login: string };
 }
 
 export interface FeedbackSubmitResponse {
 	success: boolean;
 	error?: string;
 	issueUrl?: string;
+	/**
+	 * gh refused the request in a way signing in again can fix (expired or
+	 * revoked token, org OAuth restriction, missing scope).
+	 */
+	needsGhLogin?: boolean;
 }
 
 export interface FeedbackAttachmentPayload {

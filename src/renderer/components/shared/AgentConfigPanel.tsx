@@ -388,13 +388,6 @@ export interface AgentConfigPanelProps {
 	onMaestroPPathBlur?: () => void;
 	/** Auto-detected maestro-p path shown as helper text when `maestroPPath` is empty. */
 	detectedMaestroPPath?: string;
-	/** Last resolved Claude headless-mode state for this session. When provided and Adaptive Mode is on,
-	 *  the panel renders a small pill next to the toggle so the user can see whether the spawner is
-	 *  currently on Time Limits (Max plan) or has fallen back to API Limits. */
-	claudeInteractive?: {
-		mode: 'interactive' | 'api';
-		modeReason: 'auto' | 'limit';
-	};
 	// === Codex usage resets (codex agent only) ===
 	/**
 	 * Spend a rate-limit reset credit automatically when this agent hits a
@@ -449,7 +442,6 @@ export function AgentConfigPanel({
 	onMaestroPPathChange,
 	onMaestroPPathBlur,
 	detectedMaestroPPath,
-	claudeInteractive,
 	codexAutoResetOnExhaustion = false,
 	onCodexAutoResetChange,
 }: AgentConfigPanelProps): JSX.Element {
@@ -733,25 +725,6 @@ export function AgentConfigPanel({
 								<RefreshCw className={`w-3 h-3 ${remoteMaestroPProbing ? 'animate-spin' : ''}`} />
 								Re-check
 							</button>
-						)}
-						{showMaestroPDetails && claudeInteractive && (
-							<span
-								className="text-2xs font-mono px-1.5 py-0.5 rounded whitespace-nowrap"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									color:
-										claudeInteractive.mode === 'interactive'
-											? theme.colors.accent
-											: (theme.colors.warning ?? theme.colors.accent),
-								}}
-								title={
-									claudeInteractive.modeReason === 'limit'
-										? 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.'
-										: 'Selected automatically based on current usage.'
-								}
-							>
-								{claudeInteractive.mode === 'interactive' ? 'Time Limits' : 'API Limits'}
-							</span>
 						)}
 					</div>
 					<ToggleButtonGroup

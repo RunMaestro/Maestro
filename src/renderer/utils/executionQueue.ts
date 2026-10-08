@@ -7,7 +7,9 @@
  * dequeue, interrupt/kill re-dispatch, batch progression, and the manual
  * "process next" action all run the first *non-paused* item instead of blindly
  * taking index 0. A connection hold is an ordering barrier: later items cannot
- * overtake a prompt whose delivery state is still unknown.
+ * overtake a prompt whose delivery state is still unknown. A consult hold
+ * (`awaitingConsult`) is the same barrier scoped to one tab: that tab's turn is
+ * not finished until the agents it consulted have replied.
  */
 
 import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
@@ -59,9 +61,59 @@ export function applyQueuedItemEdit(
 	);
 }
 
-/** A queued item is runnable when neither the user nor the bridge holds it. */
+/**
+ * A queued item is runnable when neither the user, the bridge, nor a pending
+ * cross-agent consult holds it.
+ */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
-	return !item.paused && !item.waitingForConnection;
+	return !item.paused && !item.waitingForConnection && !item.awaitingConsult;
+}
+
+/**
+ * Whether a consult hold is still waiting on `tabId`'s behalf. A held turn has
+ * not finished yet, so anything new for that tab - a typed message included -
+ * must queue behind it rather than run ahead of the reply.
+ */
+export function hasConsultHoldForTab(queue: QueuedItem[], tabId: string | undefined): boolean {
+	if (!tabId) return false;
+	return queue.some((item) => !!item.awaitingConsult && item.tabId === tabId);
+}
+
+/**
+ * Remove `tabId`'s consult hold, for a turn that never started (its spawn
+ * failed or collided). With no answer underway there is nothing to finish, and
+ * a hold left behind would later deliver a continuation for a message the agent
+ * never received. Returns the queue unchanged (same reference) when there is
+ * no hold to drop.
+ */
+export function dropConsultHold(queue: QueuedItem[], tabId: string | undefined): QueuedItem[] {
+	if (!tabId || !queue.some((item) => item.awaitingConsult && item.tabId === tabId)) return queue;
+	return queue.filter((item) => !(item.awaitingConsult && item.tabId === tabId));
+}
+
+/**
+ * Walk the queue in order and return the index of the first item that would
+ * actually run, or -1. The ONE place the dispatch order is decided:
+ *
+ * - a connection hold is a barrier for the whole queue (delivery state unknown);
+ * - a consult hold is a barrier for ITS TAB only: that tab's turn is not done
+ *   until the reply lands, while other tabs carry on;
+ * - a paused item is simply skipped.
+ */
+function firstRunnableQueueIndex(queue: QueuedItem[]): number {
+	const consultBlockedTabs = new Set<string>();
+	for (let index = 0; index < queue.length; index += 1) {
+		const item = queue[index];
+		if (item.waitingForConnection) return -1;
+		if (item.awaitingConsult) {
+			consultBlockedTabs.add(item.tabId);
+			continue;
+		}
+		if (consultBlockedTabs.has(item.tabId)) continue;
+		if (item.paused) continue;
+		return index;
+	}
+	return -1;
 }
 
 /** Release bridge holds after main process ownership is known. */
@@ -72,11 +124,8 @@ export function releaseConnectionHeldQueueItems(queue: QueuedItem[]): QueuedItem
 
 /** The first item that would actually run, or undefined if all are held/empty. */
 export function nextRunnableQueueItem(queue: QueuedItem[]): QueuedItem | undefined {
-	for (const item of queue) {
-		if (item.waitingForConnection) return undefined;
-		if (!item.paused) return item;
-	}
-	return undefined;
+	const index = firstRunnableQueueIndex(queue);
+	return index >= 0 ? queue[index] : undefined;
 }
 
 /** Whether the queue has at least one item that would run (not all held). */
@@ -94,16 +143,12 @@ export function takeNextRunnableQueueItem(queue: QueuedItem[]): {
 	item: QueuedItem | null;
 	remaining: QueuedItem[];
 } {
-	for (let index = 0; index < queue.length; index += 1) {
-		const candidate = queue[index];
-		if (candidate.waitingForConnection) return { item: null, remaining: queue };
-		if (candidate.paused) continue;
-		return {
-			item: candidate,
-			remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
-		};
-	}
-	return { item: null, remaining: queue };
+	const index = firstRunnableQueueIndex(queue);
+	if (index < 0) return { item: null, remaining: queue };
+	return {
+		item: queue[index],
+		remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
+	};
 }
 
 /**
@@ -128,7 +173,7 @@ export function hasWorkAheadOfNewMessage(
 	if (opts.autoRunActive) return true;
 	if (getBusyTabs(session, { includeOrphans: true }).length > 0) return true;
 	return (session.executionQueue ?? []).some(
-		(item) => item.waitingForConnection || isRunnableQueueItem(item)
+		(item) => item.waitingForConnection || !!item.awaitingConsult || isRunnableQueueItem(item)
 	);
 }
 
@@ -216,7 +261,12 @@ export function applyQueuedItemDispatchFailure(
 	const aiTabs = released.aiTabs.map(stripCard);
 	const orphans = released.orphanedThinkingTabs?.map(stripCard);
 
-	const queue = released.executionQueue ?? [];
+	// A message that @mentions another agent placed a consult hold when it
+	// dispatched. Its turn never started, so that hold has nothing to finish -
+	// and the restored item places a fresh one when it dispatches again.
+	const queue = item.crossAgentMention
+		? dropConsultHold(released.executionQueue ?? [], item.tabId)
+		: (released.executionQueue ?? []);
 	const restored: QueuedItem = opts.hold ? { ...item, paused: true } : item;
 	const executionQueue = queue.some((i) => i.id === item.id)
 		? queue.map((i) => (i.id === item.id ? restored : i))
@@ -351,7 +401,11 @@ export function getQueueBusyContext(
 }
 
 /** Why a queued item cannot be force sent right now. */
-export type ForceSendBlockedReason = 'no-target-tab' | 'target-tab-busy' | 'needs-forced-parallel';
+export type ForceSendBlockedReason =
+	| 'no-target-tab'
+	| 'target-tab-busy'
+	| 'needs-forced-parallel'
+	| 'awaiting-consult';
 
 export interface ForceSendEligibility extends QueueBusyContext {
 	/** Sending now means running alongside another tab's in-flight turn. */
@@ -371,18 +425,22 @@ export interface ForceSendEligibility extends QueueBusyContext {
  */
 export function getForceSendEligibility(
 	session: Session,
-	item: Pick<QueuedItem, 'tabId'>,
+	item: Pick<QueuedItem, 'tabId' | 'awaitingConsult'>,
 	opts: { forcedParallelEnabled: boolean }
 ): ForceSendEligibility {
 	const busy = getQueueBusyContext(session, item);
 	const requiresParallel = busy.otherBusyTabs.length > 0;
-	const blockedReason: ForceSendBlockedReason | undefined = !resolveQueuedItemTarget(session, item)
-		? 'no-target-tab'
-		: busy.targetTabBusy
-			? 'target-tab-busy'
-			: requiresParallel && !opts.forcedParallelEnabled
-				? 'needs-forced-parallel'
-				: undefined;
+	// A consult hold has nothing to send yet: its text is the reply, which has not
+	// arrived. Forcing it would hand the agent an empty continuation.
+	const blockedReason: ForceSendBlockedReason | undefined = item.awaitingConsult
+		? 'awaiting-consult'
+		: !resolveQueuedItemTarget(session, item)
+			? 'no-target-tab'
+			: busy.targetTabBusy
+				? 'target-tab-busy'
+				: requiresParallel && !opts.forcedParallelEnabled
+					? 'needs-forced-parallel'
+					: undefined;
 	return { ...busy, requiresParallel, canForce: !blockedReason, blockedReason };
 }
 
@@ -406,7 +464,9 @@ export function shouldOfferForceSend(
 ): boolean {
 	if (!eligibility) return false;
 	return (
-		eligibility.blockedReason !== 'no-target-tab' && eligibility.blockedReason !== 'target-tab-busy'
+		eligibility.blockedReason !== 'no-target-tab' &&
+		eligibility.blockedReason !== 'target-tab-busy' &&
+		eligibility.blockedReason !== 'awaiting-consult'
 	);
 }
 
@@ -428,6 +488,8 @@ export function getForceSendTitle(eligibility: ForceSendEligibility): string {
 			return 'Another tab in this agent is working. Forced Parallel Execution is off - click to turn it on in Settings.';
 		case 'no-target-tab':
 			return 'This message has no tab left to run on';
+		case 'awaiting-consult':
+			return 'Waiting for the consulted agent to reply - this runs as soon as it does';
 		default:
 			return eligibility.requiresParallel
 				? `Send now, running in parallel with ${otherBusyCount} other working tab${otherBusyCount === 1 ? '' : 's'}`

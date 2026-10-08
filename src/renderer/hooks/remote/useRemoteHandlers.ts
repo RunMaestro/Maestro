@@ -36,6 +36,10 @@ import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
 } from '../../services/crossAgentMentions';
+import {
+	resolveConsultTargets,
+	withConsultPendingNote,
+} from '../../services/crossAgentConsultHold';
 import { noteDirectDispatch } from '../../stores/retryStore';
 import { logger } from '../../utils/logger';
 
@@ -680,7 +684,17 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						prompt: promptToSend,
+						// A trailing mention is answered by the consulted agent in parallel
+						// (dispatched below); tell this turn so it waits for the reply
+						// rather than finishing alone. Agent-only: the user bubble above
+						// keeps the plain `promptToSend`.
+						prompt:
+							mentionPlan && writeTabId
+								? withConsultPendingNote(
+										promptToSend,
+										resolveConsultTargets(mentionPlan.targetSessionIds)
+									)
+								: promptToSend,
 						images: remoteImages,
 						appendSystemPrompt,
 						agentSessionId: tabAgentSessionId ?? undefined,
