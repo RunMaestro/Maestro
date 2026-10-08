@@ -170,6 +170,66 @@ Exit codes recorded: run 1 `0` (drained), runs 2 and 3 `137` (kill -9), run 4
 Throwaway files (the Dockerfile, the stub, the seed and HTTP scripts) lived in
 a scratch directory and are not committed.
 
+## Current state, 2026-10-08
+
+Where today's work stands on `feat/cue-server` after the three fixes
+(`57a536438`, `2cb5a8f37`, `26d24ae1e`). The sections below it are the
+detailed records, oldest first; [Regression pass on HEAD](#regression-pass-on-head)
+is the latest live run.
+
+### Findings
+
+| Finding                                                                                                     | Where it came from                                     | State                                              |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------- |
+| ReFS reports `FILE_INVALID_FILE_ID` as every inode, so two workspace folders matched                        | `3392fcd76` (today)                                    | Fixed, `611fd1cf5`                                 |
+| Import-restart test teardown can hit EBUSY / EPERM on Windows (chokidar still closing)                      | `bb1d1084d` (today, test)                              | Fixed, `611fd1cf5`                                 |
+| `file.changed` misses a watched folder created after the engine started                                     | Pre-existing, desktop too                              | **Open**                                           |
+| A pause longer than an interval ran that interval twice at resume                                           | `247b04bb0` (today)                                    | Fixed, `57a536438`; live rerun and regression pass |
+| No 503 during a drain (connection refused instead)                                                          | Pre-existing                                           | Fixed, `26d24ae1e`; live rerun and regression pass |
+| Non-JSON text on stdout under `--log-format json` (`[CueDebug]`, self-destruct)                             | Pre-existing                                           | Fixed, `2cb5a8f37`; live rerun and regression pass |
+| `bundle export` accepts a `cue.yaml` that `bundle validate` rejects                                         | Pre-existing                                           | **Open** (validate and import catch it)            |
+| `cue trigger <name>` also fires same-pipeline siblings with the same trigger; not in the `cli.trigger` docs | Pre-existing, by design                                | **Open** (docs only)                               |
+| A `cue.yaml` reload fires that workspace's `time.heartbeat` subscriptions again ("initial")                 | Pre-existing (seen in Stage A and the regression pass) | **Open**, not yet judged a bug                     |
+
+### Checks, latest result
+
+| Check                                                                                    | Latest result                                                                         | Where                                     |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `prettier --check`, `lint:eslint`, `lint`, `lint:doc-refs`, `docs:verify`                | Pass on HEAD (`docs:verify` 693 paths)                                                | Regression pass on HEAD                   |
+| Full suite (`npm run test`)                                                              | Pass on HEAD: 2069 files passed, 1 skipped; 47,018 tests passed, 90 skipped, 0 failed | Regression pass on HEAD                   |
+| Real-SQLite tests (skipped on every CI leg)                                              | Pass, run once locally with a plain-Node binary                                       | Stage A, Observations                     |
+| Windows review of today's diff                                                           | Read only; two fixes in `611fd1cf5`                                                   | Today's verification                      |
+| Export, validate, inspect, duplicate-folder refusal, dry run, import, `cue engine check` | Pass on HEAD                                                                          | Regression pass on HEAD                   |
+| Schedule (Claude), chain (OpenCode), fan-in, signed webhook                              | Pass on HEAD                                                                          | Regression pass on HEAD                   |
+| 2 minute heartbeat at normal cadence                                                     | Pass on HEAD: 3 intervals, each 120.000 s apart                                       | Regression pass on HEAD                   |
+| `app.startup`, `file.changed` (folder present at start), `time.once`                     | Pass on HEAD                                                                          | Regression pass on HEAD                   |
+| `task.pending`, `cli.trigger`                                                            | Pass on `3bc48cbe9`, not rerun                                                        | Stage A                                   |
+| Status and inspect read-only                                                             | Pass on HEAD (mode, schema hash, files unchanged)                                     | Regression pass on HEAD                   |
+| Drain with a run in flight, 503 with `Retry-After: 30` during it                         | Pass on HEAD                                                                          | Regression pass on HEAD                   |
+| Drain stopping a Claude turn's tool child at the timeout                                 | Pass on `3bc48cbe9`, not rerun                                                        | Stage A                                   |
+| kill -9 mid-run and restart                                                              | Pass on HEAD                                                                          | Regression pass on HEAD                   |
+| Pause catch-up (SIGSTOP 150 s)                                                           | Pass after `57a536438`                                                                | Rerun of the pause catch-up after the fix |
+| JSON-only output: stdout only `--json` results, every stderr line JSON                   | Pass on HEAD (3 engine runs, 162 stderr lines)                                        | Regression pass on HEAD                   |
+| `send` (new and resumed), `playbook`, `run-doc`, `goal-run`, both providers              | Pass on `3bc48cbe9`, not rerun (no change to those paths)                             | Stage A                                   |
+| TUI stop removes the tool child, both providers                                          | Pass on `3bc48cbe9`                                                                   | Stage A                                   |
+| Idle engine under 150 MB and 1% CPU                                                      | Pass on `3bc48cbe9` (121.6 MB, 0.148%), not remeasured                                | Stage A, Measurements                     |
+| Webhook start p95 under 1 s                                                              | Pass on `3bc48cbe9` (53 ms), not remeasured                                           | Stage A, Measurements                     |
+
+### Open items
+
+- `file.changed` misses a folder created after the engine starts (pre-existing,
+  desktop too). Workaround: create it first, or restart.
+- `bundle export` accepts a config that `bundle validate` rejects.
+- GitHub triggers (`github.pull_request`, `github.issue`, `github.label`) not
+  exercised live.
+- A real host suspend not run live (SIGSTOP only; fake-timer tests cover it).
+- No Windows host run; the Windows review was by reading, and windows-latest in
+  CI is the first real run.
+- No `--log-level`: in JSON mode debug output is dropped and cannot be turned
+  on.
+- Moved to 2026-10-09: the packaged install (`install.sh`), systemd
+  `Type=notify`, the container image, and the 24-hour soak.
+
 ## maestro-lib terminal example, live run
 
 Dated 2026-10-08, on Linux (Node v24.21.0), against `feat/cue-server` with
@@ -525,3 +585,52 @@ this stage does not take. The other nine of the twelve ran.
 - Codex (not installed).
 - A real host suspend (only SIGSTOP). Finding 2 affected it too, later in the
   window rather than at resume; covered by fake-timer tests only.
+
+## Regression pass on HEAD
+
+Dated 2026-10-08, against `feat/cue-server` at `26d24ae1e` (after `57a536438`,
+`2cb5a8f37` and `26d24ae1e`). Same rig as [Stage A](#stage-a-live-this-machine):
+a fresh scratch folder outside the repo, a new `$SRV` from `npm run build:cli`
+and `node scripts/build-server.mjs` with the same plain-Node `better-sqlite3`, a
+new random webhook secret in `CREDENTIALS_DIRECTORY`, the same seed script and
+pipeline `Live`, and a fresh server data dir. Claude Code 2.1.295, OpenCode
+1.18.33, Node 24.21.0. Every engine start was
+`cue engine start --data-dir $D --status-port 7433 --require-ready --log-format json --json`,
+stdout and stderr captured separately. To keep agent turns down, the drain and
+kill -9 steps used `slowhook` (a 30 s shell command) instead of a Claude turn;
+the run used two agent turns in all (`sched` and `after-claude`). The on-demand
+verbs and the measurements were not rerun: none of the three fixes touches them.
+
+| Item                                              | Result | Evidence                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Export, validate                                  | Pass   | exit 0, `Secrets to set on import: LIVE_HOOK_SECRET`; `PASS (0 errors, 0 warnings)`                                                                                                                                                                                                                                                                      |
+| Import, two workspaces on one folder              | Pass   | exit 2, `Workspaces "claude" and "opencode" are both mapped to ...`                                                                                                                                                                                                                                                                                      |
+| Import, `cue engine check`                        | Pass   | exit 0; `Ready: 3 agent(s), 3 workspace(s), 11 subscription(s) checked, no gaps.`                                                                                                                                                                                                                                                                        |
+| Start (run 1)                                     | Pass   | `/readyz` 200 `ready:true` within 1 s; `boot` and the initial `beat` ran                                                                                                                                                                                                                                                                                 |
+| Status and inspect read-only                      | Pass   | both exit 0 against the live engine; `cue.db` mode `600`, files `cue.db cue.db-shm cue.db-wal`, `sqlite_master` hash `3e2cbaae8821d471`, `user_version` 0, the same before and after. Again after the last stop: unchanged                                                                                                                               |
+| Signed webhook                                    | Pass   | unsigned 401; signed 202 `{"accepted":1}` and `hook` ran; the same id again 200 `duplicate`                                                                                                                                                                                                                                                              |
+| `file.changed` (`inbox/` present at start)        | Pass   | `files` ran 5 s after the write                                                                                                                                                                                                                                                                                                                          |
+| `time.once` and two `cue.yaml` reloads            | Pass   | `cue schedule --agent live-ops --in 1m --notify --name regress-once`: `Config reloaded` (9 subscriptions), fired, self-destructed, `Config reloaded` (8)                                                                                                                                                                                                 |
+| Schedule, chain, fan-in, real providers           | Pass   | 18:02 `sched` on Claude completed in 4.9 s; `after-claude` on OpenCode in 9.0 s; `"join" triggered (agent.completed, fan-in complete)`                                                                                                                                                                                                                   |
+| Heartbeat, 2 minutes, normal cadence              | Pass   | after the last reload re-armed it at 21:56:44.785: 21:58:44.786, 22:00:44.786 (and the run 1 log shows no other `beat` in that span), each 120.000 s apart, once each. Each reload also fired `beat` "initial" (21:55:43, 21:56:44), as Stage A's reloads did before the fix                                                                             |
+| Drain with a run in flight (run 1)                | Pass   | `slowhook` delivery `d-A` running `sleep 30`; SIGTERM: `/readyz` 503; `Drain: waiting up to 90s for 1 run(s)`; a signed delivery 1 s in: 503 `{"accepted":0,"failed":1}`, logged `not taken (Cue is stopping) - answered 503 so the sender retries`; `1 run(s) finished, 0 stopped` (27.9 s); exit 0; no `sleep 30` and no lock left                     |
+| kill -9 mid-run, restart (runs 2 and 3)           | Pass   | `k-A` running and `k-B` queued, both 202; `kill -9` (exit 137) left `k-B` in the queue and `k-A` `running`. Run 3 ready in about 2 s, `Restored 1 persisted queue entry`, `k-B` ran once (one `slowhook-start` since the restart), `k-A` `failed` ("The Cue engine exited before this run finished"); both ids redelivered: 200 `duplicate`; queue empty |
+| Stop through the CLI with a run in flight (run 3) | Pass   | `cue engine stop --wait-ms 120000` with `s-A` running; a signed delivery during it: 503 with `Retry-After: 30`; `Engine (pid ...) stopped.`, engine exit 0, no `sleep 30` left                                                                                                                                                                           |
+| stdout only `--json` results                      | Pass   | each of runs 1, 2 and 3 wrote exactly one stdout line, the `--json` start result (`{"started":true,...}`), including run 1 across both reloads, where Stage A had 1113 bytes of text                                                                                                                                                                     |
+| Every stderr line JSON                            | Pass   | runs 1, 2 and 3: 92, 27 and 43 lines, 0 unparseable                                                                                                                                                                                                                                                                                                      |
+| Secret and desktop data                           | Pass   | the webhook secret is in no file outside its credentials file; nothing under `~/.config/maestro` or `~/.config/maestro-dev` newer than the seed                                                                                                                                                                                                          |
+
+No new bug. The heartbeat re-fire on a `cue.yaml` reload is older than the
+fixes (same lines in Stage A's run 3) and is listed as open in
+[Current state](#current-state-2026-10-08).
+
+Gates on `26d24ae1e`:
+
+| Command                  | Result                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `npx prettier --check .` | Pass                                                                                  |
+| `npm run lint:eslint`    | Pass, including the dash pass                                                         |
+| `npm run lint`           | Pass, three TypeScript configs                                                        |
+| `npm run lint:doc-refs`  | Pass, 40 docs                                                                         |
+| `npm run docs:verify`    | Pass, 693 asserted paths, 0 missing                                                   |
+| `npm run test`           | Pass: 2069 files passed, 1 skipped; 47,018 tests passed, 90 skipped, 0 failed (779 s) |
