@@ -13,6 +13,7 @@ import {
 	type AgentDefinition,
 	type AgentConfigOption,
 } from '../../../main/agents';
+import { getAgentCapabilities } from '../../../main/agents/capabilities';
 
 describe('agent-definitions', () => {
 	describe('AGENT_DEFINITIONS', () => {
@@ -316,6 +317,25 @@ describe('agent-definitions', () => {
 			expect(promptPrefix).toContain('@/tmp/screenshot-1.png');
 			expect(promptPrefix).toContain('@/tmp/screenshot-2.jpg');
 		});
+
+		// Neither CLI has an attachment flag, but both open an image path named in
+		// the prompt with their file tool (verified live, fresh and resumed). A
+		// leading `@` is literal text to both, so the paths go in bare.
+		it.each(['grok', 'antigravity'])(
+			'should embed %s images as plain paths and accept images on resume',
+			(agentId) => {
+				const agent = getAgentDefinition(agentId);
+				expect(agent?.imageArgs).toBeUndefined();
+				expect(agent?.imagePromptBuilder?.(['/tmp/a.png', '/tmp/b.jpg'])).toBe(
+					'Use these attached images as context:\n/tmp/a.png\n/tmp/b.jpg\n\n'
+				);
+				expect(agent?.imagePromptBuilder?.([])).toBe('');
+				expect(getAgentCapabilities(agentId)).toMatchObject({
+					supportsImageInput: true,
+					supportsImageInputOnResume: true,
+				});
+			}
+		);
 	});
 
 	describe('Agent config options', () => {

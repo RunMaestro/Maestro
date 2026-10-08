@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
+import { CodexOutputParser, unwrapShellCommand } from '../../../main/parsers/codex-output-parser';
 import {
 	classifyRetryableError,
 	tokenExhaustionResetAt,
@@ -1721,7 +1721,8 @@ describe('CodexOutputParser', () => {
 			const event = parser.parseJsonLine(line);
 			expect(event?.type).toBe('tool_use');
 			const state = event?.toolState as { status: string; exitCode: number };
-			expect(state.status).toBe('completed');
+			// A failed command must not draw a check mark in the chat badge.
+			expect(state.status).toBe('failed');
 			expect(state.exitCode).toBe(127);
 		});
 
@@ -1754,6 +1755,167 @@ describe('CodexOutputParser', () => {
 			const event = parser.parseJsonLine(line);
 			const state = event?.toolState as { exitCode: number | null };
 			expect(state.exitCode).toBeNull();
+		});
+	});
+
+	// Lines below are verbatim shapes from a live `codex exec --json` run
+	// (codex 0.160.0): every command arrives wrapped in a login shell, a failed
+	// command says so in `status` AND `exit_code`, and file edits arrive as
+	// `file_change` items that used to fall through to `system`.
+	describe('exec --json tool items (codex 0.160.0)', () => {
+		it('shows the command the agent ran, not the login-shell wrapper', () => {
+			const started = parser.parseJsonLine(
+				'{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc \'ls -la\'","aggregated_output":"","exit_code":null,"status":"in_progress"}}'
+			);
+			expect(started?.toolCallId).toBe('item_1');
+			expect(started?.toolState).toEqual({
+				status: 'running',
+				input: { command: 'ls -la' },
+				exitCode: null,
+			});
+
+			const quoted = parser.parseJsonLine(
+				'{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"/bin/zsh -lc \\"printf \'done\' > out.txt\\"","aggregated_output":"","exit_code":0,"status":"completed"}}'
+			);
+			expect((quoted?.toolState as { input: unknown }).input).toEqual({
+				command: "printf 'done' > out.txt",
+			});
+		});
+
+		it('marks a failed command failed and says why when it printed nothing', () => {
+			const event = parser.parseJsonLine(
+				'{"type":"item.completed","item":{"id":"item_5","type":"command_execution","command":"/bin/zsh -lc false","aggregated_output":"","exit_code":1,"status":"failed"}}'
+			);
+			expect(event?.toolState).toEqual({
+				status: 'failed',
+				input: { command: 'false' },
+				output: 'Exit code 1',
+				exitCode: 1,
+			});
+		});
+
+		it('treats a non-zero exit as failed even when Codex says completed', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						id: 'item_9',
+						type: 'command_execution',
+						command: 'npm test',
+						aggregated_output: '\u001b[31m1 failing\u001b[0m\r\n',
+						exit_code: 1,
+						status: 'completed',
+					},
+				})
+			);
+			const state = event?.toolState as { status: string; output: string };
+			expect(state.status).toBe('failed');
+			// ANSI and CRLF would print literally in the badge.
+			expect(state.output).toBe('1 failing');
+		});
+
+		it('renders file_change as an apply_patch badge listing each file', () => {
+			const started = parser.parseJsonLine(
+				'{"type":"item.started","item":{"id":"item_6","type":"file_change","changes":[{"path":"/tmp/w/hello.txt","kind":"update"}],"status":"in_progress"}}'
+			);
+			expect(started?.type).toBe('tool_use');
+			expect(started?.toolName).toBe('apply_patch');
+			expect(started?.toolCallId).toBe('item_6');
+			expect(started?.toolState).toEqual({
+				status: 'running',
+				input: '/tmp/w/hello.txt (update)',
+			});
+
+			const completed = parser.parseJsonLine(
+				'{"type":"item.completed","item":{"id":"item_7","type":"file_change","changes":[{"path":"/tmp/w/a.txt","kind":"add"},{"path":"/tmp/w/b.txt","kind":"delete"}],"status":"completed"}}'
+			);
+			expect(completed?.toolState).toEqual({
+				status: 'completed',
+				input: '/tmp/w/a.txt (add)\n/tmp/w/b.txt (delete)',
+			});
+		});
+
+		it('renders mcp_tool_call with the mcp__server__tool name, arguments, and result text', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						id: 'item_2',
+						type: 'mcp_tool_call',
+						server: 'gitnexus',
+						tool: 'query',
+						arguments: { search_query: 'auth' },
+						result: { content: [{ type: 'text', text: 'found 3 flows' }] },
+						status: 'completed',
+					},
+				})
+			);
+			expect(event?.toolName).toBe('mcp__gitnexus__query');
+			expect(event?.toolState).toEqual({
+				status: 'completed',
+				input: { search_query: 'auth' },
+				output: 'found 3 flows',
+			});
+
+			const failed = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						id: 'item_3',
+						type: 'mcp_tool_call',
+						server: 'gitnexus',
+						tool: 'query',
+						arguments: {},
+						error: { message: 'server not running' },
+						status: 'failed',
+					},
+				})
+			);
+			expect(failed?.toolState).toMatchObject({ status: 'failed', output: 'server not running' });
+		});
+
+		it('renders web_search and todo_list items', () => {
+			const search = parser.parseJsonLine(
+				'{"type":"item.completed","item":{"id":"item_8","type":"web_search","query":"codex exec json"}}'
+			);
+			expect(search?.toolName).toBe('web_search');
+			// item.completed with no status word is still finished.
+			expect(search?.toolState).toEqual({
+				status: 'completed',
+				input: { query: 'codex exec json' },
+			});
+
+			const todo = parser.parseJsonLine(
+				'{"type":"item.started","item":{"id":"item_0","type":"todo_list","items":[{"text":"Read file","completed":true},{"text":"Edit file","completed":false}]}}'
+			);
+			expect(todo?.toolName).toBe('update_plan');
+			expect((todo?.toolState as { input: unknown }).input).toEqual({
+				plan: [
+					{ step: 'Read file', status: 'completed' },
+					{ step: 'Edit file', status: 'pending' },
+				],
+			});
+		});
+	});
+
+	describe('unwrapShellCommand', () => {
+		it.each([
+			["/bin/zsh -lc 'cat hello.txt'", 'cat hello.txt'],
+			['/bin/bash -lc false', 'false'],
+			['bash -c "echo \\"hi\\""', 'echo "hi"'],
+			["/bin/zsh -lc 'it'\\''s'", "it's"],
+		])('%s -> %s', (wrapped, expected) => {
+			expect(unwrapShellCommand(wrapped)).toBe(expected);
+		});
+
+		it.each([
+			'ls -la',
+			"/bin/zsh -lc 'a' 'b'",
+			"/bin/zsh -lc ''",
+			"/bin/zsh -lc 'unterminated",
+			'powershell.exe -Command Get-ChildItem',
+		])('leaves %s unchanged', (command) => {
+			expect(unwrapShellCommand(command)).toBe(command);
 		});
 	});
 

@@ -193,8 +193,8 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsReadOnlyMode: false, // No flag makes it read-only; workspace writes stay auto-allowed
 		supportsJsonOutput: true, // --output-format stream-json
 		supportsSessionId: true, // conversation_id on init/step_update/result
-		supportsImageInput: false, // No documented attachment flag
-		supportsImageInputOnResume: false,
+		supportsImageInput: true, // Verified (agy 1.2.16): image path in the prompt, opened with view_file
+		supportsImageInputOnResume: true, // Verified: same prompt path works with --conversation <id>
 		supportsSlashCommands: false, // Slash commands are TUI-only, not exposed to headless runs
 		supportsSessionStorage: false, // On-disk conversation format is undocumented
 		supportsCostTracking: false, // usage reports tokens only, no cost
@@ -205,7 +205,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // Terminal `result` event
 		supportsModelSelection: true, // --model <slug>
 		supportsStreamJsonInput: false, // No stdin stream-json input format
-		supportsThinkingDisplay: false, // thinking_tokens are counted, but no reasoning text step type is documented
+		supportsThinkingDisplay: true, // Thinking text is read from the conversation store (antigravity-step-store.ts)
 		supportsContextMerge: true, // Context can be delivered through the prompt
 		supportsContextExport: false, // Requires session storage
 		supportsWizard: false, // Structured-output wizard flow unverified against a live CLI
@@ -493,12 +493,12 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsReadOnlyMode: true, // Verified: --permission-mode plan (grok --help v0.2.93)
 		supportsJsonOutput: true, // Verified: --output-format streaming-json emits one JSON object per line
 		supportsSessionId: true, // Verified: camelCase sessionId (UUIDv7) on the final end event (no init event exists)
-		supportsImageInput: false, // Conservative default: no image flag observed in grok --help
-		supportsImageInputOnResume: false, // Conservative default: follows supportsImageInput
+		supportsImageInput: true, // Verified (grok 1.0.41): image path in the prompt, opened with read_file
+		supportsImageInputOnResume: true, // Verified: same prompt path works with --resume <id>
 		supportsSlashCommands: false, // Conservative default: not investigated in headless mode
 		supportsSessionStorage: true, // Verified: GrokSessionStorage reads ~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/
-		supportsCostTracking: false, // Verified absent: no cost fields anywhere in the stream or on-disk session files
-		supportsUsageStats: false, // Verified absent: no token usage in the streaming-json stream (counts exist only in on-disk signals.json/updates.jsonl)
+		supportsCostTracking: true, // Verified (grok 1.0.41): end.total_cost_usd per turn; usage.json costUsdTicks per session
+		supportsUsageStats: true, // Verified (grok 1.0.41): a usage line per model call, turn totals on end
 		supportsBatchMode: true, // Verified: -p/--single <PROMPT> headless mode
 		requiresPromptToStart: true, // Verified: headless runs require -p <prompt>; no interactive PTY integration
 		supportsStreaming: true, // Verified: token-sized thought/text deltas stream on stdout

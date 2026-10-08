@@ -26,8 +26,9 @@
  * - There is NO init/session-start event. The session ID (camelCase
  *   `sessionId`, UUIDv7) arrives only on the final `end` event, so it is
  *   extracted from the `result` event rather than an `init` event.
- * - No token usage or cost appears anywhere in the stream, so `end` maps to a
- *   `result` event without a usage object.
+ * - 0.2.93 reports no token usage or cost. grok 1.x adds a `usage` line per
+ *   model call and puts the turn's totals, `total_cost_usd`, and `modelUsage`
+ *   on `end` (verified on 1.0.41), so `end` maps to a `result` with usage.
  * - Runtime failures emit the `error` JSON on stdout, duplicate the message on
  *   stderr as `Error: <message>`, and exit 1.
  *
@@ -60,6 +61,7 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { cleanToolOutputText } from '../../shared/toolOutput';
 
 /** Cap for user-facing unmatched error bodies in UI/logs. */
 const MAX_ERROR_MESSAGE_CHARS = 500;
@@ -95,11 +97,105 @@ interface GrokRawMessage {
 	input?: unknown;
 	/** Lifecycle word on `tool_call_update`: pending/running/completed/failed. */
 	status?: string;
-	/** Tool result. Only on a settling `tool_call_update`. */
+	/** Tool result. Only on a settling `tool_call_update`. In grok 1.x an object
+	 *  keyed by tool: `{type:"Bash", output:[<bytes>], exit_code, ...}`,
+	 *  `{type:"ReadFile", FileContent:{...}}`, `{type:"SearchReplace", ...}`. */
 	rawOutput?: unknown;
 	output?: unknown;
 	/** Failure detail on a settling `tool_call_update`. */
 	error?: unknown;
+	/** ACP content blocks: the text the grok TUI itself shows for the call
+	 *  (`{type:"content",content:{type:"text",text}}`) and file edits
+	 *  (`{type:"diff",path,oldText,newText}`). */
+	content?: unknown;
+
+	// --- token usage (grok 1.x) ---
+	/** On a `usage` line: ONE model call. On `end`: the turn total (the sum of
+	 *  that turn's calls, not the session). `input_tokens` excludes cache reads. */
+	usage?: GrokUsage;
+	/** On `end`: what the turn cost, as reported by grok. */
+	total_cost_usd?: number;
+	/** On `end`: the turn's tokens keyed by model id. */
+	modelUsage?: Record<string, unknown>;
+}
+
+interface GrokUsage {
+	input_tokens?: number;
+	output_tokens?: number;
+	cache_read_input_tokens?: number;
+	cache_creation_input_tokens?: number;
+	reasoning_tokens?: number;
+}
+
+const tokenCount = (value: unknown): number =>
+	typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+
+/** One ACP content block on a grok tool line. */
+interface GrokContentBlock {
+	type?: string;
+	content?: { type?: string; text?: string };
+	path?: string;
+	oldText?: string | null;
+	newText?: string | null;
+}
+
+/** `-old` / `+new` lines for one ACP diff block, under its path. */
+function diffBlockText(block: GrokContentBlock): string {
+	const lines = (text: string | null | undefined, sign: string): string[] =>
+		text
+			? text
+					.replace(/\n$/, '')
+					.split('\n')
+					.map((line) => `${sign}${line}`)
+			: [];
+	return [block.path ?? '', ...lines(block.oldText, '-'), ...lines(block.newText, '+')]
+		.filter(Boolean)
+		.join('\n');
+}
+
+/** First string among the known text fields of a grok rawOutput object. */
+function rawOutputText(rawOutput: unknown, depth = 0): string {
+	if (typeof rawOutput === 'string') return rawOutput;
+	if (!rawOutput || typeof rawOutput !== 'object' || depth > 2) return '';
+	const record = rawOutput as Record<string, unknown>;
+	for (const key of ['tool_output_for_prompt_concise', 'tool_output_for_prompt', 'content']) {
+		if (typeof record[key] === 'string' && record[key]) return record[key] as string;
+	}
+	for (const value of Object.values(record)) {
+		const nested = value && typeof value === 'object' ? rawOutputText(value, depth + 1) : '';
+		if (nested) return nested;
+	}
+	return '';
+}
+
+/**
+ * What a settled grok tool call printed, as badge-ready text.
+ *
+ * `rawOutput` used to go to the badge as-is. For a shell command that object
+ * carries the output as a BYTE ARRAY (`output:[116,111,116,...]`), so the badge
+ * JSON-dumped a column of numbers; for reads and edits it dumped the whole
+ * result envelope. The ACP `content` blocks are what the grok TUI renders, so
+ * they come first; the known text fields of `rawOutput` are the fallback.
+ */
+function grokToolOutputText(msg: GrokRawMessage): string {
+	const blocks = Array.isArray(msg.content) ? (msg.content as GrokContentBlock[]) : [];
+	const fromContent = blocks
+		.map((block) =>
+			block?.type === 'diff'
+				? diffBlockText(block)
+				: block?.type === 'content' && block.content?.type === 'text'
+					? (block.content.text ?? '')
+					: ''
+		)
+		.filter((text) => text.trim())
+		.join('\n');
+	return cleanToolOutputText(fromContent || rawOutputText(firstDefined(msg.rawOutput, msg.output)));
+}
+
+/** A shell command's exit code from a grok `Bash` rawOutput, when present. */
+function grokExitCode(msg: GrokRawMessage): number | undefined {
+	const raw = msg.rawOutput as { exit_code?: unknown } | null | undefined;
+	return typeof raw?.exit_code === 'number' ? raw.exit_code : undefined;
 }
 
 /** Grok statuses that mean the call has settled, mapped onto the status
@@ -176,6 +272,13 @@ export class GrokOutputParser implements AgentOutputParser {
 	 *  lives for one process, so an unsettled call cannot outlive the run. */
 	private readonly toolNamesById = new Map<string, string>();
 
+	/** The last model call's usage. Every usage event Maestro sees is ADDED to the
+	 *  session totals, so only `end` (the turn total) reports usage; this is the
+	 *  last call's size, attached there as `absoluteUsage`, the real context
+	 *  occupancy. Overwritten per call and never consumed, because StdoutHandler
+	 *  can parse the `end` line twice and uses the second parse. */
+	private lastCallUsage: GrokUsage | undefined;
+
 	/** Parse a single JSON line from Grok's JSONL output stream.
 	 *  Non-JSON lines (e.g. stray stderr text like `Error: ...`) return null. */
 	parseJsonLine(line: string): ParsedEvent | null {
@@ -230,13 +333,18 @@ export class GrokOutputParser implements AgentOutputParser {
 				}
 				// Sole result-style event. The full answer text was already
 				// streamed via `text` deltas, so no text is attached here.
-				// No usage object exists anywhere in the stream.
+				const usage = this.turnUsage(msg);
 				return {
 					type: 'result',
 					sessionId,
+					...(usage ? { usage } : {}),
 					raw: msg,
 				};
 			}
+			case 'usage':
+				// One model call. Remembered for `end`, never reported on its own.
+				if (msg.usage && typeof msg.usage === 'object') this.lastCallUsage = msg.usage;
+				return { type: 'system', raw: msg };
 			case 'error': {
 				// Align with detectErrorFromParsed: empty/non-string messages are
 				// not errors (avoid synthetic "Unknown error" on the CLI path).
@@ -258,6 +366,38 @@ export class GrokOutputParser implements AgentOutputParser {
 					raw: msg,
 				};
 		}
+	}
+
+	/** The turn's usage and cost from an `end` line (grok 1.x), or undefined on
+	 *  0.x, which reports none. Verified on 1.0.41: `end.usage` is the sum of the
+	 *  turn's `usage` lines, and a resumed turn reports only itself. */
+	private turnUsage(msg: GrokRawMessage): ParsedEvent['usage'] | undefined {
+		const usage = msg.usage;
+		if (!usage || typeof usage !== 'object') return undefined;
+		const last = this.lastCallUsage;
+		const model = Object.keys(msg.modelUsage ?? {})[0];
+		return {
+			inputTokens: tokenCount(usage.input_tokens),
+			outputTokens: tokenCount(usage.output_tokens),
+			cacheReadTokens: tokenCount(usage.cache_read_input_tokens),
+			cacheCreationTokens: tokenCount(usage.cache_creation_input_tokens),
+			reasoningTokens: tokenCount(usage.reasoning_tokens),
+			...(typeof msg.total_cost_usd === 'number' && Number.isFinite(msg.total_cost_usd)
+				? { costUsd: msg.total_cost_usd }
+				: {}),
+			...(model ? { model } : {}),
+			...(last
+				? {
+						absoluteUsage: {
+							inputTokens: tokenCount(last.input_tokens),
+							outputTokens: tokenCount(last.output_tokens),
+							cacheReadInputTokens: tokenCount(last.cache_read_input_tokens),
+							cacheCreationInputTokens: tokenCount(last.cache_creation_input_tokens),
+							reasoningTokens: tokenCount(last.reasoning_tokens),
+						},
+					}
+				: {}),
+		};
 	}
 
 	/** thought/text deltas share the same shape; only isReasoning differs. */
@@ -315,17 +455,36 @@ export class GrokOutputParser implements AgentOutputParser {
 			this.toolNamesById.set(toolCallId, reportedName);
 		}
 
-		const status = isUpdate ? normalizeToolStatus(msg.status) : 'running';
+		const exitCode = isUpdate ? grokExitCode(msg) : undefined;
+		let status = isUpdate ? normalizeToolStatus(msg.status) : 'running';
+		// grok settles a non-zero shell exit as `completed` (verified on 1.0.41
+		// with `false`); the exit code is the only failure signal it sends.
+		if (status === 'completed' && exitCode !== undefined && exitCode !== 0) {
+			status = 'failed';
+		}
 		if (toolCallId && status !== 'running') {
 			this.toolNamesById.delete(toolCallId);
 		}
 
 		const input = firstDefined(msg.rawInput, msg.input);
-		// A failure's detail goes in `output` rather than a field of its own:
-		// `LogEntry.metadata.toolState` is {status,input,output}, so an `error` key
-		// would survive the merge and render nowhere - the badge would say failed
-		// and show nothing. A call that produced real output keeps it.
-		const output = firstDefined(msg.rawOutput, msg.output, msg.error);
+		// Output is only attached once the call settles: progress lines restate
+		// the call's description in `content`, which is not a result. A
+		// failure's detail goes in `output` rather than a field of its own:
+		// `LogEntry.metadata.toolState` is {status,input,output}, so an `error`
+		// key would survive the merge and render nowhere - the badge would say
+		// failed and show nothing. A call that produced real output keeps it.
+		const errorText =
+			typeof msg.error === 'string'
+				? msg.error
+				: msg.error !== undefined && msg.error !== null
+					? JSON.stringify(msg.error)
+					: '';
+		const output =
+			status === 'running'
+				? ''
+				: grokToolOutputText(msg) ||
+					errorText ||
+					(status === 'failed' && exitCode !== undefined ? `Exit code ${exitCode}` : '');
 
 		return {
 			type: 'tool_use',
@@ -338,7 +497,8 @@ export class GrokOutputParser implements AgentOutputParser {
 				// value per field, so omitting a field the line did not restate
 				// keeps the value recorded when the call opened.
 				...(input !== undefined ? { input } : {}),
-				...(output !== undefined ? { output } : {}),
+				...(output ? { output } : {}),
+				...(exitCode !== undefined && status !== 'running' ? { exitCode } : {}),
 			},
 			raw: msg,
 		};
@@ -360,9 +520,8 @@ export class GrokOutputParser implements AgentOutputParser {
 		return typeof raw?.sessionId === 'string' && raw.sessionId ? raw.sessionId : null;
 	}
 
-	/** Extract usage/token statistics from a parsed event.
-	 *  Grok's stream carries no usage or cost data, so this is always null
-	 *  unless a future CLI version adds it. */
+	/** Extract usage/token statistics from a parsed event. Only the `end`
+	 *  result carries any (grok 1.x); 0.x reports none. */
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
 		return event.usage || null;
 	}

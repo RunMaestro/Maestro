@@ -330,7 +330,84 @@ describe('GrokOutputParser', () => {
 		});
 	});
 
-	it('reports no usage - the grok stream carries no token or cost data', () => {
+	// Captured from a live grok 1.0.41 run (`--output-format streaming-json`),
+	// trimmed to the fields the parser reads. A shell result's rawOutput carries
+	// the output as a byte array, which the badge used to JSON-dump as a column
+	// of numbers; the readable text is in the ACP `content` blocks.
+	describe('grok 1.0.41 captured tool lines', () => {
+		const LS_CALL =
+			'{"type":"tool_call","toolCallId":"call-0","title":"run_terminal_command","kind":"execute","status":"pending","toolName":"run_terminal_command","rawInput":{"command":"ls -la","description":"List current directory contents"},"content":[],"locations":[]}';
+		const LS_DESCRIPTION =
+			'{"type":"tool_call_update","toolCallId":"call-0","status":null,"content":[{"type":"content","content":{"type":"text","text":"List current directory contents"}}],"rawOutput":null,"locations":[]}';
+		const LS_DONE =
+			'{"type":"tool_call_update","toolCallId":"call-0","status":"completed","content":[{"type":"content","content":{"type":"text","text":"total 8\\n-rw-r--r--@  1 ron  wheel   20 Oct  6 07:04 \\u001b[34mhello.txt\\u001b[0m\\n"}}],"rawOutput":{"type":"Bash","output":[116,111,116,97,108],"output_for_prompt":"exit: 0\\ntotal 8\\n","exit_code":0,"command":"ls -la"},"locations":[]}';
+
+		it('shows the command text, not the byte array, and strips ANSI color codes', () => {
+			const parser = new GrokOutputParser();
+			const opened = parser.parseJsonLine(LS_CALL);
+			expect(opened?.toolState).toEqual({
+				status: 'running',
+				input: { command: 'ls -la', description: 'List current directory contents' },
+			});
+
+			// The progress line restates the description; that is not a result.
+			const progress = parser.parseJsonLine(LS_DESCRIPTION);
+			expect(progress?.toolState).toEqual({ status: 'running' });
+
+			const done = parser.parseJsonLine(LS_DONE);
+			expect(done?.toolName).toBe('run_terminal_command');
+			expect(done?.toolState).toEqual({
+				status: 'completed',
+				output: 'total 8\n-rw-r--r--@  1 ron  wheel   20 Oct  6 07:04 hello.txt',
+				exitCode: 0,
+			});
+		});
+
+		it('marks a non-zero exit failed even though grok reports completed', () => {
+			const parser = new GrokOutputParser();
+			parser.parseJsonLine(
+				'{"type":"tool_call","toolCallId":"call-2","toolName":"run_terminal_command","kind":"execute","rawInput":{"command":"false"}}'
+			);
+			const done = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"call-2","status":"completed","content":[{"type":"content","content":{"type":"text","text":""}}],"rawOutput":{"type":"Bash","output":[],"output_for_prompt":"exit: 1\\n","exit_code":1,"command":"false"}}'
+			);
+			expect(done?.toolState).toEqual({ status: 'failed', output: 'Exit code 1', exitCode: 1 });
+		});
+
+		it('shows file contents for read_file and a compact diff for search_replace', () => {
+			const parser = new GrokOutputParser();
+			parser.parseJsonLine(
+				'{"type":"tool_call","toolCallId":"call-1","toolName":"read_file","kind":"read","rawInput":{"target_file":"/tmp/w/hello.txt"}}'
+			);
+			const read = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"call-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"1→alpha\\nbravo\\n"}}],"rawOutput":{"type":"ReadFile","FileContent":{"content":"1→alpha\\nbravo\\n","absolute_path":"/tmp/w/hello.txt"}}}'
+			);
+			expect((read?.toolState as { output: string }).output).toBe('1→alpha\nbravo');
+
+			parser.parseJsonLine(
+				'{"type":"tool_call","toolCallId":"call-3","toolName":"search_replace","kind":"edit","rawInput":{"file_path":"/tmp/w/hello.txt","old_string":"bravo","new_string":"BRAVO"}}'
+			);
+			const edit = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"call-3","status":"completed","content":[{"type":"diff","path":"/tmp/w/hello.txt","oldText":"bravo","newText":"BRAVO"}],"rawOutput":{"type":"SearchReplace","EditsApplied":{"tool_output_for_prompt":"The file /tmp/w/hello.txt has been updated."}}}'
+			);
+			expect((edit?.toolState as { output: string }).output).toBe(
+				'/tmp/w/hello.txt\n-bravo\n+BRAVO'
+			);
+		});
+
+		it('falls back to the known rawOutput text fields when there is no content block', () => {
+			const parser = new GrokOutputParser();
+			parser.parseJsonLine('{"type":"tool_call","toolCallId":"call-4","toolName":"write"}');
+			const done = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"call-4","status":"completed","rawOutput":{"type":"SearchReplace","EditsApplied":{"tool_output_for_prompt_concise":"The file /tmp/w/out.txt has been created."}}}'
+			);
+			expect((done?.toolState as { output: string }).output).toBe(
+				'The file /tmp/w/out.txt has been created.'
+			);
+		});
+	});
+
+	it('reports no usage on a 0.2.93 turn - that stream carries no token or cost data', () => {
 		const parser = new GrokOutputParser();
 
 		const result = parser.parseJsonLine(SIMPLE_TURN_END_LINE);
@@ -338,6 +415,57 @@ describe('GrokOutputParser', () => {
 
 		const delta = parser.parseJsonLine('{"type":"text","data":"Hello"}');
 		expect(delta && parser.extractUsage(delta)).toBeNull();
+	});
+
+	// Captured from grok 1.0.41: one `usage` line per model call, and an `end`
+	// whose usage is their sum plus the turn's cost. Every usage event Maestro
+	// sees is ADDED to the session totals, so only `end` may report usage.
+	describe('grok 1.x usage and cost', () => {
+		const CALL_1 =
+			'{"type":"usage","usage":{"input_tokens":19098,"output_tokens":99,"cache_read_input_tokens":12032,"cache_creation_input_tokens":0,"reasoning_tokens":37},"signature":"x"}';
+		const CALL_2 =
+			'{"type":"usage","usage":{"input_tokens":154,"output_tokens":68,"cache_read_input_tokens":31104,"cache_creation_input_tokens":0,"reasoning_tokens":45},"signature":"y"}';
+		const END =
+			'{"type":"end","stopReason":"end_turn","sessionId":"01a11188-3666-7872-8103-48299d68b4d7","requestId":"r","usage":{"input_tokens":19252,"cache_read_input_tokens":43136,"cache_creation_input_tokens":0,"output_tokens":167,"reasoning_tokens":82,"total_tokens":62555},"num_turns":2,"total_cost_usd":0.02076516,"total_cost_usd_ticks":207651600,"modelUsage":{"grok-4.7-build":{"inputTokens":19252,"outputTokens":167,"cacheReadInputTokens":43136,"cacheCreationInputTokens":0,"modelCalls":2,"costUSD":0.02076516}}}';
+
+		it('reports the turn total and cost on end, with the last call as occupancy', () => {
+			const parser = new GrokOutputParser();
+			for (const line of [CALL_1, CALL_2]) {
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('system');
+				expect(event && parser.extractUsage(event)).toBeNull();
+			}
+
+			const expected = {
+				inputTokens: 19252,
+				outputTokens: 167,
+				cacheReadTokens: 43136,
+				cacheCreationTokens: 0,
+				reasoningTokens: 82,
+				costUsd: 0.02076516,
+				model: 'grok-4.7-build',
+				absoluteUsage: {
+					inputTokens: 154,
+					outputTokens: 68,
+					cacheReadInputTokens: 31104,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 45,
+				},
+			};
+			const end = parser.parseJsonLine(END);
+			expect(end?.type).toBe('result');
+			expect(end && parser.extractUsage(end)).toEqual(expected);
+			// StdoutHandler can parse the same end line twice; both must agree.
+			const again = parser.parseJsonLine(END);
+			expect(again && parser.extractUsage(again)).toEqual(expected);
+		});
+
+		it('still reports totals when no per-call line arrived', () => {
+			const parser = new GrokOutputParser();
+			const end = parser.parseJsonLine(END);
+			expect(end?.usage).toMatchObject({ inputTokens: 19252, costUsd: 0.02076516 });
+			expect(end?.usage?.absoluteUsage).toBeUndefined();
+		});
 	});
 
 	it('maps unknown event types to system events', () => {
