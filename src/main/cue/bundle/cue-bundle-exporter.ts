@@ -55,6 +55,7 @@ import {
 	type CueBundleWorkspaceSource,
 } from '../../../shared/cue-bundle-types';
 import { resolveCueConfigPath } from '../config/cue-config-repository';
+import { resolveConfigOwner } from '../cue-session-state';
 import { readSessionsStoreFile } from '../../stores/sessions-store-file';
 import { readAgentConfigsStoreFile } from '../../stores/agent-configs-store-file';
 import { collectClaudeAssets, resolveClaudeAssetSelection } from './cue-bundle-claude-assets';
@@ -424,24 +425,35 @@ function resolveCreatedAt(options: CueBundleExportOptions): string | undefined {
 	return undefined;
 }
 
-/** Resolve `owner_agent_id`, which may hold an id or a display name, to an id. */
-function resolveOwnerId(owner: unknown, sessions: SessionInfo[]): string | undefined {
-	if (typeof owner !== 'string' || !owner) return undefined;
-	if (sessions.some((s) => s.id === owner)) return owner;
-	return sessions.find((s) => s.name === owner)?.id ?? owner;
-}
-
 /**
- * The agent an unassigned subscription runs on: `settings.owner_agent_id` when
- * set, else the first agent in `maestro-sessions.json` whose project root is
- * this one, which is the agent Cue picks at runtime (`computeOwnershipWarning`).
+ * The agent an unassigned subscription runs on, by the runtime's own owner
+ * rule (`resolveConfigOwner`): `settings.owner_agent_id` matched by id, then by
+ * display name, among this root's agents; else the first candidate in
+ * `maestro-sessions.json` (not a terminal agent, and with a cue.yaml). When
+ * no agent runs them (an owner that matches nobody, or an ambiguous name),
+ * there is no target, and a warning carries the runtime's reason if `subs`
+ * has unassigned subscriptions.
  */
 function resolveUnownedTarget(
-	owner: unknown,
+	doc: RawCueDocument | undefined,
 	root: string,
-	sessions: SessionInfo[]
+	sessions: SessionInfo[],
+	subs: RawSubscription[],
+	builder: BundleBuilder
 ): string | undefined {
-	return resolveOwnerId(owner, sessions) ?? sessions.find((s) => agentRoot(s) === root)?.id;
+	const owner = doc?.settings?.owner_agent_id;
+	const { owner: target, problem } = resolveConfigOwner({
+		projectRoot: root,
+		sessions: sessions.map((s) => ({ ...s, projectRoot: agentRoot(s) })),
+		hasCueConfig: (r) => resolveCueConfigPath(r) !== null,
+		config: { settings: { owner_agent_id: typeof owner === 'string' ? owner : undefined } },
+	});
+	if (problem && subs.some((s) => !(typeof s.agent_id === 'string' && s.agent_id))) {
+		builder.warnings.add(
+			`cue.yaml in "${path.basename(root)}": ${problem} No agent was exported to run them.`
+		);
+	}
+	return target?.id;
 }
 
 /**
@@ -756,9 +768,8 @@ export async function exportCueBundle(
 			const subs = rawSubscriptions(doc).filter((s) => s.pipeline_name === bundleName);
 			if (subs.length === 0) continue;
 			configByRoot.set(root, { subs, settings: doc?.settings });
-			const owner = resolveOwnerId(doc?.settings?.owner_agent_id, sessions);
-			if (owner) agentIds.add(owner);
-			const unownedTarget = resolveUnownedTarget(doc?.settings?.owner_agent_id, root, sessions);
+			const unownedTarget = resolveUnownedTarget(doc, root, sessions, subs, builder);
+			if (unownedTarget) agentIds.add(unownedTarget);
 			for (const id of referencedAgentIds(subs, sessions, unownedTarget)) agentIds.add(id);
 		}
 		if (!pipeline && configByRoot.size === 0) {
@@ -780,7 +791,7 @@ export async function exportCueBundle(
 		agentIds.add(agent.id);
 		const root = agentRoot(agent);
 		const doc = readCueDocument(root);
-		const unownedTarget = resolveUnownedTarget(doc?.settings?.owner_agent_id, root, sessions);
+		const unownedTarget = resolveUnownedTarget(doc, root, sessions, rawSubscriptions(doc), builder);
 		const subs = rawSubscriptions(doc).filter((s) =>
 			typeof s.agent_id === 'string' && s.agent_id
 				? s.agent_id === agent.id

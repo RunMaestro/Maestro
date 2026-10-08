@@ -19,8 +19,8 @@
  *   warnings already name unresolved prompt files and skipped subscriptions;
  * - secrets: `resolveSecrets` / `lookupSecret` (`src/shared/serverSecrets.ts`);
  * - fan-out targets: `findFanOutTarget`, the dispatcher's own lookup;
- * - which agent runs an unpinned subscription: `selectOwnershipCandidates`
- *   and `computeOwnershipWarning`, the session runtime's owner rule;
+ * - which agent runs an unpinned subscription: `resolveConfigOwner`, the
+ *   session runtime's owner rule;
  * - gh: `isGhInstalled`, the detection the GitHub poller's `resolveGhPath`
  *   reads; git: `checkBinaryExists`, the launch path's binary probe.
  *
@@ -34,7 +34,7 @@ import * as path from 'path';
 import type { SessionInfo, SshRemoteConfig } from '../../shared/types';
 import type { CueConfig, CueSubscription } from './cue-types';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
-import { computeOwnershipWarning, selectOwnershipCandidates } from './cue-session-state';
+import { resolveConfigOwner } from './cue-session-state';
 import { planSessionTurn } from '../../shared/maestro-lib/run/session';
 import { resolveSshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
 import { checkBinaryExists } from '../../shared/maestro-lib/launch/path-prober';
@@ -214,26 +214,26 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	const repoInferredRoots = new Map<string, CueSubscription>();
 	let runsSomething = false;
 
-	// Who runs what is the runtime's own decision, made per agent exactly as
-	// `initSession` makes it: the same candidates, the same owner rule
-	// (settings.owner_agent_id by id, then by name; else the first candidate).
-	// A non-owner keeps only the subscriptions pinned to it.
-	const candidates = selectOwnershipCandidates(sessions, (root) => configs.has(root));
-	const ownedRoots = new Set<string>();
-	const ownerProblems = new Map<string, string>(); // root -> why no agent owns it
+	// Who runs what is the runtime's own decision (`resolveConfigOwner`):
+	// settings.owner_agent_id by id, then by name, within the root; else the
+	// first candidate. A non-owner keeps only the subscriptions pinned to it.
+	const owners = new Map<string, { ownerId?: string; problem?: string }>();
+	for (const [root, workspace] of configs) {
+		if (!workspace.config) continue;
+		const { owner, problem } = resolveConfigOwner({
+			projectRoot: root,
+			sessions,
+			hasCueConfig: (r) => configs.has(r),
+			config: workspace.config,
+		});
+		owners.set(root, { ownerId: owner?.id, problem });
+	}
 	for (const session of sessions) {
 		const workspace = session.projectRoot ? configs.get(session.projectRoot) : undefined;
 		if (!workspace?.config) continue;
-		const ownershipWarning = computeOwnershipWarning({
-			session,
-			candidates,
-			config: workspace.config,
-			configFromAncestor: false,
-		});
-		if (ownershipWarning) ownerProblems.set(session.projectRoot, ownershipWarning);
-		else ownedRoots.add(session.projectRoot);
+		const isOwner = owners.get(session.projectRoot)?.ownerId === session.id;
 		const owned = workspace.subscriptions.filter((sub) =>
-			sub.agent_id ? sub.agent_id === session.id : !ownershipWarning
+			sub.agent_id ? sub.agent_id === session.id : isOwner
 		);
 		if (owned.length === 0) continue;
 		involved.set(session.id, session);
@@ -267,8 +267,8 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	for (const [root, { subscriptions }] of configs) {
 		// An owner_agent_id that matches nobody, or more than one agent by
 		// name, leaves no agent in the root running its unpinned subscriptions.
-		const problem = ownerProblems.get(root);
-		if (problem && !ownedRoots.has(root) && subscriptions.some((sub) => !sub.agent_id)) {
+		const problem = owners.get(root)?.problem;
+		if (problem && subscriptions.some((sub) => !sub.agent_id)) {
 			add({ kind: 'cue-config', workspace: root, message: `Cue config in ${root}: ${problem}` });
 		}
 		// A pinned subscription runs only on that agent, and only from the

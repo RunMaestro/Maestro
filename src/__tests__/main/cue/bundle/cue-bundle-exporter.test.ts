@@ -609,6 +609,103 @@ describe('exportCueBundle - agent resolution', () => {
 		expect(secondCue.subscriptions).toEqual([]);
 	});
 
+	describe('owner of unassigned subscriptions (the runtime rule)', () => {
+		const agentIn = (id: string, root: string, extra: Record<string, unknown> = {}) => ({
+			id,
+			name: id,
+			toolType: 'claude-code',
+			cwd: root,
+			projectRoot: root,
+			...extra,
+		});
+		/** Export pipeline "Gamma", one unassigned heartbeat in the gamma root. */
+		async function exportGamma(sessions: Array<Record<string, unknown>>, owner?: string) {
+			const gammaRoot = path.join(tmp, 'projects', 'gamma');
+			setSessions(sessions);
+			writeCueYaml(gammaRoot, {
+				...(owner ? { settings: { owner_agent_id: owner } } : {}),
+				subscriptions: [
+					{
+						name: 'tick',
+						event: 'time.heartbeat',
+						pipeline_name: 'Gamma',
+						prompt: 'tick',
+						interval_minutes: 5,
+					},
+				],
+			});
+			const result = await exportCueBundle({
+				dataDir,
+				pipeline: 'Gamma',
+				outputPath: path.join(tmp, 'gamma.zip'),
+				env: ENV,
+			});
+			return {
+				agents: result.manifest.agents.map((a) => a.id),
+				ownerWarnings: (result.manifest.warnings ?? []).filter((w) => w.includes('owner_agent_id')),
+			};
+		}
+
+		it('skips a terminal agent or an agent from a root with no cue.yaml listed first', async () => {
+			const bare = path.join(tmp, 'projects', 'bare');
+			fs.mkdirSync(bare, { recursive: true });
+			const g = path.join(tmp, 'projects', 'gamma');
+			const result = await exportGamma([
+				agentIn('agent-bare', bare),
+				agentIn('agent-shell', g, { toolType: 'terminal' }),
+				agentIn('agent-real', g),
+			]);
+			expect(result).toEqual({ agents: ['agent-real'], ownerWarnings: [] });
+		});
+
+		it('picks the agent owner_agent_id names in the root, by id or by name', async () => {
+			const g = path.join(tmp, 'projects', 'gamma');
+			const pair = [agentIn('agent-one', g), agentIn('agent-two', g, { name: 'Two' })];
+			expect((await exportGamma(pair, 'agent-two')).agents).toEqual(['agent-two']);
+			expect((await exportGamma(pair, 'Two')).agents).toEqual(['agent-two']);
+		});
+
+		it('ignores a same-named agent in another root', async () => {
+			const g = path.join(tmp, 'projects', 'gamma');
+			const elsewhere = agentIn('agent-elsewhere', betaRoot, { name: 'Two' });
+			expect(
+				(
+					await exportGamma(
+						[elsewhere, agentIn('agent-one', g), agentIn('agent-two', g, { name: 'Two' })],
+						'Two'
+					)
+				).agents
+			).toEqual(['agent-two']);
+
+			const result = await exportGamma([elsewhere, agentIn('agent-one', g)], 'Two');
+			expect(result.agents).toEqual([]);
+			expect(result.ownerWarnings).toEqual([
+				expect.stringContaining('settings.owner_agent_id "Two" does not match any agent'),
+			]);
+		});
+
+		it('exports no unassigned target and warns for an ambiguous or unmatched owner', async () => {
+			const g = path.join(tmp, 'projects', 'gamma');
+			const twins = [
+				agentIn('agent-a', g, { name: 'Twin' }),
+				agentIn('agent-b', g, { name: 'Twin' }),
+			];
+			const ambiguous = await exportGamma(twins, 'Twin');
+			expect(ambiguous.agents).toEqual([]);
+			expect(ambiguous.ownerWarnings).toEqual([
+				expect.stringMatching(
+					/^cue\.yaml in "gamma": settings\.owner_agent_id "Twin" is ambiguous.*No agent was exported to run them\.$/
+				),
+			]);
+
+			const unmatched = await exportGamma(twins, 'agent-gone');
+			expect(unmatched.agents).toEqual([]);
+			expect(unmatched.ownerWarnings).toEqual([
+				expect.stringContaining('settings.owner_agent_id "agent-gone" does not match any agent'),
+			]);
+		});
+	});
+
 	it('includes an upstream agent named only in source_session', async () => {
 		writeCueYaml(betaRoot, {
 			subscriptions: [
