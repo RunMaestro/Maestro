@@ -14,4 +14,4 @@
  * `npm run build:maestro-lib` writes it into the built package's
  * `package.json`, next to the app version the build was cut from.
  */
-export const MAESTRO_LIB_VERSION = '0.1.0';
+export const MAESTRO_LIB_VERSION = '0.2.0';

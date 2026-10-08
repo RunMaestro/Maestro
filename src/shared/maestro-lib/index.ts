@@ -82,11 +82,14 @@ export {
 	type BinaryDetectionResult,
 } from './launch/path-prober';
 export type { QuerySource } from '../querySource';
+export { cmdShellArgProblem } from './launch/windows-command';
 
 // Run
 export {
 	startTurn,
 	turnProcessSpecFromPlan,
+	applyWindowsShellRules,
+	type WindowsShellRulesOptions,
 	DEFAULT_MAX_LINE_LENGTH,
 	DEFAULT_STDOUT_TAIL_LIMIT,
 	DEFAULT_STDERR_TAIL_LIMIT,

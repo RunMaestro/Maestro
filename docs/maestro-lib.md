@@ -25,17 +25,18 @@ It is not:
 
 `planSessionTurn` checks every request before anything starts, and refuses what could not run correctly:
 
-| Reason          | When                                                                                                                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `unknown-agent` | The agent id is not one Maestro knows.                                                                                                                                                  |
-| `no-batch-mode` | The provider cannot run a single turn without a terminal.                                                                                                                               |
-| `no-parser`     | Maestro has no parser for the provider's output, so the answer could not be read. The turn is refused rather than run blind.                                                            |
-| `no-resume`     | You asked to resume, and the provider cannot resume a session.                                                                                                                          |
-| `no-read-only`  | You asked for a read-only turn, and the provider's command line cannot enforce one. A program with nobody watching gets read-only or a refusal, never a turn that only looks read-only. |
-| `not-installed` | The provider's binary was not found on `PATH`, in its known install locations, or at the `command` you gave.                                                                            |
-| `launch`        | The launch could not be planned. The message says why.                                                                                                                                  |
+| Reason          | When                                                                                                                                                                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unknown-agent` | The agent id is not one Maestro knows.                                                                                                                                                                                                                                |
+| `no-batch-mode` | The provider cannot run a single turn without a terminal.                                                                                                                                                                                                             |
+| `no-parser`     | Maestro has no parser for the provider's output, so the answer could not be read. The turn is refused rather than run blind.                                                                                                                                          |
+| `no-resume`     | You asked to resume, and the provider cannot resume a session.                                                                                                                                                                                                        |
+| `no-read-only`  | You asked for a read-only turn, and the provider's command line cannot enforce one. A program with nobody watching gets read-only or a refusal, never a turn that only looks read-only.                                                                               |
+| `not-installed` | The provider's binary was not found on `PATH`, in its known install locations, or at the `command` you gave.                                                                                                                                                          |
+| `windows-shell` | On Windows, the provider is installed as a `.cmd` shim that only starts through cmd.exe, and an argument cannot pass through cmd.exe intact (a prompt with a line break, `%` or `^`, for a provider that cannot read its prompt from stdin). See [Windows](#windows). |
+| `launch`        | The launch could not be planned. The message says why.                                                                                                                                                                                                                |
 
-What each provider supports in maestro-lib `0.1.0`:
+What each provider supports in maestro-lib `0.2.0`:
 
 | Agent id        | Name            | Runs a turn | Resume | Read-only |
 | --------------- | --------------- | ----------- | ------ | --------- |
@@ -96,7 +97,7 @@ The library has its own version, separate from the Maestro app's version. The ap
 ```ts
 import { MAESTRO_LIB_VERSION } from 'maestro-lib';
 
-const SUPPORTED = '0.1.';
+const SUPPORTED = '0.2.';
 
 if (!MAESTRO_LIB_VERSION.startsWith(SUPPORTED)) {
 	throw new Error(`This tool needs maestro-lib ${SUPPORTED}x, found ${MAESTRO_LIB_VERSION}`);
@@ -366,11 +367,23 @@ Log lines go to the logger you register at the time of the call, so register hoo
 
 Two more hooks exist for hosts that have the data: `setMaestroLibImageRefResolver` resolves Maestro's `maestro-image://` image references (without it, such a reference is treated as unreadable), and `setMaestroLibCapabilitySnapshotLookup` supplies live per-agent capability data (without it, context windows fall back to built-in defaults). A program that is not Maestro does not need either.
 
+## Windows
+
+npm installs most agent CLIs on Windows as `.cmd` shims (`claude.cmd`, `codex.cmd`), and Node cannot start a `.cmd` file without a shell. `planSessionTurn` handles this the same way the Maestro desktop app does:
+
+- If the binary is a `.cmd` or `.bat` shim, a bare `.exe` name, or a shebang script, the spec has `shell: true`. Every argument is escaped for cmd.exe, and a command path with spaces is quoted. A plain `.exe` with a path starts directly, with no shell.
+- The prompt goes over stdin for every provider that can read it there, so quotes, `%`, `&`, `|`, `^` and line breaks reach the agent as typed. This also avoids cmd.exe's limit of about 8 KB per command line.
+- A provider that only takes its prompt on the command line keeps it there. If an argument contains a line break, `%` or `^`, cmd.exe cannot pass it intact, so the turn is refused with `windows-shell` instead of running with a changed prompt.
+
+On other hosts the spec is unchanged.
+
+If you build a spec yourself, pass it through `applyWindowsShellRules(spec)` to apply the same rules. It returns the spec unchanged on other hosts, for a command that can start directly, and for a spec that already sets `shell`, so applying it twice is safe. `turnProcessSpecFromPlan` already applies it. Put the prompt in `spec.stdin` when the provider reads its prompt from stdin, and check other arguments with `cmdShellArgProblem(arg)`, which returns the reason cmd.exe cannot carry an argument, or `null` if it can.
+
 ## Lower-level pieces
 
 `planSessionTurn` and `runTurn` cover a program that runs turns. The entry also exports the steps they are made of, for a program that needs more control:
 
-- **Plan:** `buildAgentArgs` (the provider's arguments, resume included), `buildAgentLaunchPlan` (environment and prompt delivery), `turnProcessSpecFromPlan`, and `checkBinaryExists` / `checkCustomPath` to find a provider's binary.
+- **Plan:** `buildAgentArgs` (the provider's arguments, resume included), `buildAgentLaunchPlan` (environment and prompt delivery), `turnProcessSpecFromPlan` (which applies `applyWindowsShellRules`, see [Windows](#windows)), and `checkBinaryExists` / `checkCustomPath` to find a provider's binary.
 - **Run:** `startTurn` starts and streams a turn and reports how the process ended, without deciding whether it succeeded. `TurnCapture` folds its events into an answer, session id and usage, and `resolveTurnOutcome` decides the outcome. `runTurn` is these three together.
 - **Stop:** `stopProcess` runs the same stop stages on a process you started yourself; `snapshotProcessTree` and `killProcessTreeNow` record and end what it started.
 - **Parsers:** `createOutputParser(agentId)` returns a new parser for one stream. `initializeOutputParsers()`, then `getOutputParser(agentId)`, gives a shared instance for read-only checks.

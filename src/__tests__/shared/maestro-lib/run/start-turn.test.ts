@@ -10,14 +10,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+	applyWindowsShellRules,
 	startTurn,
 	turnProcessSpecFromPlan,
+	type TurnProcessSpec,
 	type LocalLaunchPlan,
 	type StartTurnOptions,
 	type TurnHandlers,
 } from '../../../../shared/maestro-lib/run/start-turn';
 import type { ParsedEvent } from '../../../../shared/maestro-lib/parsers/agent-output-parser';
 import { createOutputParser } from '../../../../shared/maestro-lib/parsers/parser-factory';
+// The desktop spawners' own import path: the library must escape with that code.
+import { escapeCmdArg } from '../../../../main/process-manager/utils/shellEscape';
 import { CAPTURED_RECORDINGS } from '../../../main/process-manager/recordings/captured';
 import { createScratchDir, fakeAgentSpec, fakeTurnFromRecording } from './fakeAgent';
 
@@ -561,4 +565,107 @@ describe('turnProcessSpecFromPlan', () => {
 			stdin: 'fix the bug',
 		});
 	});
+});
+
+describe('applyWindowsShellRules', () => {
+	const SHIM = 'C:\\Users\\First Last\\AppData\\Roaming\\npm\\codex.cmd';
+	const ARGS = ['exec', '--json', 'a b', 'say "hi"', 'x&y', 'up^down'];
+	const spec = (command: string, extra: Partial<TurnProcessSpec> = {}): TurnProcessSpec => ({
+		command,
+		args: ARGS,
+		cwd: 'C:\\project',
+		env: {},
+		stdin: 'the prompt',
+		...extra,
+	});
+
+	it('turns the shell on for a .cmd shim, quotes its path and escapes every argument as the desktop does', () => {
+		expect(applyWindowsShellRules(spec(SHIM), { isWindowsHost: true })).toEqual({
+			...spec(SHIM),
+			command: `"${SHIM}"`,
+			args: ARGS.map(escapeCmdArg),
+			shell: true,
+		});
+	});
+
+	it('changes nothing the second time', () => {
+		const once = applyWindowsShellRules(spec(SHIM), { isWindowsHost: true });
+		expect(applyWindowsShellRules(once, { isWindowsHost: true })).toEqual(once);
+	});
+
+	it('turns the shell on for a bare .exe name, which only a shell finds on PATH', () => {
+		expect(applyWindowsShellRules(spec('codex.exe'), { isWindowsHost: true }).shell).toBe(true);
+	});
+
+	it('starts an .exe with a path directly', () => {
+		const direct = spec('C:\\Program Files\\Codex\\codex.exe');
+		expect(applyWindowsShellRules(direct, { isWindowsHost: true })).toBe(direct);
+	});
+
+	it('leaves a spec that already names its shell to its caller', () => {
+		const chosen = spec(SHIM, {
+			shell: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+		});
+		expect(applyWindowsShellRules(chosen, { isWindowsHost: true })).toBe(chosen);
+	});
+
+	it('changes nothing off Windows', () => {
+		const shim = spec(SHIM);
+		expect(applyWindowsShellRules(shim, { isWindowsHost: false })).toBe(shim);
+	});
+
+	it('is applied by turnProcessSpecFromPlan', () => {
+		const plan: LocalLaunchPlan = {
+			target: { kind: 'local' },
+			command: SHIM,
+			args: ARGS,
+			cwd: 'C:\\project',
+			prompt: { via: 'stdin', format: 'raw', args: [] },
+			stdin: 'the prompt',
+			env: {},
+		};
+		expect(turnProcessSpecFromPlan(plan, { isWindowsHost: true })).toEqual(
+			applyWindowsShellRules(spec(SHIM), { isWindowsHost: true })
+		);
+	});
+
+	// A real cmd.exe and a real npm-style shim: only the Windows CI leg has them.
+	it.runIf(process.platform === 'win32')(
+		'starts a .cmd shim under a path with spaces and delivers the prompt intact',
+		async () => {
+			const shimDir = path.join(scratch.dir, 'npm dir');
+			fs.mkdirSync(shimDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(shimDir, 'echo.mjs'),
+				[
+					"let stdin = '';",
+					"process.stdin.setEncoding('utf8');",
+					"process.stdin.on('data', (chunk) => (stdin += chunk));",
+					"process.stdin.on('end', () => process.stdout.write(JSON.stringify({ argv: process.argv.slice(2), stdin }) + '\\n'));",
+				].join('\n')
+			);
+			const shimPath = path.join(shimDir, 'echo.cmd');
+			// What npm writes, reduced to its essentials.
+			fs.writeFileSync(shimPath, `@"${process.execPath}" "%~dp0\\echo.mjs" %*\r\n`);
+
+			const prompt = 'say "hi" & echo 50% | more ^ done\nsecond line\r\nthird';
+			const args = ['--flag', 'a b', 'x&y|z', 'say "hi"'];
+			const handle = startTurn(
+				applyWindowsShellRules({
+					command: shimPath,
+					args,
+					cwd: scratch.dir,
+					env: process.env,
+					stdin: prompt,
+				}),
+				{},
+				OPTIONS
+			);
+			const exit = await handle.done;
+
+			expect(exit.spawnError).toBeUndefined();
+			expect(exit.exitCode).toBe(0);
+			expect(JSON.parse(exit.stdoutText.trim())).toEqual({ argv: args, stdin: prompt });
+		}
+	);
 });

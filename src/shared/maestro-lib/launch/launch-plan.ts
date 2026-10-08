@@ -110,6 +110,12 @@ export interface AgentLaunchInput {
 
 	/** Defaults to the real host. Injected by tests. */
 	isWindowsHost?: boolean;
+	/**
+	 * The command will run through cmd.exe (a Windows `.cmd` shim, see
+	 * `windowsShellReason`), which cannot carry a multi-line prompt. The prompt
+	 * then goes over stdin on every surface, for a provider that reads it there.
+	 */
+	cmdShellLaunch?: boolean;
 }
 
 interface LaunchPlanCommon {
@@ -204,8 +210,11 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		agent,
 		prompt: input.prompt,
 		// Only desktop moves a Windows prompt to stdin. The CLI and Cue have
-		// always put it on the command line, on every host.
-		isWindowsHost: input.surface === 'desktop' && (input.isWindowsHost ?? isWindows()),
+		// always put it on the command line, on every host, unless the caller
+		// says the launch goes through cmd.exe.
+		isWindowsHost:
+			(input.surface === 'desktop' && (input.isWindowsHost ?? isWindows())) ||
+			input.cmdShellLaunch === true,
 		sshRemote: target.kind === 'remote',
 		hasImages: input.hasImages,
 	});

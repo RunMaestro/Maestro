@@ -5,6 +5,8 @@ import { buildAgentArgs } from '../launch/agent-args';
 import { buildAgentLaunchPlan } from '../launch/launch-plan';
 import { createOutputParser } from '../parsers/parser-factory';
 import { checkBinaryExists, checkCustomPath } from '../launch/path-prober';
+import { cmdShellArgProblem, windowsShellReason } from '../launch/windows-command';
+import { isWindows } from '../../platformDetection';
 import { getAgentCapabilities } from '../providers/capabilities';
 import { getAgentDefinition } from '../providers/definitions';
 import { turnProcessSpecFromPlan, type TurnProcessSpec } from './start-turn';
@@ -49,6 +51,7 @@ export type SessionTurnPlan =
 				| 'no-parser'
 				| 'no-read-only'
 				| 'not-installed'
+				| 'windows-shell'
 				| 'launch';
 			error: string;
 	  };
@@ -67,6 +70,12 @@ export type SessionTurnPlan =
  * could not be read), and a read-only turn for a provider whose CLI cannot
  * enforce one. A program with nobody watching gets read-only or a refusal,
  * never a turn that was asked to be read-only and was not.
+ *
+ * On Windows a binary that only starts through cmd.exe (an npm `.cmd` shim)
+ * gets the shell and the desktop's escaping (`applyWindowsShellRules`), and
+ * its prompt goes over stdin when the provider reads it there. An argument
+ * cmd.exe cannot carry intact (`cmdShellArgProblem`) is refused rather than
+ * delivered altered.
  */
 export async function planSessionTurn(request: SessionTurnRequest): Promise<SessionTurnPlan> {
 	const definition = getAgentDefinition(request.agentId);
@@ -138,6 +147,10 @@ export async function planSessionTurn(request: SessionTurnRequest): Promise<Sess
 		forceBatchMode: true,
 	});
 
+	// cmd.exe ends a command line at a line break, so a shim's prompt goes over
+	// stdin, as the desktop sends it on Windows.
+	const cmdShellLaunch = isWindows() && windowsShellReason(detected.path).reason !== null;
+
 	const planned = buildAgentLaunchPlan({
 		// A program run from a shell: the shell's exported values stand, as they
 		// do for `maestro-cli`.
@@ -151,6 +164,7 @@ export async function planSessionTurn(request: SessionTurnRequest): Promise<Sess
 		sessionCustomEnvVars: request.envVars,
 		isResuming: resuming,
 		querySource: request.querySource,
+		cmdShellLaunch,
 	});
 	if (!planned.ok) {
 		return { ok: false, reason: 'launch', error: planned.error };
@@ -158,6 +172,20 @@ export async function planSessionTurn(request: SessionTurnRequest): Promise<Sess
 	const plan = planned.plan;
 	if (plan.env === undefined) {
 		return { ok: false, reason: 'launch', error: 'A session turn runs on this machine only' };
+	}
+
+	if (cmdShellLaunch) {
+		const promptArgs = plan.prompt.via === 'argv' ? new Set(plan.prompt.args) : new Set<string>();
+		for (const arg of plan.args) {
+			const problem = cmdShellArgProblem(arg);
+			if (!problem) continue;
+			const what = promptArgs.has(arg) ? 'the prompt' : `the argument "${arg}"`;
+			return {
+				ok: false,
+				reason: 'windows-shell',
+				error: `${definition.name} at ${detected.path} only starts through cmd.exe, which cannot pass ${what} intact: ${problem}`,
+			};
+		}
 	}
 
 	return { ok: true, spec: turnProcessSpecFromPlan(plan), resuming };

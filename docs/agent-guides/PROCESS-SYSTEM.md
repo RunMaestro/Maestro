@@ -152,7 +152,7 @@ Both runners keep a `sessionId -> kill` registry of in-flight commands so `cance
 | `utils/bufferUtils.ts`       | `appendToBuffer()` - append with 100KB size cap                                                                                                                                                                                     |
 | `utils/imageUtils.ts`        | Save base64 images to temp files, build prompt prefixes, cleanup                                                                                                                                                                    |
 | `utils/pathResolver.ts`      | Resolve shell paths (cached), build wrapped commands with config sourcing, build interactive shell args                                                                                                                             |
-| `utils/shellEscape.ts`       | Windows shell escaping for cmd.exe and PowerShell, shell selection logic to avoid cmd.exe's 8KB limit                                                                                                                               |
+| `utils/shellEscape.ts`       | Shell selection logic to avoid cmd.exe's 8KB limit; re-exports the cmd.exe and PowerShell escapers from maestro-lib's `launch/windows-command.ts`                                                                                   |
 | `utils/streamJsonBuilder.ts` | Build stream-json messages for Claude Code (images + text as JSON)                                                                                                                                                                  |
 
 ### Types (`types.ts`)

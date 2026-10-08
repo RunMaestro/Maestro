@@ -7,6 +7,12 @@ import { createOutputParser } from '../parsers/parser-factory';
 import { BufferedLineReader } from '../streaming/buffered-line-reader';
 import { stopProcess, type StopHandle, type StopStage } from '../control/termination';
 import type { AgentLaunchPlan } from '../launch/launch-plan';
+import {
+	escapeCmdArgs,
+	quoteCommandForCmdShell,
+	windowsShellReason,
+} from '../launch/windows-command';
+import { isWindows } from '../../platformDetection';
 
 /**
  * A sensible cap on one buffered stdout line, for a caller that wants one.
@@ -37,27 +43,70 @@ export interface TurnProcessSpec {
 	/**
 	 * Run the command through a shell: `true` for the platform default, or the
 	 * shell's path. Needed on Windows for a bare `.exe` name (PATH resolution),
-	 * a `.cmd` / `.bat` shim, or a shebang script.
+	 * a `.cmd` / `.bat` shim, or a shebang script; `applyWindowsShellRules`
+	 * sets it, with the command and args prepared for that shell.
 	 */
 	shell?: boolean | string;
+}
+
+export interface WindowsShellRulesOptions {
+	/** Defaults to the real host. Injected by tests. */
+	isWindowsHost?: boolean;
+}
+
+/**
+ * Prepare a spec for a command Windows can only start through a shell, by the
+ * same rules the desktop's ChildProcessSpawner applies: a `.cmd` / `.bat`
+ * shim (Node refuses it without a shell, `spawn EINVAL`), a bare `.exe` name,
+ * or a shebang script turns the cmd.exe shell on, every argument is escaped
+ * with `escapeCmdArgs()`, and a command path with spaces is quoted.
+ *
+ * Returns the spec unchanged off Windows, for a command that starts directly,
+ * and for a spec that already names its `shell`: that caller has prepared the
+ * command line itself. So applying it twice changes nothing.
+ *
+ * It does not move the prompt. cmd.exe cannot carry a line break, `%` or `^`
+ * in an argument (`cmdShellArgProblem()`), so a prompt bound for a shell
+ * launch belongs on stdin; `planSessionTurn` arranges that.
+ */
+export function applyWindowsShellRules(
+	spec: TurnProcessSpec,
+	options: WindowsShellRulesOptions = {}
+): TurnProcessSpec {
+	if (spec.shell !== undefined) return spec;
+	if (!(options.isWindowsHost ?? isWindows())) return spec;
+	if (windowsShellReason(spec.command).reason === null) return spec;
+	return {
+		...spec,
+		command: quoteCommandForCmdShell(spec.command),
+		args: escapeCmdArgs(spec.args),
+		shell: true,
+	};
 }
 
 /** A launch plan for this machine: the one kind that carries a full environment. */
 export type LocalLaunchPlan = Extract<AgentLaunchPlan, { env: NodeJS.ProcessEnv }>;
 
 /**
- * The process spec for a LOCAL launch plan. A remote plan describes the remote
- * invocation, so it goes through the SSH wrapper first and the caller builds
- * the spec from what that returns.
+ * The process spec for a LOCAL launch plan, ready to start on this host: on
+ * Windows a command that needs a shell gets one (`applyWindowsShellRules`). A
+ * remote plan describes the remote invocation, so it goes through the SSH
+ * wrapper first and the caller builds the spec from what that returns.
  */
-export function turnProcessSpecFromPlan(plan: LocalLaunchPlan): TurnProcessSpec {
-	return {
-		command: plan.command,
-		args: plan.args,
-		cwd: plan.cwd,
-		env: plan.env,
-		stdin: plan.stdin,
-	};
+export function turnProcessSpecFromPlan(
+	plan: LocalLaunchPlan,
+	options: WindowsShellRulesOptions = {}
+): TurnProcessSpec {
+	return applyWindowsShellRules(
+		{
+			command: plan.command,
+			args: plan.args,
+			cwd: plan.cwd,
+			env: plan.env,
+			stdin: plan.stdin,
+		},
+		options
+	);
 }
 
 /**
