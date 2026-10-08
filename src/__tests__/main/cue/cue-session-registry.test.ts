@@ -28,7 +28,6 @@ function makeState(overrides: Partial<SessionState> = {}): SessionState {
 	return {
 		config,
 		triggerSources: [],
-		yamlWatchers: [],
 		sleepPrevented: false,
 		...overrides,
 	};

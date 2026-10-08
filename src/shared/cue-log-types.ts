@@ -23,6 +23,7 @@ export type CueLogPayload =
 	  }
 	| { type: 'configReloaded'; sessionId: string }
 	| { type: 'configRemoved'; sessionId: string }
+	| { type: 'triggerHealthWarning'; sessionId: string; message: string }
 	| {
 			type: 'runStarted';
 			runId: string;

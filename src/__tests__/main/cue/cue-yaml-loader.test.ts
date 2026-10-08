@@ -496,7 +496,7 @@ subscriptions:
 
 			const result = loadCueConfigDetailed('/projects/test');
 
-			expect(result).toEqual({ ok: false, reason: 'missing' });
+			expect(result).toEqual({ ok: false, reason: 'missing', file: null });
 		});
 
 		it('returns { ok: false, reason: "parse-error" } for malformed YAML', () => {

@@ -311,13 +311,20 @@ export function pruneOrphanedPromptFiles(
  * `opts.onReady` fires once chokidar finishes its initial scan - use it in
  * tests so they don't have to sleep on a timer while chokidar registers
  * watched paths (that sleep was a flakiness source on slow CI runners).
- * Production callers can ignore the opt; file changes before `ready` are
- * uncommon for config reloads triggered by the user.
+ * Reconcile YAML contents at `ready` and every 30 seconds as well: an atomic
+ * CLI rewrite during the initial scan can be swallowed by `ignoreInitial`,
+ * and filesystem notifications can be lost on synced/network directories.
+ * This only requests the normal reload; it never replays missed executions.
  */
 export function watchCueConfigFile(
 	projectRoot: string,
 	onChange: () => void,
-	opts?: { onReady?: () => void }
+	opts?: {
+		onReady?: () => void;
+		onWarning?: (message: string) => void;
+		/** Bytes actually consumed by the runtime, not a fresh disk read. */
+		getLoadedConfigFile?: () => ReturnType<typeof readCueConfigFile> | undefined;
+	}
 ): () => void {
 	const canonicalPath = path.join(projectRoot, CUE_CONFIG_PATH);
 	const legacyPath = path.join(projectRoot, LEGACY_CUE_CONFIG_PATH);
@@ -329,6 +336,21 @@ export function watchCueConfigFile(
 	const promptsGlob = path.join(projectRoot, CUE_PROMPTS_DIR, '*.md');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let torn = false;
+	let lastReadError: string | null = null;
+	let reloadPending = false;
+	let promptChangePending = false;
+	const warn = (message: string) => {
+		logger.warn(message, 'CueConfig');
+		opts?.onWarning?.(message);
+	};
+	// Compare bytes rather than mtime/size: atomic replacement can preserve both.
+	let observed: ReturnType<typeof readCueConfigFile> | undefined;
+	try {
+		observed = readCueConfigFile(projectRoot);
+	} catch (error) {
+		lastReadError = String(error);
+		warn(`[CUE] Config health check failed for ${projectRoot}: ${lastReadError}`);
+	}
 
 	const watcher = chokidar.watch([canonicalPath, legacyPath, promptsGlob], {
 		persistent: true,
@@ -339,33 +361,89 @@ export function watchCueConfigFile(
 	// changes). Without a listener, these bubble as unhandled promise rejections and
 	// crash the main process. The watcher recovers on its own for transient issues.
 	watcher.on('error', (error) => {
-		logger.warn(
-			`[Cue] Config file watcher error for ${projectRoot}: ${String(error)}`,
-			'CueConfig'
+		warn(
+			`[CUE] Config watcher unhealthy for ${projectRoot}: ${String(error)}; YAML reconciliation remains active`
 		);
 	});
 
-	const debouncedOnChange = () => {
+	const debouncedOnChange = (changedPath?: string) => {
 		if (torn) return;
+		// Chokidar emits forward slashes on Windows; compare native-normalized paths.
+		const normalizedPath = changedPath ? path.normalize(changedPath) : undefined;
+		if (normalizedPath && normalizedPath !== canonicalPath && normalizedPath !== legacyPath) {
+			promptChangePending = true;
+		}
 		if (debounceTimer) {
 			clearTimeout(debounceTimer);
 		}
 		debounceTimer = setTimeout(() => {
 			debounceTimer = null;
 			if (torn) return;
-			onChange();
+			try {
+				const current = readCueConfigFile(projectRoot);
+				const loaded = opts?.getLoadedConfigFile?.();
+				// A CLI write before the runtime read may already have been loaded.
+				// Suppress its late native notification as well as ready reconciliation.
+				if (
+					loaded !== undefined &&
+					!promptChangePending &&
+					!reloadPending &&
+					current?.filePath === loaded?.filePath &&
+					current?.raw === loaded?.raw
+				)
+					return;
+				onChange();
+				observed = current;
+				reloadPending = false;
+				promptChangePending = false;
+			} catch (error) {
+				reloadPending = true;
+				warn(`[CUE] Config reload failed for ${projectRoot}: ${String(error)}`);
+			}
 		}, 1000);
 	};
+	const reconcile = () => {
+		if (torn) return;
+		try {
+			const current = readCueConfigFile(projectRoot);
+			const loaded = opts?.getLoadedConfigFile?.();
+			// An installed runtime getter returning undefined means its load failed,
+			// not that the watcher snapshot was successfully consumed.
+			const baseline = opts?.getLoadedConfigFile ? loaded : observed;
+			lastReadError = null;
+			if (
+				!reloadPending &&
+				baseline !== undefined &&
+				current?.filePath === baseline?.filePath &&
+				current?.raw === baseline?.raw
+			)
+				return;
+			if (debounceTimer) return; // Native notification already queued the reload.
+			warn(
+				`[CUE] Missed config change for ${projectRoot}; reconciling YAML and timer registrations`
+			);
+			debouncedOnChange();
+		} catch (error) {
+			const message = String(error);
+			if (message !== lastReadError) {
+				warn(`[CUE] Config health check failed for ${projectRoot}: ${message}`);
+				lastReadError = message;
+			}
+		}
+	};
+	const reconciliationTimer = setInterval(reconcile, 30_000);
 
 	watcher.on('add', debouncedOnChange);
 	watcher.on('change', debouncedOnChange);
 	watcher.on('unlink', debouncedOnChange);
-	if (opts?.onReady) {
-		watcher.once('ready', opts.onReady);
-	}
+	watcher.on('ready', () => {
+		reconcile();
+		opts?.onReady?.();
+	});
 
 	return () => {
 		torn = true;
+		clearInterval(reconciliationTimer);
 		if (debounceTimer) {
 			clearTimeout(debounceTimer);
 			debounceTimer = null;

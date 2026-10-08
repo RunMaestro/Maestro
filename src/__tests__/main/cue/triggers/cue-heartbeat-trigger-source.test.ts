@@ -139,6 +139,31 @@ describe('cue-heartbeat-trigger-source', () => {
 		source.stop();
 	});
 
+	it('reports skipped intervals after a delayed timer and evaluates only once', () => {
+		const emit = vi.fn();
+		const onLog = vi.fn();
+		const source = createCueHeartbeatTriggerSource({
+			session: makeSession(),
+			subscription: makeSub({ interval_minutes: 1 }),
+			registry: createCueSessionRegistry(),
+			enabled: () => true,
+			onLog,
+			emit,
+		})!;
+		source.start();
+		emit.mockClear();
+		vi.setSystemTime(Date.now() + 3 * 60_000);
+		vi.advanceTimersByTime(60_000);
+		expect(emit).toHaveBeenCalledTimes(1);
+		expect(emit.mock.calls[0][0].payload.missedCount).toBe(3);
+		expect(onLog).toHaveBeenCalledWith(
+			'warn',
+			expect.stringContaining('missed 3 heartbeat interval(s)'),
+			expect.objectContaining({ type: 'triggerHealthWarning', sessionId: 'session-1' })
+		);
+		source.stop();
+	});
+
 	it('honours the subscription filter', () => {
 		const emit = vi.fn();
 		const onLog = vi.fn();

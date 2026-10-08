@@ -37,8 +37,19 @@ export function createCueHeartbeatTriggerSource(
 	let ownFiredAtMs: number | undefined;
 
 	function fire(label: string): void {
+		const missedCount =
+			nextFireMs === null ? 0 : Math.floor((Date.now() - nextFireMs) / intervalMs);
+		if (missedCount > 0) {
+			const message = `[CUE] "${ctx.subscription.name}" missed ${missedCount} heartbeat interval(s); evaluating once`;
+			ctx.onLog('warn', message, {
+				type: 'triggerHealthWarning',
+				sessionId: ctx.session.id,
+				message,
+			});
+		}
 		const event = createCueEvent('time.heartbeat', ctx.subscription.name, {
 			interval_minutes: intervalMinutes,
+			...(missedCount > 0 ? { missedCount } : {}),
 		});
 
 		// Always advance nextFireMs so nextTriggerAt() stays current even when the

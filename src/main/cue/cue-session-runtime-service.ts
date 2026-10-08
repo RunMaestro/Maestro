@@ -1,7 +1,7 @@
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { SessionInfo } from '../../shared/types';
 import { loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
-import { resolveCueConfigPath } from './config/cue-config-repository';
+import { resolveCueConfigPath, type readCueConfigFile } from './config/cue-config-repository';
 import { createCueEvent, type CueEvent, type CueSubscription } from './cue-types';
 import { clearGitHubSeenForSubscription } from './cue-db';
 import {
@@ -121,7 +121,8 @@ export function createCueSessionRuntimeService(
 	deps: CueSessionRuntimeServiceDeps
 ): CueSessionRuntimeService {
 	const { registry } = deps;
-	const pendingYamlWatchers = new Map<string, () => void>();
+	const yamlWatchers = new Map<string, { projectRoot: string; cleanup: () => void }>();
+	const loadedYamlFiles = new Map<string, ReturnType<typeof readCueConfigFile>>();
 
 	/** Sources `disarmAll` stopped, kept only so `settleAll` can wait on them. */
 	let disarmedSources: CueTriggerSource[] = [];
@@ -141,7 +142,7 @@ export function createCueSessionRuntimeService(
 				'warn',
 				`[CUE] initSession called for already-initialized session "${session.name}" - tearing down first`
 			);
-			teardownSession(session.id);
+			teardownSession(session.id, true);
 			registry.unregister(session.id);
 		}
 
@@ -152,7 +153,34 @@ export function createCueSessionRuntimeService(
 		// `pipelinesToYamlByOwnerCwd`). Worktrees, sub-agents, and any
 		// other shared-parent topology each get their own cue.yaml; they
 		// do not inherit from a parent dir.
+		// Observe before reading: another process can atomically replace YAML
+		// between the engine's read and chokidar's initial scan. Keep this same
+		// watcher for both pending and loaded configs, so ready reconciliation
+		// covers that entire window.
+		const existingWatcher = yamlWatchers.get(session.id);
+		if (existingWatcher && existingWatcher.projectRoot !== session.projectRoot) {
+			existingWatcher.cleanup();
+			yamlWatchers.delete(session.id);
+			loadedYamlFiles.delete(session.id);
+		}
+		if (!yamlWatchers.has(session.id)) {
+			const cleanup = watchCueYaml(
+				session.projectRoot,
+				() => deps.onRefreshRequested(session.id, session.projectRoot),
+				{
+					getLoadedConfigFile: () => loadedYamlFiles.get(session.id),
+					onWarning: (message) =>
+						deps.onLog('warn', message, {
+							type: 'triggerHealthWarning',
+							sessionId: session.id,
+							message,
+						}),
+				}
+			);
+			yamlWatchers.set(session.id, { projectRoot: session.projectRoot, cleanup });
+		}
 		const loadResult = loadCueConfigDetailed(session.projectRoot);
+		if (loadResult.file !== undefined) loadedYamlFiles.set(session.id, loadResult.file);
 
 		if (!loadResult.ok) {
 			// Distinguish missing (silent) from parse / validation failures (loud).
@@ -168,12 +196,6 @@ export function createCueSessionRuntimeService(
 				);
 			}
 
-			if (!pendingYamlWatchers.has(session.id)) {
-				const yamlWatcher = watchCueYaml(session.projectRoot, () => {
-					deps.onRefreshRequested(session.id, session.projectRoot);
-				});
-				pendingYamlWatchers.set(session.id, yamlWatcher);
-			}
 			return { kind: loadResult.reason };
 		}
 
@@ -227,17 +249,8 @@ export function createCueSessionRuntimeService(
 			config,
 			configRoot: undefined,
 			triggerSources: [],
-			yamlWatchers: [],
 			ownershipWarning,
 		};
-
-		// Watch only this session's own cue.yaml. Per-agent-cwd model: there
-		// is no ancestor or cross-cwd merge to keep in sync.
-		state.yamlWatchers.push(
-			watchCueYaml(session.projectRoot, () => {
-				deps.onRefreshRequested(session.id, session.projectRoot);
-			})
-		);
 
 		// Register the session before starting any trigger sources or firing
 		// app.startup so that other components (e.g. CueRunManager via registry.get)
@@ -353,7 +366,13 @@ export function createCueSessionRuntimeService(
 		return { kind: 'loaded' };
 	}
 
-	function teardownSession(sessionId: string): void {
+	function teardownSession(sessionId: string, preserveYamlWatcher = false): void {
+		if (!preserveYamlWatcher) {
+			yamlWatchers.get(sessionId)?.cleanup();
+			yamlWatchers.delete(sessionId);
+		}
+		// Stopped triggers no longer represent a loaded runtime, even if bytes are unchanged.
+		loadedYamlFiles.delete(sessionId);
 		const state = registry.get(sessionId);
 		if (!state) return;
 
@@ -364,11 +383,6 @@ export function createCueSessionRuntimeService(
 			source.stop();
 		}
 		state.triggerSources = [];
-
-		for (const cleanup of state.yamlWatchers) {
-			cleanup();
-		}
-		state.yamlWatchers = [];
 
 		deps.clearFanInState(sessionId);
 		deps.clearQueue(sessionId, true);
@@ -407,17 +421,12 @@ export function createCueSessionRuntimeService(
 		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
 		// post-reload set and clear seen rows for removed GitHub subscriptions.
 		const oldGitHubIds = collectGitHubSubIds(sessionId);
-		teardownSession(sessionId);
+		teardownSession(sessionId, true);
 		registry.unregister(sessionId);
-
-		const pendingWatcher = pendingYamlWatchers.get(sessionId);
-		if (pendingWatcher) {
-			pendingWatcher();
-			pendingYamlWatchers.delete(sessionId);
-		}
 
 		const session = getSession(sessionId);
 		if (!session) {
+			teardownSession(sessionId);
 			return { reloaded: false, configRemoved: false };
 		}
 
@@ -462,12 +471,6 @@ export function createCueSessionRuntimeService(
 		}
 
 		if (hadSession) {
-			if (!pendingYamlWatchers.has(sessionId)) {
-				const yamlWatcher = watchCueYaml(projectRoot, () => {
-					deps.onRefreshRequested(sessionId, projectRoot);
-				});
-				pendingYamlWatchers.set(sessionId, yamlWatcher);
-			}
 			// Only surface "Config removed" when the session previously had a
 			// config AND the file is truly gone. A parse/validation error on
 			// a previously-valid config is a SEPARATE state ("invalid config")
@@ -501,12 +504,6 @@ export function createCueSessionRuntimeService(
 		for (const id of oldGitHubIds) {
 			clearGitHubSeenForSubscription(id);
 		}
-
-		const pendingWatcher = pendingYamlWatchers.get(sessionId);
-		if (pendingWatcher) {
-			pendingWatcher();
-			pendingYamlWatchers.delete(sessionId);
-		}
 	}
 
 	return {
@@ -526,10 +523,9 @@ export function createCueSessionRuntimeService(
 			}
 			registry.clear();
 
-			for (const [, cleanup] of pendingYamlWatchers) {
-				cleanup();
-			}
-			pendingYamlWatchers.clear();
+			for (const { cleanup } of yamlWatchers.values()) cleanup();
+			yamlWatchers.clear();
+			loadedYamlFiles.clear();
 		},
 
 		disarmAll(): number {
@@ -542,11 +538,12 @@ export function createCueSessionRuntimeService(
 					stopped++;
 				}
 				state.triggerSources = [];
-				for (const cleanup of state.yamlWatchers) cleanup();
-				state.yamlWatchers = [];
 			}
-			for (const [, cleanup] of pendingYamlWatchers) cleanup();
-			pendingYamlWatchers.clear();
+			// Every cue.yaml watcher, loaded or pending, lives in one map; a
+			// drained engine reloads nothing, and its baselines go with it.
+			for (const { cleanup } of yamlWatchers.values()) cleanup();
+			yamlWatchers.clear();
+			loadedYamlFiles.clear();
 			return stopped;
 		},
 
