@@ -194,7 +194,9 @@ afterEach(() => {
 	vi.restoreAllMocks();
 	if (savedUserData === undefined) delete process.env.MAESTRO_USER_DATA;
 	else process.env.MAESTRO_USER_DATA = savedUserData;
-	fs.rmSync(root, { recursive: true, force: true });
+	// The engine's chokidar watchers close asynchronously, and Windows refuses to
+	// delete a folder whose handle is still open (EBUSY / EPERM), so retry.
+	fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe('standalone engine and bundle import: restart picks up the change', () => {

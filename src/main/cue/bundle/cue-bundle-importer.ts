@@ -400,11 +400,23 @@ function samePath(a: string, b: string, platform: NodeJS.Platform = process.plat
 	return isWithin(a, b, platform) && isWithin(b, a, platform);
 }
 
+/**
+ * The inode values a volume reports when it has no usable file id: 0 (some
+ * network and FAT volumes) and all ones, Windows' FILE_INVALID_FILE_ID, which
+ * ReFS (a Dev Drive) reports for an id that does not fit 64 bits. Every folder
+ * there shares the value, so it identifies none of them.
+ */
+const NO_FILE_ID = new Set([0n, 0xffff_ffff_ffff_ffffn]);
+
+/** `dev:ino` from a bigint stat, or undefined when the volume reports no file id. */
+export function statIdentity(stat: { dev: bigint; ino: bigint }): string | undefined {
+	return NO_FILE_ID.has(stat.ino) ? undefined : `${stat.dev}:${stat.ino}`;
+}
+
 /** Device and inode of an existing folder, or undefined when the volume reports none. */
 function folderIdentity(folder: string): string | undefined {
 	try {
-		const stat = fs.statSync(folder, { bigint: true });
-		return stat.ino === 0n ? undefined : `${stat.dev}:${stat.ino}`;
+		return statIdentity(fs.statSync(folder, { bigint: true }));
 	} catch {
 		return undefined;
 	}

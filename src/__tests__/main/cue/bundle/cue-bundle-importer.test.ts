@@ -24,6 +24,7 @@ import {
 	findSharedWorkspaceRoot,
 	importCueBundle,
 	planCueBundleImport,
+	statIdentity,
 	type CueBundleImportOptions,
 } from '../../../../main/cue/bundle/cue-bundle-importer';
 import {
@@ -776,6 +777,15 @@ describe('importCueBundle against a fixture bundle', () => {
 				keys: ['proj', 'other'],
 				folder: projRoot,
 			});
+		});
+
+		it.each([
+			['0, as some network volumes report', 0n],
+			['FILE_INVALID_FILE_ID, as ReFS reports', 0xffff_ffff_ffff_ffffn],
+		])('gives no folder identity when the inode is %s', (_label, ino) => {
+			// Every folder on such a volume reports it, so it must not match two of them.
+			expect(statIdentity({ dev: 1n, ino })).toBeUndefined();
+			expect(statIdentity({ dev: 1n, ino: 42n })).toBe('1:42');
 		});
 
 		it('imports workspaces nested one inside the other, each into its own cue.yaml', async () => {
