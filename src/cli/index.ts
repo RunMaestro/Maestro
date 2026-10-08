@@ -76,7 +76,7 @@ import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
-import { settingsGet } from './commands/settings-get';
+import { settingsGet, settingsMediaStatus } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
 import {
 	displayFont,
@@ -1692,6 +1692,11 @@ settings
 	.description('Reset a setting to its default value')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(settingsReset);
+
+settings
+	.command('media-status')
+	.description('Report local Host Media tools and allowed models as JSON')
+	.action(settingsMediaStatus);
 
 // Agent-specific config subcommands
 const agent = settings.command('agent').description('View and manage per-agent configuration');

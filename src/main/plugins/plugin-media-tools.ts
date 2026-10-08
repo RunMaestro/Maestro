@@ -69,6 +69,17 @@ export interface PluginMediaToolsDeps {
 	tempDir?: string;
 }
 
+/** Canonical host setting validation shared by desktop IPC and CLI writes. */
+export async function resolveMediaModelDirectory(value: unknown): Promise<string> {
+	if (typeof value !== 'string') throw new Error('Invalid media model directory');
+	if (value === '') return '';
+	if (!path.isAbsolute(value)) throw new Error('Media model directory must be absolute');
+	const canonical = await fs.realpath(value);
+	if (!(await fs.stat(canonical)).isDirectory())
+		throw new Error('Media model directory must be a directory');
+	return canonical;
+}
+
 /** Resolve existing installations at call time. No binaries/models are downloaded or bundled. */
 export async function resolveMediaRuntime(configuredDirectory?: unknown): Promise<Runtime> {
 	const binaries: Runtime['binaries'] = {};

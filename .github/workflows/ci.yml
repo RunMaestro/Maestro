@@ -2,7 +2,15 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, rc, '*-RC']
+    branches:
+      [
+        main,
+        rc,
+        '*-RC',
+        feat/plugin-media-broker,
+        fix/media-host-settings,
+        feat/plugin-settings-cards,
+      ]
   push:
     branches: [main, rc]
 
