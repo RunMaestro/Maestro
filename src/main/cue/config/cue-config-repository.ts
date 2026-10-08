@@ -368,7 +368,9 @@ export function watchCueConfigFile(
 
 	const debouncedOnChange = (changedPath?: string) => {
 		if (torn) return;
-		if (changedPath && changedPath !== canonicalPath && changedPath !== legacyPath) {
+		// Chokidar emits forward slashes on Windows; compare native-normalized paths.
+		const normalizedPath = changedPath ? path.normalize(changedPath) : undefined;
+		if (normalizedPath && normalizedPath !== canonicalPath && normalizedPath !== legacyPath) {
 			promptChangePending = true;
 		}
 		if (debounceTimer) {

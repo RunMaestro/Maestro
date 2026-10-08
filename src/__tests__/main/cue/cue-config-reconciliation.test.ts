@@ -3,13 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
+import { watch } from 'chokidar';
 
 vi.mock('chokidar', () => ({
-	watch: () => Object.assign(new EventEmitter(), { close: vi.fn() }),
+	watch: vi.fn(() => Object.assign(new EventEmitter(), { close: vi.fn() })),
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
-import { watchCueConfigFile } from '../../../main/cue/config/cue-config-repository';
+import {
+	readCueConfigFile,
+	watchCueConfigFile,
+} from '../../../main/cue/config/cue-config-repository';
 import { writeCueYamlAtomicSync } from '../../../main/cue/cue-yaml-write';
 
 describe('YAML reconciliation when native notifications are lost', () => {
@@ -71,5 +75,14 @@ describe('YAML reconciliation when native notifications are lost', () => {
 		expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('Config reload failed'));
 		vi.advanceTimersByTime(30_000);
 		expect(onChange).toHaveBeenCalledTimes(2);
+	});
+	it('ignores a late native notification for loaded YAML using chokidar path separators', () => {
+		const loaded = readCueConfigFile(root);
+		const onChange = vi.fn();
+		cleanup = watchCueConfigFile(root, onChange, { getLoadedConfigFile: () => loaded });
+		const watcher = vi.mocked(watch).mock.results.at(-1)!.value;
+		watcher.emit('change', config.replace(/\\/g, '/'));
+		vi.advanceTimersByTime(1000);
+		expect(onChange).not.toHaveBeenCalled();
 	});
 });
