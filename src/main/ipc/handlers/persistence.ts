@@ -15,6 +15,11 @@ import Store from 'electron-store';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
+import {
+	getMediaToolStatus,
+	resolveMediaRuntime,
+	resolveMediaModelDirectory,
+} from '../../plugins/plugin-media-tools';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
@@ -361,7 +366,18 @@ export function registerPersistenceHandlers(
 		return value;
 	});
 
+	ipcMain.handle('settings:mediaStatus', async () =>
+		getMediaToolStatus(await resolveMediaRuntime(settingsStore.get('mediaModelDirectory')))
+	);
+
 	ipcMain.handle('settings:set', async (event, key: string, value: any) => {
+		if (key === 'mediaModelDirectory') {
+			try {
+				value = await resolveMediaModelDirectory(value);
+			} catch {
+				return false;
+			}
+		}
 		// `usageStats` holds lifetime high-water marks, so a write may only ever
 		// raise them. Enforcing that here - against the value on disk rather than
 		// against any caller's in-memory copy - is what makes the invariant hold

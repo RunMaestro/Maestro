@@ -7,6 +7,7 @@
  */
 
 import { Globe } from 'lucide-react';
+import { HostMediaSection } from '../HostMediaSection';
 import { useSettings } from '../../../hooks';
 import { useKnownAuthDirs } from '../../../hooks/agent/useKnownAuthDirs';
 import type { Theme } from '../../../types';
@@ -25,6 +26,7 @@ export function EnvironmentTab({ theme }: EnvironmentTabProps) {
 
 	return (
 		<div className="space-y-5">
+			<HostMediaSection theme={theme} />
 			{/* Global Environment Variables */}
 			<div data-setting-id="environment-global-vars">
 				<div className="flex items-center gap-2 mb-1">

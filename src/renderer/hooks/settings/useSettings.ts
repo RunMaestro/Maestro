@@ -78,6 +78,10 @@ export interface UseSettingsReturn {
 	shellEnvVarsDisabled: Record<string, string>;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 
+	// Host media tools
+	mediaModelDirectory: string;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
+
 	// GitHub CLI settings
 	ghPath: string;
 	setGhPath: (value: string) => void;

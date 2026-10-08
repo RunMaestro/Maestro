@@ -18,7 +18,7 @@ import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
-import { PluginMediaTools } from './plugin-media-tools';
+import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { HostMethod } from '../../shared/plugins/rpc-protocol';
@@ -674,6 +674,7 @@ function resolveRealPath(target: string): string {
 
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	const mediaTools = new PluginMediaTools({
+		resolveRuntime: () => resolveMediaRuntime(deps.settingsGet('mediaModelDirectory')),
 		egressGuard: deps.egressGuard,
 		authorize: (pluginId) => {
 			assertBrokerAllowed(deps, pluginId, 'media.open', {});

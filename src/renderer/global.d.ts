@@ -258,6 +258,7 @@ interface MaestroAPI {
 		get: (key: string) => Promise<unknown>;
 		set: (key: string, value: unknown) => Promise<boolean>;
 		getAll: () => Promise<Record<string, unknown>>;
+		getMediaStatus?: () => Promise<import('../shared/plugins/media-tools').MediaToolStatus>;
 		onExternalChange: (handler: () => void) => () => void;
 	};
 	sessions: {

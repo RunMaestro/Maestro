@@ -59,8 +59,19 @@ export interface PluginMediaToolsDeps {
 	tempDir?: string;
 }
 
+/** Canonical host setting validation shared by desktop IPC and CLI writes. */
+export async function resolveMediaModelDirectory(value: unknown): Promise<string> {
+	if (typeof value !== 'string') throw new Error('Invalid media model directory');
+	if (value === '') return '';
+	if (!path.isAbsolute(value)) throw new Error('Media model directory must be absolute');
+	const canonical = await fs.realpath(value);
+	if (!(await fs.stat(canonical)).isDirectory())
+		throw new Error('Media model directory must be a directory');
+	return canonical;
+}
+
 /** Resolve existing installations at call time. No binaries/models are downloaded or bundled. */
-export async function resolveMediaRuntime(): Promise<Runtime> {
+export async function resolveMediaRuntime(configuredDirectory?: unknown): Promise<Runtime> {
 	const binaries: Runtime['binaries'] = {};
 	for (const [tool, key] of [
 		['ffprobe', 'MAESTRO_MEDIA_FFPROBE'],
@@ -84,8 +95,12 @@ export async function resolveMediaRuntime(): Promise<Runtime> {
 		}
 	}
 	const models: Runtime['models'] = {};
-	const directory = process.env.MAESTRO_MEDIA_MODEL_DIR;
-	if (directory && path.isAbsolute(directory)) {
+	// A non-empty host setting takes precedence. Invalid stored values fail closed.
+	const directory =
+		configuredDirectory === undefined || configuredDirectory === ''
+			? process.env.MAESTRO_MEDIA_MODEL_DIR
+			: configuredDirectory;
+	if (typeof directory === 'string' && directory && path.isAbsolute(directory)) {
 		try {
 			const root = await fs.realpath(directory);
 			for (const id of MEDIA_MODEL_IDS) {
@@ -104,6 +119,16 @@ export async function resolveMediaRuntime(): Promise<Runtime> {
 		}
 	}
 	return { binaries, models };
+}
+
+/** Shared by the broker and the host settings diagnostic. Never exposes filesystem paths. */
+export function getMediaToolStatus(runtime: Runtime): MediaToolStatus {
+	const models = MEDIA_MODEL_IDS.filter((id) => runtime.models[id]);
+	const missing: MediaToolStatus['missing'] = (
+		['ffprobe', 'ffmpeg', 'whisper-cli'] as const
+	).filter((t) => !runtime.binaries[t]);
+	if (models.length === 0) missing.push('model-directory');
+	return { profiles: missing.length ? [] : ['whisper-cli'], models, missing };
 }
 
 export class PluginMediaTools {
@@ -175,12 +200,7 @@ export class PluginMediaTools {
 
 	private async status(): Promise<MediaToolStatus> {
 		const runtime = await (this.deps.resolveRuntime ?? resolveMediaRuntime)();
-		const models = MEDIA_MODEL_IDS.filter((id) => runtime.models[id]);
-		const missing: MediaToolStatus['missing'] = (
-			['ffprobe', 'ffmpeg', 'whisper-cli'] as const
-		).filter((t) => !runtime.binaries[t]);
-		if (models.length === 0) missing.push('model-directory');
-		return { profiles: missing.length ? [] : ['whisper-cli'], models, missing };
+		return getMediaToolStatus(runtime);
 	}
 
 	private open(pluginId: string): { jobId: string } {
@@ -255,9 +275,14 @@ export class PluginMediaTools {
 		);
 	}
 
-	cleanupPlugin(pluginId: string): void {
-		for (const job of this.jobs.values())
-			if (job.pluginId === pluginId) void this.close(job, 'MediaCancelled').catch(() => {});
+	cleanupPlugin(pluginId: string): Promise<void> {
+		const drain = Promise.all(
+			[...this.jobs.values()]
+				.filter((job) => job.pluginId === pluginId)
+				.map((job) => this.close(job, 'MediaCancelled'))
+		).then(() => {});
+		void drain.catch(() => {});
+		return drain;
 	}
 
 	/** Lookups do not accept a signal. Settle on cancellation; a late answer may never cause I/O. */
@@ -437,8 +462,9 @@ export class PluginMediaTools {
 				credentials: 'omit',
 				referrerPolicy: 'no-referrer',
 				signal: job.controller.signal,
-				dispatcher: this.deps.egressGuard.dispatcher as RequestInit['dispatcher'],
-			},
+				// Node fetch extension; the renderer type graph also includes DOM RequestInit.
+				dispatcher: this.deps.egressGuard.dispatcher,
+			} as RequestInit,
 			MEDIA_LIMITS.jobTimeoutMs
 		);
 		const reader = response.body?.getReader();

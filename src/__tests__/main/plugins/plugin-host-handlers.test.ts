@@ -81,9 +81,9 @@ describe('settings.set', () => {
 	it('rejects keys outside the plugin namespace', async () => {
 		const settingsSet = vi.fn();
 		const h = buildHostCallHandlers(makeDeps({ settingsSet }));
-		await expect(h['settings.set']!('p', { key: 'theme', value: 'dark' })).rejects.toThrow(
-			/plugins\.p\./
-		);
+		await expect(
+			h['settings.set']!('p', { key: 'mediaModelDirectory', value: '/models' })
+		).rejects.toThrow(/plugins\.p\./);
 		await expect(h['settings.set']!('p', { key: 'plugins.other.x', value: 1 })).rejects.toThrow(
 			/plugins\.p\./
 		);
@@ -1829,5 +1829,45 @@ describe('ui.groupingPublish / ui.groupingClear', () => {
 				assignments: {},
 			})
 		).rejects.toThrow(/permission denied/);
+	});
+});
+
+describe('host media configuration', () => {
+	it('re-reads the host setting for brokered status and preserves plugin authorization', async () => {
+		const pathProber = await import('../../../main/agents/path-prober');
+		const discovery = vi.spyOn(pathProber, 'findAllBinaryPaths').mockResolvedValue([]);
+		// Runtime discovery is read-only; these model fixtures need no native tools.
+		const first = path.join(kvBase, 'first');
+		const second = path.join(kvBase, 'second');
+		fs.mkdirSync(first);
+		fs.mkdirSync(second);
+		fs.writeFileSync(path.join(first, 'ggml-base.bin'), 'model');
+		fs.writeFileSync(path.join(second, 'ggml-small.bin'), 'model');
+		let directory = first;
+		let trusted = true;
+		let grants: PermissionGrant[] = [
+			{ capability: 'media:tools', scope: 'discord-voice', grantedAt: 1 },
+		];
+		const settingsGet = vi.fn(() => directory);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				settingsGet,
+				broker: brokerFor(() => grants),
+				isPluginTrusted: () => trusted,
+			})
+		);
+		try {
+			expect(await h['media.status']!('p', {})).toMatchObject({ models: ['base'] });
+			directory = second;
+			expect(await h['media.status']!('p', {})).toMatchObject({ models: ['small'] });
+			expect(settingsGet).toHaveBeenCalledWith('mediaModelDirectory');
+			trusted = false;
+			await expect(h['media.status']!('p', {})).rejects.toMatchObject({ code: 'MediaDenied' });
+			trusted = true;
+			grants = [];
+			await expect(h['media.status']!('p', {})).rejects.toMatchObject({ code: 'MediaDenied' });
+		} finally {
+			discovery.mockRestore();
+		}
 	});
 });

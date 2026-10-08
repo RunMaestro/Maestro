@@ -92,6 +92,7 @@ function resetStore() {
 		globalShowHotkey: [],
 		defaultShell: 'zsh',
 		customShellPath: '',
+		mediaModelDirectory: '',
 		shellArgs: '',
 		shellEnvVars: {},
 		ghPath: '',
@@ -1898,6 +1899,43 @@ describe('settingsStore', () => {
 	// ========================================================================
 	// 11. loadAllSettings
 	// ========================================================================
+
+	describe('host media directory', () => {
+		it.each([undefined, null, 42])(
+			'keeps a controlled empty value for a malformed persisted directory: %s',
+			async (persisted) => {
+				vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
+				vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(persisted);
+				expect(await useSettingsStore.getState().setMediaModelDirectory('/models')).toBe(true);
+				expect(useSettingsStore.getState().mediaModelDirectory).toBe('');
+			}
+		);
+
+		it('updates state only after successful persistence and reads the canonical path', async () => {
+			vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(false);
+			expect(await useSettingsStore.getState().setMediaModelDirectory('/bad')).toBe(false);
+			expect(useSettingsStore.getState().mediaModelDirectory).toBe('');
+			vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
+			vi.mocked(window.maestro.settings.get).mockResolvedValueOnce('/canonical/models');
+			expect(await useSettingsStore.getState().setMediaModelDirectory('/alias/models')).toBe(true);
+			expect(useSettingsStore.getState().mediaModelDirectory).toBe('/canonical/models');
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				'mediaModelDirectory',
+				'/alias/models'
+			);
+		});
+
+		it('hydrates the host directory and clears stale values if removed externally', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+				mediaModelDirectory: '/models',
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().mediaModelDirectory).toBe('/models');
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().mediaModelDirectory).toBe('');
+		});
+	});
 
 	describe('loadAllSettings', () => {
 		it('loads all settings from getAll() on success', async () => {
