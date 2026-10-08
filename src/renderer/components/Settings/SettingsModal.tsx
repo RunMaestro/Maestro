@@ -339,10 +339,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// (e.g. caller switches tab without closing). Mount-time restoration is
 	// handled by the lazy useState init above, not here.
 	useEffect(() => {
-		if (isOpen && initialTab) {
+		if (isOpen && initialTab && !initialSettingId?.startsWith('plugin-settings:')) {
 			setActiveTab(initialTab);
 		}
-	}, [isOpen, initialTab]);
+	}, [isOpen, initialTab, initialSettingId]);
 
 	// Persist the current tab in module memory so the next open lands here.
 	// In-memory only - resets on app restart by design.

@@ -3036,6 +3036,34 @@ describe('plugin settings destinations', () => {
 		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
 	});
 
+	it('lets a plugin card destination override a management tab while settings stays open', async () => {
+		__resetLastOpenSettingsTabForTests();
+		settingsPanels = [panel];
+		const props = {
+			isOpen: true,
+			onClose: vi.fn(),
+			theme: mockTheme,
+			themes: { dracula: mockTheme },
+		};
+		const view = render(<SettingsModal {...props} initialTab="general" />);
+		view.rerender(
+			<SettingsModal
+				{...props}
+				initialTab="encore"
+				initialSettingId="plugin-settings:example.plugin/config"
+			/>
+		);
+		expect(await screen.findByTestId('plugin-settings-frame')).toHaveTextContent(panel.id);
+		view.rerender(
+			<SettingsModal
+				{...props}
+				initialTab="environment"
+				initialSettingId="environment-host-media"
+			/>
+		);
+		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
+	});
+
 	it('navigates/searches/deep-links by stable panel identity and unmounts on removal', async () => {
 		__resetLastOpenSettingsTabForTests();
 		settingsPanels = [panel];
