@@ -196,7 +196,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInput: true, // Verified (agy 1.2.16): image path in the prompt, opened with view_file
 		supportsImageInputOnResume: true, // Verified: same prompt path works with --conversation <id>
 		supportsSlashCommands: false, // Slash commands are TUI-only, not exposed to headless runs
-		supportsSessionStorage: false, // On-disk conversation format is undocumented
+		supportsSessionStorage: true, // AntigravitySessionStorage reads conversation_summaries.db + conversations/<id>.db (local only)
 		supportsCostTracking: false, // usage reports tokens only, no cost
 		supportsUsageStats: true, // usage: input/output/thinking/cache_read/total tokens
 		supportsBatchMode: true, // -p / --print / --prompt

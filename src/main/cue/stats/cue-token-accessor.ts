@@ -85,8 +85,10 @@ const COVERAGE_BY_AGENT: Record<string, 'full' | 'partial'> = {
 	'claude-code': 'full',
 	opencode: 'full',
 	'factory-droid': 'full',
+	grok: 'full',
 	codex: 'partial',
 	'copilot-cli': 'partial',
+	antigravity: 'partial',
 };
 
 /**

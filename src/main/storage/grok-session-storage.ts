@@ -13,9 +13,8 @@
  * so this implementation follows `copilot-session-storage.ts`, borrowing
  * only the tool_call/tool_result merge pattern from Codex.
  *
- * Grok's transcript records carry no per-message timestamps and no token
- * counts; those fields are left empty/zero rather than fabricated from the
- * auxiliary event files (see Phase 02 research notes).
+ * Grok's transcript records carry no per-message timestamps (left empty). Token
+ * and cost totals come from the session's `usage.json` (grok 1.x).
  */
 
 import path from 'path';
@@ -40,6 +39,8 @@ import { isMacOS } from '../../shared/platformDetection';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { isExpectedRemoteError } from './remote-error-utils';
+import type { ModelTokenUsage } from '../../shared/tokenUsage';
+import { normalizeModelId } from '../../shared/modelPricing';
 
 const LOG_CONTEXT = '[GrokSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -87,6 +88,73 @@ interface GrokSessionSummary {
 	created_at?: string;
 	updated_at?: string;
 	git_root_dir?: string;
+}
+
+/** Token totals as `usage.json` records them, per session and per model. */
+interface GrokUsageTotals {
+	/** INCLUDES cached reads, unlike the stream's `input_tokens`. */
+	inputTokens?: number;
+	outputTokens?: number;
+	cachedReadTokens?: number;
+	cacheCreationTokens?: number;
+	/** USD x 1e10 (verified: 207651600 ticks == total_cost_usd 0.02076516). */
+	costUsdTicks?: number;
+}
+
+/** Shape of usage.json (grok 1.x; absent on 0.x sessions). */
+interface GrokUsageFile {
+	session?: GrokUsageTotals & { modelUsage?: Record<string, GrokUsageTotals> };
+}
+
+const COST_TICKS_PER_USD = 1e10;
+
+const nonNegative = (value: unknown): number =>
+	typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+
+/**
+ * Session tokens in Maestro's convention: `inputTokens` EXCLUDES cache reads,
+ * the way the live stream reports them, so the dashboard's `input + cacheRead`
+ * does not count cached tokens twice.
+ */
+function toSessionTokens(totals: GrokUsageTotals) {
+	const cacheReadTokens = nonNegative(totals.cachedReadTokens);
+	const cacheCreationTokens = nonNegative(totals.cacheCreationTokens);
+	return {
+		inputTokens: Math.max(
+			0,
+			nonNegative(totals.inputTokens) - cacheReadTokens - cacheCreationTokens
+		),
+		outputTokens: nonNegative(totals.outputTokens),
+		cacheReadTokens,
+		cacheCreationTokens,
+		// Undefined, not 0, when the file names no cost: a provider that reports
+		// tokens but no cost (a grok-compatible custom binary) must read as unknown, not free.
+		costUsd:
+			typeof totals.costUsdTicks === 'number'
+				? nonNegative(totals.costUsdTicks) / COST_TICKS_PER_USD
+				: undefined,
+	};
+}
+
+/** Session totals plus a per-model split from usage.json, or null if unreadable. */
+export function parseGrokUsageFile(
+	content: string | null
+): (ReturnType<typeof toSessionTokens> & { byModel: ModelTokenUsage[] }) | null {
+	if (!content) return null;
+	let parsed: GrokUsageFile;
+	try {
+		parsed = JSON.parse(content) as GrokUsageFile;
+	} catch {
+		return null;
+	}
+	if (!parsed.session || typeof parsed.session !== 'object') return null;
+	const byModel = Object.entries(parsed.session.modelUsage ?? {}).map(([model, totals]) => ({
+		model: normalizeModelId(model),
+		...toSessionTokens(totals),
+		costUsd: toSessionTokens(totals).costUsd ?? 0,
+		costEstimated: typeof totals.costUsdTicks !== 'number',
+	}));
+	return { ...toSessionTokens(parsed.session), byModel };
 }
 
 /** A tool call entry on an assistant transcript record. */
@@ -496,6 +564,9 @@ export class GrokSessionStorage extends BaseSessionStorage {
 					? Math.max(0, Math.floor((modifiedMs - createdMs) / 1000))
 					: 0;
 			const preview = parsed.firstUserMessage || parsed.firstAssistantMessage || title;
+			const usage = parseGrokUsageFile(
+				await this.readSessionFile(this.joinPath(sshConfig, sessionDir, 'usage.json'), sshConfig)
+			);
 
 			return {
 				sessionId: summary.info?.id || sessionId,
@@ -505,12 +576,14 @@ export class GrokSessionStorage extends BaseSessionStorage {
 				firstMessage: preview.slice(0, FIRST_MESSAGE_PREVIEW_LENGTH),
 				messageCount: parsed.messages.length,
 				sizeBytes: transcript.size,
-				// Grok transcripts carry no token counts; report zeros rather than
-				// fabricating values from the auxiliary event files.
-				inputTokens: 0,
-				outputTokens: 0,
-				cacheReadTokens: 0,
-				cacheCreationTokens: 0,
+				// The transcript carries no token counts; grok 1.x keeps the session
+				// totals in usage.json beside it. A 0.x session has none: zeros.
+				inputTokens: usage?.inputTokens ?? 0,
+				outputTokens: usage?.outputTokens ?? 0,
+				cacheReadTokens: usage?.cacheReadTokens ?? 0,
+				cacheCreationTokens: usage?.cacheCreationTokens ?? 0,
+				...(usage?.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
+				...(usage?.byModel.length ? { byModel: usage.byModel } : {}),
 				durationSeconds,
 				sessionName: title || undefined,
 			};

@@ -57,8 +57,11 @@ const COVERAGE_BY_AGENT: Record<string, TokenCoverage> = {
 	'claude-code': 'full',
 	opencode: 'full',
 	'factory-droid': 'full',
+	grok: 'full',
 	codex: 'partial',
 	'copilot-cli': 'partial',
+	// No cost and no model id on disk: tokens only.
+	antigravity: 'partial',
 };
 
 /** How long collected breakdowns stay fresh in memory before a re-collect. */

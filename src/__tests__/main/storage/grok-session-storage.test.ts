@@ -268,9 +268,89 @@ describe('GrokSessionStorage - local listing', () => {
 			'Create a file named hello.txt containing the word hello, then read it back'
 		);
 		expect(session.messageCount).toBe(3);
-		// Grok transcripts carry no token counts; zeros, not fabricated values.
+		// No usage.json (a 0.x session): zeros, not fabricated values.
 		expect(session.inputTokens).toBe(0);
 		expect(session.outputTokens).toBe(0);
+		expect(session.costUsd).toBeUndefined();
+	});
+
+	it('reads session tokens and cost from usage.json (grok 1.x)', async () => {
+		const dir = path.join(SESSIONS_DIR, encodeURIComponent(PROJECT), SESSION_ID);
+		// Trimmed from a real 1.0.41 session after two turns. On disk inputTokens
+		// INCLUDES cached reads (93742 = 19374 uncached + 74368 cached).
+		const usageJson = JSON.stringify({
+			sessionId: SESSION_ID,
+			session: {
+				inputTokens: 93742,
+				outputTokens: 193,
+				cachedReadTokens: 74368,
+				cacheCreationTokens: 0,
+				reasoningTokens: 107,
+				costUsdTicks: 262106000,
+				modelUsage: {
+					'grok-4.7-build': {
+						inputTokens: 93742,
+						outputTokens: 193,
+						cachedReadTokens: 74368,
+						cacheCreationTokens: 0,
+						costUsdTicks: 262106000,
+					},
+				},
+			},
+		});
+		mockLocalFs({
+			...sessionFiles(PROJECT, SESSION_ID, summaryJson(SESSION_ID, PROJECT), chatHistoryJsonl()),
+			[path.join(dir, 'usage.json')]: usageJson,
+		});
+
+		const [session] = await new GrokSessionStorage().listSessions(PROJECT);
+
+		// Stream convention: input EXCLUDES cache reads, so the dashboard's
+		// input + cacheRead does not count the cached tokens twice.
+		expect(session).toMatchObject({
+			inputTokens: 19374,
+			outputTokens: 193,
+			cacheReadTokens: 74368,
+			cacheCreationTokens: 0,
+		});
+		expect(session.costUsd).toBeCloseTo(0.0262106, 10);
+		expect(session.byModel).toEqual([
+			{
+				model: 'grok-4.7-build',
+				inputTokens: 19374,
+				outputTokens: 193,
+				cacheReadTokens: 74368,
+				cacheCreationTokens: 0,
+				costUsd: expect.closeTo(0.0262106, 10),
+				costEstimated: false,
+			},
+		]);
+	});
+
+	it('reads a cost-less usage.json (custom grok-compatible binary) as tokens with an unknown cost', async () => {
+		const dir = path.join(SESSIONS_DIR, encodeURIComponent(PROJECT), SESSION_ID);
+		// A grok-compatible custom binary that reports tokens but no cost writes this.
+		const usageJson = JSON.stringify({
+			sessionId: SESSION_ID,
+			session: {
+				inputTokens: 15364,
+				outputTokens: 32,
+				cachedReadTokens: 3200,
+				cacheCreationTokens: 0,
+				turnCount: 1,
+			},
+		});
+		mockLocalFs({
+			...sessionFiles(PROJECT, SESSION_ID, summaryJson(SESSION_ID, PROJECT), chatHistoryJsonl()),
+			[path.join(dir, 'usage.json')]: usageJson,
+		});
+
+		const [session] = await new GrokSessionStorage().listSessions(PROJECT);
+
+		expect(session).toMatchObject({ inputTokens: 12164, outputTokens: 32, cacheReadTokens: 3200 });
+		// Unknown, not $0: the dashboard then estimates it and flags it estimated.
+		expect(session.costUsd).toBeUndefined();
+		expect(session.byModel).toBeUndefined();
 	});
 
 	it('matches sessions recorded under /private/var when the project path uses /var (and vice versa)', async () => {
