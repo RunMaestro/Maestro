@@ -8,6 +8,31 @@ import { createMockSession } from './cue-test-helpers';
 
 const { readSessions } = vi.hoisted(() => ({ readSessions: vi.fn() }));
 const { watcherReady } = vi.hoisted(() => ({ watcherReady: [] as Promise<void>[] }));
+const ioFaults = vi.hoisted(() => ({
+	afterRead: undefined as (() => void) | undefined,
+	failedReads: 0,
+	failTargetRefresh: false,
+}));
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
+			const isConfig = String(args[0]).replace(/\\/g, '/').endsWith('/.maestro/cue.yaml');
+			if (isConfig && ioFaults.failedReads > 0) {
+				ioFaults.failedReads--;
+				throw Object.assign(new Error('transient config read failure'), { code: 'EIO' });
+			}
+			const value = actual.readFileSync(...args);
+			if (isConfig && ioFaults.afterRead) {
+				const hook = ioFaults.afterRead;
+				ioFaults.afterRead = undefined;
+				hook();
+			}
+			return value;
+		},
+	};
+});
 vi.mock('chokidar', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('chokidar')>();
 	return {
@@ -39,6 +64,9 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 	const onLog = vi.fn();
 
 	beforeEach(() => {
+		ioFaults.afterRead = undefined;
+		ioFaults.failedReads = 0;
+		ioFaults.failTargetRefresh = false;
 		watcherReady.length = 0;
 		intervals = vi.spyOn(globalThis, 'setInterval');
 		fs.mkdirSync('.build', { recursive: true });
@@ -54,7 +82,13 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			enabled: () => true,
 			getSessions: () => [other, target],
 			registry,
-			onRefreshRequested: (id, projectRoot) => runtime.refreshSession(id, projectRoot),
+			onRefreshRequested: (id, projectRoot) => {
+				if (id === 'target' && ioFaults.failTargetRefresh) {
+					ioFaults.failTargetRefresh = false;
+					ioFaults.failedReads = 1;
+				}
+				runtime.refreshSession(id, projectRoot);
+			},
 			onLog,
 			dispatchSubscription: dispatch,
 			clearQueue: vi.fn(),
@@ -127,5 +161,79 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 		expect(dispatch.mock.calls[0][0]).toBe('target');
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(registry.get('other')?.triggerSources).toHaveLength(0);
+	});
+
+	it('does not dispatch twice when CLI writes between the watcher snapshot and runtime load', async () => {
+		runtime.clearAll();
+		watcherReady.length = 0;
+		let created!: Promise<void>;
+		ioFaults.afterRead = () => {
+			created = cueSchedule({
+				agent: 'target',
+				every: '15m',
+				prompt: 'inert test',
+				name: 'completion',
+				json: true,
+			});
+		};
+		runtime.initSession(readSessions()[1], { reason: 'system-boot' });
+		await created;
+		await Promise.all(watcherReady);
+		// Include the real native-notification debounce window, not just ready.
+		await new Promise((resolve) => setTimeout(resolve, 1200));
+		expect(dispatch).toHaveBeenCalledTimes(1);
+		expect(registry.get('target')?.triggerSources).toHaveLength(1);
+	});
+
+	it('keeps the watcher alive and retries when the real runtime refresh read throws', async () => {
+		await Promise.all(watcherReady);
+		ioFaults.failTargetRefresh = true;
+		await cueSchedule({
+			agent: 'target',
+			every: '15m',
+			prompt: 'inert test',
+			name: 'completion',
+			json: true,
+		});
+		await vi.waitFor(
+			() =>
+				expect(onLog).toHaveBeenCalledWith(
+					'warn',
+					expect.stringContaining('Config reload failed'),
+					expect.objectContaining({ type: 'triggerHealthWarning' })
+				),
+			{ timeout: 4000 }
+		);
+		expect(dispatch).not.toHaveBeenCalled();
+		// Drive the existing 30s health checks: refresh must not have closed them.
+		for (const [callback, delay] of intervals.mock.calls) {
+			if (delay === 30_000) (callback as () => void)();
+		}
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), { timeout: 4000 });
+		expect(registry.get('target')?.triggerSources).toHaveLength(1);
+		expect(watcherReady).toHaveLength(2); // Both original watchers survived refresh.
+	});
+
+	it('installs the watcher despite an initial snapshot read error without repeating a loaded interval', async () => {
+		runtime.clearAll();
+		watcherReady.length = 0;
+		await cueSchedule({
+			agent: 'target',
+			every: '15m',
+			prompt: 'inert test',
+			name: 'completion',
+			json: true,
+		});
+		ioFaults.failedReads = 1;
+		runtime.initSession(readSessions()[1], { reason: 'system-boot' });
+		await Promise.all(watcherReady);
+		await new Promise((resolve) => setTimeout(resolve, 1200));
+		expect(dispatch).toHaveBeenCalledTimes(1);
+		expect(onLog).toHaveBeenCalledWith(
+			'warn',
+			expect.stringContaining('Config health check failed'),
+			expect.objectContaining({ type: 'triggerHealthWarning' })
+		);
+		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 	});
 });

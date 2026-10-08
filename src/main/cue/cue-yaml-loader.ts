@@ -22,11 +22,12 @@ export { resolveCueConfigPath } from './config/cue-config-repository';
  * carries non-fatal warnings (e.g. unresolved prompt_file references) so the
  * caller can surface them to the user.
  */
-export type LoadCueConfigDetailedResult =
+export type LoadCueConfigDetailedResult = (
 	| { ok: true; config: CueConfig; warnings: string[] }
 	| { ok: false; reason: 'missing' }
 	| { ok: false; reason: 'parse-error'; message: string }
-	| { ok: false; reason: 'invalid'; errors: string[] };
+	| { ok: false; reason: 'invalid'; errors: string[] }
+) & { file?: ReturnType<typeof readCueConfigFile> };
 
 /**
  * Loads, validates, and materializes the Cue config for a project root.
@@ -41,7 +42,7 @@ export type LoadCueConfigDetailedResult =
 export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetailedResult {
 	const file = readCueConfigFile(projectRoot);
 	if (!file) {
-		return { ok: false, reason: 'missing' };
+		return { ok: false, reason: 'missing', file: null };
 	}
 
 	let parsed: unknown;
@@ -49,6 +50,7 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 		parsed = yaml.load(file.raw);
 	} catch (err) {
 		return {
+			file,
 			ok: false,
 			reason: 'parse-error',
 			message: err instanceof Error ? err.message : String(err),
@@ -57,6 +59,7 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 
 	if (!parsed || typeof parsed !== 'object') {
 		return {
+			file,
 			ok: false,
 			reason: 'parse-error',
 			message: 'Cue config root must be a YAML mapping',
@@ -69,13 +72,14 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 	// pipelines belonging to other agents that share the same project root.
 	const partitioned = partitionValidSubscriptions(parsed);
 	if (partitioned.configErrors.length > 0) {
-		return { ok: false, reason: 'invalid', errors: partitioned.configErrors };
+		return { ok: false, reason: 'invalid', errors: partitioned.configErrors, file };
 	}
 
 	const document = parseCueConfigDocument(file.raw, projectRoot);
 	if (!document) {
 		// Should be unreachable since the config-level shape passed, but guard defensively.
 		return {
+			file,
 			ok: false,
 			reason: 'parse-error',
 			message: 'Cue config could not be normalized',
@@ -125,7 +129,7 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 		warnings.push(`Skipped invalid subscription at index ${entry.index} - ${detail}`);
 	}
 
-	return { ok: true, config: materialized.config, warnings };
+	return { ok: true, config: materialized.config, warnings, file };
 }
 
 /**
@@ -159,7 +163,7 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 export function watchCueYaml(
 	projectRoot: string,
 	onChange: () => void,
-	opts?: { onWarning?: (message: string) => void }
+	opts?: Parameters<typeof watchCueConfigFile>[2]
 ): () => void {
 	return watchCueConfigFile(projectRoot, onChange, opts);
 }

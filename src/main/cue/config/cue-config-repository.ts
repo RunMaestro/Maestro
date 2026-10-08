@@ -319,7 +319,12 @@ export function pruneOrphanedPromptFiles(
 export function watchCueConfigFile(
 	projectRoot: string,
 	onChange: () => void,
-	opts?: { onReady?: () => void; onWarning?: (message: string) => void }
+	opts?: {
+		onReady?: () => void;
+		onWarning?: (message: string) => void;
+		/** Bytes actually consumed by the runtime, not a fresh disk read. */
+		getLoadedConfigFile?: () => ReturnType<typeof readCueConfigFile> | undefined;
+	}
 ): () => void {
 	const canonicalPath = path.join(projectRoot, CUE_CONFIG_PATH);
 	const legacyPath = path.join(projectRoot, LEGACY_CUE_CONFIG_PATH);
@@ -332,12 +337,20 @@ export function watchCueConfigFile(
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let torn = false;
 	let lastReadError: string | null = null;
+	let reloadPending = false;
+	let promptChangePending = false;
 	const warn = (message: string) => {
 		logger.warn(message, 'CueConfig');
 		opts?.onWarning?.(message);
 	};
 	// Compare bytes rather than mtime/size: atomic replacement can preserve both.
-	let observed = readCueConfigFile(projectRoot);
+	let observed: ReturnType<typeof readCueConfigFile> | undefined;
+	try {
+		observed = readCueConfigFile(projectRoot);
+	} catch (error) {
+		lastReadError = String(error);
+		warn(`[CUE] Config health check failed for ${projectRoot}: ${lastReadError}`);
+	}
 
 	const watcher = chokidar.watch([canonicalPath, legacyPath, promptsGlob], {
 		persistent: true,
@@ -353,8 +366,11 @@ export function watchCueConfigFile(
 		);
 	});
 
-	const debouncedOnChange = () => {
+	const debouncedOnChange = (changedPath?: string) => {
 		if (torn) return;
+		if (changedPath && changedPath !== canonicalPath && changedPath !== legacyPath) {
+			promptChangePending = true;
+		}
 		if (debounceTimer) {
 			clearTimeout(debounceTimer);
 		}
@@ -363,9 +379,23 @@ export function watchCueConfigFile(
 			if (torn) return;
 			try {
 				const current = readCueConfigFile(projectRoot);
+				const loaded = opts?.getLoadedConfigFile?.();
+				// A CLI write before the runtime read may already have been loaded.
+				// Suppress its late native notification as well as ready reconciliation.
+				if (
+					loaded !== undefined &&
+					!promptChangePending &&
+					!reloadPending &&
+					current?.filePath === loaded?.filePath &&
+					current?.raw === loaded?.raw
+				)
+					return;
 				onChange();
 				observed = current;
+				reloadPending = false;
+				promptChangePending = false;
 			} catch (error) {
+				reloadPending = true;
 				warn(`[CUE] Config reload failed for ${projectRoot}: ${String(error)}`);
 			}
 		}, 1000);
@@ -374,8 +404,15 @@ export function watchCueConfigFile(
 		if (torn) return;
 		try {
 			const current = readCueConfigFile(projectRoot);
+			const loaded = opts?.getLoadedConfigFile?.();
+			const baseline = loaded === undefined ? observed : loaded;
 			lastReadError = null;
-			if (current?.filePath === observed?.filePath && current?.raw === observed?.raw) return;
+			if (
+				!reloadPending &&
+				current?.filePath === baseline?.filePath &&
+				current?.raw === baseline?.raw
+			)
+				return;
 			if (debounceTimer) return; // Native notification already queued the reload.
 			warn(
 				`[CUE] Missed config change for ${projectRoot}; reconciling YAML and timer registrations`
