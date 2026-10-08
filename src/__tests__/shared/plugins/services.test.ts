@@ -26,31 +26,33 @@ const required = {
 const request = { jobId: 'job', audioId: 'audio', model: 'base', language: 'de' };
 
 describe('host-known service contract', () => {
-	it('accepts the native provider and consumer manifests documented in plugin-services.md', () => {
-		const examples = [
-			...readFileSync(
-				new URL('../../../../docs/plugin-services.md', import.meta.url),
-				'utf8'
-			).matchAll(/```json\n([\s\S]*?)\n```/g),
-		].map((match) => JSON.parse(match[1]));
-		expect(examples).toHaveLength(2);
-		const [provider, consumer] = examples;
-		const providerResult = validatePluginManifest(provider);
-		const consumerResult = validatePluginManifest({
-			id: 'example.consumer',
-			name: 'Consumer',
-			version: '1.0.0',
-			tier: 1,
-			entry: 'main.js',
-			maestro: { minHostApi: '1.24.0' },
-			...consumer,
-		});
-		expect(providerResult.errors).toEqual([]);
-		expect(providerResult.manifest?.provides).toEqual(provider.provides);
-		expect(consumerResult.errors).toEqual([]);
-		expect(consumerResult.manifest?.requires).toEqual(consumer.requires);
-		expect(consumerResult.manifest?.permissions).toEqual(consumer.permissions);
-	});
+	it.each(['\n', '\r\n'])(
+		'accepts the documented native provider and consumer manifests with line endings %j',
+		(lineEnding) => {
+			const examples = [
+				...readFileSync(new URL('../../../../docs/plugin-services.md', import.meta.url), 'utf8')
+					.replace(/\r?\n/g, lineEnding)
+					.matchAll(/```json\r?\n([\s\S]*?)\r?\n```/g),
+			].map((match) => JSON.parse(match[1]));
+			expect(examples).toHaveLength(2);
+			const [provider, consumer] = examples;
+			const providerResult = validatePluginManifest(provider);
+			const consumerResult = validatePluginManifest({
+				id: 'example.consumer',
+				name: 'Consumer',
+				version: '1.0.0',
+				tier: 1,
+				entry: 'main.js',
+				maestro: { minHostApi: '1.24.0' },
+				...consumer,
+			});
+			expect(providerResult.errors).toEqual([]);
+			expect(providerResult.manifest?.provides).toEqual(provider.provides);
+			expect(consumerResult.errors).toEqual([]);
+			expect(consumerResult.manifest?.requires).toEqual(consumer.requires);
+			expect(consumerResult.manifest?.permissions).toEqual(consumer.permissions);
+		}
+	);
 	it('preserves provided/required declarations through the manifest validator', () => {
 		const result = validatePluginManifest({
 			id: 'example.plugin',
