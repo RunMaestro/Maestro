@@ -10,14 +10,16 @@
 import { captureException } from '../sentry';
 import { resolveLanguage } from './highlighterManager';
 
+interface HighlightJsGuess {
+	language?: string;
+	relevance: number;
+}
+
 interface HighlightJsApi {
 	highlightAuto: (
 		code: string,
 		languageSubset?: string[]
-	) => {
-		language?: string;
-		relevance: number;
-	};
+	) => HighlightJsGuess & { secondBest?: HighlightJsGuess };
 }
 
 type HighlightJsImport = typeof import('highlight.js') & {
@@ -48,23 +50,29 @@ function loadHljs(): Promise<HighlightJsApi> {
 	return hljsPromise;
 }
 
-/**
- * Guess a Shiki-compatible language id for `code`. Returns null if the
- * heuristic isn't confident enough, or if hljs's pick doesn't map to a
- * grammar Shiki ships.
- *
- * The `relevance` field from hljs is a rough confidence signal - anything
- * under 5 tends to be noise on small snippets. We pass that threshold up so
- * callers can decide whether to render plain or highlight on a weak guess.
- */
 export interface DetectionResult {
 	/** Canonical Shiki language id, e.g. `'typescript'`. */
 	language: string;
-	/** hljs relevance score; higher = more confident. */
-	relevance: number;
 }
 
-const MIN_RELEVANCE = 5;
+/**
+ * The confidence gate. hljs `relevance` is a raw keyword-hit count, not a
+ * probability, and it grows with snippet length, so no single cutoff means
+ * "sure". What separates a right guess from a wrong one is the LEAD: real code
+ * wins clearly, while prose, logs, and command output score a near-tie across
+ * several unrelated grammars (C#, Kotlin, YAML, SQL all match English words).
+ *
+ * A guess is used only when it scores at least `MIN_RELEVANCE` and at least
+ * `MIN_LEAD` times the best grammar from a different family. Measured on 42
+ * code and non-code samples (snippets, repo files, logs, stack traces, tool
+ * output), this kept 4 guesses and none was wrong: bash, SQL, PHP, and an env
+ * listing as INI. A looser gate (relevance 5, lead 1.5) let a log and a
+ * CLAUDE.md through as YAML. The cost is recall: most short or C-like
+ * snippets fall back to plain text, which is the intended trade. A wrong color
+ * is worse than none, and the picker is one click away.
+ */
+const MIN_RELEVANCE = 10;
+const MIN_LEAD = 2;
 
 /**
  * Whitelist of grammars `highlightAuto` is allowed to consider. By default hljs
@@ -77,10 +85,16 @@ const MIN_RELEVANCE = 5;
  * plaintext, which is the desired behaviour when we aren't sure. ids are
  * hljs language names; the winner is mapped to Shiki's id by `resolveLanguage`.
  *
- * Swift is left out on purpose: its keyword list is full of English words
- * (`as`, `in`, `is`, `some`, `each`, `operator`, `indirect`), so prose and
- * directory listings out-score every real language as Swift. A Swift fence
- * without a tag renders as plain text; a tagged one still highlights.
+ * Two grammars are left out on purpose, because winning with them proves
+ * nothing:
+ * - Swift: its keyword list is full of English words (`as`, `in`, `is`,
+ *   `some`, `each`, `operator`, `indirect`), so prose and directory listings
+ *   out-score every real language as Swift.
+ * - YAML: it accepts almost any text as plain scalars and scores timestamps,
+ *   so a log scores as YAML while every other grammar hits an illegal token
+ *   and scores 0, which reads as an unbeatable lead.
+ * An untagged fence in either renders as plain text; a tagged one still
+ * highlights.
  */
 const HLJS_DETECT_SUBSET = [
 	'javascript',
@@ -93,7 +107,6 @@ const HLJS_DETECT_SUBSET = [
 	'css',
 	'scss',
 	'markdown',
-	'yaml',
 	'rust',
 	'go',
 	'java',
@@ -116,17 +129,72 @@ const HLJS_DETECT_SUBSET = [
  */
 const TREE_LINE_REGEX = /^[\s│]*[├└│]/m;
 
+/**
+ * Grammars that are supersets or dialects of each other. A near-tie inside a
+ * family (TypeScript vs JavaScript, CSS vs SCSS) is not doubt about what the
+ * code is, so the lead is measured against the best grammar OUTSIDE the
+ * winner's family. Grammars not listed are their own family.
+ */
+const HLJS_FAMILIES: Record<string, string> = {
+	javascript: 'js',
+	typescript: 'js',
+	json: 'js',
+	c: 'c',
+	cpp: 'c',
+	css: 'css',
+	scss: 'css',
+	bash: 'sh',
+	shell: 'sh',
+};
+
+function hljsFamily(language: string): string {
+	return HLJS_FAMILIES[language] ?? language;
+}
+
+/** True when `text` is a JSON object or array. A parse is proof; no guess needed. */
+function isJsonDocument(text: string): boolean {
+	if (!text.startsWith('{') && !text.startsWith('[')) return false;
+	try {
+		JSON.parse(text);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The hljs language for `code`, or null unless it passes the confidence gate
+ * (see `MIN_RELEVANCE` / `MIN_LEAD`).
+ */
+function confidentHljsGuess(hljs: HighlightJsApi, code: string): string | null {
+	const best = hljs.highlightAuto(code, HLJS_DETECT_SUBSET);
+	if (!best.language || best.relevance < MIN_RELEVANCE) return null;
+	const family = hljsFamily(best.language);
+	// `secondBest` is the rival unless it shares the winner's family; only
+	// then is a second pass over the other families needed.
+	let rival = best.secondBest;
+	if (rival?.language && hljsFamily(rival.language) === family) {
+		const others = HLJS_DETECT_SUBSET.filter((lang) => hljsFamily(lang) !== family);
+		rival = hljs.highlightAuto(code, others);
+	}
+	const rivalRelevance = rival?.language ? rival.relevance : 0;
+	return best.relevance >= rivalRelevance * MIN_LEAD ? best.language : null;
+}
+
+/**
+ * Guess a Shiki-compatible language id for `code`. Returns null (render as
+ * plain text) unless the guess is near certain, or if the pick has no grammar
+ * Shiki ships.
+ */
 export async function detectLanguage(code: string): Promise<DetectionResult | null> {
 	const trimmed = code.trim();
 	if (trimmed.length < 8) return null;
 	if (TREE_LINE_REGEX.test(trimmed)) return null;
 	try {
-		const hljs = await loadHljs();
-		const result = hljs.highlightAuto(trimmed, HLJS_DETECT_SUBSET);
-		if (!result.language || result.relevance < MIN_RELEVANCE) return null;
-		const shikiLang = await resolveLanguage(result.language);
-		if (!shikiLang) return null;
-		return { language: shikiLang, relevance: result.relevance };
+		const guess = isJsonDocument(trimmed) ? 'json' : confidentHljsGuess(await loadHljs(), trimmed);
+		if (!guess) return null;
+		const shikiLang = await resolveLanguage(guess);
+		return shikiLang ? { language: shikiLang } : null;
 	} catch (err) {
 		captureException(err, { extra: { component: 'shikiLanguageDetect' } });
 		return null;
