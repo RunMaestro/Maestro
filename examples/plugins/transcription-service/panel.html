@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Local transcription</title>
+	</head>
+	<body>
+		<h1>Local transcription</h1>
+		<p>This provider accepts only media delegated by the host for a service call.</p>
+		<button id="refresh">Check readiness</button>
+		<pre id="status">Check readiness to see available models and missing prerequisites.</pre>
+		<script>
+			document.getElementById('refresh').addEventListener('click', () => {
+				parent.postMessage({ type: 'maestro:invokeCommand', commandId: 'refresh' }, '*');
+			});
+			window.addEventListener('message', (event) => {
+				if (event.data?.type === 'maestro:panelData')
+					document.getElementById('status').textContent = JSON.stringify(event.data.data, null, 2);
+			});
+		</script>
+	</body>
+</html>

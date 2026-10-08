@@ -2249,7 +2249,10 @@ app
 			}
 		}
 
-		let pluginResourceCleanup: ((pluginId: string) => void) | undefined;
+		let serviceAvailable: ((pluginId: string, requirementId: string) => boolean) | undefined;
+		let serviceReconcileQueued = false;
+		let serviceReconcile: (() => void) | undefined;
+		let pluginResourceCleanup: ((pluginId: string) => Promise<void>) | undefined;
 		const groupingRegistry = new PluginGroupingRegistry(() => {
 			try {
 				mainWindow?.webContents.send('plugins:groupings-changed');
@@ -2261,6 +2264,37 @@ app
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
+				serviceManifest: (id) =>
+					pluginManager
+						?.getActiveRecords()
+						.find((r) => r.id === id && r.signature?.status === 'trusted')?.manifest ?? undefined,
+				serviceCancelProvider: (id, callId) => {
+					pluginSandboxHost?.pushEvent(id, {
+						topic: 'services.cancel',
+						at: new Date().toISOString(),
+						payload: { callId },
+					});
+				},
+				serviceRunning: (id) => pluginSandboxHost?.isAcceptingServiceCalls(id) === true,
+				serviceAllowed: (id, capability, target) => isPermitted(grantsOf(id), capability, target),
+				serviceInvoke: (id, command, request, signal, timeoutMs) =>
+					pluginSandboxHost
+						? pluginSandboxHost.invokeTool(id, command, request, { signal, timeoutMs })
+						: Promise.reject(new Error('ServiceUnavailable')),
+				registerServiceReconcile: (reconcile) => {
+					serviceReconcile = reconcile;
+				},
+				registerServiceAvailability: (available) => {
+					serviceAvailable = available;
+				},
+				serviceChanged: () => {
+					if (serviceReconcileQueued) return;
+					serviceReconcileQueued = true;
+					queueMicrotask(() => {
+						serviceReconcileQueued = false;
+						pluginManager?.reconcileServiceDependencies();
+					});
+				},
 				broker: pluginBroker,
 				actionGuard: pluginActionGuard,
 				kvStore: pluginKvStore,
@@ -2452,21 +2486,24 @@ app
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
 			},
 			onCrash: (pluginId, code) => {
-				pluginResourceCleanup?.(pluginId);
+				const drain = pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
 				backgroundSupervisor.onPluginCrash(pluginId, code);
+				return drain;
 			},
 			onStop: (pluginId) => {
-				pluginResourceCleanup?.(pluginId);
+				const drain = pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				backgroundSupervisor.onPluginStopped(pluginId);
+				return drain;
 			},
 		});
 		pluginSandboxHost = sandboxHost;
 		pluginManager = new PluginManager({
+			serviceAvailable: (id, requirement) => serviceAvailable?.(id, requirement) === true,
 			isEnabled: () => {
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 				return ef.plugins === true;
@@ -2501,6 +2538,8 @@ app
 				backgroundSupervisor.teardown(id);
 			},
 			onChange: (registry) => {
+				serviceReconcile?.();
+				pluginManager?.reconcileServiceDependencies();
 				pluginHostViews.sync();
 				try {
 					mainWindow?.webContents.send('plugins:changed', registry);

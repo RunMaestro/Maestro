@@ -4,8 +4,17 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { PluginMediaTools, resolveMediaRuntime } from '../../../main/plugins/plugin-media-tools';
 import { MEDIA_LIMITS } from '../../../shared/plugins/media-tools';
+import { PluginServiceHost } from '../../../main/plugins/plugin-service-host';
+import {
+	validatePluginManifest,
+	type PluginManifest,
+} from '../../../shared/plugins/plugin-manifest';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
-import { parsePermissions } from '../../../shared/plugins/permissions';
+import {
+	parsePermissions,
+	grantsFromRequests,
+	isPermitted,
+} from '../../../shared/plugins/permissions';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 
 const native = vi.hoisted(() => ({ execFile: vi.fn(), paths: vi.fn() }));
@@ -111,9 +120,9 @@ beforeEach(async () => {
 	);
 });
 afterEach(async () => {
-	tools.cleanupPlugin('p');
-	tools.cleanupPlugin('other');
-	await fs.rm(root, { recursive: true, force: true });
+	await tools.cleanupPlugin('p');
+	await tools.cleanupPlugin('other');
+	await fs.rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
@@ -166,6 +175,10 @@ describe('media tools boundary', () => {
 		});
 		await tools.call('other', 'media.close', { jobId });
 		await download(jobId);
+		const cleanup = tools.cleanupPlugin('p');
+		expect(cleanup).toBeInstanceOf(Promise);
+		await cleanup;
+		expect(await fs.readdir(root)).toEqual([]);
 	});
 
 	it('keeps binary bytes on the host and pins a credential-free GET', async () => {
@@ -467,7 +480,7 @@ describe('media tools boundary', () => {
 		const pending = tools.call('p', 'media.probe', { jobId: first, audioId });
 		const outcome = expect(pending).rejects.toMatchObject({ code: 'MediaCancelled' });
 		await vi.waitFor(() => expect(children).toHaveLength(1));
-		tools.cleanupPlugin('p');
+		await tools.cleanupPlugin('p');
 		await outcome;
 		expect(children[0].kill).toHaveBeenCalledWith('SIGKILL');
 		expect(await fs.readdir(root)).toEqual([]);
@@ -531,5 +544,376 @@ describe('media tools boundary', () => {
 		expect((await resolveMediaRuntime(alias)).models).toEqual({
 			base: await fs.realpath(path.join(modelRoot, 'ggml-base.bin')),
 		});
+	});
+});
+
+describe('service media leases', () => {
+	it('runs a valid registry transcription through the real media broker and native run boundary', async () => {
+		const provider = validatePluginManifest(
+			JSON.parse(
+				await fs.readFile(
+					new URL(
+						'../../../../examples/plugins/transcription-service/plugin.json',
+						import.meta.url
+					),
+					'utf8'
+				)
+			)
+		);
+		const consumer = validatePluginManifest({
+			id: 'consumer',
+			name: 'Consumer',
+			version: '1.0.0',
+			tier: 1,
+			entry: 'main.js',
+			maestro: { minHostApi: '1.24.0' },
+			requires: [
+				{
+					id: 'voice',
+					provider: 'example.transcription',
+					service: 'transcription',
+					contract: 'maestro.audio.transcribe',
+					version: '^1.0.0',
+					optional: true,
+				},
+			],
+			permissions: [
+				{ capability: 'services:call', scope: 'example.transcription/transcription' },
+				{ capability: 'media:tools', scope: 'discord-voice' },
+			],
+		});
+		expect(provider.errors).toEqual([]);
+		expect(consumer.errors).toEqual([]);
+		const manifests = { 'example.transcription': provider.manifest!, consumer: consumer.manifest! };
+		const delegate = vi.spyOn(tools, 'delegate');
+		const registry = new PluginServiceHost({
+			manifest: (id) => manifests[id as keyof typeof manifests],
+			running: () => true,
+			allowed: (id, capability, target) =>
+				isPermitted(
+					grantsFromRequests(manifests[id as keyof typeof manifests]?.permissions ?? [], 1),
+					capability,
+					target
+				),
+			media: tools,
+			invoke: async (id, command, raw) => {
+				expect(id).toBe('example.transcription');
+				expect(command).toBe('service:transcription');
+				const args = raw as { callId: string; audioId: string; model: 'base'; language: 'de' };
+				await registry.media(id, 'probe', args.callId, args.audioId);
+				const decoded = (await registry.media(id, 'decode', args.callId, args.audioId)) as {
+					audioId: string;
+				};
+				const probe = (await registry.media(id, 'probe', args.callId, decoded.audioId)) as {
+					durationSeconds: number;
+				};
+				const output = (await registry.media(id, 'run', args.callId, decoded.audioId)) as {
+					json: string;
+				};
+				const transcript = JSON.parse(output.json);
+				return {
+					text: transcript.transcription[0].text,
+					language: transcript.result.language,
+					model: args.model,
+					durationSeconds: probe.durationSeconds,
+					multilingual: transcript.model.multilingual,
+					translated: transcript.params.translate,
+				};
+			},
+		});
+		try {
+			registry.register('example.transcription', 'transcription');
+			const { jobId } = (await tools.call('consumer', 'media.open', {})) as { jobId: string };
+			const { audioId } = (await tools.call('consumer', 'media.download', { jobId, url })) as {
+				audioId: string;
+			};
+			const { callId } = registry.start('consumer', 'voice', {
+				jobId,
+				audioId,
+				model: 'base',
+				language: 'de',
+			});
+			await expect(registry.result('consumer', callId)).resolves.toEqual({
+				text: 'Guten Tag.',
+				language: 'de',
+				model: 'base',
+				durationSeconds: 1,
+				multilingual: true,
+				translated: false,
+			});
+			expect(delegate).toHaveBeenCalledWith(
+				'consumer',
+				jobId,
+				audioId,
+				{ model: 'base', language: 'de' },
+				expect.any(Function)
+			);
+			expect(native.execFile.mock.calls.map(([binary]) => path.basename(binary))).toEqual(
+				expect.arrayContaining(['ffprobe', 'ffmpeg', 'whisper-cli'])
+			);
+			expect(
+				native.execFile.mock.calls.filter(([binary]) => binary.endsWith('whisper-cli'))
+			).toHaveLength(1);
+			expect(await fs.readdir(root)).toEqual([]);
+			await expect(registry.media('example.transcription', 'run', callId, audioId)).rejects.toThrow(
+				'ServiceInvalid'
+			);
+		} finally {
+			await registry.cleanupPlugin('consumer');
+			await registry.cleanupPlugin('example.transcription');
+			await tools.cleanupPlugin('consumer');
+			delegate.mockRestore();
+		}
+	});
+
+	it('captures only approved delegated run options, excluding handles and later caller mutations', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const options = {
+			model: 'base' as const,
+			language: 'de',
+			jobId,
+			audioId,
+			profile: 'foreign-profile',
+			args: ['--bad'],
+		};
+		const lease = tools.delegate('p', jobId, audioId, options, () => {});
+		options.language = 'en';
+		const decoded = (await lease.call('decode', lease.audioId)) as { audioId: string };
+		await expect(lease.call('run', decoded.audioId)).resolves.toEqual({ json: whisperJson });
+		const run = native.execFile.mock.calls.find(([binary]) => binary.endsWith('whisper-cli'))!;
+		expect(run[1][run[1].indexOf('-l') + 1]).toBe('de');
+		expect(run[1]).not.toContain('--bad');
+		await lease.close();
+		expect(await fs.readdir(root)).toEqual([]);
+	});
+
+	it('mints fresh aliases, preserves the original deadline and ownership, and makes handoff exclusive', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const started = Date.now();
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		expect(lease.audioId).not.toBe(audioId);
+		expect(lease.expiresAt).toBeLessThanOrEqual(started + MEDIA_LIMITS.jobTimeoutMs);
+		expect(() =>
+			tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {})
+		).toThrow('MediaBusy');
+		await expect(tools.call('p', 'media.probe', { jobId, audioId })).rejects.toMatchObject({
+			code: 'MediaBusy',
+		});
+		await expect(
+			tools.call('other', 'media.probe', { jobId, audioId: lease.audioId })
+		).rejects.toMatchObject({ code: 'MediaInvalid' });
+		await expect(lease.call('probe', audioId)).rejects.toMatchObject({ code: 'MediaInvalid' });
+		await lease.call('probe', lease.audioId);
+		const decoded = (await lease.call('decode', lease.audioId)) as { audioId: string };
+		expect(decoded.audioId).not.toBe(audioId);
+		expect(decoded.audioId).not.toBe(lease.audioId);
+		expect(await lease.call('run', decoded.audioId)).toEqual({ json: whisperJson });
+		await lease.close();
+		expect(await fs.readdir(root)).toEqual([]);
+		await expect(lease.call('probe', lease.audioId)).rejects.toMatchObject({
+			code: 'MediaCancelled',
+		});
+	});
+	it('projects delegated Whisper JSON without native paths or private metadata', async () => {
+		const nativeOutput = JSON.parse(whisperJson);
+		whisperJson = JSON.stringify({
+			...nativeOutput,
+			systeminfo: '/private/secret',
+			model: { ...nativeOutput.model, path: '/models/secret' },
+			params: { ...nativeOutput.params, model: '/models/secret', fname_inp: '/audio/secret' },
+			transcription: [
+				{ text: 'Guten Tag.', filename: '/audio/secret', tokens: [{ private: 'SECRET' }] },
+			],
+		});
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		const decoded = (await lease.call('decode', lease.audioId)) as { audioId: string };
+		const value = (await lease.call('run', decoded.audioId)) as { json: string };
+		expect(JSON.parse(value.json)).toEqual(nativeOutput);
+		expect(value.json).not.toMatch(/secret|SECRET|systeminfo|filename|tokens/);
+		await lease.close();
+	});
+	it.each([
+		'{',
+		JSON.stringify({
+			model: { multilingual: true },
+			params: { language: '/secret/path', translate: false },
+			result: { language: 'de' },
+			transcription: [],
+		}),
+	])('fails closed and cleans malformed delegated metadata', async (invalid) => {
+		whisperJson = invalid;
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		const decoded = (await lease.call('decode', lease.audioId)) as { audioId: string };
+		await expect(lease.call('run', decoded.audioId)).rejects.toThrow();
+		expect(await fs.readdir(root)).toEqual([]);
+	});
+
+	it('refuses foreign, missing and already consumed owner handles', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		expect(() =>
+			tools.delegate('other', jobId, audioId, { model: 'base', language: 'de' }, () => {})
+		).toThrow('MediaInvalid');
+		expect(() =>
+			tools.delegate('p', jobId, 'missing', { model: 'base', language: 'de' }, () => {})
+		).toThrow('MediaInvalid');
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		await lease.close();
+		expect(() =>
+			tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {})
+		).toThrow('MediaInvalid');
+	});
+	it.each(['cancel', 'stop', 'revoke', 'late-start'] as const)(
+		'%s drains blocked service media only after native exit and private-file removal',
+		async (mode) => {
+			const jobId = await open();
+			const audioId = await download(jobId);
+			let exitNative!: () => void;
+			const kill = vi.fn(() => true);
+			native.execFile.mockImplementationOnce((_binary, _args, _opts, callback) => {
+				exitNative = () => callback(new Error('PRIVATE_NATIVE_DIAGNOSTIC'), '');
+				return { stdin: { end: vi.fn() }, kill };
+			});
+			const provider: PluginManifest = {
+				id: 'provider',
+				name: 'Provider',
+				version: '1.0.0',
+				tier: 1,
+				maestro: { minHostApi: '1.24.0' },
+				provides: [{ id: 'transcription', contract: 'maestro.audio.transcribe', version: '1.0.0' }],
+			};
+			const consumer: PluginManifest = {
+				id: 'p',
+				name: 'Consumer',
+				version: '1.0.0',
+				tier: 1,
+				maestro: { minHostApi: '1.24.0' },
+				requires: [
+					{
+						id: 'voice',
+						provider: 'provider',
+						service: 'transcription',
+						contract: 'maestro.audio.transcribe',
+						version: '^1.0.0',
+						optional: true,
+					},
+				],
+			};
+			let allowed = true;
+			const registry = new PluginServiceHost({
+				manifest: (id) => (id === 'provider' ? provider : consumer),
+				running: () => true,
+				allowed: (id) => id === 'provider' || allowed,
+				media: tools,
+				invoke: async (_id, _command, raw) => {
+					const args = raw as { callId: string; audioId: string };
+					await registry.media('provider', 'probe', args.callId, args.audioId);
+					return {
+						text: 'Guten Tag',
+						language: 'de',
+						model: 'base',
+						durationSeconds: 1,
+						multilingual: true,
+						translated: false,
+					};
+				},
+			});
+			registry.register('provider', 'transcription');
+			const reservation = registry.start('p', 'voice', {
+				jobId,
+				audioId,
+				model: 'base',
+				language: 'de',
+			});
+			await vi.waitFor(() => expect(exitNative).toBeTypeOf('function'));
+			// A delayed start reply conveys a reservation even after the caller has cancelled locally.
+			const reply = Promise.withResolvers<typeof reservation>();
+			let drained = false;
+			const drain =
+				mode === 'stop'
+					? registry.cleanupPlugin('provider')
+					: mode === 'revoke'
+						? (() => {
+								allowed = false;
+								registry.reconcile();
+								return registry.result('p', reservation.callId);
+							})()
+						: mode === 'late-start'
+							? reply.promise.then((late) => registry.cancel('p', late.callId))
+							: registry.cancel('p', reservation.callId);
+			const outcome = drain.then(
+				() => {
+					drained = true;
+				},
+				(error: { code?: string }) => {
+					expect(mode).toBe('revoke');
+					expect(error.code).toBe('ServiceDenied');
+					drained = true;
+				}
+			);
+			if (mode === 'late-start') reply.resolve(reservation);
+			await vi.waitFor(() => expect(kill).toHaveBeenCalledWith('SIGKILL'));
+			expect(drained).toBe(false);
+			expect(await fs.readdir(root)).toHaveLength(1);
+			exitNative();
+			await outcome;
+			expect(drained).toBe(true);
+			expect(await fs.readdir(root)).toEqual([]);
+			await expect(
+				registry.media('provider', 'probe', reservation.callId, audioId)
+			).rejects.toThrow();
+		}
+	);
+
+	it('kills delegated subprocesses and cleans artifacts when the owner closes mid-operation', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		hold = true;
+		const operation = lease.call('probe', lease.audioId);
+		const failure = expect(operation).rejects.toMatchObject({ code: 'MediaCancelled' });
+		await vi.waitFor(() => expect(children.length).toBe(1));
+		await tools.call('p', 'media.close', { jobId });
+		await failure;
+		expect(children[0].kill).toHaveBeenCalled();
+		expect(lease.signal.aborted).toBe(true);
+		expect(await fs.readdir(root)).toEqual([]);
+	});
+	it('re-authorizes the provider during work and kills before returning a revoke failure', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		let providerAllowed = true;
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {
+			if (!providerAllowed)
+				throw Object.assign(new Error('ServiceDenied'), { code: 'ServiceDenied' });
+		});
+		hold = true;
+		const operation = lease.call('probe', lease.audioId);
+		const failure = expect(operation).rejects.toThrow();
+		await vi.waitFor(() => expect(children.length).toBe(1));
+		providerAllowed = false;
+		await lease.close();
+		await failure;
+		expect(children[0].kill).toHaveBeenCalled();
+		expect(await fs.readdir(root)).toEqual([]);
+	});
+	it('never extends the parent job lifetime on delegation', async () => {
+		vi.useFakeTimers();
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const originalDeadline = Date.now() + MEDIA_LIMITS.jobTimeoutMs;
+		await vi.advanceTimersByTimeAsync(50000);
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		expect(lease.expiresAt).toBe(originalDeadline);
+		await vi.advanceTimersByTimeAsync(MEDIA_LIMITS.jobTimeoutMs - 50000);
+		expect(lease.signal.aborted).toBe(true);
+		await lease.close();
+		expect(await fs.readdir(root)).toEqual([]);
 	});
 });

@@ -82,9 +82,9 @@ export class PermissionBroker {
 		const grants = this.deps.getGrants(pluginId);
 		let allowed: boolean;
 		let reason: string | undefined;
-		if (method === 'media.close') {
-			// Release only; ownership and closed schema enforced by the media handler.
-			// Revocation must never prevent cancellation of one's own pending job.
+		if (method === 'media.close' || method === 'services.cancel' || method === 'services.status') {
+			// Release ownership and status of an own declared requirement are checked
+			// in the handlers. Revocation must not block cancellation or denied status.
 			allowed = true;
 		} else if (HANDLER_REAUTHORIZED_METHODS.has(method)) {
 			// Scope lives in an already-open resource the params reference by opaque

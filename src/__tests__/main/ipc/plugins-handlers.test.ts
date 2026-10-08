@@ -62,7 +62,10 @@ function fakeManager() {
 		refresh: vi.fn(() => emptyRegistry),
 		getRegistry: vi.fn(() => emptyRegistry),
 		getContributions: vi.fn(() => EMPTY),
+		getRequestedPermissions: vi.fn(() => []),
 		setEnabled: vi.fn(() => emptyRegistry),
+		stopAndDrain: vi.fn(async () => {}),
+		uninstall: vi.fn(() => ({ success: true })),
 	};
 }
 
@@ -130,6 +133,37 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 		expect(manager.setEnabled).toHaveBeenCalledWith('some-plugin', true);
 	});
 
+	it.each(['plugins:set-enabled', 'plugins:revoke-grants', 'plugins:uninstall'])(
+		'%s waits for the stop/cleanup barrier before acknowledging the mutation',
+		async (channel) => {
+			const manager = register(true);
+			const gate = Promise.withResolvers<void>();
+			manager.stopAndDrain.mockReturnValue(gate.promise);
+			let finished = false;
+			const pending = Promise.resolve(handlers.get(channel)!(event, 'some-plugin', false)).then(
+				() => {
+					finished = true;
+				}
+			);
+			await vi.waitFor(() => expect(manager.stopAndDrain).toHaveBeenCalledWith('some-plugin'));
+			expect(finished).toBe(false);
+			if (channel === 'plugins:uninstall') expect(manager.uninstall).not.toHaveBeenCalled();
+			gate.resolve();
+			await pending;
+			expect(finished).toBe(true);
+			if (channel === 'plugins:uninstall')
+				expect(manager.uninstall).toHaveBeenCalledWith('some-plugin');
+		}
+	);
+	it('does not uninstall files or claim success when stop cleanup fails', async () => {
+		const manager = register(true);
+		manager.stopAndDrain.mockRejectedValue(new Error('MediaProcessFailed'));
+		await expect(handlers.get('plugins:uninstall')!(event, 'some-plugin')).rejects.toThrow(
+			'MediaProcessFailed'
+		);
+		expect(manager.uninstall).not.toHaveBeenCalled();
+	});
+
 	it('mutation channels reject a path-traversal plugin id (InvalidPluginId) and never reach the manager', async () => {
 		const manager = register(true);
 		const handler = handlers.get('plugins:set-enabled');
@@ -194,8 +228,10 @@ describe('plugins:set-enabled gates code-tier activation on ledger authorization
 		const manager = {
 			refresh: vi.fn(() => emptyRegistry),
 			getContributions: vi.fn(() => EMPTY),
+			getRequestedPermissions: vi.fn(() => []),
 			getRegistry: vi.fn(() => ({ records: [{ id: 'com.p', manifest: { tier: opts.tier } }] })),
 			setEnabled: setEnabledMock,
+			stopAndDrain: vi.fn(async () => {}),
 		};
 		registerPluginsHandlers({
 			settingsStore: settingsStore(true),

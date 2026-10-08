@@ -106,6 +106,19 @@ describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 		expect(keys).toContain('listAgents');
 		expect(keys).toContain('broker');
 	});
+	it('wires service lifecycle, live grants, trusted manifests and the existing bounded invocation channel together', () => {
+		for (const key of [
+			'serviceManifest',
+			'serviceRunning',
+			'serviceAllowed',
+			'serviceInvoke',
+			'serviceCancelProvider',
+			'registerServiceAvailability',
+			'registerServiceReconcile',
+			'serviceChanged',
+		])
+			expect(keys).toContain(key);
+	});
 
 	it('wires declared host-view lookup and the Concerto forwarding seam together', () => {
 		expect(keys).toContain('isHostViewsEnabled');

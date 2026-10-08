@@ -28,6 +28,14 @@ interface Audio {
 	kind: 'ogg' | 'wav';
 	probe?: MediaProbe;
 }
+/** Host-only lease: bound to one invocation; never transfers owner handles. */
+export interface MediaServiceLease {
+	audioId: string;
+	expiresAt: number;
+	signal: AbortSignal;
+	call(method: 'probe' | 'decode' | 'run', audioId: string): Promise<unknown>;
+	close(): Promise<void>;
+}
 interface Job {
 	id: string;
 	pluginId: string;
@@ -41,6 +49,8 @@ interface Job {
 	downloaded: boolean;
 	decoded: boolean;
 	ran: boolean;
+	expiresAt: number;
+	serviceLease?: { authorize: () => void };
 }
 
 /** Codes are the ONLY diagnostic surface: never pass through errors containing inputs. */
@@ -57,6 +67,17 @@ export interface PluginMediaToolsDeps {
 	/** Host-only seams for tests/integrators; never reachable through the SDK. */
 	resolveRuntime?: () => Promise<Runtime>;
 	tempDir?: string;
+}
+
+/** Canonical host setting validation shared by desktop IPC and CLI writes. */
+export async function resolveMediaModelDirectory(value: unknown): Promise<string> {
+	if (typeof value !== 'string') throw new Error('Invalid media model directory');
+	if (value === '') return '';
+	if (!path.isAbsolute(value)) throw new Error('Media model directory must be absolute');
+	const canonical = await fs.realpath(value);
+	if (!(await fs.stat(canonical)).isDirectory())
+		throw new Error('Media model directory must be a directory');
+	return canonical;
 }
 
 /** Resolve existing installations at call time. No binaries/models are downloaded or bundled. */
@@ -166,7 +187,7 @@ export class PluginMediaTools {
 			}
 			if (!job || job.pluginId !== pluginId || job.controller.signal.aborted)
 				throw new MediaError('MediaInvalid');
-			if (job.operation) throw new MediaError('MediaBusy');
+			if (job.operation || job.serviceLease) throw new MediaError('MediaBusy');
 			const operation = this.execute(job, method, p);
 			job.operation = operation;
 			try {
@@ -209,6 +230,7 @@ export class PluginMediaTools {
 			downloaded: false,
 			decoded: false,
 			ran: false,
+			expiresAt: Date.now() + MEDIA_LIMITS.jobTimeoutMs,
 			watchdog: createIdleWatchdog({
 				idleMs: MEDIA_LIMITS.jobTimeoutMs,
 				maxMs: MEDIA_LIMITS.jobTimeoutMs,
@@ -232,6 +254,100 @@ export class PluginMediaTools {
 	private check(job: Job): void {
 		if (job.controller.signal.aborted) throw job.controller.signal.reason;
 		this.authorize(job.pluginId);
+		job.serviceLease?.authorize();
+	}
+
+	/** Only the host service broker can mint this lease, after BOTH parties' consent. */
+	delegate(
+		owner: string,
+		jobId: string,
+		audioId: string,
+		options: { model: MediaModelId; language: string },
+		authorize: () => void
+	): MediaServiceLease {
+		this.authorize(owner);
+		authorize();
+		const job = this.jobs.get(jobId);
+		if (!job || job.pluginId !== owner || !job.audio.has(audioId) || job.controller.signal.aborted)
+			throw new MediaError('MediaInvalid');
+		if (job.operation || job.serviceLease || job.ran) throw new MediaError('MediaBusy');
+		// Capture only the approved run fields; owner handles never become run options.
+		const { model, language } = options;
+		const aliases = new Map<string, string>([[randomUUID(), audioId]]);
+		job.serviceLease = { authorize };
+		this.check(job);
+		return {
+			audioId: aliases.keys().next().value!,
+			expiresAt: job.expiresAt,
+			signal: job.controller.signal,
+			call: async (method, alias) => {
+				this.check(job);
+				const original = aliases.get(alias);
+				if (!original || !['probe', 'decode', 'run'].includes(method))
+					throw new MediaError('MediaInvalid');
+				if (job.operation) throw new MediaError('MediaBusy');
+				const operation = this.execute(job, `media.${method}`, {
+					audioId: original,
+					options: { profile: 'whisper-cli', model, language },
+				});
+				job.operation = operation;
+				try {
+					const value = await operation;
+					this.check(job);
+					if (method === 'decode') {
+						const decoded = value as { audioId: string; durationSeconds: number };
+						const next = randomUUID();
+						aliases.set(next, decoded.audioId);
+						return { audioId: next, durationSeconds: decoded.durationSeconds };
+					}
+					if (method === 'run') {
+						// Native Whisper metadata can include host model/input paths. Expose only
+						// the fields the closed provider contract needs, never arbitrary metadata.
+						const parsed = JSON.parse((value as { json: string }).json);
+						if (
+							typeof parsed?.model?.multilingual !== 'boolean' ||
+							typeof parsed?.params?.translate !== 'boolean' ||
+							typeof parsed?.params?.language !== 'string' ||
+							!/^[a-z]{2,3}$/.test(parsed.params.language) ||
+							typeof parsed?.result?.language !== 'string' ||
+							!/^[a-z]{2,3}$/.test(parsed.result.language) ||
+							!Array.isArray(parsed.transcription) ||
+							parsed.transcription.length > 1000 ||
+							parsed.transcription.some(
+								(segment: unknown) =>
+									!segment ||
+									typeof segment !== 'object' ||
+									typeof (segment as { text?: unknown }).text !== 'string'
+							)
+						)
+							throw new MediaError('MediaInvalid');
+						return {
+							json: JSON.stringify({
+								model: { multilingual: parsed.model.multilingual },
+								params: { language: parsed.params.language, translate: parsed.params.translate },
+								result: { language: parsed.result.language },
+								transcription: parsed.transcription.map((segment: { text: string }) => ({
+									text: segment.text,
+								})),
+							}),
+						};
+					}
+					return value;
+				} catch (error) {
+					job.operation = undefined;
+					await this.close(job, 'MediaProcessFailed');
+					throw error;
+				} finally {
+					job.operation = undefined;
+				}
+			},
+			close: () => this.close(job, 'MediaCancelled'),
+		};
+	}
+
+	/** No paths and no provider-selected runtime; caller is reauthorized by the service host. */
+	serviceStatus(): Promise<MediaToolStatus> {
+		return this.status();
 	}
 
 	private close(job: Job, code: MediaErrorCode): Promise<void> {
@@ -264,9 +380,14 @@ export class PluginMediaTools {
 		);
 	}
 
-	cleanupPlugin(pluginId: string): void {
-		for (const job of this.jobs.values())
-			if (job.pluginId === pluginId) void this.close(job, 'MediaCancelled').catch(() => {});
+	cleanupPlugin(pluginId: string): Promise<void> {
+		const drain = Promise.all(
+			[...this.jobs.values()]
+				.filter((job) => job.pluginId === pluginId)
+				.map((job) => this.close(job, 'MediaCancelled'))
+		).then(() => {});
+		void drain.catch(() => {});
+		return drain;
 	}
 
 	/** Lookups do not accept a signal. Settle on cancellation; a late answer may never cause I/O. */

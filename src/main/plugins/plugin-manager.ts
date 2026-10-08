@@ -61,8 +61,8 @@ const HOT_RELOAD_DEBOUNCE_MS = 150;
  */
 export interface PluginSandboxLifecycle {
 	start: (pluginId: string, pluginDir: string, entryRelPath: string) => void;
-	stop: (pluginId: string) => void;
-	stopAll: () => void;
+	stop: (pluginId: string) => void | Promise<void>;
+	stopAll: () => void | Promise<void>;
 	isRunning: (pluginId: string) => boolean;
 	runningIds: () => string[];
 	invokeCommand: (pluginId: string, commandId: string, args?: unknown) => boolean;
@@ -70,6 +70,7 @@ export interface PluginSandboxLifecycle {
 }
 
 export interface PluginManagerDeps {
+	serviceAvailable?: (pluginId: string, requirementId: string) => boolean;
 	/** Whether the `plugins` Encore flag is currently on. Re-read on every call. */
 	isEnabled: () => boolean;
 	/** Optional change hook (e.g. to broadcast to the renderer) after mutations. */
@@ -313,8 +314,30 @@ export class PluginManager {
 			!!record.manifest &&
 			record.manifest.tier >= 1 &&
 			!!record.manifest.entry &&
-			record.signature?.status === 'trusted'
+			record.signature?.status === 'trusted' &&
+			(record.manifest.requires ?? []).every(
+				(r) => r.optional === true || this.deps.serviceAvailable?.(record.id, r.id) === true
+			)
 		);
+	}
+
+	/** Reconcile only consumers with mandatory dependencies; never restart a crashed provider here. */
+	reconcileServiceDependencies(): void {
+		if (!this.deps.isEnabled()) return;
+		const sandbox = this.deps.sandbox;
+		if (!sandbox) return;
+		for (const record of this.registry.records) {
+			if (!record.manifest?.requires?.some((r) => !r.optional)) continue;
+			if (!this.isRunnable(record)) {
+				if (sandbox.isRunning(record.id)) sandbox.stop(record.id);
+			} else if (!sandbox.isRunning(record.id) && record.manifest.entry) {
+				try {
+					sandbox.start(record.id, record.source, record.manifest.entry);
+				} catch {
+					/* isolated start failure */
+				}
+			}
+		}
 	}
 
 	/**
@@ -608,7 +631,7 @@ export class PluginManager {
 			fs.cpSync(sourceDir, staged, { recursive: true });
 			// Stop the running sandbox before swapping files (mirrors uninstall's stop
 			// path); refresh() below restarts it if the new version is still runnable.
-			this.deps.sandbox?.stop(id);
+			await this.stopAndDrain(id);
 			// Move the old dir aside, then move the new one into place. If the second
 			// rename fails, restore the old dir so we never leave a partial state.
 			fs.renameSync(dest, backup);
@@ -655,6 +678,11 @@ export class PluginManager {
 		this.syncPluginWatchers();
 		this.deps.onChange?.(this.registry);
 		return { success: true };
+	}
+
+	/** Host mutation barrier: stop invalidates immediately; await confirms exit and media cleanup. */
+	async stopAndDrain(id: string): Promise<void> {
+		await this.deps.sandbox?.stop(id);
 	}
 
 	/** Stop all sandboxes (app shutdown / feature disable). */
