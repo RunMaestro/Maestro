@@ -218,7 +218,9 @@ const AgentCard = memo(function AgentCard({
 
 	const badges = useMemo(() => {
 		const list: EntityTileBadge[] = [];
-		if (isWorktree) list.push({ label: 'WT', testId: 'agent-card-wt-badge' });
+		if (isWorktree) {
+			list.push({ label: 'WT', title: 'Git worktree', testId: 'agent-card-wt-badge' });
+		}
 		if (profileLabel) {
 			list.push({
 				label: profileLabel,
