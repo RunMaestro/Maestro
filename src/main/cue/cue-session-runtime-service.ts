@@ -134,6 +134,27 @@ export function createCueSessionRuntimeService(
 		// `pipelinesToYamlByOwnerCwd`). Worktrees, sub-agents, and any
 		// other shared-parent topology each get their own cue.yaml; they
 		// do not inherit from a parent dir.
+		// Observe before reading: another process can atomically replace YAML
+		// between the engine's read and chokidar's initial scan. Keep this same
+		// watcher for both pending and loaded configs, so ready reconciliation
+		// covers that entire window.
+		if (!pendingYamlWatchers.has(session.id)) {
+			pendingYamlWatchers.set(
+				session.id,
+				watchCueYaml(
+					session.projectRoot,
+					() => deps.onRefreshRequested(session.id, session.projectRoot),
+					{
+						onWarning: (message) =>
+							deps.onLog('warn', message, {
+								type: 'triggerHealthWarning',
+								sessionId: session.id,
+								message,
+							}),
+					}
+				)
+			);
+		}
 		const loadResult = loadCueConfigDetailed(session.projectRoot);
 
 		if (!loadResult.ok) {
@@ -150,12 +171,6 @@ export function createCueSessionRuntimeService(
 				);
 			}
 
-			if (!pendingYamlWatchers.has(session.id)) {
-				const yamlWatcher = watchCueYaml(session.projectRoot, () => {
-					deps.onRefreshRequested(session.id, session.projectRoot);
-				});
-				pendingYamlWatchers.set(session.id, yamlWatcher);
-			}
 			return { kind: loadResult.reason };
 		}
 
@@ -218,11 +233,8 @@ export function createCueSessionRuntimeService(
 
 		// Watch only this session's own cue.yaml. Per-agent-cwd model: there
 		// is no ancestor or cross-cwd merge to keep in sync.
-		state.yamlWatchers.push(
-			watchCueYaml(session.projectRoot, () => {
-				deps.onRefreshRequested(session.id, session.projectRoot);
-			})
-		);
+		state.yamlWatchers.push(pendingYamlWatchers.get(session.id)!);
+		pendingYamlWatchers.delete(session.id);
 
 		// Register the session before starting any trigger sources or firing
 		// app.startup so that other components (e.g. CueRunManager via registry.get)

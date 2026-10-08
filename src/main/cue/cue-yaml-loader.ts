@@ -156,8 +156,12 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
  * Calls onChange when the file is created, modified, or deleted.
  * Debounces by 1 second.
  */
-export function watchCueYaml(projectRoot: string, onChange: () => void): () => void {
-	return watchCueConfigFile(projectRoot, onChange);
+export function watchCueYaml(
+	projectRoot: string,
+	onChange: () => void,
+	opts?: { onWarning?: (message: string) => void }
+): () => void {
+	return watchCueConfigFile(projectRoot, onChange, opts);
 }
 
 /**

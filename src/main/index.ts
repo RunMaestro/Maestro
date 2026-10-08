@@ -1441,6 +1441,17 @@ app
 			onStopCueRun: (runId) => stopCueRun(runId),
 			onLog: (_level, message, data) => {
 				logger.cue(message, 'Cue', data);
+				const payload = data as import('../shared/cue-log-types').CueLogPayload | undefined;
+				if (payload?.type === 'triggerHealthWarning') {
+					// Reach the always-mounted toast channel, even with Cue closed.
+					emitCueNotifyToast(mainWindow, {
+						agentId: payload.sessionId,
+						title: 'Cue trigger health',
+						message: payload.message,
+						sticky: true,
+						color: 'orange',
+					});
+				}
 				// Push activity updates to renderer (and web-desktop bridge clients)
 				if (data) {
 					safeSend('cue:activityUpdate', data);
