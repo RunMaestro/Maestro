@@ -1124,23 +1124,23 @@ codex exec --json resume <thread_id> "continue"
 - ✅ Output Parser: `src/main/parsers/grok-output-parser.ts`
 - ✅ Session Storage: `src/main/storage/grok-session-storage.ts` (Copilot-style directory-per-session layout; parses `summary.json` + `chat_history.jsonl`, local and SSH-remote)
 - ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (auth, rate limit, context exhaustion, network, invalid model)
-- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode, inline wizard (`supportsWizard`); `supportsUsageStats` and `supportsCostTracking` are false because the stream carries neither
+- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode, inline wizard (`supportsWizard`), usage stats and cost tracking (grok 1.x reports both; 0.x reported neither)
 
 **JSON Event Types:**
 
-Exactly four event types appear on stdout with `--output-format streaming-json`:
+These event types appear on stdout with `--output-format streaming-json`:
 
 - `thought` → reasoning delta (routed to the thinking panel via `isReasoning: true`)
 - `text` → assistant text delta (partial; deltas concatenate directly)
-- `end` → final result (`stopReason`, `sessionId`, `requestId`); the only place the session ID appears; carries no usage and no cost
+- `tool_call` / `tool_call_update` (grok 1.x) → tool badge, correlated by `toolCallId`. The readable result is in the ACP `content` blocks (text, or a `diff` for edits); `rawOutput` is a per-tool object whose shell `output` is a byte array, so the parser never hands it to the badge as-is. A shell command that exits non-zero still settles `completed`; `rawOutput.exit_code` is the failure signal (verified on 1.0.41)
+- `end` → final result (`stopReason`, `sessionId`, `requestId`); the only place the session ID appears
 - `error` → failure (`message`); duplicated on stderr as `Error: <message>`, process exits 1
 
 **Known Limitations:**
 
-- **No tool events on stdout:** tool activity is recorded only in the on-disk session files (`events.jsonl` / `chat_history.jsonl`), so live tool display is not possible from the stream
-- **No token usage or cost anywhere in the stream:** the context usage widget shows nothing for Grok until xAI adds usage fields
+- **Usage and cost (grok 1.x):** a `usage` line arrives per model call and `end` carries the turn's totals plus `total_cost_usd` (verified on 1.0.41; a resumed turn reports only itself). Every usage event Maestro sees is ADDED to the session totals, so only `end` reports usage, with the last call attached as `absoluteUsage` for the context gauge. Session History reads the same totals from the session's `usage.json`, whose `inputTokens` INCLUDES cached reads (the stream's excludes them), so storage subtracts them
 - **Interactive PTY mode is not wired:** Maestro drives Grok in batch mode only, like Codex
-- **No image input:** no image flag observed in `grok --help`
+- **Images ride in the prompt, not a flag:** there is no attachment flag, and `--prompt-json` takes base64 image blocks only as one argv string (a screenshot overruns ARG_MAX) and cannot be combined with `-p`. `imagePromptBuilder` names each temp image path in the prompt and grok opens it with `read_file` (verified on 1.0.41, fresh and resumed). Each image costs one tool call
 - **No `noToolsArgs` / all-tools-off flag:** verified on v0.2.93 - `--tools ""` is treated as unset, and a hard-coded `--disallowed-tools` list would rot. Tab naming uses plan mode (`readOnlyArgs`) only. Do not add `noToolsArgs` until Grok ships a verified all-off flag.
 - **Wizard discovery is always-approve (not plan):** discovery needs read/fetch (package.json, GitHub). Spawns use `--always-approve --max-turns 8 --no-subagents` via `GROK_WIZARD_DISCOVERY_ARGS` in `src/renderer/utils/grokWizard.ts`. Residual: the model can still write under cwd within the turn budget (no Claude-style tool allowlist on Grok CLI yet). Prefer a tool allowlist if/when the CLI supports one.
 - **History is not a scrubbed vault:** transcripts under `$GROK_HOME/sessions/` (default `~/.grok/sessions/`) are plain JSONL. Maestro reads them for History without redacting user-pasted secrets - same OS-user confidentiality model as Claude/Codex.
@@ -1182,14 +1182,15 @@ Google's terminal coding agent, and the successor to the Gemini CLI effort above
 | Auto-approve tools | `--dangerously-skip-permissions`                             |
 | Terminal sandbox   | `--sandbox`                                                  |
 | Headless timeout   | `--print-timeout` (CLI default 5m; Maestro defaults to 30m)  |
-| Session Storage    | ❌ On-disk conversation format is undocumented               |
+| Session Storage    | ✅ `conversation_summaries.db` + `conversations/<id>.db`     |
 
 **Implementation Status:**
 
 - ✅ Output Parser: `src/main/parsers/antigravity-output-parser.ts`
+- ✅ Step store reader: `src/main/parsers/antigravity-step-store.ts` (thinking and tool results, see below)
 - ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (`ANTIGRAVITY_ERROR_PATTERNS`)
-- ❌ Session Storage: not implemented; `supportsSessionStorage` is false
-- ⏳ Capabilities: derived from the published headless contract, not from a captured live run
+- ✅ Session Storage: `src/main/storage/antigravity-session-storage.ts` (local only; SSH remotes show no history)
+- ⏳ Capabilities: mostly from the published headless contract; tool events, thinking, and images were checked against live agy 1.2.16 runs
 
 **Stream-JSON Event Types:**
 
@@ -1207,6 +1208,35 @@ Usage fields are snake_case: `input_tokens`, `output_tokens`, `thinking_tokens`,
 `cache_read_tokens`, `total_tokens`. No context window is reported, so the configured
 window drives the context meter.
 
+Tool steps carry PascalCase parameters (`CommandLine`, `AbsolutePath`, `TargetFile`). Two
+things the stream leaves out are read from agy's own conversation store,
+`~/.gemini/antigravity-cli/conversations/<conversation_id>.db` (SQLite, table `steps`, row
+`idx` = `step_index`, protobuf `step_payload`):
+
+- **Thinking text.** The stream reports thinking only as `thinking_tokens`. A model step's
+  summary is at payload field 20 → 3, already written when the step first appears, and is
+  emitted through `ParsedEvent.reasoningText`. agy writes a summary only for longer thinking.
+- **Command exit codes.** Every tool step settles `DONE`; a failed `run_command` is only
+  visible in the result text stored for the model (field 140 → 2 → 1, "The command exited
+  with code N"). Edits take their diff from the same field.
+
+The store is optional: an SSH-remote agy keeps it on the remote host, and a missing or
+unreadable store just means no thinking text and no exit codes.
+
+**Usage:** agy reports usage per model step AND as the turn total on `result` (the sum of the
+steps). Maestro adds every usage event to the session totals, so only the result reports
+usage, with the last model step attached as `absoluteUsage` (the context gauge's occupancy).
+
+**History** (`AntigravitySessionStorage`) lists from `conversation_summaries.db`, agy's
+own index, which also covers headless runs. Many rows carry no `workspace_uris` (519 of 650
+on one machine, Maestro-spawned runs among them), so a row's project falls back to
+`cache/last_conversations.json` (folder -> last conversation) and then to the `Cwd` of the
+conversation's first `run_command`. Subagent conversations (a parent id) are left out.
+Every store is opened through `openAntigravityDb()`: read-only when agy's WAL sidecars
+exist, read-write with `query_only` when they do not. A plain read-only open of a finished
+store CREATES sidecars it cannot remove (one listing left 397 pairs), and a plain
+read-write close would checkpoint a WAL agy left behind into its `.db`.
+
 **Known Limitations:**
 
 - **No true read-only mode.** Headless mode auto-allows reading _and writing_ files inside the
@@ -1216,7 +1246,10 @@ window drives the context meter.
   agentic run, but the CLI has no tool-disabling flag to put there, so a naming run can still
   touch workspace files. (`noToolsArgs` is Claude-only today, so this is shared with every
   other non-Claude agent - Antigravity is just the one that also lacks CLI read-only.)
-- **No image input.** No documented attachment flag, so `supportsImageInput` is false.
+- **Images ride in the prompt.** There is no attachment flag, and `--input-format stream-json`
+  rejects any block that is not text. `imagePromptBuilder` names each temp image path in the
+  prompt and agy opens it with `view_file` (verified on 1.2.16, fresh and with
+  `--conversation`). Each image costs one tool call.
 - **No slash commands in headless mode.** They are a TUI-only affordance.
 - **Batch runs pass `--dangerously-skip-permissions`.** Without it, headless mode soft-denies
   shell commands and a run stalls on its first terminal tool call.
