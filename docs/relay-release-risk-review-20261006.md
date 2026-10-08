@@ -61,10 +61,10 @@ Tests/artifacts:
 - `src/__tests__/shared/plugins/fixtures/relay-release-question.json`: original question plus the actual Backstage wrapper evaluated with synthetic routing IDs and no attachments. No original Discord message was fetched.
 - `scripts/verify-relay-reply-path.mjs`: reproducible paired source verification with the real host MCP bridge/handlers/proof registry and real Backstage outbound/Discord REST/message queue code, bundled only in memory.
 
-Run the paired check from this worktree:
+Run the paired check from this worktree, replacing the example path with the actual Backstage checkout:
 
 ```bash
-node scripts/verify-relay-reply-path.mjs <Backstage checkout>
+node scripts/verify-relay-reply-path.mjs /path/to/backstage-checkout
 ```
 
 It verifies release text and a nonempty receipt at a fake network sink, preserves text and disabled mentions, rejects missing/foreign/revoked proof and foreign/rebound/guild-mismatched destinations/untrusted plugin, and checks the real Relay risk-error mapping. Result: one successful **fake** message, zero live network calls. Backstage files are read only; no plugin runtime/source/settings were changed there.

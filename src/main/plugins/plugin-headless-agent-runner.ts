@@ -7,6 +7,7 @@ import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { logger } from '../utils/logger';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { checkCustomPath } from '../agents/path-prober';
 
 import {
 	HEADLESS_RUN_TIMEOUT_MS,
@@ -67,7 +68,13 @@ export function createPluginHeadlessAgentRunner(
 					: 'Authenticated plugin tools unavailable',
 			};
 		}
-		const detection = local ? await deps.detectAgent(agent.toolType) : undefined;
+		const customBinary =
+			local && agent.customPath ? await checkCustomPath(agent.customPath) : undefined;
+		const detection = local
+			? customBinary
+				? { available: customBinary.exists, path: customBinary.path }
+				: await deps.detectAgent(agent.toolType)
+			: undefined;
 		if (local && !detection?.available) {
 			return {
 				success: false,

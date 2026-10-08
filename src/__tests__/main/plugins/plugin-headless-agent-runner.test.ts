@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
 import type { SessionInfo } from '../../../shared/types';
 import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
@@ -13,6 +14,50 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it.each([true, false])(
+		'validates the selected agent binary before dispatch (valid: %s)',
+		async (valid) => {
+			const probe = vi
+				.spyOn(pathProber, 'checkCustomPath')
+				.mockResolvedValueOnce({ exists: valid, path: valid ? '/resolved/codex' : undefined });
+			try {
+				const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+				const detectAgent = vi.fn(async () => ({ available: true, path: '/default/codex' }));
+				const issueRunToken = vi.fn();
+				const run = createPluginHeadlessAgentRunner({
+					getAgent: () => ({ ...agent, customPath: '~/selected/codex' }),
+					detectAgent,
+					hasPluginTools: () => false,
+					spawn,
+					prepareSystemPrompt: async () => undefined,
+					issueRunToken,
+					revokeRunToken: vi.fn(),
+					cliScriptPath: () => '/cli.js',
+					audit: vi.fn(),
+				});
+				const result = await run('agent-a', 'hello');
+				expect(probe).toHaveBeenCalledWith('~/selected/codex');
+				expect(detectAgent).not.toHaveBeenCalled();
+				if (valid) {
+					expect(result.success).toBe(true);
+					expect(spawn).toHaveBeenCalledWith(
+						'codex',
+						'/project',
+						'hello',
+						undefined,
+						expect.objectContaining({ agentCommand: '/resolved/codex' })
+					);
+				} else {
+					expect(result).toMatchObject({ success: false, error: 'Agent CLI unavailable: codex' });
+					expect(spawn).not.toHaveBeenCalled();
+					expect(issueRunToken).not.toHaveBeenCalled();
+				}
+			} finally {
+				probe.mockRestore();
+			}
+		}
+	);
+
 	it('forwards live desktop config, binary and global environment independently of session overrides', async () => {
 		const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
 		const config = { reasoningSummary: 'detailed', customEnvVars: { SHARED: 'agent' } };
