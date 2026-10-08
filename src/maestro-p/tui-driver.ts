@@ -138,6 +138,22 @@ export const PROMPT_CHUNK_DRAIN_TIMEOUT_MS = 250;
 export const PROMPT_SETTLE_QUIET_MS = 300;
 export const PROMPT_SETTLE_MAX_MS = 3000;
 
+// claude's input editor cannot hold a literal tab, so a tab in the prompt can
+// never reach the transcript as a tab. What it becomes depends on how claude
+// classifies the write: input it treats as a paste gets each `\t` replaced by
+// four spaces, while input it treats as typing reads `\t` as the Tab KEY - it
+// is dropped (`a\tb` arrives as `ab`) or, after an `@` mention, fires path
+// autocomplete and inserts text nobody wrote. Verified against claude 2.1.294
+// with raw and bracketed-paste writes (issue #1755). We expand tabs ourselves
+// to the same four spaces claude's paste path produces, so the outcome is one
+// predictable thing and no Tab keystroke is ever sent. Byte-identical delivery
+// of a tab is not possible through the TUI; run mode warns when this applies.
+export const PROMPT_TAB_SPACES = 4;
+
+export function expandPromptTabs(text: string): string {
+	return text.replace(/\t/g, ' '.repeat(PROMPT_TAB_SPACES));
+}
+
 // Split `text` into pieces of at most `maxBytes` UTF-8 bytes without cutting a
 // multi-byte character or surrogate pair in half.
 export function chunkPromptForPty(text: string, maxBytes = PROMPT_CHUNK_MAX_BYTES): string[] {
@@ -588,7 +604,8 @@ export class TuiDriver extends EventEmitter {
 		// TUI: the first tap may land before claude's editor can accept a
 		// submit, so we re-tap a few times spaced out until the turn starts.
 		// Extra taps on an already-submitted (empty) input are no-ops.
-		const chunks = chunkPromptForPty(text);
+		// See PROMPT_TAB_SPACES: a raw `\t` would be read as the Tab key.
+		const chunks = chunkPromptForPty(expandPromptTabs(text));
 		for (let i = 0; i < chunks.length; i += 1) {
 			ptyProcess.write(chunks[i]);
 			if (i === chunks.length - 1) break;

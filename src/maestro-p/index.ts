@@ -33,7 +33,7 @@ import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './promp
 import { discoverSessionId, cwdSlug } from './session-watcher';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { formatScreenTailReport, idleTimeoutMessage } from './timeout-report';
-import { TuiDriver } from './tui-driver';
+import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
 import { parseUsage } from './usage-parser';
 import { VERSION } from './package-info';
 
@@ -247,6 +247,15 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				'maestro-p: --input-format stream-json was set but stdin was not a valid Claude stream-json envelope; treating it as a plain-text prompt.\n'
 			);
 		}
+	}
+
+	// claude's input editor cannot carry a tab, so the driver types each one as
+	// spaces (see PROMPT_TAB_SPACES). That changes the prompt, and the echo
+	// check ignores whitespace so it would never notice - say so here instead.
+	if (prompt.includes('\t')) {
+		process.stderr.write(
+			`maestro-p: warning: the prompt contains tab characters; claude's TUI input cannot hold a literal tab, so each one is sent as ${PROMPT_TAB_SPACES} spaces.\n`
+		);
 	}
 
 	const cwd = process.cwd();
