@@ -78,7 +78,8 @@ vi.mock('../../../shared/platformDetection', async (importOriginal) => {
 	};
 });
 
-import { executeCueCli, stopCueCliRun } from '../../../main/cue/cue-cli-executor';
+import { executeCueCli } from '../../../main/cue/cue-cli-executor';
+import { getProcessList, stopProcess } from '../../../main/cue/cue-process-lifecycle';
 
 function createSession(): SessionInfo {
 	return {
@@ -308,12 +309,26 @@ describe('cue-cli-executor', () => {
 		);
 	});
 
-	it('stopCueCliRun signals an active CLI process and returns true', async () => {
+	it('lists a running maestro-cli call in the shared Cue registry until it settles', async () => {
 		const config = createConfig();
 		const promise = executeCueCli(config as any);
 		await Promise.resolve();
 
-		const stopped = stopCueCliRun('run-1');
+		expect(getProcessList()).toContainEqual(
+			expect.objectContaining({ runId: 'run-1', toolType: 'terminal' })
+		);
+
+		mockChild.emit('close', 0);
+		await promise;
+		expect(getProcessList()).not.toContainEqual(expect.objectContaining({ runId: 'run-1' }));
+	});
+
+	it('stopProcess signals an active CLI process and returns true', async () => {
+		const config = createConfig();
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+
+		const stopped = stopProcess('run-1');
 		expect(stopped).toBe(true);
 		expect(mockChild.killed).toBe(true);
 
@@ -321,13 +336,13 @@ describe('cue-cli-executor', () => {
 		await promise;
 	});
 
-	it('stopCueCliRun uses taskkill /t /f on Windows instead of POSIX signals', async () => {
+	it('stopProcess uses taskkill /t /f on Windows instead of POSIX signals', async () => {
 		mockIsWindows.mockReturnValue(true);
 		const config = createConfig();
 		const promise = executeCueCli(config as any);
 		await Promise.resolve();
 
-		const stopped = stopCueCliRun('run-1');
+		const stopped = stopProcess('run-1');
 		expect(stopped).toBe(true);
 		expect(mockExecFile).toHaveBeenCalledWith(
 			'taskkill',
@@ -341,7 +356,7 @@ describe('cue-cli-executor', () => {
 		await promise;
 	});
 
-	it('stopCueCliRun returns false for unknown runId', () => {
-		expect(stopCueCliRun('does-not-exist')).toBe(false);
+	it('stopProcess returns false for unknown runId', () => {
+		expect(stopProcess('does-not-exist')).toBe(false);
 	});
 });

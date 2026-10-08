@@ -1066,7 +1066,10 @@ interface MaestroAPI {
 		) => () => void;
 	};
 	feedback: {
-		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
+		checkGhAuth: (options?: {
+			fresh?: boolean;
+		}) => Promise<import('../shared/feedback').FeedbackAuthResponse>;
+		getGhLoginCommand: () => Promise<import('../shared/feedback').FeedbackGhLoginCommand>;
 		submit: (payload: {
 			sessionId: string;
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
@@ -1096,7 +1099,7 @@ interface MaestroAPI {
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
-		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
+		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
 				number: number;
@@ -1112,7 +1115,9 @@ interface MaestroAPI {
 		subscribeIssue: (
 			issueNumber: number,
 			comment?: string
-		) => Promise<{ success: boolean; error?: string }>;
+		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
+		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
+		rememberAccount: (key: string | null) => Promise<void>;
 		drafts: {
 			list: () => Promise<{
 				drafts: Array<{
@@ -3810,6 +3815,7 @@ interface MaestroAPI {
 			exchanges: number;
 			documents: number;
 			tasks: number;
+			activeMs?: number;
 			projectPath?: string;
 		}) => Promise<string | null>;
 		getWizardRuns: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
@@ -3825,6 +3831,7 @@ interface MaestroAPI {
 				exchanges: number;
 				documents: number;
 				tasks: number;
+				activeMs?: number;
 				projectPath?: string;
 			}>
 		>;

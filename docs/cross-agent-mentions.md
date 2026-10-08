@@ -64,6 +64,8 @@ Whether your **current** agent also answers depends on where the mention sits:
 - **Start the message with an `@agent` mention** (`@Backend does this look right?`) and the message is treated as addressed to the mentioned agent(s) only. Your current agent stays quiet; you still see your message in the chat as the anchor for the replies that stream back.
 - **Put the mention later in the sentence** (`does this look right to @Backend?`) and your current agent answers too, with the consulted agent's reply arriving alongside it. Use this when you want both perspectives.
 
+When your current agent answers too, it does not finish before the consult does. It starts right away and does its own share of the work while the mentioned agent thinks, but it is told to hold its final answer. A **WAITING FOR CONSULT** item sits at the top of the queue in the meantime. Nothing else you send to that tab can run ahead of it. Once every mentioned agent has replied, Maestro sends the replies to your agent word for word, and your agent writes its final answer with both sets of findings in hand. If a mentioned agent fails, your agent is told why and finishes anyway. If you press **Stop**, the wait is dropped.
+
 A leading `@file` reference (`@src/app.ts what does this do?`) is a question for your current agent about that file, so it does not count as addressing another agent.
 
 <Note>

@@ -131,6 +131,22 @@ function normalizeParentToolUseId(msg: ClaudeRawMessage): string | undefined {
 }
 
 /**
+ * Prefix of the user-role message Claude Code injects when a Stop hook blocks
+ * the end of a turn (exit code 2 or `decision: "block"`). The model then keeps
+ * going inside the SAME turn, so the reply it had just finished is no longer
+ * the last assistant message and the `result` event no longer carries it.
+ */
+const STOP_HOOK_FEEDBACK_PREFIX = 'Stop hook feedback:';
+
+/** Between a reply a Stop hook held back and the text the hook made the model write next. */
+export const STOP_HOOK_ANSWER_SEPARATOR = '\n\n---\n\n';
+
+/** True when a message came from a Task subagent rather than the main transcript. */
+function isSubagentMessage(msg: ClaudeRawMessage): boolean {
+	return normalizeParentToolUseId(msg) !== undefined;
+}
+
+/**
  * Claude Code Output Parser Implementation
  *
  * Transforms Claude Code's stream-json format into normalized ParsedEvents.
@@ -164,6 +180,30 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * It also tracks auto-compaction correctly, which no accumulated figure can.
 	 */
 	private lastCallOccupancy: OccupancySnapshot | undefined = undefined;
+
+	/**
+	 * Text of the current main-transcript assistant message, kept until a tool
+	 * call or tool result shows it was narration rather than a reply. Keyed by
+	 * message id because stream-json emits one event per content block and
+	 * repeats whole messages.
+	 */
+	private pendingReply: { id: string | undefined; texts: string[] } | null = null;
+
+	/**
+	 * Replies the model finished before a Stop hook blocked the turn. The
+	 * `result` event only carries the text written AFTER the hook, so without
+	 * these the user's question looks unanswered: the screen shows only what
+	 * the hook asked for (for example "I committed the 8 paths").
+	 */
+	private stopHookHeldReplies: string[] = [];
+
+	/**
+	 * The last `result` message and the text composed for it. A line can be
+	 * parsed more than once (StdoutHandler re-parses while it holds an in-turn
+	 * error), and the turn state is cleared on the first pass, so a re-parse of
+	 * the same object returns the composed text instead of the bare result.
+	 */
+	private lastComposedResult: { raw: ClaudeRawMessage; text: string | undefined } | null = null;
 
 	/**
 	 * Parse a single JSON line from Claude Code output.
@@ -231,7 +271,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 
 			const event: ParsedEvent = {
 				type: 'result',
-				text: resultText,
+				text: this.composeResultText(msg, resultText),
 				sessionId: msg.session_id,
 				raw: msg,
 			};
@@ -256,6 +296,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			const text = this.extractTextFromMessage(msg);
 			const thinkingText = this.extractThinkingFromMessage(msg);
 			const toolUseBlocks = this.extractToolUseBlocks(msg);
+			this.trackPendingReply(msg, text, toolUseBlocks.length > 0);
 
 			// For thinking content, prioritize thinking blocks over text blocks
 			// This ensures extended thinking (Claude 3.7+, Claude 4+) content streams properly
@@ -274,10 +315,12 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Handle user messages carrying tool_result blocks. These are how Claude
-		// Code reports tool completion; without them every tool badge would stay
-		// stuck in the "running" state forever.
+		// Handle user messages. They carry tool_result blocks (how Claude Code
+		// reports tool completion; without them every tool badge would stay stuck
+		// in the "running" state forever, and the narration before them was not
+		// the reply) or, when a Stop hook blocks the end of the turn, its feedback.
 		if (msg.type === 'user') {
+			this.trackUserMessage(msg);
 			const resultEvent = this.extractToolResultEvent(msg);
 			if (resultEvent) {
 				return resultEvent;
@@ -310,6 +353,93 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			sessionId: msg.session_id,
 			raw: msg,
 		};
+	}
+
+	/**
+	 * Follow the text of the current main-transcript assistant message. A tool
+	 * call means the text was narration on the way to the call, so it is dropped;
+	 * text with no call after it is the reply the model is about to end on.
+	 * Subagent messages are skipped: their text is never the reply.
+	 */
+	private trackPendingReply(msg: ClaudeRawMessage, text: string, hasToolUse: boolean): void {
+		if (isSubagentMessage(msg)) {
+			return;
+		}
+		if (hasToolUse) {
+			this.pendingReply = null;
+			return;
+		}
+		if (!text) {
+			return;
+		}
+
+		const id = msg.message?.id;
+		if (!this.pendingReply || !id || this.pendingReply.id !== id) {
+			this.pendingReply = { id, texts: [text] };
+		} else if (!this.pendingReply.texts.includes(text)) {
+			this.pendingReply.texts.push(text);
+		}
+	}
+
+	/**
+	 * A main-transcript user message either returns tool results, which ends any
+	 * pending reply, or is a Stop hook's feedback, which holds the reply the model
+	 * had just finished so the `result` can show it next to the text the hook made
+	 * the model write.
+	 */
+	private trackUserMessage(msg: ClaudeRawMessage): void {
+		if (isSubagentMessage(msg) || !this.pendingReply) {
+			return;
+		}
+
+		const content = msg.message?.content;
+		if (Array.isArray(content) && content.some((block) => block.type === 'tool_result')) {
+			this.pendingReply = null;
+			return;
+		}
+
+		const text =
+			typeof content === 'string'
+				? content
+				: Array.isArray(content)
+					? content
+							.filter((block) => block.type === 'text' && block.text)
+							.map((block) => block.text!)
+							.join('')
+					: '';
+		if (!text.trimStart().startsWith(STOP_HOOK_FEEDBACK_PREFIX)) {
+			return;
+		}
+
+		const reply = this.pendingReply.texts.join('');
+		this.pendingReply = null;
+		if (reply.trim() && !this.stopHookHeldReplies.includes(reply)) {
+			this.stopHookHeldReplies.push(reply);
+		}
+	}
+
+	/**
+	 * The text a `result` event shows: any replies a Stop hook held back, then
+	 * the result's own text. Ends the turn's reply tracking.
+	 */
+	private composeResultText(
+		msg: ClaudeRawMessage,
+		resultText: string | undefined
+	): string | undefined {
+		if (this.lastComposedResult?.raw === msg) {
+			return this.lastComposedResult.text;
+		}
+
+		const parts = [...this.stopHookHeldReplies];
+		if (resultText && !parts.includes(resultText)) {
+			parts.push(resultText);
+		}
+		const text = parts.length > 0 ? parts.join(STOP_HOOK_ANSWER_SEPARATOR) : resultText;
+
+		this.pendingReply = null;
+		this.stopHookHeldReplies = [];
+		this.lastComposedResult = { raw: msg, text };
+		return text;
 	}
 
 	/**

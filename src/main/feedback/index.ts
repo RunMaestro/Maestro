@@ -18,6 +18,7 @@ import path from 'path';
 import { logger } from '../utils/logger';
 import { getPrompt } from '../prompt-manager';
 import {
+	clearGhCache,
 	isGhInstalled,
 	setCachedGhStatus,
 	getCachedGhStatus,
@@ -25,12 +26,20 @@ import {
 	resolveGhPath,
 } from '../utils/cliDetection';
 import { execFileNoThrow } from '../utils/execFile';
+import {
+	parseGhActiveAccount,
+	type GhAccount,
+	isGitHubAuthError,
+	isGitHubMissingScopeError,
+	isGitHubOAuthRestrictionError,
+} from '../utils/ghErrors';
 import { getSettingsStore } from '../stores/getters';
 import { isInitialized } from '../stores/instances';
 import { generateDebugPackage, type DebugPackageDependencies } from '../debug-package';
-import { captureException } from '../utils/sentry';
+import { captureException, captureMessage } from '../utils/sentry';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { generateUUID } from '../../shared/uuid';
+import { isMacOS, isWindows } from '../../shared/platformDetection';
 import type { MaestroCliManager } from '../maestro-cli-manager';
 import {
 	isFeedbackCategory,
@@ -48,9 +57,16 @@ import {
 	type FeedbackSubmissionPayload as FeedbackSubmitPayload,
 	type FeedbackSubmitResponse,
 	type SubmittedIssue,
+	type FeedbackGhLoginCommand,
+	GH_LOGIN_ARGS,
 } from '../../shared/feedback';
+import { formatAgentLoginCommand } from '../../shared/agentMetadata';
 
 const LOG_CONTEXT = '[Feedback]';
+// The repo feedback issues are filed on, and how long the up-front write
+// probe against it may take before it is treated as inconclusive.
+const FEEDBACK_REPO = 'RunMaestro/Maestro';
+const REPO_PROBE_TIMEOUT_MS = 15_000;
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
 const MAX_DRAFTS = 30;
 const MAX_DRAFT_ATTACHMENTS = 5;
@@ -60,10 +76,87 @@ const DRAFTS_FILE_NAME = 'feedback-drafts.json';
 const SUBMITTED_ISSUES_FILE_NAME = 'feedback-submitted-issues.json';
 const MAX_SUBMITTED_ISSUES = 100;
 
-const GH_NOT_INSTALLED_MESSAGE =
-	'GitHub CLI (gh) is not installed. Install it from https://cli.github.com';
+/** How to install gh here, by the package manager this platform ships or favors. */
+function ghNotInstalledMessage(): string {
+	const how = isMacOS()
+		? 'Install it with "brew install gh" or from https://cli.github.com'
+		: isWindows()
+			? 'Install it with "winget install --id GitHub.cli" or from https://cli.github.com'
+			: 'Install it from https://cli.github.com';
+	return `GitHub CLI (gh) is not installed. ${how}, then Check Again.`;
+}
 const GH_NOT_AUTHENTICATED_MESSAGE =
-	'GitHub CLI is not authenticated. Run "gh auth login" in your terminal.';
+	'GitHub CLI (gh) is not signed in to GitHub, so feedback cannot be filed.';
+
+// The GitHub CLI's OAuth app. Its settings page is where a user grants (or
+// requests) an organization's approval for gh.
+const GH_OAUTH_APP_SETTINGS_URL =
+	'https://github.com/settings/connections/applications/178c6fc778ccc68e1d6a';
+
+/**
+ * Turn a failed gh call into something the user can act on.
+ *
+ * gh reports auth trouble as raw API text ("HTTP 401: Bad credentials", "the
+ * RunMaestro organization has enabled OAuth App access restrictions"), which
+ * reads like a Maestro bug and names no fix. The up-front `gh auth status`
+ * check cannot catch these: it is cached for a minute, and an org's OAuth
+ * restriction refuses a token that `gh auth status` reports as valid. So every
+ * failure is translated here, and anything unrecognised keeps gh's own words.
+ */
+export function describeGhFailure(stderr: string | undefined, fallback: string): string {
+	return classifyGhFailure(stderr, fallback).message;
+}
+
+/**
+ * {@link describeGhFailure}, plus whether signing gh in again can fix it, so
+ * the Feedback chat can offer its embedded login instead of only naming one.
+ */
+export function classifyGhFailure(
+	stderr: string | undefined,
+	fallback: string
+): { message: string; needsGhLogin: boolean } {
+	const message = describeGhFailureText(stderr, fallback);
+	const detail = stderr?.trim() ?? '';
+	const needsGhLogin =
+		isGitHubOAuthRestrictionError(detail) ||
+		isGitHubAuthError(detail) ||
+		isGitHubMissingScopeError(detail);
+	return { message, needsGhLogin };
+}
+
+/** A gh call failed. Carries whether a fresh login can fix it. */
+export class GhCommandError extends Error {
+	readonly needsGhLogin: boolean;
+	constructor(stderr: string | undefined, fallback: string) {
+		const { message, needsGhLogin } = classifyGhFailure(stderr, fallback);
+		super(message);
+		this.name = 'GhCommandError';
+		this.needsGhLogin = needsGhLogin;
+	}
+}
+
+/** The failure half of a feedback result for a gh call that failed. */
+function ghFailureResult(
+	stderr: string | undefined,
+	fallback: string
+): { success: false; error: string; needsGhLogin: boolean } {
+	const { message, needsGhLogin } = classifyGhFailure(stderr, fallback);
+	return { success: false, error: message, needsGhLogin };
+}
+
+function describeGhFailureText(stderr: string | undefined, fallback: string): string {
+	const detail = stderr?.trim() ?? '';
+	if (isGitHubOAuthRestrictionError(detail)) {
+		return `GitHub refused the request because an organization restricts third-party apps and has not approved the GitHub CLI for your account. Open ${GH_OAUTH_APP_SETTINGS_URL}, grant or request access for RunMaestro, then submit again. You can also run "gh auth login" again and approve RunMaestro on the authorization page.`;
+	}
+	if (isGitHubAuthError(detail)) {
+		return 'Your GitHub CLI login has expired or was revoked. Run "gh auth login" in a terminal, then submit again.';
+	}
+	if (isGitHubMissingScopeError(detail)) {
+		return 'Your GitHub CLI login is missing a permission feedback needs. Run "gh auth refresh -h github.com -s repo" in a terminal, then submit again.';
+	}
+	return detail || fallback;
+}
 
 function getPromptPath(): string {
 	if (app.isPackaged) {
@@ -478,7 +571,7 @@ async function getGitHubLogin(): Promise<string> {
 		getExpandedEnv()
 	);
 	if (result.exitCode !== 0 || !result.stdout.trim()) {
-		throw new Error(result.stderr || 'Failed to resolve GitHub login.');
+		throw new GhCommandError(result.stderr, 'Failed to resolve GitHub login.');
 	}
 	return result.stdout.trim();
 }
@@ -529,7 +622,10 @@ async function ensureAttachmentsRepo(owner: string): Promise<void> {
 		getExpandedEnv()
 	);
 	if (repoCreate.exitCode !== 0 && !repoCreate.stderr.includes('name already exists')) {
-		throw new Error(repoCreate.stderr || 'Failed to create screenshot attachment repository.');
+		throw new GhCommandError(
+			repoCreate.stderr,
+			'Failed to create screenshot attachment repository.'
+		);
 	}
 }
 
@@ -576,7 +672,10 @@ async function uploadAttachments(
 		);
 		await fs.unlink(payloadPath).catch(() => {});
 		if (uploadResult.exitCode !== 0) {
-			throw new Error(uploadResult.stderr || `Failed to upload screenshot ${attachment.name}.`);
+			throw new GhCommandError(
+				uploadResult.stderr,
+				`Failed to upload screenshot ${attachment.name}.`
+			);
 		}
 		const uploadJson = JSON.parse(uploadResult.stdout);
 		const rawUrl =
@@ -676,7 +775,7 @@ async function ensureFeedbackLabel(): Promise<void> {
 		getExpandedEnv()
 	);
 	if (labelCreate.exitCode !== 0 && !labelCreate.stderr.includes('already exists')) {
-		throw new Error(labelCreate.stderr || 'Failed to ensure Maestro-feedback label exists.');
+		throw new GhCommandError(labelCreate.stderr, 'Failed to ensure Maestro-feedback label exists.');
 	}
 }
 
@@ -758,47 +857,171 @@ function buildIssueBody(
  * Whether `gh` is installed and authenticated. Feedback cannot be filed
  * without it, so every caller checks this first.
  */
-export async function checkFeedbackGhAuth(): Promise<FeedbackAuthResponse> {
+export async function checkFeedbackGhAuth(
+	options: { fresh?: boolean } = {}
+): Promise<FeedbackAuthResponse> {
+	// A fresh check is what "Check again" and the end of an embedded login ask
+	// for: the cached verdict is the very answer the user just changed.
+	if (options.fresh) {
+		clearGhCache();
+		clearFeedbackRepoVerdicts();
+	}
+
 	// A configured custom path is authoritative: it exists precisely for
 	// binaries that PATH lookup cannot find. Resolve it before reading the
 	// cache, because the cache is keyed by the command a verdict was reached
 	// against, and the other gh callers probe the PATH-resolved binary.
 	const ghCommand = await resolveFeedbackGhCommand();
+	const notInstalled: FeedbackAuthResponse = {
+		authenticated: false,
+		reason: 'not-installed',
+		message: ghNotInstalledMessage(),
+	};
+	const notAuthenticated = (account?: GhAccount): FeedbackAuthResponse => ({
+		authenticated: false,
+		reason: 'not-authenticated',
+		message: GH_NOT_AUTHENTICATED_MESSAGE,
+		needsGhLogin: true,
+		login: ghLoginCommandFor(ghCommand),
+		...(account ? { account } : {}),
+	});
 
-	// Prefer cache when available
+	// Prefer cache when available. The shared gh status cache answers
+	// "installed?" and "signed in?"; whether THIS account may file on the
+	// feedback repo is feedback's own question and lives in `repoVerdicts`.
 	const cached = getCachedGhStatus(ghCommand);
-	if (cached) {
-		if (!cached.installed) {
-			return { authenticated: false, message: GH_NOT_INSTALLED_MESSAGE };
-		}
-		if (!cached.authenticated) {
-			return { authenticated: false, message: GH_NOT_AUTHENTICATED_MESSAGE };
-		}
-		return { authenticated: true };
-	}
+	if (cached && !cached.installed) return notInstalled;
+	if (cached && !cached.authenticated) return notAuthenticated();
+	const remembered = readRepoVerdict(ghCommand);
+	if (cached && remembered) return remembered;
 
-	// Check if gh is installed. Probe a custom path directly rather than
-	// asking `which` about a name it will never see.
 	const env = getExpandedEnv();
-	const installed =
-		ghCommand === 'gh'
-			? await isGhInstalled()
-			: (await execFileNoThrow(ghCommand, ['--version'], undefined, env)).exitCode === 0;
-	if (!installed) {
-		setCachedGhStatus(ghCommand, false, false);
-		return { authenticated: false, message: GH_NOT_INSTALLED_MESSAGE };
+	if (!cached) {
+		// Check if gh is installed. Probe a custom path directly rather than
+		// asking `which` about a name it will never see.
+		const installed =
+			ghCommand === 'gh'
+				? await isGhInstalled()
+				: (await execFileNoThrow(ghCommand, ['--version'], undefined, env)).exitCode === 0;
+		if (!installed) {
+			setCachedGhStatus(ghCommand, false, false);
+			return notInstalled;
+		}
 	}
 
-	// Check auth status (command output ignored; exit code is the signal)
+	// The exit code says signed in or not; the text names the account.
 	const authResult = await execFileNoThrow(ghCommand, ['auth', 'status'], undefined, env);
 	const authenticated = authResult.exitCode === 0;
 	setCachedGhStatus(ghCommand, true, authenticated);
+	const account = parseGhActiveAccount(`${authResult.stdout}\n${authResult.stderr}`);
 
-	if (!authenticated) {
-		return { authenticated: false, message: GH_NOT_AUTHENTICATED_MESSAGE };
+	if (!authenticated) return notAuthenticated(account);
+
+	const verdict = await probeFeedbackRepoAccess(ghCommand, env, account);
+	rememberRepoVerdict(ghCommand, verdict);
+	return verdict;
+}
+
+/**
+ * Whether gh may file an issue on the feedback repo, cached per gh binary for
+ * the same minute as gh's own status. Kept apart from the shared gh status
+ * cache on purpose: Symphony and Create PR read that one, and a refusal from
+ * RunMaestro's org says nothing about whether gh works for the user's repos.
+ */
+const REPO_VERDICT_TTL_MS = 60_000;
+const repoVerdicts = new Map<string, { verdict: FeedbackAuthResponse; at: number }>();
+
+function readRepoVerdict(ghCommand: string): FeedbackAuthResponse | undefined {
+	const entry = repoVerdicts.get(ghCommand);
+	if (!entry) return undefined;
+	if (Date.now() - entry.at >= REPO_VERDICT_TTL_MS) {
+		repoVerdicts.delete(ghCommand);
+		return undefined;
 	}
+	return entry.verdict;
+}
 
-	return { authenticated: true };
+function rememberRepoVerdict(ghCommand: string, verdict: FeedbackAuthResponse): void {
+	repoVerdicts.set(ghCommand, { verdict, at: Date.now() });
+}
+
+/** Forget every remembered repo verdict, so the next check probes again. */
+export function clearFeedbackRepoVerdicts(): void {
+	repoVerdicts.clear();
+}
+
+/**
+ * Prove gh can file an issue on the feedback repo before the user writes one.
+ *
+ * `gh auth status` only proves the token is valid. What fails at submit is a
+ * WRITE: an organization's OAuth App restriction refuses the GitHub CLI's token
+ * on RunMaestro while allowing every public read, so a GET probe passes for
+ * exactly the users it is meant to catch. Instead this POSTs an empty issue.
+ * GitHub authorizes the request first and only then validates it, so an
+ * account that may file gets 422 ("title" wasn't supplied) and nothing is
+ * created, while a refused one gets the same 401/403 a real submit would.
+ *
+ * Only a proven refusal blocks. A network failure or a 5xx says nothing about
+ * the account, so it passes and the submit path reports whatever happens.
+ */
+async function probeFeedbackRepoAccess(
+	ghCommand: string,
+	env: NodeJS.ProcessEnv,
+	account: GhAccount | undefined
+): Promise<FeedbackAuthResponse> {
+	const withAccount = account ? { account } : {};
+	const result = await execFileNoThrow(
+		ghCommand,
+		['api', `repos/${FEEDBACK_REPO}/issues`, '--method', 'POST', '--input', '-'],
+		undefined,
+		{ env, input: '{}', timeout: REPO_PROBE_TIMEOUT_MS }
+	);
+	const stderr = result.stderr ?? '';
+
+	if (result.exitCode === 0) {
+		// GitHub requires a title, so this should be impossible. If it ever
+		// happens a blank issue now exists on a public repo: make it loud.
+		void captureMessage('Feedback repo probe created an issue', 'warning', {
+			stdout: result.stdout.slice(0, 500),
+		});
+		return { authenticated: true, ...withAccount };
+	}
+	if (/\bHTTP 422\b/.test(stderr)) return { authenticated: true, ...withAccount };
+
+	const { message, needsGhLogin } = classifyGhFailure(
+		stderr,
+		`GitHub refused this account an issue on ${FEEDBACK_REPO}. ${stderr.trim()}`.trim()
+	);
+	if (needsGhLogin || /\bHTTP (?:403|404)\b/.test(stderr)) {
+		return {
+			authenticated: false,
+			reason: 'no-repo-access',
+			message,
+			needsGhLogin,
+			...(needsGhLogin ? { login: ghLoginCommandFor(ghCommand) } : {}),
+			...withAccount,
+		};
+	}
+	logger.warn(`Feedback repo probe was inconclusive: ${stderr.trim()}`, LOG_CONTEXT);
+	return { authenticated: true, ...withAccount };
+}
+
+function ghLoginCommandFor(ghCommand: string): FeedbackGhLoginCommand {
+	const args = [...GH_LOGIN_ARGS];
+	return {
+		command: ghCommand,
+		args,
+		display: formatAgentLoginCommand({ binary: ghCommand, args: args.join(' ') }),
+	};
+}
+
+/**
+ * The gh login the Feedback chat's "Log in to GitHub" runs, and that
+ * `maestro-cli feedback login` runs, with the gh binary feedback itself uses
+ * (a configured custom path wins).
+ */
+export async function getFeedbackGhLoginCommand(): Promise<FeedbackGhLoginCommand> {
+	return ghLoginCommandFor(await resolveFeedbackGhCommand());
 }
 
 /**
@@ -973,10 +1196,7 @@ export async function subscribeFeedbackIssue(payload: {
 		);
 
 		if (commentResult.exitCode !== 0) {
-			return {
-				success: false,
-				error: commentResult.stderr || 'Failed to add comment.',
-			};
+			return ghFailureResult(commentResult.stderr, 'Failed to add comment.');
 		}
 	}
 
@@ -1094,7 +1314,7 @@ export async function submitFeedback(
 	);
 	await fs.unlink(bodyPath).catch(() => {});
 	if (issueCreate.exitCode !== 0) {
-		return { success: false, error: issueCreate.stderr || 'Failed to create GitHub issue.' };
+		return ghFailureResult(issueCreate.stderr, 'Failed to create GitHub issue.');
 	}
 
 	const issueUrl = issueCreate.stdout.trim();
@@ -1226,7 +1446,18 @@ export async function submitFeedbackConversation(
 					a.dataUrl.startsWith('data:image/')
 			)
 		: [];
-	const { markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments);
+	// An upload failure is reported as a result, not thrown: a throw crosses IPC
+	// as "Error invoking remote method ...", burying the gh guidance it carries.
+	let attachmentMarkdown: string;
+	try {
+		({ markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments));
+	} catch (error) {
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : 'Failed to upload screenshots.',
+			needsGhLogin: error instanceof GhCommandError && error.needsGhLogin,
+		};
+	}
 
 	// Generate and upload debug package if requested
 	let debugPackageMarkdown = '';
@@ -1313,10 +1544,7 @@ export async function submitFeedbackConversation(
 		);
 
 		if (issueCreate.exitCode !== 0) {
-			return {
-				success: false,
-				error: issueCreate.stderr || 'Failed to create GitHub issue.',
-			};
+			return ghFailureResult(issueCreate.stderr, 'Failed to create GitHub issue.');
 		}
 
 		// gh issue create prints the issue URL to stdout

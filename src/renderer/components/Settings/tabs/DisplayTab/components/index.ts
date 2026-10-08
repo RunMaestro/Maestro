@@ -4,6 +4,7 @@ export { ContextWarningsSection } from './ContextWarningsSection';
 export { DocumentGraphSection } from './DocumentGraphSection';
 export { FileEditPreviewSection } from './FileEditPreviewSection';
 export { FileIndexingSection } from './FileIndexingSection';
+export { FileTreeLinesSection } from './FileTreeLinesSection';
 export { FontsSection } from './FontsSection';
 export { CustomFontsRow } from './CustomFontsRow';
 export { FontZoomSection } from './FontZoomSection';

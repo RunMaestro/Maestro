@@ -31,6 +31,7 @@ import {
 	selectContextWindow,
 } from '../../../shared/crossAgentContext';
 import { parseSynopsis } from '../../../shared/synopsis';
+import { settleConsultHold } from '../../services/crossAgentConsultHold';
 import type {
 	CrossAgentResponseChunk,
 	CrossAgentTranscriptEntry,
@@ -650,8 +651,17 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 				err
 			);
 			// A rejected send never produces a chunk, so nothing else will ever
-			// settle a caller blocked on the answer.
-			opts.onComplete?.({ text: '', error: err instanceof Error ? err.message : String(err) });
+			// settle a caller blocked on the answer - or the source turn's consult
+			// hold, which would otherwise wait on this target forever.
+			const error = err instanceof Error ? err.message : String(err);
+			settleConsultHold({
+				sourceSessionId: opts.sourceSessionId,
+				sourceTabId: opts.sourceTabId,
+				targetSessionId: opts.targetSessionId,
+				text: '',
+				error,
+			});
+			opts.onComplete?.({ text: '', error });
 		});
 }
 
@@ -755,6 +765,19 @@ export function useCrossAgentDispatch(
 				targetAgentSessionId: chunk.targetAgentSessionId,
 			};
 			rememberCompletion(chunk.requestId, completion);
+			// Release the source turn's consult hold (when it has one) so the agent
+			// that asked gets this reply and can finish its answer. Keyed on the
+			// chunk's own ids, not `tracked`, so it still lands after a reload lost
+			// the request bookkeeping.
+			settleConsultHold({
+				sourceSessionId: chunk.sourceSessionId,
+				sourceTabId: chunk.sourceTabId,
+				targetSessionId: chunk.targetSessionId,
+				targetAgentName: chunk.targetAgentName,
+				text: accumulated,
+				error: chunk.error,
+				canceled: chunk.canceled,
+			});
 			// Hand the answer to a caller blocked on it (`maestro-cli ask`). Runs
 			// after the transcript writes so the consult tab already holds the text
 			// the caller is about to be given.

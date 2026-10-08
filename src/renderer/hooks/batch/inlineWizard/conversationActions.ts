@@ -16,6 +16,7 @@ import {
 import {
 	beginWizardRun,
 	countWizardExchange,
+	setWizardAgentWorking,
 	updateWizardRun,
 } from '../../../services/wizardStats';
 import { logger } from '../../../utils/logger';
@@ -345,6 +346,9 @@ export function useInlineWizardConversationActions({
 				const currentState = tabStatesRef.current.get(tabId);
 				const currentHistory = currentState?.conversationHistory || [];
 
+				// Call the AI service. The agent's turn is wizard time in full; the
+				// finally below hands the clock back to the user however it ends.
+				setWizardAgentWorking(tabId, true);
 				const result = await sendWizardMessage(session, content, currentHistory, callbacks);
 
 				// The user stopped this turn while it was running. cancelTurn already cleared
@@ -411,6 +415,8 @@ export function useInlineWizardConversationActions({
 				}));
 
 				callbacks?.onError?.(errorMessage);
+			} finally {
+				setWizardAgentWorking(tabId, false);
 			}
 		},
 		[conversationSessionsMap, currentTabId, setCurrentTabId, setTabState, tabStatesRef]

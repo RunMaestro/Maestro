@@ -84,6 +84,28 @@ describe('shouldRunSynopsisOnExit', () => {
 		).toBe(false);
 	});
 
+	it('returns false while a consult hold is waiting to resume the session', () => {
+		// The hold is not runnable yet, but its continuation resumes this same
+		// provider session the moment the consult replies - a synopsis now would
+		// be a second writer on it.
+		const hold = {
+			id: 'hold',
+			timestamp: 0,
+			tabId: 't',
+			type: 'message' as const,
+			awaitingConsult: {
+				pending: [{ targetSessionId: 's-b', targetAgentName: 'Backend' }],
+				replies: [],
+			},
+		};
+		expect(
+			shouldRunSynopsisOnExit(
+				{ executionQueue: [hold], agentSessionId: 'a' },
+				{ agentSessionId: 'a', saveToHistory: true }
+			)
+		).toBe(false);
+	});
+
 	it('returns false when no agentSessionId on tab or session', () => {
 		expect(
 			shouldRunSynopsisOnExit(

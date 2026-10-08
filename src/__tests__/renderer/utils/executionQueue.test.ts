@@ -15,6 +15,8 @@ import {
 	isSameQueuedPrompt,
 	findQueuedDuplicate,
 	releaseConnectionHeldQueueItems,
+	hasConsultHoldForTab,
+	dropConsultHold,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -543,5 +545,94 @@ describe('isSameQueuedPrompt', () => {
 		const queue = [tabItem('other', 'tab-2'), { ...base, id: 'user-copy' }];
 		expect(findQueuedDuplicate({ executionQueue: queue }, base)?.id).toBe('user-copy');
 		expect(findQueuedDuplicate({ executionQueue: [] }, base)).toBeUndefined();
+	});
+});
+
+/**
+ * A consult hold is a barrier for ONE tab: the turn that @mentioned another
+ * agent is not finished until the reply lands, so nothing queued for that tab
+ * may run ahead of it - while other tabs carry on.
+ */
+describe('consult hold', () => {
+	const held = (tabId: string): QueuedItem => ({
+		id: `hold-${tabId}`,
+		timestamp: 0,
+		tabId,
+		type: 'message',
+		text: 'Waiting',
+		awaitingConsult: {
+			pending: [{ targetSessionId: 's-b', targetAgentName: 'Backend' }],
+			replies: [],
+		},
+	});
+
+	it('is not runnable while it waits', () => {
+		expect(isRunnableQueueItem(held('tab-1'))).toBe(false);
+	});
+
+	it('blocks later items for its own tab but not for other tabs', () => {
+		const queue = [held('tab-1'), tabItem('same', 'tab-1'), tabItem('other', 'tab-2')];
+
+		expect(nextRunnableQueueItem(queue)?.id).toBe('other');
+		const { item: taken, remaining } = takeNextRunnableQueueItem(queue);
+		expect(taken?.id).toBe('other');
+		expect(remaining.map((i) => i.id)).toEqual(['hold-tab-1', 'same']);
+	});
+
+	it('leaves nothing runnable when only its own tab has work', () => {
+		const queue = [held('tab-1'), tabItem('same', 'tab-1')];
+		expect(hasRunnableQueueItem(queue)).toBe(false);
+		expect(takeNextRunnableQueueItem(queue)).toEqual({ item: null, remaining: queue });
+	});
+
+	it('counts as work ahead of a new message', () => {
+		const session = createMockSession({ aiTabs: [], executionQueue: [held('tab-1')] });
+		expect(hasWorkAheadOfNewMessage(session)).toBe(true);
+	});
+
+	it('is found per tab', () => {
+		const queue = [held('tab-1')];
+		expect(hasConsultHoldForTab(queue, 'tab-1')).toBe(true);
+		expect(hasConsultHoldForTab(queue, 'tab-2')).toBe(false);
+		expect(hasConsultHoldForTab(queue, undefined)).toBe(false);
+	});
+
+	it('drops only its own tab, and returns the same queue when absent', () => {
+		const other = tabItem('other', 'tab-1');
+		const queue = [held('tab-1'), held('tab-2'), other];
+		expect(dropConsultHold(queue, 'tab-1').map((i) => i.id)).toEqual(['hold-tab-2', 'other']);
+		const plain = [other];
+		expect(dropConsultHold(plain, 'tab-1')).toBe(plain);
+	});
+
+	it('cannot be force sent: it has nothing to send until the reply lands', () => {
+		const session = { aiTabs: [{ id: 'tab-1', state: 'idle' }] } as unknown as Session;
+		const e = getForceSendEligibility(session, held('tab-1'), { forcedParallelEnabled: true });
+		expect(e.blockedReason).toBe('awaiting-consult');
+		expect(e.canForce).toBe(false);
+		expect(shouldOfferForceSend(e)).toBe(false);
+	});
+
+	it('is dropped when the turn that placed it fails to dispatch', () => {
+		// The restored item places a fresh hold when it dispatches again; the old
+		// one would otherwise deliver a continuation for a turn that never ran.
+		const failedMention: QueuedItem = {
+			id: 'q1',
+			timestamp: 0,
+			tabId: 'tab-1',
+			type: 'message',
+			text: 'ask @Backend',
+			crossAgentMention: true,
+		};
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			activeTabId: 'tab-1',
+			executionQueue: [held('tab-1')],
+		} as Partial<Session>);
+
+		const recovered = applyQueuedItemDispatchFailure(session, failedMention, { hold: false });
+
+		expect(recovered.executionQueue.map((i) => i.id)).toEqual(['q1']);
 	});
 });

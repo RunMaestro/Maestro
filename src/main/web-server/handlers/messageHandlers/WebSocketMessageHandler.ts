@@ -72,6 +72,8 @@ import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from
 import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
+	handleFeedbackGhLoginCommand,
+	handleFeedbackAccounts,
 	handleFeedbackSearch,
 	handleFeedbackSubmit,
 	handleFeedbackSubscribe,
@@ -659,12 +661,20 @@ export class WebSocketMessageHandler {
 				void handleFeedbackSearch(this.ctx, client, message);
 				break;
 
+			case 'feedback_gh_login_command':
+				void handleFeedbackGhLoginCommand(this.ctx, client, message);
+				break;
+
 			case 'feedback_submit':
 				void handleFeedbackSubmit(this.ctx, client, message);
 				break;
 
 			case 'feedback_subscribe':
 				void handleFeedbackSubscribe(this.ctx, client, message);
+				break;
+
+			case 'feedback_accounts':
+				void handleFeedbackAccounts(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

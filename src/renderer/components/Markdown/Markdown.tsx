@@ -21,6 +21,7 @@ import type { FileNode } from '../../types/fileTree';
 import { buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
+import { copyTextWithFlash } from '../../utils/inlineCodeCopy';
 import {
 	createMarkdownComponents,
 	createWizardBubbleMarkdownComponents,
@@ -64,7 +65,7 @@ export interface MarkdownProps {
 	bionifyAlgorithm?: string;
 
 	// --- Chat preset ---
-	/** Copy callback for code-fence copy buttons (required for chat). */
+	/** Copy callback for code-fence copy buttons. Defaults to clipboard write + center flash. */
 	onCopy?: (text: string) => void;
 	/** Allow raw HTML passthrough via rehype-raw (DOMPurify-sanitized). */
 	allowRawHtml?: boolean;
@@ -72,6 +73,18 @@ export interface MarkdownProps {
 	chatLineBreaks?: boolean;
 	/** Render `$...$` / `$$...$$` as KaTeX math (#622). */
 	chatMath?: boolean;
+	/**
+	 * Chip-render Codex's assistant directives (`:codex-followup[...]{...}`).
+	 * Ignored outside the chat preset - an authored document that contains the
+	 * syntax is quoting it, not offering it. Set this only for Codex agents.
+	 */
+	codexDirectives?: boolean;
+	/**
+	 * Which conversation a clicked `:codex-followup` chip belongs to. Chat preset
+	 * only. Absent leaves the chips inert - `codexDirectives` decides whether the
+	 * syntax is parsed, this decides whether there is a control to press.
+	 */
+	codexFollowup?: { sessionId: string; tabId: string };
 
 	// --- Document preset ---
 	/** Render YAML frontmatter as a table. Defaults to true for document. */
@@ -118,6 +131,8 @@ export const Markdown = memo(function Markdown({
 	allowRawHtml,
 	chatLineBreaks = false,
 	chatMath = false,
+	codexDirectives = false,
+	codexFollowup,
 	frontmatter = true,
 	imageRenderer,
 	customLanguageRenderers,
@@ -153,6 +168,21 @@ export const Markdown = memo(function Markdown({
 		return null;
 	}, [fileTree]);
 
+	// The followup context is an object, and a call site that builds it inline
+	// hands us a new identity on every render - which would invalidate the
+	// `components` memo below and re-run react-markdown's entire parse each time
+	// (#1180). Depending on the two strings instead makes the memo hold however
+	// the caller spells the prop.
+	const followupSessionId = codexFollowup?.sessionId;
+	const followupTabId = codexFollowup?.tabId;
+	const chatFollowup = useMemo(
+		() =>
+			followupSessionId && followupTabId
+				? { sessionId: followupSessionId, tabId: followupTabId }
+				: undefined,
+		[followupSessionId, followupTabId]
+	);
+
 	// Right-click context menus (chat only).
 	const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
 	const dismissLinkMenu = useCallback(() => setLinkMenu(null), []);
@@ -177,6 +207,10 @@ export const Markdown = memo(function Markdown({
 			// run, so a marker in it is live configuration worth showing. A chat
 			// message only ever describes one.
 			autorunMarkers: preset === 'document',
+			// The mirror image: a Codex directive is live only where an agent just
+			// said it. A document, a release note, or a wizard bubble renders text
+			// somebody authored, where the same string is content.
+			codexDirectives: isChat && codexDirectives,
 			allowRawHtml: effectiveAllowRawHtml,
 			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
 			mentionChips: isChat,
@@ -189,6 +223,7 @@ export const Markdown = memo(function Markdown({
 		isChat,
 		chatLineBreaks,
 		chatMath,
+		codexDirectives,
 		effectiveAllowRawHtml,
 		fileTreeIndices,
 		cwd,
@@ -211,7 +246,7 @@ export const Markdown = memo(function Markdown({
 			case 'chat':
 				return createChatMarkdownComponents({
 					theme,
-					onCopy: onCopy ?? (() => {}),
+					onCopy: onCopy ?? copyTextWithFlash,
 					onFileClick,
 					projectRoot,
 					sshRemoteId,
@@ -221,6 +256,7 @@ export const Markdown = memo(function Markdown({
 					onLinkContextMenu: (e, url) => setLinkMenu({ x: e.clientX, y: e.clientY, url }),
 					onFileContextMenu: (e, absPath, fileName) =>
 						setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName }),
+					codexFollowup: chatFollowup,
 				});
 			case 'wizard-bubble':
 				return createWizardBubbleMarkdownComponents(theme);
@@ -260,6 +296,7 @@ export const Markdown = memo(function Markdown({
 		containerRef,
 		searchHighlight,
 		codeBlockStyle,
+		chatFollowup,
 	]);
 
 	// Memoize the ReactMarkdown element: react-markdown re-runs the full remark+

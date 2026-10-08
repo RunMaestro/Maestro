@@ -21,7 +21,7 @@
  * (`agentStore.processQueuedItem`) runs outside React.
  */
 
-import type { Session } from '../types';
+import type { ConsultHoldTarget, Session } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 import {
 	buildKnownMentionNameSet,
@@ -29,6 +29,7 @@ import {
 } from '../hooks/input/useAgentMentionCompletion';
 import { messageStartsWithAgentMention } from '../../shared/crossAgentContext';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
+import { holdTurnForConsults, resolveConsultTargets } from './crossAgentConsultHold';
 
 /** What a message's `@mentions` resolve to, before anything is sent. */
 export interface CrossAgentMentionPlan {
@@ -79,13 +80,24 @@ export function planCrossAgentMentions(
  * The transcript slice is read HERE, not at plan time: for a queued message
  * that is minutes old, the consulted agent should see the conversation as it
  * stands when it is pulled in, not as it stood when the user hit send.
+ *
+ * When the source agent answers too (a mid-message mention, `!suppressLocal`),
+ * its turn must not finish before the consult replies, so this also puts a
+ * consult hold at the head of its queue (see `crossAgentConsultHold`). Returns
+ * the targets that hold is waiting on - the caller appends the pending note to
+ * the local prompt with them - or `[]` when the source agent does not answer.
  */
 export function dispatchCrossAgentMentions(
 	plan: CrossAgentMentionPlan,
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string
-): void {
+): ConsultHoldTarget[] {
+	// Hold BEFORE sending, so a consult that settles almost at once (a target
+	// that no longer exists) still finds the hold waiting to record it.
+	const heldTargets = plan.suppressLocal ? [] : resolveConsultTargets(plan.targetSessionIds);
+	holdTurnForConsults(sourceSession.id, sourceTabId, heldTargets);
+
 	const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
 	const sourceLogs = sourceTab?.logs ?? [];
 	for (const targetSessionId of plan.targetSessionIds) {
@@ -101,20 +113,22 @@ export function dispatchCrossAgentMentions(
 			sourceCwd: sourceSession.cwd,
 		});
 	}
+	return heldTargets;
 }
 
 /**
  * Plan + dispatch in one step, for callers that only hold the raw message (the
  * queue drain). Re-resolving at dispatch time is deliberate: an agent renamed
  * or deleted while the message sat in the queue then resolves correctly, or
- * drops out, instead of consulting a stale id.
+ * drops out, instead of consulting a stale id. Returns the held consult targets,
+ * exactly as `dispatchCrossAgentMentions` does.
  */
 export function dispatchCrossAgentMentionsForMessage(
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string
-): void {
+): ConsultHoldTarget[] {
 	const plan = planCrossAgentMentions(message, sourceSession.id);
-	if (!plan) return;
-	dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId);
+	if (!plan) return [];
+	return dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId);
 }

@@ -337,6 +337,28 @@ export function formatAgentLoginCommand(
 }
 
 /**
+ * Make the shell exit with the status of the command line it was typed.
+ *
+ * A login typed into an interactive shell leaves the shell running when it
+ * finishes, so nothing can tell a finished login from a pending one. Appending
+ * this turns the end of the login into the end of the PTY, with the login's
+ * own exit code, which is what lets a caller continue as soon as it succeeds.
+ *
+ * cmd.exe expands `%ERRORLEVEL%` when the line is parsed, before the command
+ * runs, so it uses `&&` / `||` instead.
+ */
+export function exitWithCommandStatus(line: string, syntax: LoginShellSyntax = 'posix'): string {
+	switch (syntax) {
+		case 'powershell':
+			return `${line}; exit $LASTEXITCODE`;
+		case 'cmd':
+			return `${line} && exit 0 || exit 1`;
+		default:
+			return `${line}; exit $?`;
+	}
+}
+
+/**
  * Map a Maestro shell id to the dialect its command line is written in.
  *
  * Shell ids come from `shellDetector`: on Windows `powershell`, `pwsh`, `cmd`,

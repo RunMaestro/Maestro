@@ -59,6 +59,15 @@ export function parseTabId(processSessionId: string): string | null {
 	return null;
 }
 
+// Badge text for a Cue run row. It leads with CUE so the row names its source
+// even though no tab exists for it, then the trigger (`time.heartbeat` ->
+// `CUE · TIME HEARTBEAT`). An empty event type (run metadata already gone)
+// still reads CUE instead of rendering an empty pill.
+export function cueSourceBadgeLabel(eventType?: string): string {
+	const trigger = eventType?.replace(/[._]/g, ' ').trim().toUpperCase();
+	return trigger ? `CUE · ${trigger}` : 'CUE';
+}
+
 // Group expandable node IDs by depth tier (only nodes that have children).
 // Used by stepwise expand/collapse so each click changes the visible depth by exactly one level.
 export function getExpandableIdsByDepth(nodes: ProcessNode[]): string[][] {

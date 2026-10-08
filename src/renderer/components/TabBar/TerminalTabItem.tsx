@@ -15,7 +15,6 @@ import {
 import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
-import { isCoarsePointer } from '../../utils/touch';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { LongPressable } from '../shared/LongPressable';
 import { TabOverlayPortal } from './TabOverlayPortal';
@@ -180,9 +179,6 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	const handleTabSelect = useCallback(() => {
 		onSelect(tab.id);
 	}, [onSelect, tab.id]);
-	// Coarse pointer: long-press owns the gesture, so native drag is off.
-	const coarse = isCoarsePointer();
-
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => onDragStart(tab.id, e),
 		[onDragStart, tab.id]
@@ -374,7 +370,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			onMouseDown={handleMouseDown}
 			onMouseEnter={handleMouseEnter}
 			onMouseLeave={handleMouseLeave}
-			draggable={!coarse}
+			draggable
 			onDragStart={handleTabDragStart}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}

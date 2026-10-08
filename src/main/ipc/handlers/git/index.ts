@@ -25,9 +25,9 @@ export type { GitHandlerDependencies } from './shared';
  */
 export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	registerReadHandlers();
-	registerBranchHandlers();
+	registerBranchHandlers(deps);
 	registerStreamingHandlers();
-	registerWorktreeHandlers();
+	registerWorktreeHandlers(deps);
 	registerWorktreeWatchHandlers(deps);
 	registerGithubHandlers();
 

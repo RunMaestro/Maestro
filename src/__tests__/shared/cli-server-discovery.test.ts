@@ -15,6 +15,7 @@ vi.mock('fs', () => ({
 	existsSync: vi.fn(),
 	mkdirSync: vi.fn(),
 	renameSync: vi.fn(),
+	chmodSync: vi.fn(),
 	unlinkSync: vi.fn(),
 }));
 
@@ -46,6 +47,7 @@ const mockFs = {
 	existsSync: fs.existsSync as ReturnType<typeof vi.fn>,
 	mkdirSync: fs.mkdirSync as ReturnType<typeof vi.fn>,
 	renameSync: fs.renameSync as ReturnType<typeof vi.fn>,
+	chmodSync: fs.chmodSync as ReturnType<typeof vi.fn>,
 	unlinkSync: fs.unlinkSync as ReturnType<typeof vi.fn>,
 };
 
@@ -261,9 +263,28 @@ describe('cli-server-discovery', () => {
 			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
 				expectedTmp,
 				JSON.stringify(sampleInfo, null, 2),
-				'utf-8'
+				{ encoding: 'utf-8', mode: 0o600 }
 			);
 			expect(mockFs.renameSync).toHaveBeenCalledWith(expectedTmp, expectedFile);
+		});
+
+		it('should make the file owner-only before it replaces the old one', () => {
+			// The token grants full control of the app, so no other local user may
+			// read it. chmod covers a .tmp left over from a build that wrote 0644.
+			writeCliServerInfo(sampleInfo);
+
+			const expectedTmp =
+				path.join(
+					'/Users/testuser',
+					'Library',
+					'Application Support',
+					'maestro',
+					'cli-server.json'
+				) + '.tmp';
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedTmp, 0o600);
+			expect(mockFs.chmodSync.mock.invocationCallOrder[0]).toBeLessThan(
+				mockFs.renameSync.mock.invocationCallOrder[0]
+			);
 		});
 
 		it('should create directory if it does not exist', () => {

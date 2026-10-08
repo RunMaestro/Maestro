@@ -13,13 +13,18 @@
 // control characters: claude's input editor may trim, re-wrap, or convert line
 // endings, none of which lose content. Checked against 500 real Cue runs
 // (2026-09-02 to 09-10): every healthy run passes and every truncated one fails.
+//
+// Claude's input editor also composes Unicode (NFC): a decomposed "è" (e +
+// U+0300, common in text pulled from macOS sources such as iMessage) is logged
+// as the single code point U+00E8. Both sides are composed before comparing,
+// or a whole prompt fails as "truncated" when claude received every character.
 
 const IGNORED_CHARS = /[\s\p{Cc}]+/gu;
 const IGNORED_CHAR = /[\s\p{Cc}]/u;
 const MISSING_SNIPPET_CHARS = 80;
 
 export function normalizePromptForEcho(text: string): string {
-	return text.replace(IGNORED_CHARS, '');
+	return text.normalize('NFC').replace(IGNORED_CHARS, '');
 }
 
 // Claude rewrites slash commands (`/compact`) and bash-mode input (`!ls`)
@@ -72,11 +77,13 @@ export function checkPromptEcho(sent: string, received: string): PromptEchoMisma
 	while (common < want.length && common < got.length && want[common] === got[common]) {
 		common += 1;
 	}
-	const start = originalOffset(sent, common);
+	// `common` counts composed characters, so map it back through the composed text.
+	const composed = sent.normalize('NFC');
+	const start = originalOffset(composed, common);
 	return {
 		sentBytes: Buffer.byteLength(sent, 'utf8'),
 		receivedBytes: Buffer.byteLength(received, 'utf8'),
-		missingFrom: sent
+		missingFrom: composed
 			.slice(start, start + MISSING_SNIPPET_CHARS)
 			.replace(/\s+/g, ' ')
 			.trim(),

@@ -122,6 +122,20 @@ describe('useHeaderTextDelta', () => {
 		expect(zoomed).toBeGreaterThan(unzoomed);
 	});
 
+	it('scales rem-built reserves with the root size, never below the baseline', () => {
+		// The trophy badge and the now-playing pill are padding and icon boxes in
+		// rem, with no label to measure, so they scale by the root instead.
+		installCanvasStub();
+		useSettingsStore.setState({ fontSize: 14 });
+		expect(renderHook(() => useHeaderTextDelta()).result.current.remScale).toBe(1);
+
+		useSettingsStore.setState({ fontSize: 21 });
+		expect(renderHook(() => useHeaderTextDelta()).result.current.remScale).toBe(1.5);
+
+		useSettingsStore.setState({ fontSize: 10 });
+		expect(renderHook(() => useHeaderTextDelta()).result.current.remScale).toBe(1);
+	});
+
 	it('never goes negative for a narrower face', () => {
 		// A negative correction would pull a threshold below the chrome it also
 		// has to cover, showing a label that does not fit.

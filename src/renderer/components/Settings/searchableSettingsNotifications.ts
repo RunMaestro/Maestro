@@ -80,12 +80,32 @@ export const NOTIFICATION_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'notifications-toast-position',
+		tab: 'notifications',
+		tabLabel: 'Notifications',
+		label: 'Toast Notification Position',
+		description:
+			'Which window corner toast notifications appear in: Top Left, Top Right, Bottom Left, or Bottom Right',
+		keywords: [
+			'toast',
+			'notification',
+			'position',
+			'corner',
+			'placement',
+			'top',
+			'bottom',
+			'left',
+			'right',
+			'location',
+		],
+	},
+	{
 		id: 'notifications-toast-width',
 		tab: 'notifications',
 		tabLabel: 'Notifications',
 		label: 'Toast Notification Width',
 		description:
-			'Width of toast notifications: Small, Medium, Large, or Dynamic (match the Right Bar)',
+			'Width of toast notifications: Small, Medium, Large, or Dynamic (match the side bar)',
 		keywords: [
 			'toast',
 			'notification',

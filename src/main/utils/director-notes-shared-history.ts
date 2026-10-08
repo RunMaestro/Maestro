@@ -22,6 +22,14 @@
  * Entries authored by THIS host are excluded at the file level by
  * `shared-history-manager` (it skips `history-<local hostname>.jsonl`), so a
  * mirrored copy of a local run can never be double counted.
+ *
+ * SSH scopes are read on a time budget. Every Director's Notes surface (list,
+ * graph, Rich Mode stats, offset lookup) calls in here, several of them at once
+ * when the modal opens, and an offline remote costs the 10s ConnectTimeout times
+ * remote-fs's retries. Unbudgeted, one powered-off machine held every one of
+ * those reads for 10-40s. Now a scope gets {@link SSH_SCOPE_BUDGET_MS}; past
+ * that the caller takes the scope's last good read (or nothing) and the real
+ * read finishes in the background for the next caller.
  */
 
 import * as path from 'path';
@@ -67,6 +75,88 @@ export interface SharedHistoryCollection {
 }
 
 const EMPTY_COLLECTION: SharedHistoryCollection = { entries: [], hosts: [], scopeCount: 0 };
+
+/** How long one SSH scope may hold up a Director's Notes read. */
+export const SSH_SCOPE_BUDGET_MS = 3000;
+
+/** How long a finished SSH read is reused before the remote is asked again. */
+export const SSH_SCOPE_FRESH_MS = 60_000;
+
+/** Last result and any read in progress, per SSH scope. */
+interface SshScopeState {
+	entries: HistoryEntry[];
+	/** When the last read settled; 0 before the first one. */
+	fetchedAt: number;
+	/** Shared by every caller that arrives while the read is running. */
+	inFlight: Promise<HistoryEntry[]> | null;
+}
+
+const sshScopeStates = new Map<string, SshScopeState>();
+
+/** Drop every cached SSH scope read. Tests only. */
+export function resetSharedHistoryScopeCache(): void {
+	sshScopeStates.clear();
+}
+
+/**
+ * Read one SSH scope, but never wait longer than the budget for it.
+ *
+ * A fresh result is reused outright. Otherwise one read starts (or joins the
+ * read already running) and races the budget; losing the race returns the
+ * previous result, which is the "known degraded" answer: slightly stale counts
+ * beat a dashboard frozen on a spinner.
+ */
+async function readSshScopeWithinBudget(
+	scope: SharedHistoryScope,
+	sshRemote: NonNullable<ReturnType<typeof getSshRemoteById>>,
+	maxEntriesPerFile: number
+): Promise<HistoryEntry[]> {
+	const key = `${scope.key}:${maxEntriesPerFile}`;
+	let state = sshScopeStates.get(key);
+	if (!state) {
+		state = { entries: [], fetchedAt: 0, inFlight: null };
+		sshScopeStates.set(key, state);
+	}
+	if (!state.inFlight && state.fetchedAt > 0 && Date.now() - state.fetchedAt < SSH_SCOPE_FRESH_MS) {
+		return state.entries;
+	}
+
+	let read = state.inFlight;
+	if (!read) {
+		const owner = state;
+		read = owner.inFlight = readRemoteEntriesSsh(scope.dir, sshRemote, maxEntriesPerFile)
+			.then((entries) => {
+				owner.entries = entries;
+				return entries;
+			})
+			.catch((error) => {
+				void captureException(error, { operation: 'directorNotes:collectSharedHistory' });
+				logger.warn(`Failed to read shared history from ${scope.key}: ${error}`, LOG_CONTEXT);
+				return owner.entries;
+			})
+			.finally(() => {
+				owner.fetchedAt = Date.now();
+				owner.inFlight = null;
+			});
+	}
+
+	const fallback = state.entries;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const budget = new Promise<HistoryEntry[]>((resolve) => {
+		timer = setTimeout(() => {
+			logger.debug(
+				`Shared history from ${scope.key} is past its ${SSH_SCOPE_BUDGET_MS}ms budget; using the last read`,
+				LOG_CONTEXT
+			);
+			resolve(fallback);
+		}, SSH_SCOPE_BUDGET_MS);
+	});
+	try {
+		return await Promise.race([read, budget]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
 
 /**
  * Namespaced agent key for a foreign entry.
@@ -163,7 +253,7 @@ export async function collectSharedHistoryEntries(
 				if (scope.sshRemoteId) {
 					const sshRemote = getSshRemoteById(scope.sshRemoteId);
 					if (!sshRemote) return [];
-					return await readRemoteEntriesSsh(scope.dir, sshRemote, maxEntriesPerFile);
+					return await readSshScopeWithinBudget(scope, sshRemote, maxEntriesPerFile);
 				}
 				return readRemoteEntriesLocal(scope.dir, maxEntriesPerFile);
 			} catch (error) {

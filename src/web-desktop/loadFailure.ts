@@ -21,6 +21,13 @@
  * This module decides what to do instead: reload once to pick up the current
  * asset manifest, and otherwise stay out of the running app's way so its React
  * error boundary can handle the failure in-place.
+ *
+ * A module that failed to fetch for a moment presents exactly the same way,
+ * since the browser reports a 429 or a dropped request with the same message
+ * as a 404. Over a Cloudflare quick tunnel that is the common case: the tunnel
+ * caps in-flight requests and answers the overflow with an empty 429. A single
+ * guarded reload is the right remedy for both, which is why `bootstrap.ts`
+ * routes a failed boot through this policy too.
  */
 
 import { formatShortcutKeysFor } from '../shared/shortcutKeys';
@@ -97,7 +104,7 @@ function messageOf(reason: unknown): string {
  * than cast - `reason && reason.stack || String(reason)` types as `{} | string`
  * under `unknown` and is not assignable to the string parameter it feeds.
  */
-function detailOf(reason: unknown): string {
+export function detailOf(reason: unknown): string {
 	if (reason instanceof Error) return reason.stack || reason.message;
 	if (reason && typeof reason === 'object') {
 		const { stack, message } = reason as { stack?: unknown; message?: unknown };
@@ -199,9 +206,10 @@ function staleAssetHint(): string {
 	const isMac = navigator.userAgent.includes('Mac');
 	const shortcut = formatShortcutKeysFor(['Meta', 'Shift', 'R'], isMac);
 	return (
-		'Maestro was updated or restarted while this page was open, so parts of the app it ' +
-		'tried to load no longer exist on the server. Reloading did not clear it - try a hard ' +
-		`refresh (${shortcut}).`
+		'Parts of the app could not be loaded from the server, and reloading did not clear it. ' +
+		'Either Maestro was updated or restarted while this page was open, or the connection ' +
+		'is dropping requests (a Cloudflare tunnel does this when several tabs load at once). ' +
+		`Wait a moment and try a hard refresh (${shortcut}).`
 	);
 }
 

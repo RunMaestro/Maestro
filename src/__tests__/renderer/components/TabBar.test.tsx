@@ -6597,6 +6597,20 @@ describe('Group tab chip drag and drop', () => {
 		expect(groupChip()).toHaveAttribute('draggable', 'true');
 	});
 
+	it('keeps chips draggable for a mouse but not under a finger, on any device', () => {
+		// The gate used to be the PRIMARY pointer, so an iPad with a trackpad could
+		// not reorder and a touchscreen laptop let a held finger start a drag.
+		renderWithGroup();
+		const aiChip = document.querySelector('[data-tab-id="ai-tab-1"]')!;
+		expect(aiChip).toHaveAttribute('draggable', 'true');
+
+		fireEvent.pointerDown(aiChip, { pointerType: 'touch' });
+		expect(aiChip).toHaveAttribute('draggable', 'false');
+
+		fireEvent.pointerDown(aiChip, { pointerType: 'mouse' });
+		expect(aiChip).toHaveAttribute('draggable', 'true');
+	});
+
 	it('sets the group id as the drag payload on drag start', () => {
 		renderWithGroup();
 

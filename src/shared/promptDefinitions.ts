@@ -200,6 +200,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Context summarization prompt',
 		category: 'context',
 	},
+	{
+		id: 'cross-agent-consult-pending',
+		filename: 'cross-agent-consult-pending.md',
+		description:
+			'Appended to a turn that @mentions another agent mid-message: the consult is running in parallel, so work but do not finish yet',
+		category: 'context',
+	},
+	{
+		id: 'cross-agent-consult-reply',
+		filename: 'cross-agent-consult-reply.md',
+		description:
+			'The continuation Maestro sends once every consult has replied: the replies verbatim, then finish the answer',
+		category: 'context',
+	},
 	// System (UI/meta)
 	{
 		id: 'tab-naming',
@@ -326,6 +340,8 @@ export const PROMPT_IDS = {
 	CONTEXT_GROOMING: 'context-grooming',
 	CONTEXT_TRANSFER: 'context-transfer',
 	CONTEXT_SUMMARIZE: 'context-summarize',
+	CROSS_AGENT_CONSULT_PENDING: 'cross-agent-consult-pending',
+	CROSS_AGENT_CONSULT_REPLY: 'cross-agent-consult-reply',
 	// System
 	TAB_NAMING: 'tab-naming',
 	DIRECTOR_NOTES: 'director-notes',

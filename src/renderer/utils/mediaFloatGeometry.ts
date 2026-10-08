@@ -74,6 +74,13 @@ export const MEDIA_FLOAT_MIN_WIDTH = 300;
 export interface Viewport {
 	width: number;
 	height: number;
+	/**
+	 * Pixels at the top of the window the widget must stay below. The custom
+	 * title strip is an OS drag region, and a drag region eats every mouse event
+	 * over it - a player whose header slid under it could no longer be moved,
+	 * minimized, or closed. Defaults to 0 (native title bar, or none).
+	 */
+	top?: number;
 }
 
 /** Everything that decides how tall the frame has to be. */
@@ -125,12 +132,14 @@ export function fitMediaFloatRect(
 	fit: MediaFloatFit,
 	viewport: Viewport
 ): MediaFloatRect {
+	const minTop = Math.max(0, viewport.top ?? 0);
+	const usableHeight = Math.max(1, viewport.height - minTop);
 	const maxWidth = Math.max(1, viewport.width);
 	let width = Math.min(Math.max(desired.width, MEDIA_FLOAT_MIN_WIDTH), maxWidth);
 	let height = mediaFloatHeight(fit, width);
 
-	if (height > viewport.height && fit.kind === 'video') {
-		const stage = Math.max(0, viewport.height - fit.chromeHeight);
+	if (height > usableHeight && fit.kind === 'video') {
+		const stage = Math.max(0, usableHeight - fit.chromeHeight);
 		width = Math.min(
 			width,
 			Math.max(MEDIA_FLOAT_MIN_WIDTH, stage * normalizeMediaAspect(fit.aspect))
@@ -140,13 +149,15 @@ export function fitMediaFloatRect(
 	}
 	// A viewport shorter than the chrome itself wins: a cramped widget beats one
 	// hanging off the screen.
-	height = Math.min(height, Math.max(1, viewport.height));
+	height = Math.min(height, usableHeight);
 
 	return {
 		width: Math.round(width),
 		height: Math.round(height),
 		left: Math.min(Math.max(desired.left, 0), Math.max(0, viewport.width - width)),
-		top: Math.min(Math.max(desired.top, 0), Math.max(0, viewport.height - height)),
+		// Height is capped to the band below `minTop`, so the ceiling can never
+		// drop under the floor and a stored top of 0 is pulled clear of the strip.
+		top: Math.max(minTop, Math.min(desired.top, viewport.height - height)),
 	};
 }
 

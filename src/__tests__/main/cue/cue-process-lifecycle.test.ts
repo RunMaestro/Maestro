@@ -94,6 +94,8 @@ vi.mock('child_process', async (importOriginal) => {
 import {
 	runProcess,
 	stopProcess,
+	stopAllProcesses,
+	trackCueProcess,
 	getActiveProcessMap,
 	getProcessList,
 } from '../../../main/cue/cue-process-lifecycle';
@@ -630,12 +632,50 @@ describe('cue-process-lifecycle', () => {
 			const resultPromise = runProcess('win-dead', createSpec(), createOptions());
 			await vi.advanceTimersByTimeAsync(0);
 
+			// The child exited before taskkill ran. The exit code, not the
+			// (localized) error text, is what marks the failure as benign.
+			mockChild.exitCode = 1;
 			stopProcess('win-dead');
 			// Already-dead is expected on Windows and must not be reported to Sentry.
 			expect(mockCaptureException).not.toHaveBeenCalled();
 
 			mockChild.emit('close', null);
 			await resultPromise;
+		});
+	});
+
+	describe('trackCueProcess', () => {
+		function trackedEntry(child: MockChildProcess) {
+			return {
+				child: child as unknown as ChildProcess,
+				command: 'sh',
+				args: ['-c', 'true'],
+				cwd: '/projects/test',
+				toolType: 'terminal',
+				startTime: Date.now(),
+				getStdout: () => '',
+				getStderr: () => '',
+			};
+		}
+
+		it('a stale unregister does not drop a newer run under the same id', () => {
+			const untrackOld = trackCueProcess('same-id', trackedEntry(new MockChildProcess()));
+			const newer = trackedEntry(new MockChildProcess());
+			trackCueProcess('same-id', newer);
+
+			untrackOld();
+			expect(getActiveProcessMap().get('same-id')).toBe(newer);
+		});
+
+		it('stopAllProcesses escalates to SIGKILL at once (shutdown cannot wait on a timer)', () => {
+			const child = new MockChildProcess();
+			const childKill = vi.spyOn(child, 'kill');
+			trackCueProcess('shutdown-run', trackedEntry(child));
+
+			stopAllProcesses();
+			expect(childKill).toHaveBeenCalledWith('SIGTERM');
+			expect(childKill).toHaveBeenCalledWith('SIGKILL');
+			expect(getActiveProcessMap().size).toBe(0);
 		});
 	});
 

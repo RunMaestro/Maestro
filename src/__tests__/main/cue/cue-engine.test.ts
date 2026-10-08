@@ -756,7 +756,7 @@ describe('CueEngine', () => {
 			expect(engine.getStatus()).toHaveLength(0);
 		});
 
-		it('sets up a pending yaml watcher after config deletion for re-creation', () => {
+		it('retains the yaml watcher after config deletion for re-creation', () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -776,8 +776,9 @@ describe('CueEngine', () => {
 			const initialWatchCalls = mockWatchCueYaml.mock.calls.length;
 			engine.refreshSession('session-1', '/projects/test');
 
-			// A new yaml watcher should be created for watching re-creation
-			expect(mockWatchCueYaml.mock.calls.length).toBe(initialWatchCalls + 1);
+			// Keep the original watcher alive for deletion, re-creation and read retries.
+			expect(mockWatchCueYaml.mock.calls.length).toBe(initialWatchCalls);
+			expect(yamlWatcherCleanup).not.toHaveBeenCalled();
 		});
 
 		it('recovers when config file is re-created after deletion', () => {
@@ -842,19 +843,18 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			const pendingCleanup = vi.fn();
 			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
-			mockWatchCueYaml.mockReturnValueOnce(yamlWatcherCleanup).mockReturnValue(pendingCleanup);
+			mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Delete config - creates pending yaml watcher
+			// Delete config - the original watcher now waits for re-creation
 			engine.refreshSession('session-1', '/projects/test');
 
 			// Stop engine - should clean up pending watcher
 			engine.stop();
-			expect(pendingCleanup).toHaveBeenCalled();
+			expect(yamlWatcherCleanup).toHaveBeenCalledTimes(1);
 		});
 
 		it('cleans up pending yaml watchers on removeSession', () => {
@@ -869,19 +869,18 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			const pendingCleanup = vi.fn();
 			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
-			mockWatchCueYaml.mockReturnValueOnce(yamlWatcherCleanup).mockReturnValue(pendingCleanup);
+			mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Delete config - creates pending yaml watcher
+			// Delete config - the original watcher now waits for re-creation
 			engine.refreshSession('session-1', '/projects/test');
 
 			// Remove session - should clean up pending watcher
 			engine.removeSession('session-1');
-			expect(pendingCleanup).toHaveBeenCalled();
+			expect(yamlWatcherCleanup).toHaveBeenCalledTimes(1);
 		});
 
 		it('triggers refresh via yaml watcher callback on file change', () => {

@@ -4,8 +4,10 @@ import { render as rtlRender, screen, fireEvent, waitFor, within } from '@testin
 import userEvent from '@testing-library/user-event';
 import {
 	AutoRunDocumentSelector,
+	DOCUMENT_DROPDOWN_HEIGHT_KEY,
 	DocTreeNode,
 } from '../../../renderer/components/AutoRun/AutoRunDocumentSelector';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 
 import { mockTheme } from '../../helpers/mockTheme';
@@ -1101,6 +1103,46 @@ describe('AutoRunDocumentSelector', () => {
 
 			const refreshButton = screen.getByTitle('Refresh document list');
 			expect(refreshButton.className).toContain('opacity-50');
+		});
+	});
+
+	describe('Resizable Height', () => {
+		const originalInnerHeight = window.innerHeight;
+
+		beforeEach(() => {
+			installLocalStorageMock();
+		});
+
+		afterEach(() => {
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight,
+			});
+		});
+
+		const openDropdown = () => {
+			render(<AutoRunDocumentSelector {...defaultProps} />);
+			fireEvent.click(screen.getByRole('button', { name: /select a document/i }));
+			return screen.getByTestId('autorun-document-dropdown');
+		};
+
+		it('offers only a bottom-edge resize handle', () => {
+			openDropdown();
+			expect(screen.getByTestId('autorun-document-dropdown-resize-s')).toBeInTheDocument();
+			expect(screen.queryByTestId('autorun-document-dropdown-resize-e')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('autorun-document-dropdown-resize-se')).not.toBeInTheDocument();
+		});
+
+		it('opens at the remembered height', () => {
+			window.localStorage.setItem(DOCUMENT_DROPDOWN_HEIGHT_KEY, '400');
+			expect(openDropdown()).toHaveStyle({ maxHeight: '400px' });
+		});
+
+		it('clamps a remembered height to the window so the bottom stays on screen', () => {
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 });
+			window.localStorage.setItem(DOCUMENT_DROPDOWN_HEIGHT_KEY, '1200');
+			// jsdom lays the dropdown out at top 0; the hook keeps an 8px margin.
+			expect(openDropdown()).toHaveStyle({ maxHeight: '492px' });
 		});
 	});
 

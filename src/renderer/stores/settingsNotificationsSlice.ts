@@ -10,18 +10,50 @@
 import type { StateCreator } from 'zustand';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { isToastWidth, TOAST_WIDTH_LABELS, describeToastWidth } from '../../shared/toastWidth';
+import type { ToastPosition } from '../../shared/toastPosition';
+import {
+	DEFAULT_TOAST_POSITION,
+	describeToastPosition,
+	isToastPosition,
+	TOAST_POSITION_LABELS,
+	toastSidePanel,
+} from '../../shared/toastPosition';
 import { notifyToast, useNotificationStore } from './notificationStore';
 import type { SettingsStore } from './settingsStore';
 
-/** How long the toast-width preview stays up. Long enough to read, short enough not to linger. */
-const TOAST_WIDTH_PREVIEW_DURATION_MS = 5000;
+/** How long a toast-setting preview stays up. Long enough to read, short enough not to linger. */
+const TOAST_PREVIEW_DURATION_MS = 5000;
 
-// The preview toast currently on screen, so picking a second preset replaces it
-// rather than stacking a fourth toast beside the three already fading out.
-let toastWidthPreviewId: string | null = null;
+/**
+ * ID of the live toast-setting preview (width or position), so a new pick
+ * replaces it instead of stacking.
+ */
+let toastPreviewId: string | null = null;
+
+/**
+ * Fire a sample toast so a width or position change is visible the moment it
+ * is picked, instead of waiting for the next real notification. Replaces its
+ * own previous preview so clicking through the presets updates one toast
+ * rather than stacking several.
+ */
+function showToastSettingPreview(title: string, message: string): void {
+	if (toastPreviewId) {
+		useNotificationStore.getState().removeToast(toastPreviewId);
+	}
+	toastPreviewId = notifyToast({
+		color: 'theme',
+		title,
+		message,
+		duration: TOAST_PREVIEW_DURATION_MS,
+		// In-app preview only: no TTS command, no Notification Center entry.
+		skipCustomNotification: true,
+		skipOsNotification: true,
+	});
+}
 
 export interface NotificationsState {
 	toastWidth: ToastWidth;
+	toastPosition: ToastPosition;
 	osNotificationsEnabled: boolean;
 	audioFeedbackEnabled: boolean;
 	audioFeedbackCommand: string;
@@ -32,6 +64,7 @@ export interface NotificationsState {
 
 export interface NotificationsActions {
 	setToastWidth: (value: ToastWidth) => void;
+	setToastPosition: (value: ToastPosition) => void;
 	setOsNotificationsEnabled: (value: boolean) => void;
 	setAudioFeedbackEnabled: (value: boolean) => void;
 	setAudioFeedbackCommand: (value: string) => void;
@@ -47,6 +80,7 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	get
 ) => ({
 	toastWidth: 'dynamic',
+	toastPosition: DEFAULT_TOAST_POSITION,
 	osNotificationsEnabled: true,
 	audioFeedbackEnabled: false,
 	audioFeedbackCommand: 'say',
@@ -57,22 +91,20 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	setToastWidth: (value) => {
 		set({ toastWidth: value });
 		window.maestro.settings.set('toastWidth', value);
-		// Fire a sample toast at the new width so the size is visible the
-		// moment it is picked, instead of waiting for the next real
-		// notification. Replaces its own previous preview so clicking
-		// through the presets updates one toast rather than stacking four.
-		if (toastWidthPreviewId) {
-			useNotificationStore.getState().removeToast(toastWidthPreviewId);
-		}
-		toastWidthPreviewId = notifyToast({
-			color: 'theme',
-			title: `Toast Width: ${TOAST_WIDTH_LABELS[value]}`,
-			message: describeToastWidth(value, get().rightPanelWidth),
-			duration: TOAST_WIDTH_PREVIEW_DURATION_MS,
-			// In-app preview only: no TTS command, no Notification Center entry.
-			skipCustomNotification: true,
-			skipOsNotification: true,
-		});
+		const sidePanel = toastSidePanel(get().toastPosition, get());
+		showToastSettingPreview(
+			`Toast Width: ${TOAST_WIDTH_LABELS[value]}`,
+			describeToastWidth(value, sidePanel.width, sidePanel.name)
+		);
+	},
+
+	setToastPosition: (value) => {
+		set({ toastPosition: value });
+		window.maestro.settings.set('toastPosition', value);
+		showToastSettingPreview(
+			`Toast Position: ${TOAST_POSITION_LABELS[value]}`,
+			describeToastPosition(value)
+		);
 	},
 
 	setOsNotificationsEnabled: (value) => {
@@ -115,6 +147,12 @@ export function hydrateNotificationsSettings(
 		patch.toastWidth = isToastWidth(allSettings['toastWidth'])
 			? allSettings['toastWidth']
 			: 'small';
+	}
+
+	if (allSettings['toastPosition'] !== undefined) {
+		patch.toastPosition = isToastPosition(allSettings['toastPosition'])
+			? allSettings['toastPosition']
+			: DEFAULT_TOAST_POSITION;
 	}
 
 	if (allSettings['osNotificationsEnabled'] !== undefined)

@@ -2083,7 +2083,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		'agents:getCodexResetCredits',
 		withIpcErrorLogging(
 			handlerOpts('getCodexResetCredits'),
-			async (_event, codexHome: string): Promise<CodexResetCreditsReadResult> => {
+			async (codexHome: string): Promise<CodexResetCreditsReadResult> => {
 				return fetchCodexResetCredits({ codexHome });
 			}
 		)
@@ -2099,7 +2099,6 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('consumeCodexResetCredit'),
 			async (
-				_event,
 				codexHome: string,
 				creditId: string,
 				idempotencyKey?: string

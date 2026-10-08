@@ -24,6 +24,7 @@ import rehypeKatex from 'rehype-katex';
 import { svgSanitizeSchema } from './sanitizeSchema';
 import { remarkAlert } from './remarkAlert';
 import { remarkMaestroMarkers } from './remarkMaestroMarkers';
+import { remarkCodexDirectives } from './remarkCodexDirectives';
 import { REMARK_GFM_PLUGINS } from '../../../shared/markdownPlugins';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, type buildFileTreeIndices } from '../../utils/remarkFileLinks';
@@ -62,6 +63,13 @@ export interface BuildMarkdownPluginsOptions {
 	 * why a chat message must keep rendering them as prose. Default false.
 	 */
 	autorunMarkers?: boolean;
+	/**
+	 * Render Codex's assistant directives (`:codex-followup[...]{...}`) as chips.
+	 * Chat surfaces only - see `remarkCodexDirectives` for why an authored
+	 * document must keep rendering them as the text its author wrote. Default
+	 * false.
+	 */
+	codexDirectives?: boolean;
 	/** When provided and active, adds the remarkFileLinks transform. */
 	fileLinks?: MarkdownFileLinkOptions;
 	/**
@@ -102,6 +110,7 @@ export function buildMarkdownPlugins(
 		allowRawHtml = false,
 		alerts = true,
 		autorunMarkers = false,
+		codexDirectives = false,
 		fileLinks,
 		mentionChips = false,
 		extraRemarkPlugins,
@@ -125,6 +134,14 @@ export function buildMarkdownPlugins(
 	// than something a `<br>` has been spliced into.
 	if (autorunMarkers) {
 		remarkPlugins.push(remarkMaestroMarkers);
+	}
+
+	// Runs before remark-breaks for the same reason, and it matters more here: a
+	// directive is matched against the ORIGINAL source by offset, so it has to
+	// still be one intact span rather than something a `<br>` has been spliced
+	// into.
+	if (codexDirectives) {
+		remarkPlugins.push(remarkCodexDirectives);
 	}
 
 	// Without rehype-raw, react-markdown renders every raw HTML node as visible

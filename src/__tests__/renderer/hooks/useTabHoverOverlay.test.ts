@@ -1,10 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTabHoverOverlay } from '../../../renderer/hooks/tabs/useTabHoverOverlay';
+import { resetPointerTypeTrackingForTests } from '../../../renderer/utils/touch';
+
+/** What the browser dispatches before the compatibility mouse events of a tap or a hover. */
+function firePointerOver(pointerType: 'touch' | 'mouse' | 'pen') {
+	const event = new Event('pointerover', { bubbles: true });
+	Object.defineProperty(event, 'pointerType', { value: pointerType });
+	document.dispatchEvent(event);
+}
 
 describe('useTabHoverOverlay', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
+		resetPointerTypeTrackingForTests();
 	});
 
 	afterEach(() => {
@@ -435,6 +444,76 @@ describe('useTabHoverOverlay', () => {
 			vi.advanceTimersByTime(400);
 		});
 		expect(result.current.overlayOpen).toBe(false);
+	});
+
+	// iOS answers a tap with an emulated mouseenter and never a mouseleave, so a
+	// hover timer armed there popped the tab menu 400ms after every tap.
+	describe('touch-emulated mouse events', () => {
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+
+		it('ignores the mouseenter a tap emulates: no hover state, no menu', () => {
+			const { result } = renderHook(() => useTabHoverOverlay());
+			(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+				mockElement as unknown as HTMLDivElement;
+
+			firePointerOver('touch');
+			act(() => {
+				result.current.handleMouseEnter();
+			});
+			act(() => {
+				vi.advanceTimersByTime(1000);
+			});
+
+			expect(result.current.isHovered).toBe(false);
+			expect(result.current.overlayOpen).toBe(false);
+		});
+
+		it('treats a pen tap the same as a finger', () => {
+			const { result } = renderHook(() => useTabHoverOverlay());
+			firePointerOver('pen');
+			act(() => {
+				result.current.handleMouseEnter();
+			});
+			act(() => {
+				vi.advanceTimersByTime(1000);
+			});
+			expect(result.current.overlayOpen).toBe(false);
+		});
+
+		it('still opens on a real mouse hover after a touch, judging each event by its own pointer', () => {
+			// A hybrid device (iPad with a trackpad, touchscreen laptop) has both.
+			const { result } = renderHook(() => useTabHoverOverlay());
+			(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+				mockElement as unknown as HTMLDivElement;
+
+			firePointerOver('touch');
+			act(() => {
+				result.current.handleMouseEnter();
+			});
+			firePointerOver('mouse');
+			act(() => {
+				result.current.handleMouseEnter();
+			});
+			act(() => {
+				vi.advanceTimersByTime(400);
+			});
+
+			expect(result.current.isHovered).toBe(true);
+			expect(result.current.overlayOpen).toBe(true);
+		});
+
+		it('leaves the long-press path (openOverlay) working on touch', () => {
+			const { result } = renderHook(() => useTabHoverOverlay());
+			(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+				mockElement as unknown as HTMLDivElement;
+
+			firePointerOver('touch');
+			act(() => {
+				result.current.openOverlay();
+			});
+
+			expect(result.current.overlayOpen).toBe(true);
+		});
 	});
 
 	it('openOverlay opens immediately (no hover delay), anchored to the tab', () => {

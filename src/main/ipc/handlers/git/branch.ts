@@ -4,13 +4,14 @@ import { getSshRemoteById } from '../../../stores';
 import { withIpcErrorLogging, createIpcHandler } from '../../../utils/ipcHandler';
 import { parseGitBranches, parseGitTags } from '../../../../shared/gitUtils';
 import { resolveDefaultBranch } from '../../../utils/pr-creator';
-import { handlerOpts } from './shared';
+import { branchSwitchBlocker } from '../../../utils/branch-switch-guard';
+import { handlerOpts, type GitHandlerDependencies } from './shared';
 
 /**
  * Register branch/tag/repo-mutation Git IPC handlers: init, commitAll, branch,
  * branches, tags, switch, checkoutBranch, getDefaultBranch.
  */
-export function registerBranchHandlers(): void {
+export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 	// Initialize a new git repository at the given directory.
 	// Returns { success, error? }. Used by the agent-create UI to offer
 	// `git init` when a chosen working directory isn't already a repo.
@@ -227,6 +228,8 @@ export function registerBranchHandlers(): void {
 					return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
 				}
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const blocker = await branchSwitchBlocker(deps, cwd, sshRemote, effectiveRemoteCwd);
+				if (blocker) return { success: false, error: blocker };
 				const args = createTracking
 					? ['checkout', '-b', branch, '--track', `origin/${branch}`]
 					: ['checkout', branch];

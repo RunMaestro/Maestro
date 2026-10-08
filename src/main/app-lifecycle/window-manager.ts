@@ -378,7 +378,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		// These handlers capture crashes that Sentry in the renderer cannot
 		// report (because the renderer process is dead or broken).
 
-		attachWindowCrashHandlers(browserWindow);
+		attachWindowCrashHandlers(browserWindow, getIsQuitting);
 		// Initialize auto-updater (only in production, and only for the primary
 		// window - update checks/installs are a single app-wide concern).
 		if (isMain) {

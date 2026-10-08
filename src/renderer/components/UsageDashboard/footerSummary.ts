@@ -26,6 +26,7 @@ import type { Session, UsageDashboardViewMode } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
 import { formatCost, formatNumber, formatRelativeTime } from '../../../shared/formatters';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
+import { aggregateRangeUsage } from '../../../shared/usageStats';
 import { formatHour, formatShortDate } from './SummaryCards';
 
 /**
@@ -132,24 +133,19 @@ export function buildGroupsSummary(
  * looks like it covers everything and quietly understates the real spend.
  */
 export function buildTokensSummary(data: StatsAggregation): string | null {
-	const totals = Object.values(data.bySessionTokens ?? {});
-	if (totals.length === 0) return null;
-
-	let tokens = 0;
-	let cost = 0;
-	let priced = 0;
-	for (const t of totals) {
-		tokens += t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheCreationTokens;
-		cost += t.costUsd;
-		priced += t.pricedQueries;
-	}
-	if (tokens === 0 && cost === 0) return null;
+	// Same summation the Overview's Tokens and Cost cards run, so the footer and
+	// the cards cannot drift on what the range holds. No model resolver here:
+	// the footer already hedges every figure with `~`, so estimating the unpriced
+	// sessions would buy it nothing.
+	const usage = aggregateRangeUsage(data.bySessionTokens);
+	if (usage.count === 0) return null;
+	if (usage.totalTokens === 0 && usage.costUsd === 0) return null;
 
 	const coverage =
-		data.totalQueries > 0 && priced < data.totalQueries
-			? `${formatNumber(priced)} of ${formatNumber(data.totalQueries)} turns priced`
+		data.totalQueries > 0 && usage.pricedQueries < data.totalQueries
+			? `${formatNumber(usage.pricedQueries)} of ${formatNumber(data.totalQueries)} turns priced`
 			: null;
-	return join([count(tokens, 'token'), `~${formatCost(cost)}`, coverage]);
+	return join([count(usage.totalTokens, 'token'), `~${formatCost(usage.costUsd)}`, coverage]);
 }
 
 /**

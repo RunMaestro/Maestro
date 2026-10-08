@@ -105,6 +105,9 @@ describe('web handlers', () => {
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
 			getPort: vi.fn().mockReturnValue(8080),
+			// Models a Live Mode server by default; tests of the loopback-only
+			// CLI server override it.
+			isLanAccessible: vi.fn().mockReturnValue(true),
 			start: vi.fn().mockResolvedValue({
 				port: 8080,
 				token: 'mock-security-token',
@@ -477,10 +480,42 @@ describe('web handlers', () => {
 			const handler = registeredHandlers.get('live:startServer');
 			const result = await handler!({});
 
-			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(mockCreateWebServer).toHaveBeenCalledWith({ lanAccess: true });
 			expect(webServerRef.current).toBe(mockWebServer); // Server was set
 			expect(mockWebServer.start).toHaveBeenCalled();
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
+		});
+
+		it('should replace a loopback-only CLI server with a LAN server even when persistentWebLink is on', async () => {
+			// The CLI server never listens on the LAN. Live ON must swap it for
+			// one that does; the persistent token survives because the factory
+			// reads it from settings, not from the old server.
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
+			mockWebServer.isLanAccessible.mockReturnValue(false);
+			const lanServer = {
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				isLanAccessible: vi.fn().mockReturnValue(true),
+				start: vi.fn().mockResolvedValue({
+					port: 8080,
+					token: 'mock-security-token',
+					url: 'http://192.168.1.5:8080/mock-security-token',
+				}),
+			};
+			mockCreateWebServer.mockReturnValueOnce(lanServer);
+
+			const handler = registeredHandlers.get('live:startServer');
+			const result = await handler!({});
+
+			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(mockCreateWebServer).toHaveBeenCalledWith({ lanAccess: true });
+			expect(webServerRef.current).toBe(lanServer);
+			expect(result).toEqual({
+				success: true,
+				url: 'http://192.168.1.5:8080/mock-security-token',
+			});
 		});
 
 		it('should just start existing server if not active and persistentWebLink is on', async () => {
@@ -720,6 +755,25 @@ describe('web handlers', () => {
 		});
 	});
 
+	describe('live:getDashboardUrl', () => {
+		it('returns the URL of a running Live Mode (LAN) server', async () => {
+			const handler = registeredHandlers.get('live:getDashboardUrl');
+			expect(await handler!({})).toBe('http://localhost:8080');
+		});
+
+		it('returns null for the loopback-only CLI server so auto-start still opens the LAN', async () => {
+			mockWebServer.isLanAccessible.mockReturnValue(false);
+			const handler = registeredHandlers.get('live:getDashboardUrl');
+			expect(await handler!({})).toBeNull();
+		});
+
+		it('returns null when the server is not running', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
+			const handler = registeredHandlers.get('live:getDashboardUrl');
+			expect(await handler!({})).toBeNull();
+		});
+	});
+
 	describe('live:stopServer', () => {
 		it('should stop web server, delete discovery, and re-establish CLI server', async () => {
 			const handler = registeredHandlers.get('live:stopServer');
@@ -920,6 +974,16 @@ describe('web handlers', () => {
 			expect(writeCliServerInfo).toHaveBeenCalledWith(
 				expect.objectContaining({ port: 8080, token: 'mock-security-token', pid: process.pid })
 			);
+		});
+
+		it('creates the CLI server without LAN access', async () => {
+			webServerRef.current = null;
+			mockWebServer.isActive.mockReturnValue(false);
+
+			await ensureCliServer(buildDeps());
+
+			expect(mockCreateWebServer).toHaveBeenCalledTimes(1);
+			expect(mockCreateWebServer.mock.calls[0]).toEqual([]);
 		});
 
 		it('refreshes the discovery file when an already-running server is reused', async () => {

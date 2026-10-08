@@ -278,7 +278,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false,
 		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
-		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
+		supportsPromptViaStdin: true, // Requires --query-file -; bare stdin opens the interactive TUI (#1657)
 		supportsThinkingDisplay: false,
 		supportsContextMerge: true,
 		supportsContextExport: false,

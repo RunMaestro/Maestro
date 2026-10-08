@@ -10,6 +10,19 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 }));
 
+// The LAN address probe touches the real network; pin it. The address watcher
+// still needs the module's other exports.
+vi.mock('../../../main/utils/networkUtils', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/utils/networkUtils')>()),
+	getLocalIpAddress: vi.fn().mockResolvedValue('192.168.1.50'),
+}));
+
+// start() installs the IPC-bridge fanout, which needs Electron.
+vi.mock('../../../main/web-server/handlers/bridgeHandlers', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/web-server/handlers/bridgeHandlers')>()),
+	installWebContentsBridgeHook: vi.fn(),
+}));
+
 describe('WebServer PWA asset resolution', () => {
 	let tempRoot: string;
 
@@ -43,6 +56,59 @@ describe('WebServer PWA asset resolution', () => {
 		const server = new WebServer(0);
 
 		expect((server as any).webAssetsPath).toBeNull();
+	});
+});
+
+describe('WebServer desktop asset caching', () => {
+	let tempRoot: string;
+
+	beforeEach(() => {
+		tempRoot = mkdtempSync(path.join(os.tmpdir(), 'maestro-web-cache-'));
+		vi.spyOn(process, 'cwd').mockReturnValue(tempRoot);
+		const assets = path.join(tempRoot, 'dist', 'web-desktop', 'assets');
+		mkdirSync(path.join(assets, 'fonts'), { recursive: true });
+		writeFileSync(path.join(tempRoot, 'dist', 'web-desktop', 'index.html'), '<html></html>');
+		writeFileSync(path.join(assets, 'main-BOEbwE3b.js'), 'export {};');
+		writeFileSync(path.join(assets, 'fonts', 'inter-latin-400_700-1.woff2'), 'font');
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		rmSync(tempRoot, { recursive: true, force: true });
+	});
+
+	// Revalidating every module on every load is what overflowed a Cloudflare
+	// quick tunnel's in-flight request cap when several phone tabs reloaded at
+	// once, so the header has to actually reach the wire, on 304s included.
+	it('serves hashed bundle files as immutable and leaves the fonts folder revalidating', async () => {
+		const server = new WebServer(0);
+		await (server as any).setupMiddleware();
+		const fastify = server.getServer();
+		const token = server.getSecurityToken();
+
+		const hashed = await fastify.inject({
+			method: 'GET',
+			url: `/${token}/desktop/assets/main-BOEbwE3b.js`,
+		});
+		expect(hashed.statusCode).toBe(200);
+		expect(hashed.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+
+		const revalidated = await fastify.inject({
+			method: 'GET',
+			url: `/${token}/desktop/assets/main-BOEbwE3b.js`,
+			headers: { 'if-none-match': String(hashed.headers.etag) },
+		});
+		expect(revalidated.statusCode).toBe(304);
+		expect(revalidated.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+
+		const font = await fastify.inject({
+			method: 'GET',
+			url: `/${token}/desktop/assets/fonts/inter-latin-400_700-1.woff2`,
+		});
+		expect(font.statusCode).toBe(200);
+		expect(font.headers['cache-control']).not.toContain('immutable');
+
+		await fastify.close();
 	});
 });
 
@@ -111,5 +177,108 @@ describe('WebServer Web Login revocation', () => {
 
 		vi.doUnmock('../../../main/web-server/auth/web-user-store');
 		vi.resetModules();
+	});
+});
+
+describe('WebServer network exposure', () => {
+	// start() with the route and store wiring stubbed out, so only the bind
+	// decision is under test.
+	async function startStubbed(server: WebServer) {
+		const internals = server as any;
+		internals.setupMiddleware = vi.fn();
+		internals.setupRoutes = vi.fn();
+		internals.setupMessageHandlerCallbacks = vi.fn();
+		internals.watchWebUserStore = vi.fn();
+		internals.startAddressWatcher = vi.fn();
+		const listen = vi.spyOn(server.getServer(), 'listen').mockResolvedValue('' as never);
+		const result = await server.start();
+		return { listen, result, internals };
+	}
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('listens on loopback only and advertises 127.0.0.1 by default', async () => {
+		const server = new WebServer(0);
+		const { listen, result, internals } = await startStubbed(server);
+
+		expect(server.isLanAccessible()).toBe(false);
+		expect(listen).toHaveBeenCalledWith({ port: 0, host: '127.0.0.1' });
+		expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:/);
+		expect(internals.startAddressWatcher).not.toHaveBeenCalled();
+	});
+
+	it('listens on every interface and advertises the LAN address when asked for LAN access', async () => {
+		const server = new WebServer(0, undefined, { lanAccess: true });
+		const { listen, result, internals } = await startStubbed(server);
+
+		expect(server.isLanAccessible()).toBe(true);
+		expect(listen).toHaveBeenCalledWith({ port: 0, host: '0.0.0.0' });
+		expect(result.url).toMatch(/^http:\/\/192\.168\.1\.50:/);
+		expect(internals.startAddressWatcher).toHaveBeenCalled();
+	});
+});
+
+describe('WebServer origin policy', () => {
+	let server: WebServer;
+
+	beforeEach(async () => {
+		server = new WebServer(0);
+		await (server as any).setupMiddleware();
+		server.getServer().get('/probe', async () => 'ok');
+		server.getServer().post('/probe', async () => 'ok');
+	});
+
+	afterEach(async () => {
+		await server.getServer().close();
+	});
+
+	function request(method: 'GET' | 'POST', headers: Record<string, string>) {
+		return server.getServer().inject({
+			method,
+			url: '/probe',
+			headers,
+			...(method === 'POST' ? { payload: '{"command":"echo pwned"}' } : {}),
+		});
+	}
+
+	it('serves requests with no Origin header (maestro-cli, same-origin GETs)', async () => {
+		const res = await request('GET', { host: '127.0.0.1:1234' });
+		expect(res.statusCode).toBe(200);
+	});
+
+	it('serves requests whose Origin is the host they were sent to', async () => {
+		const res = await request('GET', { host: '127.0.0.1:1234', origin: 'http://127.0.0.1:1234' });
+		expect(res.statusCode).toBe(200);
+	});
+
+	it('refuses a foreign Origin and sends no CORS grant', async () => {
+		const res = await request('GET', { host: '127.0.0.1:1234', origin: 'https://evil.example' });
+		expect(res.statusCode).toBe(403);
+		expect(res.headers['access-control-allow-origin']).toBeUndefined();
+	});
+
+	it('refuses the opaque "null" Origin a sandboxed iframe sends', async () => {
+		const res = await request('GET', { host: '127.0.0.1:1234', origin: 'null' });
+		expect(res.statusCode).toBe(403);
+	});
+
+	it('refuses a cross-origin POST outright instead of only hiding the response', async () => {
+		const res = await request('POST', {
+			host: '127.0.0.1:1234',
+			origin: 'https://evil.example',
+			'content-type': 'text/plain',
+		});
+		expect(res.statusCode).toBe(403);
+	});
+
+	it('serves the trusted tunnel origin even when the Host header differs', async () => {
+		server.setTrustedOriginsProvider(() => ['https://abc-def.trycloudflare.com']);
+		const res = await request('GET', {
+			host: '127.0.0.1:1234',
+			origin: 'https://abc-def.trycloudflare.com',
+		});
+		expect(res.statusCode).toBe(200);
 	});
 });

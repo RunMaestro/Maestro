@@ -288,10 +288,17 @@ function SessionListInner(props: SessionListProps) {
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
+	// How much wider the header's own labels render in the current interface font
+	// than in the one the thresholds below were measured against. Zero when the
+	// user is on the original monospace face.
+	const headerTextDelta = useHeaderTextDelta();
 	// The badge pill occupies part of the header's left cluster, so both label
-	// thresholds below shift by the same amount when it is showing.
+	// thresholds below shift by the same amount when it is showing. Its box is
+	// rem-built, so it grows with the root size.
 	const headerBadgeWidth =
-		autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0;
+		autoRunStats && autoRunStats.currentBadgeLevel > 0
+			? HEADER_BADGE_WIDTH * headerTextDelta.remScale
+			: 0;
 	// Whether the now-playing pill is on screen, and in which form. Read from the
 	// store's own selector rather than re-derived here, so the reserve below
 	// cannot end up describing a header nobody is looking at.
@@ -299,13 +306,8 @@ function SessionListInner(props: SessionListProps) {
 	const nowPlayingCompact = leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH + headerBadgeWidth;
 	const nowPlayingReserve = !nowPlayingVisible
 		? 0
-		: nowPlayingCompact
-			? NOW_PLAYING_COMPACT_RESERVE
-			: NOW_PLAYING_LABEL_RESERVE;
-	// How much wider the header's own labels render in the current interface font
-	// than in the one the thresholds below were measured against. Zero when the
-	// user is on the original monospace face.
-	const headerTextDelta = useHeaderTextDelta();
+		: (nowPlayingCompact ? NOW_PLAYING_COMPACT_RESERVE : NOW_PLAYING_LABEL_RESERVE) *
+			headerTextDelta.remScale;
 	// Constant on this build. The indirection is deliberate: a build that hides
 	// the LIVE toggle zeroes this one line instead of re-deriving the threshold.
 	// The label's own delta rides with it, since the reserve exists to hold it.

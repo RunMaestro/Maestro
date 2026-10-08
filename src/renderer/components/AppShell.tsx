@@ -7,7 +7,7 @@
  */
 
 import React, { useEffect, type ComponentProps, type ReactNode } from 'react';
-import { isWebDesktop } from '../utils/runtimeContext';
+import { shouldShowAppTitleStrip } from '../utils/appTitleStrip';
 import { SessionList } from './SessionList';
 import { RightPanel, type RightPanelHandle } from './RightPanel';
 import { MainPanel, type MainPanelHandle } from './MainPanel';
@@ -18,6 +18,7 @@ import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ImageContextMenuHost } from './ImageContextMenuHost';
+import { ZoomViewerHost } from './ZoomViewer';
 import { MediaPlaybackHost } from './MediaPlayback';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
@@ -134,8 +135,11 @@ export function AppShell({
 		useMovementStore.getState().clearItems();
 	}, [concertoEnabled]);
 
-	const showTitleBar =
-		!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop();
+	const showTitleBar = shouldShowAppTitleStrip({
+		isMobileLandscape,
+		useNativeTitleBar,
+		isMdDownViewport,
+	});
 
 	return (
 		<div
@@ -294,6 +298,10 @@ export function AppShell({
 			    right-click Copy / Save. Surfaces wire up nothing. See
 			    ImageContextMenuHost. */}
 			<ImageContextMenuHost theme={theme} />
+			{/* --- ZOOM VIEWER (single, app-wide) ---
+			    Full-screen pan/zoom for any diagram or image. Opened by expand
+			    buttons and the image right-click menu via openZoomViewer(). */}
+			<ZoomViewerHost theme={theme} />
 			{/* --- MEDIA PLAYBACK (single, app-wide, never unmounted) ---
 			    Owns the one <audio>/<video> element so playback survives switching
 			    tabs and agents. Media never gets a tab: it renders only as the

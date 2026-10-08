@@ -703,6 +703,59 @@ describe('CodexOutputParser', () => {
 			expect(error?.recoverable).toBe(true);
 		});
 
+		// #1694: `codex exec --json` forwards each retry it is about to make as a
+		// bare `error` event. Raising it put a live, retrying turn into the error
+		// state and burned the once-only latch the real terminal error needs.
+		describe('retry notices', () => {
+			const disconnect =
+				'stream disconnected before completion: websocket closed by server before response.completed';
+			const notices = [
+				`Reconnecting... 2/5 (${disconnect})`,
+				`Reconnecting... 2/2 (${disconnect})`,
+				'Reconnecting... waiting for network',
+			];
+
+			it.each(notices)('is not an error: %s', (message) => {
+				const line = JSON.stringify({ type: 'error', message });
+				expect(parser.detectErrorFromLine(line)).toBeNull();
+			});
+
+			it('surfaces as progress text kept out of the final answer', () => {
+				const event = parser.parseJsonLine(JSON.stringify({ type: 'error', message: notices[0] }));
+				expect(event?.type).toBe('text');
+				expect(event?.text).toBe(notices[0]);
+				expect(event?.isPartial).toBe(true);
+				expect(event?.isReasoning).toBe(true);
+			});
+
+			it('still raises a non-retry error event', () => {
+				const line = JSON.stringify({ type: 'error', message: disconnect });
+				expect(parser.detectErrorFromLine(line)).not.toBeNull();
+			});
+
+			it('classifies the terminal disconnect as a transient network error that auto-retries', () => {
+				for (const line of [
+					JSON.stringify({ type: 'error', message: disconnect }),
+					JSON.stringify({ type: 'turn.failed', error: { message: disconnect } }),
+				]) {
+					const error = parser.detectErrorFromLine(line);
+					expect(error?.type).toBe('network_error');
+					expect(error?.recoverable).toBe(true);
+					expect(classifyRetryableError(error!)).toBe('availability');
+				}
+			});
+
+			it('does not retry a permanent failure behind the same prefix', () => {
+				const line = JSON.stringify({
+					type: 'error',
+					message: 'stream disconnected before completion: The model gpt-x does not exist',
+				});
+				const error = parser.detectErrorFromLine(line);
+				expect(error?.type).not.toBe('network_error');
+				expect(error ? classifyRetryableError(error) : null).toBeNull();
+			});
+		});
+
 		it('should detect rate limit errors from JSON', () => {
 			const line = JSON.stringify({ error: 'rate limit exceeded' });
 			const error = parser.detectErrorFromLine(line);
