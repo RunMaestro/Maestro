@@ -111,9 +111,9 @@ beforeEach(async () => {
 	);
 });
 afterEach(async () => {
-	tools.cleanupPlugin('p');
-	tools.cleanupPlugin('other');
-	await fs.rm(root, { recursive: true, force: true });
+	await tools.cleanupPlugin('p');
+	await tools.cleanupPlugin('other');
+	await fs.rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
@@ -166,6 +166,10 @@ describe('media tools boundary', () => {
 		});
 		await tools.call('other', 'media.close', { jobId });
 		await download(jobId);
+		const cleanup = tools.cleanupPlugin('p');
+		expect(cleanup).toBeInstanceOf(Promise);
+		await cleanup;
+		expect(await fs.readdir(root)).toEqual([]);
 	});
 
 	it('keeps binary bytes on the host and pins a credential-free GET', async () => {
@@ -467,7 +471,7 @@ describe('media tools boundary', () => {
 		const pending = tools.call('p', 'media.probe', { jobId: first, audioId });
 		const outcome = expect(pending).rejects.toMatchObject({ code: 'MediaCancelled' });
 		await vi.waitFor(() => expect(children).toHaveLength(1));
-		tools.cleanupPlugin('p');
+		await tools.cleanupPlugin('p');
 		await outcome;
 		expect(children[0].kill).toHaveBeenCalledWith('SIGKILL');
 		expect(await fs.readdir(root)).toEqual([]);
