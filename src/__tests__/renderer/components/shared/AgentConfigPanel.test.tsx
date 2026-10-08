@@ -601,6 +601,23 @@ describe('AgentConfigPanel', () => {
 
 			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
 		});
+
+		it('shows no Time Limits / API Limits pill next to the selector', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.queryByText('API Limits')).not.toBeInTheDocument();
+			expect(screen.queryByText('Time Limits')).not.toBeInTheDocument();
+		});
 	});
 });
 

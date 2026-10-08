@@ -795,7 +795,6 @@ export function EditAgentModal({
 							onEnableMaestroPChange={setEnableMaestroP}
 							maestroPMode={maestroPMode}
 							onMaestroPModeChange={setMaestroPMode}
-							claudeInteractive={session?.claudeInteractive}
 							maestroPPath={maestroPPath}
 							onMaestroPPathChange={setMaestroPPath}
 							onMaestroPPathBlur={() => {
