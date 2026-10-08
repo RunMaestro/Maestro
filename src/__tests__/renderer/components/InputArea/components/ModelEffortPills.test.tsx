@@ -163,5 +163,69 @@ describe('ModelEffortPills', () => {
 
 			expect(onModelChange).not.toHaveBeenCalled();
 		});
+
+		// Enter confirms a candidate mid-composition in Japanese, Chinese and
+		// Korean input. Treating that as submit applies a half-typed ID.
+		it('ignores Enter while an IME composition is active', () => {
+			const onModelChange = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange, setModelMenuOpen });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: UNLISTED } });
+			fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+
+			expect(onModelChange).not.toHaveBeenCalled();
+			expect(setModelMenuOpen).not.toHaveBeenCalled();
+
+			// The same key once composition has ended still applies.
+			fireEvent.keyDown(input, { key: 'Enter' });
+			expect(onModelChange).toHaveBeenCalledWith(UNLISTED);
+		});
+
+		it('closes the menu on Escape instead of swallowing the key', () => {
+			const onModelChange = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange, setModelMenuOpen });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: UNLISTED } });
+			fireEvent.keyDown(input, { key: 'Escape' });
+
+			expect(setModelMenuOpen).toHaveBeenCalledWith(false);
+			expect(onModelChange).not.toHaveBeenCalled();
+		});
+
+		// Escape elsewhere interrupts the turn, so the field must not let it
+		// through on its way to closing the menu.
+		it('keeps every key, Escape included, away from the composer', () => {
+			const onKeyDown = vi.fn();
+			render(
+				<div onKeyDown={onKeyDown}>
+					<ModelEffortPills
+						isVisible
+						theme={inputAreaTheme}
+						currentModel="gpt-5"
+						currentEffort="medium"
+						availableModels={['gpt-5']}
+						availableEfforts={['', 'low']}
+						onModelChange={vi.fn()}
+						onEffortChange={vi.fn()}
+						modelMenuOpen
+						setModelMenuOpen={vi.fn()}
+						modelMenuRef={{ current: null }}
+						effortMenuOpen={false}
+						setEffortMenuOpen={vi.fn()}
+						effortMenuRef={{ current: null }}
+					/>
+				</div>
+			);
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.keyDown(input, { key: 'Escape' });
+			fireEvent.keyDown(input, { key: 'a' });
+
+			expect(onKeyDown).not.toHaveBeenCalled();
+		});
 	});
 });

@@ -108,8 +108,13 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							{/*
 							 * Escape hatch for a model discovery cannot know about: a preview or
 							 * limited-access model that the CLI's published catalog does not list
-							 * and that this machine has never run. Typing it once is enough - the
-							 * CLI records the usage, and discovery offers it from then on.
+							 * and that this machine has never run. The typed ID is applied like
+							 * any other selection, so it persists as the tab's model.
+							 *
+							 * It reaches this dropdown only once the CLI records a run of it in
+							 * `lastModelUsage`, which the interactive (maestro-p) spawn path does
+							 * and `claude --print` does not - so on an API-mode tab this field
+							 * stays the way in.
 							 */}
 							<div className="border-t px-3 py-1.5" style={{ borderColor: theme.colors.border }}>
 								<input
@@ -118,9 +123,22 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 									onChange={(e) => setTypedModel(e.target.value)}
 									onKeyDown={(e) => {
 										// The composer and the global shortcuts both listen for plain
-										// keys; typing a model ID must not reach them.
+										// keys; typing a model ID must not reach them. That includes
+										// Escape, which elsewhere interrupts the turn - but swallowing
+										// it outright left the field with no way out, so it closes the
+										// menu here instead of doing nothing.
 										e.stopPropagation();
+										if (e.key === 'Escape') {
+											setTypedModel('');
+											setModelMenuOpen(false);
+											return;
+										}
 										if (e.key !== 'Enter') {
+											return;
+										}
+										// Enter confirms an IME candidate mid-composition; committing
+										// there would apply half a model ID and close the menu.
+										if (e.nativeEvent.isComposing) {
 											return;
 										}
 										const next = typedModel.trim();
