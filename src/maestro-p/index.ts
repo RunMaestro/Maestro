@@ -159,6 +159,20 @@ function resolveBinPath(): string {
 	return 'claude';
 }
 
+// Explicit opt-in to answer claude's folder-trust dialog with "Yes". Maestro's
+// usage sampler sets it for the empty probe folder it owns; a user can set it
+// for a folder they mean to trust. Trust persists in claude for that folder.
+function acceptsWorkspaceTrust(): boolean {
+	return process.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST === '1';
+}
+
+// What to tell the caller when claude's trust dialog defaulted to "No, exit"
+// (the home dir and the system temp dir, never-trusted folders). Without this
+// the TUI quit on the blind Enter and the only signal was `tui_exited`.
+function workspaceUntrustedHint(cwd: string): string {
+	return `maestro-p: claude has not been trusted to work in ${cwd}, and its folder-trust prompt defaults to "No, exit" there. Open claude in that folder once and choose "Yes, I trust this folder", or set MAESTRO_P_ACCEPT_WORKSPACE_TRUST=1 to have maestro-p accept it. Failing with workspace_untrusted.\n`;
+}
+
 function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
 	return new Promise<void>((resolve) => emitter.once(event, () => resolve()));
 }
@@ -276,6 +290,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		args: passThroughArgs,
 		cwd,
 		env: childEnv,
+		acceptWorkspaceTrust: acceptsWorkspaceTrust(),
 	});
 
 	// A turn on API Usage Billing still completes, so nothing downstream would
@@ -598,6 +613,11 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		if (finalized) return;
 		finalize({ isError: true, error: 'tui_exited', exitCode: 1 });
 	});
+	driver.on('workspace-untrusted', () => {
+		if (finalized) return;
+		process.stderr.write(workspaceUntrustedHint(cwd));
+		finalize({ isError: true, error: 'workspace_untrusted', exitCode: 7 });
+	});
 	driver.on('ready-timeout', () => {
 		if (finalized) return;
 		// Distinct from 'tui_exited': the PTY is still alive, but the
@@ -744,11 +764,11 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// 'line' events: heavier panels paint via cursor-addressing with no line
 		// feeds, so the 'line' stream is empty and the content would be lost.
 		captureScreen: true,
-		// Set only by Maestro's usage sampler, which runs this from a dedicated
-		// folder it owns and keeps empty. In the home or temp dir claude's trust
-		// prompt defaults to "No, exit", so without this the probe quits before
-		// /usage renders. Never honored implicitly: trust persists for that folder.
-		acceptWorkspaceTrust: process.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST === '1',
+		// Set by Maestro's usage sampler, which runs this from a dedicated folder
+		// it owns and keeps empty. In the home or temp dir claude's trust prompt
+		// defaults to "No, exit", so without this the probe cannot reach /usage.
+		// Never honored implicitly: trust persists for that folder.
+		acceptWorkspaceTrust: acceptsWorkspaceTrust(),
 	});
 
 	const lines: string[] = [];
@@ -770,6 +790,13 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 	});
 
 	let statusFinalized = false;
+	driver.on('workspace-untrusted', () => {
+		if (statusFinalized) return;
+		statusFinalized = true;
+		process.stderr.write(workspaceUntrustedHint(cwd));
+		driver.kill('SIGTERM');
+		process.exit(1);
+	});
 	driver.on('exit', () => {
 		if (statusFinalized) return;
 		statusFinalized = true;
