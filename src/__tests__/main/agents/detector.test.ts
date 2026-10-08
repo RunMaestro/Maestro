@@ -1074,8 +1074,12 @@ describe('agent-detector', () => {
 			});
 		};
 
-		/** A model catalog shaped like the one the Claude Code CLI caches. */
-		const catalogWith = (...ids: string[]) =>
+		/**
+		 * Catalog shape A: one file holding every surface, keyed by name under
+		 * `document.surfaces`, each surface carrying an ARRAY of selector configs.
+		 * Observed on Claude Code 2.1.257 as `published-<hash>.json`.
+		 */
+		const catalogShapeA = (...ids: string[]) =>
 			JSON.stringify({
 				document: {
 					surfaces: {
@@ -1086,13 +1090,33 @@ describe('agent-detector', () => {
 				},
 			});
 
-		it('should discover models from the Claude Code model catalog', async () => {
+		/**
+		 * Catalog shape B: one file PER surface, the surface named in a field
+		 * instead of a key, and a single selector config object instead of an
+		 * array. Observed on Claude Code 2.1.294 as `<uuid>-<hash>-<surface>.json`.
+		 */
+		const catalogShapeB = (surface: string, ...ids: string[]) =>
+			JSON.stringify({
+				version: 2,
+				fetchedAt: 1790690260525,
+				staleAt: 1790690260525,
+				catalog: {
+					surface,
+					config: {
+						id: 'default',
+						models: ids.map((id) => ({ id, thinking: true })),
+						settings_vocabulary: {},
+					},
+				},
+			});
+
+		it('should discover models from the Claude Code model catalog (shape A)', async () => {
 			mockClaudeAvailable();
 
 			_readdirSync.mockReturnValue(['published-floor.json', 'published-abc123.json']);
 			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
 				if (typeof filePath === 'string' && filePath.includes('published-abc123.json')) {
-					return catalogWith('claude-opus-5-5', 'claude-sonnet-5-5');
+					return catalogShapeA('claude-opus-5-5', 'claude-sonnet-5-5');
 				}
 				throw new Error('ENOENT');
 			});
@@ -1121,6 +1145,66 @@ describe('agent-detector', () => {
 			expect(models).not.toContain('chat-only-model');
 		});
 
+		it('should discover models from the per-surface catalog layout (shape B)', async () => {
+			mockClaudeAvailable();
+
+			// Newer CLI builds write one file per surface and drop the `published-`
+			// prefix entirely, so the reader must not key off the file name.
+			_readdirSync.mockReturnValue([
+				'published-floor.json',
+				'0f2b-9a1c-cc.json',
+				'0f2b-9a1c-chat.json',
+				'not-a-catalog.txt',
+			]);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath !== 'string') throw new Error('ENOENT');
+				if (filePath.includes('0f2b-9a1c-cc.json')) {
+					return catalogShapeB('cc', 'claude-opus-5-5', 'claude-haiku-5-5');
+				}
+				if (filePath.includes('0f2b-9a1c-chat.json')) {
+					return catalogShapeB('chat', 'chat-only-model');
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toContain('claude-opus-5-5');
+			expect(models).toContain('claude-haiku-5-5');
+			// The surface lives in a field now, so only the field can exclude `chat`.
+			expect(models).not.toContain('chat-only-model');
+			expect(_readFileSync).not.toHaveBeenCalledWith(
+				expect.stringContaining('published-floor.json'),
+				expect.anything()
+			);
+			expect(_readFileSync).not.toHaveBeenCalledWith(
+				expect.stringContaining('not-a-catalog.txt'),
+				expect.anything()
+			);
+		});
+
+		it('should read both catalog shapes side by side', async () => {
+			mockClaudeAvailable();
+
+			// A machine that upgraded mid-cycle keeps the old file next to the new one.
+			_readdirSync.mockReturnValue(['published-abc123.json', '0f2b-9a1c-cc.json']);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath !== 'string') throw new Error('ENOENT');
+				if (filePath.includes('published-abc123.json')) return catalogShapeA('claude-opus-5');
+				if (filePath.includes('0f2b-9a1c-cc.json')) return catalogShapeB('cc', 'claude-opus-5-5');
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toContain('claude-opus-5');
+			expect(models).toContain('claude-opus-5-5');
+		});
+
 		it('should surface models the user has run that the catalog does not list', async () => {
 			mockClaudeAvailable();
 
@@ -1132,7 +1216,7 @@ describe('agent-detector', () => {
 					throw new Error('ENOENT');
 				}
 				if (filePath.includes('published-abc123.json')) {
-					return catalogWith('claude-opus-5-5');
+					return catalogShapeA('claude-opus-5-5');
 				}
 				if (filePath.endsWith('.claude.json')) {
 					return JSON.stringify({
@@ -1154,6 +1238,151 @@ describe('agent-detector', () => {
 			expect(models.filter((m) => m === 'claude-opus-5-5')).toHaveLength(1);
 		});
 
+		it('should surface used models when there is no catalog at all', async () => {
+			mockClaudeAvailable();
+
+			// Each source must stand on its own: no catalog directory, valid usage.
+			_readdirSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.endsWith('.claude.json')) {
+					return JSON.stringify({
+						projects: { '/home/dev/a': { lastModelUsage: { 'claude-preview-9': {} } } },
+					});
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			expect(await detector.discoverModels('claude-code')).toContain('claude-preview-9');
+		});
+
+		it('should keep catalog models when .claude.json is corrupt', async () => {
+			mockClaudeAvailable();
+
+			// The mirror of the case above: a good catalog must survive a bad
+			// usage file, so neither source can quietly come to depend on the other.
+			_readdirSync.mockReturnValue(['published-abc123.json']);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath !== 'string') throw new Error('ENOENT');
+				if (filePath.includes('published-abc123.json')) return catalogShapeA('claude-opus-5-5');
+				if (filePath.endsWith('.claude.json')) return '{ not json';
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			expect(await detector.discoverModels('claude-code')).toContain('claude-opus-5-5');
+		});
+
+		it('should still read the legacy stats cache when a machine has one', async () => {
+			mockClaudeAvailable();
+
+			// Current CLI builds no longer write this file here, but a machine that
+			// ran an older build keeps its history in it.
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.endsWith('stats-cache.json')) {
+					return JSON.stringify({ modelUsage: { 'claude-opus-4-1-20250805': { cost: 1 } } });
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			expect(await detector.discoverModels('claude-code')).toContain('claude-opus-4-1-20250805');
+		});
+
+		it('should read every source from CLAUDE_CONFIG_DIR when it is set', async () => {
+			mockClaudeAvailable();
+
+			const configDir = path.join(path.sep, 'tmp', 'maestro-test-claude-account-b');
+			const previous = process.env.CLAUDE_CONFIG_DIR;
+			process.env.CLAUDE_CONFIG_DIR = configDir;
+
+			try {
+				_readdirSync.mockImplementation((dir: fs.PathLike) => {
+					if (String(dir) === path.join(configDir, 'cache', 'model-catalog')) {
+						return ['published-abc123.json'] as unknown as fs.Dirent[];
+					}
+					throw new Error('ENOENT');
+				});
+				_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+					if (typeof filePath !== 'string') throw new Error('ENOENT');
+					if (
+						filePath === path.join(configDir, 'cache', 'model-catalog', 'published-abc123.json')
+					) {
+						return catalogShapeA('claude-account-b-model');
+					}
+					if (filePath === path.join(configDir, '.claude.json')) {
+						return JSON.stringify({
+							projects: { '/w': { lastModelUsage: { 'claude-account-b-preview': {} } } },
+						});
+					}
+					if (filePath === path.join(configDir, 'stats-cache.json')) {
+						return JSON.stringify({ modelUsage: { 'claude-account-b-legacy': {} } });
+					}
+					// Anything under the default account is the bug this guards against.
+					throw new Error('ENOENT');
+				});
+
+				detector.clearCache();
+				await detector.detectAgents();
+
+				const models = await detector.discoverModels('claude-code');
+				expect(models).toContain('claude-account-b-model');
+				expect(models).toContain('claude-account-b-preview');
+				expect(models).toContain('claude-account-b-legacy');
+				// The default account's `~/.claude.json` must not be consulted: with
+				// CLAUDE_CONFIG_DIR set, the CLI writes inside the config dir instead.
+				expect(_readFileSync).not.toHaveBeenCalledWith(
+					path.join(os.homedir(), '.claude.json'),
+					expect.anything()
+				);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.CLAUDE_CONFIG_DIR;
+				} else {
+					process.env.CLAUDE_CONFIG_DIR = previous;
+				}
+			}
+		});
+
+		it('should treat a blank CLAUDE_CONFIG_DIR as unset', async () => {
+			mockClaudeAvailable();
+
+			// A blank value resolves to the process cwd if passed through verbatim,
+			// which would point discovery at a directory that is nobody's account.
+			const previous = process.env.CLAUDE_CONFIG_DIR;
+			process.env.CLAUDE_CONFIG_DIR = '  ';
+
+			try {
+				_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+					if (filePath === path.join(os.homedir(), '.claude.json')) {
+						return JSON.stringify({
+							projects: { '/w': { lastModelUsage: { 'claude-default-account': {} } } },
+						});
+					}
+					throw new Error('ENOENT');
+				});
+
+				detector.clearCache();
+				await detector.detectAgents();
+
+				expect(await detector.discoverModels('claude-code')).toContain('claude-default-account');
+			} finally {
+				if (previous === undefined) {
+					delete process.env.CLAUDE_CONFIG_DIR;
+				} else {
+					process.env.CLAUDE_CONFIG_DIR = previous;
+				}
+			}
+		});
+
 		it('should skip a corrupt catalog file without losing the others', async () => {
 			mockClaudeAvailable();
 
@@ -1163,7 +1392,7 @@ describe('agent-detector', () => {
 					return '{ not json';
 				}
 				if (typeof filePath === 'string' && filePath.includes('published-good.json')) {
-					return catalogWith('claude-opus-5-5');
+					return catalogShapeA('claude-opus-5-5');
 				}
 				throw new Error('ENOENT');
 			});
