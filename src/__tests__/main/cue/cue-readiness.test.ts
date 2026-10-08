@@ -407,6 +407,134 @@ describe('checkCueReadiness', () => {
 		});
 	});
 
+	describe('owner of unpinned subscriptions', () => {
+		const owned = (owner?: string, extra = '') =>
+			`${owner ? `settings:\n  owner_agent_id: ${owner}\n` : ''}${beat('shared')}${extra}`;
+		/** Each agent needs its own secret, none set, so a gap names exactly who was checked. */
+		const pair = (root: string, overrides: Partial<SessionInfo>[] = []) =>
+			['first', 'second'].map((id, i) =>
+				agent({ id, name: id, projectRoot: root, requiredSecrets: [`${id}_KEY`], ...overrides[i] })
+			);
+		const checked = (gaps: { agentId?: string }[]) => [
+			...new Set(gaps.flatMap((g) => (g.agentId ? [g.agentId] : []))),
+		];
+
+		it('checks only the first candidate when no owner_agent_id is set', async () => {
+			const root = workspace('shared', owned());
+			const report = await checkCueReadiness(
+				inputs({ sessions: pair(root, [{}, { toolType: 'hermes' }]) })
+			);
+			expect(checked(report.gaps)).toEqual(['first']);
+			expect(report.agents).toBe(1);
+		});
+
+		it('checks only the agent owner_agent_id names, by id or by name', async () => {
+			const byId = workspace('by-id', owned('second'));
+			const byName = workspace('by-name', owned('Second'));
+			const sessions = [
+				...pair(byId),
+				agent({ id: 'third', name: 'third', projectRoot: byName, requiredSecrets: ['third_KEY'] }),
+				agent({
+					id: 'fourth',
+					name: 'Second',
+					projectRoot: byName,
+					requiredSecrets: ['fourth_KEY'],
+				}),
+			];
+			const report = await checkCueReadiness(inputs({ sessions }));
+			expect(checked(report.gaps).sort()).toEqual(['fourth', 'second']);
+		});
+
+		it('reports an owner_agent_id that matches nobody, and nothing to run', async () => {
+			const root = workspace('no-owner', owned('nobody'));
+			const report = await checkCueReadiness(inputs({ sessions: pair(root) }));
+			expect(report.gaps).toEqual([
+				{
+					kind: 'cue-config',
+					workspace: root,
+					message: expect.stringMatching(
+						new RegExp(
+							`^Cue config in ${root.replace(/[\\.]/g, '\\$&')}: settings\\.owner_agent_id "nobody" does not match`
+						)
+					),
+				},
+				{ kind: 'nothing-to-run', message: expect.any(String) },
+			]);
+			expect(report.agents).toBe(0);
+		});
+
+		it('reports an owner_agent_id that is an ambiguous name', async () => {
+			const root = workspace('twins', owned('Twin'));
+			const report = await checkCueReadiness(
+				inputs({ sessions: pair(root, [{ name: 'Twin' }, { name: 'Twin' }]) })
+			);
+			expect(report.gaps.map((g) => [g.kind, g.workspace])).toEqual([
+				['cue-config', root],
+				['nothing-to-run', undefined],
+			]);
+			expect(report.gaps[0].message).toContain('owner_agent_id "Twin" is ambiguous');
+		});
+
+		it('still runs pinned subscriptions when no agent owns the unpinned ones', async () => {
+			const root = workspace(
+				'pinned-only',
+				owned('nobody', beat('mine', '    agent_id: second\n').replace('subscriptions:\n', ''))
+			);
+			const report = await checkCueReadiness(inputs({ sessions: pair(root) }));
+			expect(report.gaps.map((g) => g.kind)).toEqual(['cue-config', 'secret-missing']);
+			expect(checked(report.gaps)).toEqual(['second']);
+		});
+
+		it('never makes a terminal or config-less agent listed first the owner', async () => {
+			const root = workspace('real', beat('real-beat'));
+			const bare = workspace('bare');
+			const report = await checkCueReadiness(
+				inputs({
+					sessions: [
+						agent({ id: 'elsewhere', projectRoot: bare, toolType: 'hermes' }),
+						agent({ id: 'shell', projectRoot: root, toolType: 'terminal' }),
+						agent({ id: 'real', projectRoot: root, requiredSecrets: ['REAL_KEY'] }),
+					],
+				})
+			);
+			expect(checked(report.gaps)).toEqual(['real']);
+			expect(report.agents).toBe(1);
+		});
+
+		it('sends a pinned subscription only to its agent, even past the owner', async () => {
+			const root = workspace(
+				'pin',
+				owned('first', beat('mine', '    agent_id: second\n').replace('subscriptions:\n', ''))
+			);
+			const report = await checkCueReadiness(inputs({ sessions: pair(root) }));
+			expect(checked(report.gaps).sort()).toEqual(['first', 'second']);
+		});
+
+		it('reports a subscription pinned to an agent in another workspace', async () => {
+			const here = workspace(
+				'here',
+				beat('local') + beat('stray', '    agent_id: there\n').replace('subscriptions:\n', '')
+			);
+			const there = workspace('there');
+			const report = await checkCueReadiness(
+				inputs({
+					sessions: [
+						agent({ id: 'here', projectRoot: here }),
+						agent({ id: 'there', name: 'There', projectRoot: there }),
+					],
+				})
+			);
+			expect(report.gaps).toEqual([
+				{
+					kind: 'unknown-agent',
+					subscription: 'stray',
+					workspace: here,
+					message: expect.stringContaining(`agent "There" (there), whose workspace is ${there}`),
+				},
+			]);
+		});
+	});
+
 	describe('nothing to run', () => {
 		it('is not ready for a data dir with no agents (nothing imported)', async () => {
 			const report = await checkCueReadiness(inputs({ sessions: [] }));

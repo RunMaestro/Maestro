@@ -103,6 +103,22 @@ export interface OwnershipCandidate {
 }
 
 /**
+ * The sessions that compete for ownership of a cue.yaml: a tool type that
+ * participates in Cue AND a cue config at their projectRoot. A terminal (or
+ * any non-AI-agent) session, or one with no config, could otherwise win the
+ * implicit first-in-list race at a shared projectRoot, become the "owner",
+ * have nothing to dispatch, and silently suppress automation on the real
+ * Cue-configured agent. The runtime and the readiness check both pass this
+ * list to {@link computeOwnershipWarning}, so they pick the same owner.
+ */
+export function selectOwnershipCandidates<T extends OwnershipCandidate & { toolType: string }>(
+	sessions: T[],
+	hasCueConfig: (projectRoot: string) => boolean
+): T[] {
+	return sessions.filter((s) => s.toolType !== 'terminal' && hasCueConfig(s.projectRoot));
+}
+
+/**
  * Compute the ownership warning for a session that just loaded `config`.
  *
  * Returns `undefined` when the session is the effective owner (no warning is

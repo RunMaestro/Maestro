@@ -19,6 +19,8 @@
  *   warnings already name unresolved prompt files and skipped subscriptions;
  * - secrets: `resolveSecrets` / `lookupSecret` (`src/shared/serverSecrets.ts`);
  * - fan-out targets: `findFanOutTarget`, the dispatcher's own lookup;
+ * - which agent runs an unpinned subscription: `selectOwnershipCandidates`
+ *   and `computeOwnershipWarning`, the session runtime's owner rule;
  * - gh: `isGhInstalled`, the detection the GitHub poller's `resolveGhPath`
  *   reads; git: `checkBinaryExists`, the launch path's binary probe.
  *
@@ -30,8 +32,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { SessionInfo, SshRemoteConfig } from '../../shared/types';
-import type { CueSubscription } from './cue-types';
+import type { CueConfig, CueSubscription } from './cue-types';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
+import { computeOwnershipWarning, selectOwnershipCandidates } from './cue-session-state';
 import { planSessionTurn } from '../../shared/maestro-lib/run/session';
 import { resolveSshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
 import { checkBinaryExists } from '../../shared/maestro-lib/launch/path-prober';
@@ -60,9 +63,12 @@ export type CueReadinessGapKind =
 	| 'secret-unusable'
 	/** The agent runs over SSH and its remote is missing or disabled. */
 	| 'ssh-remote'
-	/** cue.yaml does not parse or validate, or names a prompt file that is missing. */
+	/**
+	 * cue.yaml does not parse or validate, names a prompt file that is missing,
+	 * or has a settings.owner_agent_id that leaves its unpinned subscriptions with no owner.
+	 */
 	| 'cue-config'
-	/** A subscription names an agent that does not exist in this data directory. */
+	/** A subscription names an agent that does not exist in this data directory, or pins one from another workspace. */
 	| 'unknown-agent'
 	/** A host tool something needs (gh, git) is not installed. */
 	| 'tool-missing'
@@ -93,7 +99,7 @@ export interface CueReadinessReport {
 	ready: boolean;
 	/** ISO time the check ran; the status endpoint reports how fresh it is. */
 	checkedAt: string;
-	/** Agents checked: those owning an enabled subscription, and every fan-out target of one. */
+	/** Agents checked: those that run an enabled subscription (owner rule applied), and every fan-out target of one. */
 	agents: number;
 	/** Project roots with a cue.yaml. */
 	workspaces: number;
@@ -146,9 +152,12 @@ function agentLabel(session: SessionInfo): string {
 	return `Agent "${session.name}"`;
 }
 
-/** The subscriptions the engine runs on `session` from its own project root's config. */
-function ownedBy(session: SessionInfo, subscriptions: CueSubscription[]): CueSubscription[] {
-	return subscriptions.filter((sub) => !sub.agent_id || sub.agent_id === session.id);
+/** A project root's cue.yaml as the engine sees it. */
+interface Workspace {
+	/** The loaded config, for its settings. Absent when it does not parse or validate. */
+	config?: CueConfig;
+	/** Its ENABLED subscriptions only. */
+	subscriptions: CueSubscription[];
 }
 
 /**
@@ -163,12 +172,12 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	const add = (gap: CueReadinessGap) => gaps.push(gap);
 
 	// ─── Workspaces: every project root an agent stands in, loaded once ─────
-	// `configs` holds only the ENABLED subscriptions, the ones the engine wires
+	// A workspace holds only the ENABLED subscriptions, the ones the engine wires
 	// (`cue-session-runtime-service` skips `enabled === false`). Filtering here,
 	// once, keeps a disabled subscription from adding any gap below: its gh,
 	// webhook secret, provider, fan-out targets and pinned agent are never
 	// needed. A config that does not parse or validate is still reported.
-	const configs = new Map<string, CueSubscription[]>();
+	const configs = new Map<string, Workspace>();
 	let subscriptionCount = 0;
 	for (const session of sessions) {
 		const root = session.projectRoot;
@@ -176,7 +185,7 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 		const loaded = probes.loadCueConfig(root);
 		if (!loaded.ok) {
 			if (loaded.reason === 'missing') continue;
-			configs.set(root, []);
+			configs.set(root, { subscriptions: [] });
 			add({
 				kind: 'cue-config',
 				workspace: root,
@@ -188,10 +197,10 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 			continue;
 		}
 		subscriptionCount += loaded.config.subscriptions.length;
-		configs.set(
-			root,
-			loaded.config.subscriptions.filter((sub) => sub.enabled !== false)
-		);
+		configs.set(root, {
+			config: loaded.config,
+			subscriptions: loaded.config.subscriptions.filter((sub) => sub.enabled !== false),
+		});
 		for (const warning of loaded.warnings) {
 			add({ kind: 'cue-config', workspace: root, message: `Cue config in ${root}: ${warning}` });
 		}
@@ -205,10 +214,27 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	const repoInferredRoots = new Map<string, CueSubscription>();
 	let runsSomething = false;
 
+	// Who runs what is the runtime's own decision, made per agent exactly as
+	// `initSession` makes it: the same candidates, the same owner rule
+	// (settings.owner_agent_id by id, then by name; else the first candidate).
+	// A non-owner keeps only the subscriptions pinned to it.
+	const candidates = selectOwnershipCandidates(sessions, (root) => configs.has(root));
+	const ownedRoots = new Set<string>();
+	const ownerProblems = new Map<string, string>(); // root -> why no agent owns it
 	for (const session of sessions) {
-		const subs = session.projectRoot ? configs.get(session.projectRoot) : undefined;
-		if (!subs) continue;
-		const owned = ownedBy(session, subs);
+		const workspace = session.projectRoot ? configs.get(session.projectRoot) : undefined;
+		if (!workspace?.config) continue;
+		const ownershipWarning = computeOwnershipWarning({
+			session,
+			candidates,
+			config: workspace.config,
+			configFromAncestor: false,
+		});
+		if (ownershipWarning) ownerProblems.set(session.projectRoot, ownershipWarning);
+		else ownedRoots.add(session.projectRoot);
+		const owned = workspace.subscriptions.filter((sub) =>
+			sub.agent_id ? sub.agent_id === session.id : !ownershipWarning
+		);
 		if (owned.length === 0) continue;
 		involved.set(session.id, session);
 		runsSomething = true;
@@ -238,17 +264,27 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 			}
 		}
 	}
-	// A subscription pinned to an agent id that no longer exists runs nowhere.
-	for (const [root, subs] of configs) {
-		for (const sub of subs) {
-			if (sub.agent_id && !sessions.some((s) => s.id === sub.agent_id)) {
-				add({
-					kind: 'unknown-agent',
-					subscription: sub.name,
-					workspace: root,
-					message: `Subscription "${sub.name}" is pinned to agent_id "${sub.agent_id}", which is not an agent in this data directory, so it never runs.`,
-				});
-			}
+	for (const [root, { subscriptions }] of configs) {
+		// An owner_agent_id that matches nobody, or more than one agent by
+		// name, leaves no agent in the root running its unpinned subscriptions.
+		const problem = ownerProblems.get(root);
+		if (problem && !ownedRoots.has(root) && subscriptions.some((sub) => !sub.agent_id)) {
+			add({ kind: 'cue-config', workspace: root, message: `Cue config in ${root}: ${problem}` });
+		}
+		// A pinned subscription runs only on that agent, and only from the
+		// agent's own project root's config.
+		for (const sub of subscriptions) {
+			if (!sub.agent_id) continue;
+			const pinned = sessions.find((s) => s.id === sub.agent_id);
+			if (pinned?.projectRoot === root) continue;
+			add({
+				kind: 'unknown-agent',
+				subscription: sub.name,
+				workspace: root,
+				message: pinned
+					? `Subscription "${sub.name}" is pinned to agent "${pinned.name}" (${sub.agent_id}), whose workspace is ${pinned.projectRoot || '(none)'}, not ${root}, so it never runs. Move it to that workspace's cue.yaml.`
+					: `Subscription "${sub.name}" is pinned to agent_id "${sub.agent_id}", which is not an agent in this data directory, so it never runs.`,
+			});
 		}
 	}
 
