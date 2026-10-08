@@ -81,7 +81,8 @@ vi.mock('../../../../main/themes', () => ({
 	}),
 }));
 
-vi.mock('../../../../main/plugins/plugin-media-tools', () => ({
+vi.mock('../../../../main/plugins/plugin-media-tools', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/plugins/plugin-media-tools')>()),
 	resolveMediaRuntime: vi.fn(),
 	getMediaToolStatus: vi.fn(),
 }));

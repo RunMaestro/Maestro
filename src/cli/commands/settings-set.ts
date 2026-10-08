@@ -5,6 +5,7 @@ import { readSettingValue, writeSettingValue } from '../services/storage';
 import { formatSuccess, formatError, formatWarning } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
 import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
+import { resolveMediaModelDirectory } from '../../main/plugins/plugin-media-tools';
 
 interface SettingsSetOptions {
 	json?: boolean;
@@ -42,7 +43,11 @@ function parseValue(input: string): unknown {
 	return input;
 }
 
-export function settingsSet(key: string, value: string, options: SettingsSetOptions): void {
+export async function settingsSet(
+	key: string,
+	value: string,
+	options: SettingsSetOptions
+): Promise<void> {
 	try {
 		const oldValue = readSettingValue(key);
 		const topKey = key.split('.')[0];
@@ -65,7 +70,11 @@ export function settingsSet(key: string, value: string, options: SettingsSetOpti
 			parsedValue = parseValue(value);
 		}
 
-		writeSettingValue(key, parsedValue);
+		if (topKey === 'mediaModelDirectory') {
+			if (key !== topKey) throw new Error('mediaModelDirectory does not accept nested keys');
+			parsedValue = await resolveMediaModelDirectory(parsedValue);
+		}
+		if (!writeSettingValue(key, parsedValue)) throw new Error('Could not persist setting');
 
 		if (options.json) {
 			emitJsonl({

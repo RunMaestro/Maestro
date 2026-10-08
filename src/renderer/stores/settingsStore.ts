@@ -888,7 +888,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setMediaModelDirectory: async (value) => {
 			if (!(await window.maestro.settings.set('mediaModelDirectory', value))) return false;
 			const persisted = await window.maestro.settings.get('mediaModelDirectory');
-			set({ mediaModelDirectory: persisted as string });
+			set({ mediaModelDirectory: typeof persisted === 'string' ? persisted : '' });
 			return true;
 		},
 
