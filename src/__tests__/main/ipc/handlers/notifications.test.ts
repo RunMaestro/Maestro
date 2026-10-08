@@ -122,13 +122,16 @@ import {
 import type { WindowRegistry } from '../../../../main/window-registry';
 
 /**
- * Build a minimal fake BrowserWindow whose only observable behaviour is
- * `isDestroyed()`. resolveNotificationClickWindow returns the object as-is, and
- * the real dispatchDeepLink (which would call show()/focus()) is mocked, so this
- * is all the surface the routing logic touches.
+ * Build a minimal fake BrowserWindow shared by routing and queued-delivery tests.
  */
 function makeFakeWindow(destroyed = false): Electron.BrowserWindow {
-	return { isDestroyed: () => destroyed } as unknown as Electron.BrowserWindow;
+	return {
+		isDestroyed: () => destroyed,
+		isMinimized: () => false,
+		show: vi.fn(),
+		focus: vi.fn(),
+		webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => destroyed },
+	} as unknown as Electron.BrowserWindow;
 }
 
 /** Build a fake WindowRegistry exposing just the two methods the resolver uses. */
@@ -320,20 +323,8 @@ describe('Notification IPC Handlers', () => {
 		it.each([true, false])(
 			'routes terminal clicks to the owning renderer (already ready: %s)',
 			async (alreadyReady) => {
-				const mainWindow = {
-					isDestroyed: () => false,
-					isMinimized: () => false,
-					show: vi.fn(),
-					focus: vi.fn(),
-					webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => false },
-				} as unknown as Electron.BrowserWindow;
-				const ownerWindow = {
-					isDestroyed: () => false,
-					isMinimized: () => false,
-					show: vi.fn(),
-					focus: vi.fn(),
-					webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => false },
-				} as unknown as Electron.BrowserWindow;
+				const mainWindow = makeFakeWindow();
+				const ownerWindow = makeFakeWindow();
 				const registry = makeFakeRegistry({ 'agent-7': 'win-owner' }, { 'win-owner': ownerWindow });
 				registerNotificationsHandlers({
 					getMainWindow: () => mainWindow,
@@ -369,20 +360,8 @@ describe('Notification IPC Handlers', () => {
 		);
 
 		it('does not let an unready secondary window block a ready primary action', async () => {
-			const mainWindow = {
-				isDestroyed: () => false,
-				isMinimized: () => false,
-				show: vi.fn(),
-				focus: vi.fn(),
-				webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => false },
-			} as unknown as Electron.BrowserWindow;
-			const ownerWindow = {
-				isDestroyed: () => false,
-				isMinimized: () => false,
-				show: vi.fn(),
-				focus: vi.fn(),
-				webContents: { send: vi.fn(), once: vi.fn(), isDestroyed: () => false },
-			} as unknown as Electron.BrowserWindow;
+			const mainWindow = makeFakeWindow();
+			const ownerWindow = makeFakeWindow();
 			const registry = makeFakeRegistry({ 'agent-7': 'win-owner' }, { 'win-owner': ownerWindow });
 			registerNotificationsHandlers({
 				getMainWindow: () => mainWindow,
