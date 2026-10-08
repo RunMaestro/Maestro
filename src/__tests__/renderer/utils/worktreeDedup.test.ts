@@ -157,6 +157,17 @@ describe('normalizePath', () => {
 	it('returns empty string unchanged', () => {
 		expect(normalizePath('')).toBe('');
 	});
+
+	it.each([
+		['/', false, '/'],
+		['C:\\', false, 'C:/'],
+		['\\\\server\\share\\repo\\', false, '//server/share/repo'],
+		['//server//share/repo/', true, '/server/share/repo'],
+		['/trees/feature\\name/', true, '/trees/feature\\name'],
+		['/', true, '/'],
+	] as const)('normalizes %s with POSIX mode %s', (input, posix, expected) => {
+		expect(normalizePath(input, posix)).toBe(expected);
+	});
 });
 
 describe('sessionMatchesWorktreeRoot', () => {

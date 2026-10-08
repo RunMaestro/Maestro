@@ -110,6 +110,9 @@ vi.mock('../../../../main/runtime/getShellPath', () => ({
 vi.mock('../../../../main/utils/remote-git', () => ({
 	execGitRemote: vi.fn(),
 	execGit: vi.fn(),
+	listWorktreesRemote: vi.fn(),
+	resolveWorktreePathsRemote: vi.fn(),
+	resolveWorktreeAliasesRemote: vi.fn(),
 }));
 
 // The branch-switch guard has its own suite (branch-switch-guard.test.ts). Its
@@ -4173,6 +4176,365 @@ export function Component() {
 	});
 
 	describe('git:listWorktrees', () => {
+		it('preserves the empty-list contract for legacy SSH callers on a Git failure', async () => {
+			mockSettingsStore.get.mockReturnValue([{ id: 'ssh-1', host: 'example.com', enabled: true }]);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValueOnce({
+				success: false,
+				error: 'not a git repository',
+			});
+			const result = await handlers.get('git:listWorktrees')!({} as any, '/not-a-repo', 'ssh-1');
+			expect(result).toEqual({ success: true, worktrees: [] });
+		});
+
+		it.each([false, true])(
+			'resolves migrated registry aliases together with saved paths and filters child metadata (prunable: %s)',
+			async (isPrunable) => {
+				const sshConfig = { id: 'ssh-1', host: 'example.com', enabled: true };
+				mockSettingsStore.get.mockReturnValue([sshConfig]);
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				const saved = '/old-alias/review';
+				const alias = '/data/trees/group/review';
+				const missing = '/data/trees/group/removed';
+				const unresolved = '/data/trees/inaccessible/review';
+				const unsafe = '/data/trees/line\nfeed';
+				const worktrees = [
+					{ path: '/data/repo.git', head: '', branch: null, isBare: true },
+					{ path: alias, head: 'abc', branch: 'review', isBare: false },
+					{
+						path: missing,
+						head: 'def',
+						branch: 'removed',
+						isBare: false,
+						...(isPrunable ? { isPrunable: true } : {}),
+					},
+					{ path: unresolved, head: 'ghi', branch: 'unreadable', isBare: false },
+					{ path: unsafe, head: 'jkl', branch: 'unsafe', isBare: false },
+				];
+				vi.mocked(remoteGit.resolveWorktreePathsRemote).mockResolvedValueOnce({
+					success: true,
+					data: { resolvedCwd: '/data/repo', resolvedBasePath: '/data/trees' },
+				});
+				vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValueOnce({
+					success: true,
+					data: worktrees,
+				});
+				vi.mocked(remoteGit.resolveWorktreeAliasesRemote).mockResolvedValueOnce({
+					success: true,
+					data: {
+						resolvedSessionPaths: {
+							[saved]: '/migrated-group/review',
+							[alias]: '/migrated-group/review',
+							[missing]: '/migrated-group/removed',
+						},
+						missingSessionPaths: [missing],
+						unresolvedSessionPaths: [unresolved, unsafe],
+					},
+				});
+
+				const result = await handlers.get('git:listWorktrees')!(
+					{} as any,
+					'~/repo',
+					'ssh-1',
+					'~/trees',
+					[saved, saved]
+				);
+
+				expect(remoteGit.resolveWorktreePathsRemote).toHaveBeenCalledWith(
+					'~/repo',
+					'~/trees',
+					sshConfig,
+					[]
+				);
+				expect(remoteGit.listWorktreesRemote).toHaveBeenCalledWith('/data/repo', sshConfig);
+				expect(remoteGit.resolveWorktreeAliasesRemote).toHaveBeenCalledWith(
+					[saved, alias, missing, unresolved, unsafe],
+					sshConfig
+				);
+				expect(result).toEqual({
+					success: true,
+					resolvedCwd: '/data/repo',
+					resolvedBasePath: '/data/trees',
+					resolvedSessionPaths: { [saved]: '/migrated-group/review' },
+					worktrees: [
+						worktrees[0],
+						{ ...worktrees[1], resolvedPath: '/migrated-group/review' },
+						{ ...worktrees[2], resolvedPath: '/migrated-group/removed', pathMissing: true },
+						{ ...worktrees[3], pathUnresolved: true },
+						{ ...worktrees[4], pathUnresolved: true },
+					],
+				});
+			}
+		);
+
+		it('withholds reconciliation metadata when the combined alias probe fails after a healthy registry read', async () => {
+			const sshConfig = { id: 'ssh-1', host: 'example.com', enabled: true };
+			mockSettingsStore.get.mockReturnValue([sshConfig]);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.resolveWorktreePathsRemote).mockResolvedValueOnce({
+				success: true,
+				data: { resolvedCwd: '/data/repo', resolvedBasePath: '/data/trees' },
+			});
+			vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValueOnce({
+				success: true,
+				data: [{ path: '/data/repo', head: 'abc', branch: 'main', isBare: false }],
+			});
+			vi.mocked(remoteGit.resolveWorktreeAliasesRemote).mockResolvedValueOnce({
+				success: false,
+				error: 'SSH connection timed out during alias probe',
+			});
+
+			const result = await handlers.get('git:listWorktrees')!(
+				{} as any,
+				'~/repo',
+				'ssh-1',
+				'~/trees',
+				['/old-alias/deleted']
+			);
+
+			expect(remoteGit.listWorktreesRemote).toHaveBeenCalled();
+			expect(result).toMatchObject({
+				success: false,
+				error: expect.stringContaining('SSH connection timed out during alias probe'),
+			});
+			expect(result).not.toHaveProperty('worktrees');
+			expect(result).not.toHaveProperty('missingSessionPaths');
+		});
+
+		it('forwards unresolved SSH aliases without withholding the healthy registry', async () => {
+			const sshConfig = { id: 'ssh-1', host: 'example.com', enabled: true };
+			mockSettingsStore.get.mockReturnValue([sshConfig]);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			const metadata = {
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/trees',
+				unresolvedSessionPaths: ['/old-alias/unreadable'],
+			};
+			vi.mocked(remoteGit.resolveWorktreePathsRemote).mockResolvedValueOnce({
+				success: true,
+				data: metadata,
+			});
+			const worktrees = [
+				{ path: '/data/repo', head: 'abc', branch: 'main', isBare: false },
+				{ path: '/data/trees/live', head: 'def', branch: 'live', isBare: false },
+			];
+			vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValueOnce({
+				success: true,
+				data: worktrees,
+			});
+			vi.mocked(remoteGit.resolveWorktreeAliasesRemote).mockResolvedValueOnce({
+				success: true,
+				data: {
+					resolvedSessionPaths: {
+						'/data/repo': '/data/repo',
+						'/data/trees/live': '/data/trees/live',
+					},
+					unresolvedSessionPaths: metadata.unresolvedSessionPaths,
+				},
+			});
+
+			const result = await handlers.get('git:listWorktrees')!(
+				{} as any,
+				'~/repo',
+				'ssh-1',
+				'~/trees',
+				['/old-alias/unreadable']
+			);
+
+			expect(result).toEqual({
+				success: true,
+				worktrees: worktrees.map((entry) => ({ ...entry, resolvedPath: entry.path })),
+				...metadata,
+			});
+			expect(remoteGit.listWorktreesRemote).toHaveBeenCalledWith('/data/repo', sshConfig);
+		});
+
+		it.each([false, true])(
+			'lists the SSH registry and forwards missing old aliases when a live child is present: %s',
+			async (hasLiveChild) => {
+				const sshConfig = { id: 'ssh-1', host: 'example.com', enabled: true };
+				mockSettingsStore.get.mockReturnValue([sshConfig]);
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				const sessionPaths = ['/old-alias/deleted', '/old-alias/live'];
+				const resolvedPaths = {
+					resolvedCwd: '/data/repo',
+					resolvedBasePath: '/data/trees',
+					resolvedSessionPaths: {
+						'/old-alias/deleted': '/data/trees/deleted',
+						'/old-alias/live': '/data/trees/live',
+					},
+					missingSessionPaths: ['/old-alias/deleted'],
+				};
+				vi.mocked(remoteGit.resolveWorktreePathsRemote).mockResolvedValueOnce({
+					success: true,
+					data: resolvedPaths,
+				});
+				const worktrees = [
+					{ path: '/data/repo', head: 'abc', branch: 'main', isBare: false },
+					...(hasLiveChild
+						? [{ path: '/data/trees/live', head: 'def', branch: 'live', isBare: false }]
+						: []),
+				];
+				vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValueOnce({
+					success: true,
+					data: worktrees,
+				});
+				vi.mocked(remoteGit.resolveWorktreeAliasesRemote).mockResolvedValueOnce({
+					success: true,
+					data: {
+						resolvedSessionPaths: {
+							...resolvedPaths.resolvedSessionPaths,
+							...Object.fromEntries(worktrees.map((entry) => [entry.path, entry.path])),
+						},
+						missingSessionPaths: resolvedPaths.missingSessionPaths,
+					},
+				});
+
+				const result = await handlers.get('git:listWorktrees')!(
+					{} as any,
+					'~/repo',
+					'ssh-1',
+					'~/trees',
+					sessionPaths
+				);
+
+				expect(remoteGit.resolveWorktreePathsRemote).toHaveBeenCalledWith(
+					'~/repo',
+					'~/trees',
+					sshConfig,
+					[]
+				);
+				expect(remoteGit.listWorktreesRemote).toHaveBeenCalledWith('/data/repo', sshConfig);
+				expect(result).toEqual({
+					success: true,
+					worktrees: worktrees.map((entry) => ({ ...entry, resolvedPath: entry.path })),
+					...resolvedPaths,
+				});
+			}
+		);
+
+		it.each(['SSH connection timed out', 'Permission denied', 'Malformed remote path output'])(
+			'does not list the SSH registry after unsafe alias resolution: %s',
+			async (error) => {
+				mockSettingsStore.get.mockReturnValue([
+					{ id: 'ssh-1', host: 'example.com', enabled: true },
+				]);
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				vi.mocked(remoteGit.resolveWorktreePathsRemote).mockResolvedValueOnce({
+					success: false,
+					error,
+				});
+
+				const result = await handlers.get('git:listWorktrees')!(
+					{} as any,
+					'~/repo',
+					'ssh-1',
+					'~/trees',
+					['/old-alias/deleted', '/old-alias/live']
+				);
+
+				expect(result).toMatchObject({ success: false, error: expect.stringContaining(error) });
+				expect(result).not.toHaveProperty('worktrees');
+				expect(result).not.toHaveProperty('missingSessionPaths');
+				expect(remoteGit.listWorktreesRemote).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['Empty remote worktree registry', 'Invalid remote worktree registry'])(
+			'does not expose missing aliases as safe removals after a failed registry read: %s',
+			async (error) => {
+				mockSettingsStore.get.mockReturnValue([
+					{ id: 'ssh-1', host: 'example.com', enabled: true },
+				]);
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				const resolvedPaths = {
+					resolvedCwd: '/data/repo',
+					resolvedBasePath: '/data/trees',
+					resolvedSessionPaths: { '/old-alias/deleted': '/data/trees/deleted' },
+					missingSessionPaths: ['/old-alias/deleted'],
+				};
+				vi.mocked(remoteGit.resolveWorktreePathsRemote).mockResolvedValueOnce({
+					success: true,
+					data: resolvedPaths,
+				});
+				vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValueOnce({ success: false, error });
+
+				const result = await handlers.get('git:listWorktrees')!(
+					{} as any,
+					'~/repo',
+					'ssh-1',
+					'~/trees',
+					['/old-alias/deleted']
+				);
+
+				expect(result).toMatchObject({ success: false, error: expect.stringContaining(error) });
+				expect(result).not.toHaveProperty('worktrees');
+				expect(result).not.toHaveProperty('missingSessionPaths');
+				expect(remoteGit.resolveWorktreeAliasesRemote).not.toHaveBeenCalled();
+			}
+		);
+
+		it('resolves SSH directories before listing and returns canonical paths', async () => {
+			const sshConfig = { id: 'ssh-1', host: 'example.com', enabled: true };
+			mockSettingsStore.get.mockReturnValue([sshConfig]);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.resolveWorktreePathsRemote).mockResolvedValueOnce({
+				success: true,
+				data: { resolvedCwd: '/data/repo', resolvedBasePath: '/data/trees' },
+			});
+			const worktrees = [{ path: '/data/repo', head: 'abc', branch: 'main', isBare: false }];
+			vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValueOnce({
+				success: true,
+				data: worktrees,
+			});
+			vi.mocked(remoteGit.resolveWorktreeAliasesRemote).mockResolvedValueOnce({
+				success: true,
+				data: { resolvedSessionPaths: { '/data/repo': '/data/repo' } },
+			});
+
+			const result = await handlers.get('git:listWorktrees')!(
+				{} as any,
+				'~/repo',
+				'ssh-1',
+				'~/trees'
+			);
+
+			expect(remoteGit.resolveWorktreePathsRemote).toHaveBeenCalledWith(
+				'~/repo',
+				'~/trees',
+				sshConfig,
+				[]
+			);
+			expect(remoteGit.listWorktreesRemote).toHaveBeenCalledWith('/data/repo', sshConfig);
+			expect(result).toEqual({
+				success: true,
+				worktrees: worktrees.map((entry) => ({ ...entry, resolvedPath: entry.path })),
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/trees',
+			});
+		});
+
+		it('fails SSH discovery when the base directory cannot be resolved', async () => {
+			mockSettingsStore.get.mockReturnValue([{ id: 'ssh-1', host: 'example.com', enabled: true }]);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.resolveWorktreePathsRemote).mockResolvedValueOnce({
+				success: false,
+				error: 'Permission denied',
+			});
+
+			const result = await handlers.get('git:listWorktrees')!(
+				{} as any,
+				'~/repo',
+				'ssh-1',
+				'~/trees'
+			);
+
+			expect(result).toMatchObject({
+				success: false,
+				error: expect.stringContaining('Permission denied'),
+			});
+			expect(remoteGit.listWorktreesRemote).not.toHaveBeenCalled();
+		});
 		it('should return list of worktrees with parsed details', async () => {
 			const porcelainOutput = `worktree /home/user/project
 HEAD abc123def456789
@@ -4403,6 +4765,301 @@ branch refs/heads/bugfix-123
 			mockFs = (await import('fs/promises')).default;
 		});
 
+		it.each(['identity', 'dirent', 'group-read'])(
+			'protects physical aliases of native errored candidates while discovering healthy siblings: %s',
+			async (failure) => {
+				const base = path.resolve('/alias/trees');
+				const physicalBase = path.resolve('/physical/trees');
+				const broken = path.join(base, 'broken');
+				const physicalBroken = path.join(physicalBase, 'broken');
+				vi.mocked(mockFs.readdir).mockImplementation(async (dir: any) => {
+					if (String(dir) === broken && failure === 'group-read') {
+						throw Object.assign(new Error('EACCES: cannot read group'), { code: 'EACCES' });
+					}
+					if (String(dir) !== base) return [];
+					return [
+						{
+							name: 'broken',
+							isDirectory: () => {
+								if (failure === 'dirent') throw new Error('Candidate metadata unavailable');
+								return true;
+							},
+						},
+						{ name: 'healthy', isDirectory: () => true },
+					] as any;
+				});
+				vi.mocked(mockFs.realpath).mockImplementation(async (value: any) => {
+					const candidate = String(value);
+					return candidate === base || candidate.startsWith(`${base}${path.sep}`)
+						? path.join(physicalBase, path.relative(base, candidate))
+						: candidate;
+				});
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
+					const candidate = String(cwd);
+					if (candidate === broken && failure === 'group-read') {
+						return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+					}
+					if (candidate === broken && args?.includes('--git-dir') && failure === 'identity') {
+						throw new Error('Candidate Git metadata unavailable');
+					}
+					const stdout = args?.includes('--is-inside-work-tree')
+						? 'true'
+						: args?.includes('--show-toplevel')
+							? path.join(physicalBase, path.relative(base, candidate))
+							: args?.includes('--abbrev-ref')
+								? path.basename(candidate)
+								: '.git';
+					return { stdout, stderr: '', exitCode: 0 };
+				});
+
+				const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, base);
+
+				expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual(['healthy']);
+				expect(result.unresolvedPaths).toEqual([broken, physicalBroken]);
+				expect(result.scanFailed).toBeFalsy();
+			}
+		);
+
+		it('derives an unresolved native leaf from its reachable symlinked group instead of the base', async () => {
+			const base = path.resolve('/alias/trees');
+			const physicalBase = path.resolve('/physical/trees');
+			const group = path.join(base, 'group');
+			const physicalGroup = path.resolve('/elsewhere/group');
+			const broken = path.join(group, 'broken');
+			vi.mocked(mockFs.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === base) {
+					return [{ name: 'group', isDirectory: () => true }] as any;
+				}
+				if (String(dir) === group) {
+					return ['broken', 'healthy'].map((name) => ({ name, isDirectory: () => true })) as any;
+				}
+				return [];
+			});
+			vi.mocked(mockFs.realpath).mockImplementation(async (value: any) => {
+				const candidate = String(value);
+				if (candidate === broken) {
+					throw Object.assign(new Error('ENOENT: candidate moved during scan'), { code: 'ENOENT' });
+				}
+				if (candidate === group || candidate.startsWith(`${group}${path.sep}`)) {
+					return path.join(physicalGroup, path.relative(group, candidate));
+				}
+				return candidate === base ? physicalBase : candidate;
+			});
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
+				const candidate = String(cwd);
+				if (candidate === group) {
+					return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+				}
+				if (candidate === broken) throw new Error('Candidate moved during scan');
+				const stdout = args?.includes('--is-inside-work-tree')
+					? 'true'
+					: args?.includes('--show-toplevel')
+						? path.join(physicalGroup, 'healthy')
+						: args?.includes('--abbrev-ref')
+							? 'healthy'
+							: '.git';
+				return { stdout, stderr: '', exitCode: 0 };
+			});
+
+			const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, base);
+
+			expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual(['healthy']);
+			expect(result.unresolvedPaths).toEqual([broken, path.join(physicalGroup, 'broken')]);
+			expect(result.unresolvedPaths).not.toContain(path.join(physicalBase, 'group', 'broken'));
+			expect(result.scanFailed).toBeFalsy();
+		});
+
+		it.each(['unreadable', 'malformed'])(
+			'isolates one bad native directory entry without withholding its healthy siblings: %s',
+			async (kind) => {
+				const parent = path.resolve('/parent');
+				const broken = path.join(parent, 'broken');
+				const badEntry =
+					kind === 'unreadable'
+						? {
+								name: 'broken',
+								isDirectory: () => {
+									throw Object.assign(new Error('EACCES: metadata unavailable'), {
+										code: 'EACCES',
+									});
+								},
+							}
+						: { name: 123, isDirectory: () => true };
+				vi.mocked(mockFs.readdir).mockResolvedValue([
+					{ name: 'before', isDirectory: () => true },
+					badEntry,
+					{ name: 'after', isDirectory: () => true },
+				] as any);
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => ({
+					stdout: args?.includes('--is-inside-work-tree')
+						? 'true'
+						: args?.includes('--show-toplevel')
+							? String(cwd)
+							: args?.includes('--abbrev-ref')
+								? path.basename(String(cwd))
+								: '.git',
+					stderr: '',
+					exitCode: 0,
+				}));
+
+				const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
+
+				expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual([
+					'before',
+					'after',
+				]);
+				expect(result.unresolvedPaths).toEqual([kind === 'unreadable' ? broken : parent]);
+				expect(result.scanFailed).toBeFalsy();
+			}
+		);
+
+		it('isolates a malformed SSH directory entry without withholding its healthy siblings', async () => {
+			const parent = '/remote/trees';
+			mockSettingsStore.get.mockReturnValue([{ id: 'ssh-1', host: 'example.com', enabled: true }]);
+			const remoteFs = await import('../../../../main/utils/remote-fs');
+			vi.mocked(remoteFs.readDirRemote).mockResolvedValueOnce({
+				success: true,
+				data: [
+					{ name: 'before', isDirectory: true },
+					{ name: 123, isDirectory: true },
+					{ name: 'after', isDirectory: true },
+				] as any,
+			});
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGit).mockImplementation(async (args, cwd) => ({
+				stdout: args.includes('--is-inside-work-tree')
+					? 'true'
+					: args.includes('--show-toplevel')
+						? cwd
+						: args.includes('--abbrev-ref')
+							? cwd.split('/').pop() || ''
+							: '.git',
+				stderr: '',
+				exitCode: 0,
+			}));
+
+			const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent, 'ssh-1');
+
+			expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual([
+				'before',
+				'after',
+			]);
+			expect(result.unresolvedPaths).toEqual([parent]);
+			expect(result.scanFailed).toBeFalsy();
+		});
+
+		it.each([
+			'--is-inside-work-tree',
+			'--show-toplevel',
+			'--git-dir',
+			'--git-common-dir',
+			'--abbrev-ref',
+		])(
+			'isolates a rejecting candidate Git probe and discovers both healthy siblings: %s',
+			async (probe) => {
+				const parent = path.resolve('/parent');
+				const broken = path.join(parent, 'broken');
+				vi.mocked(mockFs.readdir).mockImplementation(async (dir: any) =>
+					String(dir) === parent
+						? (['before', 'broken', 'after'].map((name) => ({
+								name,
+								isDirectory: () => true,
+							})) as any)
+						: []
+				);
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
+					const candidate = String(cwd);
+					if (candidate === broken && args?.includes(probe)) {
+						throw Object.assign(new Error('EACCES: candidate inaccessible'), { code: 'EACCES' });
+					}
+					const stdout = args?.includes('--is-inside-work-tree')
+						? 'true'
+						: args?.includes('--show-toplevel')
+							? candidate
+							: args?.includes('--abbrev-ref')
+								? path.basename(candidate)
+								: '.git';
+					return { stdout, stderr: '', exitCode: 0 };
+				});
+
+				const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
+
+				expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual([
+					'before',
+					'after',
+				]);
+				expect(result.unresolvedPaths).toEqual([broken]);
+				expect(result.scanFailed).toBeFalsy();
+			}
+		);
+
+		it.each(['--is-inside-work-tree', '--show-toplevel', '--git-dir', '--git-common-dir'])(
+			'preserves an uncertain candidate after a nonzero identity probe: %s',
+			async (probe) => {
+				const parent = path.resolve('/parent');
+				const broken = path.join(parent, 'broken');
+				vi.mocked(mockFs.readdir).mockImplementation(async (dir: any) =>
+					String(dir) === parent
+						? (['broken', 'healthy'].map((name) => ({ name, isDirectory: () => true })) as any)
+						: []
+				);
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
+					const candidate = String(cwd);
+					if (candidate === broken && args?.includes(probe)) {
+						return {
+							stdout: '',
+							stderr: 'fatal: cannot read candidate Git metadata',
+							exitCode: 128,
+						};
+					}
+					const stdout = args?.includes('--is-inside-work-tree')
+						? 'true'
+						: args?.includes('--show-toplevel')
+							? candidate
+							: args?.includes('--abbrev-ref')
+								? path.basename(candidate)
+								: '.git';
+					return { stdout, stderr: '', exitCode: 0 };
+				});
+
+				const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
+
+				expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual(['healthy']);
+				expect(result.unresolvedPaths).toEqual([broken]);
+				expect(result.scanFailed).toBeFalsy();
+			}
+		);
+
+		it('preserves the affected candidate after realpath failure while discovering its healthy sibling', async () => {
+			const parent = path.resolve('/parent');
+			const broken = path.join(parent, 'broken');
+			vi.mocked(mockFs.readdir).mockImplementation(async (dir: any) =>
+				String(dir) === parent
+					? (['broken', 'healthy'].map((name) => ({ name, isDirectory: () => true })) as any)
+					: []
+			);
+			vi.mocked(mockFs.realpath).mockRejectedValueOnce(
+				Object.assign(new Error('EACCES: cannot canonicalize candidate'), { code: 'EACCES' })
+			);
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => ({
+				stdout: args?.includes('--is-inside-work-tree')
+					? 'true'
+					: args?.includes('--show-toplevel')
+						? String(cwd)
+						: args?.includes('--abbrev-ref')
+							? path.basename(String(cwd))
+							: '.git',
+				stderr: '',
+				exitCode: 0,
+			}));
+
+			const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
+
+			expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual(['healthy']);
+			expect(result.unresolvedPaths).toEqual([broken]);
+			expect(result.scanFailed).toBeFalsy();
+		});
+
 		it('should find git repositories and worktrees in directory', async () => {
 			// Mock fs.readdir to return directory entries
 			vi.mocked(mockFs.readdir).mockResolvedValue([
@@ -4430,7 +5087,7 @@ branch refs/heads/bugfix-123
 						return { stdout: 'main\n', stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--show-toplevel')) {
-						return { stdout: '/parent/main-repo', stderr: '', exitCode: 0 };
+						return { stdout: path.join('/parent', 'main-repo'), stderr: '', exitCode: 0 };
 					}
 				}
 
@@ -4440,17 +5097,17 @@ branch refs/heads/bugfix-123
 						return { stdout: 'true\n', stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--show-toplevel')) {
-						return { stdout: '/parent/worktree-feature', stderr: '', exitCode: 0 };
+						return { stdout: path.join('/parent', 'worktree-feature'), stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--git-dir')) {
 						return {
-							stdout: '/parent/main-repo/.git/worktrees/worktree-feature',
+							stdout: path.join('/parent', 'main-repo', '.git', 'worktrees', 'worktree-feature'),
 							stderr: '',
 							exitCode: 0,
 						};
 					}
 					if (args?.includes('--git-common-dir')) {
-						return { stdout: '/parent/main-repo/.git', stderr: '', exitCode: 0 };
+						return { stdout: path.join('/parent', 'main-repo', '.git'), stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--abbrev-ref')) {
 						return { stdout: 'feature-branch\n', stderr: '', exitCode: 0 };
@@ -4479,14 +5136,14 @@ branch refs/heads/bugfix-123
 						name: 'main-repo',
 						isWorktree: false,
 						branch: 'main',
-						repoRoot: '/parent/main-repo',
+						repoRoot: path.join('/parent', 'main-repo'),
 					},
 					{
 						path: path.join('/parent', 'worktree-feature'),
 						name: 'worktree-feature',
 						isWorktree: true,
 						branch: 'feature-branch',
-						repoRoot: '/parent/main-repo',
+						repoRoot: path.join('/parent', 'main-repo'),
 					},
 				],
 			});
@@ -4516,7 +5173,7 @@ branch refs/heads/bugfix-123
 						return { stdout: 'main\n', stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--show-toplevel')) {
-						return { stdout: '/parent/visible-repo', stderr: '', exitCode: 0 };
+						return { stdout: path.join('/parent', 'visible-repo'), stderr: '', exitCode: 0 };
 					}
 				}
 
@@ -4535,7 +5192,7 @@ branch refs/heads/bugfix-123
 						name: 'visible-repo',
 						isWorktree: false,
 						branch: 'main',
-						repoRoot: '/parent/visible-repo',
+						repoRoot: path.join('/parent', 'visible-repo'),
 					},
 				],
 			});
@@ -4565,7 +5222,7 @@ branch refs/heads/bugfix-123
 						return { stdout: 'develop\n', stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--show-toplevel')) {
-						return { stdout: '/parent/repo-dir', stderr: '', exitCode: 0 };
+						return { stdout: path.join('/parent', 'repo-dir'), stderr: '', exitCode: 0 };
 					}
 				}
 
@@ -4584,7 +5241,7 @@ branch refs/heads/bugfix-123
 						name: 'repo-dir',
 						isWorktree: false,
 						branch: 'develop',
-						repoRoot: '/parent/repo-dir',
+						repoRoot: path.join('/parent', 'repo-dir'),
 					},
 				],
 			});
@@ -4691,7 +5348,7 @@ branch refs/heads/bugfix-123
 					return { stdout: '', stderr: 'fatal: ambiguous argument', exitCode: 128 };
 				}
 				if (args?.includes('--show-toplevel')) {
-					return { stdout: '/parent/detached-repo', stderr: '', exitCode: 0 };
+					return { stdout: path.join('/parent', 'detached-repo'), stderr: '', exitCode: 0 };
 				}
 
 				return { stdout: '', stderr: '', exitCode: 0 };
@@ -4708,7 +5365,7 @@ branch refs/heads/bugfix-123
 						name: 'detached-repo',
 						isWorktree: false,
 						branch: null,
-						repoRoot: '/parent/detached-repo',
+						repoRoot: path.join('/parent', 'detached-repo'),
 					},
 				],
 			});
@@ -4724,7 +5381,7 @@ branch refs/heads/bugfix-123
 					return { stdout: 'true\n', stderr: '', exitCode: 0 };
 				}
 				if (args?.includes('--show-toplevel')) {
-					return { stdout: '/parent/my-worktree', stderr: '', exitCode: 0 };
+					return { stdout: path.join('/parent', 'my-worktree'), stderr: '', exitCode: 0 };
 				}
 				if (args?.includes('--git-dir')) {
 					// Worktree has a different git-dir
@@ -4767,7 +5424,7 @@ branch refs/heads/bugfix-123
 						return { stdout: 'true\n', stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--show-toplevel')) {
-						return { stdout: '/parent/actual-worktree', stderr: '', exitCode: 0 };
+						return { stdout: path.join('/parent', 'actual-worktree'), stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--git-dir')) {
 						return { stdout: '.git', stderr: '', exitCode: 0 };
@@ -4781,13 +5438,13 @@ branch refs/heads/bugfix-123
 				}
 
 				// build/ and src/ are subdirectories inside actual-worktree's repo
-				if (cwdStr.endsWith('/build') || cwdStr.endsWith('/src')) {
+				if (['build', 'src'].includes(path.basename(cwdStr))) {
 					if (args?.includes('--is-inside-work-tree')) {
 						return { stdout: 'true\n', stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--show-toplevel')) {
 						// Toplevel points to the worktree root, NOT to build/ or src/
-						return { stdout: '/parent/actual-worktree', stderr: '', exitCode: 0 };
+						return { stdout: path.join('/parent', 'actual-worktree'), stderr: '', exitCode: 0 };
 					}
 				}
 
@@ -4805,7 +5462,7 @@ branch refs/heads/bugfix-123
 
 		it('should exclude subdirectories where --show-toplevel fails', async () => {
 			// Simulates a directory where git rev-parse --show-toplevel returns a non-zero exit code
-			// (e.g., corrupted repo, permission denied). Should be treated as invalid worktree.
+			// (e.g., corrupted repo, permission denied). Preserve that uncertain candidate.
 			vi.mocked(mockFs.readdir).mockResolvedValue([
 				{ name: 'good-worktree', isDirectory: () => true },
 				{ name: 'broken-repo', isDirectory: () => true },
@@ -4819,7 +5476,7 @@ branch refs/heads/bugfix-123
 						return { stdout: 'true\n', stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--show-toplevel')) {
-						return { stdout: '/parent/good-worktree', stderr: '', exitCode: 0 };
+						return { stdout: path.join('/parent', 'good-worktree'), stderr: '', exitCode: 0 };
 					}
 					if (args?.includes('--git-dir')) {
 						return { stdout: '.git', stderr: '', exitCode: 0 };
@@ -4832,7 +5489,7 @@ branch refs/heads/bugfix-123
 					}
 				}
 
-				if (cwdStr.endsWith('/broken-repo')) {
+				if (path.basename(cwdStr) === 'broken-repo') {
 					if (args?.includes('--is-inside-work-tree')) {
 						return { stdout: 'true\n', stderr: '', exitCode: 0 };
 					}
@@ -4851,9 +5508,12 @@ branch refs/heads/bugfix-123
 			// Only good-worktree should be included; broken-repo should be filtered out
 			expect(result.gitSubdirs).toHaveLength(1);
 			expect(result.gitSubdirs[0].name).toBe('good-worktree');
+			expect(result.unresolvedPaths).toEqual([path.join('/parent', 'broken-repo')]);
 		});
 
 		it('should accept worktrees on symlinked basePaths via realpath canonicalization', async () => {
+			const aliasPath = path.join('/home/user/worktrees', 'feature-branch');
+			const physicalPath = path.join('/data/worktrees', 'feature-branch');
 			// Regression: on Linux/Windows, if the configured basePath traverses a symlink
 			// (e.g. /home/user/work → /data/work), git rev-parse --show-toplevel returns
 			// the realpath while the constructed subdirPath does not. Without realpath
@@ -4864,14 +5524,12 @@ branch refs/heads/bugfix-123
 			] as any);
 
 			vi.mocked(mockFs.realpath).mockImplementation(async (p: any) => {
-				// Normalize separators so the Windows product path (path.join → backslashes)
-				// matches these POSIX keys; on POSIX this is a no-op.
-				const s = String(p).replace(/\\/g, '/');
-				if (s === '/home/user/worktrees/feature-branch') {
-					return '/data/worktrees/feature-branch';
+				const s = String(p);
+				if (s === aliasPath) {
+					return physicalPath;
 				}
-				if (s === '/data/worktrees/feature-branch') {
-					return '/data/worktrees/feature-branch';
+				if (s === physicalPath) {
+					return physicalPath;
 				}
 				return s;
 			});
@@ -4882,7 +5540,7 @@ branch refs/heads/bugfix-123
 				}
 				if (args?.includes('--show-toplevel')) {
 					// git always returns realpath, not the symlink path
-					return { stdout: '/data/worktrees/feature-branch', stderr: '', exitCode: 0 };
+					return { stdout: physicalPath, stderr: '', exitCode: 0 };
 				}
 				if (args?.includes('--git-dir')) {
 					return { stdout: '.git', stderr: '', exitCode: 0 };
@@ -5055,6 +5713,58 @@ branch refs/heads/bugfix-123
 			expect(result.scanFailed).toBe(true);
 		});
 
+		it('should run each SSH git probe in the discovered worktree directory', async () => {
+			const remotePath = '/remote/worktrees/feature';
+			mockSettingsStore.get.mockReturnValue([
+				{ id: 'ssh-1', host: 'remote.example.com', user: 'me' },
+			]);
+
+			const remoteFs = await import('../../../../main/utils/remote-fs');
+			vi.mocked(remoteFs.readDirRemote).mockImplementation(
+				async (dir) =>
+					({
+						success: true,
+						data:
+							String(dir) === '/remote/worktrees' ? [{ name: 'feature', isDirectory: true }] : [],
+					}) as any
+			);
+
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGit).mockImplementation(
+				async (args, _localCwd, _sshRemote, remoteCwd) => {
+					if (remoteCwd !== remotePath) {
+						return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+					}
+					if (args.includes('--is-inside-work-tree'))
+						return { stdout: 'true\n', stderr: '', exitCode: 0 };
+					if (args.includes('--show-toplevel'))
+						return { stdout: `${remotePath}\n`, stderr: '', exitCode: 0 };
+					if (args.includes('--git-dir'))
+						return { stdout: '/remote/repo/.git/worktrees/feature\n', stderr: '', exitCode: 0 };
+					if (args.includes('--git-common-dir'))
+						return { stdout: '/remote/repo/.git\n', stderr: '', exitCode: 0 };
+					return { stdout: 'feature\n', stderr: '', exitCode: 0 };
+				}
+			);
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/remote/worktrees', 'ssh-1');
+
+			expect(result.gitSubdirs).toEqual([
+				{
+					path: remotePath,
+					name: 'feature',
+					isWorktree: true,
+					branch: 'feature',
+					repoRoot: '/remote/repo',
+				},
+			]);
+			expect(remoteGit.execGit).toHaveBeenCalledTimes(5);
+			for (const call of vi.mocked(remoteGit.execGit).mock.calls) {
+				expect(call[3]).toBe(remotePath);
+			}
+		});
+
 		it('should swallow read errors on nested group directories', async () => {
 			// If recursing into a group dir fails (perms, race with deletion), the
 			// rest of the scan must still succeed. Without this, a transient
@@ -5100,6 +5810,7 @@ branch refs/heads/bugfix-123
 			// Whole-scan failure must NOT be flagged - that would trigger the renderer's
 			// removal-skip fallback; we only flag scanFailed for the top-level read.
 			expect(result.scanFailed).toBeFalsy();
+			expect(result.unresolvedPaths).toEqual([path.join('/parent', 'broken-group')]);
 		});
 	});
 
@@ -5111,6 +5822,152 @@ branch refs/heads/bugfix-123
 			mockFs = (await import('fs/promises')).default;
 			mockChokidar = (await import('chokidar')).default;
 		});
+
+		it('contains a closing-window send race, broadcasts removals and delivers later events to the replacement window', async () => {
+			const parent = path.resolve('/watched/trees');
+			const removed = path.join(parent, 'removed');
+			const later = path.join(parent, 'later');
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
+			let onUnlinkDir: ((dir: string) => void) | undefined;
+			const mockWatcher = {
+				on: vi.fn((event: string, callback: (dir: string) => void) => {
+					if (event === 'unlinkDir') onUnlinkDir = callback;
+					return mockWatcher;
+				}),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
+			const closingWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: {
+					isDestroyed: vi.fn().mockReturnValue(false),
+					send: vi.fn(() => {
+						throw new Error('Window destroyed during send');
+					}),
+				},
+			};
+			const liveWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: {
+					isDestroyed: vi.fn().mockReturnValue(false),
+					send: vi.fn(),
+				},
+			};
+			currentMockWindow = closingWindow;
+			await handlers.get('git:watchWorktreeDirectory')!({} as any, 'removal-send-race', parent);
+
+			const outcomes = [removed, later].map((dir) => {
+				try {
+					if (dir === later) currentMockWindow = liveWindow;
+					onUnlinkDir!(dir);
+					return 'fulfilled';
+				} catch {
+					return 'rejected';
+				}
+			});
+
+			expect(outcomes).toEqual(['fulfilled', 'fulfilled']);
+			expect(mockBroadcastBridgeEvent.mock.calls).toEqual([
+				['worktree:removed', [{ sessionId: 'removal-send-race', worktreePath: removed }]],
+				['worktree:removed', [{ sessionId: 'removal-send-race', worktreePath: later }]],
+			]);
+			expect(liveWindow.webContents.send.mock.calls).toEqual([
+				['worktree:removed', { sessionId: 'removal-send-race', worktreePath: later }],
+			]);
+		});
+
+		it.each(['--is-inside-work-tree', '--show-toplevel', '--abbrev-ref', 'path-parse', 'send'])(
+			'contains one failing watched worktree and still emits its healthy sibling: %s',
+			async (failure) => {
+				vi.useFakeTimers();
+				const validationTimers: Array<() => unknown> = [];
+				const timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback) => {
+					validationTimers.push(callback as () => unknown);
+					return validationTimers.length as unknown as ReturnType<typeof setTimeout>;
+				});
+				try {
+					const parent = path.resolve('/watched/trees');
+					const broken = path.join(parent, 'broken');
+					const healthy = path.join(parent, 'healthy');
+					vi.mocked(mockFs.access).mockResolvedValue(undefined);
+					let onAddDir: ((dir: string) => Promise<void>) | undefined;
+					const mockWatcher = {
+						on: vi.fn((event: string, callback: (dir: string) => Promise<void>) => {
+							if (event === 'addDir') onAddDir = callback;
+							return mockWatcher;
+						}),
+						close: vi.fn().mockResolvedValue(undefined),
+					};
+					vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
+					const emittedPaths: string[] = [];
+					const mockWindow = {
+						isDestroyed: vi.fn().mockReturnValue(false),
+						webContents: {
+							isDestroyed: vi.fn().mockReturnValue(false),
+							send: vi.fn((_channel: string, data: { worktree: { path: string } }) => {
+								if (failure === 'send' && data.worktree.path === broken) {
+									throw new Error('Window destroyed during send');
+								}
+								emittedPaths.push(data.worktree.path);
+							}),
+						},
+					};
+					currentMockWindow = mockWindow;
+					vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
+						if (String(cwd) === broken && args?.includes(failure)) {
+							throw new Error('Candidate probe failed');
+						}
+						if (
+							String(cwd) === broken &&
+							failure === 'path-parse' &&
+							args?.includes('--show-toplevel')
+						) {
+							return { stdout: null as any, stderr: '', exitCode: 0 };
+						}
+						return {
+							stdout: args?.includes('--is-inside-work-tree')
+								? 'true'
+								: args?.includes('--show-toplevel')
+									? String(cwd)
+									: path.basename(String(cwd)),
+							stderr: '',
+							exitCode: 0,
+						};
+					});
+					await handlers.get('git:watchWorktreeDirectory')!(
+						{} as any,
+						`watch-failure-${failure}`,
+						parent
+					);
+					await onAddDir!(broken);
+					await onAddDir!(healthy);
+
+					// Observe timer promises directly so the regression exposes the
+					// rejection without leaking an unhandled promise into Vitest.
+					const results = await Promise.allSettled(
+						validationTimers.map((callback) => Promise.resolve().then(callback))
+					);
+
+					expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+					expect(emittedPaths).toEqual([healthy]);
+					const { logger } = await import('../../../../main/utils/logger');
+					if (failure === 'send') {
+						expect(logger.debug).toHaveBeenCalledWith(
+							'Failed to send IPC message to renderer: worktree:discovered',
+							'IPC',
+							{ error: expect.stringContaining('Window destroyed during send') }
+						);
+					} else {
+						expect(logger.warn).toHaveBeenCalledWith(
+							expect.stringContaining(`Failed to inspect discovered worktree ${broken}`)
+						);
+					}
+				} finally {
+					timerSpy.mockRestore();
+					vi.useRealTimers();
+				}
+			}
+		);
 
 		it('should start watching a valid directory and return success', async () => {
 			// Mock fs.access to succeed (directory exists)
