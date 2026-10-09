@@ -351,14 +351,16 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	function* acquireFileLock(
 		name: string,
 		label: string,
-		timeoutMs = ASKS_LOCK_TIMEOUT_MS
-	): Generator<void, () => void> {
+		waitForTurn = false
+	): Generator<void, (renew?: boolean) => void> {
 		const lock = filePath(name) + '.lock';
 		fs.mkdirSync(path.dirname(lock), { recursive: true });
 		const token = process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2);
-		const deadline = Date.now() + timeoutMs;
+		let observedMtime: number | undefined;
+		let deadline = Date.now() + (waitForTurn ? ASKS_LOCK_STALE_MS : ASKS_LOCK_TIMEOUT_MS);
 		while (true) {
-			if (Date.now() >= deadline) throw new Error(`Timed out waiting for Pianola ${label} lock`);
+			if (!waitForTurn && Date.now() >= deadline)
+				throw new Error(`Timed out waiting for Pianola ${label} lock`);
 			try {
 				fs.writeFileSync(lock, token, { flag: 'wx' });
 				break;
@@ -366,7 +368,16 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
 			}
 			try {
-				if (Date.now() - fs.statSync(lock).mtimeMs > ASKS_LOCK_STALE_MS) {
+				const mtime = fs.statSync(lock).mtimeMs;
+				if (waitForTurn) {
+					if (mtime !== observedMtime) {
+						observedMtime = mtime;
+						deadline = Date.now() + ASKS_LOCK_STALE_MS;
+					}
+					if (Date.now() >= deadline)
+						throw new Error(`Timed out waiting for Pianola ${label} lock`);
+				}
+				if (Date.now() - mtime > ASKS_LOCK_STALE_MS) {
 					const observedToken = fs.readFileSync(lock, 'utf8');
 					const ownerAlive = (value: string): boolean => {
 						const owner = Number(value.split('.')[0]);
@@ -404,8 +415,15 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			}
 			yield;
 		}
-		return () => {
-			if (fs.readFileSync(lock, 'utf8') === token) fs.rmSync(lock, { force: true });
+		return (renew = false) => {
+			if (fs.readFileSync(lock, 'utf8') !== token) {
+				if (renew) throw new Error(`Lost Pianola ${label} lock ownership`);
+				return;
+			}
+			if (renew) {
+				const now = new Date();
+				fs.utimesSync(lock, now, now);
+			} else fs.rmSync(lock, { force: true });
 		};
 	}
 	function withFileLock<T>(name: string, label: string, operation: () => T): T {
@@ -425,18 +443,35 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		name: string,
 		label: string,
 		operation: () => T | Promise<T>,
-		timeoutMs = ASKS_LOCK_TIMEOUT_MS
+		waitForTurn = false,
+		renewWhileHeld = false
 	): Promise<T> {
-		const acquisition = acquireFileLock(name, label, timeoutMs);
+		const acquisition = acquireFileLock(name, label, waitForTurn);
 		let attempt = acquisition.next();
 		while (!attempt.done) {
 			await new Promise<void>((resolve) => setTimeout(resolve, 10));
 			attempt = acquisition.next();
 		}
+		const ownership = attempt.value;
+		let renewalError: { error: unknown } | undefined;
+		const heartbeat = renewWhileHeld
+			? setInterval(() => {
+					if (renewalError) return;
+					try {
+						ownership(true);
+					} catch (error) {
+						renewalError = { error };
+					}
+				}, ASKS_LOCK_STALE_MS / 3)
+			: undefined;
+		heartbeat?.unref();
 		try {
-			return await operation();
+			const result = await operation();
+			if (renewalError) throw renewalError.error;
+			return result;
 		} finally {
-			attempt.value();
+			if (heartbeat) clearInterval(heartbeat);
+			ownership();
 		}
 	}
 	function withProgramLoopLock<T>(programId: string, operation: () => Promise<T>): Promise<T> {
@@ -453,7 +488,8 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			`pianola-plan-${key}`,
 			'plan orchestration',
 			operation,
-			options?.waitForTurn ? Infinity : ASKS_LOCK_TIMEOUT_MS
+			options?.waitForTurn,
+			true
 		);
 	}
 	function persistAsks(asks: PianolaAsk[]): PianolaAsk[] {
