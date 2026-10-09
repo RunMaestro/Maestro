@@ -94,7 +94,11 @@ export interface PianolaFsStore {
 	/** Hold exclusive ownership across the complete asynchronous loop tick. */
 	withProgramLoopLock<T>(programId: string, operation: () => Promise<T>): Promise<T>;
 	/** Serialize revisions with the complete orchestrator tick for this plan. */
-	withPlanLock<T>(planId: string, operation: () => Promise<T>): Promise<T>;
+	withPlanLock<T>(
+		planId: string,
+		operation: () => Promise<T>,
+		options?: { waitForTurn?: boolean }
+	): Promise<T>;
 	readAsks(): PianolaAsk[];
 	writeAsks(asks: PianolaAsk[]): PianolaAsk[];
 	updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[];
@@ -344,11 +348,15 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		);
 	}
 	/** Shared protocol: each yield requests a delay before the next exclusive-create attempt. */
-	function* acquireFileLock(name: string, label: string): Generator<void, () => void> {
+	function* acquireFileLock(
+		name: string,
+		label: string,
+		timeoutMs = ASKS_LOCK_TIMEOUT_MS
+	): Generator<void, () => void> {
 		const lock = filePath(name) + '.lock';
 		fs.mkdirSync(path.dirname(lock), { recursive: true });
 		const token = process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2);
-		const deadline = Date.now() + ASKS_LOCK_TIMEOUT_MS;
+		const deadline = Date.now() + timeoutMs;
 		while (true) {
 			if (Date.now() >= deadline) throw new Error(`Timed out waiting for Pianola ${label} lock`);
 			try {
@@ -416,9 +424,10 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	async function withFileLockAsync<T>(
 		name: string,
 		label: string,
-		operation: () => T | Promise<T>
+		operation: () => T | Promise<T>,
+		timeoutMs = ASKS_LOCK_TIMEOUT_MS
 	): Promise<T> {
-		const acquisition = acquireFileLock(name, label);
+		const acquisition = acquireFileLock(name, label, timeoutMs);
 		let attempt = acquisition.next();
 		while (!attempt.done) {
 			await new Promise<void>((resolve) => setTimeout(resolve, 10));
@@ -434,9 +443,18 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		const key = createHash('sha256').update(programId).digest('hex');
 		return withFileLockAsync(`pianola-program-loop-${key}`, 'program loop', operation);
 	}
-	function withPlanLock<T>(planId: string, operation: () => Promise<T>): Promise<T> {
+	function withPlanLock<T>(
+		planId: string,
+		operation: () => Promise<T>,
+		options?: { waitForTurn?: boolean }
+	): Promise<T> {
 		const key = createHash('sha256').update(planId).digest('hex');
-		return withFileLockAsync(`pianola-plan-${key}`, 'plan orchestration', operation);
+		return withFileLockAsync(
+			`pianola-plan-${key}`,
+			'plan orchestration',
+			operation,
+			options?.waitForTurn ? Infinity : ASKS_LOCK_TIMEOUT_MS
+		);
 	}
 	function persistAsks(asks: PianolaAsk[]): PianolaAsk[] {
 		const validated = validatePianolaAsksFile({ asks }).asks;

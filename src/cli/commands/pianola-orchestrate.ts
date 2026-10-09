@@ -732,15 +732,19 @@ export async function pianolaPlanRevise(
 ): Promise<void> {
 	ensurePianolaEnabled(options.json);
 	try {
-		await withPianolaPlanLock(planId, async () => {
-			updatePianolaPlans((plans) => {
-				const plan = plans.find((entry) => entry.id === planId);
-				if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
-				const revised = revisePlanTask(plan, taskId, options.prompt);
-				assertOneActivePlanPerProgram(revised, plans);
-				return plans.map((entry) => (entry.id === planId ? revised : entry));
-			});
-		});
+		await withPianolaPlanLock(
+			planId,
+			async () => {
+				updatePianolaPlans((plans) => {
+					const plan = plans.find((entry) => entry.id === planId);
+					if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
+					const revised = revisePlanTask(plan, taskId, options.prompt);
+					assertOneActivePlanPerProgram(revised, plans);
+					return plans.map((entry) => (entry.id === planId ? revised : entry));
+				});
+			},
+			{ waitForTurn: true }
+		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
