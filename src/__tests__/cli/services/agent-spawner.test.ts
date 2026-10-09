@@ -954,9 +954,10 @@ Some text with [x] in it that's not a checkbox
 			// interactive (TUI) wraps the spawn with maestro-p via process.execPath
 			// (node), injecting MAESTRO_CLAUDE_BIN, instead of running `claude --print`.
 			// Make maestro-p "present": getCliMaestroPBinPath() (accessSync) resolves
-			// and the resolver's fileExists (existsSync) confirms the candidate.
+			// and the resolver's fileExists (existsSync) confirms the candidate. No
+			// `app.asar` beside the CLI: this is the dev layout, not a packaged app.
 			vi.mocked(fs.accessSync).mockReturnValue(undefined);
-			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(fs.existsSync).mockImplementation((p) => !String(p).endsWith('app.asar'));
 
 			const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt', undefined, {
 				enableMaestroP: true,
@@ -983,6 +984,38 @@ Some text with [x] in it that's not a checkbox
 			mockChild.emit('close', 0);
 			const result = await resultPromise;
 			expect(result.success).toBe(true);
+		});
+
+		it('runs maestro-p under the packaged app binary when the CLI was started by a system node (#1770)', async () => {
+			// A packaged CLI sits beside app.asar, which a plain `node` cannot read,
+			// so node-pty only loads when maestro-p runs under the app binary itself.
+			vi.mocked(fs.accessSync).mockReturnValue(undefined);
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			const original = process.resourcesPath;
+			Object.defineProperty(process, 'resourcesPath', { value: undefined, configurable: true });
+			try {
+				const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt', undefined, {
+					enableMaestroP: true,
+					maestroPMode: 'interactive',
+				});
+				await new Promise((resolve) => setTimeout(resolve, 0));
+
+				const [cmd, args, options] = mockSpawn.mock.calls[0];
+				const resourcesDir = path.dirname(String(args[0]));
+				expect(cmd).not.toBe(process.execPath);
+				expect(path.dirname(String(cmd)).startsWith(path.dirname(resourcesDir))).toBe(true);
+				expect(options.env.ELECTRON_RUN_AS_NODE).toBe('1');
+				expect(String(options.env.NODE_PATH).split(path.delimiter)[0]).toBe(
+					path.join(resourcesDir, 'app.asar', 'node_modules')
+				);
+
+				mockStdout.emit('data', Buffer.from('{"type":"result","result":"ok"}\n'));
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+				expect((await resultPromise).success).toBe(true);
+			} finally {
+				Object.defineProperty(process, 'resourcesPath', { value: original, configurable: true });
+			}
 		});
 
 		it('stays on claude --print for the API token source (no maestro-p wrap)', async () => {

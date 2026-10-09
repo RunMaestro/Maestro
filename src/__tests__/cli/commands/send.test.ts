@@ -289,9 +289,13 @@ describe('send command', () => {
 			},
 		});
 		vi.mocked(estimateContextUsage).mockReturnValue(0);
+		const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		await send('agent-abc', 'Bad request', {});
 
+		// A caller that only reads stderr must still see the failure (#1770).
+		expect(stderrSpy).toHaveBeenCalledWith('maestro-cli send failed: Agent crashed');
+		stderrSpy.mockRestore();
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(false);
 		expect(output.error).toBe('Agent crashed');

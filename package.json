@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "0.18.9-RC",
+	"version": "1.1.0-RC",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"author": {
@@ -69,6 +69,7 @@
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:integration:watch": "vitest --config vitest.integration.config.ts",
 		"test:performance": "vitest run --config vitest.performance.config.mts",
+		"test:maestro-p:live": "node scripts/maestro-p-suite.mjs",
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
 		"refresh-openspec": "node scripts/refresh-openspec.mjs",
 		"refresh-bmad": "node scripts/refresh-bmad.mjs",

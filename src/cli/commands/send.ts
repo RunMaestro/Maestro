@@ -177,6 +177,9 @@ export async function send(
 	console.log(JSON.stringify(response, null, 2));
 
 	if (!result.success) {
+		// The JSON on stdout is the contract, but a caller that only reads stderr
+		// would otherwise see a silent non-zero exit.
+		console.error(`maestro-cli send failed: ${result.error ?? 'unknown error'}`);
 		// 130 is the shell convention for an interrupt; 1 stays for real failures.
 		process.exit(result.outcome === 'interrupted' ? 130 : 1);
 	}

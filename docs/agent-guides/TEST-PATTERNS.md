@@ -36,6 +36,19 @@ npm run test          # Unit tests (excludes integration/e2e/performance)
 npm run test:watch    # Watch mode
 ```
 
+### maestro-p Live Suite
+
+The maestro-p unit tests (`src/__tests__/maestro-p/`) mock the PTY. The behavior that breaks in the field (envelopes, exit codes, slash commands, trust dialogs, `--continue`, process cleanup) only shows against a real `claude` TUI, so `scripts/maestro-p-suite.mjs` runs the binary end to end. Each case runs a real turn on the account it runs as. Run it after any change to `src/maestro-p/`, and add a case when you fix a bug only a live run can see.
+
+```bash
+npm run test:maestro-p:live -- --local                          # build this checkout and test it
+npm run test:maestro-p:live -- --local --only T18,T20           # a subset
+npm run test:maestro-p:live -- --config-dir ~/.claude-work      # another account
+npm run test:maestro-p:live -- --cli <Resources>/maestro-cli.js --cli-agent <id>   # adds T22, the CLI send path
+```
+
+Test folders go under `.maestro/scratch/maestro-p-suite` (override with `--root`), which must sit inside a folder claude already trusts on that account. Exit code: `0` all pass, `2` only known-issue failures (`KNOWN` in the script), `1` anything unexpected. Raw stdout and stderr of every failing run are kept under `<root>/logs/`.
+
 ---
 
 ## File Organization

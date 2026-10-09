@@ -25,6 +25,7 @@
  * `claude` (stdin / CLI arg per agent capability).
  */
 
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { selectMode as builtinSelectMode } from './claude-mode-selector';
@@ -343,6 +344,13 @@ export interface ApplyClaudeSpawnInput {
 	/** Defaults to process.execPath; injectable for tests. */
 	execPath?: string;
 	/**
+	 * Resources dir of the packaged app whose `node-pty` maestro-p should load.
+	 * Defaults to `process.resourcesPath`, which only the app binary sets; a
+	 * caller running OUTSIDE the app (the CLI under a system `node`) passes the
+	 * one {@link findPackagedAppHost} found.
+	 */
+	resourcesPath?: string;
+	/**
 	 * Overall idle budget for the maestro-p run, in seconds. Forwarded as
 	 * `--max-wait`. Background callers (Cue, Auto Run) SHOULD pass this so the run
 	 * honors their configured timeout instead of maestro-p's built-in default.
@@ -387,11 +395,13 @@ export function applyClaudeSpawnDecision(input: ApplyClaudeSpawnInput): ApplyCla
 		// find node-pty without help. Point NODE_PATH at the IN-ASAR node_modules
 		// (`<resources>/app.asar/node_modules`). node-pty computes its `spawn-helper`
 		// path by rewriting `app.asar` → `app.asar.unpacked`, so we must feed it the
-		// asar path (not the already-unpacked one, which would double-apply). In dev
-		// / under the plain-node CLI `resourcesPath` is empty, so this is skipped and
-		// node-pty resolves from the surrounding node_modules.
-		if (typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0) {
-			const asarModules = path.join(process.resourcesPath, 'app.asar', 'node_modules');
+		// asar path (not the already-unpacked one, which would double-apply). Only
+		// the app binary can read inside an asar, so a caller outside the app must
+		// also pass that binary as `execPath`. In dev `resourcesPath` is empty, so
+		// this is skipped and node-pty resolves from the surrounding node_modules.
+		const resourcesPath = input.resourcesPath ?? process.resourcesPath;
+		if (typeof resourcesPath === 'string' && resourcesPath.length > 0) {
+			const asarModules = path.join(resourcesPath, 'app.asar', 'node_modules');
 			const existing = env.NODE_PATH ?? process.env.NODE_PATH;
 			env.NODE_PATH = existing ? `${asarModules}${path.delimiter}${existing}` : asarModules;
 		}
@@ -410,6 +420,48 @@ export function applyClaudeSpawnDecision(input: ApplyClaudeSpawnInput): ApplyCla
 	}
 
 	return { command, args, customEnvVars };
+}
+
+/** The app binary and resources dir of a packaged Maestro install. */
+export interface PackagedAppHost {
+	/** The Electron binary, run with `ELECTRON_RUN_AS_NODE=1` to act as Node. */
+	execPath: string;
+	/** The dir holding `app.asar`, `maestro-cli.js` and `maestro-p.js`. */
+	resourcesPath: string;
+}
+
+/**
+ * Find the packaged Maestro app that ships the scripts in `scriptDir`, for a
+ * process running OUTSIDE it - `maestro-cli.js` started with a system `node`
+ * (#1770). maestro-p needs `node-pty`, which lives only inside `app.asar`, and
+ * no plain `node` can read an asar. Handing node-pty the unpacked copy instead
+ * does not work either: it rewrites `app.asar` to `app.asar.unpacked` in its
+ * `spawn-helper` path, so an already-unpacked path becomes
+ * `app.asar.unpacked.unpacked` and every turn dies in `posix_spawn`. The only
+ * runtime that loads it correctly is the app binary itself, so the caller runs
+ * maestro-p under that binary exactly as the desktop does.
+ *
+ * Returns null when `scriptDir` is not a packaged resources dir (a dev build in
+ * `dist/cli/`, which resolves node-pty from the repo's node_modules) or when no
+ * app binary is found beside it, which leaves the spawn as it was.
+ */
+export function findPackagedAppHost(
+	scriptDir: string,
+	platform: NodeJS.Platform = process.platform,
+	exists: (p: string) => boolean = fs.existsSync
+): PackagedAppHost | null {
+	if (!exists(path.join(scriptDir, 'app.asar'))) return null;
+	const appRoot = path.dirname(scriptDir);
+	// electron-builder names the binary after `productName` on macOS and
+	// Windows, and after the package `name` on Linux.
+	const candidates =
+		platform === 'darwin'
+			? [path.join(appRoot, 'MacOS', 'Maestro')]
+			: platform === 'win32'
+				? [path.join(appRoot, 'Maestro.exe')]
+				: [path.join(appRoot, 'maestro'), path.join(appRoot, 'Maestro')];
+	const execPath = candidates.find((candidate) => exists(candidate));
+	return execPath ? { execPath, resourcesPath: scriptDir } : null;
 }
 
 /**

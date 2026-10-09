@@ -72,12 +72,14 @@ vi.mock('../../shared/platformDetection', async (importOriginal) => ({
 
 import {
 	chunkPromptForPty,
+	expandPromptTabs,
 	MACOS_PTY_INPUT_QUEUE_BYTES,
 	PROMPT_CHUNK_DRAIN_TIMEOUT_MS,
 	PROMPT_CHUNK_INTERVAL_MS,
 	PROMPT_CHUNK_MAX_BYTES,
 	PROMPT_SETTLE_MAX_MS,
 	PROMPT_SETTLE_QUIET_MS,
+	PROMPT_TAB_SPACES,
 	QUIT_GRACE_MS,
 	READY_MAX_TAPS,
 	READY_TAP_INTERVAL_MS,
@@ -265,7 +267,21 @@ describe('TuiDriver', () => {
 			const driver = await makeDriver();
 			const trustHandler = vi.fn();
 			driver.on('trust-accepted', trustHandler);
-			feed('Yes, I trust this folder\n');
+			feed('❯ 1. Yes, I trust this folder\n  2. No, exit\n');
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('\r');
+		});
+
+		it('waits for the selector to paint before answering', async () => {
+			const driver = await makeDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+			// The dialog text can land a chunk ahead of the `❯` line; an Enter sent
+			// now would confirm whichever option the selector turns out to be on.
+			feed('Quick safety check: Is this a project you created or one you trust?\n');
+			feed('  1. Yes, I trust this folder\n');
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			feed('❯ 1. Yes, I trust this folder\n  2. No, exit\n');
 			expect(trustHandler).toHaveBeenCalledTimes(1);
 			expect(mockPtyProcess.write).toHaveBeenCalledWith('\r');
 		});
@@ -447,11 +463,66 @@ describe('TuiDriver', () => {
 			feed('\r❯ Try "edit <filepath>"\n');
 			expect(readyHandler).toHaveBeenCalledTimes(1);
 		});
+	});
 
-		it('keeps the plain Enter without the opt-in', async () => {
-			await makeDriver();
+	describe('\'workspace-untrusted\' event (trust prompt on "No, exit", no opt-in)', () => {
+		// The home dir and the system temp dir: claude highlights "No, exit".
+		const PROMPT_ON_NO =
+			'Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?\n1.Yes,Itrustthisfolder\n❯2.No,exit\n';
+		const writes = () => mockPtyProcess.write.mock.calls.map((call) => call[0]);
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('emits workspace-untrusted instead of pressing Enter on "No, exit"', async () => {
+			const driver = await makeDriver();
+			const untrusted = vi.fn();
+			const trustHandler = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			driver.on('trust-accepted', trustHandler);
 			feed(PROMPT_ON_NO);
-			expect(writes()).toEqual(['\r']);
+			expect(untrusted).toHaveBeenCalledTimes(1);
+			expect(trustHandler).not.toHaveBeenCalled();
+			expect(writes()).toEqual([]);
+		});
+
+		it('never presses Enter afterwards, and neither ready nor ready-timeout fires', async () => {
+			const driver = await makeDriver();
+			const untrusted = vi.fn();
+			const readyHandler = vi.fn();
+			const readyTimeout = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			driver.on('ready', readyHandler);
+			driver.on('ready-timeout', readyTimeout);
+			feed('Quick safety check\n  1. Yes, I trust this folder\n❯ 2. No, exit\n');
+			// A redraw of the same dialog is not a second event.
+			feed('❯ 2. No, exit\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(untrusted).toHaveBeenCalledTimes(1);
+			// The dialog's own `❯ ` is not claude's input prompt.
+			expect(readyHandler).not.toHaveBeenCalled();
+			expect(readyTimeout).not.toHaveBeenCalled();
+			expect(writes()).toEqual([]);
+		});
+
+		it('is not raised when acceptWorkspaceTrust is set', async () => {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp',
+				env: {},
+				acceptWorkspaceTrust: true,
+			});
+			await driver.start();
+			const untrusted = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			feed(PROMPT_ON_NO);
+			expect(untrusted).not.toHaveBeenCalled();
+			expect(writes()).toEqual(['\x1b[B']);
 		});
 	});
 
@@ -515,6 +586,23 @@ describe('TuiDriver', () => {
 			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS - 1);
 			expect(timeoutHandler).not.toHaveBeenCalled();
 			await vi.advanceTimersByTimeAsync(1);
+			expect(timeoutHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it('honors a caller-supplied readyTimeoutMs instead of READY_TIMEOUT_MS', async () => {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp',
+				env: { HOME: '/home/test' },
+				readyTimeoutMs: 30_000,
+			});
+			await driver.start();
+			const timeoutHandler = vi.fn();
+			driver.on('ready-timeout', timeoutHandler);
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(timeoutHandler).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(30_000 - READY_TIMEOUT_MS * 2);
 			expect(timeoutHandler).toHaveBeenCalledTimes(1);
 		});
 
@@ -736,12 +824,39 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	describe('expandPromptTabs()', () => {
+		it('replaces every tab with PROMPT_TAB_SPACES spaces, matching what claude does on paste', () => {
+			expect(PROMPT_TAB_SPACES).toBe(4);
+			expect(expandPromptTabs('a\tb\tc\nline two\twith tab')).toBe(
+				'a    b    c\nline two    with tab'
+			);
+		});
+
+		it('leaves a prompt without tabs untouched', () => {
+			const text = 'no tabs here\n  indented with spaces';
+			expect(expandPromptTabs(text)).toBe(text);
+		});
+	});
+
 	describe('send()', () => {
 		beforeEach(() => {
 			vi.useFakeTimers();
 		});
 		afterEach(() => {
 			vi.useRealTimers();
+		});
+
+		it('never types a raw tab, which claude would read as the Tab key', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('a\tb');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenNthCalledWith(1, 'a    b');
+			for (const [chunk] of mockPtyProcess.write.mock.calls) {
+				expect(chunk).not.toContain('\t');
+			}
 		});
 
 		it('writes text first, then \\r at SEND_ENTER_DELAY_MS, then retry taps', async () => {
