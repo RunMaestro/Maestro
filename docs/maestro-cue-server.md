@@ -24,6 +24,13 @@ maestro-cli bundle export --pipeline "Nightly Review" --output pipeline.zip
 maestro-cli bundle export --agent "Coder" --output agent.zip
 ```
 
+Export refuses a Cue config that `bundle validate` would reject, so a bundle never reaches the server only to fail there. The check covers each exported cue.yaml as written into the bundle: the same config rules, plus subscription names with `:`, heartbeats under a minute and `command.mode: cli` subscriptions. It looks only at the subscriptions being exported, so a broken subscription of another pipeline in the same cue.yaml does not block this one. A refusal writes no file, exits 1 (`BUNDLE_INVALID` with `--json`, every problem in `details.errors`) and lists every problem with its workspace and subscription, for example:
+
+```text
+Error: Refusing to export: the Cue config would fail bundle validation with 1 error. Fix it and export again.
+  [cue-config-invalid] workspace "review": Subscription "gather": "source_sub" is required for agent.completed subscriptions when action is "command"
+```
+
 `maestro-cli bundle inspect pipeline.zip` lists the bundle's workspaces, agents and the secrets it needs. See [Sharing Pipelines and Agents](./maestro-cue-bundles) for what a bundle holds.
 
 ## Build the server bundle

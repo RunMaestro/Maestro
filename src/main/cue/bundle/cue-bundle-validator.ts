@@ -82,6 +82,19 @@ export interface CueBundleValidateOptions {
 	runSecretsDir?: string | null;
 }
 
+/**
+ * Codes of the issues about how a cue.yaml is written, independent of which
+ * agents and files the bundle carries alongside it. The exporter refuses a
+ * bundle with any of these, so a config that validates here is one that
+ * exported.
+ */
+export const CUE_BUNDLE_CONFIG_ISSUE_CODES: ReadonlySet<string> = new Set([
+	'cue-config-invalid',
+	'name-has-colon',
+	'sub-minute-heartbeat',
+	'desktop-only-command',
+]);
+
 type RawSubscription = Record<string, unknown>;
 
 function asStringList(value: unknown): string[] {

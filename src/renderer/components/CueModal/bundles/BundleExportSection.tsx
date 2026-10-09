@@ -205,7 +205,7 @@ export function BundleExportSection({ theme, pipelines, agents }: BundleExportSe
 
 			{result && !result.ok && (
 				<BundleNotice theme={theme} tone="error" title="Export failed">
-					{result.message}
+					<div className="whitespace-pre-line break-words">{result.message}</div>
 				</BundleNotice>
 			)}
 			{result?.ok && (

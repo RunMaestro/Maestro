@@ -1244,7 +1244,9 @@ const bundle = program
 
 bundle
 	.command('export')
-	.description('Export one Cue pipeline or one agent to a deterministic bundle zip')
+	.description(
+		'Export one Cue pipeline or one agent to a deterministic bundle zip. Refuses, writing nothing, when an exported cue.yaml would fail bundle validate'
+	)
 	.option('-a, --agent <id-or-name>', 'Export this agent (exclusive with --pipeline)')
 	.option('-p, --pipeline <name>', 'Export this Cue pipeline (exclusive with --agent)')
 	.option('-o, --output <path>', 'Zip to write (default: ./<name>.maestro-bundle.zip)')

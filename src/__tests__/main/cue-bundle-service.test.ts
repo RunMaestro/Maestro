@@ -104,6 +104,33 @@ describe('exportBundleFromApp', () => {
 		});
 	});
 
+	it('reports a config that would fail validation with every problem, and writes nothing', async () => {
+		write(
+			path.join(root, '.maestro/cue.yaml'),
+			[
+				'subscriptions:',
+				'  - name: gather',
+				'    event: agent.completed',
+				'    source_session: [Planner, Other]',
+				'    action: command',
+				'    command: { mode: shell, shell: echo done }',
+				'',
+			].join('\n')
+		);
+		const outputPath = path.join(tmp, 'out', 'planner.zip');
+		const outcome = await exportBundleFromApp(context([agent()]), {
+			agentId: AGENT_ID,
+			outputPath,
+		});
+		expect(outcome).toMatchObject({
+			ok: false,
+			code: 'BUNDLE_INVALID',
+			message: expect.stringContaining('Subscription "gather": "source_sub" is required'),
+			details: { errors: [expect.objectContaining({ code: 'cue-config-invalid' })] },
+		});
+		expect(fs.existsSync(outputPath)).toBe(false);
+	});
+
 	it('wants an absolute output path', async () => {
 		const outcome = await exportBundleFromApp(context([agent()]), {
 			agentId: AGENT_ID,

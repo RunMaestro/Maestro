@@ -899,7 +899,7 @@ Export, validate, inspect, and import portable Cue pipeline and agent bundles
 
 ## `maestro-cli bundle export`
 
-Export one Cue pipeline or one agent to a deterministic bundle zip
+Export one Cue pipeline or one agent to a deterministic bundle zip. Refuses, writing nothing, when an exported cue.yaml would fail bundle validate
 
 | Option                     | Description                                                                               | Default |
 | -------------------------- | ----------------------------------------------------------------------------------------- | ------- |

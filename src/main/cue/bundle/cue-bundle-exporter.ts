@@ -59,6 +59,11 @@ import { resolveConfigOwner } from '../cue-session-state';
 import { readSessionsStoreFile } from '../../stores/sessions-store-file';
 import { readAgentConfigsStoreFile } from '../../stores/agent-configs-store-file';
 import { collectClaudeAssets, resolveClaudeAssetSelection } from './cue-bundle-claude-assets';
+import {
+	CUE_BUNDLE_CONFIG_ISSUE_CODES,
+	validateCueBundleArchive,
+	type CueBundleValidationIssue,
+} from './cue-bundle-validator';
 import { resolveClaudeConfigDir } from '../../memory-manager';
 
 /** Every entry gets this date, so the archive bytes depend only on content. */
@@ -102,6 +107,23 @@ export interface CueBundleExportResult {
 	size: number;
 	/** SHA-256 of the written zip. */
 	sha256: string;
+}
+
+/**
+ * A generated cue.yaml would fail `bundle validate`'s config checks (and so the
+ * bundle would be refused by every import). `details.errors` holds every
+ * problem; the message lists them too, naming each one's workspace and
+ * subscription.
+ */
+export class CueBundleExportInvalidError extends Error {
+	readonly code = 'BUNDLE_INVALID';
+	constructor(
+		message: string,
+		readonly details: { errors: CueBundleValidationIssue[] }
+	) {
+		super(message);
+		this.name = 'CueBundleExportInvalidError';
+	}
 }
 
 /** Raw (un-normalized) subscription as it sits in cue.yaml. */
@@ -694,6 +716,43 @@ function buildReadme(manifest: Omit<CueBundleManifest, 'files'>): string {
 	return lines.join('\n');
 }
 
+/**
+ * Refuse a bundle whose cue.yaml `bundle validate` would reject
+ * ({@link CUE_BUNDLE_CONFIG_ISSUE_CODES}), checked with the validator itself on
+ * exactly the files about to be written. It sees only the generated cue.yaml,
+ * so a broken subscription of some other pipeline in the same source file
+ * never blocks this export.
+ */
+function assertBundleValid(
+	builder: BundleBuilder,
+	configs: ReadonlyMap<string, { key: string; subNames: unknown[] }>
+): void {
+	// Checked against the engine version the manifest itself requires, so the
+	// answer does not depend on which program is exporting.
+	const errors = validateCueBundleArchive(
+		{ entries: builder.files, unsafeNames: [] },
+		{ runningVersion: CUE_BUNDLE_MIN_ENGINE_VERSION }
+	).errors.filter((issue) => CUE_BUNDLE_CONFIG_ISSUE_CODES.has(issue.code));
+	if (errors.length === 0) return;
+	// The config validator names a subscription by its index in the generated
+	// file, which the user never sees; name it as the user wrote it instead.
+	const lines: string[] = [];
+	const issues = errors.map((issue) => {
+		const config = issue.file ? configs.get(issue.file) : undefined;
+		const message = issue.message.replace(/^subscriptions\[(\d+)\]/, (whole, index: string) => {
+			const name = config?.subNames[Number(index)];
+			return typeof name === 'string' && name ? `Subscription "${name}"` : whole;
+		});
+		const where = config ? `workspace "${config.key}"` : (issue.file ?? 'bundle');
+		lines.push(`  [${issue.code}] ${where}: ${message}`);
+		return { ...issue, message };
+	});
+	throw new CueBundleExportInvalidError(
+		`Refusing to export: the Cue config would fail bundle validation with ${issues.length} error${issues.length === 1 ? '' : 's'}. Fix it and export again.\n${lines.join('\n')}`,
+		{ errors: issues }
+	);
+}
+
 async function writeZip(
 	outputPath: string,
 	files: Map<string, Buffer>,
@@ -729,7 +788,8 @@ async function writeZip(
 /**
  * Export a pipeline or an agent to a bundle zip. Throws with a user-facing
  * message on any refusal (ambiguous options, unknown pipeline, inline secret,
- * escaping prompt file, path leak).
+ * escaping prompt file, path leak), and with {@link CueBundleExportInvalidError}
+ * when a generated cue.yaml would fail `bundle validate`. Nothing is written on a refusal.
  */
 export async function exportCueBundle(
 	options: CueBundleExportOptions
@@ -853,6 +913,8 @@ export async function exportCueBundle(
 
 	// Workspace cue.yaml + prompt files.
 	const manifestWorkspaces: CueBundleWorkspace[] = [];
+	/** Generated cue.yaml path -> workspace key and its subscriptions' names, by index. */
+	const generatedConfigs = new Map<string, { key: string; subNames: unknown[] }>();
 	const events = new Set<string>();
 	const secrets = new Set<string>();
 	/** Workspace key -> secrets its exported `.mcp.json` references. */
@@ -882,6 +944,7 @@ export async function exportCueBundle(
 			doc.subscriptions = subs;
 			const cuePath = `workspaces/${ws.key}/${CUE_CONFIG_PATH}`;
 			addGenerated(cuePath, yaml.dump(doc, { lineWidth: -1, noRefs: true }));
+			generatedConfigs.set(cuePath, { key: ws.key, subNames: subs.map((sub) => sub.name) });
 			entry.cueConfig = cuePath;
 		}
 		const source = readGitSource(ws.root);
@@ -1062,6 +1125,7 @@ export async function exportCueBundle(
 		}
 	}
 	assertNoLocalPaths(builder, generated, forbiddenNeedles(localRoots));
+	assertBundleValid(builder, generatedConfigs);
 
 	const outputPath = path.resolve(options.outputPath);
 	await writeZip(outputPath, builder.files, builder.executables);

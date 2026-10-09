@@ -149,6 +149,27 @@ describe('export', () => {
 		expect(screen.getByText(/literal webhook.secret/)).toBeInTheDocument();
 	});
 
+	it('shows every problem of a config refusal on its own line', async () => {
+		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue('/tmp/x.zip');
+		const message = [
+			'Refusing to export: the Cue config would fail bundle validation with 2 errors. Fix it and export again.',
+			'  [cue-config-invalid] workspace "web": Subscription "gather": "source_sub" is required',
+			'  [name-has-colon] workspace "web": Subscription "a:b" contains ":"',
+		].join('\n');
+		api().export.mockResolvedValue({
+			ok: false,
+			code: 'BUNDLE_INVALID',
+			message,
+			details: { errors: [] },
+		});
+		renderTab();
+		fireEvent.click(screen.getByRole('button', { name: /Export…/ }));
+		expect(await screen.findByText('Export failed')).toBeInTheDocument();
+		const body = screen.getByText(/Refusing to export/);
+		expect(body.textContent).toBe(message);
+		expect(body).toHaveClass('whitespace-pre-line');
+	});
+
 	it('does nothing when the save dialog is cancelled', async () => {
 		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue(null);
 		renderTab();

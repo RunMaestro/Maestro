@@ -25,7 +25,7 @@ import { resolveAgentId } from '../cli/services/storage';
 import type { SessionInfo } from '../shared/types';
 import type { CueBundleClaudeAssetSelection, CueBundleManifest } from '../shared/cue-bundle-types';
 import { CUE_BUNDLE_README_PATH } from '../shared/cue-bundle-types';
-import { exportCueBundle } from './cue/bundle/cue-bundle-exporter';
+import { CueBundleExportInvalidError, exportCueBundle } from './cue/bundle/cue-bundle-exporter';
 import {
 	CueBundleImportError,
 	importCueBundle,
@@ -58,7 +58,7 @@ export interface CueBundleAppContext {
 /** A refusal, as data. */
 export interface CueBundleFailure {
 	ok: false;
-	/** Importer error code, or `EXPORT_FAILED` / `BUNDLE_UNREADABLE` / `INVALID_OPTIONS`. */
+	/** Importer error code, or `BUNDLE_INVALID` / `EXPORT_FAILED` / `BUNDLE_UNREADABLE` / `INVALID_OPTIONS`. */
 	code: string;
 	message: string;
 	details?: Record<string, unknown>;
@@ -114,7 +114,7 @@ export type CueBundleImportOutcome =
 	| CueBundleFailure;
 
 function failure(error: unknown, fallbackCode: string): CueBundleFailure {
-	if (error instanceof CueBundleImportError) {
+	if (error instanceof CueBundleImportError || error instanceof CueBundleExportInvalidError) {
 		return { ok: false, code: error.code, message: error.message, details: error.details };
 	}
 	return {

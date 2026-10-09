@@ -10,7 +10,7 @@ A bundle is a zip that carries one Cue pipeline (its subscriptions, prompt files
 
 Open **Maestro Cue** and go to the **Bundles** tab.
 
-**Export.** Choose **Pipeline** or **Agent**, pick one, choose which Claude Code assets to include, then **Export…** and pick where to save the zip. The result lists the secrets the importing machine has to set.
+**Export.** Choose **Pipeline** or **Agent**, pick one, choose which Claude Code assets to include, then **Export…** and pick where to save the zip. The result lists the secrets the importing machine has to set. A pipeline or agent whose Cue config `bundle validate` would reject is not exported: the tab lists every problem, with its workspace and subscription, and no file is written.
 
 **Import.**
 

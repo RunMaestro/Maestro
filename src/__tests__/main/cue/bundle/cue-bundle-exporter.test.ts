@@ -13,10 +13,15 @@ import * as crypto from 'crypto';
 import * as yaml from 'js-yaml';
 import {
 	assignWorkspaceKeys,
+	CueBundleExportInvalidError,
 	exportCueBundle,
 	isWithin,
 	scrubGitRemote,
 } from '../../../../main/cue/bundle/cue-bundle-exporter';
+import {
+	CUE_BUNDLE_CONFIG_ISSUE_CODES,
+	validateCueBundle,
+} from '../../../../main/cue/bundle/cue-bundle-validator';
 import { readZipArchive } from '../../../../main/utils/zip-archive';
 import type {
 	CueBundleAgentSettings,
@@ -759,6 +764,107 @@ describe('exportCueBundle - agent resolution', () => {
 		for (const [name, bytes] of entries) {
 			expect(bytes.toString('utf-8'), name).not.toContain('sk-proj-abc123');
 		}
+	});
+});
+
+describe('exportCueBundle - config validation', () => {
+	/** The Stage A shape: a command fan-in on agent.completed with no source_sub. */
+	const commandFanIn = (pipeline: string) => ({
+		name: 'gather',
+		event: 'agent.completed',
+		pipeline_name: pipeline,
+		agent_id: 'agent-beta',
+		source_session: ['Alpha', 'Writer'],
+		action: 'command',
+		command: { mode: 'shell', shell: 'echo done' },
+	});
+
+	function readBetaConfig(): { subscriptions: unknown[] } {
+		return yaml.load(fs.readFileSync(path.join(betaRoot, '.maestro/cue.yaml'), 'utf-8')) as {
+			subscriptions: unknown[];
+		};
+	}
+
+	it('refuses a command fan-in without source_sub and writes nothing', async () => {
+		const doc = readBetaConfig();
+		doc.subscriptions.push(commandFanIn('Review'));
+		writeCueYaml(betaRoot, doc);
+		const outDir = path.join(tmp, 'refused');
+		const outputPath = path.join(outDir, 'review.zip');
+
+		const error = await exportCueBundle({ dataDir, pipeline: 'Review', outputPath, env: ENV }).then(
+			() => undefined,
+			(e: unknown) => e
+		);
+		expect(error).toBeInstanceOf(CueBundleExportInvalidError);
+		const invalid = error as CueBundleExportInvalidError;
+		expect(invalid.code).toBe('BUNDLE_INVALID');
+		expect(invalid.message).toMatch(/^Refusing to export: the Cue config would fail/);
+		expect(invalid.message).toContain(
+			'[cue-config-invalid] workspace "beta": Subscription "gather": "source_sub" is required for agent.completed subscriptions when action is "command"'
+		);
+		expect(invalid.details.errors).toEqual([
+			expect.objectContaining({
+				code: 'cue-config-invalid',
+				file: 'workspaces/beta/.maestro/cue.yaml',
+			}),
+		]);
+		expect(fs.existsSync(outDir)).toBe(false);
+	});
+
+	it('lists every config problem in one refusal', async () => {
+		const doc = readBetaConfig();
+		doc.subscriptions.push(commandFanIn('Review'), {
+			name: 'fast:tick',
+			event: 'time.heartbeat',
+			agent_id: 'agent-beta',
+			pipeline_name: 'Review',
+			prompt: 'tick',
+			interval_minutes: 0.5,
+		});
+		writeCueYaml(betaRoot, doc);
+
+		const error = (await exportCueBundle({
+			dataDir,
+			pipeline: 'Review',
+			outputPath: path.join(tmp, 'review.zip'),
+			env: ENV,
+		}).catch((e: unknown) => e)) as CueBundleExportInvalidError;
+		expect(error).toBeInstanceOf(CueBundleExportInvalidError);
+		expect(error.details.errors.map((e) => e.code).sort()).toEqual([
+			'cue-config-invalid',
+			'name-has-colon',
+			'sub-minute-heartbeat',
+		]);
+		expect(error.message).toContain('3 errors');
+		expect(error.message).toContain('Subscription "gather"');
+		expect(error.message).toContain('Subscription "fast:tick"');
+		expect(fs.existsSync(path.join(tmp, 'review.zip'))).toBe(false);
+	});
+
+	it("exports a valid pipeline when the same cue.yaml holds another pipeline's invalid subscription", async () => {
+		const doc = readBetaConfig();
+		doc.subscriptions.push(commandFanIn('Other'));
+		writeCueYaml(betaRoot, doc);
+		const outputPath = path.join(tmp, 'review.zip');
+
+		await exportCueBundle({ dataDir, pipeline: 'Review', outputPath, env: ENV });
+		const cue = yaml.load(
+			readZip(outputPath).get('workspaces/beta/.maestro/cue.yaml')!.toString()
+		) as { subscriptions: Array<{ name: string }> };
+		expect(cue.subscriptions.map((s) => s.name)).toEqual(['chain']);
+		const validation = await validateCueBundle(outputPath, { runningVersion: '99.0.0' });
+		expect(validation.errors.filter((e) => CUE_BUNDLE_CONFIG_ISSUE_CODES.has(e.code))).toEqual([]);
+
+		// The broken pipeline itself still refuses.
+		await expect(
+			exportCueBundle({
+				dataDir,
+				pipeline: 'Other',
+				outputPath: path.join(tmp, 'other.zip'),
+				env: ENV,
+			})
+		).rejects.toThrow(CueBundleExportInvalidError);
 	});
 });
 

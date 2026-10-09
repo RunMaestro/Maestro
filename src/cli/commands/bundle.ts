@@ -146,7 +146,8 @@ export async function bundleExport(
 			);
 		}
 
-		const { exportCueBundle } = await import('../../main/cue/bundle/cue-bundle-exporter');
+		const { exportCueBundle, CueBundleExportInvalidError } =
+			await import('../../main/cue/bundle/cue-bundle-exporter');
 
 		const throughApp = shouldGoThroughApp(options);
 		let agentId: string | undefined;
@@ -189,16 +190,24 @@ export async function bundleExport(
 			}
 			result = outcome;
 		} else {
-			result = await exportCueBundle({
-				dataDir,
-				agentId,
-				pipeline: options.pipeline,
-				outputPath,
-				allowInlineSecrets: options.allowInlineSecrets,
-				createdAt: options.createdAt,
-				claudeAssets: claudeAssetSelection(options),
-				producerVersion: cliVersion,
-			});
+			try {
+				result = await exportCueBundle({
+					dataDir,
+					agentId,
+					pipeline: options.pipeline,
+					outputPath,
+					allowInlineSecrets: options.allowInlineSecrets,
+					createdAt: options.createdAt,
+					claudeAssets: claudeAssetSelection(options),
+					producerVersion: cliVersion,
+				});
+			} catch (error) {
+				// Same code and details the app path reports for this refusal.
+				if (error instanceof CueBundleExportInvalidError) {
+					fail(error.message, options, ExitCode.GeneralError, error.code, error.details);
+				}
+				throw error;
+			}
 		}
 
 		if (options.json) {
