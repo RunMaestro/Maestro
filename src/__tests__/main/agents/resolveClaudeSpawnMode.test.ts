@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
 	resolveClaudeSpawnMode,
@@ -462,6 +463,35 @@ describe('applyClaudeSpawnDecision (batch surfaces)', () => {
 				value: original,
 				configurable: true,
 			});
+		}
+	});
+
+	it('honors an explicit resourcesPath when the caller runs outside the app (#1770)', () => {
+		const original = process.resourcesPath;
+		try {
+			// A system `node` leaves resourcesPath unset; the CLI passes the
+			// packaged app it found instead, along with that app's binary.
+			Object.defineProperty(process, 'resourcesPath', { value: undefined, configurable: true });
+			const result = applyClaudeSpawnDecision({
+				decision: {
+					mode: 'interactive',
+					reason: 'auto',
+					maestroPBinPath: '/res/maestro-p.js',
+					claudeRealBinPath: '/bin/claude',
+				},
+				interactiveModeArgs: [],
+				command: 'claude',
+				args: ['--print', '--', 'hi'],
+				execPath: '/Applications/Maestro.app/Contents/MacOS/Maestro',
+				resourcesPath: '/Applications/Maestro.app/Contents/Resources',
+			});
+			expect(result.command).toBe('/Applications/Maestro.app/Contents/MacOS/Maestro');
+			expect(result.customEnvVars?.ELECTRON_RUN_AS_NODE).toBe('1');
+			expect(result.customEnvVars?.NODE_PATH?.split(path.delimiter)[0]).toBe(
+				path.join('/Applications/Maestro.app/Contents/Resources', 'app.asar', 'node_modules')
+			);
+		} finally {
+			Object.defineProperty(process, 'resourcesPath', { value: original, configurable: true });
 		}
 	});
 
