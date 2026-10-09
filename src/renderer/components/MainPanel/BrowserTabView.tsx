@@ -13,10 +13,14 @@ import {
 	ChevronUp,
 	ExternalLink,
 	Globe,
+	MousePointerClick,
 	RotateCw,
 	X,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
+import { EscCloseButton } from '../ui/EscCloseButton';
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { captureException } from '../../utils/sentry';
 import type { BrowserTab, Theme } from '../../types';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
@@ -25,6 +29,13 @@ import {
 	resolveBrowserTabNavigationTarget,
 	toWebviewSrc,
 } from '../../utils/browserTabPersistence';
+import {
+	DESIGN_MODE_ARM_SCRIPT,
+	DESIGN_MODE_DISARM_SCRIPT,
+	designPickCaptureRect,
+	parseDesignModeMessage,
+	type DesignModePick,
+} from '../../utils/designModePicker';
 
 type ElectronWebviewElement = HTMLElement & {
 	src: string;
@@ -38,6 +49,7 @@ type ElectronWebviewElement = HTMLElement & {
 	getTitle: () => string;
 	isLoading: () => boolean;
 	getWebContentsId?: () => number;
+	getZoomFactor?: () => number;
 	executeJavaScript: (code: string) => Promise<unknown>;
 	insertCSS?: (css: string) => Promise<string>;
 	findInPage: (
@@ -61,6 +73,12 @@ interface BrowserTabViewProps {
 	 * which otherwise strands keystrokes in the webview.
 	 */
 	isActive?: boolean;
+	/**
+	 * Receives an element picked in Design Mode, with a cropped screenshot of it
+	 * (a data URL, or null when none of the element was on screen). The Design
+	 * Mode toggle is only offered when this is provided.
+	 */
+	onDesignPick?: (pick: DesignModePick, screenshot: string | null) => void;
 }
 
 export interface BrowserTabViewHandle {
@@ -133,7 +151,7 @@ function syncWebviewLayout(webview: ElectronWebviewElement | null) {
 
 export const BrowserTabView = React.memo(
 	forwardRef<BrowserTabViewHandle, BrowserTabViewProps>(function BrowserTabView(
-		{ tab, theme, onUpdateTab, isActive = true },
+		{ tab, theme, onUpdateTab, isActive = true, onDesignPick },
 		ref
 	) {
 		const webviewRef = useRef<ElectronWebviewElement | null>(null);
@@ -153,6 +171,15 @@ export const BrowserTabView = React.memo(
 		const [findMatches, setFindMatches] = useState({ active: 0, total: 0 });
 		const findInputRef = useRef<HTMLInputElement | null>(null);
 		const findRequestIdRef = useRef(0);
+		// Design Mode: while on, the guest page runs the element picker. The ref
+		// mirror lets the tab-keyed listener effect re-arm it after a navigation
+		// without re-registering every listener when the toggle flips.
+		const [designMode, setDesignMode] = useState(false);
+		const designModeRef = useRef(false);
+		const onDesignPickRef = useRef(onDesignPick);
+		useEffect(() => {
+			onDesignPickRef.current = onDesignPick;
+		}, [onDesignPick]);
 
 		useEffect(() => {
 			latestTabRef.current = tab;
@@ -280,7 +307,41 @@ export const BrowserTabView = React.memo(
 			}
 			webviewRef.current?.blur();
 			userClickedRef.current = false;
+			// A picker left armed on a hidden tab would swallow the next click on it.
+			setDesignMode(false);
 		}, [isActive]);
+
+		// Arm or disarm the guest picker as the toggle flips. Arming also hands
+		// the guest keyboard focus, so Escape, Enter, and ArrowUp reach the picker
+		// directly instead of riding the shortcut forwarder. Disarming is a no-op
+		// on a page that never had the picker.
+		useEffect(() => {
+			designModeRef.current = designMode;
+			const webview = webviewRef.current;
+			if (!webview || !isDomReadyRef.current) return;
+			webview
+				.executeJavaScript(designMode ? DESIGN_MODE_ARM_SCRIPT : DESIGN_MODE_DISARM_SCRIPT)
+				.catch(() => {});
+			if (designMode) {
+				userClickedRef.current = true;
+				webview.focus();
+			}
+		}, [designMode]);
+
+		const cancelDesignMode = useCallback(() => setDesignMode(false), []);
+
+		// Escape while focus is still on the host (e.g. the toggle button that
+		// armed the picker) cancels too. Inside the guest the picker handles it.
+		useEventListener(
+			'keydown',
+			(event) => {
+				if ((event as KeyboardEvent).key !== 'Escape') return;
+				event.preventDefault();
+				event.stopPropagation();
+				setDesignMode(false);
+			},
+			{ enabled: designMode && isActive, capture: true }
+		);
 
 		useEffect(() => {
 			if (!isAddressFocusedRef.current) {
@@ -468,10 +529,41 @@ export const BrowserTabView = React.memo(
 				webview.executeJavaScript(scrollInjection).catch(() => {});
 				webview.executeJavaScript(keyboardInjection).catch(() => {});
 			};
+			const handleDesignPick = async (pick: DesignModePick) => {
+				const deliver = onDesignPickRef.current;
+				if (!deliver) return;
+				// The guest hid its outline and waited two frames before reporting,
+				// so the window capture shows the element as the page paints it.
+				const bounds = webview.getBoundingClientRect();
+				const rect = designPickCaptureRect(
+					pick,
+					{ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height },
+					webview.getZoomFactor?.() ?? 1
+				);
+				let screenshot: string | null = null;
+				if (rect && window.maestro?.shell?.capturePage) {
+					try {
+						screenshot = await window.maestro.shell.capturePage(rect);
+					} catch (error) {
+						// A failed capture still delivers the HTML and styles, but it is
+						// not an expected outcome, so report it.
+						captureException(error, { tags: { surface: 'browser-design-mode' } });
+						screenshot = null;
+					}
+				}
+				deliver(pick, screenshot);
+			};
 			const handleConsoleMessage = (event: Event) => {
 				const msg = (event as Event & { message?: string }).message;
 				if (msg === '__MAESTRO_SCROLL__1') setAddressBarHidden(true);
 				else if (msg === '__MAESTRO_SCROLL__0') setAddressBarHidden(false);
+				const designEvent = parseDesignModeMessage(msg);
+				if (designEvent) {
+					// Ignore a stale report from a picker the user already turned off.
+					if (!designModeRef.current) return;
+					setDesignMode(false);
+					if (designEvent.type === 'pick') void handleDesignPick(designEvent.pick);
+				}
 				// __MAESTRO_KEY__ shortcuts are forwarded by the main process
 				// (via before-input-event and console-message → IPC) and handled
 				// by the onBrowserTabShortcutKey listener in useMainKeyboardHandler.
@@ -484,6 +576,10 @@ export const BrowserTabView = React.memo(
 				setAddressBarHidden(false);
 				injectGuestListeners();
 				applyBlankGuestBackground(webview, blankBackgroundRef.current);
+				// A full navigation resets the page's JS, picker included.
+				if (designModeRef.current) {
+					webview.executeJavaScript(DESIGN_MODE_ARM_SCRIPT).catch(() => {});
+				}
 			};
 			// Re-inject guest listeners on navigation (page JS state resets)
 			const handleDidNavigateForInjection = () => injectGuestListeners();
@@ -796,6 +892,27 @@ export const BrowserTabView = React.memo(
 								) : null}
 							</div>
 						</form>
+						{onDesignPick ? (
+							<button
+								type="button"
+								onClick={() => setDesignMode((on) => !on)}
+								disabled={tab.url === DEFAULT_BROWSER_TAB_URL}
+								aria-pressed={designMode}
+								className="flex items-center justify-center w-8 h-8 rounded transition-colors disabled:opacity-40"
+								style={{
+									color: designMode ? theme.colors.accent : theme.colors.textMain,
+									backgroundColor: designMode ? `${theme.colors.accent}22` : undefined,
+								}}
+								title={
+									designMode
+										? 'Exit Design Mode (Esc)'
+										: 'Design Mode: click an element to send it to the agent'
+								}
+								data-testid="browser-tab-design-mode-toggle"
+							>
+								<MousePointerClick className="w-4 h-4" />
+							</button>
+						) : null}
 						<button
 							type="button"
 							onClick={handleOpenExternal}
@@ -830,6 +947,30 @@ export const BrowserTabView = React.memo(
 						// mid-commit and crashes the renderer (MAESTRO-QX/QY/QZ).
 						src={toWebviewSrc(tab.url)}
 					/>
+					{designMode ? (
+						<div
+							className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-md border px-3 py-1 shadow-md text-xs select-none"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.accent,
+								color: theme.colors.textMain,
+							}}
+							data-testid="browser-tab-design-mode-banner"
+							role="status"
+						>
+							<MousePointerClick className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<span>
+								Design Mode: click an element to send it to the agent.
+								<span style={{ color: theme.colors.textDim }}> Up arrow selects the parent.</span>
+							</span>
+							<EscCloseButton
+								theme={theme}
+								onClose={cancelDesignMode}
+								label="Exit Design Mode (Esc)"
+								testId="browser-tab-design-mode-cancel"
+							/>
+						</div>
+					) : null}
 					{findOpen ? (
 						<div
 							className="absolute top-2 right-3 z-10 flex items-center gap-1 rounded-md border px-2 py-1 shadow-md"

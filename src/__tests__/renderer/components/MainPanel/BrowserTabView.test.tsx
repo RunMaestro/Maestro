@@ -959,4 +959,126 @@ describe('BrowserTabView', () => {
 			}
 		);
 	});
+
+	describe('Design Mode', () => {
+		const pickPayload = {
+			url: 'https://example.com',
+			tagName: 'button',
+			selector: 'button.primary',
+			html: '<button class="primary">Save</button>',
+			htmlTruncated: false,
+			styles: { display: 'inline-flex' },
+			rect: { x: 10, y: 20, width: 100, height: 40 },
+			viewport: { width: 800, height: 600 },
+		};
+
+		async function setupReady(onDesignPick?: ReturnType<typeof vi.fn>) {
+			render(
+				<BrowserTabView
+					tab={mockTab}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+					onDesignPick={onDesignPick}
+				/>
+			);
+			const webview = getWebview();
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => 'https://example.com');
+			webview.getTitle = vi.fn(() => 'Example');
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 99);
+			webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
+			webview.getBoundingClientRect = () =>
+				({ left: 200, top: 100, width: 800, height: 600 }) as DOMRect;
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+			return webview;
+		}
+
+		function emit(webview: MockWebview, message: string) {
+			webview.dispatchEvent(Object.assign(new Event('console-message'), { message }));
+		}
+
+		afterEach(() => {
+			delete (window.maestro.shell as unknown as Record<string, unknown>).capturePage;
+		});
+
+		it('offers no toggle when nobody receives picks', async () => {
+			await setupReady();
+			expect(screen.queryByTestId('browser-tab-design-mode-toggle')).toBeNull();
+		});
+
+		it('arms the guest picker and shows the banner, and Esc pill disarms it', async () => {
+			const webview = await setupReady(vi.fn());
+
+			fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
+			expect(webview.executeJavaScript).toHaveBeenCalledWith(
+				expect.stringContaining('__maestroDesignPicker')
+			);
+			expect(screen.getByTestId('browser-tab-design-mode-banner')).toBeTruthy();
+
+			webview.executeJavaScript.mockClear();
+			fireEvent.click(screen.getByTestId('browser-tab-design-mode-cancel'));
+			expect(screen.queryByTestId('browser-tab-design-mode-banner')).toBeNull();
+			expect(webview.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('.disarm()'));
+		});
+
+		it('captures the element rect in window space and delivers the pick', async () => {
+			const capturePage = vi.fn().mockResolvedValue('data:image/png;base64,CROP');
+			(window.maestro.shell as unknown as Record<string, unknown>).capturePage = capturePage;
+			const onDesignPick = vi.fn();
+			const webview = await setupReady(onDesignPick);
+			fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
+
+			await act(async () => {
+				emit(webview, '__MAESTRO_DESIGN__' + JSON.stringify({ type: 'pick', pick: pickPayload }));
+			});
+
+			await waitFor(() => expect(onDesignPick).toHaveBeenCalled());
+			expect(capturePage).toHaveBeenCalledWith({ x: 210, y: 120, width: 100, height: 40 });
+			expect(onDesignPick).toHaveBeenCalledWith(
+				expect.objectContaining({ selector: 'button.primary' }),
+				'data:image/png;base64,CROP'
+			);
+			expect(screen.queryByTestId('browser-tab-design-mode-banner')).toBeNull();
+		});
+
+		it('turns off on a guest cancel and ignores picks once off', async () => {
+			const onDesignPick = vi.fn();
+			const webview = await setupReady(onDesignPick);
+			fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
+
+			await act(async () => {
+				emit(webview, '__MAESTRO_DESIGN__{"type":"cancel"}');
+			});
+			expect(screen.queryByTestId('browser-tab-design-mode-banner')).toBeNull();
+
+			await act(async () => {
+				emit(webview, '__MAESTRO_DESIGN__' + JSON.stringify({ type: 'pick', pick: pickPayload }));
+			});
+			expect(onDesignPick).not.toHaveBeenCalled();
+		});
+
+		it('cancels on Escape pressed in the host window', async () => {
+			await setupReady(vi.fn());
+			fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
+			fireEvent.keyDown(window, { key: 'Escape' });
+			expect(screen.queryByTestId('browser-tab-design-mode-banner')).toBeNull();
+		});
+
+		it('re-arms the picker after a full navigation', async () => {
+			const webview = await setupReady(vi.fn());
+			fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
+			webview.executeJavaScript.mockClear();
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+			expect(webview.executeJavaScript).toHaveBeenCalledWith(
+				expect.stringContaining('window.__maestroDesignPicker={arm:arm')
+			);
+		});
+	});
 });
