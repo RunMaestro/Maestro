@@ -8,7 +8,6 @@
  * "one decision, honored across every surface" guarantee can't silently drift.
  */
 
-import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import path from 'path';
 import os from 'os';
