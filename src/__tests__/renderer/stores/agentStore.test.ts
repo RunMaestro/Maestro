@@ -13,6 +13,7 @@ import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore'
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 
 // ============================================================================
 // Helpers
@@ -101,6 +102,12 @@ vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
 		getStatus: vi.fn().mockResolvedValue({ branch: 'main', files: [] }),
 	},
+}));
+
+// Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts;
+// here we only assert that the queue drain hands the message to it (issue #1531).
+vi.mock('../../../renderer/services/tabAutoNaming', () => ({
+	requestTabAutoNameForMessage: vi.fn(),
 }));
 
 // Prompt content is now loaded via window.maestro.prompts.get() and cached at module level.
@@ -1277,6 +1284,77 @@ describe('agentStore', () => {
 					agentSessionId: 'existing-conv-id',
 				})
 			);
+		});
+
+		it('names the target tab from the queued message (dispatch --queue never passes the composer)', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+			vi.mocked(requestTabAutoNameForMessage).mockClear();
+
+			await useAgentStore
+				.getState()
+				.processQueuedItem(
+					'session-1',
+					createQueuedItem({ tabId: 'tab-1', text: 'Build the feature' }),
+					defaultDeps
+				);
+
+			expect(requestTabAutoNameForMessage).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				'Build the feature',
+				'queue'
+			);
+		});
+
+		it('does not name a tab from a queued slash command', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+			vi.mocked(requestTabAutoNameForMessage).mockClear();
+
+			await useAgentStore
+				.getState()
+				.processQueuedItem(
+					'session-1',
+					createQueuedItem({ tabId: 'tab-1', type: 'command', text: undefined, command: '/x' }),
+					defaultDeps
+				);
+
+			expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
 		});
 
 		it('prepends and clears the tab pendingMergedContext (session recovery sent while queued)', async () => {

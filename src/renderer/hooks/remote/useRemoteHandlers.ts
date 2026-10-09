@@ -26,6 +26,7 @@ import { filterYoloArgs } from '../../utils/agentArgs';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
 import { noteDispatch } from '../../stores/retryStore';
+import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
 import type { ProcessQueuedItemDeps } from '../../stores/agentStore';
 import { logger } from '../../utils/logger';
 
@@ -453,6 +454,16 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					prompt: promptToSend.substring(0, 100),
 					imageCount: remoteImages?.length ?? 0,
 				});
+
+				// Name the tab from what was dispatched, exactly as the composer does for a
+				// typed message. `maestro-cli dispatch`, `send --live --new-tab`, and the
+				// web/mobile composer all land here without passing through the desktop
+				// composer, so this is the only chance such a tab gets to be named. Uses
+				// the raw command (not a slash command's expanded template), matching
+				// what the composer names from.
+				if (targetTab) {
+					requestTabAutoNameForMessage(session, targetTab.id, command, 'remote');
+				}
 
 				// Add user message to target tab's logs and set state to busy
 				const userLogEntry: LogEntry = {

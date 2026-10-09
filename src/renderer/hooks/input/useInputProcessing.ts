@@ -19,8 +19,7 @@ import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
 import { submitSteeringNote } from '../../services/autoRunSteering';
 import {
-	collectNamingPrompt,
-	requestTabAutoName,
+	requestTabAutoNameForMessage,
 	requestWizardTabAutoName,
 } from '../../services/tabAutoNaming';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
@@ -582,21 +581,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// an early `return` and the dequeue path (agentStore.processQueuedItem) does no
 			// naming of its own. Sitting after it meant a first message sent while any other
 			// tab was busy got queued and the tab stayed permanently unnamed - the retry
-			// never fires because there is no second send.
+			// never fires because there is no second send. (The drain and remote
+			// dispatch now name too, so this is no longer the only entry point.)
 			const activeTabForNaming = getActiveTab(activeSession);
-			if (currentMode === 'ai' && activeTabForNaming && effectiveInputValue.trim()) {
-				requestTabAutoName({
-					session: activeSession,
-					tabId: activeTabForNaming.id,
-					// Prior user messages plus the current one - richer context produces
-					// names that survive the extractor's filters.
-					prompt: collectNamingPrompt(
-						activeTabForNaming.logs
-							.filter((entry) => entry.source === 'user')
-							.map((entry) => entry.text),
-						effectiveInputValue
-					),
-				});
+			if (currentMode === 'ai' && activeTabForNaming) {
+				requestTabAutoNameForMessage(activeSession, activeTabForNaming.id, effectiveInputValue);
 			}
 
 			// Queue messages when AI is busy (only in AI mode)

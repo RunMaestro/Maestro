@@ -42,6 +42,11 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
+// Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts.
+vi.mock('../../../renderer/services/tabAutoNaming', () => ({
+	requestTabAutoNameForMessage: vi.fn(),
+}));
+
 // Mock hasCapabilityCached - agents with batch mode support
 const BATCH_MODE_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'factory-droid']);
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
@@ -62,6 +67,7 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 
 // ============================================================================
 // Helpers
@@ -433,6 +439,40 @@ describe('useRemoteHandlers', () => {
 				expect.objectContaining({
 					prompt: 'explain this code',
 				})
+			);
+		});
+
+		it('names the target tab from a dispatched AI command (issue #1531)', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+			vi.mocked(requestTabAutoNameForMessage).mockClear();
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const addListenerCall = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			);
+			const handler = addListenerCall[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'explain this code',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(requestTabAutoNameForMessage).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'session-1' }),
+				session.aiTabs[0].id,
+				'explain this code',
+				'remote'
 			);
 		});
 
