@@ -584,11 +584,11 @@ A change seen both ways fires once. Deliveries and polls record what they fired 
 | Field              | Type   | Description                                                                      |
 | ------------------ | ------ | -------------------------------------------------------------------------------- |
 | `path`             | string | URL segment under `/cue/`. Defaults to a slug of the subscription name.          |
-| `secret_env`       | string | Name of an environment variable holding the webhook secret. Preferred.           |
+| `secret_env`       | string | Name of the secret holding the webhook secret (see below). Preferred.            |
 | `secret`           | string | Literal secret. Mutually exclusive with `secret_env`.                            |
 | `signature_header` | string | Header carrying the HMAC signature. Defaults to `X-Hub-Signature-256`, GitHub's. |
 
-A secret is required, as for `webhook.received`. If its environment variable is not set when the subscription loads, the Cue log says so and the subscription keeps polling.
+A secret is required, as for `webhook.received`. `secret_env` is looked up the way every server secret is: `$CREDENTIALS_DIRECTORY/<NAME>` (a systemd credential), then `/run/secrets/<NAME>` (a Docker or Compose secret), then the environment variable `<NAME>`. If none of them has it when the subscription loads, the Cue log says so and the subscription keeps polling.
 
 **Example:**
 
@@ -615,7 +615,7 @@ subscriptions:
 1. In the repository, open **Settings > Webhooks > Add webhook**.
 2. **Payload URL:** a public URL that forwards to `http://127.0.0.1:17997/cue/<path>`. GitHub cannot reach the loopback listener directly, so put a tunnel or a reverse proxy in front of it (see the listener notes under `webhook.received`, and [Webhooks behind a proxy](./maestro-cue-server#webhooks-behind-a-proxy) for nginx, Caddy and tunnel configurations).
 3. **Content type:** `application/json`. Form-encoded deliveries are ignored.
-4. **Secret:** the value of the environment variable named in `secret_env`.
+4. **Secret:** the value of the secret named in `secret_env`.
 5. **Events:** pick individual events, matching the triggers that use this path:
 
 | Trigger               | GitHub events                                                                                                        |
@@ -707,12 +707,12 @@ Fires when an external service POSTs to Maestro's local webhook listener. This i
 
 **`webhook` sub-fields:**
 
-| Field              | Type   | Description                                                                                                          |
-| ------------------ | ------ | -------------------------------------------------------------------------------------------------------------------- |
-| `path`             | string | URL segment under `/cue/`. Defaults to a slug of the subscription name.                                              |
-| `secret_env`       | string | Name of an environment variable holding the shared secret. Preferred - keeps the value out of a committed cue.yaml.  |
-| `secret`           | string | Literal shared secret. Mutually exclusive with `secret_env`.                                                         |
-| `signature_header` | string | When set, authenticate by HMAC-SHA256 over the raw body using this header instead of presenting the secret directly. |
+| Field              | Type   | Description                                                                                                                                                                                        |
+| ------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`             | string | URL segment under `/cue/`. Defaults to a slug of the subscription name.                                                                                                                            |
+| `secret_env`       | string | Name of the secret holding the shared secret: `$CREDENTIALS_DIRECTORY/<NAME>`, then `/run/secrets/<NAME>`, then the environment variable. Preferred - keeps the value out of a committed cue.yaml. |
+| `secret`           | string | Literal shared secret. Mutually exclusive with `secret_env`.                                                                                                                                       |
+| `signature_header` | string | When set, authenticate by HMAC-SHA256 over the raw body using this header instead of presenting the secret directly.                                                                               |
 
 A secret is mandatory. A webhook path with no authentication is a remote trigger for an AI agent running with your credentials, so a subscription without `secret` or `secret_env` fails config validation rather than quietly starting to listen.
 
