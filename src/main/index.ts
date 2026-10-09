@@ -34,6 +34,7 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
+import { projectCueEventPaths } from './cue/cue-template-context-builder';
 import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
@@ -1238,8 +1239,18 @@ app
 				// session that is the POSIX root on the remote host; the host-visible
 				// mount (see the engine's getSessions) is only for reading cue.yaml and
 				// prompt files, which are already resolved by config-load time.
+				const ssh = storedSession.sessionSshRemoteConfig;
 				const projectRoot =
-					storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
+					(ssh?.enabled && ssh.workingDirOverride) ||
+					storedSession.projectRoot ||
+					storedSession.cwd ||
+					storedSession.fullPath ||
+					os.homedir();
+				if (ssh?.enabled && (event.type === 'task.pending' || event.type === 'file.changed')) {
+					const remotes = (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[];
+					const remote = remotes.find((candidate) => candidate.id === ssh.remoteId);
+					if (remote) event = projectCueEventPaths(event, remote);
+				}
 				const templateContext: TemplateContext = {
 					session: {
 						id: storedSession.id,

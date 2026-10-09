@@ -13,6 +13,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
+import type { SshRemoteConfig } from '../../../shared/types';
+import { hostVisibleProjectRoot } from '../../../shared/hostVisibleProjectRoot';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -80,7 +82,22 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const allSessions = useSessionStore((state) => state.sessions);
 	const groups = useSessionStore((state) => state.groups);
 	const setActiveSessionId = useSessionStore((state) => state.setActiveSessionId);
-
+	const [hostRemotes, setHostRemotes] = useState<SshRemoteConfig[] | null>(null);
+	useEffect(() => {
+		let cancelled = false;
+		async function loadRemotes() {
+			try {
+				const remotes = await window.maestro.settings.get('sshRemotes');
+				if (!cancelled) setHostRemotes(Array.isArray(remotes) ? remotes : []);
+			} catch (error) {
+				captureException(error, { extra: { context: 'Cue host mount configuration' } });
+			}
+		}
+		void loadRemotes();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 	const sessionInfoList = useMemo(
 		() =>
 			allSessions.map((s) => ({
@@ -88,9 +105,12 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 				groupId: s.groupId,
 				name: s.name,
 				toolType: s.toolType,
-				projectRoot: s.projectRoot,
+				projectRoot:
+					s.sessionSshRemoteConfig?.enabled && hostRemotes === null
+						? undefined
+						: hostVisibleProjectRoot(s, hostRemotes ?? []) || undefined,
 			})),
-		[allSessions]
+		[allSessions, hostRemotes]
 	);
 
 	// Agents that can own a scheduled task. Terminal agents are excluded: they
@@ -234,7 +254,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 				`Remove Cue configuration for "${session.sessionName}"?\n\nThis will delete the cue.yaml file from this project. This cannot be undone.`,
 				async () => {
 					try {
-						await cueService.deleteYaml(session.projectRoot);
+						await cueService.deleteYaml(session.projectRoot, session.sessionId);
 					} catch (err) {
 						captureException(err, {
 							extra: { context: 'handleRemoveCue', projectRoot: session.projectRoot },

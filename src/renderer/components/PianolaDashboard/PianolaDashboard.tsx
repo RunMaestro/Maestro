@@ -50,7 +50,8 @@ import {
 } from './usePianolaDashboardData';
 import { usePianolaSupervisor, type PianolaSupervisorState } from './usePianolaSupervisor';
 import type { PianolaSupervisedState } from '../../../main/pianola/pianola-supervisor';
-
+import { useSessionStore } from '../../stores/sessionStore';
+import { focusAiTabInSession } from '../../utils/tabHelpers';
 interface PianolaDashboardProps {
 	theme: Theme;
 	onJumpToAgent: (sessionId: string) => void;
@@ -353,6 +354,7 @@ function AskRow({
 	const [note, setNote] = React.useState('');
 	const { busy, error, settle } = usePianolaAction(onSettled);
 	const color = severityColor(theme, ask.severity);
+	const descriptionId = React.useId();
 
 	const submitResolve = (): void => {
 		const chosen = option.trim();
@@ -366,7 +368,7 @@ function AskRow({
 			style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${color}` }}
 			data-testid={`pianola-ask-${ask.id}`}
 		>
-			<div className="flex items-center gap-2" title={ask.detail}>
+			<div className="flex items-center gap-2">
 				<MiniBadge theme={theme} label={ask.severity} color={color} />
 				{ask.programTitle && (
 					<span
@@ -386,13 +388,25 @@ function AskRow({
 					{formatRelativeTime(ask.since)}
 				</span>
 			</div>
+			<p
+				id={descriptionId}
+				className="text-xs whitespace-pre-wrap break-words"
+				style={{ color: theme.colors.textMain, overflowWrap: 'anywhere' }}
+			>
+				{ask.detail}
+			</p>
 			{ask.requestedAction && (
 				<div className="text-xs" style={{ color: theme.colors.textMain }}>
 					{ask.requestedAction}
 				</div>
 			)}
 			{resolving ? (
-				<div className="flex flex-col gap-1.5">
+				<div
+					className="flex flex-col gap-1.5"
+					role="group"
+					aria-label={`Resolve ${ask.title}`}
+					aria-describedby={descriptionId}
+				>
 					<FormInput
 						theme={theme}
 						value={option}
@@ -419,6 +433,7 @@ function AskRow({
 							type="button"
 							onClick={submitResolve}
 							disabled={busy || option.trim().length === 0}
+							aria-describedby={descriptionId}
 							className="text-xs px-2 py-1 rounded font-medium transition-opacity disabled:opacity-40 disabled:cursor-default"
 							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 						>
@@ -441,6 +456,7 @@ function AskRow({
 						type="button"
 						onClick={() => setResolving(true)}
 						disabled={busy}
+						aria-describedby={descriptionId}
 						className="text-xs px-2 py-1 rounded font-medium hover:bg-white/5 transition-colors"
 						style={{ color: theme.colors.accent, border: `1px solid ${theme.colors.border}` }}
 					>
@@ -450,6 +466,7 @@ function AskRow({
 						type="button"
 						onClick={() => void settle(() => window.maestro.pianola.dismissAsk(ask.id))}
 						disabled={busy}
+						aria-describedby={descriptionId}
 						className="text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
 						style={{ color: theme.colors.textDim }}
 					>
@@ -476,7 +493,15 @@ const NEEDS_META: Record<
 };
 
 /** An escalation, a task awaiting review, or a failed task from the brief. */
-function NeedsRow({ theme, row }: { theme: Theme; row: DashboardNeedsRow }): React.ReactElement {
+function NeedsRow({
+	theme,
+	row,
+	onJump,
+}: {
+	theme: Theme;
+	row: DashboardNeedsRow;
+	onJump?: (sessionId: string) => void;
+}): React.ReactElement {
 	const meta = NEEDS_META[row.kind];
 	const color = meta.color(theme);
 	return (
@@ -494,9 +519,33 @@ function NeedsRow({ theme, row }: { theme: Theme; row: DashboardNeedsRow }): Rea
 					{row.programTitle}
 				</span>
 			)}
-			<span className="text-sm truncate flex-1" style={{ color: theme.colors.textMain }}>
-				{row.title}
-			</span>
+			{row.kind === 'escalation' && row.sessionId && onJump ? (
+				<button
+					type="button"
+					onClick={() => {
+						const sessionId = row.sessionId;
+						if (!sessionId) return;
+						useSessionStore
+							.getState()
+							.setSessions((sessions) =>
+								sessions.map((session) =>
+									session.id === sessionId && session.aiTabs.some((tab) => tab.id === row.tabId)
+										? focusAiTabInSession(session, row.tabId)
+										: session
+								)
+							);
+						onJump(sessionId);
+					}}
+					className="text-sm truncate flex-1 text-left hover:underline"
+					style={{ color: theme.colors.textMain }}
+				>
+					{row.title}
+				</button>
+			) : (
+				<span className="text-sm truncate flex-1" style={{ color: theme.colors.textMain }}>
+					{row.title}
+				</span>
+			)}
 			<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
 				{formatRelativeTime(row.since)}
 			</span>
@@ -838,7 +887,7 @@ export function PianolaDashboard({
 					<AskRow key={ask.id} theme={theme} ask={ask} onSettled={refresh} />
 				))}
 				{portfolio.escalations.map((row) => (
-					<NeedsRow key={row.key} theme={theme} row={row} />
+					<NeedsRow key={row.key} theme={theme} row={row} onJump={onJumpToAgent} />
 				))}
 				{data.needsInput.map(renderAgentRow(theme.colors.warning))}
 				{portfolio.needsReview.map((row) => (

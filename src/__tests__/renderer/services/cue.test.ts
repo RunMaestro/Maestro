@@ -166,7 +166,7 @@ describe('cueService - read methods', () => {
 		it('passes resolved value through', async () => {
 			mockCue.readYaml.mockResolvedValue('yaml content');
 			expect(await cueService.readYaml('/root')).toBe('yaml content');
-			expect(mockCue.readYaml).toHaveBeenCalledWith('/root');
+			expect(mockCue.readYaml).toHaveBeenCalledWith('/root', undefined);
 		});
 
 		it('passes through null when handler reports the file does not exist', async () => {
@@ -271,7 +271,7 @@ describe('cueService - write methods', () => {
 		mockCue.writeYaml.mockRejectedValue(new Error('IPC fail'));
 		const promptFiles = { 'p.md': 'content' };
 		await expect(cueService.writeYaml('/root', 'yaml', promptFiles)).rejects.toThrow('IPC fail');
-		expect(mockCue.writeYaml).toHaveBeenCalledWith('/root', 'yaml', promptFiles);
+		expect(mockCue.writeYaml).toHaveBeenCalledWith('/root', 'yaml', promptFiles, undefined);
 	});
 
 	it('deleteYaml - passes resolved boolean through', async () => {

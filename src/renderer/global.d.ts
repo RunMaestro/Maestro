@@ -4509,13 +4509,14 @@ interface MaestroAPI {
 			projectRoot: string,
 			name: string
 		) => Promise<{ removed: boolean; reason?: string }>;
-		readYaml: (projectRoot: string) => Promise<string | null>;
+		readYaml: (projectRoot: string, sessionId?: string) => Promise<string | null>;
 		writeYaml: (
 			projectRoot: string,
 			content: string,
-			promptFiles?: Record<string, string>
+			promptFiles?: Record<string, string>,
+			sessionId?: string
 		) => Promise<{ changed: boolean }>;
-		deleteYaml: (projectRoot: string) => Promise<boolean>;
+		deleteYaml: (projectRoot: string, sessionId?: string) => Promise<boolean>;
 		renamePipeline: (
 			oldName: string,
 			newName: string

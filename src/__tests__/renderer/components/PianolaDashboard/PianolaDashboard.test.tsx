@@ -11,6 +11,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import type { Theme } from '../../../../renderer/types';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab } from '../../../helpers/mockTab';
 import type {
 	DashboardData,
 	PortfolioData,
@@ -106,6 +109,7 @@ const refresh = vi.fn();
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	useSessionStore.setState({ sessions: [] });
 	mockHook(populatedData());
 });
 
@@ -165,6 +169,62 @@ describe('PianolaDashboard data mapping', () => {
 });
 
 describe('PianolaDashboard portfolio', () => {
+	it('jumps to the original escalation tab rather than the currently active conversation', () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'lead',
+					activeTabId: 'other',
+					aiTabs: [createMockAITab({ id: 'origin' }), createMockAITab({ id: 'other' })],
+				}),
+			],
+		});
+		mockHook(emptyData(), {
+			...emptyPortfolio(),
+			escalations: [
+				{
+					key: 'escalation:d1',
+					kind: 'escalation',
+					title: 'Choose provider',
+					sessionId: 'lead',
+					tabId: 'origin',
+					since: now,
+				},
+			],
+		});
+		const onJump = vi.fn();
+		render(<PianolaDashboard theme={theme} onJumpToAgent={onJump} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Choose provider' }));
+		expect(onJump).toHaveBeenCalledWith('lead');
+		expect(useSessionStore.getState().sessions[0].activeTabId).toBe('origin');
+	});
+
+	it('keeps founder context readable and described while entering and submitting a decision', async () => {
+		const detail =
+			'Stripe costs 2 percent; Adyen costs 3 percent. Choose the provider for checkout.';
+		mockHook(emptyData(), {
+			...emptyPortfolio(),
+			asks: [{ id: 'context', title: 'Choose provider', detail, severity: 'high', since: now }],
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		const row = within(screen.getByTestId('pianola-ask-context'));
+		expect(row.getByText(detail)).toBeVisible();
+		const resolve = row.getByRole('button', { name: 'Resolve' });
+		expect(resolve).toHaveAccessibleDescription(detail);
+		resolve.focus();
+		fireEvent.click(resolve);
+		expect(row.getByRole('group', { name: 'Resolve Choose provider' })).toHaveAccessibleDescription(
+			detail
+		);
+		expect(row.getByText(detail)).toBeVisible();
+		fireEvent.change(row.getByPlaceholderText('Your decision'), { target: { value: 'Stripe' } });
+		const submit = row.getByRole('button', { name: 'Submit' });
+		expect(submit).toHaveAccessibleDescription(detail);
+		fireEvent.click(submit);
+		await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+		expect(window.maestro.pianola.resolveAsk).toHaveBeenCalledWith('context', 'Stripe', undefined);
+	});
+
 	it('shows the program strip, a founder ask, and verified results grouped by program', () => {
 		mockHook(emptyData(), {
 			...emptyPortfolio(),

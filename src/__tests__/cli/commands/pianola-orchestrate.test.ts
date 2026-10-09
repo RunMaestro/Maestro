@@ -43,6 +43,9 @@ vi.mock('../../../cli/services/pianola-store', () => ({
 	readPianolaPlans: vi.fn(() => []),
 	getPianolaPlan: vi.fn(),
 	upsertPianolaPlan: vi.fn(),
+	updatePianolaPlans: vi.fn((update: (plans: PianolaPlan[]) => PianolaPlan[]) =>
+		update(readPianolaPlans())
+	),
 	readPianolaPrograms: vi.fn(() => []),
 }));
 vi.mock('../../../cli/services/maestro-client', () => ({
@@ -68,16 +71,16 @@ import {
 	pianolaOrchestrate,
 	pianolaPlanSet,
 	pianolaValidate,
-	quoteForPosixShell,
+	sandboxLaunchOptions,
 	resolveExistingPianolaAgentType,
 	resolvePianolaSandboxRunner,
-	sandboxSpawnArgs,
 } from '../../../cli/commands/pianola-orchestrate';
 import { readSettingValue } from '../../../cli/services/storage';
 import {
 	getPianolaPlan,
 	readPianolaPlans,
 	upsertPianolaPlan,
+	updatePianolaPlans,
 	readPianolaPrograms,
 } from '../../../cli/services/pianola-store';
 import { runDispatch } from '../../../cli/commands/dispatch';
@@ -876,6 +879,36 @@ describe('pianola validate CLI', () => {
 });
 
 describe('pianola plan set', () => {
+	it('checks program exclusivity against the locked transaction snapshot', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-plan-transaction-'));
+		const file = path.join(dir, 'plan.json');
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+			throw new Error('exit');
+		}) as never);
+		const competitor: PianolaPlan = {
+			...PLAN,
+			id: 'competitor',
+			programId: 'product',
+			tasks: [{ id: 'a', title: 'A', prompt: 'p', dependsOn: [], status: 'pending' }],
+		};
+		let saved = [competitor];
+		vi.mocked(readSettingValue).mockReturnValue({ pianola: true });
+		vi.mocked(readPianolaPlans).mockReturnValue([]);
+		vi.mocked(updatePianolaPlans).mockImplementationOnce((update) => (saved = update(saved)));
+		fs.writeFileSync(file, JSON.stringify({ ...competitor, id: 'new' }));
+		try {
+			expect(() => pianolaPlanSet({ file, json: true })).toThrow('exit');
+			expect(JSON.parse(log.mock.lastCall![0] as string)).toMatchObject({ success: false });
+			expect(saved).toEqual([competitor]);
+			expect(saved.some((plan) => plan.id === 'new')).toBe(false);
+			expect(updatePianolaPlans).toHaveBeenCalled();
+		} finally {
+			exit.mockRestore();
+			log.mockRestore();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	it('refuses to overwrite a plan whose tasks have already started', () => {
 		// A lead that reuses an earlier plan id would erase the run history and verified rows
 		// hanging off it; the new outcome has to get a new id.
@@ -916,68 +949,44 @@ describe('pianola plan set', () => {
 	});
 });
 
-describe('sandbox launcher arguments', () => {
-	it('single-quotes every argument when the runner is reached through wsl.exe', () => {
-		// wsl.exe hands its argv to bash -c; an unquoted Go -run regex breaks that shell.
-		const args = ['--', 'go', 'test', '-run', '^(A|B)$', "it's"];
-		expect(
-			sandboxSpawnArgs('wsl.exe', args, [
-				'--',
+describe.runIf(process.platform === 'win32')('real WSL oracle argument boundary', () => {
+	it.each([
+		{ mode: 'exec', prefix: ['--exec'] },
+		{ mode: 'short exec', prefix: ['-e'] },
+		{ mode: 'no shell', prefix: ['--shell-type', 'none'] },
+		{ mode: 'default shell', prefix: ['--'] },
+		{ mode: 'login shell', prefix: ['--shell-type', 'login', '--'] },
+	])(
+		'preserves quotes, whitespace, and metacharacters through $mode',
+		async ({ prefix }, context) => {
+			const { spawnSync } =
+				await vi.importActual<typeof import('node:child_process')>('node:child_process');
+			const probe = spawnSync('wsl.exe', ['--exec', 'python3', '-c', 'pass'], {
+				encoding: 'utf8',
+				timeout: 10000,
+				windowsHide: true,
+			});
+			if (probe.status !== 0) context.skip(probe.stderr || 'WSL Python is unavailable');
+			const expected = ["it's", '^(A|B)$', 'space with words', 'double" quote', 'Unicode café'];
+			const launch = sandboxLaunchOptions('wsl.exe', expected, [
+				...prefix,
 				'python3',
-				'/mnt/c/Program Files/Maestro/sandbox_runner.py',
-			])
-		).toEqual([
-			'--',
-			"'python3'",
-			"'/mnt/c/Program Files/Maestro/sandbox_runner.py'",
-			...args.map(quoteForPosixShell),
-		]);
-		expect(sandboxSpawnArgs('wsl.exe', args)).toEqual([
-			"'--'",
-			"'go'",
-			"'test'",
-			"'-run'",
-			"'^(A|B)$'",
-			"'it'\\''s'",
-		]);
-		expect(sandboxSpawnArgs('C:\\Windows\\System32\\wsl.exe', ['x'])).toEqual(["'x'"]);
-	});
-	it('passes arguments through untouched for a direct runner', () => {
-		expect(sandboxSpawnArgs('python3', ['-run', '^(A|B)$'])).toEqual(['-run', '^(A|B)$']);
-	});
-	it('escapes embedded single quotes for a POSIX shell', () => {
-		expect(quoteForPosixShell("a'b")).toBe("'a'\\''b'");
-	});
+				'-c',
+				'import json,sys; print(json.dumps(sys.argv[1:]))',
+			]);
+			const result = spawnSync('wsl.exe', launch.args, {
+				encoding: 'utf8',
+				timeout: 10000,
+				windowsHide: true,
+				windowsVerbatimArguments: launch.windowsVerbatimArguments,
+			});
+			expect(result.status, result.stderr).toBe(0);
+			expect(JSON.parse(result.stdout)).toEqual(expected);
+		}
+	);
 });
 
 describe('portable default sandbox runner', () => {
-	it.each(['linux', 'darwin', 'win32'] as const)(
-		'resolves a repository runner from the installed CLI on %s',
-		(platform) => {
-			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-default-'));
-			try {
-				const runner = path.join(dir, 'scripts/pianola-sandbox/sandbox_runner.py');
-				fs.mkdirSync(path.dirname(runner), { recursive: true });
-				fs.writeFileSync(runner, '');
-				const prefix = resolvePianolaSandboxRunner(path.join(dir, 'dist/cli'), platform);
-				expect(prefix).toEqual(
-					platform === 'win32'
-						? [
-								'wsl.exe',
-								'--',
-								'python3',
-								runner
-									.replace(/^([a-z]):[\\/]/i, (_, drive: string) => `/mnt/${drive.toLowerCase()}/`)
-									.replace(/\\/g, '/'),
-							]
-						: ['python3', runner]
-				);
-			} finally {
-				fs.rmSync(dir, { recursive: true, force: true });
-			}
-		}
-	);
-
 	it('names the override when the installed runner is absent', () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-no-runner-'));
 		try {

@@ -160,6 +160,17 @@
 					"to": "permission-relay-bridge.js"
 				},
 				{
+					"from": "scripts/pianola-sandbox/sandbox_runner.py",
+					"to": "scripts/pianola-sandbox/sandbox_runner.py"
+				},
+				{
+					"from": "src/prompts/pianola-program-loop",
+					"to": "prompts/core/pianola-program-loop",
+					"filter": [
+						"*.md"
+					]
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -219,6 +230,17 @@
 					"to": "permission-relay-bridge.js"
 				},
 				{
+					"from": "scripts/pianola-sandbox/sandbox_runner.py",
+					"to": "scripts/pianola-sandbox/sandbox_runner.py"
+				},
+				{
+					"from": "src/prompts/pianola-program-loop",
+					"to": "prompts/core/pianola-program-loop",
+					"filter": [
+						"*.md"
+					]
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -268,6 +290,17 @@
 				{
 					"from": "dist/cli/permission-relay-bridge.js",
 					"to": "permission-relay-bridge.js"
+				},
+				{
+					"from": "scripts/pianola-sandbox/sandbox_runner.py",
+					"to": "scripts/pianola-sandbox/sandbox_runner.py"
+				},
+				{
+					"from": "src/prompts/pianola-program-loop",
+					"to": "prompts/core/pianola-program-loop",
+					"filter": [
+						"*.md"
+					]
 				},
 				{
 					"from": "src/prompts",

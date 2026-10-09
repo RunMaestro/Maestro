@@ -161,7 +161,7 @@ describe('portfolio files', () => {
 		expect(Object.keys(store.readProgramLoopMemo())).toEqual(['__proto__']);
 		expect(store.readProgramLoopMemo()['__proto__'].notifiedTaskIds).toEqual(['plan:task']);
 	});
-	it.each(['memo', 'targets'])(
+	it.each(['memo', 'targets', 'plans', 'programs'])(
 		'serializes %s updates across two independent processes',
 		async (kind) => {
 			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-memo-processes-'));
@@ -180,8 +180,18 @@ describe('portfolio files', () => {
 				trailingNewline: true,
 			});
 			if (kind === 'memo') initial.writeProgramLoopMemo({});
-			else initial.writeSupervisorTargets([]);
+			else if (kind === 'targets') initial.writeSupervisorTargets([]);
+			else if (kind === 'plans') initial.writePlans([]);
+			else initial.writePrograms([]);
 			const workers = ['one', 'two'].map((id) => {
+				const filename =
+					kind === 'memo'
+						? 'maestro-pianola-program-loop.json'
+						: kind === 'targets'
+							? 'maestro-pianola-supervisor.json'
+							: kind === 'plans'
+								? 'maestro-pianola-plans.json'
+								: 'maestro-pianola-programs.json';
 				const script = [
 					'const fs = require("fs");',
 					'const store = require(' +
@@ -189,13 +199,8 @@ describe('portfolio files', () => {
 						').createPianolaFsStore({ resolveDir: () => ' +
 						JSON.stringify(dir) +
 						', indent: 2, trailingNewline: true });',
-					kind === 'memo' ? 'store.readProgramLoopMemo();' : 'store.readSupervisorTargets();',
 					'const read = fs.readFileSync; fs.readFileSync = (file, ...args) => { const value = read.call(fs, file, ...args); if (String(file).endsWith(' +
-						JSON.stringify(
-							kind === 'memo'
-								? 'maestro-pianola-program-loop.json'
-								: 'maestro-pianola-supervisor.json'
-						) +
+						JSON.stringify(filename) +
 						')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); return value; };',
 					'console.log("ready");',
 					kind === 'memo'
@@ -204,16 +209,50 @@ describe('portfolio files', () => {
 							', { notifiedTaskIds: [' +
 							JSON.stringify(id + ':task') +
 							'] }); process.stdin.destroy(); });'
-						: 'process.stdin.once("data", () => { store.upsertSupervisorTarget(' +
-							JSON.stringify({
-								id,
-								kind: 'watch',
-								agentId: id,
-								tabId: id,
-								enabled: true,
-								createdAt: 1,
-							}) +
-							'); process.stdin.destroy(); });',
+						: kind === 'targets'
+							? 'process.stdin.once("data", () => { store.upsertSupervisorTarget(' +
+								JSON.stringify({
+									id,
+									kind: 'watch',
+									agentId: id,
+									tabId: id,
+									enabled: true,
+									createdAt: 1,
+								}) +
+								'); process.stdin.destroy(); });'
+							: 'process.stdin.once("data", () => { store.' +
+								(kind === 'plans' ? 'upsertPlan' : 'upsertProgram') +
+								'(' +
+								JSON.stringify(
+									kind === 'plans'
+										? {
+												id,
+												title: id,
+												createdAt: 1,
+												tasks: [
+													{
+														id: 'task',
+														title: id,
+														prompt: 'Work',
+														dependsOn: [],
+														status: 'running',
+														agentId: id,
+														tabId: id,
+													},
+												],
+											}
+										: {
+												id,
+												title: id,
+												root: '/product',
+												roles: {},
+												charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+												status: 'paused',
+												createdAt: 1,
+												updatedAt: 2,
+											}
+								) +
+								'); process.stdin.destroy(); });',
 				].join('\n');
 				const child = spawn(process.execPath, ['-e', script], { stdio: ['pipe', 'pipe', 'pipe'] });
 				let errors = '';
@@ -250,13 +289,35 @@ describe('portfolio files', () => {
 						one: { notifiedTaskIds: ['one:task'] },
 						two: { notifiedTaskIds: ['two:task'] },
 					});
-				else
+				else if (kind === 'targets')
 					expect(
 						store
 							.readSupervisorTargets()
 							.map((target) => target.id)
 							.sort()
 					).toEqual(['one', 'two']);
+				else if (kind === 'plans') {
+					expect(
+						store
+							.readPlans()
+							.map((plan) => plan.id)
+							.sort()
+					).toEqual(['one', 'two']);
+					for (const plan of store.readPlans())
+						expect(plan.tasks[0]).toMatchObject({
+							status: 'running',
+							agentId: plan.id,
+							tabId: plan.id,
+						});
+				} else {
+					expect(
+						store
+							.readPrograms()
+							.map((program) => program.id)
+							.sort()
+					).toEqual(['one', 'two']);
+					for (const program of store.readPrograms()) expect(program.status).toBe('paused');
+				}
 			} finally {
 				for (const worker of workers) if (worker.child.exitCode === null) worker.child.kill();
 			}
@@ -282,7 +343,7 @@ describe('portfolio files', () => {
 			two: { notifiedTaskIds: ['q:u'] },
 		});
 	});
-	it('uses independent temporary files when writes overlap, even in the same millisecond', () => {
+	it('uses unique temporary files for serialized writes in the same millisecond', async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-atomic-'));
 		dirs.push(dir);
 		const store = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
@@ -298,25 +359,57 @@ describe('portfolio files', () => {
 		};
 		vi.spyOn(Date, 'now').mockReturnValue(1234);
 		const tempNames = new Set<string>();
-		let nested = false;
-		renameOverride = (from, to) => {
+		const recordRename = (from: fs.PathLike, to: fs.PathLike): void => {
 			tempNames.add(String(from));
-			if (!nested) {
-				nested = true;
-				// A second writer lands while the first is between write and rename.
-				store.writePrograms([{ ...program, id: 'inner', title: 'Inner' }]);
-			}
 			renameOverride = null;
-			fs.renameSync(from, to);
+			try {
+				fs.renameSync(from, to);
+			} finally {
+				renameOverride = recordRename;
+			}
 		};
+		renameOverride = recordRename;
 		try {
-			store.writePrograms([program]);
+			await Promise.all([
+				store.upsertProgramAsync(program),
+				store.upsertProgramAsync({ ...program, id: 'inner' }),
+			]);
 		} finally {
 			renameOverride = null;
 		}
-		expect(store.readPrograms()).toEqual([program]);
+		expect(store.readPrograms().map((entry) => entry.id)).toEqual(['outer', 'inner']);
 		expect(tempNames.size).toBe(2);
 		expect(fs.readdirSync(dir).filter((file) => file.endsWith('.tmp'))).toEqual([]);
+	});
+	it('holds per-program loop ownership through awaits and releases rejected operations', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-loop-lock-'));
+		dirs.push(dir);
+		const store = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const first = store.withProgramLoopLock('../unsafe/id', async () => {
+			await gate;
+			return 1;
+		});
+		const secondOperation = vi.fn(async () => 2);
+		const second = store.withProgramLoopLock('../unsafe/id', secondOperation);
+		expect(await store.withProgramLoopLock('other', async () => 3)).toBe(3);
+		await new Promise<void>((resolve) => setTimeout(resolve, 20));
+		expect(secondOperation).not.toHaveBeenCalled();
+		expect(fs.readdirSync(dir)).toEqual([
+			expect.stringMatching(/^pianola-program-loop-[a-f0-9]{64}\.lock$/),
+		]);
+		release();
+		expect(await Promise.all([first, second])).toEqual([1, 2]);
+		await expect(
+			store.withProgramLoopLock('../unsafe/id', async () => {
+				throw new Error('failed');
+			})
+		).rejects.toThrow('failed');
+		expect(await store.withProgramLoopLock('../unsafe/id', async () => 4)).toBe(4);
+		expect(fs.readdirSync(dir)).toEqual([]);
 	});
 	it('releases the asks lock after a failed mutation and recovers an abandoned stale lock', () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-asks-lock-'));

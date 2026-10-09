@@ -14,6 +14,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { assertSerializedJsonIsSafe } from '../jsonUtils';
 import {
 	PIANOLA_RULES_FILENAME,
@@ -77,9 +78,21 @@ export interface PianolaFsStore {
 	writePlans(plans: PianolaPlan[]): PianolaPlan[];
 	getPlan(planId: string): PianolaPlan | null;
 	upsertPlan(plan: PianolaPlan): PianolaPlan[];
+	updatePlans(update: (plans: PianolaPlan[]) => PianolaPlan[]): PianolaPlan[];
+	writePlansAsync(plans: PianolaPlan[]): Promise<PianolaPlan[]>;
+	updatePlansAsync(update: (plans: PianolaPlan[]) => PianolaPlan[]): Promise<PianolaPlan[]>;
+	upsertPlanAsync(plan: PianolaPlan): Promise<PianolaPlan[]>;
 	readPrograms(): PianolaProgram[];
 	writePrograms(programs: PianolaProgram[]): PianolaProgram[];
 	upsertProgram(program: PianolaProgram): PianolaProgram[];
+	updatePrograms(update: (programs: PianolaProgram[]) => PianolaProgram[]): PianolaProgram[];
+	writeProgramsAsync(programs: PianolaProgram[]): Promise<PianolaProgram[]>;
+	updateProgramsAsync(
+		update: (programs: PianolaProgram[]) => PianolaProgram[]
+	): Promise<PianolaProgram[]>;
+	upsertProgramAsync(program: PianolaProgram): Promise<PianolaProgram[]>;
+	/** Hold exclusive ownership across the complete asynchronous loop tick. */
+	withProgramLoopLock<T>(programId: string, operation: () => Promise<T>): Promise<T>;
 	readAsks(): PianolaAsk[];
 	writeAsks(asks: PianolaAsk[]): PianolaAsk[];
 	updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[];
@@ -234,7 +247,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		);
 	}
 
-	function writePlans(plans: PianolaPlan[]): PianolaPlan[] {
+	function persistPlans(plans: PianolaPlan[]): PianolaPlan[] {
 		const validated = validatePianolaPlansFile({ plans }).plans;
 		writeJsonAtomic(PIANOLA_PLANS_FILENAME, { plans: validated });
 		return validated;
@@ -244,11 +257,35 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return readPlans().find((p) => p.id === planId) ?? null;
 	}
 
-	function upsertPlan(plan: PianolaPlan): PianolaPlan[] {
-		const current = readPlans();
-		const index = current.findIndex((p) => p.id === plan.id);
-		const next = index >= 0 ? current.map((p, i) => (i === index ? plan : p)) : [...current, plan];
-		return writePlans(next);
+	function upsertPlan(value: PianolaPlan): PianolaPlan[] {
+		return updatePlans((current) =>
+			current.some((p) => p.id === value.id)
+				? current.map((p) => (p.id === value.id ? value : p))
+				: [...current, value]
+		);
+	}
+	function upsertPlanAsync(value: PianolaPlan): Promise<PianolaPlan[]> {
+		return updatePlansAsync((current) =>
+			current.some((p) => p.id === value.id)
+				? current.map((p) => (p.id === value.id ? value : p))
+				: [...current, value]
+		);
+	}
+	function writePlans(values: PianolaPlan[]): PianolaPlan[] {
+		return withFileLock(PIANOLA_PLANS_FILENAME, 'plans', () => persistPlans(values));
+	}
+	function updatePlans(update: (values: PianolaPlan[]) => PianolaPlan[]): PianolaPlan[] {
+		return withFileLock(PIANOLA_PLANS_FILENAME, 'plans', () => persistPlans(update(readPlans())));
+	}
+	function writePlansAsync(values: PianolaPlan[]): Promise<PianolaPlan[]> {
+		return withFileLockAsync(PIANOLA_PLANS_FILENAME, 'plans', () => persistPlans(values));
+	}
+	function updatePlansAsync(
+		update: (values: PianolaPlan[]) => PianolaPlan[]
+	): Promise<PianolaPlan[]> {
+		return withFileLockAsync(PIANOLA_PLANS_FILENAME, 'plans', () =>
+			persistPlans(update(readPlans()))
+		);
 	}
 
 	function readPrograms(): PianolaProgram[] {
@@ -258,16 +295,43 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			(raw) => validatePianolaProgramsFile(raw).programs
 		);
 	}
-	function writePrograms(programs: PianolaProgram[]): PianolaProgram[] {
+	function persistPrograms(programs: PianolaProgram[]): PianolaProgram[] {
 		const validated = validatePianolaProgramsFile({ programs }).programs;
 		writeJsonAtomic(PIANOLA_PROGRAMS_FILENAME, { programs: validated });
 		return validated;
 	}
-	function upsertProgram(program: PianolaProgram): PianolaProgram[] {
-		const current = readPrograms();
-		const index = current.findIndex((p) => p.id === program.id);
-		return writePrograms(
-			index < 0 ? [...current, program] : current.map((p, i) => (i === index ? program : p))
+	function upsertProgram(value: PianolaProgram): PianolaProgram[] {
+		return updatePrograms((current) =>
+			current.some((p) => p.id === value.id)
+				? current.map((p) => (p.id === value.id ? value : p))
+				: [...current, value]
+		);
+	}
+	function upsertProgramAsync(value: PianolaProgram): Promise<PianolaProgram[]> {
+		return updateProgramsAsync((current) =>
+			current.some((p) => p.id === value.id)
+				? current.map((p) => (p.id === value.id ? value : p))
+				: [...current, value]
+		);
+	}
+	function writePrograms(values: PianolaProgram[]): PianolaProgram[] {
+		return withFileLock(PIANOLA_PROGRAMS_FILENAME, 'programs', () => persistPrograms(values));
+	}
+	function updatePrograms(
+		update: (values: PianolaProgram[]) => PianolaProgram[]
+	): PianolaProgram[] {
+		return withFileLock(PIANOLA_PROGRAMS_FILENAME, 'programs', () =>
+			persistPrograms(update(readPrograms()))
+		);
+	}
+	function writeProgramsAsync(values: PianolaProgram[]): Promise<PianolaProgram[]> {
+		return withFileLockAsync(PIANOLA_PROGRAMS_FILENAME, 'programs', () => persistPrograms(values));
+	}
+	function updateProgramsAsync(
+		update: (values: PianolaProgram[]) => PianolaProgram[]
+	): Promise<PianolaProgram[]> {
+		return withFileLockAsync(PIANOLA_PROGRAMS_FILENAME, 'programs', () =>
+			persistPrograms(update(readPrograms()))
 		);
 	}
 	function readAsks(): PianolaAsk[] {
@@ -347,7 +411,11 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			attempt.value();
 		}
 	}
-	async function withFileLockAsync<T>(name: string, label: string, operation: () => T): Promise<T> {
+	async function withFileLockAsync<T>(
+		name: string,
+		label: string,
+		operation: () => T | Promise<T>
+	): Promise<T> {
 		const acquisition = acquireFileLock(name, label);
 		let attempt = acquisition.next();
 		while (!attempt.done) {
@@ -355,10 +423,14 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			attempt = acquisition.next();
 		}
 		try {
-			return operation();
+			return await operation();
 		} finally {
 			attempt.value();
 		}
+	}
+	function withProgramLoopLock<T>(programId: string, operation: () => Promise<T>): Promise<T> {
+		const key = createHash('sha256').update(programId).digest('hex');
+		return withFileLockAsync(`pianola-program-loop-${key}`, 'program loop', operation);
 	}
 	function persistAsks(asks: PianolaAsk[]): PianolaAsk[] {
 		const validated = validatePianolaAsksFile({ asks }).asks;
@@ -542,9 +614,18 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		writePlans,
 		getPlan,
 		upsertPlan,
+		updatePlans,
+		writePlansAsync,
+		updatePlansAsync,
+		upsertPlanAsync,
 		readPrograms,
 		writePrograms,
 		upsertProgram,
+		updatePrograms,
+		writeProgramsAsync,
+		updateProgramsAsync,
+		upsertProgramAsync,
+		withProgramLoopLock,
 		readAsks,
 		writeAsks,
 		updateAsks,

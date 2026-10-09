@@ -25,6 +25,7 @@ import {
 	readPianolaPlans,
 	getPianolaPlan,
 	upsertPianolaPlan,
+	updatePianolaPlans,
 	readPianolaPrograms,
 } from '../services/pianola-store';
 import {
@@ -87,7 +88,7 @@ export function resolvePianolaSandboxRunner(
 ): string[] {
 	const candidates = [
 		path.resolve(cliDir, 'scripts/pianola-sandbox/sandbox_runner.py'),
-		// build:cli does not copy the runner; dist/cli falls back to the repository root.
+		// Repository fallback for development builds without copied resources.
 		path.resolve(cliDir, '../../scripts/pianola-sandbox/sandbox_runner.py'),
 		// Unbundled source execution (src/cli/commands).
 		path.resolve(cliDir, '../../../scripts/pianola-sandbox/sandbox_runner.py'),
@@ -97,7 +98,7 @@ export function resolvePianolaSandboxRunner(
 			if (!fs.statSync(candidate).isFile()) continue;
 			fs.accessSync(candidate, fs.constants.R_OK);
 			return platform === 'win32'
-				? ['wsl.exe', '--', 'python3', translatePianolaSandboxPath(candidate)]
+				? ['wsl.exe', '--exec', 'python3', translatePianolaSandboxPath(candidate)]
 				: ['python3', candidate];
 		} catch {
 			continue;
@@ -240,29 +241,43 @@ function auditAgentRunAction(
 }
 
 /** Single-quote one argument for a POSIX shell (`'` becomes `'\''`). */
-export function quoteForPosixShell(value: string): string {
+function quoteForPosixShell(value: string): string {
 	return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-/**
- * Arguments as the runner's launcher must receive them. wsl.exe joins its argv into one
- * `bash -c` string on the Linux side, so a Go `-run '^(A|B)$'` regex or a glob would be
- * parsed by that shell; each argument is single-quoted there and arrives verbatim.
- */
-export function sandboxSpawnArgs(
+function quoteForWindowsCommandLine(value: string): string {
+	if (!/[\s"]/.test(value)) return value;
+	return '"' + value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+}
+
+/** Shell-mode WSL needs POSIX quotes without Node adding a second Windows quoting layer. */
+export function sandboxLaunchOptions(
 	launcher: string,
 	args: readonly string[],
 	prefix: readonly string[] = []
-): string[] {
+): { args: string[]; windowsVerbatimArguments: boolean } {
 	const crossesWsl = /(^|[\\/])wsl(\.exe)?$/i.test(launcher);
-	const separator = crossesWsl ? prefix.indexOf('--') : -1;
-	return separator >= 0
-		? [
-				...prefix.slice(0, separator + 1),
-				...prefix.slice(separator + 1).map(quoteForPosixShell),
-				...args.map(quoteForPosixShell),
-			]
-		: [...prefix, ...(crossesWsl ? args.map(quoteForPosixShell) : args)];
+	if (!crossesWsl) return { args: [...prefix, ...args], windowsVerbatimArguments: false };
+	const separator = prefix.indexOf('--');
+	const options = separator >= 0 ? prefix.slice(0, separator) : prefix;
+	const directExec = options.some(
+		(value, index) =>
+			value === '--exec' ||
+			value === '-e' ||
+			(value === '--shell-type' && options[index + 1] === 'none')
+	);
+	if (directExec) return { args: [...prefix, ...args], windowsVerbatimArguments: false };
+	return {
+		args:
+			separator >= 0
+				? [
+						...prefix.slice(0, separator + 1).map(quoteForWindowsCommandLine),
+						...prefix.slice(separator + 1).map(quoteForPosixShell),
+						...args.map(quoteForPosixShell),
+					]
+				: [...prefix.map(quoteForWindowsCommandLine), ...args.map(quoteForPosixShell)],
+		windowsVerbatimArguments: true,
+	};
 }
 
 async function runSandbox(
@@ -290,10 +305,12 @@ async function runSandbox(
 		'--',
 		...spec.command,
 	];
-	// WSL receives POSIX-quoted oracle arguments; launcher flags remain untouched.
-	const spawnArgs = sandboxSpawnArgs(prefix[0], runnerArgs, prefix.slice(1));
+	const launch = sandboxLaunchOptions(prefix[0], runnerArgs, prefix.slice(1));
 	return new Promise((resolve) => {
-		const child = spawn(prefix[0], spawnArgs, { windowsHide: true });
+		const child = spawn(prefix[0], launch.args, {
+			windowsHide: true,
+			windowsVerbatimArguments: launch.windowsVerbatimArguments,
+		});
 		let stdout = '';
 		let stderr = '';
 		const wallSeconds = (spec.timeoutSeconds ?? 120) + SANDBOX_LAUNCH_GRACE_SECONDS;
@@ -680,23 +697,24 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 		return;
 	}
 
-	const existingPlans = readPianolaPlans();
-	// A plan whose tasks have run is history (its run ids and verified rows hang off it);
-	// a new handoff that reuses the id must pick a fresh one instead of overwriting it.
-	const started = existingPlans.find(
-		(p) => p.id === plan.id && p.tasks.some((task) => task.status !== 'pending')
-	);
-	if (started) {
-		return fail(
-			`Plan "${plan.id}" has already started (${started.title}); save the new plan under a new id`
-		);
-	}
 	try {
-		assertOneActivePlanPerProgram(plan, existingPlans);
+		updatePianolaPlans((existingPlans) => {
+			// Started plans are history: reject replacements inside the same transaction.
+			const started = existingPlans.find(
+				(p) => p.id === plan.id && p.tasks.some((task) => task.status !== 'pending')
+			);
+			if (started)
+				throw new Error(
+					`Plan "${plan.id}" has already started (${started.title}); save the new plan under a new id`
+				);
+			assertOneActivePlanPerProgram(plan, existingPlans);
+			return existingPlans.some((p) => p.id === plan.id)
+				? existingPlans.map((p) => (p.id === plan.id ? plan : p))
+				: [...existingPlans, plan];
+		});
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	}
-	upsertPianolaPlan(plan);
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, planId: plan.id, taskCount: plan.tasks.length }));
 	} else {
