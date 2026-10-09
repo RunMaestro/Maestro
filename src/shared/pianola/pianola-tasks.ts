@@ -396,6 +396,47 @@ export function markTaskStatus(
 	return { ...plan, tasks };
 }
 
+/** Requeue reviewed work while preserving its oracle, role agent, and completed dependencies. */
+export function revisePlanTask(plan: PianolaPlan, taskId: string, prompt: string): PianolaPlan {
+	if (!prompt.trim()) throw new Error('A revised task requires a non-empty prompt.');
+	const task = plan.tasks.find((entry) => entry.id === taskId);
+	if (!task) throw new Error(`No task with id "${taskId}" in plan "${plan.id}".`);
+	if (task.status !== 'needs_review' && task.status !== 'failed')
+		throw new Error(`Task "${taskId}" must be awaiting review or failed before revision.`);
+	const revised: PianolaTask = { ...task, prompt, status: 'pending' };
+	delete revised.tabId;
+	delete revised.runId;
+	delete revised.error;
+	delete revised.fixAttempts;
+	delete revised.validationUnknownAttempts;
+	delete revised.dispatchedMessageCount;
+	delete revised.dispatchedMessageId;
+	const byId = new Map(plan.tasks.map((entry) => [entry.id, entry]));
+	byId.set(taskId, revised);
+	const reopened = new Set([taskId]);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const original of plan.tasks) {
+			const entry = byId.get(original.id)!;
+			if (entry.status !== 'blocked' || !entry.dependsOn.some((id) => reopened.has(id))) continue;
+			if (
+				entry.dependsOn.some((id) => {
+					const status = byId.get(id)?.status;
+					return status === 'failed' || status === 'skipped' || status === 'blocked';
+				})
+			)
+				continue;
+			const next: PianolaTask = { ...entry, status: 'pending' };
+			delete next.error;
+			byId.set(entry.id, next);
+			reopened.add(entry.id);
+			changed = true;
+		}
+	}
+	return { ...plan, tasks: plan.tasks.map((entry) => byId.get(entry.id)!) };
+}
+
 /**
  * Mark as 'blocked' any non-terminal, non-running task that has at least one
  * dependency which is failed, skipped, or already blocked. Applied iteratively

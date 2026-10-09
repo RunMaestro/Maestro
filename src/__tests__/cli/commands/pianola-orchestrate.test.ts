@@ -47,6 +47,7 @@ vi.mock('../../../cli/services/pianola-store', () => ({
 		update(readPianolaPlans())
 	),
 	readPianolaPrograms: vi.fn(() => []),
+	withPianolaPlanLock: vi.fn((_id: string, operation: () => Promise<unknown>) => operation()),
 }));
 vi.mock('../../../cli/services/maestro-client', () => ({
 	MaestroClient: class {
@@ -70,6 +71,7 @@ vi.mock('../../../cli/services/agent-run-store', () => ({
 import {
 	pianolaOrchestrate,
 	pianolaPlanSet,
+	pianolaPlanRevise,
 	pianolaValidate,
 	sandboxLaunchOptions,
 	resolveExistingPianolaAgentType,
@@ -127,6 +129,65 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		findActiveRunBySessionMock.mockReturnValue(undefined);
 		upsertAgentRunMock.mockImplementation((run) => run);
 		appendAgentRunEventMock.mockImplementation((event) => event);
+	});
+
+	it('dispatches the persisted founder revision instead of its startup snapshot', async () => {
+		const { runOrchestratorIteration: actualIteration } = await vi.importActual<
+			typeof import('../../../shared/pianola/pianola-orchestrator')
+		>('../../../shared/pianola/pianola-orchestrator');
+		const completed = {
+			id: 'done',
+			title: 'Done',
+			prompt: 'Done',
+			status: 'done' as const,
+			dependsOn: [],
+		};
+		const original: PianolaPlan = {
+			...PLAN,
+			tasks: [
+				completed,
+				{
+					id: 'reviewed',
+					title: 'Answer',
+					prompt: 'Old prompt',
+					status: 'needs_review',
+					dependsOn: ['done'],
+					agentId: 'engineer',
+				},
+			],
+		};
+		const revised: PianolaPlan = {
+			...original,
+			tasks: [completed, { ...original.tasks[1], status: 'pending', prompt: 'Founder correction' }],
+		};
+		vi.mocked(getPianolaPlan).mockReturnValueOnce(original).mockReturnValue(revised);
+		sendCommandMock.mockImplementation(async (command) =>
+			command.type === 'list_desktop_sessions'
+				? {
+						sessions: [
+							{
+								agentId: 'engineer',
+								sessionId: 'tab',
+								tabId: 'tab',
+								toolType: 'codex',
+								state: 'idle',
+								active: true,
+							},
+						],
+					}
+				: { success: true, messages: [] }
+		);
+		vi.mocked(runDispatch).mockResolvedValue({ success: true, sessionId: 'tab' });
+		runIterationMock.mockImplementation(actualIteration);
+		let persisted: PianolaPlan | undefined;
+		vi.mocked(upsertPianolaPlan).mockImplementationOnce((value) => {
+			persisted = value;
+			return [value];
+		});
+		await pianolaOrchestrate(PLAN.id, { once: true });
+		expect(runDispatch).toHaveBeenCalledWith('engineer', 'Founder correction', { tab: 'tab' });
+		expect(persisted?.tasks[0]).toEqual(completed);
+		expect(persisted?.tasks[1]).toMatchObject({ prompt: 'Founder correction', status: 'running' });
 	});
 
 	it('does not start direct orchestration for a paused program', async () => {
@@ -945,6 +1006,70 @@ describe('pianola plan set', () => {
 			exit.mockRestore();
 			log.mockRestore();
 			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('pianola plan revise', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(readSettingValue).mockReturnValue({ pianola: true });
+	});
+	it('commits the correction from the transaction snapshot and preserves other plans', async () => {
+		const completed = {
+			id: 'done',
+			title: 'Done',
+			prompt: 'Done',
+			status: 'done' as const,
+			dependsOn: [],
+			runId: 'verified',
+		};
+		const original: PianolaPlan = {
+			...PLAN,
+			tasks: [
+				completed,
+				{
+					id: 'reviewed',
+					title: 'Answer',
+					prompt: 'Old prompt',
+					status: 'needs_review',
+					dependsOn: ['done'],
+					agentId: 'engineer',
+					validation: { command: ['true'], target: '/product' },
+				},
+			],
+		};
+		const other = { ...PLAN, id: 'other' };
+		let saved = [original, other];
+		vi.mocked(readPianolaPlans).mockReturnValue([]);
+		vi.mocked(updatePianolaPlans).mockImplementationOnce((update) => (saved = update(saved)));
+		await pianolaPlanRevise(PLAN.id, 'reviewed', { prompt: 'Founder correction', json: true });
+		expect(saved[0]).toEqual({
+			...original,
+			tasks: [completed, { ...original.tasks[1], prompt: 'Founder correction', status: 'pending' }],
+		});
+		expect(saved[1]).toEqual(other);
+	});
+	it('rejects reopening a terminal plan when another plan owns the product', async () => {
+		const original: PianolaPlan = {
+			...PLAN,
+			programId: 'product',
+			tasks: [{ id: 'failed', title: 'Failed', prompt: 'Old', dependsOn: [], status: 'failed' }],
+		};
+		const competitor: PianolaPlan = {
+			...original,
+			id: 'competitor',
+			tasks: [{ ...original.tasks[0], status: 'pending' }],
+		};
+		let saved = [original, competitor];
+		vi.mocked(updatePianolaPlans).mockImplementationOnce((update) => (saved = update(saved)));
+		const exitCode = process.exitCode;
+		try {
+			await pianolaPlanRevise(PLAN.id, 'failed', { prompt: 'Correction', json: true });
+			expect(process.exitCode).toBe(1);
+			expect(saved).toEqual([original, competitor]);
+		} finally {
+			process.exitCode = exitCode;
 		}
 	});
 });

@@ -132,9 +132,12 @@ Beyond watching, Pianola can run a saved task plan, dispatching each task as its
 maestro-cli pianola plan list
 maestro-cli pianola plan show <plan-id>
 maestro-cli pianola orchestrate <plan-id>
+maestro-cli pianola plan revise <plan-id> <task-id> --prompt "<founder-approved correction>" --json
 ```
 
 Orchestrations are recorded in the agent run ledger alongside everything else, so a plan that ran overnight has the same audit trail as a prompt that was answered by a rule.
+
+After a founder resolves blocked work, the lead uses `plan revise` to correct a task in `needs_review` or `failed`. It requeues only that task and unblocks eligible descendants, preserving the plan ID, completed tasks, dependencies, role agent, and validation oracle. Prior execution bindings and corrective-attempt counters are cleared; the supervised orchestrator dispatches the revised instructions. Revision and complete orchestrator ticks share per-plan ownership, and each tick reloads the saved plan so a running supervisor cannot overwrite the correction. Active or completed tasks cannot be revised; a terminal plan cannot reopen while another unfinished plan belongs to the same program. `plan set` still refuses to replace any started plan.
 
 ## Validation
 

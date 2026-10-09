@@ -93,6 +93,8 @@ export interface PianolaFsStore {
 	upsertProgramAsync(program: PianolaProgram): Promise<PianolaProgram[]>;
 	/** Hold exclusive ownership across the complete asynchronous loop tick. */
 	withProgramLoopLock<T>(programId: string, operation: () => Promise<T>): Promise<T>;
+	/** Serialize revisions with the complete orchestrator tick for this plan. */
+	withPlanLock<T>(planId: string, operation: () => Promise<T>): Promise<T>;
 	readAsks(): PianolaAsk[];
 	writeAsks(asks: PianolaAsk[]): PianolaAsk[];
 	updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[];
@@ -432,6 +434,10 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		const key = createHash('sha256').update(programId).digest('hex');
 		return withFileLockAsync(`pianola-program-loop-${key}`, 'program loop', operation);
 	}
+	function withPlanLock<T>(planId: string, operation: () => Promise<T>): Promise<T> {
+		const key = createHash('sha256').update(planId).digest('hex');
+		return withFileLockAsync(`pianola-plan-${key}`, 'plan orchestration', operation);
+	}
 	function persistAsks(asks: PianolaAsk[]): PianolaAsk[] {
 		const validated = validatePianolaAsksFile({ asks }).asks;
 		writeJsonAtomic(PIANOLA_ASKS_FILENAME, { asks: validated });
@@ -626,6 +632,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		updateProgramsAsync,
 		upsertProgramAsync,
 		withProgramLoopLock,
+		withPlanLock,
 		readAsks,
 		writeAsks,
 		updateAsks,
