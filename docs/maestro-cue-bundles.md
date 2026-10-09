@@ -31,6 +31,14 @@ maestro-cli bundle import nightly.maestro-bundle.zip --workspace web=~/code/web
 
 While Maestro is running, `bundle export` and `bundle import` go through the app and do exactly what the Bundles tab does. With the app closed, or with `--data-dir`, they work on the data directory directly, which is how a server is provisioned. See the [CLI reference](./cli-reference) for every flag.
 
+## Agents that share a workspace
+
+When several agents work in one workspace, only its owner runs the subscriptions that are not pinned to an agent: the agent `settings.owner_agent_id` names, else the first one listed (see [One owner per workspace](./maestro-cue-server#check)). An agent export carries the subscriptions that agent runs: those pinned to it with `agent_id`, and the unpinned ones too when it is the owner.
+
+- **Exporting an agent that is not the owner** leaves `owner_agent_id` out of the bundle. It names an agent that stays behind, and none of the subscriptions in the bundle need an owner, so the agent runs the same subscriptions wherever it is imported.
+- **Importing never changes a folder's owner.** Settings already in the folder's `cue.yaml` are kept, and the bundle's are added only where the folder has none, so an imported agent does not take over the folder's own unpinned subscriptions.
+- **A pipeline bundle with unpinned subscriptions keeps their owner.** If that owner is not in the bundle (on the desktop it matches no agent, or more than one), `bundle validate` and the import report it as `unknown-agent`. Fix `settings.owner_agent_id`, or pin the subscriptions with `agent_id`, and export again.
+
 ## Claude Code assets
 
 For each workspace a Claude Code agent works in, an export can include its Claude Code setup. All three are on by default; turn them off in the tab or with `--no-claude-skills`, `--no-claude-mcp` and `--no-claude-memory`.

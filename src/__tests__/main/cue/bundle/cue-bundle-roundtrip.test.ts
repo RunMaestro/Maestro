@@ -25,8 +25,17 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { exportCueBundle } from '../../../../main/cue/bundle/cue-bundle-exporter';
 import { importCueBundle } from '../../../../main/cue/bundle/cue-bundle-importer';
+import {
+	readCueBundleArchive,
+	validateCueBundleArchive,
+} from '../../../../main/cue/bundle/cue-bundle-validator';
+import { checkCueReadiness } from '../../../../main/cue/cue-readiness';
+import { resolveConfigOwner } from '../../../../main/cue/cue-session-state';
+import { readSessionsStoreFile } from '../../../../main/stores/sessions-store-file';
 import { readZipArchive } from '../../../../main/utils/zip-archive';
+import { planSessionTurn } from '../../../../shared/maestro-lib/run/session';
 import type { CueBundleManifest } from '../../../../shared/cue-bundle-types';
+import type { SessionInfo } from '../../../../shared/types';
 
 const PRODUCER = '0.18.0';
 const COMMIT = 'c0ffee'.repeat(6) + 'c0ff';
@@ -242,6 +251,28 @@ async function importInto(bundle: string, name: string): Promise<string> {
 	return dataDir;
 }
 
+/**
+ * Names of the subscriptions in `root`'s cue.yaml that Cue runs on `agentId`,
+ * by the runtime's own owner rule: a pinned one on its agent, an unpinned one
+ * on the workspace's owner.
+ */
+function subscriptionsRunBy(agentId: string, root: string, sessions: SessionInfo[]): string[] {
+	const doc = yaml.load(fs.readFileSync(path.join(root, '.maestro/cue.yaml'), 'utf-8')) as {
+		settings?: { owner_agent_id?: string };
+		subscriptions: Array<{ name: string; agent_id?: string }>;
+	};
+	const { owner } = resolveConfigOwner({
+		projectRoot: root,
+		sessions: sessions.map((s) => ({ ...s, projectRoot: s.projectRoot || s.cwd })),
+		hasCueConfig: (r) => fs.existsSync(path.join(r, '.maestro/cue.yaml')),
+		config: { settings: doc.settings ?? {} },
+	});
+	return doc.subscriptions
+		.filter((sub) => (sub.agent_id ? sub.agent_id === agentId : owner?.id === agentId))
+		.map((sub) => sub.name)
+		.sort();
+}
+
 describe('bundle round trip', () => {
 	it('re-exports a pipeline bundle byte for byte', async () => {
 		const source = seedSource();
@@ -286,6 +317,107 @@ describe('bundle round trip', () => {
 		});
 
 		expectSameZip(first, second);
+	});
+
+	it('exports an agent that does not own its workspace so it imports, runs the same subscriptions, and re-exports byte for byte', async () => {
+		// Docs works in web, which Lead owns; it runs only what is pinned to it.
+		const source = seedSource();
+		const sourceSessions = readSessionsStoreFile(source.dataDir).sessions;
+		expect(subscriptionsRunBy('agent-docs', source.webRoot, sourceSessions)).toEqual(['docs']);
+
+		const first = path.join(tmp, 'docs-first.zip');
+		await exportCueBundle({
+			dataDir: source.dataDir,
+			agentId: 'agent-docs',
+			outputPath: first,
+			producerVersion: PRODUCER,
+		});
+		expect(
+			validateCueBundleArchive(readCueBundleArchive(first), { runningVersion: PRODUCER }).errors
+		).toEqual([]);
+		// Lead stays behind, so the owner naming it does not travel; the rest of
+		// the settings do.
+		const bundled = yaml.load(entries(first).get('workspaces/web/.maestro/cue.yaml')!) as {
+			settings?: Record<string, unknown>;
+		};
+		expect(bundled.settings).toEqual({ timeout_minutes: 30 });
+
+		const target = await importInto(first, 'docs-server');
+		const sessions = readSessionsStoreFile(target).sessions;
+		const webRoot = path.join(tmp, 'docs-server', 'a', 'web');
+		expect(subscriptionsRunBy('agent-docs', webRoot, sessions)).toEqual(['docs']);
+
+		const report = await checkCueReadiness({
+			sessions,
+			agentConfigs: {},
+			sshRemotes: [],
+			secretLookup: { env: {}, runSecretsDir: null },
+			probes: {
+				planSessionTurn: (request) =>
+					planSessionTurn({ ...request, command: request.command ?? process.execPath }),
+				isGhInstalled: async () => true,
+				binaryExists: async () => true,
+			},
+		});
+		expect(report.gaps.filter((g) => g.kind === 'cue-config')).toEqual([]);
+		expect(report.gaps.filter((g) => g.kind === 'nothing-to-run')).toEqual([]);
+
+		const second = path.join(tmp, 'docs-second.zip');
+		await exportCueBundle({
+			dataDir: target,
+			agentId: 'agent-docs',
+			outputPath: second,
+			producerVersion: PRODUCER,
+		});
+		expectSameZip(first, second);
+	});
+
+	it("gives no owner to a folder's own subscriptions when a non-owner agent is imported into it", async () => {
+		const source = seedSource();
+		const bundle = path.join(tmp, 'docs.zip');
+		await exportCueBundle({
+			dataDir: source.dataDir,
+			agentId: 'agent-docs',
+			outputPath: bundle,
+			producerVersion: PRODUCER,
+		});
+
+		// The target folder already has an unpinned subscription and an agent
+		// named Lead, which the dropped owner would have handed it to.
+		const dataDir = path.join(tmp, 'busy', 'data');
+		const webRoot = path.join(tmp, 'busy', 'web');
+		fakeClone(webRoot);
+		fs.mkdirSync(path.join(webRoot, 'docs'), { recursive: true });
+		write(
+			path.join(webRoot, '.maestro/cue.yaml'),
+			yaml.dump({
+				subscriptions: [
+					{ name: 'local', event: 'time.heartbeat', interval_minutes: 60, prompt: 'hi' },
+				],
+			})
+		);
+		writeJson(path.join(dataDir, 'maestro-sessions.json'), {
+			sessions: [
+				{ id: 'local-first', name: 'First', toolType: 'codex', cwd: webRoot, projectRoot: webRoot },
+				{ id: 'local-lead', name: 'Lead', toolType: 'codex', cwd: webRoot, projectRoot: webRoot },
+			],
+		});
+		await importCueBundle({
+			bundlePath: bundle,
+			dataDir,
+			workspaces: { web: webRoot },
+			runningVersion: PRODUCER,
+			env: {},
+		});
+
+		const merged = yaml.load(fs.readFileSync(path.join(webRoot, '.maestro/cue.yaml'), 'utf-8')) as {
+			settings?: Record<string, unknown>;
+		};
+		expect(merged.settings).toEqual({ timeout_minutes: 30 });
+		const sessions = readSessionsStoreFile(dataDir).sessions;
+		expect(subscriptionsRunBy('local-first', webRoot, sessions)).toEqual(['local']);
+		expect(subscriptionsRunBy('local-lead', webRoot, sessions)).toEqual([]);
+		expect(subscriptionsRunBy('agent-docs', webRoot, sessions)).toEqual(['docs']);
 	});
 
 	/**

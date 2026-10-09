@@ -479,6 +479,28 @@ function resolveUnownedTarget(
 }
 
 /**
+ * A workspace's cue.yaml settings as the bundle carries them. An
+ * `owner_agent_id` naming an agent the bundle leaves out is dropped when every
+ * exported subscription there is pinned (`agent_id`): the owner decides only
+ * who runs unpinned ones, so it means nothing to this bundle, and kept it
+ * would fail validation and, merged into a folder with no owner of its own,
+ * change who runs that folder's subscriptions. With an unpinned subscription
+ * it stays, so the validator reports the owner the bundle is missing.
+ */
+function settingsForBundle(
+	settings: Record<string, unknown>,
+	subs: RawSubscription[],
+	agents: SessionInfo[]
+): Record<string, unknown> {
+	const owner = settings.owner_agent_id;
+	if (typeof owner !== 'string' || !owner) return settings;
+	if (agents.some((a) => a.id === owner || a.name === owner)) return settings;
+	if (!subs.every((s) => typeof s.agent_id === 'string' && s.agent_id)) return settings;
+	const { owner_agent_id: _dropped, ...rest } = settings;
+	return rest;
+}
+
+/**
  * Resolve one `source_session` entry the way the completion service matches
  * it (by id, else by display name). An id wins outright; a name matches every
  * agent carrying it. Unmatched entries pass through so the caller can warn.
@@ -940,7 +962,11 @@ export async function exportCueBundle(
 				if (typeof secretEnv === 'string' && secretEnv) secrets.add(secretEnv);
 			}
 			const doc: Record<string, unknown> = {};
-			if (ws.settings && typeof ws.settings === 'object') doc.settings = ws.settings;
+			if (ws.settings && typeof ws.settings === 'object') {
+				const settings = settingsForBundle(ws.settings, subs, includedAgents);
+				// Left empty only by the dropped owner: write no block at all.
+				if (settings === ws.settings || Object.keys(settings).length > 0) doc.settings = settings;
+			}
 			doc.subscriptions = subs;
 			const cuePath = `workspaces/${ws.key}/${CUE_CONFIG_PATH}`;
 			addGenerated(cuePath, yaml.dump(doc, { lineWidth: -1, noRefs: true }));

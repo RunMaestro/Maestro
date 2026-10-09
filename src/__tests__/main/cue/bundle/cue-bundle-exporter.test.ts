@@ -20,7 +20,9 @@ import {
 } from '../../../../main/cue/bundle/cue-bundle-exporter';
 import {
 	CUE_BUNDLE_CONFIG_ISSUE_CODES,
+	readCueBundleArchive,
 	validateCueBundle,
+	validateCueBundleArchive,
 } from '../../../../main/cue/bundle/cue-bundle-validator';
 import { readZipArchive } from '../../../../main/utils/zip-archive';
 import type {
@@ -485,9 +487,12 @@ describe('exportCueBundle - single agent', () => {
 		expect(settings).not.toHaveProperty('customPath');
 
 		const cue = yaml.load(entries.get('workspaces/alpha/.maestro/cue.yaml')!.toString()) as {
+			settings: Record<string, unknown>;
 			subscriptions: Array<{ name: string }>;
 		};
 		expect(cue.subscriptions.map((s) => s.name)).toEqual(['review-pr', 'other-pipeline']);
+		// The owner is the exported agent, so it travels.
+		expect(cue.settings).toEqual({ timeout_minutes: 15, owner_agent_id: 'Alpha' });
 		expect(result.manifest.warnings?.some((w) => w.includes('Writer'))).toBe(true);
 	});
 
@@ -495,6 +500,17 @@ describe('exportCueBundle - single agent', () => {
 		const out = path.join(tmp, 'writer.zip');
 		await exportCueBundle({ dataDir, agentId: 'agent-writer', outputPath: out, env: ENV });
 		const entries = readZip(out);
+		// Writer works in alpha, which Alpha owns: only its pinned subscription
+		// travels, and the owner it does not need stays behind.
+		const cue = yaml.load(entries.get('workspaces/alpha/.maestro/cue.yaml')!.toString()) as {
+			settings: Record<string, unknown>;
+			subscriptions: Array<{ name: string; agent_id: string }>;
+		};
+		expect(cue.subscriptions.map((s) => [s.name, s.agent_id])).toEqual([['hook', 'agent-writer']]);
+		expect(cue.settings).toEqual({ timeout_minutes: 15 });
+		expect(
+			validateCueBundleArchive(readCueBundleArchive(out), { runningVersion: '99.0.0' }).errors
+		).toEqual([]);
 		expect(entries.has('autorun/agent-writer/draft.md')).toBe(true);
 		const settings = JSON.parse(
 			entries.get('agents/agent-writer.json')!.toString()
@@ -687,6 +703,21 @@ describe('exportCueBundle - agent resolution', () => {
 			expect(result.ownerWarnings).toEqual([
 				expect.stringContaining('settings.owner_agent_id "Two" does not match any agent'),
 			]);
+		});
+
+		it('keeps an owner the unpinned subscriptions need even when no exported agent matches it', async () => {
+			// On the desktop nobody runs "tick"; dropping the owner would hand it
+			// to whichever agent an import finds first, so validate reports it.
+			const g = path.join(tmp, 'projects', 'gamma');
+			await exportGamma([agentIn('agent-one', g)], 'agent-gone');
+			const out = path.join(tmp, 'gamma.zip');
+			const cue = yaml.load(readZip(out).get('workspaces/gamma/.maestro/cue.yaml')!.toString()) as {
+				settings: Record<string, unknown>;
+			};
+			expect(cue.settings).toEqual({ owner_agent_id: 'agent-gone' });
+			expect(
+				validateCueBundleArchive(readCueBundleArchive(out), { runningVersion: '99.0.0' }).errors
+			).toEqual([expect.objectContaining({ code: 'unknown-agent' })]);
 		});
 
 		it('exports no unassigned target and warns for an ambiguous or unmatched owner', async () => {
