@@ -62,12 +62,14 @@ vi.mock('node-pty', () => ({
 
 import {
 	chunkPromptForPty,
+	expandPromptTabs,
 	MACOS_PTY_INPUT_QUEUE_BYTES,
 	PROMPT_CHUNK_DRAIN_TIMEOUT_MS,
 	PROMPT_CHUNK_INTERVAL_MS,
 	PROMPT_CHUNK_MAX_BYTES,
 	PROMPT_SETTLE_MAX_MS,
 	PROMPT_SETTLE_QUIET_MS,
+	PROMPT_TAB_SPACES,
 	QUIT_GRACE_MS,
 	READY_MAX_TAPS,
 	READY_TAP_INTERVAL_MS,
@@ -726,12 +728,39 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	describe('expandPromptTabs()', () => {
+		it('replaces every tab with PROMPT_TAB_SPACES spaces, matching what claude does on paste', () => {
+			expect(PROMPT_TAB_SPACES).toBe(4);
+			expect(expandPromptTabs('a\tb\tc\nline two\twith tab')).toBe(
+				'a    b    c\nline two    with tab'
+			);
+		});
+
+		it('leaves a prompt without tabs untouched', () => {
+			const text = 'no tabs here\n  indented with spaces';
+			expect(expandPromptTabs(text)).toBe(text);
+		});
+	});
+
 	describe('send()', () => {
 		beforeEach(() => {
 			vi.useFakeTimers();
 		});
 		afterEach(() => {
 			vi.useRealTimers();
+		});
+
+		it('never types a raw tab, which claude would read as the Tab key', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('a\tb');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenNthCalledWith(1, 'a    b');
+			for (const [chunk] of mockPtyProcess.write.mock.calls) {
+				expect(chunk).not.toContain('\t');
+			}
 		});
 
 		it('writes text first, then \\r at SEND_ENTER_DELAY_MS, then retry taps', async () => {
