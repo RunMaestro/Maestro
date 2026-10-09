@@ -173,11 +173,17 @@ describe('parseArgs', () => {
 			expect(result.passThroughArgs).toEqual([]);
 		});
 
-		it('drops --verbose with a stderr warning', () => {
+		it('drops --verbose without a warning, since the output is already verbose-shaped', () => {
 			const result = callArgs(['--verbose', '-p', 'hi']);
 			expect(result.passThroughArgs).toEqual([]);
-			expect(warnSpy).toHaveBeenCalledTimes(1);
-			expect(warnSpy.mock.calls[0][0]).toMatch(/--verbose/);
+			expect(warnSpy).not.toHaveBeenCalled();
+		});
+
+		it('drops --output-format stream-json without a warning', () => {
+			const result = callArgs(['--output-format', 'stream-json', '-p', 'hi']);
+			expect(result.passThroughArgs).toEqual([]);
+			expect(result.prompt).toBe('hi');
+			expect(warnSpy).not.toHaveBeenCalled();
 		});
 
 		// Regression: when Maestro forwards its API-mode claude args verbatim
@@ -201,17 +207,37 @@ describe('parseArgs', () => {
 			// --output-format is the STRIPPED branch (claude's API-mode flag), not
 			// --input-format, so streamJsonInput stays false here.
 			expect(result.streamJsonInput).toBe(false);
-			const messages = warnSpy.mock.calls.map((c) => c[0]).join('\n');
-			expect(messages).toMatch(/--print requires a value/);
-			expect(messages).toMatch(/--verbose/);
-			expect(messages).toMatch(/--output-format/);
+			// Maestro passes exactly this line on every spawn, and maestro-p honors
+			// all of it, so none of it may produce a warning.
+			expect(warnSpy).not.toHaveBeenCalled();
 		});
 
 		it('does not consume a flag-looking next token as the prompt value for -p', () => {
 			const result = callArgs(['-p', '--verbose', 'real prompt']);
 			expect(result.prompt).toBe('real prompt');
+			// A bare -p is claude's print-mode switch, not a missing value.
+			expect(warnSpy).not.toHaveBeenCalled();
+		});
+
+		it('still warns when --prompt has no value', () => {
+			callArgs(['--prompt', '--verbose', 'real prompt']);
 			const messages = warnSpy.mock.calls.map((c) => c[0]).join('\n');
-			expect(messages).toMatch(/-p requires a value/);
+			expect(messages).toMatch(/--prompt requires a value/);
+		});
+
+		it('warns when --output-format asks for something other than stream-json', () => {
+			const result = callArgs(['--output-format', 'json', 'real prompt']);
+			expect(result.prompt).toBe('real prompt');
+			const messages = warnSpy.mock.calls.map((c) => c[0]).join('\n');
+			expect(messages).toMatch(
+				/ignoring --output-format json - maestro-p always writes stream-json/
+			);
+		});
+
+		it('accepts --output-format=stream-json inline without a warning', () => {
+			const result = callArgs(['--output-format=stream-json', 'real prompt']);
+			expect(result.prompt).toBe('real prompt');
+			expect(warnSpy).not.toHaveBeenCalled();
 		});
 
 		it('still accepts a flag-looking prompt via the inline form', () => {

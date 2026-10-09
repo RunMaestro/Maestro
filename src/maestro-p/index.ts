@@ -31,7 +31,7 @@ import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
-import { discoverSessionId, cwdSlug } from './session-watcher';
+import { cwdSlug, discoverSessionId, findLatestSessionId } from './session-watcher';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
 import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
@@ -287,9 +287,37 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// its id, so we leave that path untouched. claude 2.1.x honours
 	// `--session-id` in interactive/TUI mode (verified: it writes exactly the
 	// requested `<uuid>.jsonl`).
-	const passThroughArgs = [...args.passThroughArgs];
+	let passThroughArgs = [...args.passThroughArgs];
+	let resumeSessionId = args.resumeSessionId;
+
+	// `--continue` cannot reach claude as-is: every fresh TUI gets a
+	// pre-assigned `--session-id` below, and claude refuses the two together
+	// and exits before painting anything. Resolve the session `--continue`
+	// would pick (the newest transcript for this cwd) and run it as a resume.
+	if (!resumeSessionId && passThroughArgs.some((a) => a === '--continue' || a === '-c')) {
+		const latest = await findLatestSessionId(configDir, cwd);
+		if (!latest) {
+			process.stderr.write(
+				`maestro-p: --continue found no earlier conversation for ${cwd}. Failing with no_conversation.\n`
+			);
+			emitter.emitInit({ sessionId: '', model: null, cwd });
+			emitter.emitResult({
+				sessionId: '',
+				durationMs: Date.now() - startMs,
+				isError: true,
+				error: 'no_conversation',
+			});
+			// stdout is asynchronous on a macOS pipe: exit once the envelope drains.
+			process.stdout.write('', () => process.exit(1));
+			return new Promise<never>(() => undefined);
+		}
+		resumeSessionId = latest;
+		passThroughArgs = passThroughArgs.filter((a) => a !== '--continue' && a !== '-c');
+		passThroughArgs.push('--resume', latest);
+	}
+
 	let freshSessionId: string | null = null;
-	if (!args.resumeSessionId) {
+	if (!resumeSessionId) {
 		freshSessionId = randomUUID();
 		passThroughArgs.push('--session-id', freshSessionId);
 	}
@@ -322,7 +350,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	}
 
 	let tailer: JsonlTailer | null = null;
-	let resolvedSessionId: string = args.resumeSessionId ?? '';
+	// Tails the session a slash command rotated claude onto (see
+	// watchRotatedSession).
+	let rotatedTailer: JsonlTailer | null = null;
+	let resolvedSessionId: string = resumeSessionId ?? '';
 	let initEmitted = false;
 	let finalized = false;
 	let watchdogTimer: NodeJS.Timeout | null = null;
@@ -433,6 +464,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		finalized = true;
 		cleanupTimers();
 		tailer?.stop();
+		rotatedTailer?.stop();
 		// Best-effort: synchronous so claude (which has long-since consumed
 		// these via the @path Read tool) doesn't leave them behind.
 		cleanupStreamJsonImages(tempImagePaths);
@@ -647,6 +679,45 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		processEntry(entry);
 	};
 
+	// `/clear` (and its `/reset` and `/new` aliases) moves claude onto a brand-new
+	// session and writes the command's output row THERE, so the transcript this
+	// run tails never sees the end of the turn and it rode out `--max-wait`.
+	// For a slash-command prompt, also watch the project folder for a session
+	// that appears after the prompt was sent, and let its local-command output
+	// row end the turn like any other. An ordinary command never rotates, so
+	// the watch just expires unused.
+	const watchRotatedSession = (currentSessionId: string, sentAt: number): void => {
+		if (!slashCommandPrompt) return;
+		discoverSessionId({
+			configDir,
+			cwd,
+			spawnTimestamp: sentAt,
+			excludeSessionIds: new Set([currentSessionId]),
+			timeoutMs: args.maxWaitSeconds * 1000,
+		}).then(
+			async (rotated) => {
+				if (finalized) return;
+				rotatedTailer = new JsonlTailer({ path: rotated.jsonlPath, skipExisting: false });
+				rotatedTailer.on('entry', (entry: unknown) => {
+					markFirstEntrySeen();
+					if (!initEmitted) {
+						emitter.emitInit({ sessionId: rotated.sessionId, model: null, cwd });
+						initEmitted = true;
+					}
+					// Only the command's own output row: the rest of the new
+					// session (its caveat and command-name rows) is not this turn's
+					// output.
+					if (localCommandOutput(entry) !== null) processEntry(entry);
+				});
+				rotatedTailer.on('parse-error', handleParseError);
+				await rotatedTailer.start();
+			},
+			() => {
+				// No new session: the command finished in the one being tailed.
+			}
+		);
+	};
+
 	const handleParseError = (payload: ParseErrorPayload): void => {
 		const snippet = payload.line.length > 200 ? `${payload.line.slice(0, 200)}…` : payload.line;
 		process.stderr.write(
@@ -657,6 +728,14 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	driver.on('limit-hit', markLimitHit);
 	driver.on('exit', () => {
 		if (finalized) return;
+		// claude prints why it quit (a rejected flag, a crash, a config error)
+		// to the screen it just left, which is the only evidence there is.
+		process.stderr.write(
+			formatScreenTailReport(
+				'claude exited before the turn finished. Failing with tui_exited.',
+				driver.getScreenTail()
+			)
+		);
 		finalize({ isError: true, error: 'tui_exited', exitCode: 1 });
 	});
 	driver.on('workspace-untrusted', () => {
@@ -701,24 +780,20 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
 	}, firstByteTimeoutMs);
 
-	if (args.resumeSessionId) {
+	if (resumeSessionId) {
 		// Resume path: the JSONL already exists from the prior turn(s); tail
 		// from EOF so we don't replay history to stdout. The wait-for-ready
 		// step ensures the TUI is accepting input before we send our reply.
-		const jsonlPath = path.join(
-			configDir,
-			'projects',
-			cwdSlug(cwd),
-			`${args.resumeSessionId}.jsonl`
-		);
+		const jsonlPath = path.join(configDir, 'projects', cwdSlug(cwd), `${resumeSessionId}.jsonl`);
 		tailer = new JsonlTailer({ path: jsonlPath, skipExisting: true });
 		tailer.on('entry', handleEntry);
 		tailer.on('parse-error', handleParseError);
 		await tailer.start();
 		await waitForEvent(driver, 'ready');
-		emitter.emitInit({ sessionId: args.resumeSessionId, model: null, cwd });
+		emitter.emitInit({ sessionId: resumeSessionId, model: null, cwd });
 		initEmitted = true;
 		flushPending();
+		watchRotatedSession(resumeSessionId, Date.now());
 		// Await the whole paced prompt before the resubmit loop can press Enter.
 		await driver.send(prompt);
 		startResubmitLoop();
@@ -742,6 +817,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// --max-wait window. The FLOOR still covers a slow cold start.
 			timeoutMs: Math.max(DISCOVERY_TIMEOUT_FLOOR_MS, firstByteTimeoutMs),
 		});
+		if (freshSessionId) watchRotatedSession(freshSessionId, Date.now());
 		// Await the whole paced prompt before the resubmit loop can press Enter.
 		await driver.send(prompt);
 		startResubmitLoop();
