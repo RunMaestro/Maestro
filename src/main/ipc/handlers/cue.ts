@@ -36,6 +36,21 @@ import {
 	type ScheduledTaskAgent,
 } from '../../cue/cue-scheduled-tasks';
 import { getLiveSessions } from '../../stores';
+import {
+	getAgentConfigsStore,
+	getLiveSessions,
+	getSessionsStore,
+	getSettingsStore,
+} from '../../stores';
+import {
+	buildCueReadinessInputs,
+	checkCueReadiness,
+	type CueReadinessReport,
+} from '../../cue/cue-readiness';
+import {
+	hostVisibleProjectRoot,
+	resolveHostProjectRoot,
+} from '../../../shared/hostVisibleProjectRoot';
 import { loadPipelineLayout, savePipelineLayout } from '../../cue/pipeline-layout-store';
 import { renamePipelineOnDisk, type RenamePipelineResult } from '../../cue/cue-pipeline-rename';
 import { captureException } from '../../utils/sentry';
@@ -74,16 +89,22 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  */
 function readTaskAgents(): ScheduledTaskAgent[] {
 	const stored = getLiveSessions();
-	return stored
-		.filter((session) => session.toolType !== 'terminal')
-		.map((session) => ({
-			id: session.id,
-			name: session.name,
-			projectRoot: session.projectRoot || session.cwd || '',
-		}))
-		.filter((agent) => agent.projectRoot.length > 0);
+	const remotes = getSettingsStore().get('sshRemotes', []);
+	return stored.flatMap((session) => {
+		if (session.toolType === 'terminal') return [];
+		const projectRoot = hostVisibleProjectRoot(session, remotes);
+		return projectRoot ? [{ id: session.id, name: session.name, projectRoot }] : [];
+	});
 }
 
+function filesystemRoot(options: { projectRoot: string; sessionId?: string }): string {
+	return resolveHostProjectRoot(
+		options.projectRoot,
+		getSessionsStore().get('sessions', []),
+		getSettingsStore().get('sshRemotes', []),
+		options.sessionId
+	);
+}
 /**
  * Dependencies required for Cue handler registration
  */
@@ -304,7 +325,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 			handlerOpts('refreshSession'),
 			async (options: { sessionId: string; projectRoot: string }): Promise<void> => {
 				requireCue();
-				await requireEngine().refreshSession(options.sessionId, options.projectRoot);
+				await requireEngine().refreshSession(options.sessionId, filesystemRoot(options));
 			}
 		)
 	);
@@ -368,7 +389,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				patch: ScheduledTaskUpdateInput;
 			}): Promise<{ updated: boolean; reason?: string }> => {
 				requireCue();
-				return updateScheduledTask(options.projectRoot, options.name, options.patch);
+				return updateScheduledTask(filesystemRoot(options), options.name, options.patch);
 			}
 		)
 	);
@@ -382,7 +403,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				name: string;
 			}): Promise<{ removed: boolean; reason?: string }> => {
 				requireCue();
-				return cancelScheduledTask(options.projectRoot, options.name);
+				return cancelScheduledTask(filesystemRoot(options), options.name);
 			}
 		)
 	);
@@ -392,8 +413,8 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		'cue:readYaml',
 		withIpcErrorLogging(
 			handlerOpts('readYaml'),
-			async (options: { projectRoot: string }): Promise<string | null> => {
-				const file = readCueConfigFile(options.projectRoot);
+			async (options: { projectRoot: string; sessionId?: string }): Promise<string | null> => {
+				const file = readCueConfigFile(filesystemRoot(options));
 				return file ? file.raw : null;
 			}
 		)
@@ -407,12 +428,14 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 			handlerOpts('writeYaml'),
 			async (options: {
 				projectRoot: string;
+				sessionId?: string;
 				content: string;
 				promptFiles?: Record<string, string>;
 			}): Promise<{ changed: boolean }> => {
 				requireCue();
+				const projectRoot = filesystemRoot(options);
 				cueDebugLog('main:writeYaml:received', {
-					projectRoot: options.projectRoot,
+					projectRoot,
 					yamlBytes: options.content.length,
 					promptFileCount: Object.keys(options.promptFiles ?? {}).length,
 				});
@@ -426,7 +449,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// pipeline.
 				let existingYaml: string | null = null;
 				try {
-					existingYaml = readCueConfigFile(options.projectRoot)?.raw ?? null;
+					existingYaml = readCueConfigFile(projectRoot)?.raw ?? null;
 				} catch {
 					// Existing file unreadable for some reason → assume changed so the
 					// write proceeds and the engine refreshes (conservative default).
@@ -436,7 +459,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				let promptsChanged = false;
 				const keepPaths = new Set<string>();
 				if (options.promptFiles) {
-					const promptsBase = path.resolve(options.projectRoot, '.maestro/prompts');
+					const promptsBase = path.resolve(projectRoot, '.maestro/prompts');
 					for (const [relativePath, content] of Object.entries(options.promptFiles)) {
 						// Reject obviously malformed keys before path.resolve - empty
 						// strings would resolve to the project root itself, and
@@ -468,7 +491,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 								`cue:writeYaml: promptFiles key "${relativePath}" contains "." or ".." segment`
 							);
 						}
-						const target = path.resolve(options.projectRoot, normalizedKey);
+						const target = path.resolve(projectRoot, normalizedKey);
 						// Must resolve strictly INSIDE .maestro/prompts/. The earlier
 						// check allowed `target === promptsBase` which would attempt
 						// to write to the directory path itself.
@@ -487,8 +510,8 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 						// Skip the write when the prompt file already holds identical
 						// content - avoids an mtime bump that would wake the prompt
 						// watcher and trigger a needless reload/re-execution.
-						if (readCuePromptFile(options.projectRoot, normalizedKey) !== content) {
-							writeCuePromptFile(options.projectRoot, normalizedKey, content);
+						if (readCuePromptFile(projectRoot, normalizedKey) !== content) {
+							writeCuePromptFile(projectRoot, normalizedKey, content);
 							promptsChanged = true;
 						}
 						keepPaths.add(normalizedKey);
@@ -543,7 +566,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 					parseSucceeded = false;
 					captureException(parseErr, {
 						operation: 'cue:writeYaml.parseForPrune',
-						projectRoot: options.projectRoot,
+						projectRoot,
 					});
 				}
 
@@ -551,14 +574,14 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// identical bytes still bumps mtime and wakes the config watcher,
 				// which refreshes the session and re-arms its triggers.
 				if (yamlChanged) {
-					writeCueConfigFile(options.projectRoot, options.content);
+					writeCueConfigFile(projectRoot, options.content);
 				}
 
 				try {
 					const validation = validateCueConfig(parsed);
 					const subs = Array.isArray(parsed?.subscriptions) ? parsed!.subscriptions! : [];
 					cueDebugLog('main:writeYaml:parsed', {
-						projectRoot: options.projectRoot,
+						projectRoot,
 						parseSucceeded,
 						validation,
 						subscriptionCount: subs.length,
@@ -578,7 +601,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 					});
 				} catch (err) {
 					cueDebugLog('main:writeYaml:parsed:error', {
-						projectRoot: options.projectRoot,
+						projectRoot,
 						message: err instanceof Error ? err.message : String(err),
 					});
 				}
@@ -590,12 +613,12 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// (with valid YAML) will catch up.
 				let prunedCount = 0;
 				if (parseSucceeded) {
-					prunedCount = pruneOrphanedPromptFiles(options.projectRoot, keepPaths).length;
+					prunedCount = pruneOrphanedPromptFiles(projectRoot, keepPaths).length;
 					// If the user saved an empty pipeline state (no prompts left)
 					// collapse `.maestro/prompts/` too so the on-disk footprint
 					// matches the empty UI. Non-empty dirs are left alone.
 					if (keepPaths.size === 0) {
-						removeEmptyPromptsDir(options.projectRoot);
+						removeEmptyPromptsDir(projectRoot);
 					}
 				}
 
@@ -617,16 +640,17 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		'cue:deleteYaml',
 		withIpcErrorLogging(
 			handlerOpts('deleteYaml'),
-			async (options: { projectRoot: string }): Promise<boolean> => {
+			async (options: { projectRoot: string; sessionId?: string }): Promise<boolean> => {
 				requireCue();
-				const deleted = deleteCueConfigFile(options.projectRoot);
+				const projectRoot = filesystemRoot(options);
+				const deleted = deleteCueConfigFile(projectRoot);
 				// Run prompt cleanup regardless of whether the yaml file was
 				// present - if the user deleted cue.yaml by hand and then
 				// invokes this, we still want orphaned prompts cleaned up.
-				pruneOrphanedPromptFiles(options.projectRoot, []);
-				removeEmptyPromptsDir(options.projectRoot);
+				pruneOrphanedPromptFiles(projectRoot, []);
+				removeEmptyPromptsDir(projectRoot);
 				// Collapse .maestro/ itself if nothing else lives there.
-				removeEmptyMaestroDir(options.projectRoot);
+				removeEmptyMaestroDir(projectRoot);
 				return deleted;
 			}
 		)

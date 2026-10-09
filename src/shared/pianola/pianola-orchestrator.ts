@@ -84,7 +84,10 @@ export interface OrchestratorDeps {
 	/** Program-specific validation and fix policy; absent programs preserve existing defaults. */
 	getProgramCharter?: (
 		programId: string
-	) => Pick<PianolaProgramCharter, 'validationRequired' | 'maxAttempts'> | undefined;
+	) =>
+		| (Pick<PianolaProgramCharter, 'validationRequired' | 'maxAttempts'> &
+				Partial<Pick<PianolaProgramCharter, 'maxConcurrent'>>)
+		| undefined;
 	/** Reuse task.agentId or create an agent for the task. Returns the bound id/type or an error. */
 	ensureAgent: (
 		task: PianolaTask
@@ -170,6 +173,18 @@ export async function runOrchestratorIteration(
 ): Promise<OrchestratorIterationResult> {
 	let plan = state.plan;
 	const charter = plan.programId ? deps.getProgramCharter?.(plan.programId) : undefined;
+	const dispatchLimit = (): number =>
+		Math.min(
+			options.concurrencyLimit,
+			(plan.programId ? deps.getProgramCharter?.(plan.programId)?.maxConcurrent : undefined) ??
+				options.concurrencyLimit
+		);
+	const activeCount = (): number => {
+		let count = 0;
+		for (const task of plan.tasks)
+			if (task.status === 'running' || task.status === 'fixing') count++;
+		return count;
+	};
 	const maxFixAttempts = charter?.maxAttempts ?? MAX_FIX_ATTEMPTS;
 	const missingRequiredValidation = (task: PianolaTask): boolean =>
 		charter?.validationRequired === true && (!task.validation || !deps.validate);
@@ -448,6 +463,7 @@ export async function runOrchestratorIteration(
 				continue;
 			}
 			if (deps.dispatchFix && ledger) {
+				if (activeCount() >= dispatchLimit()) continue;
 				const claimed = plan.tasks.filter(
 					(entry) =>
 						entry.status === 'running' ||
@@ -464,6 +480,7 @@ export async function runOrchestratorIteration(
 				deps.persist(plan);
 				const beforeDispatch = await deps.getRecentMessages(task, { fresh: true });
 				const previousId = beforeDispatch[beforeDispatch.length - 1]?.id ?? null;
+				if (activeCount() >= dispatchLimit()) continue;
 				const fix = await deps.dispatchFix(task, ledger);
 				// An uncertain failure may already have started work. Keep its persisted
 				// claim and attempt count; only a confirmed refusal can restore them.
@@ -511,7 +528,7 @@ export async function runOrchestratorIteration(
 	).length;
 	const ready = computeReadyTasks(plan);
 	for (const task of ready) {
-		if (runningCount >= options.concurrencyLimit) break;
+		if (runningCount >= dispatchLimit()) break;
 
 		const agentResult = await deps.ensureAgent(task);
 		if ('error' in agentResult) {
@@ -536,6 +553,15 @@ export async function runOrchestratorIteration(
 			});
 			deps.log(`[orchestrator] task "${task.id}" pending (history unavailable: ${String(error)})`);
 			continue;
+		}
+		// Charter edits during agent/history awaits must take effect before this send.
+		if (runningCount >= dispatchLimit()) {
+			plan = markTaskStatus(plan, task.id, 'pending', {
+				agentId: agentResult.agentId,
+				agentType: agentResult.agentType,
+				tabId: dispatchedTask.tabId,
+			});
+			break;
 		}
 		// Persist a claim before crossing the delivery boundary. If the controller
 		// crashes or loses the reply, recovery waits for reconciliation instead of

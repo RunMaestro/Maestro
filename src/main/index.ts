@@ -61,6 +61,7 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
+import { projectCueEventPaths } from './cue/cue-template-context-builder';
 import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';

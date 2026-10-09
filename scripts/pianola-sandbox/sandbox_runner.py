@@ -11,6 +11,7 @@ import json
 import math
 import os
 import selectors
+import re
 import shutil
 import signal
 import stat
@@ -191,8 +192,11 @@ def _capture(
                 else:
                     if name == "stderr" and not read_only_write_detected:
                         diagnostic = (stderr_tail + chunk).lower()
-                        read_only_write_detected = b"read-only file system" in diagnostic or b"erofs" in diagnostic
-                        stderr_tail = diagnostic[-20:]
+                        # A complete right boundary may arrive in the next chunk; EOF is handled below.
+                        read_only_write_detected = (b"read-only file system" in diagnostic
+                            or re.search(rb"(?<![a-z0-9_])erofs(?=[^a-z0-9_])", diagnostic) is not None)
+                        # Preserve a left boundary without inventing one at the retained tail's start.
+                        stderr_tail = b"_" + diagnostic[-22:] if len(diagnostic) > 22 else diagnostic
                     available = max(0, limits.output_bytes - len(streams[name]))
                     streams[name].extend(chunk[:available])
                     if len(chunk) > available:
@@ -228,6 +232,8 @@ def _capture(
     process.wait(timeout=remaining)
     if not released or exit_status != process.returncode or streams["status"].strip():
         raise IsolationError("No complete isolation receipt: " + streams["stderr"].decode("utf-8", "replace")[:2000])
+    if not read_only_write_detected:
+        read_only_write_detected = re.search(rb"(?<![a-z0-9_])erofs$", stderr_tail) is not None
     isolation["outputTruncated"] = truncated
     isolation["readOnlyWriteDetected"] = read_only_write_detected
     return bytes(streams["stdout"]), bytes(streams["stderr"]), isolation
@@ -249,10 +255,9 @@ def _program_index(command: Sequence[str]) -> int:
 
 
 def _resolve_command(command: Sequence[str], workspace: Path | None = None) -> list[str]:
-    """Make a bare program absolute at its real location when that lies outside /usr (a user install, or a
-    /usr/local/bin symlink into one), so its install can be mounted read-only. System tools stay bare.
-    A bare `python`/`python3` prefers the project's own virtualenv when the workspace has one, since that
-    is where the project's test dependencies live and the system interpreter has none of them."""
+    """Make discovered programs absolute so installs outside the sandbox PATH remain executable.
+    A bare `python`/`python3` prefers the project's own virtualenv when the workspace has one,
+    since that is where the project's test dependencies live."""
     index = _program_index(command)
     program = command[index]
     if "/" in program:
@@ -266,7 +271,28 @@ def _resolve_command(command: Sequence[str], workspace: Path | None = None) -> l
     if not found:
         return list(command)
     real = Path(found).resolve()
-    return list(command) if real.is_relative_to("/usr") else [*command[:index], str(real), *command[index + 1:]]
+    return [*command[:index], str(real), *command[index + 1:]]
+
+
+def _covers_host_home(root: Path) -> bool:
+    import pwd
+
+    homes = {Path(entry.pw_dir).resolve() for entry in pwd.getpwall() if entry.pw_dir.startswith("/")}
+    homes.add(Path.home().resolve())
+    return (root == Path("/") or root.parent.name == "home"
+            or any(home.is_relative_to(root) for home in homes))
+
+
+def _pinned_mount_source(root: Path, stack: ExitStack, descriptors: list[int]) -> str:
+    """Pin an already resolved, narrow mount and reject replacements before descriptor acquisition."""
+    if _covers_host_home(root):
+        raise IsolationError("Read-only mount would expose a host home directory")
+    fd = _descriptor(stack, os.open(root, os.O_PATH | os.O_NOFOLLOW))
+    source = f"/proc/self/fd/{fd}"
+    if stat.S_ISLNK(os.fstat(fd).st_mode) or Path(os.readlink(source)) != root:
+        raise IsolationError("Read-only mount changed while its scope was checked")
+    descriptors.append(fd)
+    return source
 
 
 def _toolchain_mounts(
@@ -302,15 +328,11 @@ def _toolchain_mounts(
             parent.name == "uv" and parent.parent.name == "share" for parent in real.parents):
         install = real.parent.parent
     roots.append(install)
-    import pwd
-    homes = {Path(entry.pw_dir).resolve() for entry in pwd.getpwall() if entry.pw_dir.startswith("/")}
-    homes.add(Path.home().resolve())
     mounts: list[str] = []
     bound: list[Path] = []
     for root in roots:
         resolved = root.resolve(strict=True)
-        if (resolved == Path("/") or resolved.parent.name == "home"
-                or any(home.is_relative_to(resolved) for home in homes)):
+        if _covers_host_home(resolved):
             if root == install:
                 resolved = real
             else:
@@ -318,13 +340,9 @@ def _toolchain_mounts(
         if (resolved.is_relative_to(workspace) or resolved.is_relative_to("/usr")
                 or any(resolved.is_relative_to(existing) for existing in bound)):
             continue
-        fd = _descriptor(stack, os.open(resolved, os.O_PATH | os.O_NOFOLLOW))
-        source = Path(f"/proc/self/fd/{fd}")
-        if stat.S_ISLNK(os.fstat(fd).st_mode) or Path(os.readlink(source)) != resolved:
-            raise IsolationError("Toolchain mount changed while its scope was checked")
-        descriptors.append(fd)
+        source = _pinned_mount_source(resolved, stack, descriptors)
         bound.append(resolved)
-        mounts.extend(["--ro-bind", str(source), str(resolved)])
+        mounts.extend(["--ro-bind", source, str(resolved)])
     linked: set[Path] = set()
     for path in aliases:
         for ancestor in (path, *path.parents):
@@ -401,7 +419,9 @@ def run_isolated_cli(
             args.extend(["--setenv", name, value])
         host_modcache = Path.home() / "go" / "pkg" / "mod"
         if host_modcache.is_dir():
-            args.extend(["--ro-bind", str(host_modcache), "/home/validator/go/pkg/mod"])
+            cache = host_modcache.resolve(strict=True)
+            args.extend(["--ro-bind", _pinned_mount_source(cache, stack, artifact_fds),
+                         "/home/validator/go/pkg/mod"])
         command = _resolve_command(command, workspace)
         argv = []
         for value in command:

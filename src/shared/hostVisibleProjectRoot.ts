@@ -16,6 +16,7 @@ export interface HostMountedRemote {
 }
 
 export interface RemoteBoundSession {
+	id?: string;
 	cwd?: string;
 	projectRoot?: string;
 	fullPath?: string;
@@ -33,7 +34,7 @@ export interface RemoteBoundSession {
 export function hostVisibleProjectRoot(
 	session: RemoteBoundSession,
 	remotes: readonly HostMountedRemote[],
-	fallback: string
+	fallback = ''
 ): string | null {
 	const local = session.projectRoot || session.cwd || session.fullPath || fallback;
 	const ssh = session.sessionSshRemoteConfig;
@@ -57,4 +58,63 @@ export function hostVisibleProjectRoot(
 	}
 	const separator = mount.includes('\\') ? '\\' : '/';
 	return mount.replace(/[\\/]+$/, '') + separator + parts.join(separator);
+}
+
+/** Translate a host-mounted file back to the SSH filesystem namespace. */
+export function remoteVisiblePath(hostPath: string, remote: HostMountedRemote): string {
+	const mount = remote.hostMountRoot;
+	if (!mount) return hostPath;
+	const windows = mount.includes('\\') || /^[a-z]:/i.test(mount);
+	const root = mount.replace(/\\/g, '/').replace(/\/+$/, '');
+	const normalized = hostPath.replace(/\\/g, '/');
+	const comparableRoot = windows ? root.toLowerCase() : root;
+	const comparablePath = windows ? normalized.toLowerCase() : normalized;
+	if (comparablePath !== comparableRoot && !comparablePath.startsWith(comparableRoot + '/')) {
+		return hostPath;
+	}
+	const relative = normalized.slice(root.length).replace(/^\/+/, '');
+	const parts: string[] = [];
+	for (const part of relative.split('/')) {
+		if (!part || part === '.') continue;
+		if (part === '..') {
+			if (parts.length === 0) return hostPath;
+			parts.pop();
+		} else {
+			parts.push(part);
+		}
+	}
+	return '/' + parts.join('/');
+}
+
+/** Resolve a Cue filesystem request; equal remote roots require session identity. */
+export function resolveHostProjectRoot(
+	projectRoot: string,
+	sessions: readonly RemoteBoundSession[],
+	remotes: readonly HostMountedRemote[],
+	sessionId?: string
+): string {
+	if (sessionId) {
+		const session = sessions.find((entry) => entry.id === sessionId);
+		if (!session) throw new Error('Cue session not found: ' + sessionId);
+		const root = hostVisibleProjectRoot(session, remotes, projectRoot);
+		if (!root) throw new Error('Cue project root escapes the remote mount');
+		return root;
+	}
+	const hostMatches = sessions.filter(
+		(session) => hostVisibleProjectRoot(session, remotes) === projectRoot
+	);
+	const matches =
+		hostMatches.length > 0
+			? hostMatches
+			: sessions.filter(
+					(session) =>
+						session.projectRoot === projectRoot ||
+						session.cwd === projectRoot ||
+						session.fullPath === projectRoot ||
+						session.sessionSshRemoteConfig?.workingDirOverride === projectRoot
+				);
+	const roots = new Set(matches.map((session) => hostVisibleProjectRoot(session, remotes)));
+	if (roots.has(null)) throw new Error('Cue project root escapes the remote mount');
+	if (roots.size > 1) throw new Error('Ambiguous Cue project root; specify a session id');
+	return roots.size === 1 ? roots.values().next().value! : projectRoot;
 }

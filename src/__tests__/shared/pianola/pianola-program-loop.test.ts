@@ -1,6 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
 import {
 	runProgramLoopTick,
 	shouldLogProgramLoopDecision,
@@ -38,6 +36,10 @@ const blank = (): ProgramLoopState => ({
 	now,
 });
 const deps = () => ({
+	findWake: vi.fn(
+		async (_agentId: string, _wakeId: string) =>
+			undefined as { success: true; tabId: string } | undefined
+	),
 	wake: vi.fn(async (_agentId: string, _prompt: string) => ({ success: true, tabId: 'fresh-tab' })),
 	ensureOrchestrate: vi.fn(),
 	ensureWatch: vi.fn(),
@@ -55,7 +57,8 @@ describe('program loop', () => {
 			state.memo = JSON.parse(JSON.stringify(memo));
 		});
 		io.wake.mockImplementationOnce(async () => {
-			expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
+			expect(state.memo.notifiedTaskIds).toEqual([]);
+			expect(state.memo.pendingWake?.taskKey).toBe('plan:task');
 			return { success: true, tabId: 'fresh-tab' };
 		});
 		io.ensureWatch.mockImplementationOnce(() => {
@@ -76,7 +79,7 @@ describe('program loop', () => {
 			state.memo = JSON.parse(JSON.stringify(memo));
 		});
 		io.wake.mockImplementationOnce(async () => {
-			expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
+			expect(state.memo.notifiedTaskIds).toEqual([]);
 			throw new Error('Dispatch failed');
 		});
 		await expect(runProgramLoopTick(state, io)).rejects.toThrow('Dispatch failed');
@@ -130,6 +133,7 @@ describe('program loop', () => {
 		state.targets = [
 			{ id: 'orchestrate', kind: 'orchestrate', planId: 'plan', enabled: true, createdAt: 1 },
 		];
+		state.targets[0] = { ...state.targets[0], concurrency: program.charter.maxConcurrent };
 		await runProgramLoopTick(state, io);
 		expect(io.wake).toHaveBeenCalledTimes(1);
 		expect(io.ensureOrchestrate).toHaveBeenCalledTimes(1);
@@ -211,7 +215,9 @@ describe('program loop', () => {
 		const registered = await runProgramLoopTick(state, io);
 		expect(registered.acted).toBe(true);
 		expect(shouldLogProgramLoopDecision(undefined, registered)).toBe(true);
-		state.targets = [{ id: 'o', kind: 'orchestrate', planId: 'plan', enabled: true, createdAt: 1 }];
+		state.targets = [
+			{ id: 'o', kind: 'orchestrate', planId: 'plan', enabled: true, createdAt: 1, concurrency: 2 },
+		];
 		const firstNoOp = await runProgramLoopTick(state, io);
 		expect(shouldLogProgramLoopDecision(registered.memo, firstNoOp)).toBe(false);
 		state.memo = { ...firstNoOp.memo, lastLoggedReason: firstNoOp.reason };
@@ -222,37 +228,83 @@ describe('program loop', () => {
 		).toBe(true);
 		expect(shouldLogProgramLoopDecision(state.memo, repeat)).toBe(false);
 	});
-	it('renders a usable Windows-root handoff plan example with role ids and no dispatch instruction', async () => {
+	it('retries an interrupted pre-dispatch intent without losing task attention', async () => {
 		const state = blank();
-		state.program = {
-			...program,
-			roles: { ...program.roles, engineer: { name: 'Engineer', agentId: 'eng-id' } },
-		};
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review' }] }];
 		const io = deps();
-		io.prompt = (kind, vars) => {
-			const template = fs.readFileSync(
-				path.resolve(__dirname, '../../../prompts/pianola-program-loop', kind + '.md'),
-				'utf8'
-			);
-			return template.replace(/\{\{([A-Z_]+)\}\}/g, (_match, key: string) => vars[key] ?? '');
-		};
+		io.persistMemo.mockImplementation((memo) => {
+			state.memo = structuredClone(memo);
+		});
+		io.persistMemo.mockImplementationOnce((memo) => {
+			state.memo = structuredClone(memo);
+			throw new Error('interrupted');
+		});
+		await expect(runProgramLoopTick(state, io)).rejects.toThrow('interrupted');
+		expect(state.memo.notifiedTaskIds).toEqual([]);
+		const pendingId = state.memo.pendingWake!.id;
 		await runProgramLoopTick(state, io);
-		const prompt = io.wake.mock.calls[0][1];
-		// The prompt template is read from disk; tolerate a CRLF checkout.
-		const example = prompt.split(/```json\r?\n/)[1]?.split(/\r?\n```/)[0];
-		const sample = JSON.parse(example ?? '') as {
-			programId: string;
-			tasks: {
-				cwd: string;
-				agentId: string;
-				validation: { target: string; command: string[]; artifacts: string[] };
-			}[];
-		};
-		expect(sample.programId).toBe('product');
-		expect(sample.tasks[0].cwd).toBe(program.root);
-		expect(sample.tasks[0].validation.target).toBe(program.root);
-		expect(prompt).toContain('engineer: Engineer (eng-id)');
-		expect(prompt).toContain('pianola plan set --file');
-		expect(prompt).toContain('Do not dispatch any agent yourself');
+		expect(io.findWake).toHaveBeenCalledWith('lead', pendingId);
+		expect(io.wake).toHaveBeenCalledTimes(1);
+		expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
+	});
+	it('reconciles an accepted wake after interruption rather than dispatching twice', async () => {
+		const state = blank();
+		const io = deps();
+		io.persistMemo.mockImplementation((memo) => {
+			state.memo = structuredClone(memo);
+		});
+		io.wake.mockRejectedValueOnce(new Error('lost acknowledgement'));
+		await expect(runProgramLoopTick(state, io)).rejects.toThrow('lost acknowledgement');
+		io.findWake.mockResolvedValueOnce({ success: true, tabId: 'accepted-tab' });
+		state.leadSession = { tabId: 'accepted-tab', state: 'busy' };
+		await runProgramLoopTick(state, io);
+		expect(io.wake).toHaveBeenCalledTimes(1);
+		expect(io.ensureWatch).toHaveBeenCalledWith('lead', 'accepted-tab');
+		expect(state.memo.pendingWake).toBeUndefined();
+	});
+	it('delivers founder choice and note once on the next safe wake, including during an active plan', async () => {
+		const state = blank();
+		state.plans = [plan];
+		state.targets = [
+			{ id: 'o', kind: 'orchestrate', planId: 'plan', enabled: true, createdAt: 1, concurrency: 2 },
+		];
+		state.asks = [
+			{
+				id: 'choice',
+				title: 'Choose provider',
+				detail: 'Stripe or Adyen?',
+				severity: 'high',
+				status: 'resolved',
+				programId: 'product',
+				agentId: 'engineer',
+				dedupeKey: 'engineer:product',
+				createdAt: now,
+				updatedAt: now,
+				resolution: { option: 'Stripe', note: 'Use test mode', resolvedAt: now },
+			},
+		];
+		const io = deps();
+		state.leadSession = { tabId: 'lead-tab', state: 'busy' };
+		await runProgramLoopTick(state, io);
+		expect(io.wake).not.toHaveBeenCalled();
+		state.leadSession.state = 'idle';
+		const first = await runProgramLoopTick(state, io);
+		expect(io.wake.mock.calls[0][1]).toContain('Stripe');
+		expect(io.wake.mock.calls[0][1]).toContain('Use test mode');
+		state.memo = first.memo;
+		await runProgramLoopTick(state, io);
+		expect(io.wake).toHaveBeenCalledTimes(1);
+	});
+	it('updates a live orchestrator after the concurrency charter is lowered', async () => {
+		const state = blank();
+		state.plans = [plan];
+		state.program = { ...program, charter: { ...program.charter, maxConcurrent: 1 } };
+		state.targets = [
+			{ id: 'o', kind: 'orchestrate', planId: 'plan', enabled: true, createdAt: 1, concurrency: 3 },
+		];
+		const io = deps();
+		await runProgramLoopTick(state, io);
+		expect(io.ensureOrchestrate).toHaveBeenCalledWith(plan, 1);
+		expect(io.wake).not.toHaveBeenCalled();
 	});
 });
