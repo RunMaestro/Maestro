@@ -69,6 +69,10 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 		return path.posix.join(shellRoot, ...segments);
 	}
 
+	function resolveFixturePaths(paths: string[], basePath = shellPath('physical', 'worktrees')) {
+		return resolveWorktreePathsRemote(shellPath('repo'), basePath, remote, paths);
+	}
+
 	function fixtureGit(...args: string[]): string {
 		const result = spawnSync('git', args, {
 			cwd: path.join(fixtureRoot, 'repo'),
@@ -155,12 +159,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 		expect(porcelain).toContain('branch refs/heads/removed\nprunable ');
 
 		const child = shellPath('physical', 'worktrees', 'removed');
-		const resolved = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[child]
-		);
+		const resolved = await resolveFixturePaths([child]);
 		expect(resolved.data).toMatchObject({
 			resolvedSessionPaths: { [child]: child },
 			missingSessionPaths: [child],
@@ -206,12 +205,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			expect(porcelain).not.toContain('prunable');
 			const registry = await listWorktreesRemote(shellPath('repo'), remote);
 			expect(registry.data?.find((entry) => entry.branch === 'review')?.path).toBe(child);
-			const resolved = await resolveWorktreePathsRemote(
-				shellPath('repo'),
-				shellPath('physical', 'worktrees'),
-				remote,
-				[child]
-			);
+			const resolved = await resolveFixturePaths([child]);
 			expect(resolved.data?.resolvedSessionPaths).toEqual({ [child]: physicalChild });
 			expect(physicalChild).not.toBe(child);
 			const aliases = await resolveWorktreeAliasesRemote([child, physicalChild], remote);
@@ -242,12 +236,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			context
 		);
 		const child = shellPath('physical', 'worktrees', 'review');
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[child]
-		);
+		const result = await resolveFixturePaths([child]);
 
 		expect(result.success).toBe(true);
 		expect(result.data?.resolvedSessionPaths).toEqual({
@@ -268,12 +257,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 				context
 			);
 			const child = shellPath('physical', 'worktrees', 'group', 'review');
-			const result = await resolveWorktreePathsRemote(
-				shellPath('repo'),
-				shellPath('physical', 'worktrees'),
-				remote,
-				[child]
-			);
+			const result = await resolveFixturePaths([child]);
 
 			expect(result.success).toBe(true);
 			expect(result.data?.resolvedSessionPaths).toEqual({
@@ -297,7 +281,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 				prefix === 'configured'
 					? shellPath('configured-alias', 'removed')
 					: shellPath('physical', 'worktrees', 'removed');
-			const result = await resolveWorktreePathsRemote(shellPath('repo'), base, remote, [child]);
+			const result = await resolveFixturePaths([child], base);
 
 			expect(result.success).toBe(true);
 			expect(result.data).toMatchObject({
@@ -317,12 +301,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			const live = shellPath('physical', 'worktrees', 'live');
 			const missing = shellPath('physical', 'worktrees', 'removed');
 			const candidates = position === 'before' ? [child, live, missing] : [live, missing, child];
-			const result = await resolveWorktreePathsRemote(
-				shellPath('repo'),
-				shellPath('physical', 'worktrees'),
-				remote,
-				candidates
-			);
+			const result = await resolveFixturePaths(candidates);
 
 			expect(result.success).toBe(true);
 			expect(result.data).toMatchObject({
@@ -346,12 +325,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 		const live = shellPath('live-child');
 		const removed = shellPath('old-alias', 'removed');
 
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[removed, live]
-		);
+		const result = await resolveFixturePaths([removed, live]);
 
 		expect(result).toEqual({
 			success: true,
@@ -374,12 +348,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			context
 		);
 		const removed = `${shellPath('old-alias', 'removed')}///`;
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[removed]
-		);
+		const result = await resolveFixturePaths([removed]);
 
 		expect(result).toEqual({
 			success: true,
@@ -397,12 +366,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 	it.each(['.', '..'])('does not derive a missing candidate for a terminal %s', async (leaf) => {
 		mkdirSync(path.join(fixtureRoot, 'old-alias'));
 		const child = `${shellPath('old-alias', 'missing')}/${leaf}`;
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[child]
-		);
+		const result = await resolveFixturePaths([child]);
 
 		expect(result.success).toBe(true);
 		expect(result.data).toMatchObject({ unresolvedSessionPaths: [child] });
@@ -414,12 +378,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 		mkdirSync(path.join(fixtureRoot, 'live-child'));
 		const child = shellPath('old-alias', 'missing\nchild');
 		const live = shellPath('live-child');
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[child, live]
-		);
+		const result = await resolveFixturePaths([child, live]);
 
 		expect(result.success).toBe(true);
 		expect(result.data).toMatchObject({
@@ -443,12 +402,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 		);
 		const name = "missing $(touch sentinel) 'quote' `backtick` ";
 		const child = shellPath('old-alias', name);
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[child]
-		);
+		const result = await resolveFixturePaths([child]);
 
 		expect(result.success).toBe(true);
 		expect(result.data).toMatchObject({
@@ -458,60 +412,12 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 		expect(existsSync(path.join(fixtureRoot, 'sentinel'))).toBe(false);
 	});
 
-	it('preserves an unresolved child when its immediate alias parent is missing', async () => {
-		const child = shellPath('removed-alias', 'child');
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[child]
-		);
-		expect(result.success).toBe(true);
-		expect(result.data).toMatchObject({ unresolvedSessionPaths: [child] });
-		expect(result.data?.resolvedSessionPaths?.[child]).toBeUndefined();
-	});
-
-	it('preserves a dangling symlink instead of declaring its target removed', async (context) => {
-		directoryAlias(
-			path.join(fixtureRoot, 'missing-target'),
-			path.join(fixtureRoot, 'dangling-child'),
-			context
-		);
-		const child = shellPath('dangling-child');
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[child]
-		);
-		expect(result.success).toBe(true);
-		expect(result.data).toMatchObject({ unresolvedSessionPaths: [child] });
-		expect(result.data?.resolvedSessionPaths?.[child]).toBeUndefined();
-	});
-
-	it('preserves a child whose path still exists as a nondirectory', async () => {
-		writeFileSync(path.join(fixtureRoot, 'file-child'), 'still present');
-		const child = shellPath('file-child');
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('physical', 'worktrees'),
-			remote,
-			[child]
-		);
-		expect(result.success).toBe(true);
-		expect(result.data).toMatchObject({ unresolvedSessionPaths: [child] });
-		expect(result.data?.resolvedSessionPaths?.[child]).toBeUndefined();
-	});
-
-	it.each([
-		{ failure: 'missing parent', position: 'before' },
-		{ failure: 'missing parent', position: 'after' },
-		{ failure: 'nondirectory', position: 'before' },
-		{ failure: 'nondirectory', position: 'after' },
-		{ failure: 'dangling symlink', position: 'before' },
-		{ failure: 'dangling symlink', position: 'after' },
-	])(
-		'continues resolving healthy aliases with a $failure $position them',
+	it.each(
+		['missing parent', 'nondirectory', 'dangling symlink'].flatMap((failure) =>
+			['alone', 'before', 'after'].map((position) => ({ failure, position }))
+		)
+	)(
+		'preserves an unresolved $failure with probe ordering: $position',
 		async ({ failure, position }, context) => {
 			mkdirSync(path.join(fixtureRoot, 'live-child'));
 			mkdirSync(path.join(fixtureRoot, 'missing-parent'));
@@ -531,20 +437,22 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 				);
 				child = shellPath('dangling-child');
 			}
-			const candidates = position === 'before' ? [child, live, missing] : [live, missing, child];
-			const result = await resolveWorktreePathsRemote(
-				shellPath('repo'),
-				shellPath('physical', 'worktrees'),
-				remote,
-				candidates
-			);
+			const candidates =
+				position === 'alone'
+					? [child]
+					: position === 'before'
+						? [child, live, missing]
+						: [live, missing, child];
+			const result = await resolveFixturePaths(candidates);
 
 			expect(result.success).toBe(true);
-			expect(result.data).toMatchObject({
-				resolvedSessionPaths: { [live]: live, [missing]: missing },
-				missingSessionPaths: [missing],
-				unresolvedSessionPaths: [child],
-			});
+			expect(result.data).toMatchObject({ unresolvedSessionPaths: [child] });
+			if (position !== 'alone') {
+				expect(result.data).toMatchObject({
+					resolvedSessionPaths: { [live]: live, [missing]: missing },
+					missingSessionPaths: [missing],
+				});
+			}
 			expect(result.data?.resolvedSessionPaths?.[child]).toBeUndefined();
 		}
 	);
@@ -559,12 +467,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			const live = shellPath('live-child');
 			chmodSync(inaccessible, 0);
 			try {
-				const result = await resolveWorktreePathsRemote(
-					shellPath('repo'),
-					shellPath('physical', 'worktrees'),
-					remote,
-					[child, live]
-				);
+				const result = await resolveFixturePaths([child, live]);
 				expect(result.success).toBe(true);
 				expect(result.data).toMatchObject({
 					resolvedSessionPaths: { [live]: live },
@@ -587,12 +490,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 		);
 		const child = shellPath(name);
 
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('configured-alias'),
-			remote,
-			[child]
-		);
+		const result = await resolveFixturePaths([child], shellPath('configured-alias'));
 
 		expect(result.success).toBe(true);
 		expect(result.data).toMatchObject({
@@ -612,12 +510,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			context
 		);
 		const child = `${shellPath('physical', 'worktrees', 'nested')}/../review`;
-		const result = await resolveWorktreePathsRemote(
-			shellPath('repo'),
-			shellPath('elsewhere'),
-			remote,
-			[child]
-		);
+		const result = await resolveFixturePaths([child], shellPath('elsewhere'));
 
 		expect(result.success).toBe(true);
 		expect(result.data?.resolvedSessionPaths).toEqual({
@@ -634,12 +527,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			directoryAlias(target, path.join(fixtureRoot, 'safe-alias'), context);
 			const child = shellPath('safe-alias');
 			const live = shellPath('live-child');
-			const result = await resolveWorktreePathsRemote(
-				shellPath('repo'),
-				shellPath('physical', 'worktrees'),
-				remote,
-				[child, live]
-			);
+			const result = await resolveFixturePaths([child, live]);
 
 			expect(result.success).toBe(true);
 			expect(result.data).toMatchObject({
@@ -659,12 +547,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			directoryAlias(target, path.join(fixtureRoot, 'safe-alias'), context);
 			const child = shellPath('safe-alias');
 			const live = shellPath('live-child');
-			const result = await resolveWorktreePathsRemote(
-				shellPath('repo'),
-				shellPath('physical', 'worktrees'),
-				remote,
-				[live, child]
-			);
+			const result = await resolveFixturePaths([live, child]);
 
 			expect(result.success).toBe(true);
 			expect(result.data).toMatchObject({
@@ -683,12 +566,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			mkdirSync(path.join(fixtureRoot, 'live-child'));
 			const child = shellPath(name);
 			const live = shellPath('live-child');
-			const result = await resolveWorktreePathsRemote(
-				shellPath('repo'),
-				shellPath('physical', 'worktrees'),
-				remote,
-				[child, live]
-			);
+			const result = await resolveFixturePaths([child, live]);
 
 			expect(result.success).toBe(true);
 			expect(result.data).toMatchObject({
@@ -704,12 +582,7 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 			const name = 'literal\\backslash';
 			mkdirSync(path.join(fixtureRoot, name));
 			const child = shellPath(name);
-			const result = await resolveWorktreePathsRemote(
-				shellPath('repo'),
-				shellPath('physical', 'worktrees'),
-				remote,
-				[child]
-			);
+			const result = await resolveFixturePaths([child]);
 
 			expect(result.success).toBe(true);
 			expect(result.data?.resolvedSessionPaths).toEqual({ [child]: child });

@@ -4761,6 +4761,21 @@ branch refs/heads/bugfix-123
 	describe('git:scanWorktreeDirectory', () => {
 		let mockFs: typeof import('fs/promises').default;
 
+		function respondAsWorktreeAt(
+			args: readonly string[] | undefined,
+			workPath: string,
+			{ branch = path.basename(workPath) } = {}
+		) {
+			const stdout = args?.includes('--is-inside-work-tree')
+				? 'true'
+				: args?.includes('--show-toplevel')
+					? workPath
+					: args?.includes('--abbrev-ref')
+						? branch
+						: '.git';
+			return { stdout, stderr: '', exitCode: 0 };
+		}
+
 		beforeEach(async () => {
 			mockFs = (await import('fs/promises')).default;
 		});
@@ -4802,14 +4817,13 @@ branch refs/heads/bugfix-123
 					if (candidate === broken && args?.includes('--git-dir') && failure === 'identity') {
 						throw new Error('Candidate Git metadata unavailable');
 					}
-					const stdout = args?.includes('--is-inside-work-tree')
-						? 'true'
-						: args?.includes('--show-toplevel')
-							? path.join(physicalBase, path.relative(base, candidate))
-							: args?.includes('--abbrev-ref')
-								? path.basename(candidate)
-								: '.git';
-					return { stdout, stderr: '', exitCode: 0 };
+					return respondAsWorktreeAt(
+						args,
+						path.join(physicalBase, path.relative(base, candidate)),
+						{
+							branch: path.basename(candidate),
+						}
+					);
 				});
 
 				const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, base);
@@ -4851,14 +4865,7 @@ branch refs/heads/bugfix-123
 					return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
 				}
 				if (candidate === broken) throw new Error('Candidate moved during scan');
-				const stdout = args?.includes('--is-inside-work-tree')
-					? 'true'
-					: args?.includes('--show-toplevel')
-						? path.join(physicalGroup, 'healthy')
-						: args?.includes('--abbrev-ref')
-							? 'healthy'
-							: '.git';
-				return { stdout, stderr: '', exitCode: 0 };
+				return respondAsWorktreeAt(args, path.join(physicalGroup, 'healthy'));
 			});
 
 			const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, base);
@@ -4890,17 +4897,9 @@ branch refs/heads/bugfix-123
 					badEntry,
 					{ name: 'after', isDirectory: () => true },
 				] as any);
-				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => ({
-					stdout: args?.includes('--is-inside-work-tree')
-						? 'true'
-						: args?.includes('--show-toplevel')
-							? String(cwd)
-							: args?.includes('--abbrev-ref')
-								? path.basename(String(cwd))
-								: '.git',
-					stderr: '',
-					exitCode: 0,
-				}));
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) =>
+					respondAsWorktreeAt(args, String(cwd))
+				);
 
 				const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
 
@@ -4926,17 +4925,9 @@ branch refs/heads/bugfix-123
 				] as any,
 			});
 			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.execGit).mockImplementation(async (args, cwd) => ({
-				stdout: args.includes('--is-inside-work-tree')
-					? 'true'
-					: args.includes('--show-toplevel')
-						? cwd
-						: args.includes('--abbrev-ref')
-							? cwd.split('/').pop() || ''
-							: '.git',
-				stderr: '',
-				exitCode: 0,
-			}));
+			vi.mocked(remoteGit.execGit).mockImplementation(async (args, cwd) =>
+				respondAsWorktreeAt(args, cwd, { branch: cwd.split('/').pop() || '' })
+			);
 
 			const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent, 'ssh-1');
 
@@ -4972,14 +4963,7 @@ branch refs/heads/bugfix-123
 					if (candidate === broken && args?.includes(probe)) {
 						throw Object.assign(new Error('EACCES: candidate inaccessible'), { code: 'EACCES' });
 					}
-					const stdout = args?.includes('--is-inside-work-tree')
-						? 'true'
-						: args?.includes('--show-toplevel')
-							? candidate
-							: args?.includes('--abbrev-ref')
-								? path.basename(candidate)
-								: '.git';
-					return { stdout, stderr: '', exitCode: 0 };
+					return respondAsWorktreeAt(args, candidate);
 				});
 
 				const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
@@ -5012,14 +4996,7 @@ branch refs/heads/bugfix-123
 							exitCode: 128,
 						};
 					}
-					const stdout = args?.includes('--is-inside-work-tree')
-						? 'true'
-						: args?.includes('--show-toplevel')
-							? candidate
-							: args?.includes('--abbrev-ref')
-								? path.basename(candidate)
-								: '.git';
-					return { stdout, stderr: '', exitCode: 0 };
+					return respondAsWorktreeAt(args, candidate);
 				});
 
 				const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
@@ -5041,17 +5018,9 @@ branch refs/heads/bugfix-123
 			vi.mocked(mockFs.realpath).mockRejectedValueOnce(
 				Object.assign(new Error('EACCES: cannot canonicalize candidate'), { code: 'EACCES' })
 			);
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => ({
-				stdout: args?.includes('--is-inside-work-tree')
-					? 'true'
-					: args?.includes('--show-toplevel')
-						? String(cwd)
-						: args?.includes('--abbrev-ref')
-							? path.basename(String(cwd))
-							: '.git',
-				stderr: '',
-				exitCode: 0,
-			}));
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) =>
+				respondAsWorktreeAt(args, String(cwd))
+			);
 
 			const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
 

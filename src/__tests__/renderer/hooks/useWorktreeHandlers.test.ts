@@ -115,7 +115,17 @@ const mockParentSession = {
 	unifiedClosedTabHistory: [],
 } as any;
 
-function createChildSession(overrides: Partial<Session> = {}): any {
+function createChildSession(overrides?: Partial<Session>): any;
+function createChildSession(
+	parent: Pick<Session, 'id' | 'sessionSshRemoteConfig'>,
+	overrides: Partial<Session>
+): any;
+function createChildSession(
+	parentOrOverrides: Partial<Session> = {},
+	childOverrides?: Partial<Session>
+): any {
+	const overrides = childOverrides ?? parentOrOverrides;
+	const parent = childOverrides ? parentOrOverrides : undefined;
 	return {
 		id: `child-${Math.random().toString(36).slice(2, 8)}`,
 		name: 'Child Worktree',
@@ -150,8 +160,46 @@ function createChildSession(overrides: Partial<Session> = {}): any {
 		activeFileTabId: null,
 		unifiedTabOrder: [],
 		unifiedClosedTabHistory: [],
+		...(parent
+			? { parentSessionId: parent.id, sessionSshRemoteConfig: parent.sessionSshRemoteConfig }
+			: {}),
 		...overrides,
 	} as any;
+}
+
+type RegistryEntry = NonNullable<
+	Awaited<ReturnType<typeof window.maestro.git.listWorktrees>>['worktrees']
+>[number];
+
+// Commit hashes do not participate in reconciliation; keep valid defaults out of each scenario.
+function registryEntry(
+	path: string,
+	branch: string | null,
+	overrides: Partial<RegistryEntry> = {}
+): RegistryEntry {
+	return { path, branch, head: 'abc', isBare: false, ...overrides };
+}
+
+async function runConfiguredScan(
+	mode: string,
+	parent: Session,
+	children: Session[] = []
+): Promise<void> {
+	useSessionStore.setState({
+		sessions: [parent, ...children],
+		activeSessionId: parent.id,
+		sessionsLoaded: mode === 'startup',
+	});
+	const { result } = renderHook(() => useWorktreeHandlers());
+	await act(async () => {
+		if (mode === 'save') await result.current.handleSaveWorktreeConfig(parent.worktreeConfig!);
+		if (mode === 'refresh') await result.current.refreshWorktreeState();
+		if (mode === 'visibility') {
+			Object.defineProperty(document, 'hidden', { value: false, writable: true });
+			document.dispatchEvent(new Event('visibilitychange'));
+		}
+		await vi.runAllTimersAsync();
+	});
 }
 
 // ============================================================================
@@ -1326,8 +1374,7 @@ describe('Session inheritance via buildWorktreeSession', () => {
 			worktreeConfig: { basePath: '~/worktrees', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const child = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const child = createChildSession(parent, {
 			id: 'existing-aliased-detached',
 			cwd: '~/worktrees/review',
 			projectRoot: '~/worktrees/review',
@@ -1338,9 +1385,9 @@ describe('Session inheritance via buildWorktreeSession', () => {
 			resolvedCwd: '/remote/repo',
 			resolvedBasePath: '/home/dev/worktrees',
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-				{ path: '/home/dev/worktrees/review', branch: null, head: 'def', isBare: false },
-				{ path: '/home/dev/worktrees/feature', branch: 'feature', head: 'abc', isBare: false },
+				registryEntry('/remote/repo', 'main'),
+				registryEntry('/home/dev/worktrees/review', null),
+				registryEntry('/home/dev/worktrees/feature', 'feature'),
 			],
 		});
 		useSessionStore.setState({ sessions: [parent, child], activeSessionId: parent.id } as any);
@@ -1372,8 +1419,7 @@ describe('Session inheritance via buildWorktreeSession', () => {
 			worktreeConfig: { basePath: '/alias/worktrees', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const child = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const child = createChildSession(parent, {
 			id: 'existing-detached-before-config-edit',
 			cwd: '/alias/worktrees/review',
 			projectRoot: '/alias/worktrees/review',
@@ -1385,8 +1431,8 @@ describe('Session inheritance via buildWorktreeSession', () => {
 			resolvedBasePath: '/physical/worktrees',
 			resolvedSessionPaths: { '/alias/worktrees/review': '/physical/worktrees/review' },
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-				{ path: '/physical/worktrees/review', branch: null, head: 'def', isBare: false },
+				registryEntry('/remote/repo', 'main'),
+				registryEntry('/physical/worktrees/review', null),
 			],
 		});
 		useSessionStore.setState({ sessions: [parent, child], activeSessionId: parent.id } as any);
@@ -1421,14 +1467,12 @@ describe('Session inheritance via buildWorktreeSession', () => {
 			worktreeConfig: { basePath: '/old/worktrees', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const stale = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const stale = createChildSession(parent, {
 			id: 'missing-before-config-save',
 			cwd: '/old/worktrees/obsolete',
 			worktreeBranch: 'recreated',
 		});
-		const healthy = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const healthy = createChildSession(parent, {
 			id: 'healthy-before-config-save',
 			cwd: '/old/worktrees/live',
 			worktreeBranch: null,
@@ -1443,9 +1487,9 @@ describe('Session inheritance via buildWorktreeSession', () => {
 			},
 			missingSessionPaths: [stale.cwd],
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-				{ path: '/physical/worktrees/live', branch: null, head: 'def', isBare: false },
-				{ path: '/physical/worktrees/recreated', branch: 'recreated', head: 'ghi', isBare: false },
+				registryEntry('/remote/repo', 'main'),
+				registryEntry('/physical/worktrees/live', null),
+				registryEntry('/physical/worktrees/recreated', 'recreated'),
 			],
 		});
 		useSessionStore.setState({
@@ -1563,15 +1607,14 @@ describe('Effects', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/remote/worktrees',
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/remote/worktrees/feature', branch: 'feature', head: 'abc', isBare: false },
-					{ path: '/remote/worktrees/review', branch: null, head: 'abc', isBare: false },
-					{ path: '/remote/worktrees/review-2', branch: null, head: 'def', isBare: false },
-					{ path: '/tmp/outside', branch: 'outside', head: 'abc', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/remote/worktrees/feature', 'feature'),
+					registryEntry('/remote/worktrees/review', null),
+					registryEntry('/remote/worktrees/review-2', null),
+					registryEntry('/tmp/outside', 'outside'),
 				],
 			});
-			const existingDetached = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const existingDetached = createChildSession(parent, {
 				id: 'existing-detached',
 				cwd: '/remote/worktrees/review',
 				worktreeBranch: null,
@@ -1612,8 +1655,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/remote/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'existing-ssh-child',
 				cwd: '/remote/worktrees/feature',
 				aiTabs: [{ id: 'existing-chat', agentSessionId: 'codex-session' }],
@@ -1651,8 +1693,7 @@ describe('Effects', () => {
 					worktreeConfig: { basePath, watchEnabled: false },
 					sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 				};
-				const child = createChildSession({
-					sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+				const child = createChildSession(parent, {
 					id: 'existing-aliased-detached',
 					cwd: `${basePath}/review`,
 					projectRoot: `${basePath}/review`,
@@ -1666,10 +1707,10 @@ describe('Effects', () => {
 						? { resolvedSessionPaths: { [child.cwd]: `${resolvedBasePath}/review` } }
 						: {}),
 					worktrees: [
-						{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-						{ path: `${resolvedBasePath}/review`, branch: null, head: 'abc', isBare: false },
-						{ path: `${resolvedBasePath}/review-2`, branch: null, head: 'def', isBare: false },
-						{ path: `${resolvedBasePath}/feature`, branch: 'feature', head: 'abc', isBare: false },
+						registryEntry('/remote/repo', 'main'),
+						registryEntry(`${resolvedBasePath}/review`, null),
+						registryEntry(`${resolvedBasePath}/review-2`, null),
+						registryEntry(`${resolvedBasePath}/feature`, 'feature'),
 					],
 				});
 				useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -1710,13 +1751,8 @@ describe('Effects', () => {
 				resolvedCwd: '/physical/worktrees/parent',
 				resolvedBasePath: '/physical/worktrees',
 				worktrees: [
-					{
-						path: '/physical/worktrees/parent',
-						branch: 'parent-feature',
-						head: 'abc',
-						isBare: false,
-					},
-					{ path: '/physical/worktrees/review', branch: null, head: 'def', isBare: false },
+					registryEntry('/physical/worktrees/parent', 'parent-feature'),
+					registryEntry('/physical/worktrees/review', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent], sessionsLoaded: true } as any);
@@ -1747,8 +1783,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '~/Worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'different-case-detached',
 				cwd: '~/worktrees/review',
 				projectRoot: '~/worktrees/review',
@@ -1759,8 +1794,8 @@ describe('Effects', () => {
 				resolvedBasePath: '/physical/Worktrees',
 				resolvedSessionPaths: { '~/worktrees/review': '/physical/worktrees/review' },
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/Worktrees/review', branch: null, head: 'def', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/Worktrees/review', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -1786,8 +1821,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'existing-detached-old-alias',
 				cwd: '/alias/worktrees/review',
 				projectRoot: '/alias/worktrees/review',
@@ -1799,8 +1833,8 @@ describe('Effects', () => {
 				resolvedBasePath: '/physical/worktrees',
 				resolvedSessionPaths: { '/alias/worktrees/review': '/physical/worktrees/review' },
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/worktrees/review', branch: null, head: 'def', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/worktrees/review', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -1830,8 +1864,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'existing-detached-unresolved-alias',
 				cwd: '/alias/worktrees/review',
 				projectRoot: '/alias/worktrees/review',
@@ -1841,7 +1874,7 @@ describe('Effects', () => {
 			mockGit.listWorktrees.mockResolvedValueOnce({
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/worktrees',
-				worktrees: [{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false }],
+				worktrees: [registryEntry('/remote/repo', 'main')],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
 
@@ -1866,14 +1899,12 @@ describe('Effects', () => {
 					worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 					sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 				};
-				const stale = createChildSession({
-					sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+				const stale = createChildSession(parent, {
 					id: 'missing-old-alias',
 					cwd: '/old/worktrees/obsolete',
 					worktreeBranch: branch,
 				});
-				const healthy = createChildSession({
-					sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+				const healthy = createChildSession(parent, {
 					id: 'healthy-old-alias',
 					cwd: '/older/worktrees/live',
 					worktreeBranch: null,
@@ -1888,8 +1919,8 @@ describe('Effects', () => {
 					},
 					missingSessionPaths: [stale.cwd],
 					worktrees: [
-						{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-						{ path: '/physical/worktrees/live', branch: null, head: 'def', isBare: false },
+						registryEntry('/remote/repo', 'main'),
+						registryEntry('/physical/worktrees/live', null),
 						{ path: '/physical/worktrees/recreated', branch, head: 'ghi', isBare: false },
 					],
 				});
@@ -1927,8 +1958,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'missing-old-alias',
 				cwd: '/old/worktrees/feature',
 				worktreeBranch: 'feature',
@@ -1938,7 +1968,7 @@ describe('Effects', () => {
 				resolvedBasePath: '/physical/worktrees',
 				resolvedSessionPaths: { [child.cwd]: '/physical/worktrees/feature' },
 				missingSessionPaths: [child.cwd],
-				worktrees: [{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false }],
+				worktrees: [registryEntry('/remote/repo', 'main')],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
 			renderHook(() => useWorktreeHandlers());
@@ -1960,8 +1990,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const stale = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const stale = createChildSession(parent, {
 				id: 'missing-current-prefix-child',
 				cwd: '/physical/worktrees/obsolete',
 				worktreeBranch: 'recreated',
@@ -1970,13 +1999,8 @@ describe('Effects', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/worktrees',
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{
-						path: '/physical/worktrees/recreated',
-						branch: 'recreated',
-						head: 'def',
-						isBare: false,
-					},
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/worktrees/recreated', 'recreated'),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, stale], sessionsLoaded: true } as any);
@@ -2004,8 +2028,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'missing-alias-live-physical-child',
 				cwd: '/old/worktrees/review',
 				worktreeBranch: null,
@@ -2017,8 +2040,8 @@ describe('Effects', () => {
 				resolvedSessionPaths: { [child.cwd]: '/physical/worktrees/review' },
 				missingSessionPaths: [child.cwd],
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/worktrees/review', branch: null, head: 'def', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/worktrees/review', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -2041,8 +2064,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'vanished-ancestor-alias',
 				cwd: '/vanished/worktrees/review',
 				worktreeBranch: null,
@@ -2052,8 +2074,8 @@ describe('Effects', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/worktrees',
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/worktrees/review', branch: null, head: 'def', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/worktrees/review', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -2109,8 +2131,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'malformed-missing-metadata-child',
 				cwd: '/physical/worktrees/review',
 				worktreeBranch: null,
@@ -2120,7 +2141,7 @@ describe('Effects', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/worktrees',
 				...metadata,
-				worktrees: [{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false }],
+				worktrees: [registryEntry('/remote/repo', 'main')],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
 			renderHook(() => useWorktreeHandlers());
@@ -2140,8 +2161,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'literal-backslash-child',
 				cwd: '/old/worktrees/review\\one',
 				worktreeBranch: null,
@@ -2152,9 +2172,9 @@ describe('Effects', () => {
 				resolvedBasePath: '/physical/worktrees',
 				resolvedSessionPaths: { [child.cwd]: '/physical/worktrees/review\\one' },
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/worktrees/review\\one', branch: null, head: 'def', isBare: false },
-					{ path: '/physical/worktrees/review/one', branch: null, head: 'ghi', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/worktrees/review\\one', null),
+					registryEntry('/physical/worktrees/review/one', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -2195,9 +2215,9 @@ describe('Effects', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/worktrees',
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: child.cwd, branch: null, head: 'def', isBare: false },
-					{ path: '/physical/worktrees/review\\one', branch: null, head: 'ghi', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry(child.cwd, null),
+					registryEntry('/physical/worktrees/review\\one', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -2227,8 +2247,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/work\\trees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'literal-backslash-base-child',
 				cwd: '/physical/work\\trees/review',
 				worktreeBranch: null,
@@ -2237,9 +2256,9 @@ describe('Effects', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/work\\trees',
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: child.cwd, branch: null, head: 'def', isBare: false },
-					{ path: '/physical/work/trees/outside', branch: 'outside', head: 'ghi', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry(child.cwd, null),
+					registryEntry('/physical/work/trees/outside', 'outside'),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -2260,8 +2279,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '~/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'current-alias-literal-backslash-child',
 				cwd: '~/worktrees/review\\one',
 				worktreeBranch: null,
@@ -2271,9 +2289,9 @@ describe('Effects', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/home/dev/worktrees',
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/home/dev/worktrees/review\\one', branch: null, head: 'def', isBare: false },
-					{ path: '/home/dev/worktrees/review/one', branch: null, head: 'ghi', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/home/dev/worktrees/review\\one', null),
+					registryEntry('/home/dev/worktrees/review/one', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -2303,8 +2321,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'dot-segment-child-without-resolution',
 				cwd: '/physical/worktrees/nested/../review',
 				worktreeBranch: null,
@@ -2314,8 +2331,8 @@ describe('Effects', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/worktrees',
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/worktrees/review', branch: null, head: 'def', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/worktrees/review', null),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
@@ -2349,8 +2366,7 @@ describe('Effects', () => {
 					worktreeConfig: { basePath, watchEnabled: false },
 					sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 				};
-				const child = createChildSession({
-					sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+				const child = createChildSession(parent, {
 					id: 'normalized-prefix-child',
 					cwd: childPath,
 					worktreeBranch: null,
@@ -2359,9 +2375,9 @@ describe('Effects', () => {
 					resolvedCwd: '/remote/repo',
 					resolvedBasePath: basePath === '/' ? '/' : '/physical/worktrees',
 					worktrees: [
-						{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-						{ path: childPath, branch: null, head: 'def', isBare: false },
-						{ path: `${childPath}-2`, branch: null, head: 'ghi', isBare: false },
+						registryEntry('/remote/repo', 'main'),
+						registryEntry(childPath, null),
+						registryEntry(`${childPath}-2`, null),
 						...(siblingPath
 							? [{ path: siblingPath, branch: 'outside', head: 'jkl', isBare: false }]
 							: []),
@@ -2397,8 +2413,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/remote/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'existing-ssh-child',
 				cwd: '/remote/worktrees/feature',
 				projectRoot: '/remote/worktrees/feature',
@@ -2406,7 +2421,7 @@ describe('Effects', () => {
 			});
 			mockGit.listWorktrees.mockResolvedValueOnce({
 				...metadata,
-				worktrees: [{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false }],
+				worktrees: [registryEntry('/remote/repo', 'main')],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
 
@@ -2438,8 +2453,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/alias/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'removed-ssh-child',
 				cwd: '/alias/worktrees/feature',
 				projectRoot: '/alias/worktrees/feature',
@@ -2447,10 +2461,7 @@ describe('Effects', () => {
 			mockGit.listWorktrees.mockResolvedValueOnce({
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/worktrees',
-				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					...outsideWorktrees,
-				],
+				worktrees: [registryEntry('/remote/repo', 'main'), ...outsideWorktrees],
 			});
 			useSessionStore.setState({ sessions: [parent, child], sessionsLoaded: true } as any);
 
@@ -2473,8 +2484,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/remote/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'existing-ssh-child',
 				cwd: '/remote/worktrees/feature',
 			});
@@ -4055,28 +4065,24 @@ describe('SSH registry retention outside the configured base', () => {
 				worktreeConfig: { basePath: '/alias/current', watchEnabled: mode === 'visibility' },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const oldAlias = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const oldAlias = createChildSession(parent, {
 				id: 'outside-old-alias-child',
 				cwd: '/old-alias/child',
 				worktreeBranch: 'outside-feature',
 				aiTabs: [{ id: 'outside-chat', agentSessionId: 'codex-session' }] as any,
 			});
-			const missingAlias = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const missingAlias = createChildSession(parent, {
 				id: 'outside-missing-alias-child',
 				cwd: '/removed-alias/detached',
 				worktreeBranch: null,
 				aiTabs: [{ id: 'missing-alias-chat', agentSessionId: 'detached-session' }] as any,
 			});
-			const physicalDetached = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const physicalDetached = createChildSession(parent, {
 				id: 'outside-physical-detached-child',
 				cwd: '/physical/old/detached',
 				worktreeBranch: null,
 			});
-			const currentAlias = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const currentAlias = createChildSession(parent, {
 				id: 'outside-current-prefix-child',
 				cwd: '/alias/current/group/child',
 				worktreeBranch: 'current-alias-feature',
@@ -4093,37 +4099,18 @@ describe('SSH registry retention outside the configured base', () => {
 				},
 				missingSessionPaths: [missingAlias.cwd],
 				worktrees: [
-					{ path: '/physical/new/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/old/child', branch: 'outside-feature', head: 'def', isBare: false },
-					{ path: '/physical/old/missing-candidate', branch: null, head: 'ghi', isBare: false },
-					{ path: physicalDetached.cwd, branch: null, head: 'jkl', isBare: false },
-					{
-						path: '/physical/old/current-child',
-						branch: 'current-alias-feature',
-						head: 'mno',
-						isBare: false,
-					},
-					{ path: '/physical/new/inside', branch: 'inside', head: 'pqr', isBare: false },
-					{ path: '/physical/old/unowned', branch: 'unowned', head: 'stu', isBare: false },
+					registryEntry('/physical/new/repo', 'main'),
+					registryEntry('/physical/old/child', 'outside-feature'),
+					registryEntry('/physical/old/missing-candidate', null),
+					registryEntry(physicalDetached.cwd, null),
+					registryEntry('/physical/old/current-child', 'current-alias-feature'),
+					registryEntry('/physical/new/inside', 'inside'),
+					registryEntry('/physical/old/unowned', 'unowned'),
 					{ path: '/physical/new/bare', branch: 'bare', head: '', isBare: true },
 					{ path: '/physical/new/malformed', branch: 17, head: 'vwx', isBare: false },
 				],
 			});
-			useSessionStore.setState({
-				sessions: [parent, ...retained],
-				activeSessionId: parent.id,
-				sessionsLoaded: mode === 'startup',
-			} as any);
-			const { result } = renderHook(() => useWorktreeHandlers());
-			await act(async () => {
-				if (mode === 'save') await result.current.handleSaveWorktreeConfig(parent.worktreeConfig);
-				if (mode === 'refresh') await result.current.refreshWorktreeState();
-				if (mode === 'visibility') {
-					Object.defineProperty(document, 'hidden', { value: false, writable: true });
-					document.dispatchEvent(new Event('visibilitychange'));
-				}
-				await vi.runAllTimersAsync();
-			});
+			await runConfiguredScan(mode, parent, retained);
 
 			const children = useSessionStore
 				.getState()
@@ -4154,8 +4141,7 @@ describe('SSH registry retention outside the configured base', () => {
 				worktreeConfig: { basePath: '/physical/new', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const retained = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const retained = createChildSession(parent, {
 				id: 'outside-child-with-old-branch',
 				cwd: '/old-alias/child',
 				worktreeBranch: 'shared',
@@ -4166,21 +4152,12 @@ describe('SSH registry retention outside the configured base', () => {
 				resolvedBasePath: '/physical/new',
 				resolvedSessionPaths: { [retained.cwd]: '/physical/old/child' },
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/old/child', branch: 'changed', head: 'def', isBare: false },
-					{ path: '/physical/new/new-child', branch: 'shared', head: 'ghi', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/old/child', 'changed'),
+					registryEntry('/physical/new/new-child', 'shared'),
 				],
 			});
-			useSessionStore.setState({
-				sessions: [parent, retained],
-				activeSessionId: parent.id,
-				sessionsLoaded: mode === 'startup',
-			} as any);
-			const { result } = renderHook(() => useWorktreeHandlers());
-			await act(async () => {
-				if (mode === 'save') await result.current.handleSaveWorktreeConfig(parent.worktreeConfig);
-				await vi.runAllTimersAsync();
-			});
+			await runConfiguredScan(mode, parent, [retained]);
 
 			const children = useSessionStore
 				.getState()
@@ -4210,8 +4187,7 @@ describe('SSH registry retention outside the configured base', () => {
 			worktreeConfig: { basePath: '/physical/new', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const child = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const child = createChildSession(parent, {
 			id: 'missing-alias-excluded-registry-path',
 			cwd: '/old-alias/removed',
 			worktreeBranch: 'removed',
@@ -4222,7 +4198,7 @@ describe('SSH registry retention outside the configured base', () => {
 			resolvedSessionPaths: { [child.cwd]: candidatePath },
 			missingSessionPaths: [child.cwd],
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
+				registryEntry('/remote/repo', 'main'),
 				...(isBare ? [{ path: candidatePath, branch: null, head: '', isBare }] : []),
 			],
 		});
@@ -4246,13 +4222,11 @@ describe('SSH registry retention outside the configured base', () => {
 			worktreeConfig: { basePath: '/physical/new', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const uncertain = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const uncertain = createChildSession(parent, {
 			id: 'outside-alias-malformed-record',
 			cwd: '/old-alias/uncertain',
 		});
-		const missing = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const missing = createChildSession(parent, {
 			id: 'outside-alias-confirmed-missing',
 			cwd: '/old-alias/missing',
 			worktreeBranch: 'missing',
@@ -4266,9 +4240,9 @@ describe('SSH registry retention outside the configured base', () => {
 			},
 			missingSessionPaths: [uncertain.cwd, missing.cwd],
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
+				registryEntry('/remote/repo', 'main'),
 				{ path: '/physical/old/uncertain', branch: 17, head: 'def', isBare: false },
-				{ path: '/physical/old/unrelated', branch: 'unrelated', head: 'ghi', isBare: false },
+				registryEntry('/physical/old/unrelated', 'unrelated'),
 			],
 		});
 		useSessionStore.setState({
@@ -4305,14 +4279,12 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				worktreeConfig: { basePath: '/home/alice/wt', watchEnabled: mode === 'visibility' },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const physicalChild = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const physicalChild = createChildSession(parent, {
 				id: 'physical-registry-alias-child',
 				cwd: '/data/home/alice/wt/feature',
 				aiTabs: [{ id: 'physical-alias-chat', agentSessionId: 'saved-session' }] as any,
 			});
-			const rawChild = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const rawChild = createChildSession(parent, {
 				id: 'raw-registry-alias-child',
 				cwd: '/home/alice/wt/raw-saved',
 				aiTabs: [{ id: 'raw-alias-chat', agentSessionId: 'other-saved-session' }] as any,
@@ -4325,13 +4297,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 					[rawChild.cwd]: '/data/home/alice/wt/raw-saved',
 				},
 				worktrees: [
-					{
-						path: '/home/alice/repo',
-						resolvedPath: '/data/home/alice/repo',
-						branch: 'main',
-						head: 'abc',
-						isBare: false,
-					},
+					registryEntry('/home/alice/repo', 'main', { resolvedPath: '/data/home/alice/repo' }),
 					{
 						path: '/home/alice/wt/feature',
 						...(metadata === 'resolved' ? { resolvedPath: physicalChild.cwd } : {}),
@@ -4355,37 +4321,15 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 						head: 'jkl',
 						isBare: false,
 					},
-					{
-						path: '/data/home/alice/wt/discovered-physical',
+					registryEntry('/data/home/alice/wt/discovered-physical', 'discovered-physical', {
 						resolvedPath: '/data/home/alice/wt/discovered-physical',
-						branch: 'discovered-physical',
-						head: 'mno',
-						isBare: false,
-					},
-					{
-						path: '/home/alice/wt/linked-outside',
+					}),
+					registryEntry('/home/alice/wt/linked-outside', 'outside', {
 						resolvedPath: '/other/worktrees/linked-outside',
-						branch: 'outside',
-						head: 'pqr',
-						isBare: false,
-					},
+					}),
 				],
 			});
-			useSessionStore.setState({
-				sessions: [parent, physicalChild, rawChild],
-				activeSessionId: parent.id,
-				sessionsLoaded: mode === 'startup',
-			} as any);
-			const { result } = renderHook(() => useWorktreeHandlers());
-			await act(async () => {
-				if (mode === 'save') await result.current.handleSaveWorktreeConfig(parent.worktreeConfig);
-				if (mode === 'refresh') await result.current.refreshWorktreeState();
-				if (mode === 'visibility') {
-					Object.defineProperty(document, 'hidden', { value: false, writable: true });
-					document.dispatchEvent(new Event('visibilitychange'));
-				}
-				await vi.runAllTimersAsync();
-			});
+			await runConfiguredScan(mode, parent, [physicalChild, rawChild]);
 			const children = useSessionStore
 				.getState()
 				.sessions.filter((session) => session.parentSessionId === parent.id);
@@ -4417,26 +4361,22 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				worktreeConfig: { basePath: '/data/home/alice/wt', watchEnabled: mode === 'visibility' },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const missingLeaf = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const missingLeaf = createChildSession(parent, {
 				id: 'registered-prunable-missing-leaf',
 				cwd: '/data/home/alice/wt/offline-leaf',
 				aiTabs: [{ id: 'offline-leaf-chat', agentSessionId: 'offline-session' }] as any,
 			});
-			const emptyMount = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const emptyMount = createChildSession(parent, {
 				id: 'registered-prunable-empty-mount',
 				cwd: '/data/home/alice/wt/empty-mount',
 				aiTabs: [{ id: 'empty-mount-chat', agentSessionId: 'mounted-session' }] as any,
 			});
-			const unregistered = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const unregistered = createChildSession(parent, {
 				id: 'unregistered-prunable-control',
 				cwd: '/data/home/alice/wt/truly-removed',
 				worktreeBranch: 'truly-removed',
 			});
-			const vanishedBeforePrune = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const vanishedBeforePrune = createChildSession(parent, {
 				id: 'registered-missing-before-prunable',
 				cwd: '/data/home/alice/wt/vanished-before-prune',
 				aiTabs: [{ id: 'vanished-chat', agentSessionId: 'vanished-session' }] as any,
@@ -4452,68 +4392,32 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				},
 				missingSessionPaths: [missingLeaf.cwd, unregistered.cwd, vanishedBeforePrune.cwd],
 				worktrees: [
-					{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false },
-					{
-						path: missingLeaf.cwd,
-						branch: 'offline-leaf',
-						head: 'def',
-						isBare: false,
-						isPrunable: true,
-					},
-					{
-						path: emptyMount.cwd,
+					registryEntry(parent.cwd, 'main'),
+					registryEntry(missingLeaf.cwd, 'offline-leaf', { isPrunable: true }),
+					registryEntry(emptyMount.cwd, 'empty-mount', {
 						resolvedPath: emptyMount.cwd,
-						branch: 'empty-mount',
-						head: 'ghi',
-						isBare: false,
 						isPrunable: true,
-					},
-					{
-						path: '/data/home/alice/wt/unowned-offline',
-						branch: 'unowned-offline',
-						head: 'jkl',
-						isBare: false,
+					}),
+					registryEntry('/data/home/alice/wt/unowned-offline', 'unowned-offline', {
 						isPrunable: true,
-					},
-					{
-						path: '/data/home/alice/wt/healthy',
-						branch: 'healthy',
-						head: 'mno',
-						isBare: false,
-					},
-					{
-						path: vanishedBeforePrune.cwd,
+					}),
+					registryEntry('/data/home/alice/wt/healthy', 'healthy'),
+					registryEntry(vanishedBeforePrune.cwd, 'vanished-before-prune', {
 						resolvedPath: vanishedBeforePrune.cwd,
-						branch: 'vanished-before-prune',
-						head: 'pqr',
-						isBare: false,
 						pathMissing: true,
-					},
-					{
-						path: '/data/home/alice/wt/unowned-missing',
+					}),
+					registryEntry('/data/home/alice/wt/unowned-missing', 'unowned-missing', {
 						resolvedPath: '/data/home/alice/wt/unowned-missing',
-						branch: 'unowned-missing',
-						head: 'stu',
-						isBare: false,
 						pathMissing: true,
-					},
+					}),
 				],
 			});
-			useSessionStore.setState({
-				sessions: [parent, missingLeaf, emptyMount, vanishedBeforePrune, unregistered],
-				activeSessionId: parent.id,
-				sessionsLoaded: mode === 'startup',
-			} as any);
-			const { result } = renderHook(() => useWorktreeHandlers());
-			await act(async () => {
-				if (mode === 'save') await result.current.handleSaveWorktreeConfig(parent.worktreeConfig);
-				if (mode === 'refresh') await result.current.refreshWorktreeState();
-				if (mode === 'visibility') {
-					Object.defineProperty(document, 'hidden', { value: false, writable: true });
-					document.dispatchEvent(new Event('visibilitychange'));
-				}
-				await vi.runAllTimersAsync();
-			});
+			await runConfiguredScan(mode, parent, [
+				missingLeaf,
+				emptyMount,
+				vanishedBeforePrune,
+				unregistered,
+			]);
 			const children = useSessionStore
 				.getState()
 				.sessions.filter((session) => session.parentSessionId === parent.id);
@@ -4557,20 +4461,17 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				worktreeConfig: { basePath: '/physical/wt', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const rawChild = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const rawChild = createChildSession(parent, {
 				id: 'unresolved-registry-raw-child',
 				cwd: '/mounted/alias/uncertain',
 				aiTabs: [{ id: 'raw-unresolved-chat', agentSessionId: 'raw-saved-session' }] as any,
 			});
-			const physicalChild = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const physicalChild = createChildSession(parent, {
 				id: 'unresolved-registry-physical-child',
 				cwd: '/physical/old/uncertain',
 				aiTabs: [{ id: 'physical-unresolved-chat', agentSessionId: 'physical-session' }] as any,
 			});
-			const missingCandidate = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const missingCandidate = createChildSession(parent, {
 				id: 'unresolved-registry-missing-candidate',
 				cwd: '/physical/wt/missing-candidate',
 			});
@@ -4585,21 +4486,15 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				},
 				missingSessionPaths: [missingCandidate.cwd],
 				worktrees: [
-					{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false },
-					{
-						path: identity === 'matching raw path' ? rawChild.cwd : '/unmatched-registry/uncertain',
-						branch: 'uncertain',
-						head: 'def',
-						isBare: false,
-						pathUnresolved: true,
-					},
-					{
-						path: '/physical/wt/healthy',
+					registryEntry(parent.cwd, 'main'),
+					registryEntry(
+						identity === 'matching raw path' ? rawChild.cwd : '/unmatched-registry/uncertain',
+						'uncertain',
+						{ pathUnresolved: true }
+					),
+					registryEntry('/physical/wt/healthy', 'healthy', {
 						resolvedPath: '/physical/wt/healthy',
-						branch: 'healthy',
-						head: 'ghi',
-						isBare: false,
-					},
+					}),
 				],
 			});
 			useSessionStore.setState({
@@ -4644,14 +4539,12 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				worktreeConfig: { basePath: '/home/alice/wt', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const affected = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const affected = createChildSession(parent, {
 				id: 'malformed-aliased-registry-chat',
 				cwd: '/data/home/alice/wt/feature',
 				aiTabs: [{ id: 'malformed-alias-chat', agentSessionId: 'saved-chat-session' }] as any,
 			});
-			const missing = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const missing = createChildSession(parent, {
 				id: 'malformed-alias-missing-control',
 				cwd: '/data/home/alice/wt/oldchild',
 				worktreeBranch: 'oldchild',
@@ -4662,7 +4555,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				resolvedSessionPaths: { [affected.cwd]: affected.cwd, [missing.cwd]: missing.cwd },
 				missingSessionPaths: [missing.cwd],
 				worktrees: [
-					{ path: '/data/home/alice/repo', branch: 'main', head: 'abc', isBare: false },
+					registryEntry('/data/home/alice/repo', 'main'),
 					{
 						path: '/home/alice/wt/feature',
 						resolvedPath: affected.cwd,
@@ -4671,12 +4564,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 						isBare: false,
 						...malformed,
 					},
-					{
-						path: '/data/home/alice/wt/healthy',
-						branch: 'healthy',
-						head: 'ghi',
-						isBare: false,
-					},
+					registryEntry('/data/home/alice/wt/healthy', 'healthy'),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, affected, missing] } as any);
@@ -4711,8 +4599,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				worktreeConfig: { basePath: '/home/alice/wt', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const unproven = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const unproven = createChildSession(parent, {
 				id: 'invalid-registry-physical-identity-chat',
 				cwd: '/physical/old/unproven',
 				aiTabs: [{ id: 'unproven-chat', agentSessionId: 'saved-session' }] as any,
@@ -4723,7 +4610,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				resolvedSessionPaths: { [unproven.cwd]: unproven.cwd },
 				missingSessionPaths: [unproven.cwd],
 				worktrees: [
-					{ path: '/data/home/alice/repo', branch: 'main', head: 'abc', isBare: false },
+					registryEntry('/data/home/alice/repo', 'main'),
 					{
 						path: '/home/alice/wt/feature',
 						resolvedPath,
@@ -4731,12 +4618,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 						head: 'def',
 						isBare: false,
 					},
-					{
-						path: '/data/home/alice/wt/healthy',
-						branch: 'healthy',
-						head: 'ghi',
-						isBare: false,
-					},
+					registryEntry('/data/home/alice/wt/healthy', 'healthy'),
 				],
 			});
 			useSessionStore.setState({ sessions: [parent, unproven] } as any);
@@ -4765,14 +4647,12 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 			worktreeConfig: { basePath: '/remote/wt', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const missing = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const missing = createChildSession(parent, {
 			id: 'snapshot-missing-control',
 			cwd: '/remote/wt/oldchild',
 			worktreeBranch: 'oldchild',
 		});
-		const fresh = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const fresh = createChildSession(parent, {
 			id: 'created-during-registry-request',
 			cwd: '/new-alias/wt/fresh',
 			worktreeBranch: 'fresh',
@@ -4798,7 +4678,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				resolvedBasePath: '/remote/wt',
 				resolvedSessionPaths: { [missing.cwd]: missing.cwd },
 				missingSessionPaths: [missing.cwd],
-				worktrees: [{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false }],
+				worktrees: [registryEntry(parent.cwd, 'main')],
 			});
 			await scan;
 		});
@@ -4819,8 +4699,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
 			const otherParent = { ...parent, id: 'other-parent', worktreeConfig: undefined };
-			const missing = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const missing = createChildSession(parent, {
 				id: 'addition-await-missing-control',
 				cwd: '/remote/wt/oldchild',
 				worktreeBranch: 'oldchild',
@@ -4831,8 +4710,7 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 				aiTabs: [{ id: 'retargeted-chat', agentSessionId: 'saved-session' }] as any,
 			});
-			const fresh = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const fresh = createChildSession(parent, {
 				id: 'created-during-git-info',
 				cwd: '/new-alias/wt/fresh',
 				worktreeBranch: 'fresh',
@@ -4847,8 +4725,8 @@ describe('SSH registry physical aliases, prunable entries, and scan races', () =
 				},
 				missingSessionPaths: [missing.cwd, candidate.cwd],
 				worktrees: [
-					{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false },
-					{ path: '/remote/wt/discovered', branch: 'discovered', head: 'def', isBare: false },
+					registryEntry(parent.cwd, 'main'),
+					registryEntry('/remote/wt/discovered', 'discovered'),
 				],
 			});
 			let resolveBranches!: (value: string[]) => void;
@@ -4909,15 +4787,13 @@ describe('SSH reconciliation snapshot guards', () => {
 			worktreeConfig: { basePath: '/remote/wt', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const candidate = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const candidate = createChildSession(parent, {
 			id: 'save-retargeted-candidate',
 			cwd: '/remote/wt/old-target',
 			worktreeBranch: 'retargeted',
 			aiTabs: [{ id: 'save-retargeted-chat', agentSessionId: 'saved-session' }] as any,
 		});
-		const missing = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const missing = createChildSession(parent, {
 			id: 'save-missing-control',
 			cwd: '/remote/wt/oldchild',
 			worktreeBranch: 'oldchild',
@@ -4951,7 +4827,7 @@ describe('SSH reconciliation snapshot guards', () => {
 				resolvedBasePath: '/remote/wt',
 				resolvedSessionPaths: { [candidate.cwd]: candidate.cwd, [missing.cwd]: missing.cwd },
 				missingSessionPaths: [candidate.cwd, missing.cwd],
-				worktrees: [{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false }],
+				worktrees: [registryEntry(parent.cwd, 'main')],
 			});
 			await save;
 		});
@@ -4980,8 +4856,7 @@ describe('SSH reconciliation snapshot guards', () => {
 				worktreeConfig: { basePath: '/remote/wt', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const child = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const child = createChildSession(parent, {
 				id: 'parent-retargeted-saved-child',
 				cwd: '/remote/wt/oldchild',
 				aiTabs: [{ id: 'parent-retargeted-chat', agentSessionId: 'saved-session' }] as any,
@@ -4992,8 +4867,8 @@ describe('SSH reconciliation snapshot guards', () => {
 				resolvedSessionPaths: { [child.cwd]: child.cwd },
 				missingSessionPaths: [child.cwd],
 				worktrees: [
-					{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false },
-					{ path: '/remote/wt/discovered', branch: 'discovered', head: 'def', isBare: false },
+					registryEntry(parent.cwd, 'main'),
+					registryEntry('/remote/wt/discovered', 'discovered'),
 				],
 			};
 			let resolveListing!: (value: unknown) => void;
@@ -5125,15 +5000,13 @@ describe('Worktree failure isolation', () => {
 				worktreeConfig: { basePath: '/trees', watchEnabled: mode === 'watcher' },
 				sessionSshRemoteConfig: remote ? { enabled: true, remoteId: 'ssh-1' } : undefined,
 			};
-			const healthy = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const healthy = createChildSession(parent, {
 				id: 'exact-healthy-chat',
 				cwd: '/trees/healthy',
 				worktreeBranch: 'healthy',
 				aiTabs: [{ id: 'existing-chat', agentSessionId: 'codex-session' }] as any,
 			});
-			const uncertain = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const uncertain = createChildSession(parent, {
 				id: 'unknown-directory-chat',
 				cwd: '/trees/uncertain',
 				worktreeBranch: 'uncertain',
@@ -5147,7 +5020,7 @@ describe('Worktree failure isolation', () => {
 					resolvedCwd: '/repo',
 					resolvedBasePath: '/trees',
 					worktrees: [
-						{ path: '/repo', branch: 'main', head: 'abc', isBare: false },
+						registryEntry('/repo', 'main'),
 						null,
 						...known.map((entry) => ({ ...entry, head: 'def', isBare: false })),
 					],
@@ -5201,14 +5074,12 @@ describe('Worktree failure isolation', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const unresolved = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const unresolved = createChildSession(parent, {
 				id: 'dictionary-key-child',
 				cwd,
 				worktreeBranch: 'healthy',
 			});
-			const stale = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const stale = createChildSession(parent, {
 				id: 'dictionary-case-stale-child',
 				cwd: '/physical/worktrees/stale',
 			});
@@ -5216,8 +5087,8 @@ describe('Worktree failure isolation', () => {
 				resolvedCwd: '/remote/repo',
 				resolvedBasePath: '/physical/worktrees',
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{ path: '/physical/worktrees/healthy', branch: 'healthy', head: 'def', isBare: false },
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/worktrees/healthy', 'healthy'),
 				],
 			});
 			useSessionStore.setState({
@@ -5396,8 +5267,7 @@ describe('Worktree failure isolation', () => {
 			worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const affected = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const affected = createChildSession(parent, {
 			id: 'malformed-registry-record-child',
 			cwd: '/physical/worktrees/broken',
 			worktreeBranch: 'healthy',
@@ -5406,9 +5276,9 @@ describe('Worktree failure isolation', () => {
 			resolvedCwd: '/remote/repo',
 			resolvedBasePath: '/physical/worktrees',
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
+				registryEntry('/remote/repo', 'main'),
 				record,
-				{ path: '/physical/worktrees/healthy', branch: 'healthy', head: 'ghi', isBare: false },
+				registryEntry('/physical/worktrees/healthy', 'healthy'),
 			],
 		});
 		useSessionStore.setState({ sessions: [parent, affected], sessionsLoaded: true } as any);
@@ -5431,8 +5301,7 @@ describe('Worktree failure isolation', () => {
 			worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const affected = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const affected = createChildSession(parent, {
 			id: 'malformed-cwd-child',
 			cwd: null as any,
 			worktreeBranch: 'healthy',
@@ -5441,8 +5310,8 @@ describe('Worktree failure isolation', () => {
 			resolvedCwd: '/remote/repo',
 			resolvedBasePath: '/physical/worktrees',
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-				{ path: '/physical/worktrees/healthy', branch: 'healthy', head: 'ghi', isBare: false },
+				registryEntry('/remote/repo', 'main'),
+				registryEntry('/physical/worktrees/healthy', 'healthy'),
 			],
 		});
 		useSessionStore.setState({ sessions: [parent, affected], sessionsLoaded: true } as any);
@@ -5465,13 +5334,11 @@ describe('Worktree failure isolation', () => {
 			worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const affected = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const affected = createChildSession(parent, {
 			id: 'malformed-registry-child',
 			cwd: '/physical/worktrees/broken\npath',
 		});
-		const stale = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const stale = createChildSession(parent, {
 			id: 'healthy-registry-stale-child',
 			cwd: '/physical/worktrees/stale',
 		});
@@ -5479,9 +5346,9 @@ describe('Worktree failure isolation', () => {
 			resolvedCwd: '/remote/repo',
 			resolvedBasePath: '/physical/worktrees',
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-				{ path: affected.cwd, branch: 'broken', head: 'def', isBare: false },
-				{ path: '/physical/worktrees/healthy', branch: 'healthy', head: 'ghi', isBare: false },
+				registryEntry('/remote/repo', 'main'),
+				registryEntry(affected.cwd, 'broken'),
+				registryEntry('/physical/worktrees/healthy', 'healthy'),
 			],
 		});
 		useSessionStore.setState({ sessions: [parent, affected, stale], sessionsLoaded: true } as any);
@@ -5507,15 +5374,13 @@ describe('Worktree failure isolation', () => {
 				worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: mode === 'visibility' },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			};
-			const unresolved = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const unresolved = createChildSession(parent, {
 				id: 'unresolved-child',
 				cwd: '/unreachable/worktrees/review',
 				worktreeBranch: 'recreated',
 				aiTabs: [{ id: 'existing-chat', agentSessionId: 'codex-session' }] as any,
 			});
-			const missing = createChildSession({
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+			const missing = createChildSession(parent, {
 				id: 'confirmed-missing-child',
 				cwd: '/old/worktrees/obsolete',
 			});
@@ -5526,30 +5391,11 @@ describe('Worktree failure isolation', () => {
 				resolvedSessionPaths: { [missing.cwd]: '/physical/worktrees/obsolete' },
 				missingSessionPaths: [missing.cwd],
 				worktrees: [
-					{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-					{
-						path: '/physical/worktrees/recreated',
-						branch: 'recreated',
-						head: 'def',
-						isBare: false,
-					},
+					registryEntry('/remote/repo', 'main'),
+					registryEntry('/physical/worktrees/recreated', 'recreated'),
 				],
 			});
-			useSessionStore.setState({
-				sessions: [parent, unresolved, missing],
-				activeSessionId: parent.id,
-				sessionsLoaded: mode === 'startup',
-			} as any);
-			const { result } = renderHook(() => useWorktreeHandlers());
-			await act(async () => {
-				if (mode === 'save') await result.current.handleSaveWorktreeConfig(parent.worktreeConfig);
-				if (mode === 'refresh') await result.current.refreshWorktreeState();
-				if (mode === 'visibility') {
-					Object.defineProperty(document, 'hidden', { value: false, writable: true });
-					document.dispatchEvent(new Event('visibilitychange'));
-				}
-				await vi.runAllTimersAsync();
-			});
+			await runConfiguredScan(mode, parent, [unresolved, missing]);
 
 			const children = useSessionStore
 				.getState()
@@ -5577,14 +5423,12 @@ describe('Worktree failure isolation', () => {
 			worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const unresolved = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const unresolved = createChildSession(parent, {
 			id: 'bad-child-metadata',
 			cwd: '/old/worktrees/review',
 			worktreeBranch: 'new',
 		});
-		const stale = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const stale = createChildSession(parent, {
 			id: 'safe-to-remove',
 			cwd: '/physical/worktrees/stale',
 		});
@@ -5593,8 +5437,8 @@ describe('Worktree failure isolation', () => {
 			resolvedBasePath: '/physical/worktrees',
 			...metadata,
 			worktrees: [
-				{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false },
-				{ path: '/physical/worktrees/new', branch: 'new', head: 'def', isBare: false },
+				registryEntry('/remote/repo', 'main'),
+				registryEntry('/physical/worktrees/new', 'new'),
 			],
 		});
 		useSessionStore.setState({
@@ -5621,13 +5465,11 @@ describe('Worktree failure isolation', () => {
 			worktreeConfig: { basePath: '/physical/worktrees', watchEnabled: false },
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 		};
-		const unresolved = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const unresolved = createChildSession(parent, {
 			id: 'inaccessible-child',
 			cwd: '/old/worktrees/review',
 		});
-		const stale = createChildSession({
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		const stale = createChildSession(parent, {
 			id: 'stale-child',
 			cwd: '/physical/worktrees/stale',
 		});
@@ -5635,7 +5477,7 @@ describe('Worktree failure isolation', () => {
 			resolvedCwd: '/remote/repo',
 			resolvedBasePath: '/physical/worktrees',
 			unresolvedSessionPaths: [unresolved.cwd],
-			worktrees: [{ path: '/remote/repo', branch: 'main', head: 'abc', isBare: false }],
+			worktrees: [registryEntry('/remote/repo', 'main')],
 		});
 		useSessionStore.setState({
 			sessions: [parent, unresolved, stale],
@@ -5812,13 +5654,8 @@ describe('Multi-parent scan arguments and SSH host identity', () => {
 							resolvedSessionPaths: { [fresh.cwd]: fresh.cwd },
 							missingSessionPaths: [fresh.cwd],
 							worktrees: [
-								{ path: laterParent.cwd, branch: 'main', head: 'abc', isBare: false },
-								{
-									path: '/remote/later/wt/obsolete-discovery',
-									branch: 'obsolete-discovery',
-									head: 'def',
-									isBare: false,
-								},
+								registryEntry(laterParent.cwd, 'main'),
+								registryEntry('/remote/later/wt/obsolete-discovery', 'obsolete-discovery'),
 							],
 						})
 			);
@@ -5849,7 +5686,7 @@ describe('Multi-parent scan arguments and SSH host identity', () => {
 				resolveFirst({
 					resolvedCwd: firstParent.cwd,
 					resolvedBasePath: firstParent.worktreeConfig.basePath,
-					worktrees: [{ path: firstParent.cwd, branch: 'main', head: 'abc', isBare: false }],
+					worktrees: [registryEntry(firstParent.cwd, 'main')],
 				});
 				await scan;
 			});
@@ -5954,11 +5791,10 @@ describe('Multi-parent scan arguments and SSH host identity', () => {
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 				aiTabs: [{ id: 'old-host-chat', agentSessionId: 'ssh1-saved-session' }] as any,
 			});
-			const inheritedMissing = createChildSession({
+			const inheritedMissing = createChildSession(parent, {
 				id: 'current-host-inherited-missing-control',
 				cwd: '/remote/wt/inherited-missing',
 				worktreeBranch: 'inherited-missing',
-				sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
 			});
 			mockGit.listWorktrees.mockResolvedValue({
 				resolvedCwd: parent.cwd,
@@ -5969,21 +5805,11 @@ describe('Multi-parent scan arguments and SSH host identity', () => {
 				},
 				missingSessionPaths: [oldHostChild.cwd, inheritedMissing.cwd],
 				worktrees: [
-					{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false },
-					{ path: '/remote/wt/shared', branch: 'new-host', head: 'def', isBare: false },
+					registryEntry(parent.cwd, 'main'),
+					registryEntry('/remote/wt/shared', 'new-host'),
 				],
 			});
-			useSessionStore.setState({
-				sessions: [parent, oldHostChild, inheritedMissing],
-				activeSessionId: parent.id,
-				sessionsLoaded: mode === 'startup',
-			} as any);
-			const { result } = renderHook(() => useWorktreeHandlers());
-			await act(async () => {
-				if (mode === 'save') await result.current.handleSaveWorktreeConfig(parent.worktreeConfig);
-				if (mode === 'refresh') await result.current.refreshWorktreeState();
-				await vi.runAllTimersAsync();
-			});
+			await runConfiguredScan(mode, parent, [oldHostChild, inheritedMissing]);
 			const children = useSessionStore
 				.getState()
 				.sessions.filter((session) => session.parentSessionId === parent.id);
@@ -6036,8 +5862,8 @@ describe('Configured SSH target precedence over the previous spawn', () => {
 				resolvedSessionPaths: { [oldHostChild.cwd]: oldHostChild.cwd },
 				missingSessionPaths: [oldHostChild.cwd],
 				worktrees: [
-					{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false },
-					{ path: '/remote/wt/new-host', branch: 'new-host', head: 'def', isBare: false },
+					registryEntry(parent.cwd, 'main'),
+					registryEntry('/remote/wt/new-host', 'new-host'),
 				],
 			});
 			useSessionStore.setState({
@@ -6096,13 +5922,8 @@ describe('Configured SSH target precedence over the previous spawn', () => {
 						resolvedCwd: laterParent.cwd,
 						resolvedBasePath: laterParent.worktreeConfig.basePath,
 						worktrees: [
-							{ path: laterParent.cwd, branch: 'main', head: 'abc', isBare: false },
-							{
-								path: '/remote/later/wt/stale-discovery',
-								branch: 'stale-discovery',
-								head: 'def',
-								isBare: false,
-							},
+							registryEntry(laterParent.cwd, 'main'),
+							registryEntry('/remote/later/wt/stale-discovery', 'stale-discovery'),
 						],
 					})
 		);
@@ -6121,7 +5942,7 @@ describe('Configured SSH target precedence over the previous spawn', () => {
 			resolveFirst({
 				resolvedCwd: firstParent.cwd,
 				resolvedBasePath: firstParent.worktreeConfig.basePath,
-				worktrees: [{ path: firstParent.cwd, branch: 'main', head: 'abc', isBare: false }],
+				worktrees: [registryEntry(firstParent.cwd, 'main')],
 			});
 			await scan;
 		});
@@ -6155,7 +5976,7 @@ describe('Configured SSH target precedence over the previous spawn', () => {
 			resolvedBasePath: '/local/wt',
 			resolvedSessionPaths: { [oldHostChild.cwd]: oldHostChild.cwd },
 			missingSessionPaths: [oldHostChild.cwd],
-			worktrees: [{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false }],
+			worktrees: [registryEntry(parent.cwd, 'main')],
 		});
 		useSessionStore.setState({ sessions: [parent, oldHostChild] } as any);
 		const { result } = renderHook(() => useWorktreeHandlers());
@@ -6202,8 +6023,8 @@ describe('Configured SSH target precedence over the previous spawn', () => {
 			resolvedSessionPaths: { [localChild.cwd]: localChild.cwd },
 			missingSessionPaths: [localChild.cwd],
 			worktrees: [
-				{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false },
-				{ path: '/remote/wt/shared', branch: 'ssh-host', head: 'def', isBare: false },
+				registryEntry(parent.cwd, 'main'),
+				registryEntry('/remote/wt/shared', 'ssh-host'),
 			],
 		});
 		useSessionStore.setState({ sessions: [parent, localChild] } as any);
@@ -6253,10 +6074,7 @@ describe('Local child identity and watcher targets', () => {
 				resolvedBasePath: '/remote/wt',
 				resolvedSessionPaths: { [localChild.cwd]: localChild.cwd },
 				...(registryStatus === 'missing' ? { missingSessionPaths: [localChild.cwd] } : {}),
-				worktrees: [
-					{ path: parent.cwd, branch: 'main', head: 'abc', isBare: false },
-					{ path: remotePath, branch: 'ssh2-chat', head: 'def', isBare: false },
-				],
+				worktrees: [registryEntry(parent.cwd, 'main'), registryEntry(remotePath, 'ssh2-chat')],
 			});
 			useSessionStore.setState({ sessions: [parent, localChild] } as any);
 			const { result } = renderHook(() => useWorktreeHandlers());
@@ -6297,11 +6115,10 @@ describe('Local child identity and watcher targets', () => {
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' },
 			aiTabs: [{ id: 'ssh1-chat', agentSessionId: 'ssh1-session' }] as any,
 		});
-		const localChild = createChildSession({
+		const localChild = createChildSession(parent, {
 			id: 'local-watcher-chat',
 			cwd: sshChild.cwd,
 			worktreeBranch: 'local-chat',
-			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
 		});
 		let callback: any;
 		mockGit.onWorktreeRemoved.mockImplementationOnce((cb) => {
