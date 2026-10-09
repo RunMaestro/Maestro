@@ -1409,7 +1409,9 @@ describe('agent-detector', () => {
 		it('should read every source from CLAUDE_CONFIG_DIR when it is set', async () => {
 			mockClaudeAvailable();
 
-			const configDir = path.join(path.sep, 'tmp', 'maestro-test-claude-account-b');
+			// path.resolve, not path.join: the detector resolves CLAUDE_CONFIG_DIR, which
+			// prefixes a drive letter on Windows, so a bare rooted path never matches.
+			const configDir = path.resolve(path.sep, 'tmp', 'maestro-test-claude-account-b');
 			const previous = process.env.CLAUDE_CONFIG_DIR;
 			process.env.CLAUDE_CONFIG_DIR = configDir;
 
