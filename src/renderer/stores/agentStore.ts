@@ -45,6 +45,7 @@ import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import { filterYoloArgs } from '../utils/agentArgs';
 import { logger } from '../utils/logger';
+import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
 
 // ============================================================================
 // Store Types
@@ -393,6 +394,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
+
+		// Name the tab from the message it is about to run. The composer names at
+		// queue time, but `dispatch --queue` and other external producers never
+		// pass through the composer, so without this a tab fed only by the queue
+		// stays unnamed forever. A tab that is already named (or mid-naming) is
+		// left alone by the helper's guards, so composer-queued items cost nothing.
+		if (item.type === 'message' && item.text?.trim()) {
+			requestTabAutoNameForMessage(session, targetTab.id, item.text, 'queue');
+		}
 
 		// The model/effort this turn runs under were frozen when the user queued
 		// it, so a queue that drains after the user switched models still spawns

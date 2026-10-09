@@ -50,6 +50,11 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
+// Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts.
+vi.mock('../../../renderer/services/tabAutoNaming', () => ({
+	requestTabAutoNameForMessage: vi.fn(),
+}));
+
 // Mock hasCapabilityCached - agents with batch mode support
 const BATCH_MODE_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'factory-droid']);
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({

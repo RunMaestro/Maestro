@@ -1,9 +1,10 @@
 /**
  * tabAutoNaming - the one place an AI tab gets named from what the user asked for.
  *
- * Three surfaces want the same behavior and used to hand-roll it: the send path
- * (`useInputProcessing`), the manual "Auto" rename in the rename modal
- * (`useSessionLifecycle`), and now the inline wizard. Each copy repeated the
+ * Several surfaces want the same behavior and used to hand-roll it: the send
+ * paths (`useInputProcessing`, the queue drain, remote dispatch), the manual
+ * "Auto" rename in the rename modal (`useSessionLifecycle`), and the inline
+ * wizard. Each copy repeated the
  * same four steps - build a capped prompt from the user's own messages, try the
  * cheap client-side pattern match, spawn the ephemeral namer, then write the
  * result back only if the tab has not been renamed in the meantime - and the
@@ -218,6 +219,44 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 				error: String(error),
 			});
 		});
+}
+
+/**
+ * Name an AI tab from a message that is about to run in it, whatever produced
+ * that message: the composer, a queue drain, or a remote dispatch
+ * (`maestro-cli dispatch`, `send --live --new-tab`, a web/mobile client).
+ *
+ * Naming used to be wired into the composer alone, so a tab whose messages
+ * only ever arrived from outside it kept `name === null` forever - there is
+ * no second composer send to trigger the retry. Every path that hands a user
+ * message to an AI tab calls this instead of building its own prompt.
+ *
+ * The prompt is the tab's earlier user messages plus `message`. Callers differ
+ * on whether `message` is already in the tab's logs when they get here (the
+ * dequeue path appends it before spawning), so a trailing copy is dropped
+ * rather than fed to the namer twice. Guards are `requestTabAutoName`'s: the
+ * setting, a non-empty message, no existing name, no namer already running.
+ */
+export function requestTabAutoNameForMessage(
+	session: Session,
+	tabId: string,
+	message: string,
+	label = 'auto'
+): void {
+	const text = message.trim();
+	if (!text) return;
+	const tab = session.aiTabs.find((t) => t.id === tabId);
+	if (!tab) return;
+
+	const prior = tab.logs.filter((entry) => entry.source === 'user').map((entry) => entry.text);
+	if (prior.length > 0 && prior[prior.length - 1]?.trim() === text) prior.pop();
+
+	requestTabAutoName({
+		session,
+		tabId,
+		prompt: collectNamingPrompt(prior, message),
+		label,
+	});
 }
 
 /**
