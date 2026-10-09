@@ -62,6 +62,8 @@ export interface PianolaBriefItem {
 	planId?: string;
 	taskId?: string;
 	decisionId?: string;
+	agentId?: string;
+	tabId?: string;
 }
 export interface PianolaBriefInFlight {
 	programId?: string;
@@ -324,6 +326,8 @@ export function derivePianolaBrief(
 				kind: 'escalation',
 				id: decision.id,
 				decisionId: decision.id,
+				agentId: decision.agentId,
+				tabId: decision.tabId,
 				title: decision.classification.topic || decision.decision.reason,
 				detail: decision.decision.reason,
 				since: decision.timestamp,

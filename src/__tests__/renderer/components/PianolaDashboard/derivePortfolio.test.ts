@@ -13,6 +13,9 @@ import {
 	type PortfolioSnapshot,
 } from '../../../../renderer/components/PianolaDashboard/usePianolaDashboardData';
 import type { Session, SessionState } from '../../../../renderer/types';
+import { createMockAITab } from '../../../helpers/mockTab';
+import type { PianolaDecisionRecord } from '../../../../shared/pianola/storage';
+import { derivePianolaBrief } from '../../../../shared/pianola/pianola-programs';
 import type {
 	PianolaAsk,
 	PianolaAskSeverity,
@@ -82,6 +85,77 @@ function portfolio(snapshot: Partial<PortfolioSnapshot>, sessions: Session[] = [
 }
 
 describe('derivePortfolio', () => {
+	it('reconciles watcher escalations with the original live conversation without deleting audit decisions', () => {
+		const decision = {
+			id: 'decision',
+			timestamp: at(2),
+			agentId: 'lead',
+			tabId: 'origin',
+			classification: {
+				kind: 'question',
+				risk: 'low',
+				topic: 'Choose provider',
+				confidence: 'high',
+			},
+			decision: { action: 'escalate', matchedRuleId: null, reason: 'No matching rule' },
+			dispatched: false,
+			dryRun: false,
+		} as PianolaDecisionRecord;
+		const logs = [
+			{
+				id: 'question',
+				timestamp: Date.parse(at(1)),
+				source: 'ai' as const,
+				text: 'Which option should I choose?',
+			},
+		];
+		const origin = createMockAITab({ id: 'origin', state: 'idle', logs });
+		const other = createMockAITab({ id: 'other', state: 'idle', logs: [] });
+		const snapshot = {
+			brief: derivePianolaBrief([], [], [], [decision], {}, at(3)),
+			asks: [],
+			programs: [],
+		};
+		expect(snapshot.brief.needsMe).toEqual([
+			expect.objectContaining({ kind: 'escalation', agentId: 'lead', tabId: 'origin' }),
+		]);
+		const derive = (sessions: Session[]) => {
+			const dashboard = deriveDashboard(sessions, [decision]);
+			expect(dashboard.activity).toHaveLength(1);
+			expect(dashboard.activity[0]).toMatchObject({ action: 'escalate', topic: 'Choose provider' });
+			return derivePortfolio(dashboard, snapshot, sessions).escalations;
+		};
+		// The active tab is unrelated: the origin itself is still asking.
+		expect(
+			derive([
+				session({ id: 'lead', state: 'idle', activeTabId: 'other', aiTabs: [origin, other] }),
+			])
+		).toEqual([
+			expect.objectContaining({ sessionId: 'lead', tabId: 'origin', title: 'Choose provider' }),
+		]);
+		const replied = {
+			...origin,
+			logs: [
+				...logs,
+				{ id: 'answer', timestamp: Date.parse(at(3)), source: 'user' as const, text: 'Stripe' },
+			],
+		};
+		const done = { ...origin, logs: [{ ...logs[0], text: 'Checkout is complete.' }] };
+		const newQuestion = {
+			...replied,
+			logs: [...replied.logs, { ...logs[0], id: 'next', timestamp: Date.parse(at(4)) }],
+		};
+		for (const tab of [replied, done, newQuestion, { ...origin, state: 'busy' as const }]) {
+			expect(
+				derive([session({ id: 'lead', state: 'waiting_input', aiTabs: [tab, { ...other, logs }] })])
+			).toEqual([]);
+		}
+		expect(
+			derive([session({ id: 'lead', state: 'waiting_input', aiTabs: [{ ...other, logs }] })])
+		).toEqual([]);
+		expect(derive([])).toEqual([]);
+	});
+
 	it('orders open asks by severity, then oldest first, and drops settled ones', () => {
 		const { asks } = portfolio({
 			asks: [

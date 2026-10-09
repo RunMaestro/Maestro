@@ -529,6 +529,28 @@ describe('outcome detection is scoped to the current dispatch', () => {
 });
 
 describe('program charter fix attempts', () => {
+	it('caps fixes with the latest charter after history awaits', async () => {
+		const deps = makeReactiveDeps({
+			reactiveEnabled: () => true,
+			runStates: { A: 'busy' },
+			getRunLedger: async () => ({ checksPassed: false, runId: 'r-B' }),
+			dispatchFix: vi.fn(async () => ({ success: true })),
+		});
+		let maxConcurrent = 2;
+		deps.getProgramCharter = () => ({ validationRequired: false, maxAttempts: 2, maxConcurrent });
+		deps.getRecentMessages = vi.fn(async (_task, options) => {
+			if (options?.fresh) maxConcurrent = 1;
+			return [];
+		});
+		const state = initialOrchestratorState(
+			plan([task({ id: 'A', status: 'running' }), task({ id: 'B', status: 'needs_review' })], {
+				programId: 'product',
+			})
+		);
+		const result = await runOrchestratorIteration(state, deps, { concurrencyLimit: 3 });
+		expect(deps.dispatchFix).not.toHaveBeenCalled();
+		expect(statusOf(result.state, 'B')).toBe('needs_review');
+	});
 	it.each([
 		[1, 1, 'failed', 1],
 		[5, 3, 'fixing', 4],

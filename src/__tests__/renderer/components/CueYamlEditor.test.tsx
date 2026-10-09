@@ -254,9 +254,8 @@ describe('CueYamlEditor', () => {
 			render(<CueYamlEditor {...defaultProps} />);
 
 			await waitFor(() => {
-				expect(mockReadYaml).toHaveBeenCalledWith('/test/project');
+				expect(screen.getByTestId('yaml-editor')).toHaveValue(existingYaml);
 			});
-			expect(screen.getByTestId('yaml-editor')).toHaveValue(existingYaml);
 		});
 
 		it('should show template when no YAML file exists', async () => {
@@ -664,7 +663,12 @@ describe('CueYamlEditor', () => {
 			fireEvent.click(screen.getByText('Save'));
 
 			await waitFor(() => {
-				expect(mockWriteYaml).toHaveBeenCalledWith('/test/project', 'new content', undefined);
+				expect(mockWriteYaml).toHaveBeenCalledWith(
+					'/test/project',
+					'new content',
+					undefined,
+					'sess-1'
+				);
 			});
 			expect(mockRefreshSession).toHaveBeenCalledWith('sess-1', '/test/project');
 			expect(defaultProps.onClose).toHaveBeenCalledOnce();

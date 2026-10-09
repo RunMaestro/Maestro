@@ -36,7 +36,14 @@ const store = vi.hoisted(() => ({
 	readPrograms: vi.fn(
 		() => [] as Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]
 	),
-	writePrograms: vi.fn(),
+	updateProgramsAsync:
+		vi.fn<
+			(
+				update: (
+					programs: Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]
+				) => Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]
+			) => Promise<Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]>
+		>(),
 	readSuggestions: vi.fn(() => ({
 		generatedAt: 0,
 		pairCount: 0,
@@ -83,6 +90,8 @@ beforeEach(() => {
 	store.readSupervisorTargets.mockReturnValue([]);
 	store.readPlans.mockReturnValue([]);
 	store.readAsks.mockReturnValue([]);
+	store.readPrograms.mockReturnValue([]);
+	store.updateProgramsAsync.mockImplementation(async (update) => update(store.readPrograms()));
 	store.updateAsksAsync.mockImplementation(async (update) => update([]));
 	store.writeAsksAsync.mockImplementation(async (asks) => asks);
 	store.writeSupervisorTargetsAsync.mockImplementation(async (targets) => targets);
@@ -183,6 +192,34 @@ describe('pianola suggestions IPC handlers', () => {
 	});
 });
 describe('program controls IPC', () => {
+	it('pauses the latest locked program without overwriting a concurrent manifest apply', async () => {
+		const original = {
+			id: 'product',
+			status: 'active' as const,
+			updatedAt: 1,
+			title: 'Old',
+			root: '/old',
+		};
+		store.readPrograms.mockReturnValue([original]);
+		let saved: (Omit<typeof original, 'status'> & { status: 'active' | 'paused' })[] = [
+			{ ...original, title: 'New', root: '/new' },
+		];
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		store.updateProgramsAsync.mockImplementation(async (update) => {
+			await gate;
+			return (saved = update(saved) as typeof saved);
+		});
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const pending = handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
+		await Promise.resolve();
+		expect(saved[0].status).toBe('active');
+		release();
+		await pending;
+		expect(saved[0]).toMatchObject({ status: 'paused', title: 'New', root: '/new' });
+	});
 	it('toggles the latest locked target without overwriting a concurrent tab rebind', async () => {
 		const original: PianolaSupervisedTarget = {
 			id: 'watch',
@@ -305,13 +342,14 @@ describe('program controls IPC', () => {
 		);
 	});
 	it('pauses only the selected program and rejects invalid status', async () => {
+		// Assertions below inspect the transaction result, not a pre-lock replacement write.
 		store.readPrograms.mockReturnValue([
 			{ id: 'product', status: 'active', updatedAt: 1 },
 			{ id: 'other', status: 'active', updatedAt: 1 },
 		]);
 		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
 		await handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
-		expect(store.writePrograms).toHaveBeenCalledWith([
+		expect(await store.updateProgramsAsync.mock.results[0].value).toEqual([
 			expect.objectContaining({ id: 'product', status: 'paused' }),
 			{ id: 'other', status: 'active', updatedAt: 1 },
 		]);

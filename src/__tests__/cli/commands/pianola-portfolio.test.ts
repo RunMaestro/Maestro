@@ -35,8 +35,8 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 vi.mock('../../../cli/services/pianola-store', () => ({
 	readPianolaPrograms: () => state.programs,
-	upsertPianolaProgram: (program: PianolaProgram) => {
-		state.programs = [...state.programs.filter((p) => p.id !== program.id), program];
+	updatePianolaPrograms: (update: (programs: PianolaProgram[]) => PianolaProgram[]) => {
+		state.programs = update(state.programs);
 		return state.programs;
 	},
 	readPianolaAsks: () => state.asks,
@@ -73,12 +73,182 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.spyOn(console, 'log').mockImplementation(() => {});
 	connect.mockResolvedValue(undefined);
-	sendCommand.mockImplementation(async (command) =>
-		command.type === 'get_sessions' ? { sessions: [] } : { success: true, sessionId: 'session-1' }
-	);
+	sendCommand.mockImplementation(async (command) => {
+		if (command.type === 'get_sessions')
+			return {
+				sessions: [
+					...state.programs.flatMap((program) =>
+						Object.values(program.roles).map((role) => ({
+							id: role.agentId,
+							name: role.name,
+							cwd: program.root,
+						}))
+					),
+					...['lead', 'eng', 'market', 'cto', 'cmo', 'social'].map((id) => ({ id })),
+				],
+			};
+		return { success: true, sessionId: 'session-1' };
+	});
 });
 
 describe('portfolio CLI commands', () => {
+	it('preserves a concurrent pause and creation metadata while merging live role environment', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-apply-pause-'));
+		const file = path.join(dir, 'manifest.json');
+		const original: PianolaProgram = {
+			id: 'product',
+			title: 'Old',
+			root: dir,
+			roles: { lead: { name: 'Lead', agentId: 'lead' } },
+			leadAgentId: 'lead',
+			charter: { maxConcurrent: 2, maxAttempts: 2, validationRequired: true },
+			status: 'active',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		state.programs = [original];
+		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, title: 'New' }] }));
+		sendCommand.mockImplementation(async (command) => {
+			if (command.type === 'get_sessions')
+				return {
+					sessions: [
+						{
+							id: 'lead',
+							customEnvVars: { API_KEY: 'keep', CUSTOM_PATH: '/tools', MAESTRO_USER_DATA: 'old' },
+						},
+					],
+				};
+			if (command.type === 'update_session_config')
+				state.programs = [{ ...original, status: 'paused', createdAt: 123 }];
+			return { success: true };
+		});
+		try {
+			await pianolaProgramApply({ file, json: true });
+			expect(state.programs[0]).toMatchObject({ title: 'New', status: 'paused', createdAt: 123 });
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'update_session_config',
+					configPatch: expect.objectContaining({
+						customEnvVars: expect.objectContaining({
+							API_KEY: 'keep',
+							CUSTOM_PATH: '/tools',
+							MAESTRO_USER_DATA: 'C:\\fake\\maestro-dev',
+						}),
+					}),
+				}),
+				'update_session_config_result'
+			);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it('merges remote manifest environment into a recovered live role without removing unrelated keys', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-remote-env-'));
+		const file = path.join(dir, 'manifest.json');
+		fs.writeFileSync(
+			file,
+			JSON.stringify({
+				programs: [
+					{
+						id: 'remote',
+						title: 'Remote',
+						root: '/remote',
+						remoteId: 'wsl-dev',
+						remoteEnv: {
+							MAESTRO_CLI_JS: '/remote/cli',
+							MAESTRO_USER_DATA: '/remote/data',
+							CUSTOM_MANIFEST: 'yes',
+						},
+						roles: { lead: { name: 'Lead' } },
+						charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+					},
+				],
+			})
+		);
+		sendCommand.mockImplementation(async (command) =>
+			command.type === 'get_sessions'
+				? {
+						sessions: [
+							{
+								id: 'recovered',
+								name: 'Lead',
+								cwd: '/remote',
+								toolType: 'omp',
+								sessionSshRemoteConfig: { enabled: true, remoteId: 'wsl-dev' },
+								customEnvVars: { API_KEY: 'keep', CUSTOM_PATH: '/tools', CUSTOM_MANIFEST: 'old' },
+							},
+						],
+					}
+				: { success: true }
+		);
+		try {
+			await pianolaProgramApply({ file, json: true });
+			expect(state.programs[0].roles.lead.agentId).toBe('recovered');
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'update_session_config',
+					configPatch: expect.objectContaining({
+						customEnvVars: {
+							API_KEY: 'keep',
+							CUSTOM_PATH: '/tools',
+							CUSTOM_MANIFEST: 'yes',
+							MAESTRO_CLI_JS: '/remote/cli',
+							MAESTRO_USER_DATA: '/remote/data',
+						},
+					}),
+				}),
+				'update_session_config_result'
+			);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it('migrates legacy Cue with settings and isolates generated blocks for shared roots', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-cue-legacy-'));
+		const file = path.join(dir, 'manifest.json');
+		const legacy = path.join(dir, 'maestro-cue.yaml');
+		const manual =
+			'subscriptions:\n  - name: manual\n    event: time.heartbeat\nsettings:\n  max_concurrent: 7\n';
+		fs.writeFileSync(legacy, manual);
+		const program: PianolaProgram = {
+			id: 'a',
+			title: 'A',
+			root: dir,
+			roles: { lead: { name: 'Lead', agentId: 'lead' } },
+			charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+			status: 'active',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		fs.writeFileSync(file, JSON.stringify({ programs: [program, { ...program, id: 'b' }] }));
+		try {
+			await pianolaProgramApply({ file, json: true });
+			const canonical = path.join(dir, '.maestro', 'cue.yaml');
+			const first = fs.readFileSync(canonical, 'utf8');
+			const parsed = yaml.load(first) as { subscriptions: { name: string }[]; settings: unknown };
+			expect(parsed.subscriptions.map((entry) => entry.name)).toEqual([
+				'manual',
+				'a-standup',
+				'b-standup',
+			]);
+			expect(parsed.settings).toEqual({ max_concurrent: 7 });
+			expect(fs.readFileSync(legacy, 'utf8')).toBe(manual);
+			await pianolaProgramApply({ file, json: true });
+			expect(fs.readFileSync(canonical, 'utf8')).toBe(first);
+			const old = updateGeneratedCueYaml(manual, program)
+				.replaceAll('begin "a"', 'begin')
+				.replaceAll('end "a"', 'end');
+			const migrated = updateGeneratedCueYaml(old, { ...program, id: 'b' });
+			expect(
+				(yaml.load(migrated) as { subscriptions: { name: string }[] }).subscriptions.map(
+					(entry) => entry.name
+				)
+			).toEqual(['manual', 'a-standup', 'b-standup']);
+			expect(updateGeneratedCueYaml(migrated, program)).toBe(migrated);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	it('keeps old metadata after a partial apply and recovers created roles by live identity on retry', async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-apply-retry-'));
 		const file = path.join(dir, 'manifest.json');
@@ -98,7 +268,9 @@ describe('portfolio CLI commands', () => {
 		};
 		state.programs = [original];
 		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, root: newRoot }] }));
-		const live: { id: string; name: string; cwd: string; toolType: string }[] = [];
+		const live: { id: string; name: string; cwd: string; toolType: string }[] = [
+			{ id: 'eng', name: 'Engineer', cwd: newRoot, toolType: 'omp' },
+		];
 		let failCwd = true;
 		sendCommand.mockImplementation(async (command) => {
 			if (command.type === 'get_sessions') return { sessions: live };

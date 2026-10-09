@@ -31,7 +31,7 @@ import {
 } from '../../pianola/pianola-store-main';
 import {
 	readPrograms,
-	writePrograms,
+	updateProgramsAsync,
 	readAsks,
 	updateAsksAsync,
 	readPlans,
@@ -302,15 +302,15 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 			if (typeof programId !== 'string' || (status !== 'active' && status !== 'paused'))
 				throw new Error('InvalidProgramStatus');
-			const programs = readPrograms();
-			if (!programs.some((program) => program.id === programId))
-				throw new Error('InvalidProgramId');
-			if (programs.find((program) => program.id === programId)!.status !== status)
-				writePrograms(
-					programs.map((program) =>
-						program.id === programId ? { ...program, status, updatedAt: Date.now() } : program
-					)
+			await updateProgramsAsync((programs) => {
+				if (!programs.some((program) => program.id === programId))
+					throw new Error('InvalidProgramId');
+				return programs.map((program) =>
+					program.id === programId && program.status !== status
+						? { ...program, status, updatedAt: Date.now() }
+						: program
 				);
+			});
 			supervisor.reconcile();
 		}
 	);

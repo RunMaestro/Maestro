@@ -3,6 +3,8 @@ import * as path from 'path';
 import yaml from 'js-yaml';
 import { isScalar, isSeq, parseDocument, stringify as stringifyYaml } from 'yaml';
 import { writeCueYamlAtomicSync } from '../../main/cue/cue-yaml-write';
+import { readCueConfigFile } from '../../main/cue/config/cue-config-repository';
+import { escapeRegExp } from '../../shared/stringUtils';
 import { MaestroClient } from '../services/maestro-client';
 import { readAgentRuns } from '../services/agent-run-store';
 import { pianolaTaskAgentRunId } from '../../shared/agent-run';
@@ -11,7 +13,7 @@ import { getConfigDirectory, readSshRemotes } from '../services/storage';
 import { ensurePianolaEnabled } from './pianola';
 import {
 	readPianolaPrograms,
-	upsertPianolaProgram,
+	updatePianolaPrograms,
 	readPianolaAsks,
 	updatePianolaAsks,
 	readPianolaPlans,
@@ -140,6 +142,39 @@ function generatedCueSubscriptions(
 }
 
 export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): string {
+	// Old releases owned one unscoped block. Attribute it to its subscription names
+	// before updating this program, so shared roots keep the other program's routines.
+	const legacyStart = new RegExp('^' + escapeRegExp(GENERATED_BEGIN) + '\r?$', 'm').exec(raw);
+	const legacyEnd = new RegExp('^' + escapeRegExp(GENERATED_END) + '\r?$', 'm').exec(raw);
+	if (legacyStart || legacyEnd) {
+		if (!legacyStart || !legacyEnd || legacyEnd.index < legacyStart.index)
+			throw new Error('Unmatched generated Cue block marker');
+		const entries = yaml.load(
+			raw.slice(legacyStart.index + GENERATED_BEGIN.length, legacyEnd.index)
+		) as CueSubscription[] | null;
+		const owners = new Set(
+			(entries ?? []).map((entry) => {
+				const name = String(entry.name ?? '');
+				return name.startsWith('portfolio-weekly-')
+					? 'portfolio'
+					: name.replace(/-(?:standup|marketing)$/, '');
+			})
+		);
+		if (owners.size > 1) throw new Error('Ambiguous legacy generated Cue ownership');
+		const owner = [...owners][0] ?? program.id;
+		raw =
+			raw.slice(0, legacyStart.index) +
+			GENERATED_BEGIN +
+			' ' +
+			JSON.stringify(owner) +
+			raw.slice(legacyStart.index + GENERATED_BEGIN.length, legacyEnd.index) +
+			GENERATED_END +
+			' ' +
+			JSON.stringify(owner) +
+			raw.slice(legacyEnd.index + GENERATED_END.length);
+	}
+	const begin = GENERATED_BEGIN + ' ' + JSON.stringify(program.id);
+	const endMarker = GENERATED_END + ' ' + JSON.stringify(program.id);
 	const document = parseDocument(raw);
 	if (document.errors.length) throw document.errors[0];
 	const subscriptions = document.get('subscriptions', true);
@@ -178,7 +213,7 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 	const indent = /^([ \t]*)-(?:[ \t]|$)/m.exec(raw.slice(after, position))?.[1] ?? '  ';
 	const block =
 		[
-			GENERATED_BEGIN,
+			begin,
 			...generated.flatMap(({ pipeline, subscription }) => [
 				indent + '# Pipeline: ' + pipeline,
 				...yaml
@@ -187,10 +222,10 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 					.split('\n')
 					.map((line) => indent + line),
 			]),
-			GENERATED_END,
+			endMarker,
 		].join('\n') + '\n';
-	const startMatch = new RegExp('^' + GENERATED_BEGIN + '\\r?$', 'm').exec(raw);
-	const endMatch = new RegExp('^' + GENERATED_END + '\\r?$', 'm').exec(raw);
+	const startMatch = new RegExp('^' + escapeRegExp(begin) + '\r?$', 'm').exec(raw);
+	const endMatch = new RegExp('^' + escapeRegExp(endMarker) + '\r?$', 'm').exec(raw);
 	const start = startMatch?.index ?? -1;
 	const end = endMatch?.index ?? -1;
 	if (start >= 0 || end >= 0) {
@@ -198,7 +233,7 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 		const updated =
 			raw.slice(0, start) +
 			(generated.length ? block : '') +
-			raw.slice(end + GENERATED_END.length).replace(/^\r?\n/, '');
+			raw.slice(end + endMarker.length).replace(/^\r?\n/, '');
 		if (
 			!generated.length &&
 			(yaml.load(updated) as { subscriptions?: unknown } | null)?.subscriptions == null
@@ -228,14 +263,15 @@ function writeProgramCue(program: PianolaProgram): string | null {
 		return 'Cue skipped for ' + program.id + ': root is not a local Windows path';
 	const target = path.join(rootOnHost, '.maestro', 'cue.yaml');
 	fs.mkdirSync(path.dirname(target), { recursive: true });
-	const raw = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
+	const current = readCueConfigFile(rootOnHost);
+	const raw = current?.raw ?? '';
 	try {
 		const updated = updateGeneratedCueYaml(raw, program);
 		const document = parseDocument(updated);
 		if (document.errors.length) throw document.errors[0];
 		if (!Array.isArray((document.toJS() as { subscriptions?: unknown } | null)?.subscriptions))
 			throw new Error('Cue subscriptions must be an array');
-		if (updated !== raw) writeCueYamlAtomicSync(target, updated);
+		if (updated !== raw || current?.filePath !== target) writeCueYamlAtomicSync(target, updated);
 	} catch (error) {
 		return (
 			'Cue skipped for ' +
@@ -347,6 +383,7 @@ export async function pianolaProgramApply(options: {
 						cwd: string;
 						toolType: string;
 						sessionSshRemoteConfig?: { enabled: boolean; remoteId?: string | null };
+						customEnvVars?: Record<string, string>;
 				  }[]
 				| undefined;
 			const liveSessions = async () => {
@@ -391,7 +428,11 @@ export async function pianolaProgramApply(options: {
 					if (old?.model !== role.model) configPatch.customModel = role.model ?? null;
 					if (old?.instructions !== role.instructions)
 						configPatch.newSessionMessage = role.instructions ?? null;
-					if (roleEnv) configPatch.customEnvVars = roleEnv;
+					if (roleEnv) {
+						const session = (await liveSessions()).find((entry) => entry.id === role.agentId);
+						if (!session) throw new Error(`Role agent not found: ${role.agentId}`);
+						configPatch.customEnvVars = { ...session.customEnvVars, ...roleEnv };
+					}
 					if (existing?.remoteId !== program.remoteId) {
 						const session = (await liveSessions()).find((session) => session.id === role.agentId);
 						if (!session) throw new Error(`Role agent not found: ${role.agentId}`);
@@ -447,6 +488,7 @@ export async function pianolaProgramApply(options: {
 				}>(
 					{
 						type: 'create_session',
+						background: true,
 						name: role.name,
 						toolType: role.agentType ?? 'omp',
 						cwd: program.root,
@@ -473,7 +515,17 @@ export async function pianolaProgramApply(options: {
 					...(key === 'lead' ? { leadAgentId: result.sessionId } : {}),
 				};
 			}
-			upsertPianolaProgram(program);
+			program = updatePianolaPrograms((current) => {
+				const latest = current.find((entry) => entry.id === program.id);
+				program = {
+					...program,
+					status: latest?.status ?? program.status,
+					createdAt: latest?.createdAt ?? program.createdAt,
+				};
+				return latest
+					? current.map((entry) => (entry.id === program.id ? program : entry))
+					: [...current, program];
+			}).find((entry) => entry.id === program.id)!;
 			const warning = writeProgramCue(program);
 			if (warning) cueWarnings.push(warning);
 			applied.push(program);
@@ -506,11 +558,17 @@ export function pianolaProgramStatus(
 	options: { json?: boolean }
 ): void {
 	ensurePianolaEnabled(options.json);
-	const current = readPianolaPrograms().find((p) => p.id === id);
-	if (!current) return fail('Program not found: ' + id, options.json);
-	const updated =
-		current.status === status ? current : { ...current, status, updatedAt: Date.now() };
-	if (updated !== current) upsertPianolaProgram(updated);
+	let updated: PianolaProgram | undefined;
+	try {
+		updatePianolaPrograms((programs) => {
+			const current = programs.find((entry) => entry.id === id);
+			if (!current) throw new Error('Program not found: ' + id);
+			updated = current.status === status ? current : { ...current, status, updatedAt: Date.now() };
+			return programs.map((entry) => (entry.id === id ? updated! : entry));
+		});
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error), options.json);
+	}
 	print(updated, options.json);
 }
 

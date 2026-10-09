@@ -29,6 +29,8 @@ import type {
 	PianolaBriefVerified,
 	PianolaProgram,
 } from '../../../shared/pianola/pianola-programs';
+import { detectAwaitingInput } from '../../../shared/pianola/pianola-awaiting-detector';
+import { classifyMessages } from '../../../shared/pianola/pianola-classifier';
 
 /** A row in one of the agent-status sections. */
 export interface DashboardAgentRow {
@@ -288,6 +290,9 @@ export interface DashboardNeedsRow {
 	title: string;
 	detail?: string;
 	programTitle?: string;
+	/** The original live conversation, for escalation click-to-jump. */
+	sessionId?: string;
+	tabId?: string;
 	since: number;
 }
 
@@ -406,6 +411,38 @@ export function deriveResults(
 	return groupByProgram(rows, titleById);
 }
 
+/** An audit escalation is actionable only while its original tab still asks. */
+function isOutstandingEscalation(
+	item: PianolaBriefItem,
+	sessionById: ReadonlyMap<string, Session>
+): boolean {
+	if (!item.agentId || !item.tabId) return false;
+	const tab = sessionById.get(item.agentId)?.aiTabs?.find((t) => t.id === item.tabId);
+	if (!tab || tab.state !== 'idle') return false;
+	const since = ms(item.since);
+	// An old decision must not reappear when the agent later asks a new question.
+	if (tab.logs.some((log) => log.source === 'user' && log.timestamp >= since)) return false;
+	for (let i = tab.logs.length - 1; i >= 0; i -= 1) {
+		const log = tab.logs[i];
+		if (log.source === 'user') return false;
+		if (log.source !== 'ai') continue;
+		if (log.timestamp > since) return false;
+		return (
+			classifyMessages([
+				{
+					id: log.id,
+					role: 'assistant',
+					source: log.source,
+					content: log.text,
+					timestamp: item.since,
+					awaitingInput: detectAwaitingInput(log.text) ?? undefined,
+				},
+			]).kind !== 'none'
+		);
+	}
+	return false;
+}
+
 /**
  * Pure derivation of the portfolio view from the brief, the open asks, and the
  * programs, layered over the session-based buckets from `deriveDashboard`.
@@ -420,6 +457,7 @@ export function derivePortfolio(
 	const brief = snapshot.brief;
 	const titleById = programTitles(snapshot);
 	const nameById = new Map(sessions.map((s) => [s.id, s.name] as const));
+	const sessionById = new Map(sessions.map((s) => [s.id, s] as const));
 
 	// Which program each agent works for, from the lead and the role assignments.
 	const programByAgent = new Map<string, string>();
@@ -446,12 +484,18 @@ export function derivePortfolio(
 
 	const needsOf = (kind: DashboardNeedsRow['kind']): DashboardNeedsRow[] =>
 		(brief?.needsMe ?? [])
-			.filter((item) => item.kind === kind)
+			.filter(
+				(item) =>
+					item.kind === kind &&
+					(kind !== 'escalation' || isOutstandingEscalation(item, sessionById))
+			)
 			.map((item) => ({
 				key: `${item.kind}:${item.id}`,
 				kind,
 				title: item.title,
 				detail: item.detail,
+				sessionId: item.agentId,
+				tabId: item.tabId,
 				programTitle: item.programId
 					? (titleById.get(item.programId) ?? (item.programTitle || item.programId))
 					: undefined,

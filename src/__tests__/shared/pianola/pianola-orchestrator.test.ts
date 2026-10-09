@@ -148,6 +148,44 @@ describe('runOrchestratorIteration - linear A->B->C', () => {
 });
 
 describe('runOrchestratorIteration - concurrency', () => {
+	it('re-reads the program charter before every dispatch and keeps the CLI cap', async () => {
+		const p = plan([task({ id: 'A' }), task({ id: 'B' }), task({ id: 'C' })], {
+			programId: 'product',
+		});
+		let maxConcurrent = 3;
+		const deps = makeDeps({
+			dispatch: vi.fn(async () => {
+				maxConcurrent = 1;
+				return { success: true };
+			}),
+		});
+		deps.getProgramCharter = () => ({ maxConcurrent, maxAttempts: 2, validationRequired: false });
+		const result = await runOrchestratorIteration(initialOrchestratorState(p), deps, {
+			concurrencyLimit: 3,
+		});
+		expect(result.dispatchedTaskIds).toEqual(['A']);
+		maxConcurrent = 5;
+		const capped = await runOrchestratorIteration(result.state, deps, { concurrencyLimit: 1 });
+		expect(capped.dispatchedTaskIds).toEqual([]);
+	});
+	it('honors a lowered charter after an asynchronous agent/history lookup', async () => {
+		const p = plan([task({ id: 'A', status: 'running' }), task({ id: 'B' })], {
+			programId: 'product',
+		});
+		let maxConcurrent = 2;
+		const deps = makeDeps({
+			ensureAgent: async () => {
+				maxConcurrent = 1;
+				return { agentId: 'bound' };
+			},
+		});
+		deps.getProgramCharter = () => ({ maxConcurrent, maxAttempts: 2, validationRequired: false });
+		const result = await runOrchestratorIteration(initialOrchestratorState(p), deps, {
+			concurrencyLimit: 3,
+		});
+		expect(deps.dispatch).not.toHaveBeenCalled();
+		expect(result.state.plan.tasks[1]).toMatchObject({ status: 'pending', agentId: 'bound' });
+	});
 	it('caps simultaneous running tasks at concurrencyLimit', async () => {
 		const p = plan([task({ id: 'A' }), task({ id: 'B' }), task({ id: 'C' })]);
 		const state = initialOrchestratorState(p);

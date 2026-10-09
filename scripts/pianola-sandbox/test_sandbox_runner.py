@@ -77,6 +77,79 @@ def test_go_caches_are_writable_and_offline(tmp_path):
     assert result["stdout"].split() == ["/tmp/go-build", "off", "auto"]
 
 
+@pytest.mark.parametrize("target", ["home", "parent", "root"])
+def test_go_module_cache_rejects_home_covering_symlinks(tmp_path, monkeypatch, target):
+    home = tmp_path / "home" / "dev"
+    cache = home / "go" / "pkg" / "mod"
+    cache.parent.mkdir(parents=True)
+    cache.symlink_to({"home": home, "parent": home.parent, "root": Path("/")}[target],
+                    target_is_directory=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr("pwd.getpwall", lambda: [SimpleNamespace(pw_dir=str(home))])
+
+    def forbidden_launch(*args, **kwargs):
+        pytest.fail("Unsafe cache must be rejected before launching the oracle")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden_launch)
+    with pytest.raises(sandbox_runner.IsolationError, match="home"):
+        sandbox_runner.run_isolated_cli(["true"], workspace, [], trusted_root=workspace)
+
+
+def test_go_module_cache_is_pinned_before_launch(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    cache = home / "go" / "pkg" / "mod"
+    cache.mkdir(parents=True)
+    (cache / "module").write_text("APPROVED_CACHE")
+    (home / "secret").write_text("HOME_SECRET_FIXTURE")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr("pwd.getpwall", lambda: [SimpleNamespace(pw_dir=str(home))])
+    popen = subprocess.Popen
+
+    def swap(*args, **kwargs):
+        cache.rename(cache.with_name("saved-mod"))
+        cache.symlink_to(home, target_is_directory=True)
+        return popen(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", swap)
+    result = sandbox_runner.run_isolated_cli(
+        ["sh", "-c", 'cat "$GOMODCACHE/module" && test ! -e "$GOMODCACHE/secret"'],
+        workspace, [], trusted_root=workspace,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "APPROVED_CACHE"
+
+
+def test_go_module_cache_replacement_during_pin_is_rejected(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    cache = home / "go" / "pkg" / "mod"
+    cache.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr("pwd.getpwall", lambda: [SimpleNamespace(pw_dir=str(home))])
+    open_path = os.open
+
+    def swap(path, flags, *args, **kwargs):
+        if path == cache:
+            cache.rename(cache.with_name("saved-mod"))
+            cache.symlink_to(home, target_is_directory=True)
+        return open_path(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap)
+    with ExitStack() as stack, pytest.raises(sandbox_runner.IsolationError, match="changed"):
+        sandbox_runner._pinned_mount_source(cache, stack, [])
+
+
+@pytest.mark.parametrize("prefix", [[], ["env", "NAME=value"]])
+def test_discovered_usr_tool_keeps_absolute_path(monkeypatch, prefix):
+    monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: "/usr/local/go/bin/go")
+    assert sandbox_runner._resolve_command([*prefix, "go", "test", "./..."]) == [
+        *prefix, "/usr/local/go/bin/go", "test", "./...",
+    ]
+
+
 def test_bare_python_prefers_the_project_venv(tmp_path):
     """A project's own virtualenv holds its test dependencies; the system python has none of them."""
     venv = tmp_path / ".venv"
@@ -362,11 +435,32 @@ def test_read_only_failure_is_detected_after_stderr_truncation(tmp_path):
 def test_read_only_marker_spans_stderr_chunks(tmp_path, marker):
     split = len(marker) - 2
     result = observe(tmp_path, "python3", "-c",
-                     f"import sys,time; sys.stderr.write('x' * 100001 + {marker[:split]!r}); "
+                     f"import sys,time; sys.stderr.write('x' * 100001 + '\\n' + {marker[:split]!r}); "
                      f"sys.stderr.flush(); time.sleep(0.2); sys.stderr.write({marker[split:]!r}); sys.exit(1)")
     assert result["returncode"] == 1
     assert result["outputTruncated"]["stderr"] is True
     assert result["readOnlyWriteDetected"] is True
+
+
+@pytest.mark.parametrize("exitcode", [0, 1])
+@pytest.mark.parametrize("name", ["test_returns_erofs", "EROFS_test", "testEROFS"])
+def test_erofs_in_test_identifiers_is_not_a_read_only_diagnostic(tmp_path, name, exitcode):
+    result = observe(tmp_path, "python3", "-c",
+                     f"import sys; sys.stderr.write({name!r} + ' (Fixture) ... ok\\n'); sys.exit({exitcode})")
+    assert result["observed"] is True
+    assert result["returncode"] == exitcode
+    assert result["readOnlyWriteDetected"] is False
+
+
+@pytest.mark.parametrize("suffix", ["", ": cannot write", "_test"])
+def test_erofs_right_boundary_can_arrive_in_next_chunk(tmp_path, suffix):
+    result = observe(tmp_path, "python3", "-c",
+                     "import sys,time; sys.stderr.write('x' * 100001 + '\\nEROFS'); "
+                     f"sys.stderr.flush(); time.sleep(0.2); sys.stderr.write({suffix!r}); sys.exit(1)")
+    assert result["observed"] is True
+    assert result["returncode"] == 1
+    assert result["outputTruncated"]["stderr"] is True
+    assert result["readOnlyWriteDetected"] is (suffix != "_test")
 
 
 def test_stdout_read_only_marker_is_not_a_stderr_failure(tmp_path):

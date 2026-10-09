@@ -23,6 +23,7 @@ import {
 	readPianolaProgramLoopMemo,
 	updatePianolaProgramLoopMemo,
 	appendPianolaDecision,
+	withProgramLoopLock,
 } from '../services/pianola-store';
 
 export async function pianolaProgramLoop(
@@ -46,136 +47,163 @@ export async function pianolaProgramLoop(
 			const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
 			if (flags?.pianola !== true) break;
 			try {
-				const program = readPianolaPrograms().find((item) => item.id === programId);
-				if (!program) break;
-				const plans = readPianolaPlans();
-				const asks = readPianolaAsks();
-				const targets = readPianolaSupervisorTargets();
-				const memo = readPianolaProgramLoopMemo();
-				const sessions = await client.sendCommand<{
-					sessions?: { agentId: string; tabId: string; state: string }[];
-				}>({ type: 'list_desktop_sessions' }, 'desktop_sessions_list');
-				const leadSession =
-					sessions.sessions?.find(
-						(session) => session.agentId === program.leadAgentId && session.state === 'busy'
-					) ?? sessions.sessions?.find((session) => session.agentId === program.leadAgentId);
-				const runs = briefRunsForPlans(plans, readAgentRuns(), pianolaTaskAgentRunId);
-				const brief = derivePianolaBrief([program], plans, asks, readPianolaDecisions(), runs);
-				const now = new Date().toISOString();
-				const result = await runProgramLoopTick(
-					{
-						program,
-						plans,
-						asks,
-						brief,
-						targets,
-						leadSession,
-						memo: memo[programId] ?? { notifiedTaskIds: [] },
-						now,
-					},
-					{
-						persistMemo: (entry) => updatePianolaProgramLoopMemo(programId, entry),
-						ensureOrchestrate: (plan, concurrency) => {
-							updatePianolaSupervisorTargets((current) => {
+				await withProgramLoopLock(programId, async () => {
+					const program = readPianolaPrograms().find((item) => item.id === programId);
+					if (!program) return;
+					const plans = readPianolaPlans();
+					const asks = readPianolaAsks();
+					const targets = readPianolaSupervisorTargets();
+					const memo = readPianolaProgramLoopMemo();
+					const sessions = await client.sendCommand<{
+						sessions?: { agentId: string; tabId: string; state: string }[];
+					}>({ type: 'list_desktop_sessions' }, 'desktop_sessions_list');
+					const leadSession =
+						sessions.sessions?.find(
+							(session) => session.agentId === program.leadAgentId && session.state === 'busy'
+						) ?? sessions.sessions?.find((session) => session.agentId === program.leadAgentId);
+					const runs = briefRunsForPlans(plans, readAgentRuns(), pianolaTaskAgentRunId);
+					const brief = derivePianolaBrief([program], plans, asks, readPianolaDecisions(), runs);
+					const now = new Date().toISOString();
+					const result = await runProgramLoopTick(
+						{
+							program,
+							plans,
+							asks,
+							brief,
+							targets,
+							leadSession,
+							memo: memo[programId] ?? { notifiedTaskIds: [] },
+							now,
+						},
+						{
+							persistMemo: (entry) => updatePianolaProgramLoopMemo(programId, entry),
+							ensureOrchestrate: (plan, concurrency) => {
+								updatePianolaSupervisorTargets((current) => {
+									if (
+										readPianolaPrograms().find((entry) => entry.id === programId)?.status !==
+										'active'
+									)
+										return current;
+									const existing = current.find(
+										(target) => target.kind === 'orchestrate' && target.planId === plan.id
+									);
+									if (existing && !existing.enabled) return current;
+									const target = {
+										id: existing?.id ?? generateUUID(),
+										kind: 'orchestrate' as const,
+										enabled: true,
+										createdAt: existing?.createdAt ?? Date.now(),
+										planId: plan.id,
+										concurrency,
+										intervalSeconds: 5,
+									};
+									return existing
+										? current.map((entry) => (entry.id === existing.id ? target : entry))
+										: [...current, target];
+								});
+							},
+							findWake: async (agentId, wakeId) => {
+								const marker = '[Pianola wake ' + wakeId + ']';
+								for (const session of sessions.sessions ?? []) {
+									if (session.agentId !== agentId) continue;
+									const history = await client.sendCommand<{
+										success: boolean;
+										error?: string;
+										messages?: { role?: string; content?: string }[];
+									}>(
+										{ type: 'get_session_history', tabId: session.tabId },
+										'session_history_result'
+									);
+									if (!history.success)
+										throw new Error(history.error ?? 'Cannot reconcile pending lead wake');
+									if (
+										history.messages?.some(
+											(message) => message.role === 'user' && message.content?.includes(marker)
+										)
+									)
+										return { success: true as const, tabId: session.tabId };
+								}
+								return undefined;
+							},
+							wake: async (agentId, prompt) => {
 								if (
 									readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
 								)
-									return current;
-								const existing = current.find(
-									(target) => target.kind === 'orchestrate' && target.planId === plan.id
-								);
-								if (existing && !existing.enabled) return current;
-								const target = {
-									id: existing?.id ?? generateUUID(),
-									kind: 'orchestrate' as const,
-									enabled: true,
-									createdAt: existing?.createdAt ?? Date.now(),
-									planId: plan.id,
-									concurrency,
-									intervalSeconds: 5,
-								};
-								return existing
-									? current.map((entry) => (entry.id === existing.id ? target : entry))
-									: [...current, target];
-							});
-						},
-						wake: async (agentId, prompt) => {
-							if (
-								readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
-							)
-								return { success: false, error: 'Program paused' };
-							const response = await runDispatch(agentId, prompt, { newTab: true });
-							let tabId = response.tabId ?? response.sessionId ?? undefined;
-							if (response.success && !tabId) {
-								const updated = await client.sendCommand<{
-									sessions?: { agentId: string; tabId: string }[];
-								}>({ type: 'list_desktop_sessions' }, 'desktop_sessions_list');
-								tabId = updated.sessions?.find((session) => session.agentId === agentId)?.tabId;
-							}
-							return { success: response.success, tabId, error: response.error };
-						},
-						ensureWatch: (agentId, tabId) => {
-							updatePianolaSupervisorTargets((current) => {
-								if (
-									readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
-								)
-									return current;
-								const existing = current.find(
-									(target) => target.kind === 'watch' && target.agentId === agentId
-								);
-								if (existing && !existing.enabled) return current;
-								const target = {
-									id: existing?.id ?? generateUUID(),
-									kind: 'watch' as const,
-									enabled: true,
-									createdAt: existing?.createdAt ?? Date.now(),
-									agentId,
-									tabId,
-									intervalSeconds: 5,
-								};
-								return existing
-									? current.map((entry) => (entry.id === existing.id ? target : entry))
-									: [...current, target];
-							});
-						},
-						prompt: (kind, variables) => {
-							const candidate = _getBundledPromptCandidatesForTests(
-								path.join('pianola-program-loop', kind + '.md')
-							).find((file) => fs.existsSync(file));
-							if (!candidate) throw new Error(`Missing program loop prompt: ${kind}`);
-							return fs
-								.readFileSync(candidate, 'utf8')
-								.replace(/\{\{([A-Z_]+)\}\}/g, (_match, key: string) => variables[key] ?? '');
-						},
+									return { success: false, error: 'Program paused' };
+								const response = await runDispatch(agentId, prompt, { newTab: true });
+								let tabId = response.tabId ?? response.sessionId ?? undefined;
+								if (response.success && !tabId) {
+									const updated = await client.sendCommand<{
+										sessions?: { agentId: string; tabId: string }[];
+									}>({ type: 'list_desktop_sessions' }, 'desktop_sessions_list');
+									tabId = updated.sessions?.find((session) => session.agentId === agentId)?.tabId;
+								}
+								return { success: response.success, tabId, error: response.error };
+							},
+							ensureWatch: (agentId, tabId) => {
+								updatePianolaSupervisorTargets((current) => {
+									if (
+										readPianolaPrograms().find((entry) => entry.id === programId)?.status !==
+										'active'
+									)
+										return current;
+									const existing = current.find(
+										(target) => target.kind === 'watch' && target.agentId === agentId
+									);
+									if (existing && !existing.enabled) return current;
+									const target = {
+										id: existing?.id ?? generateUUID(),
+										kind: 'watch' as const,
+										enabled: true,
+										createdAt: existing?.createdAt ?? Date.now(),
+										agentId,
+										tabId,
+										intervalSeconds: 5,
+									};
+									return existing
+										? current.map((entry) => (entry.id === existing.id ? target : entry))
+										: [...current, target];
+								});
+							},
+							prompt: (kind, variables) => {
+								const candidate = _getBundledPromptCandidatesForTests(
+									path.join('pianola-program-loop', kind + '.md')
+								).find((file) => fs.existsSync(file));
+								if (!candidate) throw new Error(`Missing program loop prompt: ${kind}`);
+								return fs
+									.readFileSync(candidate, 'utf8')
+									.replace(/\{\{([A-Z_]+)\}\}/g, (_match, key: string) => variables[key] ?? '');
+							},
+						}
+					);
+					updatePianolaProgramLoopMemo(programId, result.memo);
+					if (shouldLogProgramLoopDecision(memo[programId], result)) {
+						appendPianolaDecision({
+							id: generateUUID(),
+							timestamp: now,
+							tabId: result.tabId ?? leadSession?.tabId ?? '',
+							agentId: program.leadAgentId ?? '',
+							projectPath: program.root,
+							dispatched: result.dispatched,
+							dryRun: false,
+							classification: {
+								kind: 'none',
+								risk: 'low',
+								topic: program.title,
+								confidence: 'high',
+								evidence: { messageId: null, reason: result.reason, structured: false },
+							},
+							decision: { action: 'ignore', matchedRuleId: null, reason: result.reason },
+							...(result.error ? { error: result.error } : {}),
+						});
+						updatePianolaProgramLoopMemo(programId, {
+							...result.memo,
+							lastLoggedReason: result.reason,
+						});
 					}
-				);
-				updatePianolaProgramLoopMemo(programId, result.memo);
-				if (shouldLogProgramLoopDecision(memo[programId], result)) {
-					appendPianolaDecision({
-						id: generateUUID(),
-						timestamp: now,
-						tabId: result.tabId ?? leadSession?.tabId ?? '',
-						agentId: program.leadAgentId ?? '',
-						projectPath: program.root,
-						dispatched: result.dispatched,
-						dryRun: false,
-						classification: {
-							kind: 'none',
-							risk: 'low',
-							topic: program.title,
-							confidence: 'high',
-							evidence: { messageId: null, reason: result.reason, structured: false },
-						},
-						decision: { action: 'ignore', matchedRuleId: null, reason: result.reason },
-						...(result.error ? { error: result.error } : {}),
-					});
-					updatePianolaProgramLoopMemo(programId, {
-						...result.memo,
-						lastLoggedReason: result.reason,
-					});
-				}
-				if (options.json) console.log(JSON.stringify(result));
-				else console.log(result.reason);
+					if (options.json) console.log(JSON.stringify(result));
+					else console.log(result.reason);
+				});
 			} catch (error) {
 				console.error(`[program-loop] ${error instanceof Error ? error.message : String(error)}`);
 				if (options.once) throw error;

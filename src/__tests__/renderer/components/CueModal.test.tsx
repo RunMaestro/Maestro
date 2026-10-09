@@ -57,20 +57,26 @@ const capturedEditorProps = vi.hoisted(() => ({
 		| { id: string | null; nonce: string; scope?: Record<string, unknown> }
 		| undefined,
 	renderCount: 0,
+	sessions: [] as Array<{ id: string; projectRoot?: string }>,
 }));
 vi.mock('../../../renderer/components/CuePipelineEditor', () => ({
-	CuePipelineEditor: (props: { initialGraphTarget?: CapturedGraphTarget }) => {
+	CuePipelineEditor: (props: {
+		initialGraphTarget?: CapturedGraphTarget;
+		sessions: Array<{ id: string; projectRoot?: string }>;
+	}) => {
 		capturedEditorProps.initialGraphTarget = props.initialGraphTarget;
+		capturedEditorProps.sessions = props.sessions;
 		capturedEditorProps.renderCount += 1;
 		return <div data-testid="cue-pipeline-editor">Pipeline Graph Mock</div>;
 	},
 }));
 
+const mockSessions = vi.hoisted(() => ({ value: [] as Array<Record<string, unknown>> }));
 // Mock sessionStore
 vi.mock('../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: (selector: (state: unknown) => unknown) => {
 		const mockState = {
-			sessions: [],
+			sessions: mockSessions.value,
 			groups: [],
 			setActiveSessionId: vi.fn(),
 		};
@@ -206,6 +212,7 @@ describe('CueModal', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockSessions.value = [];
 		mockUseCueReturn = { ...defaultUseCueReturn };
 		capturedEditorProps.initialGraphTarget = undefined;
 		capturedEditorProps.renderCount = 0;
@@ -213,6 +220,27 @@ describe('CueModal', () => {
 		// cleared - every test below assumes a fresh open lands on Dashboard.
 		__resetLastOpenCueTabForTests();
 		mockCueModalData.value = undefined;
+	});
+	it('passes distinct verified host roots to the pipeline editor for equal remote POSIX roots', async () => {
+		mockSessions.value = ['one', 'two'].map((id) => ({
+			id,
+			name: id,
+			toolType: 'claude-code',
+			projectRoot: '/home/dev/app',
+			sessionSshRemoteConfig: { enabled: true, remoteId: id },
+		}));
+		vi.mocked(window.maestro.settings.get).mockResolvedValueOnce([
+			{ id: 'one', hostMountRoot: '/mnt/one' },
+			{ id: 'two', hostMountRoot: '/mnt/two' },
+		]);
+		render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+		fireEvent.click(screen.getByText('Pipeline Graph'));
+		await waitFor(() =>
+			expect(capturedEditorProps.sessions.map((s) => s.projectRoot)).toEqual([
+				'/mnt/one/home/dev/app',
+				'/mnt/two/home/dev/app',
+			])
+		);
 	});
 
 	describe('rendering', () => {
