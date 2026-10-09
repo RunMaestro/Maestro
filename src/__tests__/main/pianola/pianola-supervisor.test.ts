@@ -254,6 +254,63 @@ describe('PianolaSupervisor reconcile', () => {
 		expect(spawned[0].killed).toBe(true);
 		expect(spawned[2].killed).toBe(true);
 	});
+	it.each(['revision before exit', 'revision after exit', 'stale relaunch'] as const)(
+		'resumes a completed plan after %s without a manual target restart',
+		(timing) => {
+			const task = {
+				id: 't',
+				title: 'Task',
+				prompt: 'Work',
+				dependsOn: [],
+				status: 'running' as const,
+			};
+			const plan = { id: 'p1', title: 'Plan', createdAt: 1, tasks: [task] };
+			vi.mocked(readPlans).mockReturnValue([plan]);
+			setTargets([orchestrateTarget()]);
+			sup.reconcile();
+			const originalPid = spawned[0].pid;
+			vi.mocked(readPlans).mockReturnValue([{ ...plan, tasks: [{ ...task, status: 'failed' }] }]);
+			if (timing === 'revision before exit') {
+				vi.mocked(readPlans).mockReturnValue([
+					{ ...plan, tasks: [{ ...task, status: 'pending' }] },
+				]);
+				sup.reconcile();
+				spawned[0].exit(0);
+				vi.advanceTimersByTime(300);
+			} else {
+				spawned[0].exit(0);
+				vi.mocked(readPlans).mockReturnValue([
+					{ ...plan, tasks: [{ ...task, status: 'pending' }] },
+				]);
+				if (timing === 'stale relaunch') expect(sup.relaunchStale()).toBe(1);
+				else sup.reconcile();
+			}
+			expect(sup.getHealth()[0]).toMatchObject({ id: 'o1', state: 'running', restarts: 0 });
+			expect(sup.getHealth()[0].pid).not.toBe(originalPid);
+		}
+	);
+	it('leaves a completed plan stopped when no revised work exists', () => {
+		const plan = {
+			id: 'p1',
+			title: 'Plan',
+			createdAt: 1,
+			tasks: [
+				{ id: 't', title: 'Task', prompt: 'Work', dependsOn: [], status: 'running' as const },
+			],
+		};
+		vi.mocked(readPlans).mockReturnValue([plan]);
+		setTargets([orchestrateTarget()]);
+		sup.reconcile();
+		vi.mocked(readPlans).mockReturnValue([
+			{ ...plan, tasks: [{ ...plan.tasks[0], status: 'failed' }] },
+		]);
+		spawned[0].exit(0);
+		vi.advanceTimersByTime(300);
+		expect(sup.relaunchStale()).toBe(0);
+		expect(spawned[0].exitCode).toBe(0);
+		expect(spawned.every((child) => child.exitCode !== null)).toBe(true);
+	});
+
 	it('does not launch orchestration for a completed plan', () => {
 		vi.mocked(readPlans).mockReturnValue([{ id: 'p1', title: 'Plan', createdAt: 1, tasks: [] }]);
 		setTargets([orchestrateTarget()]);

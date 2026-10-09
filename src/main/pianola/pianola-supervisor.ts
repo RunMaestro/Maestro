@@ -150,6 +150,13 @@ export class PianolaSupervisor {
 		});
 	}
 
+	private hasUnfinishedPlan(target: PianolaSupervisedTarget): boolean {
+		return (
+			target.kind === 'orchestrate' &&
+			readPlans().some((plan) => plan.id === target.planId && !planProgress(plan).complete)
+		);
+	}
+
 	/** Begin watching the store file and reconcile immediately. Idempotent. */
 	start(): void {
 		if (this.started) return;
@@ -185,7 +192,7 @@ export class PianolaSupervisor {
 		for (const target of targets) {
 			if (!target.enabled) continue;
 			const existing = this.children.get(target.id);
-			if (!existing) {
+			if (!existing || (existing.state === 'stopped' && this.hasUnfinishedPlan(target))) {
 				this.spawn(target);
 			} else {
 				const previousArgs = this.buildArgs(existing.target);
@@ -209,8 +216,8 @@ export class PianolaSupervisor {
 	 * be running but whose supervised child is not alive - one that crashed and
 	 * gave up after the restart cap, or was never spawned. Returns the count
 	 * relaunched. No-op when the Encore flag is off. The rapid-flap protection is
-	 * preserved: a target mid-backoff (a restart already scheduled) and a target
-	 * that finished cleanly are both treated as alive and left alone. Because a
+	 * preserved: mid-backoff targets retain their scheduled restart. Cleanly
+	 * finished plans are left alone unless revision reopens their work. Because a
 	 * cadenced relaunch is not rapid flapping, a relaunched target's failure
 	 * streak is reset so it gets a full restart budget again.
 	 */
@@ -240,9 +247,9 @@ export class PianolaSupervisor {
 	 * that must not be disturbed. A live process is alive; a target mid-backoff
 	 * (restart pending) is alive regardless of kind. A cleanly/intentionally
 	 * stopped target is kind-aware: a 'watch' should keep running, so a stopped
-	 * watch is NOT alive (stale -> relaunch); an 'orchestrate' clean exit is
-	 * terminal, so a stopped orchestrate stays alive. A failed or never-spawned
-	 * target is not alive and therefore stale.
+	 * watch is NOT alive (stale -> relaunch). A stopped orchestrate is stale when
+	 * its saved plan has unfinished work; completed or legacy absent plans stay
+	 * stopped. A failed or never-spawned target is not alive and therefore stale.
 	 */
 	private isAlive(id: string): boolean {
 		const entry = this.children.get(id);
@@ -251,7 +258,8 @@ export class PianolaSupervisor {
 		const hasLiveChild = !!child && child.exitCode === null && child.signalCode === null;
 		if (hasLiveChild) return true;
 		if (entry.state === 'backing-off') return true;
-		if (entry.state === 'stopped') return entry.target.kind === 'orchestrate';
+		if (entry.state === 'stopped')
+			return entry.target.kind === 'orchestrate' && !this.hasUnfinishedPlan(entry.target);
 		return false;
 	}
 
@@ -462,10 +470,10 @@ export class PianolaSupervisor {
 			if (entry.startedAt && Date.now() - entry.startedAt >= STABLE_RUN_MS) {
 				entry.restarts = 0;
 			}
-			// Clean exit (code 0): success. An orchestrate run finishing its plan is
-			// expected; do not restart.
+			// A clean exit stops completed work; a revision can already have reopened the plan.
 			if (code === 0) {
 				entry.state = 'stopped';
+				if (this.hasUnfinishedPlan(entry.target)) this.scheduleReconcile();
 				return;
 			}
 			// Unexpected exit: back off and retry, capped at MAX_RESTARTS.

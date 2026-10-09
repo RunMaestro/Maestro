@@ -421,21 +421,42 @@ describe('portfolio files', () => {
 			await gate;
 			orchestrator.upsertPlan(snapshot);
 		});
-		const revision = lead.withPlanLock('plan', async () => {
-			lead.updatePlans((plans) =>
-				plans.map((entry) => revisePlanTask(entry, 'reviewed', 'Founder correction'))
+		vi.useFakeTimers({ toFake: ['Date'] });
+		let settled = false;
+		const revision = lead
+			.withPlanLock(
+				'plan',
+				async () => {
+					lead.updatePlans((plans) =>
+						plans.map((entry) => revisePlanTask(entry, 'reviewed', 'Founder correction'))
+					);
+				},
+				{ waitForTurn: true }
+			)
+			.then(
+				() => {
+					settled = true;
+					return { success: true };
+				},
+				(error: unknown) => {
+					settled = true;
+					return { error };
+				}
 			);
-		});
 		try {
+			vi.setSystemTime(Date.now() + 5100);
 			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+			expect(settled).toBe(false);
 			expect(lead.getPlan('plan')!.tasks[1]).toMatchObject({
 				prompt: 'Old prompt',
 				status: 'needs_review',
 			});
 		} finally {
+			vi.useRealTimers();
 			release();
 		}
 		await Promise.all([tick, revision]);
+		expect(await revision).toEqual({ success: true });
 		expect(lead.getPlan('plan')!.tasks).toEqual([
 			{
 				id: 'done',
