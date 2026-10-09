@@ -238,9 +238,10 @@ describe('plugin headless agent runner', () => {
 		}
 	});
 
-	it('sets a finite timeout and revokes proof on provider failure', async () => {
+	it('preserves the startup recovery error and revokes proof on provider failure', async () => {
 		const revokeRunToken = vi.fn();
-		const spawn = vi.fn(async () => ({ success: false, error: 'timed out' }));
+		const error = 'Codex startup/authentication timed out; check the credential store and retry.';
+		const spawn = vi.fn(async () => ({ success: false, error }));
 		const run = createPluginHeadlessAgentRunner({
 			getAgent: () => agent,
 			detectAgent: async () => ({ available: true }),
@@ -257,7 +258,7 @@ describe('plugin headless agent runner', () => {
 			response: null,
 			sessionId: null,
 			usageStats: undefined,
-			error: 'timed out',
+			error,
 		});
 		expect(spawn.mock.calls[0][4].timeoutMs).toBe(60 * 60_000);
 		expect(revokeRunToken).toHaveBeenCalledWith('proof');

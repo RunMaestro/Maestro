@@ -35,6 +35,8 @@ import {
 } from '../../shared/plugins/mcp-agent-config';
 import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
+import { superviseAgentProcess } from './agent-process-supervisor';
+import { CODEX_STARTUP_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 import {
 	getClaudeTokenMode,
 	getClaudeTokenSourceFields,
@@ -754,7 +756,7 @@ async function spawnClaudeAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
-			...(overrides.timeoutMs ? { timeout: overrides.timeoutMs } : {}),
+			detached: !isWindows(),
 			...(overrides.signal ? { signal: overrides.signal } : {}),
 		};
 
@@ -770,6 +772,21 @@ async function spawnClaudeAgent(
 		let sessionIdEmitted = false;
 		let settled = false;
 		let cancelledByAbort = false;
+		let stopReason: string | undefined;
+		const supervision = superviseAgentProcess(child, {
+			timeoutMs: overrides.timeoutMs,
+			signal: overrides.signal,
+			onStop: (reason) => {
+				stopReason = reason;
+				cancelledByAbort = true;
+			},
+			onForcedStop: () => {
+				if (settled) return;
+				settled = true;
+				supervision.dispose();
+				resolve({ success: false, error: stopReason, agentSessionId: sessionId, usageStats });
+			},
+		});
 		const progressTools = new Map<string, { tool: string; summary?: string }>();
 
 		// Process a single parsed JSON message from Claude Code's stream-json output
@@ -898,6 +915,7 @@ async function spawnClaudeAgent(
 				}
 			}
 			settled = true;
+			supervision.dispose();
 
 			// Use accumulated assistant text as fallback when result field is empty
 			const finalResult = result || assistantText || undefined;
@@ -920,8 +938,8 @@ async function spawnClaudeAgent(
 				resolve({
 					success: false,
 					error:
-						signal || cancelledByAbort || overrides.signal?.aborted
-							? 'Agent run timed out or was cancelled'
+						stopReason || signal || cancelledByAbort || overrides.signal?.aborted
+							? (stopReason ?? 'Agent run timed out or was cancelled')
 							: stderr ||
 								(resultError
 									? 'Agent reported an error'
@@ -936,12 +954,13 @@ async function spawnClaudeAgent(
 
 		child.on('error', (error) => {
 			if (settled) return;
-			if (overrides.signal?.aborted || error.name === 'AbortError') {
+			if (cancelledByAbort || overrides.signal?.aborted || error.name === 'AbortError') {
 				// Node emits close after error. Wait for it to flush buffered metadata.
 				cancelledByAbort = true;
 				return;
 			}
 			settled = true;
+			supervision.dispose();
 			resolve({
 				success: false,
 				error: `Failed to spawn Claude: ${error.message}`,
@@ -1223,7 +1242,7 @@ async function spawnJsonLineAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
-			...(overrides.timeoutMs ? { timeout: overrides.timeoutMs } : {}),
+			detached: !isWindows(),
 			...(overrides.signal ? { signal: overrides.signal } : {}),
 		};
 
@@ -1244,6 +1263,22 @@ async function spawnJsonLineAgent(
 		const progressSummaries = new Map<string, string>();
 		let settled = false;
 		let cancelledByAbort = false;
+		let stopReason: string | undefined;
+		const supervision = superviseAgentProcess(child, {
+			timeoutMs: overrides.timeoutMs,
+			signal: overrides.signal,
+			startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
+			onStop: (reason) => {
+				stopReason = reason;
+				cancelledByAbort = true;
+			},
+			onForcedStop: () => {
+				if (settled) return;
+				settled = true;
+				supervision.dispose();
+				resolve({ success: false, error: stopReason, agentSessionId: sessionId, usageStats });
+			},
+		});
 		let codexCandidate: string | undefined;
 		let codexFinal: string | undefined;
 		const codexProgressTexts = new Set<string>();
@@ -1279,6 +1314,17 @@ async function spawnJsonLineAgent(
 				});
 			}
 			if (cancelledByAbort || overrides.signal?.aborted) return;
+			if (
+				toolType === 'codex' &&
+				typeof event.raw === 'object' &&
+				event.raw !== null &&
+				((event.type === 'text' && Boolean(event.text)) ||
+					(event.type === 'result' && Boolean(event.text)) ||
+					event.type === 'tool_use' ||
+					event.type === 'usage')
+			) {
+				supervision.modelActivity();
+			}
 			if (event.type === 'tool_use') {
 				const tool =
 					typeof event.toolName === 'string' &&
@@ -1384,6 +1430,7 @@ async function spawnJsonLineAgent(
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
 			settled = true;
+			supervision.dispose();
 
 			// Soft success: agents like Grok may exit non-zero after a full
 			// answer (e.g. --max-turns) with no structured error event. Codex's
@@ -1409,8 +1456,8 @@ async function spawnJsonLineAgent(
 				resolve({
 					success: false,
 					error:
-						signal || cancelledByAbort || overrides.signal?.aborted
-							? 'Agent run timed out or was cancelled'
+						stopReason || signal || cancelledByAbort || overrides.signal?.aborted
+							? (stopReason ?? 'Agent run timed out or was cancelled')
 							: errorText ||
 								stderr ||
 								(code === 0 ? 'Agent returned no final text' : `Process exited with code ${code}`),
@@ -1422,12 +1469,13 @@ async function spawnJsonLineAgent(
 
 		child.on('error', (error) => {
 			if (settled) return;
-			if (overrides.signal?.aborted || error.name === 'AbortError') {
+			if (cancelledByAbort || overrides.signal?.aborted || error.name === 'AbortError') {
 				// Node emits close after error. Wait for it to flush buffered metadata.
 				cancelledByAbort = true;
 				return;
 			}
 			settled = true;
+			supervision.dispose();
 			resolve({ success: false, error: `Failed to spawn ${agentName}: ${error.message}` });
 		});
 	});

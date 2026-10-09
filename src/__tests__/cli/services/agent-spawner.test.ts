@@ -25,12 +25,13 @@ const mockStdin = {
 	end: vi.fn(),
 	write: vi.fn(),
 };
-const mockStdout = new EventEmitter();
-const mockStderr = new EventEmitter();
+const mockStdout = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+const mockStderr = Object.assign(new EventEmitter(), { destroy: vi.fn() });
 const mockChild = Object.assign(new EventEmitter(), {
 	stdin: mockStdin,
 	stdout: mockStdout,
 	stderr: mockStderr,
+	kill: vi.fn(),
 });
 
 /**
@@ -1734,6 +1735,102 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('cop-1');
 		});
 
+		it.each([undefined, 'resumed-provider-session'])(
+			'bounds Codex startup despite stderr and init chatter (resume: %s)',
+			async (resumeId) => {
+				vi.useFakeTimers();
+				try {
+					const run = spawnAgent('codex', '/project', 'prompt', resumeId, {
+						timeoutMs: 3_600_000,
+						customArgs: '-c cli_auth_credentials_store=file',
+					});
+					await vi.advanceTimersByTimeAsync(0);
+					expect(mockSpawn).toHaveBeenCalledOnce();
+					mockStdout.emit(
+						'data',
+						Buffer.from(
+							'noise\n{"type":"thread.started","thread_id":"waiting"}\n{"type":"turn.started"}\n'
+						)
+					);
+					mockStderr.emit('data', Buffer.from('Reading additional input from stdin...'));
+					await vi.advanceTimersByTimeAsync(119_999);
+					expect(mockChild.kill).not.toHaveBeenCalled();
+					await vi.advanceTimersByTimeAsync(1);
+					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+					mockChild.emit('close', 0);
+					expect(await run).toMatchObject({
+						success: false,
+						agentSessionId: 'waiting',
+						error: expect.stringContaining('Startup or authentication may be blocked'),
+					});
+					expect(mockSpawn.mock.calls[0][1]).toContain('cli_auth_credentials_store=file');
+					expect(vi.getTimerCount()).toBe(0);
+				} finally {
+					vi.useRealTimers();
+				}
+			}
+		);
+
+		it.each([
+			'{"type":"item.started","item":{"id":"cmd","type":"command_execution","command":"echo ok"}}',
+			'{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"Thinking"}]}}',
+		])('keeps the long Codex run budget after model activity: %s', async (activity) => {
+			vi.useFakeTimers();
+			try {
+				const pending = spawnAgent('codex', '/project', 'prompt', undefined, {
+					timeoutMs: 3_600_000,
+				});
+				await vi.advanceTimersByTimeAsync(0);
+				mockStdout.emit('data', Buffer.from(activity + '\n'));
+				await vi.advanceTimersByTimeAsync(180_000);
+				expect(mockChild.kill).not.toHaveBeenCalled();
+				mockStdout.emit(
+					'data',
+					Buffer.from('{"type":"item.completed","item":{"type":"agent_message","text":"Done"}}\n')
+				);
+				mockChild.emit('close', 0);
+				expect(await pending).toMatchObject({ success: true, response: 'Done' });
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it.each(['claude-code', 'codex'] as const)(
+			'settles %s timeout with no close and suppresses late answers',
+			async (type) => {
+				vi.useFakeTimers();
+				try {
+					const onProgress = vi.fn();
+					const pending = spawnAgent(type, '/project', 'prompt', undefined, {
+						timeoutMs: 1_000,
+						onProgress,
+					});
+					await vi.advanceTimersByTimeAsync(1);
+					await vi.advanceTimersByTimeAsync(1_000);
+					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+					mockStdout.emit(
+						'data',
+						Buffer.from(
+							type === 'codex'
+								? '{"type":"item.completed","item":{"type":"agent_message","text":"Late"}}\n'
+								: '{"type":"result","result":"Late"}\n'
+						)
+					);
+					await vi.advanceTimersByTimeAsync(5_000);
+					expect(mockChild.kill).toHaveBeenLastCalledWith('SIGKILL');
+					expect(await pending).toMatchObject({
+						success: false,
+						error: 'Agent run timed out or was cancelled',
+					});
+					expect(onProgress).not.toHaveBeenCalled();
+					expect(vi.getTimerCount()).toBe(0);
+				} finally {
+					vi.useRealTimers();
+				}
+			}
+		);
+
 		it('does not report a partial JSON-line answer as success after timeout or cancellation', async () => {
 			const controller = new AbortController();
 			const pending = spawnAgent('codex', '/project', 'prompt', undefined, {
@@ -1742,7 +1839,8 @@ Some text with [x] in it that's not a checkbox
 			});
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			const [, , options] = mockSpawn.mock.calls[0];
-			expect(options.timeout).toBe(1_000);
+			expect(options.timeout).toBeUndefined();
+			expect(options.detached).toBe(process.platform !== 'win32');
 			expect(options.signal).toBe(controller.signal);
 			mockStdout.emit(
 				'data',
