@@ -308,8 +308,8 @@ journalctl -u maestro-cue -f
 
 The unit runs `maestro-cli cue engine start --data-dir /var/lib/maestro/data --status-port 7433 --require-ready --log-format json --drain-timeout 90` as the `maestro` user, with `/etc/maestro/maestro.env` as its environment.
 
-- It is ready (`systemctl status` shows `active`) once agents are loaded, the lock is held and triggers are armed. A missing agent binary, secret or `gh` stops the start, and the log lists every gap. Start-up may take up to 60 seconds.
-- A watchdog restarts it if the engine stops answering for 30 seconds or loses its lock to another engine, and it restarts after a crash.
+- It is ready (`systemctl status` shows `active`) once agents are loaded, the lock is held and triggers are armed. A missing agent binary, secret or `gh` stops the start, and the log lists every gap. `Restart=on-failure` then tries again every 5 seconds, logging the gaps each time, until you fix them or run `sudo systemctl stop maestro-cue`. Start-up may take up to 60 seconds.
+- A watchdog restarts it if the engine stops answering for 30 seconds or loses its lock to another engine (the journal shows `Watchdog timeout` and the engine is killed with `SIGABRT`), and it restarts after a crash, 5 seconds later. When the engine dies either way, systemd kills the rest of the service with it, including agent turns and shell steps still running; the restarted engine marks those runs failed and runs what was queued.
 - It runs with a read-only system. Only `/var/lib/maestro` and `/srv/maestro` are writable. For workspaces elsewhere, add a drop-in with `sudo systemctl edit maestro-cue`:
 
 ```ini
