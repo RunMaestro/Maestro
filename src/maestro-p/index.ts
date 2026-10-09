@@ -32,7 +32,7 @@ import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { discoverSessionId, cwdSlug } from './session-watcher';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
-import { formatScreenTailReport, idleTimeoutMessage } from './timeout-report';
+import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
 import { TuiDriver } from './tui-driver';
 import { parseUsage } from './usage-parser';
 import { VERSION } from './package-info';
@@ -111,7 +111,7 @@ program
 			'',
 			'Argument handling:',
 			'  - Prompt-input flags (consumed): -p, --print, --prompt',
-			'  - maestro-p flags (consumed):    --status, --stream-thinking, --max-wait, --first-byte-timeout, --help, --version',
+			'  - maestro-p flags (consumed):    --status, --stream-thinking, --max-wait, --first-byte-timeout, --ready-timeout, --help, --version',
 			'  - Stripped (dropped with warning): --output-format, --input-format, --verbose',
 			'  - Everything else is forwarded verbatim to the spawned `claude` TUI.',
 			'',
@@ -276,6 +276,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		args: passThroughArgs,
 		cwd,
 		env: childEnv,
+		readyTimeoutMs: args.readyTimeoutSeconds * 1000,
 	});
 
 	// A turn on API Usage Billing still completes, so nothing downstream would
@@ -604,6 +605,11 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// startup handshake (READY_REGEX or blind taps) never cleared
 		// whatever modal the TUI is parked on. finalize() drives quit()
 		// which will SIGTERM the PTY if it doesn't /quit gracefully.
+		// Dump the screen first: a still-painting boot and a stuck modal look
+		// different, and the screen is gone once finalize() quits the TUI.
+		process.stderr.write(
+			formatScreenTailReport(readyTimeoutMessage(args.readyTimeoutSeconds), driver.getScreenTail())
+		);
 		finalize({ isError: true, error: 'ready_timeout', exitCode: 4 });
 	});
 

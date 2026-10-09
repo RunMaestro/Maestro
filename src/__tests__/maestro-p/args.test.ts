@@ -14,6 +14,7 @@ import {
 	parseArgs,
 	DEFAULT_MAX_WAIT_SECONDS,
 	DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS,
+	DEFAULT_READY_TIMEOUT_SECONDS,
 } from '../../maestro-p/args';
 
 describe('parseArgs', () => {
@@ -309,6 +310,37 @@ describe('parseArgs', () => {
 			const result = callArgs(['--max-wait', '600', '--first-byte-timeout', '90', '-p', 'hi']);
 			expect(result.maxWaitSeconds).toBe(600);
 			expect(result.firstByteTimeoutSeconds).toBe(90);
+		});
+	});
+
+	describe('--ready-timeout', () => {
+		it('defaults well above the old fixed 8s boot ceiling (issue #1765)', () => {
+			const result = callArgs(['-p', 'hi']);
+			expect(result.readyTimeoutSeconds).toBe(DEFAULT_READY_TIMEOUT_SECONDS);
+			expect(DEFAULT_READY_TIMEOUT_SECONDS).toBeGreaterThan(8);
+		});
+
+		it('parses --ready-timeout 60 and consumes it (not in passThroughArgs)', () => {
+			const result = callArgs(['--ready-timeout', '60', '-p', 'hi']);
+			expect(result.readyTimeoutSeconds).toBe(60);
+			expect(result.passThroughArgs).toEqual([]);
+		});
+
+		it('parses --ready-timeout=60 (inline form)', () => {
+			const result = callArgs(['--ready-timeout=60', '-p', 'hi']);
+			expect(result.readyTimeoutSeconds).toBe(60);
+		});
+
+		it('warns and falls back to the default on a non-positive value', () => {
+			const result = callArgs(['--ready-timeout', '0', '-p', 'hi']);
+			expect(result.readyTimeoutSeconds).toBe(DEFAULT_READY_TIMEOUT_SECONDS);
+			expect(warnSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('clamps the ready budget to the first-byte budget, whose timer spans the handshake', () => {
+			const result = callArgs(['--first-byte-timeout', '20', '--ready-timeout', '45', '-p', 'hi']);
+			expect(result.firstByteTimeoutSeconds).toBe(20);
+			expect(result.readyTimeoutSeconds).toBe(20);
 		});
 	});
 

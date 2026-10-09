@@ -508,6 +508,23 @@ describe('TuiDriver', () => {
 			expect(timeoutHandler).toHaveBeenCalledTimes(1);
 		});
 
+		it('honors a caller-supplied readyTimeoutMs instead of READY_TIMEOUT_MS', async () => {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp',
+				env: { HOME: '/home/test' },
+				readyTimeoutMs: 30_000,
+			});
+			await driver.start();
+			const timeoutHandler = vi.fn();
+			driver.on('ready-timeout', timeoutHandler);
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(timeoutHandler).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(30_000 - READY_TIMEOUT_MS * 2);
+			expect(timeoutHandler).toHaveBeenCalledTimes(1);
+		});
+
 		it("does NOT emit 'ready-timeout' if ready fires first", async () => {
 			const driver = await makeDriver();
 			const timeoutHandler = vi.fn();
