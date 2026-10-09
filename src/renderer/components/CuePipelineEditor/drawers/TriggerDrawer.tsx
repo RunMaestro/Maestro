@@ -69,6 +69,20 @@ const TRIGGER_ITEMS: TriggerItem[] = [
 		color: EVENT_COLORS['github.label'],
 	},
 	{
+		eventType: 'ticket.created',
+		label: 'Ticket Created',
+		description: 'A Linear or Jira ticket is filed',
+		icon: EVENT_ICONS['ticket.created'],
+		color: EVENT_COLORS['ticket.created'],
+	},
+	{
+		eventType: 'ticket.assigned',
+		label: 'Ticket Assigned',
+		description: 'A Linear or Jira ticket is assigned to you',
+		icon: EVENT_ICONS['ticket.assigned'],
+		color: EVENT_COLORS['ticket.assigned'],
+	},
+	{
 		eventType: 'task.pending',
 		label: 'Pending Task',
 		description: 'Markdown task checkboxes',

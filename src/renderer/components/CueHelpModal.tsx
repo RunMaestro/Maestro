@@ -425,6 +425,78 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					</div>
 					<div>
 						<p>
+							<strong style={{ color: theme.colors.textMain }}>Ticket Created / Assigned</strong>{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								ticket.created
+							</code>{' '}
+							/{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								ticket.assigned
+							</code>
+						</p>
+						<p className="mt-1">
+							Polls Linear or Jira. <code>ticket.created</code> fires when a ticket is filed;{' '}
+							<code>ticket.assigned</code> fires when an open ticket lands in your own queue.
+							Required:{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								ticket_provider
+							</code>{' '}
+							(linear or jira). Optional:{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								ticket_project
+							</code>{' '}
+							(a Linear team key or Jira project key - omit for everything you can see),{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								poll_minutes
+							</code>{' '}
+							(default 5). Credentials come from the agent's environment:{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								LINEAR_API_KEY
+							</code>{' '}
+							for Linear;{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								JIRA_BASE_URL
+							</code>
+							,{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								JIRA_EMAIL
+							</code>
+							, and{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								JIRA_API_TOKEN
+							</code>{' '}
+							for Jira Cloud. Tickets already there when the subscription is first saved never fire.
+						</p>
+					</div>
+					<div>
+						<p>
 							<strong style={{ color: theme.colors.textMain }}>Task Pending</strong>{' '}
 							<code
 								className="px-1 rounded text-xs"
@@ -581,6 +653,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							{'  '}gh_labels: ["ready-to-merge"]
 						</div>
 						<div>
+							# Ticket Assigned
+							<br />
+							- name: "Start Assigned Tickets"
+							<br />
+							{'  '}event: ticket.assigned
+							<br />
+							{'  '}ticket_provider: linear
+							<br />
+							{'  '}ticket_project: ENG
+						</div>
+						<div>
 							# Task Pending
 							<br />
 							- name: "Process Tasks"
@@ -719,7 +802,8 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> - Event
 							type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed,
-							github.pull_request, github.issue, github.label, task.pending, cli.trigger)
+							github.pull_request, github.issue, github.label, ticket.created, ticket.assigned,
+							task.pending, cli.trigger)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> -
@@ -864,6 +948,54 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_ASSIGNEES}}'}</code> -
 							Comma-separated assignees (github.issue)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_PROVIDER}}'}</code> -
+							Tracker: linear or jira (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_ID}}'}</code> - Ticket
+							identifier, e.g. ENG-123 (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_TITLE}}'}</code> - Ticket
+							title (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_BODY}}'}</code> - Ticket
+							description (truncated) (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_URL}}'}</code> - Ticket
+							URL (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_STATE}}'}</code> -
+							Workflow state (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_PRIORITY}}'}</code> -
+							Priority (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_ASSIGNEE}}'}</code> -
+							Assignee (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_REPORTER}}'}</code> - Who
+							filed it (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_LABELS}}'}</code> -
+							Comma-separated labels (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_PROJECT}}'}</code> - Team
+							or project key (ticket.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TICKET_CREATED_AT}}'}</code> -
+							When it was filed (ticket.*)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_CLI_PROMPT}}'}</code> - Prompt
@@ -1256,8 +1388,9 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						</li>
 						<li>
 							<code>github.pull_request</code> / <code>github.issue</code> /{' '}
-							<code>github.label</code> - polled immediately on wake so new items and labels are
-							detected within seconds instead of waiting for the next scheduled poll.
+							<code>github.label</code> / <code>ticket.created</code> / <code>ticket.assigned</code>{' '}
+							- polled immediately on wake so new items, labels, and tickets are detected within
+							seconds instead of waiting for the next scheduled poll.
 						</li>
 					</ul>
 					<p>

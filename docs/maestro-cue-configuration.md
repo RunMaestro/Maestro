@@ -56,9 +56,11 @@ subscriptions:
     fan_out_ids: list # Optional companion to fan_out - agent UUIDs (parallel array). Preferred at runtime; survives renames
     filter: object # Optional. Payload field conditions
     repo: string # Optional for github.* (auto-detected if omitted)
-    poll_minutes: number # Optional for github.*, task.pending
+    poll_minutes: number # Optional for github.*, ticket.*, task.pending
     gh_label_target: string # Optional for github.label. "pr" | "issue" | "both" (default "both")
     gh_labels: list # Optional for github.label. Labels to watch (omit to fire on any label)
+    ticket_provider: string # Required for ticket.created / ticket.assigned. "linear" | "jira"
+    ticket_project: string # Optional for ticket.*. Linear team key or Jira project key
 
     # Action-specific fields
     action: string # Optional. One of "prompt" (default), "notify", "command"
@@ -147,9 +149,11 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 | `fan_out_ids`              | list of strings   | -        | Companion UUID array for `fan_out` (one entry per fan-out target). Preferred by the dispatcher at lookup time; falls back to `fan_out` names when absent. Set this alongside `fan_out` for rename stability                               |
 | `filter`                   | object            | -        | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))                                                                                                                                                                    |
 | `repo`                     | string            | -        | GitHub repo (`owner/repo`). Auto-detected from git remote                                                                                                                                                                                 |
-| `poll_minutes`             | number            | varies   | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                   |
+| `poll_minutes`             | number            | varies   | Poll interval for `github.*` and `ticket.*` (default 5) and `task.pending` (default 1)                                                                                                                                                    |
 | `gh_label_target`          | string            | `both`   | `github.label` only. Which kind of item to watch: `pr`, `issue`, or `both`                                                                                                                                                                |
 | `gh_labels`                | list of strings   | -        | `github.label` only. Labels that fire the trigger, matched case-insensitively. Omit to fire on any label                                                                                                                                  |
+| `ticket_provider`          | string            | -        | `ticket.*` only, and required there. Which tracker to poll: `linear` or `jira`                                                                                                                                                            |
+| `ticket_project`           | string            | -        | `ticket.*` only. Linear team key or Jira project key. Omit for every team or project the credential can see                                                                                                                               |
 | `output_prompt`            | string            | -        | Follow-up prompt sent after the main run completes successfully                                                                                                                                                                           |
 | `output_prompt_file`       | string            | -        | Path to a `.md` file for the output prompt (alternative to inline)                                                                                                                                                                        |
 | `label`                    | string            | -        | Human-readable label displayed in the Cue dashboard and pipeline editor                                                                                                                                                                   |

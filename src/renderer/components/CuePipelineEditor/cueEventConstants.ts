@@ -15,6 +15,8 @@ import {
 	CheckSquare,
 	Power,
 	Terminal,
+	Ticket,
+	UserCheck,
 } from 'lucide-react';
 import type { CueEventType } from '../../../shared/cue-pipeline-types';
 import { CUE_EVENT_LABELS } from '../../../shared/cue/cue-summary';
@@ -30,6 +32,8 @@ export const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
 	'github.pull_request': GitPullRequest,
 	'github.issue': CircleDot,
 	'github.label': Tag,
+	'ticket.created': Ticket,
+	'ticket.assigned': UserCheck,
 	'task.pending': CheckSquare,
 	'cli.trigger': Terminal,
 };
@@ -74,6 +78,21 @@ Author: {{CUE_GH_AUTHOR}}
 All labels: {{CUE_GH_LABELS}}
 
 {{CUE_GH_BODY}}`,
+	'ticket.created': `New {{CUE_TICKET_PROVIDER}} ticket: {{CUE_TICKET_ID}} {{CUE_TICKET_TITLE}}
+URL: {{CUE_TICKET_URL}}
+Reporter: {{CUE_TICKET_REPORTER}}
+Priority: {{CUE_TICKET_PRIORITY}}
+Labels: {{CUE_TICKET_LABELS}}
+
+{{CUE_TICKET_BODY}}`,
+	'ticket.assigned': `Ticket assigned: {{CUE_TICKET_ID}} {{CUE_TICKET_TITLE}}
+URL: {{CUE_TICKET_URL}}
+Reporter: {{CUE_TICKET_REPORTER}}
+Priority: {{CUE_TICKET_PRIORITY}}
+State: {{CUE_TICKET_STATE}}
+Labels: {{CUE_TICKET_LABELS}}
+
+{{CUE_TICKET_BODY}}`,
 	'file.changed': 'Changed file: {{CUE_FILE_PATH}}\n\n',
 	'agent.completed': '{{CUE_SOURCE_OUTPUT}}\n\n',
 	'task.pending': 'Pending tasks in {{CUE_TASK_FILE}}:\n{{CUE_TASK_LIST}}\n\n',
@@ -104,6 +123,8 @@ export const EVENT_COLORS: Record<CueEventType, string> = {
 	'github.pull_request': '#a855f7',
 	'github.issue': '#f97316',
 	'github.label': '#ec4899',
+	'ticket.created': '#6366f1',
+	'ticket.assigned': '#0ea5e9',
 	'task.pending': '#06b6d4',
 	'cli.trigger': '#64748b',
 };

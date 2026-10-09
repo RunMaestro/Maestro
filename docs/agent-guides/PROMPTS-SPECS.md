@@ -181,6 +181,7 @@ Variables populated only when a prompt is rendered as part of a Maestro Cue run.
 - **Agent-completion / chained-run events:** `{{CUE_SOURCE_SESSION}}`, `{{CUE_SOURCE_OUTPUT}}`, `{{CUE_SOURCE_STATUS}}`, `{{CUE_SOURCE_EXIT_CODE}}`, `{{CUE_SOURCE_DURATION}}`, `{{CUE_SOURCE_TRIGGERED_BY}}`
 - **Task pending events (`task.pending`):** `{{CUE_TASK_FILE}}`, `{{CUE_TASK_FILE_NAME}}`, `{{CUE_TASK_FILE_DIR}}`, `{{CUE_TASK_COUNT}}`, `{{CUE_TASK_LIST}}`, `{{CUE_TASK_CONTENT}}`
 - **GitHub events (`github.pull_request`, `github.issue`, `github.label`):** `{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`, and for `github.label` only: `{{CUE_GH_LABEL}}`, `{{CUE_GH_LABEL_ACTOR}}`, `{{CUE_GH_LABELED_AT}}`
+- **Ticket events (`ticket.created`, `ticket.assigned`):** `{{CUE_TICKET_PROVIDER}}`, `{{CUE_TICKET_ID}}`, `{{CUE_TICKET_TITLE}}`, `{{CUE_TICKET_BODY}}`, `{{CUE_TICKET_URL}}`, `{{CUE_TICKET_STATE}}`, `{{CUE_TICKET_PRIORITY}}`, `{{CUE_TICKET_ASSIGNEE}}`, `{{CUE_TICKET_REPORTER}}`, `{{CUE_TICKET_LABELS}}`, `{{CUE_TICKET_PROJECT}}`, `{{CUE_TICKET_CREATED_AT}}`
 
 ### Substitution Flow
 

@@ -792,3 +792,52 @@ describe('round-trip: action notify and one-shot timing', () => {
 		).toBe(ONE_SHOT);
 	});
 });
+
+// ─── Shape: ticket trigger config ─────────────────────────────────────────────
+
+describe('round-trip: ticket trigger config', () => {
+	it('keeps provider, project, and poll interval through single and fan-out shapes', () => {
+		const config = { ticket_provider: 'jira' as const, ticket_project: 'OPS', poll_minutes: 3 };
+		const sessions: PipelineSession[] = [
+			{ id: 'sess-a', name: 'Alpha', toolType: 'claude-code' },
+			{ id: 'sess-b', name: 'Bravo', toolType: 'claude-code' },
+		];
+
+		const single = roundTrip(
+			[
+				pipeline(
+					'Single',
+					'#06b6d4',
+					[trigger('t1', 'ticket.assigned', config), agent('a1', 'sess-a', 'Alpha')],
+					[edge('e1', 't1', 'a1', { prompt: 'fix {{CUE_TICKET_ID}}' })]
+				),
+			],
+			sessions
+		);
+		const fanOut = roundTrip(
+			[
+				pipeline(
+					'FanOut',
+					'#06b6d4',
+					[
+						trigger('t1', 'ticket.created', config),
+						agent('a1', 'sess-a', 'Alpha'),
+						agent('a2', 'sess-b', 'Bravo'),
+					],
+					[edge('e1', 't1', 'a1', { prompt: 'one' }), edge('e2', 't1', 'a2', { prompt: 'two' })]
+				),
+			],
+			sessions
+		);
+
+		for (const [result, eventType] of [
+			[single, 'ticket.assigned'],
+			[fanOut, 'ticket.created'],
+		] as const) {
+			const triggerNode = result[0].nodes.find((n) => n.type === 'trigger')!;
+			const data = triggerNode.data as TriggerNodeData;
+			expect(data.eventType).toBe(eventType);
+			expect(data.config).toMatchObject(config);
+		}
+	});
+});

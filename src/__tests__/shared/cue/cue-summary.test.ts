@@ -53,6 +53,15 @@ describe('getCueEventDetail', () => {
 		expect(getCueEventDetail(event)).toBe('ready-to-merge on #42');
 	});
 
+	it('formats ticket events with the ticket identifier and title', () => {
+		const event = makeEvent({
+			type: 'ticket.assigned',
+			payload: { ticket_id: 'ENG-123', title: 'Login fails on Safari' },
+		});
+		expect(getCueEventDetail(event)).toBe('ENG-123 Login fails on Safari');
+		expect(getCueEventDetail(makeEvent({ type: 'ticket.created', payload: {} }))).toBeUndefined();
+	});
+
 	it('formats github.label with the number alone when the label is missing', () => {
 		const event = makeEvent({ type: 'github.label', payload: { number: 42 } });
 		expect(getCueEventDetail(event)).toBe('#42');

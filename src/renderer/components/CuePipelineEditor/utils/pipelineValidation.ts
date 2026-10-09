@@ -15,6 +15,7 @@ import type {
 	CommandNodeData,
 	CueEventType,
 } from '../../../../shared/cue-pipeline-types';
+import { CUE_TICKET_PROJECT_KEY_RE } from '../../../../shared/cue/contracts';
 
 export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'app.startup': 'Startup',
@@ -26,6 +27,8 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'github.pull_request': 'Pull Request',
 	'github.issue': 'Issue',
 	'github.label': 'Label Added',
+	'ticket.created': 'Ticket Created',
+	'ticket.assigned': 'Ticket Assigned',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
 };
@@ -83,6 +86,21 @@ function validateTriggerConfig(
 			) {
 				errors.push(
 					`"${pipelineName}": ${label} trigger has an empty "repo" - leave blank or set "owner/repo"`
+				);
+			}
+			break;
+		case 'ticket.created':
+		case 'ticket.assigned':
+			if (cfg.ticket_provider !== 'linear' && cfg.ticket_provider !== 'jira') {
+				errors.push(`"${pipelineName}": ${label} trigger needs a tracker (Linear or Jira)`);
+			}
+			if (
+				cfg.ticket_project !== undefined &&
+				cfg.ticket_project.trim() !== '' &&
+				!CUE_TICKET_PROJECT_KEY_RE.test(cfg.ticket_project.trim())
+			) {
+				errors.push(
+					`"${pipelineName}": ${label} trigger has an invalid team/project key "${cfg.ticket_project}" - use letters, digits, and underscores (e.g. ENG)`
 				);
 			}
 			break;

@@ -11,9 +11,11 @@ import {
 	type CueScheduleDay,
 	type CueSettings,
 	type CueSubscription,
+	type CueTicketProvider,
 	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
+	CUE_TICKET_PROVIDERS,
 	DEFAULT_CUE_SETTINGS,
 } from '../../../shared/cue';
 
@@ -320,6 +322,15 @@ function normalizeSubscription(
 				? (sub.gh_label_target as CueGitHubLabelTarget)
 				: undefined,
 		gh_labels: normalizeGhLabels(sub.gh_labels),
+		ticket_provider:
+			typeof sub.ticket_provider === 'string' &&
+			CUE_TICKET_PROVIDERS.includes(sub.ticket_provider as CueTicketProvider)
+				? (sub.ticket_provider as CueTicketProvider)
+				: undefined,
+		ticket_project:
+			typeof sub.ticket_project === 'string' && sub.ticket_project.trim().length > 0
+				? sub.ticket_project.trim()
+				: undefined,
 		// The GitHub trigger source reads both off the normalized subscription.
 		// Leaving them out here silently turned every YAML re-trigger sub into
 		// fire-once-per-item, so follow-up comments never reached the agent.
