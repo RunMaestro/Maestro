@@ -13,7 +13,7 @@ import { getModalActions, useModalStore } from '../stores/modalStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
-import { notifyToast } from '../stores/notificationStore';
+import { notifyToast, useNotificationStore } from '../stores/notificationStore';
 import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
@@ -49,6 +49,9 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 	const actions = getModalActions();
 
 	switch (surface.id) {
+		case 'notification-center':
+			useNotificationStore.getState().setNotificationCenterOpen(true);
+			return { ok: true };
 		case 'settings':
 			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined);
 			return { ok: true };

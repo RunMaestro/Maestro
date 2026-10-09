@@ -178,6 +178,16 @@ export interface UseSettingsReturn {
 	audioFeedbackCommand: string;
 	setAudioFeedbackCommand: (value: string) => void;
 	toastDuration: number;
+	notificationCenterLarge: boolean;
+	setNotificationCenterLarge: (value: boolean) => void;
+	notificationCenterDetails: boolean;
+	setNotificationCenterDetails: (value: boolean) => void;
+	notificationCenterKeyboardNavigation: boolean;
+	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
+	notificationHistoryQueuedReplies: boolean;
+	setNotificationHistoryQueuedReplies: (value: boolean) => void;
+	notificationHistoryAutoRunTasks: boolean;
+	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setToastDuration: (value: number) => void;
 	idleNotificationEnabled: boolean;
 	setIdleNotificationEnabled: (value: boolean) => void;

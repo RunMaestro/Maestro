@@ -17,7 +17,7 @@
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
-import { notifyToast } from '../stores/notificationStore';
+import { notifyToast, type Toast } from '../stores/notificationStore';
 import { resolveTerminalTab } from '../utils/terminalTabHelpers';
 import { browserTabFocusFields, terminalTabFocusFields } from '../utils/tabFocusFields';
 import { openUrl } from '../utils/openUrl';
@@ -150,4 +150,31 @@ export function dispatchToastClickAction(
 			logger.warn('Unhandled toast click action', 'Toast', { action: unhandled });
 		}
 	}
+}
+
+/**
+ * Do whatever clicking this toast does. One precedence for the floating toast
+ * and for its entry in the notification center: `onClick` (renderer-only
+ * callback), then `clickAction` (data-driven, survives the IPC bridge and a
+ * reload), then the legacy `sessionId` jump.
+ *
+ * @returns `false` when the toast has nothing to act on.
+ */
+export function runToastClick(
+	toast: Pick<Toast, 'onClick' | 'clickAction' | 'sessionId' | 'tabId'>,
+	handlers: ToastClickActionHandlers = {}
+): boolean {
+	if (toast.onClick) {
+		toast.onClick();
+		return true;
+	}
+	if (toast.clickAction) {
+		dispatchToastClickAction(toast.clickAction, handlers);
+		return true;
+	}
+	if (toast.sessionId && handlers.onSessionClick) {
+		handlers.onSessionClick(toast.sessionId, toast.tabId);
+		return true;
+	}
+	return false;
 }

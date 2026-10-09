@@ -4,7 +4,11 @@ import type { QuickAction, QuickActionsModalProps } from './types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
-import { notifyToast, useNotificationStore } from '../../stores/notificationStore';
+import {
+	notifyToast,
+	selectUnreadNotificationCount,
+	useNotificationStore,
+} from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
@@ -229,6 +233,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	}, []);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
+	const unreadNotificationCount = useNotificationStore(selectUnreadNotificationCount);
 	const toastPosition = useSettingsStore((s) => s.toastPosition);
 	const setToastPosition = useSettingsStore((s) => s.setToastPosition);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -456,7 +461,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			unreadNotificationCount,
+			openNotificationCenter: () => useNotificationStore.getState().setNotificationCenterOpen(true),
 			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
+			openNotificationCenterShortcut: shortcuts.openNotificationCenter,
 			toastPosition,
 			setToastPosition,
 			setQuickActionOpen,

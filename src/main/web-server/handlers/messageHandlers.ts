@@ -35,6 +35,12 @@
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  */
 
+import { NOTIFICATION_INBOX_ACTIONS } from '../../../shared/notificationInbox';
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../shared/notificationInbox';
+
 import path from 'path';
 import fs from 'fs/promises';
 import { app } from 'electron';
@@ -146,12 +152,12 @@ const VARIANT_TO_COLOR: Record<NotifyCenterFlashVariant, NotifyCenterFlashColor>
 const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
 
 /**
- * Hard upper bound on toast duration (seconds) for externally-triggered
+ * Hard upper bound on toast duration (milliseconds) for externally-triggered
  * toasts. Toasts are corner notifications so the cap is more generous than
  * Center Flash, but `0` (never auto-dismiss) is rejected - external scripts
  * that want a sticky toast must opt in explicitly via `dismissible: true`.
  */
-const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
+const EXTERNAL_TOAST_MAX_DURATION_MS = 60000;
 import { AGENT_IDS } from '../../../shared/agentIds';
 
 // Logger context for all message handler logs
@@ -247,6 +253,7 @@ export interface MessageHandlerCallbacks {
 		options: OpenFileTabOptions
 	) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	/** Render the Document Graph over an explicit file set or directory. */
 	openDocumentGraph: (params: {
@@ -587,6 +594,10 @@ export class WebSocketMessageHandler {
 
 			case 'open_document_graph':
 				this.handleOpenDocumentGraph(client, message);
+				break;
+
+			case 'notification_inbox':
+				void this.handleNotificationInbox(client, message);
 				break;
 
 			case 'open_modal':
@@ -2095,6 +2106,36 @@ export class WebSocketMessageHandler {
 			.catch((error) => {
 				sendErrorResult(`Failed to open document graph: ${error.message}`);
 			});
+	}
+
+	/** Validate inbox requests, then return the renderer's resulting history snapshot. */
+	private async handleNotificationInbox(
+		client: WebClient,
+		message: WebClientMessage
+	): Promise<void> {
+		let result: NotificationInboxResult;
+		if (
+			!NOTIFICATION_INBOX_ACTIONS.includes(message.action as NotificationInboxRequest['action']) ||
+			(message.id !== undefined && typeof message.id !== 'string') ||
+			(message.unread !== undefined && typeof message.unread !== 'boolean')
+		) {
+			result = { success: false, error: 'Invalid notification inbox request' };
+		} else {
+			try {
+				result = (await this.callbacks.notificationInbox?.({
+					action: message.action as NotificationInboxRequest['action'],
+					id: message.id as string | undefined,
+					unread: message.unread as boolean | undefined,
+				})) ?? { success: false, error: 'Notification inbox unavailable' };
+			} catch (error) {
+				result = { success: false, error: error instanceof Error ? error.message : String(error) };
+			}
+		}
+		this.send(client, {
+			type: 'notification_inbox_result',
+			requestId: message.requestId,
+			...result,
+		});
 	}
 
 	/**
@@ -4984,14 +5025,14 @@ export class WebSocketMessageHandler {
 			if (!Number.isFinite(duration) || duration <= 0) {
 				sendResult(
 					false,
-					'duration must be a positive number of seconds (use dismissible:true for sticky toasts)'
+					'duration must be a positive number of milliseconds (use dismissible:true for sticky toasts)'
 				);
 				return;
 			}
-			if (duration > EXTERNAL_TOAST_MAX_DURATION_SECONDS) {
+			if (duration > EXTERNAL_TOAST_MAX_DURATION_MS) {
 				sendResult(
 					false,
-					`duration cannot exceed ${EXTERNAL_TOAST_MAX_DURATION_SECONDS} seconds for externally-triggered toasts (use dismissible:true to make it sticky)`
+					`duration cannot exceed ${EXTERNAL_TOAST_MAX_DURATION_MS} milliseconds for externally-triggered toasts (use dismissible:true to make it sticky)`
 				);
 				return;
 			}

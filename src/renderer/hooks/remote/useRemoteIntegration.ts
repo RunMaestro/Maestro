@@ -1,3 +1,4 @@
+import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode } from '../../types';
@@ -677,6 +678,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribe();
 		};
 	}, []);
+
+	useEffect(
+		() => window.maestro.process.onRemoteNotificationInbox?.(performNotificationInboxAction),
+		[]
+	);
 
 	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
 	// The main process has already validated the surface and tab, so this is a

@@ -173,6 +173,7 @@ function createDeps(
 // ============================================================================
 
 beforeEach(() => {
+	vi.useFakeTimers();
 	idCounter = 0;
 	vi.clearAllMocks();
 
@@ -213,6 +214,9 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
+	// Contributions schedule focus and batch-start callbacks; keep them inside each test.
+	vi.clearAllTimers();
+	vi.useRealTimers();
 });
 
 // ============================================================================
@@ -863,7 +867,7 @@ describe('useSymphonyContribution', () => {
 
 			// Wait for the rejected promise's catch to run
 			await act(async () => {
-				await new Promise((resolve) => setTimeout(resolve, 0));
+				await vi.advanceTimersByTimeAsync(0);
 			});
 
 			expect(consoleError).toHaveBeenCalledWith(
@@ -961,7 +965,6 @@ describe('useSymphonyContribution', () => {
 		});
 
 		it('focuses input element after creation (via setTimeout)', async () => {
-			vi.useFakeTimers();
 			const focusMock = vi.fn();
 			const deps = createDeps({
 				inputRef: { current: { focus: focusMock } } as any,
@@ -978,11 +981,9 @@ describe('useSymphonyContribution', () => {
 			});
 
 			expect(focusMock).toHaveBeenCalled();
-			vi.useRealTimers();
 		});
 
 		it('does not crash when inputRef.current is null', async () => {
-			vi.useFakeTimers();
 			const deps = createDeps({
 				inputRef: { current: null } as any,
 			});
@@ -997,8 +998,6 @@ describe('useSymphonyContribution', () => {
 					vi.advanceTimersByTime(50);
 				})
 			).resolves.not.toThrow();
-
-			vi.useRealTimers();
 		});
 	});
 
@@ -1007,7 +1006,6 @@ describe('useSymphonyContribution', () => {
 	// ========================================================================
 	describe('batch run auto-start', () => {
 		it('calls startBatchRun when autoRunPath and documents are present', async () => {
-			vi.useFakeTimers();
 			const startBatchRun = vi.fn();
 			const deps = createDeps({ startBatchRun });
 			const issue = createIssue({
@@ -1033,11 +1031,9 @@ describe('useSymphonyContribution', () => {
 			});
 
 			expect(startBatchRun).toHaveBeenCalledTimes(1);
-			vi.useRealTimers();
 		});
 
 		it('calls startBatchRun with the new session ID and autoRunPath', async () => {
-			vi.useFakeTimers();
 			const startBatchRun = vi.fn();
 			const deps = createDeps({ startBatchRun });
 			const data = createContributionData({ autoRunPath: '/tmp/repo/docs' });
@@ -1058,11 +1054,9 @@ describe('useSymphonyContribution', () => {
 				expect.any(Object),
 				'/tmp/repo/docs'
 			);
-			vi.useRealTimers();
 		});
 
 		it('calls startBatchRun with a BatchRunConfig containing documents from the issue', async () => {
-			vi.useFakeTimers();
 			const startBatchRun = vi.fn();
 			const deps = createDeps({ startBatchRun });
 			const issue = createIssue({
@@ -1090,11 +1084,9 @@ describe('useSymphonyContribution', () => {
 			expect(batchConfig.documents[1].filename).toBe('task2');
 			expect(batchConfig.prompt).toBe('mock-default-batch-prompt');
 			expect(batchConfig.loopEnabled).toBe(false);
-			vi.useRealTimers();
 		});
 
 		it('sets resetOnCompletion and isDuplicate to false for each document', async () => {
-			vi.useFakeTimers();
 			const startBatchRun = vi.fn();
 			const deps = createDeps({ startBatchRun });
 			const issue = createIssue({
@@ -1115,11 +1107,9 @@ describe('useSymphonyContribution', () => {
 			const [, batchConfig] = startBatchRun.mock.calls[0];
 			expect(batchConfig.documents[0].resetOnCompletion).toBe(false);
 			expect(batchConfig.documents[0].isDuplicate).toBe(false);
-			vi.useRealTimers();
 		});
 
 		it('does not call startBatchRun when autoRunPath is undefined', async () => {
-			vi.useFakeTimers();
 			const startBatchRun = vi.fn();
 			const deps = createDeps({ startBatchRun });
 			const data = createContributionData({ autoRunPath: undefined });
@@ -1135,11 +1125,9 @@ describe('useSymphonyContribution', () => {
 			});
 
 			expect(startBatchRun).not.toHaveBeenCalled();
-			vi.useRealTimers();
 		});
 
 		it('does not call startBatchRun when documentPaths is empty', async () => {
-			vi.useFakeTimers();
 			const startBatchRun = vi.fn();
 			const deps = createDeps({ startBatchRun });
 			const issue = createIssue({ documentPaths: [] });
@@ -1156,11 +1144,9 @@ describe('useSymphonyContribution', () => {
 			});
 
 			expect(startBatchRun).not.toHaveBeenCalled();
-			vi.useRealTimers();
 		});
 
 		it('does not call startBatchRun before 500ms delay', async () => {
-			vi.useFakeTimers();
 			const startBatchRun = vi.fn();
 			const deps = createDeps({ startBatchRun });
 			const data = createContributionData({ autoRunPath: '/tmp/repo/docs' });
@@ -1176,7 +1162,6 @@ describe('useSymphonyContribution', () => {
 			});
 
 			expect(startBatchRun).not.toHaveBeenCalled();
-			vi.useRealTimers();
 		});
 	});
 

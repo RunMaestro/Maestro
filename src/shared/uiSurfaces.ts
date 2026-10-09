@@ -58,6 +58,16 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 
 export const UI_SURFACES: UiSurface[] = [
 	{
+		id: 'notification-center',
+		shortcutId: 'openNotificationCenter',
+		label: 'Notification Center',
+		aliases: ['inbox'],
+		modal: 'notificationCenter',
+		description: 'Persistent notification history and unread entries.',
+		commandPalette: 'Open Notification Center',
+		click: 'the bell in the Main Panel header',
+	},
+	{
 		id: 'cue',
 		label: 'Maestro Cue',
 		aliases: ['maestro-cue', 'cue-modal'],

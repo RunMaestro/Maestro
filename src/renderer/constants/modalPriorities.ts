@@ -330,6 +330,10 @@ export const MODAL_PRIORITIES = {
 	 * the menu first. */
 	GIT_PILL_MENU: 220,
 
+	/** Header notification center popover - same tier as the git pill menu:
+	 * Escape closes the popover before anything underneath it. */
+	NOTIFICATION_CENTER: 221,
+
 	/** Branch switcher (fuzzy branch picker from the header git pill) - above the
 	 * git viewers so it layers on top when opened while one is showing. */
 	BRANCH_SWITCHER: 210,

@@ -401,11 +401,11 @@ Execute a custom command when AI tasks complete. Use any notification method tha
 
 In-app toast notifications appear in the corner when events occur. Configure how long they stay visible:
 
-| Duration                 | Behavior                                  |
-| ------------------------ | ----------------------------------------- |
-| **Off**                  | Toasts are disabled entirely              |
-| **5s / 10s / 20s / 30s** | Toast disappears after the specified time |
-| **Never**                | Toast stays until manually dismissed      |
+| Duration                 | Behavior                                      |
+| ------------------------ | --------------------------------------------- |
+| **Off**                  | No floating toasts; history is still recorded |
+| **5s / 10s / 20s / 30s** | Toast disappears after the specified time     |
+| **Never**                | Toast stays until manually dismissed          |
 
 Choose which corner toasts appear in: **Top Left**, **Top Right**, **Bottom Left**, or **Bottom Right** (the default). Toasts in a bottom corner stack upward. Toasts in a top corner stack downward, below the title bar. In both cases the newest toast is nearest the corner. In a bottom corner, the stack rises above the message input when it would otherwise cover it. To switch corners without opening Settings, search **Move Toast Notifications** in Quick Actions (<kbd>Cmd</kbd>+<kbd>K</kbd>), or run `maestro-cli settings set toastPosition top-left` (also `top-right`, `bottom-left`, `bottom-right`).
 
@@ -431,6 +431,31 @@ Most toasts are clickable, and where the click takes you depends on what the toa
 | An external link                | Opens it in your system browser                  |
 
 If the target tab was closed since the toast appeared, the click still switches to the agent and tells you what was missing, so a click never silently does nothing. Scripts and agents choose the target with the `--open-*` flags on [`maestro-cli notify toast`](/cli#notifications). A toast can also carry a separate inline link button beneath its message (`--action-url`); that link is independent of the body click.
+
+#### Notification Center
+
+A toast is only on screen for a moment, so every one is also kept in the notification center: the bell icon at the right of the header, which shows a badge with the number of unread notifications. Click the bell (or run **Open Notification Center** from the command palette) to see them newest first.
+
+- **Unread / All** switches between what still needs attention and the full history.
+- Clicking an entry marks it read and does what clicking the toast would have done, such as jumping to the agent and tab it came from.
+- **Mark all as read** clears the badge. **Clear all** empties the history.
+- Closing or clicking a toast marks it read. One that times out on its own stays unread.
+
+The history keeps the most recent 200 notifications and survives a restart. If you find the popups intrusive, set the toast duration to **Off**: in-app floating toasts are suppressed and history is still recorded. OS notifications and custom notification commands remain enabled independently; disable both separately for inbox-only delivery.
+
+The compact inbox, three-line message previews, and initially unbound **Open Notification Center** shortcut remain the defaults. In **Settings → Notifications → Notification center**, these enhancements are opt-in:
+
+| Setting                                                       | Default | Behavior when enabled                                                                                                                                                                                                                              |
+| ------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Use a larger notification center (`notificationCenterLarge`)  | Off     | Opens a wider, taller panel, bounded by the window.                                                                                                                                                                                                |
+| Expand notification details (`notificationCenterDetails`)     | Off     | Adds Show details / Hide details to read the full source, title, and message without leaving the inbox.                                                                                                                                            |
+| Keyboard navigation (`notificationCenterKeyboardNavigation`)  | Off     | Focuses the inbox on opening. Arrows and Home/End/PageUp/PageDown navigate, Enter activates, R marks read, Delete/Backspace dismisses, and D toggles details when enabled. Escape closes; focus returns to the caller when no navigation occurred. |
+| Record each queued reply (`notificationHistoryQueuedReplies`) | Off     | Records intermediate queued replies in the inbox. By default, only the final completion is recorded.                                                                                                                                               |
+| Record each Auto Run task (`notificationHistoryAutoRunTasks`) | Off     | Records each completed task in the inbox. By default, existing run outcomes, warnings, and errors are recorded.                                                                                                                                    |
+
+**Configure notification shortcut** opens the Shortcuts tab, where **Open Notification Center** can be bound. Existing bindings are preserved.
+
+A final completion is recorded even when you are viewing its tab. Its popup remains suppressed and the existing custom audio cue still runs. Intermediate queued and Auto Run task entries are history-only; enabling them does not add popups, OS notifications, or audio commands. Synopsis notifications remain separate from completion notifications. Dismissing an inbox entry marks it read and removes its floating toast, while retaining the history entry.
 
 ### When Notifications Trigger
 

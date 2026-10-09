@@ -84,6 +84,7 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { supportPackage } from './commands/support-package';
 import {
@@ -1456,6 +1457,51 @@ notify
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);
+
+const inbox = notify
+	.command('inbox')
+	.description('Read and manage the desktop notification center history');
+inbox
+	.command('list')
+	.description('List retained notifications with stable IDs')
+	.option('--unread', 'Only list unread entries')
+	.option('--json', 'Output as JSON')
+	.action((options) => notificationInbox({ action: 'list', unread: options.unread }, options));
+for (const action of ['open', 'close', 'read-all', 'clear', 'collapse'] as const) {
+	inbox
+		.command(action)
+		.description(
+			{
+				open: 'Open the notification center',
+				close: 'Close the notification center',
+				'read-all': 'Mark every history entry read',
+				clear: 'Clear retained history',
+				collapse: 'Collapse expanded notification details',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((options) => notificationInbox({ action }, options));
+}
+inbox
+	.command('dismiss [id]')
+	.description('Dismiss one notification or all visible toasts and mark their entries read')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => notificationInbox({ action: 'dismiss', id }, options));
+for (const action of ['read', 'activate', 'link', 'detail'] as const) {
+	inbox
+		.command(`${action} <id>`)
+		.description(
+			{
+				read: 'Mark one notification read',
+				activate: 'Run a notification body action',
+				link: 'Open a notification inline link',
+				detail:
+					'Expand full notification details in the inbox (requires notificationCenterDetails)',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((id, options) => notificationInbox({ action, id }, options));
+}
 
 notify
 	.command('flash <message>')

@@ -3,6 +3,8 @@
  * Extracted from main/index.ts for better modularity.
  */
 
+import type { NotificationInboxResult } from '../../shared/notificationInbox';
+
 import { randomUUID } from 'crypto';
 import { app as electronApp, BrowserWindow, ipcMain } from 'electron';
 import { WebServer, type WebServerOptions } from './WebServer';
@@ -2418,6 +2420,16 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}, timeoutMs);
 			});
 		};
+
+		server.setNotificationInboxCallback((request) =>
+			remoteRequest<NotificationInboxResult>(
+				'notificationInbox',
+				'notificationInbox',
+				{ success: false, error: 'Notification inbox unavailable or timed out' },
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:notificationInbox', request, responseChannel)
+			)
+		);
 
 		// Reset all `[x]` checkboxes back to `[ ]` for an Auto Run document.
 		// Forwards to the renderer which uses the existing autorun:readDoc / writeDoc IPC

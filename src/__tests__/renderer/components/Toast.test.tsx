@@ -356,6 +356,20 @@ describe('Toast', () => {
 			);
 		});
 
+		it('marks the inline link read without invoking the body action', () => {
+			const onClick = vi.fn();
+			const toast = createMockToast({
+				actionUrl: 'https://example.com',
+				actionLabel: 'Open link',
+				onClick,
+			});
+			useNotificationStore.setState({ toasts: [toast], history: [{ ...toast, read: false }] });
+			render(<ToastContainer theme={mockTheme} />);
+			fireEvent.click(screen.getByText('Open link'));
+			expect(useNotificationStore.getState().history[0].read).toBe(true);
+			expect(onClick).not.toHaveBeenCalled();
+		});
+
 		it('does not render action link when actionUrl is not provided', () => {
 			setStoreToasts([createMockToast()]);
 

@@ -379,6 +379,11 @@ interface MaestroAPI {
 				}
 			) => void
 		) => () => void;
+		onRemoteNotificationInbox: (
+			callback: (
+				request: import('../shared/notificationInbox').NotificationInboxRequest
+			) => import('../shared/notificationInbox').NotificationInboxResult
+		) => () => void;
 		onRemoteOpenModal: (
 			callback: (params: { surface: string; tab?: string }) => void
 		) => () => void;

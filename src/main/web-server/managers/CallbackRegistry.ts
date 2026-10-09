@@ -5,6 +5,11 @@
  * This separates callback management from the core WebServer logic.
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../shared/notificationInbox';
+
 import { logger } from '../../utils/logger';
 import type {
 	GetSessionsCallback,
@@ -159,6 +164,9 @@ export interface WebServerCallbacks {
 	openFileTab: OpenFileTabCallback | null;
 	openDocumentGraph: OpenDocumentGraphCallback | null;
 	openModal: OpenModalCallback | null;
+	notificationInbox:
+		| ((request: NotificationInboxRequest) => Promise<NotificationInboxResult>)
+		| null;
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
@@ -250,6 +258,7 @@ export class CallbackRegistry {
 		openFileTab: null,
 		openDocumentGraph: null,
 		openModal: null,
+		notificationInbox: null,
 		refreshFileTree: null,
 		openBrowserTab: null,
 		closeBrowserTab: null,
@@ -431,6 +440,21 @@ export class CallbackRegistry {
 	async openDocumentGraph(params: OpenDocumentGraphParams): Promise<boolean> {
 		if (!this.callbacks.openDocumentGraph) return false;
 		return this.callbacks.openDocumentGraph(params);
+	}
+
+	/** Execute a history operation in the desktop renderer. */
+	async notificationInbox(request: NotificationInboxRequest): Promise<NotificationInboxResult> {
+		return (
+			this.callbacks.notificationInbox?.(request) ?? {
+				success: false,
+				error: 'Notification inbox unavailable',
+			}
+		);
+	}
+	setNotificationInboxCallback(
+		callback: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>
+	): void {
+		this.callbacks.notificationInbox = callback;
 	}
 
 	async openModal(params: OpenModalParams): Promise<boolean> {

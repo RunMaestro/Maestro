@@ -1,10 +1,14 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
-import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
+import {
+	useNotificationStore,
+	type Toast as ToastType,
+	type ToastColor,
+} from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
-import { dispatchToastClickAction } from '../services/toastClickActions';
+import { runToastClick } from '../services/toastClickActions';
 import { formatDurationParts as formatDuration } from '../../shared/formatters';
 import { getToastWidthDimensions, TOAST_VIEWPORT_GUTTER } from '../../shared/toastWidth';
 import {
@@ -36,6 +40,26 @@ export function buildToastClipboardText(toast: ToastType): string {
 		.filter((line): line is string => Boolean(line && line.trim()))
 		.join('\n')
 		.trim();
+}
+
+/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
+const ORANGE_HEX = '#f97316';
+
+/** The accent a toast color resolves to under a theme (icon, badge, progress bar). */
+export function toastAccentColor(color: ToastColor, theme: Theme): string {
+	switch (color) {
+		case 'green':
+			return theme.colors.success;
+		case 'red':
+			return theme.colors.error;
+		case 'yellow':
+			return theme.colors.warning;
+		case 'orange':
+			return ORANGE_HEX;
+		case 'theme':
+		default:
+			return theme.colors.accent;
+	}
 }
 
 const ToastItem = memo(function ToastItem({
@@ -75,29 +99,18 @@ const ToastItem = memo(function ToastItem({
 
 	const handleClose = (e?: React.MouseEvent) => {
 		e?.stopPropagation();
+		// Closing or clicking a toast is the user dealing with it; one that timed
+		// out on its own stays unread in the notification center.
+		useNotificationStore.getState().markNotificationRead(toast.id);
 		setIsExiting(true);
 		setTimeout(() => onRemove(toast.id), 300);
 	};
 
 	// Handle click on toast to navigate to session or trigger custom action.
-	// Order: onClick (renderer-only callback) → clickAction (data-driven, survives
-	// the IPC bridge from CLI/web) → legacy sessionId fallback.
+	// The precedence lives in runToastClick so the notification center's entry
+	// for this toast does the same thing.
 	const handleToastClick = () => {
-		if (toast.onClick) {
-			toast.onClick();
-			handleClose();
-			return;
-		}
-		if (toast.clickAction) {
-			// Every kind (AI tab, file preview, terminal tab, browser tab, external
-			// URL) is dispatched by one shared service so the behavior is identical
-			// wherever a toast came from.
-			dispatchToastClickAction(toast.clickAction, { onSessionClick });
-			handleClose();
-			return;
-		}
-		if (toast.sessionId && onSessionClick) {
-			onSessionClick(toast.sessionId, toast.tabId);
+		if (runToastClick(toast, { onSessionClick })) {
 			handleClose();
 		}
 	};
@@ -168,24 +181,7 @@ const ToastItem = memo(function ToastItem({
 
 	const offscreen = fromLeft ? 'translateX(-100%)' : 'translateX(100%)';
 
-	/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
-	const ORANGE_HEX = '#f97316';
-
-	const getTypeColor = () => {
-		switch (toast.color) {
-			case 'green':
-				return theme.colors.success;
-			case 'red':
-				return theme.colors.error;
-			case 'yellow':
-				return theme.colors.warning;
-			case 'orange':
-				return ORANGE_HEX;
-			case 'theme':
-			default:
-				return theme.colors.accent;
-		}
-	};
+	const getTypeColor = () => toastAccentColor(toast.color, theme);
 
 	return (
 		<div
@@ -276,6 +272,7 @@ const ToastItem = memo(function ToastItem({
 							style={{ color: theme.colors.accent }}
 							onClick={(e) => {
 								e.stopPropagation();
+								useNotificationStore.getState().markNotificationRead(toast.id);
 								openUrl(toast.actionUrl!);
 							}}
 						>

@@ -4,6 +4,7 @@ import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { GitStatusWidget } from '../GitStatusWidget';
 import { GitPillMenu } from '../GitPillMenu';
+import { NotificationCenter } from '../NotificationCenter';
 import { useHoverTooltip } from '../../hooks';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -800,6 +801,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							)}
 						</div>
 					)}
+
+				{/* Notification center - every toast, kept after it leaves the screen */}
+				<NotificationCenter theme={theme} />
 
 				{/* Memory Viewer Button - only show if agent maintains per-project memory */}
 				{hasCapability('supportsProjectMemory') && (
