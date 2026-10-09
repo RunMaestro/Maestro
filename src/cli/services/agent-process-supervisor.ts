@@ -1,8 +1,8 @@
 /** Bound headless process startup and teardown without relying on child close. */
-import { execFile, type ChildProcess } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { createIdleWatchdog, type IdleWatchdog } from '../../main/utils/idle-watchdog';
-import { isWindows } from '../../shared/platformDetection';
-import { HEADLESS_PROCESS_KILL_GRACE_MS } from '../../shared/plugins/headless-agent-timeouts';
+import { killProcessTreeNow } from '../../main/utils/processTree';
+import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 
 export function superviseAgentProcess(
 	child: ChildProcess,
@@ -18,45 +18,27 @@ export function superviseAgentProcess(
 	let stopping = false;
 	let startup: IdleWatchdog | undefined;
 	let lifetime: IdleWatchdog | undefined;
-	let escalation: ReturnType<typeof setTimeout> | undefined;
+	let closeDeadline: ReturnType<typeof setTimeout> | undefined;
 
-	// Supervised POSIX children are spawned as process-group leaders. Kill the
-	// group too: Codex's Node launcher and children can otherwise retain pipes.
-	const kill = (signal: NodeJS.Signals): void => {
-		try {
-			if (isWindows() && child.pid) {
-				execFile(
-					'taskkill',
-					['/pid', String(child.pid), '/t', '/f'],
-					{ timeout: HEADLESS_PROCESS_KILL_GRACE_MS },
-					() => {}
-				);
-			} else if (child.pid) {
-				process.kill(-child.pid, signal);
-			} else {
-				child.kill(signal);
-			}
-		} catch {
-			// The child/group may already have exited before close drains stdio.
-		}
-	};
 	const stop = (reason: string): void => {
 		if (disposed || stopping) return;
 		stopping = true;
 		startup?.disarm();
 		lifetime?.disarm();
 		options.onStop(reason);
-		// Arm before signalling: close can be delivered during kill in a harness.
-		escalation = setTimeout(() => {
+		// Arm before killing: close can be delivered during kill in a harness.
+		closeDeadline = setTimeout(() => {
 			if (disposed) return;
-			kill('SIGKILL');
 			// A descendant may retain stdio even after the provider exits. Do not
 			// wait forever for close, and do not expose late output as success.
 			child.stdout?.destroy();
 			child.stderr?.destroy();
 			options.onForcedStop();
-		}, HEADLESS_PROCESS_KILL_GRACE_MS);
-		kill('SIGTERM');
+		}, HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
+		// Snapshot and terminate descendants before their launcher can exit and
+		// reparent them. Reuse the same tree kill as the host's Stop action.
+		if (child.pid) killProcessTreeNow(child.pid, { label: 'headless agent' });
+		else child.kill('SIGKILL');
 	};
 	const abort = (): void => stop('Agent run timed out or was cancelled');
 	if (options.startupMs) {
@@ -79,13 +61,11 @@ export function superviseAgentProcess(
 	return {
 		modelActivity: () => startup?.disarm(),
 		dispose: () => {
+			if (disposed) return;
 			disposed = true;
-			// A launcher can close while a descendant ignores SIGTERM. Finish
-			// terminating its group before clearing the pending escalation.
-			if (stopping) kill('SIGKILL');
 			startup?.disarm();
 			lifetime?.disarm();
-			if (escalation) clearTimeout(escalation);
+			if (closeDeadline) clearTimeout(closeDeadline);
 			options.signal?.removeEventListener('abort', abort);
 		},
 	};

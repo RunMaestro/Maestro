@@ -1017,7 +1017,7 @@ Some text with [x] in it that's not a checkbox
 			});
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			const [, , options] = mockSpawn.mock.calls[0];
-			expect(options.signal).toBe(controller.signal);
+			expect(options.signal).toBeUndefined();
 			mockStdout.emit(
 				'data',
 				Buffer.from(
@@ -1756,7 +1756,7 @@ Some text with [x] in it that's not a checkbox
 					await vi.advanceTimersByTimeAsync(119_999);
 					expect(mockChild.kill).not.toHaveBeenCalled();
 					await vi.advanceTimersByTimeAsync(1);
-					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+					expect(mockChild.kill).toHaveBeenCalledWith('SIGKILL');
 					mockChild.emit('close', 0);
 					expect(await run).toMatchObject({
 						success: false,
@@ -1808,7 +1808,7 @@ Some text with [x] in it that's not a checkbox
 					});
 					await vi.advanceTimersByTimeAsync(1);
 					await vi.advanceTimersByTimeAsync(1_000);
-					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+					expect(mockChild.kill).toHaveBeenCalledWith('SIGKILL');
 					mockStdout.emit(
 						'data',
 						Buffer.from(
@@ -1841,7 +1841,7 @@ Some text with [x] in it that's not a checkbox
 			const [, , options] = mockSpawn.mock.calls[0];
 			expect(options.timeout).toBeUndefined();
 			expect(options.detached).toBe(process.platform !== 'win32');
-			expect(options.signal).toBe(controller.signal);
+			expect(options.signal).toBeUndefined();
 			mockStdout.emit(
 				'data',
 				Buffer.from('{"type":"thread.started","thread_id":"codex-cancelled"}')

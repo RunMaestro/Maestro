@@ -2,14 +2,18 @@
 import { EventEmitter } from 'events';
 import { spawn, type ChildProcess } from 'child_process';
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import * as processTree from '../../../main/utils/processTree';
 import { superviseAgentProcess } from '../../../cli/services/agent-process-supervisor';
-import { HEADLESS_PROCESS_KILL_GRACE_MS } from '../../../shared/plugins/headless-agent-timeouts';
+import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.useRealTimers();
+});
 
 describe('headless process supervision', () => {
 	it.each(['startup', 'lifetime', 'abort'] as const)(
-		'escalates %s and releases the caller even when close never arrives',
+		'terminates %s and releases the caller even when close never arrives',
 		async (cause) => {
 			vi.useFakeTimers();
 			const child = Object.assign(new EventEmitter(), {
@@ -30,9 +34,9 @@ describe('headless process supervision', () => {
 			if (cause === 'abort') controller.abort();
 			else await vi.advanceTimersByTimeAsync(cause === 'startup' ? 120_000 : 3_600_000);
 			expect(onStop).toHaveBeenCalledTimes(1);
-			expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+			expect(child.kill).toHaveBeenCalledWith('SIGKILL');
 			expect(onForcedStop).not.toHaveBeenCalled();
-			await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_KILL_GRACE_MS);
+			await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
 			expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
 			expect(onForcedStop).toHaveBeenCalledTimes(1);
 			expect(child.stdout?.destroy).toHaveBeenCalled();
@@ -40,7 +44,26 @@ describe('headless process supervision', () => {
 		}
 	);
 
-	it('kills remaining group members if the launcher closes during teardown', async () => {
+	it('uses the existing host tree kill for cancellation before waiting for close', () => {
+		vi.useFakeTimers();
+		const killTree = vi.spyOn(processTree, 'killProcessTreeNow').mockImplementation(() => {});
+		const child = { pid: 42, kill: vi.fn() } as unknown as ChildProcess;
+		const controller = new AbortController();
+		const onStop = vi.fn();
+		const supervision = superviseAgentProcess(child, {
+			signal: controller.signal,
+			onStop,
+			onForcedStop: vi.fn(),
+		});
+		controller.abort();
+		expect(killTree).toHaveBeenCalledWith(42, { label: 'headless agent' });
+		expect(onStop).toHaveBeenCalledWith('Agent run timed out or was cancelled');
+		expect(child.kill).not.toHaveBeenCalled();
+		supervision.dispose();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('disposes teardown idempotently when the launcher closes', async () => {
 		vi.useFakeTimers();
 		const child = { kill: vi.fn() } as unknown as ChildProcess;
 		const supervision = superviseAgentProcess(child, {
@@ -49,9 +72,11 @@ describe('headless process supervision', () => {
 			onForcedStop: vi.fn(),
 		});
 		await vi.advanceTimersByTimeAsync(100);
-		expect(child.kill).toHaveBeenCalledWith('SIGTERM');
-		// The caller disposes on close even if another group member survives.
+		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+		// The caller disposes on close, including a repeated cleanup.
 		supervision.dispose();
+		supervision.dispose();
+		expect(child.kill).toHaveBeenCalledOnce();
 		expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
 		expect(vi.getTimerCount()).toBe(0);
 	});
@@ -98,7 +123,7 @@ describe('headless process supervision', () => {
 				});
 				await vi.advanceTimersByTimeAsync(100);
 				expect(child.exitCode).toBeNull();
-				await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_KILL_GRACE_MS);
+				await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
 				vi.useRealTimers();
 				expect(await closed).toEqual({ code: null, signal: 'SIGKILL' });
 			} finally {

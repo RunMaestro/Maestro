@@ -31,10 +31,11 @@ or usage. Session/turn initialization, unstructured stdout, and stderr cannot
 release the startup deadline. Once model activity arrives, the original long
 run budget remains intact.
 
-Timeout and cancellation signal the local process group on POSIX (including a
-provider launcher and descendants), or use Windows `taskkill /t /f`. After a
-five-second grace, force termination and pipe disposal release a failed result
-even without `close`. Late output cannot become progress or a successful answer.
+Timeout and cancellation reuse `killProcessTreeNow`, the existing host Stop
+utility. It snapshots descendants before killing a launcher, then force-kills
+the tree and process groups on POSIX, or uses Windows `taskkill /t /f`. A
+five-second completion ceiling and pipe disposal release a failed result even
+without `close`. Late output cannot become progress or a successful answer.
 A startup failure carries static auth/keyring guidance and a retry instruction
 through the existing failed Relay result. The host does not change the credential
 store, log in, read credentials, or retry potentially delivered tool work.
@@ -60,4 +61,9 @@ argument survives, run one ordinary Relay request, and exercise a deliberately
 non-authenticated test fixture to confirm a failed result within 125 seconds.
 Do not induce a real keyring outage or remove credentials for this test. Verify
 that the Relay plugin renders the returned failure as a visible error/recovery
-notice; host contract tests cannot establish live Discord delivery.
+notice. Read-only inspection of the installed Relay entry point confirmed that
+it uses `agents.send` and posts a failure to Discord, but currently maps provider
+errors to the generic `agent-failed` notice. A targeted Backstage plugin mapping
+is needed for the specific auth/retry notice; the host now makes that detail
+available through `result.error`. Host contract tests cannot establish live
+Discord delivery.

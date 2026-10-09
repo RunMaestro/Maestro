@@ -757,7 +757,6 @@ async function spawnClaudeAgent(
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
 			detached: !isWindows(),
-			...(overrides.signal ? { signal: overrides.signal } : {}),
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -1243,7 +1242,6 @@ async function spawnJsonLineAgent(
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
 			detached: !isWindows(),
-			...(overrides.signal ? { signal: overrides.signal } : {}),
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
