@@ -6,7 +6,9 @@
 //                    --ready-timeout, --help, --version) and their values.
 //   (b) stripped   - headless-mode flags that would corrupt the TUI spawn
 //                    (--output-format, --input-format, --verbose). Dropped
-//                    silently with a one-line stderr warning.
+//                    without a word when maestro-p honors them anyway
+//                    (`--verbose`, `--output-format stream-json`), with a
+//                    one-line stderr warning when it cannot.
 //   (c) passthrough - everything else, forwarded verbatim to the spawned
 //                    `claude` TUI.
 //
@@ -258,7 +260,10 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		if (PROMPT_VALUE_FLAGS.has(flag)) {
 			const value = consumeValue();
 			if (value === undefined) {
-				warn(`maestro-p: ${flag} requires a value; ignoring.`);
+				// A bare `-p` / `--print` is claude's print-mode switch, which is
+				// the only mode maestro-p has, so it is not an error. Maestro passes
+				// it on every spawn; only `--prompt` genuinely needs its value.
+				if (flag === '--prompt') warn(`maestro-p: ${flag} requires a value; ignoring.`);
 			} else {
 				promptFromFlag = value;
 			}
@@ -339,7 +344,13 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		}
 
 		if (STRIPPED_VALUE_FLAGS.has(flag)) {
-			warn(`maestro-p: ignoring ${flag} - headless-mode flag, not forwarded to the TUI.`);
+			const value = inlineValue ?? (i + 1 < argv.length ? argv[i + 1] : undefined);
+			// maestro-p always writes stream-json, so `--output-format stream-json`
+			// (what Maestro passes every time) is honored, not ignored.
+			if (value !== 'stream-json') {
+				const shown = value === undefined ? flag : `${flag} ${value}`;
+				warn(`maestro-p: ignoring ${shown} - maestro-p always writes stream-json.`);
+			}
 			if (inlineValue === undefined && i + 1 < argv.length) {
 				i += 1;
 			}
@@ -366,7 +377,8 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 			continue;
 		}
 		if (STRIPPED_BOOLEAN_FLAGS.has(flag)) {
-			warn(`maestro-p: ignoring ${flag} - headless-mode flag, not forwarded to the TUI.`);
+			// `--verbose` only shapes `claude -p`'s stream-json, which maestro-p
+			// writes in that same shape anyway: nothing is lost, so stay quiet.
 			i += 1;
 			continue;
 		}
