@@ -91,6 +91,12 @@ export interface TriggerNodeData {
 		 *  `CueSubscription.self_destruct_on_failure`. Round-tripped, not
 		 *  editable. */
 		self_destruct_on_failure?: boolean;
+		/** `presence.*` only: minimum absence in minutes. See
+		 *  `CueSubscription.away_minutes`. */
+		away_minutes?: number;
+		/** `presence.return` only: minutes the user must stay back before it
+		 *  fires (0 = immediately). See `CueSubscription.settle_minutes`. */
+		settle_minutes?: number;
 	};
 	/** Name of the underlying Cue subscription this trigger represents on disk.
 	 *  Populated on load by `yamlToPipeline`. Every trigger node in a multi-

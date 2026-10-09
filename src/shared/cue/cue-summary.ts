@@ -9,6 +9,7 @@
  * Pure / runtime-agnostic - safe to import from main and renderer alike.
  */
 
+import { formatDurationCompact } from '../duration';
 import { stripMarkdown } from '../markdown';
 import { stripAnsiCodes } from '../stringUtils';
 import type { CueEvent, CueEventType, CueRunResult } from './contracts';
@@ -30,6 +31,8 @@ export const CUE_EVENT_LABELS: Record<CueEventType, string> = {
 	'github.label': 'GitHub Label',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
+	'presence.return': 'User Returned',
+	'presence.leave': 'User Left',
 };
 
 /**
@@ -110,6 +113,14 @@ export function getCueEventDetail(event: CueEvent): string | undefined {
 			if (!prompt) return undefined;
 			const oneLine = String(prompt).replace(/\s+/g, ' ').trim();
 			return oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine;
+		}
+
+		case 'presence.return':
+		case 'presence.leave': {
+			const awayMs = Number(payload.away_duration_ms);
+			if (!Number.isFinite(awayMs) || awayMs <= 0) return undefined;
+			const span = formatDurationCompact(awayMs);
+			return event.type === 'presence.return' ? `back after ${span}` : `away ${span}`;
 		}
 
 		case 'time.heartbeat':

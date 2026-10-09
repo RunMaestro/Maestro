@@ -119,7 +119,7 @@ Each subscription is a trigger-prompt pairing. When the trigger fires, Cue sends
 | Field    | Type   | Description                                                                   |
 | -------- | ------ | ----------------------------------------------------------------------------- |
 | `name`   | string | Unique identifier. Used in logs, history, and as a reference in chains        |
-| `event`  | string | One of the eleven [event types](./maestro-cue-events)                         |
+| `event`  | string | One of the thirteen [event types](./maestro-cue-events)                       |
 | `prompt` | string | The prompt to send as inline text. Required unless `prompt_file` is specified |
 
 <Note>
@@ -371,7 +371,7 @@ The engine validates your YAML on every load. Common validation errors:
 | Error                                      | Fix                                                                                                 |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
 | `"name" is required`                       | Every subscription needs a unique `name` field                                                      |
-| `"event" is required`                      | Specify one of the eleven event types                                                               |
+| `"event" is required`                      | Specify one of the thirteen event types                                                             |
 | `"prompt" is required`                     | Provide inline text or a file path                                                                  |
 | `"interval_minutes" is required`           | `time.heartbeat` events must specify a positive interval                                            |
 | `"schedule_times" is required`             | `time.scheduled` events must have at least one `HH:MM` time                                         |

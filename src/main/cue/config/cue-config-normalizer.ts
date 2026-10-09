@@ -336,6 +336,14 @@ function normalizeSubscription(
 				? sub.agent_id.trim()
 				: undefined,
 		label: typeof sub.label === 'string' ? sub.label : undefined,
+		away_minutes:
+			typeof sub.away_minutes === 'number' && Number.isFinite(sub.away_minutes)
+				? sub.away_minutes
+				: undefined,
+		settle_minutes:
+			typeof sub.settle_minutes === 'number' && Number.isFinite(sub.settle_minutes)
+				? sub.settle_minutes
+				: undefined,
 		fire_at: typeof sub.fire_at === 'string' ? sub.fire_at : undefined,
 		grace_minutes:
 			typeof sub.grace_minutes === 'number' &&

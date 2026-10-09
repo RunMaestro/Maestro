@@ -299,3 +299,38 @@ describe('validateSubscription - github.label', () => {
 		).toBe(true);
 	});
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// presence.* event validation
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('validateSubscription - presence.return / presence.leave', () => {
+	const base = { name: 'welcome-back', event: 'presence.return', prompt: 'Catch me up' };
+
+	it('accepts a bare presence subscription (default away time)', () => {
+		expect(errs(base)).toEqual([]);
+		expect(errs({ ...base, event: 'presence.leave' })).toEqual([]);
+	});
+
+	it('accepts away_minutes and settle_minutes on a return', () => {
+		expect(errs({ ...base, away_minutes: 30, settle_minutes: 5 })).toEqual([]);
+		expect(errs({ ...base, settle_minutes: 0 })).toEqual([]);
+	});
+
+	it('rejects an away_minutes below one minute', () => {
+		const found = errs({ ...base, away_minutes: 0.5 });
+		expect(found.some((e) => /"away_minutes" must be a number >= 1/.test(e))).toBe(true);
+	});
+
+	it('rejects a negative settle_minutes', () => {
+		const found = errs({ ...base, settle_minutes: -1 });
+		expect(found.some((e) => /"settle_minutes" must be a number >= 0/.test(e))).toBe(true);
+	});
+
+	it('rejects settle_minutes on a leave', () => {
+		const found = errs({ ...base, event: 'presence.leave', settle_minutes: 5 });
+		expect(found.some((e) => /"settle_minutes" only applies to presence.return/.test(e))).toBe(
+			true
+		);
+	});
+});

@@ -224,6 +224,8 @@ const TRIGGER_TYPE_LABELS: Record<string, string> = {
 	'cli.trigger': 'CLI Trigger',
 	'time.once': 'One-Time',
 	'github.label': 'GitHub Label',
+	'presence.return': 'User Returned',
+	'presence.leave': 'User Left',
 };
 
 function triggerTypeGroupKey(eventType: string): { key: string; label: string } {

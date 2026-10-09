@@ -16,19 +16,21 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 
 ### Event Types
 
-| Event                 | Fires when…                                                          | Key config fields                                                                                   |
-| --------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `app.startup`         | Maestro launches                                                     | -                                                                                                   |
-| `time.heartbeat`      | Every N minutes                                                      | `interval_minutes`                                                                                  |
-| `time.scheduled`      | At specific clock times (cron-like)                                  | `schedule_times`, `schedule_days`                                                                   |
-| `time.once`           | At a specific wall-clock moment, exactly once (self-destructs after) | `fire_at`, optional `grace_minutes`, `self_destruct_on_failure`                                     |
-| `file.changed`        | Files matching a glob are added/changed/removed                      | `watch` (glob)                                                                                      |
-| `agent.completed`     | An upstream agent finishes a run                                     | `source_session` (name or names)                                                                    |
-| `github.pull_request` | A PR matches a filter (polled)                                       | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
-| `github.issue`        | An issue matches a filter (polled)                                   | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
-| `github.label`        | A label is added to a PR or issue (polled)                           | `repo`, `gh_label_target` (`pr`/`issue`/`both`), `gh_labels`, `poll_minutes`, `filter`              |
-| `task.pending`        | Pending `- [ ]` tasks detected in watched files                      | `watch`                                                                                             |
-| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                         | -                                                                                                   |
+| Event                 | Fires when…                                                                                   | Key config fields                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `app.startup`         | Maestro launches                                                                              | -                                                                                                   |
+| `time.heartbeat`      | Every N minutes                                                                               | `interval_minutes`                                                                                  |
+| `time.scheduled`      | At specific clock times (cron-like)                                                           | `schedule_times`, `schedule_days`                                                                   |
+| `time.once`           | At a specific wall-clock moment, exactly once (self-destructs after)                          | `fire_at`, optional `grace_minutes`, `self_destruct_on_failure`                                     |
+| `file.changed`        | Files matching a glob are added/changed/removed                                               | `watch` (glob)                                                                                      |
+| `agent.completed`     | An upstream agent finishes a run                                                              | `source_session` (name or names)                                                                    |
+| `github.pull_request` | A PR matches a filter (polled)                                                                | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
+| `github.issue`        | An issue matches a filter (polled)                                                            | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
+| `github.label`        | A label is added to a PR or issue (polled)                                                    | `repo`, `gh_label_target` (`pr`/`issue`/`both`), `gh_labels`, `poll_minutes`, `filter`              |
+| `task.pending`        | Pending `- [ ]` tasks detected in watched files                                               | `watch`                                                                                             |
+| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                                                  | -                                                                                                   |
+| `presence.return`     | The user comes back to the machine (unlock, or first input after going idle) after an absence | `away_minutes` (minimum absence, default 10), `settle_minutes` (0 = fire immediately)               |
+| `presence.leave`      | The user has been away from the machine for `away_minutes` (locked, idle, or switched out)    | `away_minutes` (default 10)                                                                         |
 
 ### Scheduled Tasks (one-shot and repeating)
 
@@ -343,6 +345,10 @@ subscriptions:
 `{{CUE_CLI_PROMPT}}`, `{{CUE_SOURCE_AGENT_ID}}`
 
 **`time.once`:** `{{CUE_FIRE_AT}}` (the originally-scheduled fire timestamp, ISO-8601 with timezone - handy for "you asked me to remind you at {{CUE_FIRE_AT}}" phrasing in notify messages or prompts)
+
+**`presence.return` / `presence.leave`:** `{{CUE_PRESENCE_REASON}}` (`unlock`, `input`, `session-active` on a return; `lock`, `idle`, `suspend`, `session-inactive` on a leave), `{{CUE_AWAY_SINCE}}` (ISO timestamp of the user's last input before the absence), `{{CUE_AWAY_MINUTES}}` (whole minutes away)
+
+Presence is measured on the machine running Maestro, never on an SSH remote. Reach for it when the user says "when I get back", "when I sit down", "when I step away", or "when I leave my desk" - not for a fixed clock time, which is `time.scheduled`. A `presence.leave` fires only while the machine is awake: a laptop that goes to sleep before `away_minutes` runs out fires nothing. With `settle_minutes`, a return waits that long and is dropped if the user locks or goes idle again first, so a quick glance at the screen does not fire it.
 
 ### CLI
 

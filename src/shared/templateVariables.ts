@@ -55,7 +55,7 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
  *
  * Cue Variables (Cue automation only):
- *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger)
+ *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger, presence.*)
  *   {{CUE_EVENT_TIMESTAMP}} - Cue event timestamp
  *   {{CUE_TRIGGER_NAME}}   - Cue trigger/subscription name
  *   {{CUE_RUN_ID}}         - Cue run UUID
@@ -96,6 +96,10 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  *
  *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
+ *
+ *   {{CUE_PRESENCE_REASON}} - What marked the transition: unlock, input, session-active (return) or lock, idle, suspend, session-inactive (leave) - presence.* events
+ *   {{CUE_AWAY_SINCE}}      - ISO timestamp of the user's last input before the absence (presence.* events)
+ *   {{CUE_AWAY_MINUTES}}    - How long the user was away, in whole minutes (presence.* events)
  */
 
 /**
@@ -221,6 +225,10 @@ export interface TemplateContext {
 		ghIsRetrigger?: string;
 		/** Re-trigger fire count for this PR/issue (1-based; 0 on initial). */
 		ghRetriggerCount?: string;
+		// Presence fields (presence.return, presence.leave)
+		presenceReason?: string;
+		awaySince?: string;
+		awayMinutes?: string;
 		// CLI trigger fields (cli.trigger)
 		cliPrompt?: string;
 		sourceAgentId?: string;
@@ -339,6 +347,21 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{CUE_FIRE_AT}}',
 		description: 'Originally-scheduled fire timestamp (time.once events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_PRESENCE_REASON}}',
+		description: 'What marked the return or leave: unlock, input, lock, idle, suspend (presence.*)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_AWAY_SINCE}}',
+		description: "When the user's absence began (presence.*)",
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_AWAY_MINUTES}}',
+		description: 'How long the user was away, in minutes (presence.*)',
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_RUN_ID}}', description: 'Cue run UUID', cueOnly: true },
@@ -533,6 +556,11 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 
 		// Cue time.once variables
 		CUE_FIRE_AT: context.cue?.fireAt || '',
+
+		// Cue presence variables
+		CUE_PRESENCE_REASON: context.cue?.presenceReason || '',
+		CUE_AWAY_SINCE: context.cue?.awaySince || '',
+		CUE_AWAY_MINUTES: context.cue?.awayMinutes || '',
 	};
 
 	// Add dynamic per-source output variables from the Cue context.

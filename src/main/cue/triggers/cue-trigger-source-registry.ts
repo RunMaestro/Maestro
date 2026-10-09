@@ -22,6 +22,7 @@ import { createCueFileWatcherTriggerSource } from './cue-file-watcher-trigger-so
 import { createCueGitHubPollerTriggerSource } from './cue-github-poller-trigger-source';
 import { createCueHeartbeatTriggerSource } from './cue-heartbeat-trigger-source';
 import { createCueOnceTriggerSource } from './cue-once-trigger-source';
+import { createCuePresenceTriggerSource } from './cue-presence-trigger-source';
 import { createCueScheduledTriggerSource } from './cue-scheduled-trigger-source';
 import { createCueTaskScannerTriggerSource } from './cue-task-scanner-trigger-source';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
@@ -45,6 +46,9 @@ export function createTriggerSource(
 		case 'github.issue':
 		case 'github.label':
 			return createCueGitHubPollerTriggerSource(ctx);
+		case 'presence.return':
+		case 'presence.leave':
+			return createCuePresenceTriggerSource(ctx);
 		case 'agent.completed':
 		case 'app.startup':
 		case 'cli.trigger':

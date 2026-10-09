@@ -1,10 +1,10 @@
 ---
 title: Cue Event Types
-description: Detailed reference for all eleven Maestro Cue event types with configuration, payloads, and examples.
+description: Detailed reference for all thirteen Maestro Cue event types with configuration, payloads, and examples.
 icon: calendar-check
 ---
 
-Cue supports eleven event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
+Cue supports thirteen event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
 
 ## app.startup
 
@@ -623,3 +623,56 @@ maestro-cli cue list
 | `{{CUE_CLI_PROMPT}}`   | Prompt text passed via `--prompt` flag      | `Deploy to staging` |
 | `{{CUE_TRIGGER_NAME}}` | Name of the subscription that was triggered | `deploy`            |
 | `{{CUE_EVENT_TYPE}}`   | Always `cli.trigger`                        | `cli.trigger`       |
+
+## presence.return and presence.leave
+
+Fire on **you**: `presence.return` when you come back to the machine Maestro runs on, `presence.leave` once you have stepped away from it. Use them for "catch me up when I sit down" routines, an away status when you leave your desk, or resuming work the moment you are back, instead of guessing a fixed clock time.
+
+**Fields:**
+
+| Field            | Type   | Required | Description                                                                                                                                                             |
+| ---------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `away_minutes`   | number | No       | Minimum absence, in minutes (>= 1, default 10). A return from a shorter break does not fire; a leave fires once you have been gone this long.                           |
+| `settle_minutes` | number | No       | `presence.return` only. `0` (the default) fires on the very first sign of use. A positive value waits that long after you return and fires only if you are still there. |
+
+**How presence is detected:**
+
+- **Instantly, from the OS:** locking and unlocking the screen, putting the machine to sleep, and switching users. On macOS and Windows these arrive as system notifications, so a return by unlock fires the moment you are back.
+- **From idle time:** if you walk away without locking, a minute with no keyboard or mouse input counts as the start of an absence, and your first keystroke afterwards is the return (noticed within a couple of seconds).
+- An absence is measured from your **last input**, not from when it was noticed: locking the screen five minutes after you last typed is an absence that began five minutes earlier.
+- Waking the machine is not a return on its own: a locked screen still has to be unlocked, and an unlocked one needs a keystroke or mouse move.
+- Linux reports no lock or session events, so there presence rests on idle time alone (which some Wayland sessions do not expose).
+
+**Behavior:**
+
+- `presence.leave` fires only while the machine is awake. A laptop that goes to sleep before `away_minutes` runs out fires nothing, and the leave is not replayed on wake (you are back by then).
+- With `settle_minutes`, a return that is followed by a lock, sleep, or a minute of idleness inside the window is dropped. The absence carries over: two hours away broken by a ten-second glance still counts as two hours when you come back for real.
+- Presence is always measured on the machine running Maestro, even for agents that run on an SSH remote.
+
+**Example:**
+
+```yaml
+subscriptions:
+  - name: welcome-back
+    event: presence.return
+    away_minutes: 30
+    settle_minutes: 2
+    prompt: |
+      I was away for {{CUE_AWAY_MINUTES}} minutes (since {{CUE_AWAY_SINCE}}).
+      Summarize what changed in this project while I was gone.
+
+  - name: stepped-away
+    event: presence.leave
+    away_minutes: 15
+    prompt: I stepped away. Leave a status note on anything waiting for my review.
+```
+
+**Payload fields:**
+
+| Variable                  | Description                                                                                                                       | Example                    |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `{{CUE_AWAY_MINUTES}}`    | Whole minutes you were away                                                                                                       | `45`                       |
+| `{{CUE_AWAY_SINCE}}`      | When the absence began (your last input), ISO-8601                                                                                | `2026-10-07T09:00:00.000Z` |
+| `{{CUE_PRESENCE_REASON}}` | What marked the transition: `unlock`, `input`, `session-active` (return) or `lock`, `idle`, `suspend`, `session-inactive` (leave) | `unlock`                   |
+
+The raw payload also carries `away_duration_ms` and, on a return, `returned_at`, so a `filter` can narrow a subscription further (for example `filter: { reason: unlock }` to fire only on an unlock, never on a keystroke).

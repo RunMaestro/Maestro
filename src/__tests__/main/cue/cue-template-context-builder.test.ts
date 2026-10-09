@@ -310,4 +310,18 @@ describe('cue-template-context-builder', () => {
 			expect(ctx.sourceStatus).toBe('false');
 		});
 	});
+	describe('presence enricher', () => {
+		it('surfaces the reason and the absence for presence.return and presence.leave', () => {
+			for (const type of ['presence.return', 'presence.leave'] as const) {
+				const event = createEvent({
+					type,
+					payload: { reason: 'unlock', away_since: '2026-10-07T09:00:00.000Z', away_minutes: 45 },
+				});
+				const ctx = buildCueTemplateContext(event, createSubscription({ event: type }), 'run-1');
+				expect(ctx.presenceReason).toBe('unlock');
+				expect(ctx.awaySince).toBe('2026-10-07T09:00:00.000Z');
+				expect(ctx.awayMinutes).toBe('45');
+			}
+		});
+	});
 });

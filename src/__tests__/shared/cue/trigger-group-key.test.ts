@@ -59,6 +59,17 @@ describe('triggerGroupKey', () => {
 		);
 	});
 
+	it('separates presence triggers with different away or settle times', () => {
+		const presence = (overrides: Partial<CueSubscription>) =>
+			sub({ event: 'presence.return', repo: undefined, ...overrides });
+		expect(triggerGroupKey(presence({ away_minutes: 30 }))).not.toBe(
+			triggerGroupKey(presence({ away_minutes: 60 }))
+		);
+		expect(triggerGroupKey(presence({ settle_minutes: 5 }))).not.toBe(
+			triggerGroupKey(presence({}))
+		);
+	});
+
 	it('separates one-shots that fire at different instants', () => {
 		const once = (fire_at: string) =>
 			sub({ event: 'time.once', repo: undefined, label: 'Renew the token', fire_at });

@@ -11,7 +11,7 @@ import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only — no markdown, no code fences, no bullet lists, no formatting.
 
-Event types: app.startup (fires once on application start, no extra fields), time.heartbeat (interval_minutes), time.scheduled (schedule_times array, optional schedule_days), file.changed (watch glob), agent.completed (source_session, optional fan_out), github.pull_request (poll_minutes, optional repo), github.issue (poll_minutes, optional repo), github.label (fires when a label is added to a PR or issue; optional gh_label_target: pr|issue|both, optional gh_labels array, poll_minutes, optional repo), task.pending (watch glob, poll_minutes).
+Event types: app.startup (fires once on application start, no extra fields), time.heartbeat (interval_minutes), time.scheduled (schedule_times array, optional schedule_days), file.changed (watch glob), agent.completed (source_session, optional fan_out), github.pull_request (poll_minutes, optional repo), github.issue (poll_minutes, optional repo), github.label (fires when a label is added to a PR or issue; optional gh_label_target: pr|issue|both, optional gh_labels array, poll_minutes, optional repo), task.pending (watch glob, poll_minutes), presence.return (the user comes back to the machine after being away; optional away_minutes default 10, optional settle_minutes default 0 = fire immediately), presence.leave (the user has been away from the machine away_minutes; optional away_minutes default 10).
 
 Optional filter block on any subscription: AND'd conditions on payload fields. Operators: exact string, "!value" negation, ">N"/"<N" numeric, glob patterns, boolean.
 

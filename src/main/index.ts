@@ -30,6 +30,10 @@ import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { setSusFactorNotifier } from './cue/cue-susfactor';
 import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import {
+	createPowerMonitorPresenceProvider,
+	installCuePresenceProvider,
+} from './cue/cue-presence-monitor';
+import {
 	getCueHistoryBuckets,
 	getCueHistoryEntries,
 	getCueHistoryFingerprint,
@@ -983,6 +987,12 @@ app
 					: { kind: 'jump-session', sessionId: notice.sessionId },
 			});
 		});
+
+		// Presence signals (lock/unlock, suspend/resume, idle time) for the
+		// presence.return / presence.leave triggers. Installed before the engine
+		// so its first session init can subscribe. The monitor stays inert -
+		// no listeners, no idle polling - until a presence subscription exists.
+		installCuePresenceProvider(createPowerMonitorPresenceProvider(powerMonitor));
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({

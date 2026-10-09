@@ -21,6 +21,7 @@ Each agent has a project root. Cue looks for `.maestro/cue.yaml` (preferred) or 
    triggers/*  ───►    │ Trigger sources                            │
                        │  file.changed, github.*, time.*,           │
                        │  task.pending, app.startup, agent.completed│
+                       │  presence.* (OS lock/sleep + idle time)    │
                        └────────────┬───────────────────────────────┘
                                     │  CueEvent (filtered via cue-filter.ts)
                                     ▼
@@ -170,18 +171,29 @@ System sleep / app suspension can leave the engine paused mid-day. Handled in fo
 
 Every source implements the interface in `triggers/cue-trigger-source.ts`. They share a registry (`cue-trigger-source-registry.ts`) and a filter helper (`cue-trigger-filter.ts`). Quick reference:
 
-| Event                 | Source file                            | Cadence             | First-run seeds?       | Reconciled on wake?                             |
-| --------------------- | -------------------------------------- | ------------------- | ---------------------- | ----------------------------------------------- |
-| `app.startup`         | (runtime service, not a source)        | once per boot       | n/a                    | no                                              |
-| `time.heartbeat`      | `cue-heartbeat-trigger-source.ts`      | `interval_minutes`  | n/a                    | **yes** (one catch-up, `missedCount`)           |
-| `time.scheduled`      | `cue-scheduled-trigger-source.ts`      | wall-clock          | n/a                    | **yes** (one catch-up, most recent slot)        |
-| `file.changed`        | `cue-file-watcher-trigger-source.ts`   | chokidar + debounce | no                     | no                                              |
-| `agent.completed`     | `cue-completion-service.ts` (reactive) | on completion       | n/a                    | n/a                                             |
-| `github.pull_request` | `cue-github-poller-trigger-source.ts`  | `poll_minutes`      | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
-| `github.issue`        | same                                   | same                | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
-| `task.pending`        | `cue-task-scanner-trigger-source.ts`   | 1m default          | **yes** (content hash) | no                                              |
+| Event                                | Source file                            | Cadence                                                  | First-run seeds?       | Reconciled on wake?                                             |
+| ------------------------------------ | -------------------------------------- | -------------------------------------------------------- | ---------------------- | --------------------------------------------------------------- |
+| `app.startup`                        | (runtime service, not a source)        | once per boot                                            | n/a                    | no                                                              |
+| `time.heartbeat`                     | `cue-heartbeat-trigger-source.ts`      | `interval_minutes`                                       | n/a                    | **yes** (one catch-up, `missedCount`)                           |
+| `time.scheduled`                     | `cue-scheduled-trigger-source.ts`      | wall-clock                                               | n/a                    | **yes** (one catch-up, most recent slot)                        |
+| `file.changed`                       | `cue-file-watcher-trigger-source.ts`   | chokidar + debounce                                      | no                     | no                                                              |
+| `agent.completed`                    | `cue-completion-service.ts` (reactive) | on completion                                            | n/a                    | n/a                                                             |
+| `github.pull_request`                | `cue-github-poller-trigger-source.ts`  | `poll_minutes`                                           | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped)                 |
+| `github.issue`                       | same                                   | same                                                     | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped)                 |
+| `task.pending`                       | `cue-task-scanner-trigger-source.ts`   | 1m default                                               | **yes** (content hash) | no                                                              |
+| `presence.return` / `presence.leave` | `cue-presence-trigger-source.ts`       | OS lock/sleep events + idle poll (15s present / 2s away) | n/a                    | no (a leave whose timer slept through its threshold is dropped) |
 
 "Seeds on first run" means the source records existing items as already-seen on its first poll so users don't get a flood when adding a new subscription.
+
+### Presence (`cue-presence-monitor.ts`)
+
+One process-wide `CuePresenceMonitor` serves every presence subscription. It is Electron-free; `index.ts` installs a `powerMonitor` adapter (`createPowerMonitorPresenceProvider`) before the engine starts, the same split as `utils/sleep-tracker.ts`. Without an installed provider the trigger source logs a warning and returns `null`, so a presence sub never fires instead of crashing. Rules worth knowing:
+
+- **It is inert until subscribed.** No `powerMonitor` listeners and no idle polling exist until the first presence sub starts, and both are released when the last one stops.
+- **Idle readings are ignored while hard-away** (screen locked, suspended, session switched out). Typing a password at the lock screen resets HID idle time on macOS; the unlock event is the return, not the keystroke.
+- **`resume` is not a return.** It re-reads idle time; only a drop below the reading taken at suspend (fresh input) or an unlock ends the absence. A scheduled wake nobody touched stays away.
+- **An absence starts at the last input** (`now - idle`), so a lock after five idle minutes is a five-minute-old absence, and an idle stretch followed by a lock keeps the earlier start.
+- **A settle-window drop carries the absence forward** in the trigger source (`carriedAwaySince`), so a glance in the middle of a long absence does not reset it to the glance.
 
 ## Filter operators (`cue-filter.ts`)
 

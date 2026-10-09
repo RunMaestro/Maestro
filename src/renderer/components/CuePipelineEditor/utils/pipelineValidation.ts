@@ -28,6 +28,8 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'github.label': 'Label Added',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
+	'presence.return': 'User Returns',
+	'presence.leave': 'User Leaves',
 };
 
 /**
@@ -70,6 +72,25 @@ function validateTriggerConfig(
 		case 'task.pending':
 			if (!cfg.watch || (typeof cfg.watch === 'string' && cfg.watch.trim().length === 0)) {
 				errors.push(`"${pipelineName}": ${label} trigger needs a "watch" glob pattern`);
+			}
+			break;
+		case 'presence.return':
+		case 'presence.leave':
+			if (
+				cfg.away_minutes !== undefined &&
+				(typeof cfg.away_minutes !== 'number' ||
+					!Number.isFinite(cfg.away_minutes) ||
+					cfg.away_minutes < 1)
+			) {
+				errors.push(`"${pipelineName}": ${label} trigger needs an away time of at least 1 minute`);
+			}
+			if (
+				cfg.settle_minutes !== undefined &&
+				(typeof cfg.settle_minutes !== 'number' ||
+					!Number.isFinite(cfg.settle_minutes) ||
+					cfg.settle_minutes < 0)
+			) {
+				errors.push(`"${pipelineName}": ${label} trigger has a negative settle time`);
 			}
 			break;
 		case 'github.pull_request':

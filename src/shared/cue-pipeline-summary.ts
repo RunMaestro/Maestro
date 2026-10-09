@@ -12,7 +12,7 @@
  *   - `derivePipelineHealth(...)`   → whether it is working (status + detail)
  */
 
-import type { CueRunResult } from './cue/contracts';
+import { DEFAULT_PRESENCE_AWAY_MINUTES, type CueRunResult } from './cue/contracts';
 import { parseSubscriptionName, CUE_EVENT_LABELS } from './cue/cue-summary';
 import type {
 	AgentNodeData,
@@ -61,6 +61,13 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 			return 'agent done';
 		case 'cli.trigger':
 			return 'cli';
+		case 'presence.return': {
+			const away = config.away_minutes ?? DEFAULT_PRESENCE_AWAY_MINUTES;
+			const settle = config.settle_minutes ?? 0;
+			return settle > 0 ? `back after ${away}m+, settled ${settle}m` : `back after ${away}m+`;
+		}
+		case 'presence.leave':
+			return `away ${config.away_minutes ?? DEFAULT_PRESENCE_AWAY_MINUTES}m`;
 		default:
 			return '';
 	}

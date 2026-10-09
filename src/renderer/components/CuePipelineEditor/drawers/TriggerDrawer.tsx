@@ -82,6 +82,20 @@ const TRIGGER_ITEMS: TriggerItem[] = [
 		icon: EVENT_ICONS['cli.trigger'],
 		color: EVENT_COLORS['cli.trigger'],
 	},
+	{
+		eventType: 'presence.return',
+		label: 'User Returns',
+		description: 'You come back to the machine',
+		icon: EVENT_ICONS['presence.return'],
+		color: EVENT_COLORS['presence.return'],
+	},
+	{
+		eventType: 'presence.leave',
+		label: 'User Leaves',
+		description: 'You step away from the machine',
+		icon: EVENT_ICONS['presence.leave'],
+		color: EVENT_COLORS['presence.leave'],
+	},
 ];
 
 function handleDragStart(e: React.DragEvent, item: TriggerItem) {
