@@ -128,10 +128,11 @@ interface ComposeFile {
 }
 const composeFile = yaml.load(compose) as ComposeFile;
 const composeService = composeFile.services['maestro-cue'];
-const serverDocs = fs.readFileSync(
-	path.resolve(__dirname, '../../../docs/maestro-cue-server.md'),
-	'utf8'
-);
+// docs/ is not pinned to LF, so a Windows checkout with core.autocrlf reads
+// CRLF here and the `\` continuation lines below would never match.
+const serverDocs = fs
+	.readFileSync(path.resolve(__dirname, '../../../docs/maestro-cue-server.md'), 'utf8')
+	.replace(/\r\n/g, '\n');
 
 describe('no core dumps', () => {
 	// The engine holds webhook secrets, tokens and provider keys in memory.
