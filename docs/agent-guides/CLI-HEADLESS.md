@@ -216,7 +216,7 @@ Disabled subscriptions (`enabled: false`) are ignored, exactly as the engine ski
 - **Never a secret value**: gaps name secrets and paths only.
 - **Re-checked on demand.** The engine hot-reloads `cue.yaml` and secrets rotate, so a startup verdict goes stale. With `--status-port`, `/readyz` and `/status` re-run `checkCueReadiness()` when the cached report is older than 60 seconds (one probe in flight at most); an engine nobody asks never probes. See [Status server](#status-server---status-port). systemd `READY=1` should be sent once the startup report is ready and the engine has started.
 
-Not checked (each would need a probe the launch does not make yet): whether `gh` is authenticated, an SSH agent's remote binary and secrets, the maestro-p TUI path for Claude agents in interactive mode, `owner_agent_id` ownership problems, and `source_session` names on `agent.completed` triggers.
+Not checked (each would need a probe the launch does not make yet): whether `gh` is authenticated, an SSH agent's remote binary and secrets, the maestro-p TUI path for Claude agents in interactive mode, and `source_session` names on `agent.completed` triggers.
 
 ## Status server (`--status-port`)
 
