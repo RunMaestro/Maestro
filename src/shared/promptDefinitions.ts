@@ -251,6 +251,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'includes',
 	},
 	{
+		id: '_desktop-instrumentation',
+		filename: '_desktop-instrumentation.md',
+		description:
+			'Desktop app instrumentation over CDP: CDP-accessible apps, finding a debug port, safety rules',
+		category: 'includes',
+	},
+	{
 		id: '_file-access-rules',
 		filename: '_file-access-rules.md',
 		description: 'Agent write restrictions and Auto Run folder carve-out',

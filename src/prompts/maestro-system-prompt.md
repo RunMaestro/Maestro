@@ -80,31 +80,7 @@ Rules for browser use:
 
 ## Instrumenting Desktop Applications (CDP)
 
-When a task needs you to inspect, drive, debug, or verify a **desktop application**, look for the **Chrome DevTools Protocol (CDP)** first. Every Electron app (VS Code, Slack, Discord, Notion, Figma, Obsidian, Maestro itself) and every Chromium browser speaks it. CDP gives you the live DOM, `Runtime.evaluate` inside the page, console and network events, and exact screenshots, without moving the mouse or taking focus. Screenshot-and-click automation, accessibility-tree scraping, and AppleScript are fallbacks for apps that do not speak CDP.
-
-Find an open debug port before you do anything else:
-
-```bash
-# Which processes already listen? Look for the app's process name.
-lsof -nP -iTCP -sTCP:LISTEN | grep -iE 'electron|chrome|<app-name>'
-
-# Confirm the port speaks CDP and list its page targets
-curl -s http://127.0.0.1:<port>/json/version
-curl -s http://127.0.0.1:<port>/json/list
-```
-
-Then connect a client to a target's `webSocketDebuggerUrl`: Playwright `chromium.connectOverCDP()`, Puppeteer `puppeteer.connect()`, `chrome-remote-interface`, or a short raw `ws` script.
-
-Rules for CDP:
-
-- **Look before you launch.** With no open port, the app must be started with `--remote-debugging-port=<port>`. Relaunching quits the user's running instance and can lose their unsaved state, so confirm before you restart an app they have open. When you start your own instance for testing, give it a separate profile or data directory so it does not touch theirs.
-- **For an app you are building, wire the port in.** Check the project's dev scripts for an existing CDP flag or env var and use it. If there is none and you need repeatable instrumentation, an opt-in one is a reasonable addition.
-- **Inspect before you mutate.** `Runtime.evaluate` runs with the app's full privileges against the user's real data. Treat a write (sending a message, deleting, changing settings) like any other destructive action and confirm first.
-- **Loopback only.** An open debug port is code execution for anyone who can reach it. Never bind it to `0.0.0.0`, and close every instance you started when you finish.
-- **Kill your own instance by its port** (`lsof -ti :<port> | xargs kill`), not by a name match, and confirm the port is free afterwards. An orphaned instance can keep answering `/json/list` while its page is frozen, and every CDP call then hangs.
-- **CDP scripts are throwaway.** Write them outside the project (or delete them when done). They are debugging scaffolding, not deliverables.
-
-**The Conductor Profile overrides the tool choice.** If it names an instrumentation tool (one that wraps CDP, or drives native apps), use that tool. The principle still holds: prefer the app's own debug protocol over pixel automation.
+To inspect, drive, debug, or verify a **desktop application**, look for a **Chrome DevTools Protocol (CDP)** port first. Every Electron app (Slack, Claude, VS Code, Notion, Discord, and most modern desktop apps) and every Chromium browser speaks it, and it beats screenshot-and-click automation. Never relaunch an app the user has open without asking, keep debug ports on loopback, and never instrument a password manager. Read `_desktop-instrumentation` (Reference Index below) before you start: it lists which apps speak CDP and how to find, connect to, and clean up a port.
 
 ## Terminals and Running Commands
 
@@ -180,16 +156,17 @@ Maestro is an Electron desktop application for managing multiple AI coding assis
 
 The reference material is split into focused, on-demand includes. Each `Path` below is the absolute path of a bundled `.md` - read it with your file tools when the topic is relevant. To honor user customizations from Settings → Maestro Prompts, fetch via `maestro-cli prompts get <name>` instead.
 
-| Include                 | Covers                                                                                                                                                                       | Pull when...                                                               | Path                          |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------- |
-| `_interface-primitives` | Read / Write / Peek / Poke access model + intent → action routing table                                                                                                      | mapping a natural-language intent to a CLI/filesystem action               | {{REF:_interface-primitives}} |
-| `_documentation-index`  | Curated table of external Maestro documentation URLs                                                                                                                         | the agent needs authoritative external reference material                  | {{REF:_documentation-index}}  |
-| `_history-format`       | JSON schema of session history entries at `{{AGENT_HISTORY_PATH}}`                                                                                                           | recalling prior work for self or peers                                     | {{REF:_history-format}}       |
-| `_autorun-playbooks`    | Auto Run docs (a.k.a. playbooks): file naming, mandatory `- [ ]` task format, examples                                                                                       | authoring or modifying Auto Run / playbook documents                       | {{REF:_autorun-playbooks}}    |
-| `_maestro-cli`          | `maestro-cli` orientation: what's reachable + behavioral guidance (settings, Encore gating, notify, Auto Run). Exact syntax comes from `maestro-cli --help` / `<cmd> --help` | manipulating Maestro state, coordinating agents, or inspecting the fleet   | {{REF:_maestro-cli}}          |
-| `_maestro-cue`          | Maestro Cue automation: event types, `.maestro/cue.yaml` schema, pipeline topologies, template vars                                                                          | building or debugging a Cue pipeline                                       | {{REF:_maestro-cue}}          |
-| `_file-access-rules`    | Full agent write restrictions, Auto Run carve-out, allowed / prohibited operations                                                                                           | the user pushes on a write boundary or asks to write outside the workspace | {{REF:_file-access-rules}}    |
-| `_file-access-wizard`   | Wizard-only write restrictions (writes limited to the Auto Run folder)                                                                                                       | running as a planning / wizard agent                                       | {{REF:_file-access-wizard}}   |
+| Include                    | Covers                                                                                                                                                                       | Pull when...                                                               | Path                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------- |
+| `_interface-primitives`    | Read / Write / Peek / Poke access model + intent → action routing table                                                                                                      | mapping a natural-language intent to a CLI/filesystem action               | {{REF:_interface-primitives}}    |
+| `_documentation-index`     | Curated table of external Maestro documentation URLs                                                                                                                         | the agent needs authoritative external reference material                  | {{REF:_documentation-index}}     |
+| `_history-format`          | JSON schema of session history entries at `{{AGENT_HISTORY_PATH}}`                                                                                                           | recalling prior work for self or peers                                     | {{REF:_history-format}}          |
+| `_autorun-playbooks`       | Auto Run docs (a.k.a. playbooks): file naming, mandatory `- [ ]` task format, examples                                                                                       | authoring or modifying Auto Run / playbook documents                       | {{REF:_autorun-playbooks}}       |
+| `_maestro-cli`             | `maestro-cli` orientation: what's reachable + behavioral guidance (settings, Encore gating, notify, Auto Run). Exact syntax comes from `maestro-cli --help` / `<cmd> --help` | manipulating Maestro state, coordinating agents, or inspecting the fleet   | {{REF:_maestro-cli}}             |
+| `_maestro-cue`             | Maestro Cue automation: event types, `.maestro/cue.yaml` schema, pipeline topologies, template vars                                                                          | building or debugging a Cue pipeline                                       | {{REF:_maestro-cue}}             |
+| `_desktop-instrumentation` | Desktop app instrumentation over CDP: which apps speak it, finding a debug port, connecting, safety rules                                                                    | inspecting, driving, or debugging a desktop (Electron / Chromium) app      | {{REF:_desktop-instrumentation}} |
+| `_file-access-rules`       | Full agent write restrictions, Auto Run carve-out, allowed / prohibited operations                                                                                           | the user pushes on a write boundary or asks to write outside the workspace | {{REF:_file-access-rules}}       |
+| `_file-access-wizard`      | Wizard-only write restrictions (writes limited to the Auto Run folder)                                                                                                       | running as a planning / wizard agent                                       | {{REF:_file-access-wizard}}      |
 
 **Discovery via CLI:** `maestro-cli prompts list` enumerates everything; `maestro-cli prompts get <name>` returns the customization-aware contents.
 
