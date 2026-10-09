@@ -416,12 +416,12 @@ describe('portfolio files', () => {
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
 		});
+		vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
 		const tick = orchestrator.withPlanLock('plan', async () => {
 			const snapshot = orchestrator.getPlan('plan')!;
 			await gate;
 			orchestrator.upsertPlan(snapshot);
 		});
-		vi.useFakeTimers({ toFake: ['Date'] });
 		let settled = false;
 		const revision = lead
 			.withPlanLock(
@@ -444,7 +444,7 @@ describe('portfolio files', () => {
 				}
 			);
 		try {
-			vi.setSystemTime(Date.now() + 5100);
+			await vi.advanceTimersByTimeAsync(40_000);
 			await new Promise<void>((resolve) => setTimeout(resolve, 20));
 			expect(settled).toBe(false);
 			expect(lead.getPlan('plan')!.tasks[1]).toMatchObject({
@@ -452,10 +452,10 @@ describe('portfolio files', () => {
 				status: 'needs_review',
 			});
 		} finally {
-			vi.useRealTimers();
 			release();
+			await Promise.all([tick, revision]);
+			vi.useRealTimers();
 		}
-		await Promise.all([tick, revision]);
 		expect(await revision).toEqual({ success: true });
 		expect(lead.getPlan('plan')!.tasks).toEqual([
 			{
@@ -476,6 +476,77 @@ describe('portfolio files', () => {
 		]);
 	});
 
+	it('returns an error without revising behind an abandoned lock whose PID is alive', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-reused-owner-'));
+		dirs.push(dir);
+		const store = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+		store.writePlans([
+			{
+				id: 'plan',
+				title: 'Plan',
+				createdAt: 1,
+				tasks: [
+					{
+						id: 'reviewed',
+						title: 'Answer',
+						prompt: 'Old prompt',
+						dependsOn: [],
+						status: 'needs_review',
+					},
+				],
+			},
+		]);
+		const { createHash } = await import('node:crypto');
+		const lock = path.join(
+			dir,
+			'pianola-plan-' + createHash('sha256').update('plan').digest('hex') + '.lock'
+		);
+		const token = process.pid + '.abandoned';
+		fs.writeFileSync(lock, token);
+		const old = new Date(Date.now() - 60_000);
+		fs.utimesSync(lock, old, old);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		let settled = false;
+		const revision = store
+			.withPlanLock(
+				'plan',
+				async () => {
+					store.updatePlans((plans) =>
+						plans.map((plan) => revisePlanTask(plan, 'reviewed', 'Correction'))
+					);
+				},
+				{ waitForTurn: true }
+			)
+			.then(
+				() => {
+					settled = true;
+					return undefined;
+				},
+				(error: unknown) => {
+					settled = true;
+					return error;
+				}
+			);
+		try {
+			vi.setSystemTime(Date.now() + 30_001);
+			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+			expect(settled).toBe(true);
+			expect(await revision).toEqual(
+				expect.objectContaining({
+					message: 'Timed out waiting for Pianola plan orchestration lock',
+				})
+			);
+			expect(store.getPlan('plan')?.tasks[0]).toMatchObject({
+				prompt: 'Old prompt',
+				status: 'needs_review',
+			});
+			expect(fs.readFileSync(lock, 'utf8')).toBe(token);
+		} finally {
+			vi.useRealTimers();
+			fs.rmSync(lock, { force: true });
+			await revision;
+		}
+	});
 	it('holds per-program loop ownership through awaits and releases rejected operations', async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-loop-lock-'));
 		dirs.push(dir);
