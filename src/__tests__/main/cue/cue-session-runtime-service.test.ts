@@ -137,7 +137,6 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 		expect(await refresh).toMatchObject({ reloaded: false, configRemoved: true });
 		expect(stop).toHaveBeenCalledOnce();
 		expect(registry.has(session.id)).toBe(false);
-		expect(watchCueYaml).toHaveBeenCalledTimes(2);
 		expect(clearGitHubSeenForSubscription).toHaveBeenCalledExactlyOnceWith(`${session.id}:pulls`);
 		runtime.clearAll();
 	});

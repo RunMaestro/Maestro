@@ -156,20 +156,27 @@ export function createCueSessionRuntimeService(
 			yamlWatchers.set(session.id, { projectRoot: session.projectRoot, cleanup });
 		}
 		const previousState = registry.get(session.id);
-		let loadResult = loadCueConfigDetailed(session.projectRoot);
-		if (!loadResult.ok && loadResult.reason === 'missing' && previousState) {
-			const reappeared = await configReappeared(session.projectRoot);
-			if (!deps.enabled()) return { kind: 'disabled' };
-			if (!getSession(session.id)) {
-				removeSessionInternal(session.id);
-				return { kind: 'disabled' };
+		let loadResult: ReturnType<typeof loadCueConfigDetailed>;
+		try {
+			loadResult = loadCueConfigDetailed(session.projectRoot);
+			if (!loadResult.ok && loadResult.reason === 'missing' && previousState) {
+				const reappeared = await configReappeared(session.projectRoot);
+				if (!deps.enabled()) return { kind: 'disabled' };
+				if (!getSession(session.id)) {
+					removeSessionInternal(session.id);
+					return { kind: 'disabled' };
+				}
+				// A stop, removal, or newer refresh may have settled this session during the wait.
+				if (registry.get(session.id) !== previousState) {
+					return { kind: registry.has(session.id) ? 'loaded' : 'disabled' };
+				}
+				// Reappearance confirms existence, not unchanged content; reload the recovered file.
+				if (reappeared) loadResult = loadCueConfigDetailed(session.projectRoot);
 			}
-			// A stop, removal, or newer refresh may have settled this session during the wait.
-			if (registry.get(session.id) !== previousState) {
-				return { kind: registry.has(session.id) ? 'loaded' : 'disabled' };
-			}
-			// Reappearance confirms existence, not unchanged content; reload the recovered file.
-			if (reappeared) loadResult = loadCueConfigDetailed(session.projectRoot);
+		} catch (error) {
+			// Retain the live runtime, but make the watcher retry even unchanged YAML.
+			loadedYamlFiles.delete(session.id);
+			throw error;
 		}
 
 		// Idempotency guard: tear down any pre-existing registration to prevent
@@ -440,7 +447,6 @@ export function createCueSessionRuntimeService(
 		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
 		// post-reload set and clear seen rows for removed GitHub subscriptions.
 		const oldGitHubIds = collectGitHubSubIds(sessionId);
-
 
 		const outcome = await initSession({ ...session, projectRoot }, { reason });
 		if (outcome.kind === 'disabled') return { reloaded: false, configRemoved: false };

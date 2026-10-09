@@ -14,7 +14,10 @@ import type {
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
-import { getAgentDefinition, type AgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import {
+	getAgentDefinition,
+	type AgentDefinition,
+} from '../../shared/maestro-lib/providers/definitions';
 import {
 	getAgentCapabilities,
 	hasCapability,
@@ -1267,18 +1270,11 @@ async function spawnJsonLineAgent(
 		const mcp = localPluginMcp(toolType, overrides);
 		baseArgs = mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT[toolType], baseArgs, mcp.args);
 	}
-
-	const noPromptSeparator = !!def?.noPromptSeparator;
-
-
 	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
-		: await resolveLocalAgentCommand(toolType).catch((error) => {
-				promptFileArgs?.cleanup();
-				throw error;
-			});
+		: await resolveLocalAgentCommand(toolType);
 
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
@@ -1311,221 +1307,226 @@ async function spawnJsonLineAgent(
 	);
 
 	const promptFileArgs = buildPromptFileArgs(def, effectivePrompt, plan.target.kind === 'remote');
-	let spawnCommand = plan.command;
-	let spawnArgs = promptFileArgs ? [...baseArgs, ...promptFileArgs.args] : plan.args;
-	let spawnCwd = plan.cwd;
-	let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
-	let sshStdinScript: string | undefined;
+	try {
+		let spawnCommand = plan.command;
+		let spawnArgs = promptFileArgs ? [...baseArgs, ...promptFileArgs.args] : plan.args;
+		let spawnCwd = plan.cwd;
+		let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
+		let sshStdinScript: string | undefined;
 
-	if (plan.target.kind === 'remote' && sshRemoteConfig) {
-		// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
-		// fallback for agents without native --append-system-prompt support
-		// also reaches the SSH remote. baseArgs already carries the native
-		// flag for agents that support it.
-		const wrapped = await maybeWrapSpawnWithSsh(
-			{
-				command: agentCommand,
-				args: plan.args,
-				cwd,
-				prompt: effectivePrompt,
-				customEnvVars: plan.envVars,
-				agentBinaryName: def?.binaryName,
-				noPromptSeparator,
-				promptArgs: def?.promptArgs,
-				querySource: overrides.querySource,
-			},
-			sshRemoteConfig
-		);
-		if (!wrapped.sshRemoteUsed) {
-			return sshUnresolvedFailure(sshRemoteConfig);
+		if (plan.target.kind === 'remote' && sshRemoteConfig) {
+			// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
+			// fallback for agents without native --append-system-prompt support
+			// also reaches the SSH remote. baseArgs already carries the native
+			// flag for agents that support it.
+			const wrapped = await maybeWrapSpawnWithSsh(
+				{
+					command: agentCommand,
+					args: plan.args,
+					cwd,
+					prompt: effectivePrompt,
+					customEnvVars: plan.envVars,
+					agentBinaryName: def?.binaryName,
+					noPromptSeparator: !!def?.noPromptSeparator,
+					promptArgs: def?.promptArgs,
+					querySource: overrides.querySource,
+				},
+				sshRemoteConfig
+			);
+			if (!wrapped.sshRemoteUsed) {
+				return sshUnresolvedFailure(sshRemoteConfig);
+			}
+			({ spawnCommand, spawnArgs, spawnCwd, spawnEnv, sshStdinScript } =
+				applySshWrapResult(wrapped));
 		}
-		({ spawnCommand, spawnArgs, spawnCwd, spawnEnv, sshStdinScript } = applySshWrapResult(wrapped));
-	}
 
-	// Resolve the output parser before spawning so a misconfigured agent type
-	// fails fast instead of leaving an orphaned child process. Reviewer flagged
-	// the previous post-spawn null-check as a process leak (greptile P1).
-	const parser = createOutputParser(toolType);
-	if (!parser) {
-		promptFileArgs?.cleanup();
-		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
-	}
+		// Resolve the output parser before spawning so a misconfigured agent type
+		// fails fast instead of leaving an orphaned child process. Reviewer flagged
+		// the previous post-spawn null-check as a process leak (greptile P1).
+		const parser = createOutputParser(toolType);
+		if (!parser) {
+			return spawnFailureResult(`No parser available for agent type: ${toolType}`);
+		}
 
-	// The shared capture applies the provider's usage rule (Codex reports a
-	// running session total that is turned into deltas before summing; everyone
-	// else reports per-step values that sum as they are), keeps the first
-	// session id announced, and falls back to the streamed text when no result
-	// event carries any. This path settles on the text of `error` events, so the
-	// in-band classifier stays off and its outcomes are what they always were.
-	const capture = new TurnCapture(toolType, parser, { classifyInBandErrors: false });
-	let stopped = false;
-	let stopReason: string | undefined;
-	const progressSummaries = new Map<string, string>();
-	let codexCandidate: string | undefined;
-	let codexFinal: string | undefined;
-	const codexProgressTexts = new Set<string>();
-	const emitCodexInterim = (text: string): void => {
-		if (codexProgressTexts.has(text)) return;
-		codexProgressTexts.add(text);
-		if (codexProgressTexts.size > 128)
-			codexProgressTexts.delete(codexProgressTexts.values().next().value!);
-		emitAgentProgress(overrides.onProgress, {
-			type: 'commentary',
-			text: text.slice(0, 2000),
-			at: new Date().toISOString(),
-		});
-	};
+		// The shared capture applies the provider's usage rule (Codex reports a
+		// running session total that is turned into deltas before summing; everyone
+		// else reports per-step values that sum as they are), keeps the first
+		// session id announced, and falls back to the streamed text when no result
+		// event carries any. This path settles on the text of `error` events, so the
+		// in-band classifier stays off and its outcomes are what they always were.
+		const capture = new TurnCapture(toolType, parser, { classifyInBandErrors: false });
+		let stopped = false;
+		let stopReason: string | undefined;
+		const progressSummaries = new Map<string, string>();
+		let codexCandidate: string | undefined;
+		let codexFinal: string | undefined;
+		const codexProgressTexts = new Set<string>();
+		const emitCodexInterim = (text: string): void => {
+			if (codexProgressTexts.has(text)) return;
+			codexProgressTexts.add(text);
+			if (codexProgressTexts.size > 128)
+				codexProgressTexts.delete(codexProgressTexts.values().next().value!);
+			emitAgentProgress(overrides.onProgress, {
+				type: 'commentary',
+				text: text.slice(0, 2000),
+				at: new Date().toISOString(),
+			});
+		};
 
-	const turn = startTurn(
-		{
-			command: spawnCommand,
-			args: spawnArgs,
-			cwd: spawnCwd,
-			env: spawnEnv,
-			stdin: sshStdinScript || plan.stdin,
-		},
-		{
-			onStdout: () => wakaHeartbeat?.(),
-			onEvent: (event) => {
-				if (stopped || overrides.signal?.aborted) {
-					capture.handleEvent({ ...event, type: 'system', text: undefined });
-					return;
-				}
-				capture.handleEvent(event);
-				if (
-					toolType === 'codex' &&
-					!event.isRetryNotice &&
-					event.raw &&
-					typeof event.raw === 'object' &&
-					((['text', 'result'].includes(event.type) && Boolean(event.text)) ||
-						event.type === 'tool_use' ||
-						event.type === 'usage')
-				)
-					supervision.modelActivity();
-				if (event.type === 'tool_use') {
-					const tool =
-						typeof event.toolName === 'string' &&
-						/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(event.toolName)
-							? event.toolName
-							: 'Tool';
-					const state =
-						event.toolState && typeof event.toolState === 'object' && 'status' in event.toolState
-							? (event.toolState as { status?: unknown }).status
-							: undefined;
-					const status =
-						state === 'failed' || state === 'error'
-							? 'failed'
-							: state === 'completed' || state === 'success'
-								? 'completed'
-								: 'started';
-					const input =
-						event.toolState && typeof event.toolState === 'object' && 'input' in event.toolState
-							? (event.toolState as { input?: unknown }).input
-							: undefined;
-					let summary = status === 'started' ? publicToolSummary(tool, input) : undefined;
-					if (event.toolCallId && event.toolCallId.length <= 128) {
-						if (status === 'started' && summary) {
-							progressSummaries.set(event.toolCallId, summary);
-							if (progressSummaries.size > 128) {
-								const oldest = progressSummaries.keys().next().value;
-								if (oldest) progressSummaries.delete(oldest);
-							}
-						} else if (status !== 'started') {
-							summary = progressSummaries.get(event.toolCallId);
-							progressSummaries.delete(event.toolCallId);
-						}
-					}
-					emitAgentProgress(overrides.onProgress, {
-						type: 'tool',
-						tool,
-						status,
-						...(summary ? { summary } : {}),
-						at: new Date().toISOString(),
-					});
-				}
-				// Phase-less Codex messages remain buffered until a distinct answer
-				// follows. Only then can we safely release one as public progress.
-				if (toolType === 'codex' && event.responsePhase === 'commentary' && event.text) {
-					emitCodexInterim(event.text);
-				}
-
-				if (event.type === 'result' && event.text) {
-					if (toolType === 'codex') {
-						if (event.responsePhase === 'final') {
-							if (codexCandidate && codexCandidate !== event.text) {
-								emitCodexInterim(codexCandidate);
-							}
-							codexCandidate = undefined;
-							codexFinal = event.text;
-						} else if (!codexFinal && event.text !== codexCandidate) {
-							if (codexCandidate) emitCodexInterim(codexCandidate);
-							codexCandidate = event.text;
-						}
-					}
-				}
+		const turn = startTurn(
+			{
+				command: spawnCommand,
+				args: spawnArgs,
+				cwd: spawnCwd,
+				env: spawnEnv,
+				stdin: sshStdinScript || plan.stdin,
 			},
-			onOversizedLine: warnOversizedLineBuffer,
-		},
-		{ ...cliTurnOptions(undefined), parser }
-	);
-	let forcedStop!: () => void;
-	const forced = new Promise<undefined>((resolve) => {
-		forcedStop = () => resolve(undefined);
-	});
-	const supervision = superviseAgentProcess(turn.child, {
-		timeoutMs: overrides.timeoutMs,
-		signal: overrides.signal,
-		startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
-		onStop: (reason) => {
-			stopped = true;
-			stopReason = reason;
-		},
-		onForcedStop: forcedStop,
-	});
-	const exit = await Promise.race([turn.done, forced]);
-	stopped = true;
-	supervision.dispose();
-	if (stopReason)
-		return {
-			...(overrides.signal?.aborted ? interruptedResult() : spawnFailureResult(stopReason)),
-			error: stopReason,
+			{
+				onStdout: () => wakaHeartbeat?.(),
+				onEvent: (event) => {
+					if (stopped || overrides.signal?.aborted) {
+						capture.handleEvent({ ...event, type: 'system', text: undefined });
+						return;
+					}
+					capture.handleEvent(event);
+					if (
+						toolType === 'codex' &&
+						!event.isRetryNotice &&
+						event.raw &&
+						typeof event.raw === 'object' &&
+						((['text', 'result'].includes(event.type) && Boolean(event.text)) ||
+							event.type === 'tool_use' ||
+							event.type === 'usage')
+					)
+						supervision.modelActivity();
+					if (event.type === 'tool_use') {
+						const tool =
+							typeof event.toolName === 'string' &&
+							/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(event.toolName)
+								? event.toolName
+								: 'Tool';
+						const state =
+							event.toolState && typeof event.toolState === 'object' && 'status' in event.toolState
+								? (event.toolState as { status?: unknown }).status
+								: undefined;
+						const status =
+							state === 'failed' || state === 'error'
+								? 'failed'
+								: state === 'completed' || state === 'success'
+									? 'completed'
+									: 'started';
+						const input =
+							event.toolState && typeof event.toolState === 'object' && 'input' in event.toolState
+								? (event.toolState as { input?: unknown }).input
+								: undefined;
+						let summary = status === 'started' ? publicToolSummary(tool, input) : undefined;
+						if (event.toolCallId && event.toolCallId.length <= 128) {
+							if (status === 'started' && summary) {
+								progressSummaries.set(event.toolCallId, summary);
+								if (progressSummaries.size > 128) {
+									const oldest = progressSummaries.keys().next().value;
+									if (oldest) progressSummaries.delete(oldest);
+								}
+							} else if (status !== 'started') {
+								summary = progressSummaries.get(event.toolCallId);
+								progressSummaries.delete(event.toolCallId);
+							}
+						}
+						emitAgentProgress(overrides.onProgress, {
+							type: 'tool',
+							tool,
+							status,
+							...(summary ? { summary } : {}),
+							at: new Date().toISOString(),
+						});
+					}
+					// Phase-less Codex messages remain buffered until a distinct answer
+					// follows. Only then can we safely release one as public progress.
+					if (toolType === 'codex' && event.responsePhase === 'commentary' && event.text) {
+						emitCodexInterim(event.text);
+					}
+
+					if (event.type === 'result' && event.text) {
+						if (toolType === 'codex') {
+							if (event.responsePhase === 'final') {
+								if (codexCandidate && codexCandidate !== event.text) {
+									emitCodexInterim(codexCandidate);
+								}
+								codexCandidate = undefined;
+								codexFinal = event.text;
+							} else if (!codexFinal && event.text !== codexCandidate) {
+								if (codexCandidate) emitCodexInterim(codexCandidate);
+								codexCandidate = event.text;
+							}
+						}
+					}
+				},
+				onOversizedLine: warnOversizedLineBuffer,
+			},
+			{ ...cliTurnOptions(undefined), parser }
+		);
+		let forcedStop!: () => void;
+		const forced = new Promise<undefined>((resolve) => {
+			forcedStop = () => resolve(undefined);
+		});
+		const supervision = superviseAgentProcess(turn.child, {
+			timeoutMs: overrides.timeoutMs,
+			signal: overrides.signal,
+			startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
+			onStop: (reason) => {
+				stopped = true;
+				stopReason = reason;
+			},
+			onForcedStop: forcedStop,
+		});
+		const exit = await Promise.race([turn.done, forced]);
+		stopped = true;
+		supervision.dispose();
+		if (stopReason)
+			return {
+				...(overrides.signal?.aborted ? interruptedResult() : spawnFailureResult(stopReason)),
+				error: stopReason,
+				agentSessionId: capture.sessionId,
+				usageStats: capture.usage,
+			};
+		if (!exit) return interruptedResult();
+		if (exit.spawnError) {
+			const agentName = def?.name || toolType;
+			return spawnFailureResult(`Failed to spawn ${agentName}: ${exit.spawnError.message}`);
+		}
+
+		// Soft success: agents like Grok may exit non-zero after a full
+		// answer (e.g. --max-turns) with no structured error event. The shared
+		// resolver reports that as `completed-with-warning`, still a success;
+		// the answer is preferred over raw stderr when there is no errorText.
+		return resolveCliTurnResult({
+			toolType,
+			provider: parser,
+			exitCode: exit.exitCode,
+			signal: exit.signal,
+			interrupted: exit.interrupted,
+			stderrText: exit.stderrText,
+			stdoutText: exit.stdoutText,
+			stdinError: exit.stdinError,
+			errorText:
+				capture.errorText ??
+				(toolType === 'codex' && exit.exitCode === 0 && !codexFinal && !codexCandidate
+					? 'Agent returned no final text'
+					: undefined),
+			answerText: toolType === 'codex' ? codexFinal || codexCandidate : capture.answerText,
+			resultMessageSeen: capture.resultMessageSeen,
 			agentSessionId: capture.sessionId,
 			usageStats: capture.usage,
-		};
-	if (!exit) return interruptedResult();
-	if (exit.spawnError) {
-		const agentName = def?.name || toolType;
-		return spawnFailureResult(`Failed to spawn ${agentName}: ${exit.spawnError.message}`);
+			// This path has always accepted a clean exit with no answer, and a
+			// non-zero exit after a full answer (Grok with `--max-turns`).
+			strictEmptyAnswer: toolType === 'codex' || overrides.timeoutMs !== undefined,
+			answerOutranksBareExit: true,
+			droppedOutputBytes: exit.droppedOutputBytes,
+		});
+	} finally {
+		promptFileArgs?.cleanup();
 	}
 
-	// Soft success: agents like Grok may exit non-zero after a full
-	// answer (e.g. --max-turns) with no structured error event. The shared
-	// resolver reports that as `completed-with-warning`, still a success;
-	// the answer is preferred over raw stderr when there is no errorText.
-	return resolveCliTurnResult({
-		toolType,
-		provider: parser,
-		exitCode: exit.exitCode,
-		signal: exit.signal,
-		interrupted: exit.interrupted,
-		stderrText: exit.stderrText,
-		stdoutText: exit.stdoutText,
-		stdinError: exit.stdinError,
-		errorText:
-			capture.errorText ??
-			(toolType === 'codex' && exit.exitCode === 0 && !codexFinal && !codexCandidate
-				? 'Agent returned no final text'
-				: undefined),
-		answerText: toolType === 'codex' ? codexFinal || codexCandidate : capture.answerText,
-		resultMessageSeen: capture.resultMessageSeen,
-		agentSessionId: capture.sessionId,
-		usageStats: capture.usage,
-		// This path has always accepted a clean exit with no answer, and a
-		// non-zero exit after a full answer (Grok with `--max-turns`).
-		strictEmptyAnswer: toolType === 'codex' || overrides.timeoutMs !== undefined,
-		answerOutranksBareExit: true,
-		droppedOutputBytes: exit.droppedOutputBytes,
-	});
 }
 
 /**
