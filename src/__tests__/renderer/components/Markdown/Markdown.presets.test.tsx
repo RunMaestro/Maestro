@@ -54,6 +54,22 @@ describe('Markdown presets', () => {
 			expect(container.querySelector('.prose')).toBeInTheDocument();
 		});
 
+		it('resets white-space so a pre-wrap parent cannot inflate table gaps (#1726)', () => {
+			const { container } = render(
+				<div className="whitespace-pre-wrap">
+					<Markdown
+						preset="chat"
+						content={'## Saved\n\n| A | B |\n|---|---|\n| 1 | 2 |'}
+						theme={mockTheme}
+						onCopy={noop}
+					/>
+				</div>
+			);
+			const prose = container.querySelector('.prose')!;
+			expect(prose).toHaveClass('whitespace-normal');
+			expect(prose.querySelector('table')).toBeInTheDocument();
+		});
+
 		it('renders fenced code through the Shiki CodeFence', () => {
 			const { container } = render(
 				<Markdown

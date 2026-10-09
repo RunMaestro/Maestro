@@ -163,6 +163,9 @@ export async function send(
 	console.log(JSON.stringify(response, null, 2));
 
 	if (!result.success) {
+		// The JSON on stdout is the contract, but a caller that only reads stderr
+		// would otherwise see a silent exit 1.
+		console.error(`maestro-cli send failed: ${result.error ?? 'unknown error'}`);
 		process.exit(1);
 	}
 

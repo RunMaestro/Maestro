@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import type React from 'react';
 import { Gauge, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
@@ -49,6 +49,8 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	setEffortMenuOpen,
 	effortMenuRef,
 }: ModelEffortPillsProps) {
+	const [typedModel, setTypedModel] = useState('');
+
 	if (!isVisible) {
 		return null;
 	}
@@ -102,6 +104,56 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 										</button>
 									)
 								)}
+							</div>
+							{/*
+							 * Escape hatch for a model discovery cannot know about: a preview or
+							 * limited-access model that the CLI's published catalog does not list
+							 * and that this machine has never run. The typed ID is applied like
+							 * any other selection, so it persists as the tab's model.
+							 *
+							 * It reaches this dropdown only once the CLI records a run of it in
+							 * `lastModelUsage`, which the interactive (maestro-p) spawn path does
+							 * and `claude --print` does not - so on an API-mode tab this field
+							 * stays the way in.
+							 */}
+							<div className="border-t px-3 py-1.5" style={{ borderColor: theme.colors.border }}>
+								<input
+									type="text"
+									value={typedModel}
+									onChange={(e) => setTypedModel(e.target.value)}
+									onKeyDown={(e) => {
+										// The composer and the global shortcuts both listen for plain
+										// keys; typing a model ID must not reach them. That includes
+										// Escape, which elsewhere interrupts the turn - but swallowing
+										// it outright left the field with no way out, so it closes the
+										// menu here instead of doing nothing.
+										e.stopPropagation();
+										if (e.key === 'Escape') {
+											setTypedModel('');
+											setModelMenuOpen(false);
+											return;
+										}
+										if (e.key !== 'Enter') {
+											return;
+										}
+										// Enter confirms an IME candidate mid-composition; committing
+										// there would apply half a model ID and close the menu.
+										if (e.nativeEvent.isComposing) {
+											return;
+										}
+										const next = typedModel.trim();
+										if (!next) {
+											return;
+										}
+										onModelChange(next);
+										setTypedModel('');
+										setModelMenuOpen(false);
+									}}
+									placeholder="Or type a model ID"
+									aria-label="Use a model ID that is not listed"
+									className="w-full bg-transparent text-xs font-mono outline-none placeholder:opacity-50"
+									style={{ color: theme.colors.textMain }}
+								/>
 							</div>
 						</div>
 					)}
