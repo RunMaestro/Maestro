@@ -2083,3 +2083,102 @@ describe('Codex quota outages reach the retry scheduler intact', () => {
 		expect(classifyRetryableError(error!)).toBe('token-exhaustion');
 	});
 });
+
+// `total_token_usage` is the running SESSION total, and a resumed run is a new
+// process whose first token_count already carries every earlier turn. Every
+// consumer delta-normalizes per process, so without the baseline a resumed turn
+// reported the whole conversation again as its own usage.
+describe('Codex token_count totals are measured from the start of the process', () => {
+	function tokenCount(total: Record<string, number>, last?: Record<string, number>): string {
+		return JSON.stringify({
+			type: 'event_msg',
+			payload: {
+				type: 'token_count',
+				info: { total_token_usage: total, ...(last ? { last_token_usage: last } : {}) },
+			},
+		});
+	}
+
+	// Turn 1 of the session spent these; a resumed process starts after them.
+	const PRIOR = {
+		input_tokens: 12000,
+		cached_input_tokens: 9000,
+		output_tokens: 400,
+		reasoning_output_tokens: 150,
+	};
+	const CALL_1 = {
+		input_tokens: 13000,
+		cached_input_tokens: 12000,
+		output_tokens: 90,
+		reasoning_output_tokens: 30,
+	};
+	const CALL_2 = {
+		input_tokens: 13500,
+		cached_input_tokens: 13000,
+		output_tokens: 60,
+		reasoning_output_tokens: 0,
+	};
+
+	function sum(...records: Array<Record<string, number>>): Record<string, number> {
+		const out: Record<string, number> = {};
+		for (const record of records) {
+			for (const [key, value] of Object.entries(record)) out[key] = (out[key] ?? 0) + value;
+		}
+		return out;
+	}
+
+	it('reports a resumed first event as this call alone, not the session so far', () => {
+		const parser = new CodexOutputParser();
+
+		const event = parser.parseJsonLine(tokenCount(sum(PRIOR, CALL_1), CALL_1));
+
+		expect(event?.usage).toMatchObject({
+			inputTokens: 13000,
+			cacheReadTokens: 12000,
+			outputTokens: 120,
+			reasoningTokens: 30,
+		});
+	});
+
+	it('keeps later events cumulative from the start of the process', () => {
+		const parser = new CodexOutputParser();
+
+		parser.parseJsonLine(tokenCount(sum(PRIOR, CALL_1), CALL_1));
+		const second = parser.parseJsonLine(tokenCount(sum(PRIOR, CALL_1, CALL_2), CALL_2));
+
+		expect(second?.usage).toMatchObject({
+			inputTokens: 26500,
+			cacheReadTokens: 25000,
+			outputTokens: 180,
+			reasoningTokens: 30,
+		});
+	});
+
+	it('leaves a fresh session unchanged, since its first total is its first call', () => {
+		const parser = new CodexOutputParser();
+
+		const first = parser.parseJsonLine(tokenCount(CALL_1, CALL_1));
+		const second = parser.parseJsonLine(tokenCount(sum(CALL_1, CALL_2), CALL_2));
+
+		expect(first?.usage).toMatchObject({ inputTokens: 13000, outputTokens: 120 });
+		expect(second?.usage).toMatchObject({ inputTokens: 26500, outputTokens: 180 });
+	});
+
+	it('falls back to the raw total when the event carries no last_token_usage', () => {
+		const parser = new CodexOutputParser();
+
+		const event = parser.parseJsonLine(tokenCount(sum(PRIOR, CALL_1)));
+
+		expect(event?.usage).toMatchObject({ inputTokens: 25000, outputTokens: 670 });
+	});
+
+	it('scopes the baseline to one parser instance, so a new process starts clean', () => {
+		const resumed = new CodexOutputParser();
+		resumed.parseJsonLine(tokenCount(sum(PRIOR, CALL_1), CALL_1));
+
+		const fresh = new CodexOutputParser();
+		const event = fresh.parseJsonLine(tokenCount(CALL_2, CALL_2));
+
+		expect(event?.usage).toMatchObject({ inputTokens: 13500, outputTokens: 60 });
+	});
+});

@@ -1,0 +1,19 @@
+{
+	"provider": "opencode",
+	"providerVersion": "1.18.23",
+	"capturedOn": "2026-09-28",
+	"platform": "darwin",
+	"command": ["opencode", "run", "--format", "json", "--model", "opencode/big-pickle", "<prompt>"],
+	"prompt": "Reply with exactly this sentence and nothing else: The capital of France is Paris.",
+	"stop": null,
+	"chunks": [
+		"{\"type\":\"step_start\",\"timestamp\":1790624499442,\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"part\":{\"id\":\"prt_0e98986ed001P3hqgY7VQPet0U\",\"messageID\":\"msg_0e989642d0016D9aqaxuJeVXZU\",\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"type\":\"step-start\"}}\n",
+		"{\"type\":\"text\",\"timestamp\":1790624499463,\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"part\":{\"id\":\"prt_0e98986f0001uTTtr3tlXKDxnF\",\"messageID\":\"msg_0e989642d0016D9aqaxuJeVXZU\",\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"type\":\"text\",\"text\":\"The capital of France is Paris.\",\"time\":{\"start\":1790624499440,\"end\":1790624499447}}}\n",
+		"{\"type\":\"step_finish\",\"timestamp\":1790624499463,\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"part\":{\"id\":\"prt_0e98986fb001HKVfebYpA942h1\",\"reason\":\"stop\",\"messageID\":\"msg_0e989642d0016D9aqaxuJeVXZU\",\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"type\":\"step-finish\",\"tokens\":{\"total\":9903,\"input\":7956,\"output\":8,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":1939}},\"cost\":0}}\n"
+	],
+	"stderr": "",
+	"close": {
+		"code": 0,
+		"signal": null
+	}
+}

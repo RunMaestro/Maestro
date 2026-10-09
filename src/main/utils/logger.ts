@@ -17,6 +17,7 @@ import {
 	DEFAULT_MAX_LOGS,
 } from '../../shared/logger-types';
 import { isWindows, isMacOS } from '../../shared/platformDetection';
+import { setMaestroLibLogger } from '../../shared/maestro-lib/host';
 
 // Re-export types for backwards compatibility
 export type { MainLogLevel as LogLevel, SystemLogEntry as LogEntry };
@@ -498,3 +499,9 @@ class Logger extends EventEmitter {
 
 // Export singleton instance
 export const logger = new Logger();
+
+// maestro-lib logs through whatever its host registers (see
+// src/shared/maestro-lib/host.ts). Registering here, where the logger is
+// created, means every process that loads the desktop logger - the Electron
+// main process and the CLI - routes the library's lines to it.
+setMaestroLibLogger(logger);

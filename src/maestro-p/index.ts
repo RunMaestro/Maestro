@@ -32,6 +32,7 @@ import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { cwdSlug, discoverSessionId, findLatestSessionId } from './session-watcher';
+import { installStopSignalHandlers, STOP_EXIT_CODES } from './stop-signals';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
 import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
@@ -459,7 +460,15 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		}, RESUBMIT_INTERVAL_MS);
 	};
 
-	const finalize = (options: { isError: boolean; error?: string; exitCode: number }): void => {
+	const finalize = (options: {
+		isError: boolean;
+		error?: string;
+		exitCode: number;
+		// A Stop keeps its own exit code even after a quota limit: exit 2 makes
+		// the desktop replay the prompt through the API, which is the opposite of
+		// what the user just asked for.
+		stopped?: boolean;
+	}): void => {
 		if (finalized) return;
 		finalized = true;
 		cleanupTimers();
@@ -503,7 +512,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			);
 		}
 
-		const exitCode = limitHit ? 2 : options.exitCode;
+		const exitCode = limitHit && !options.stopped ? 2 : options.exitCode;
 		void driver
 			.quit()
 			.catch(() => {
@@ -757,7 +766,34 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		finalize({ isError: true, error: 'ready_timeout', exitCode: 4 });
 	});
 
+	// A Stop (SIGINT from the desktop's interrupt, or SIGTERM) ends the turn like
+	// any other ending: result envelope, `/quit`, then exit. Installed before
+	// start() so a Stop during boot or session discovery is handled too.
+	installStopSignalHandlers({
+		onStop: (signal) => {
+			// Already ending (a normal end, a timeout): that path is quitting the
+			// TUI and exits within QUIT_GRACE_MS, so let it finish.
+			if (finalized) return;
+			finalize({
+				isError: true,
+				error: 'interrupted',
+				exitCode: STOP_EXIT_CODES[signal],
+				stopped: true,
+			});
+		},
+		onForce: (signal) => {
+			driver.kill('SIGKILL');
+			cleanupStreamJsonImages(tempImagePaths);
+			process.exit(STOP_EXIT_CODES[signal]);
+		},
+	});
+
+	// Once finalize() has run, the flow below must not carry on (emitting a
+	// second init envelope, attaching a tailer) while the exit is pending.
+	const settled = (): Promise<never> => new Promise<never>(() => undefined);
+
 	await driver.start();
+	if (finalized) return settled();
 
 	// Arm the first-byte timer the moment the TUI is up. It spans the ready
 	// handshake, session discovery, and the wait for claude's first transcript
@@ -790,12 +826,14 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		tailer.on('parse-error', handleParseError);
 		await tailer.start();
 		await waitForEvent(driver, 'ready');
+		if (finalized) return settled();
 		emitter.emitInit({ sessionId: resumeSessionId, model: null, cwd });
 		initEmitted = true;
 		flushPending();
 		watchRotatedSession(resumeSessionId, Date.now());
 		// Await the whole paced prompt before the resubmit loop can press Enter.
 		await driver.send(prompt);
+		if (finalized) return settled();
 		startResubmitLoop();
 	} else {
 		// Fresh-session path: we pre-assigned `freshSessionId` and passed it to
@@ -805,6 +843,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// precedence. We start discovery and send the prompt back-to-back, then
 		// attach the tailer once the file appears.
 		await waitForEvent(driver, 'ready');
+		if (finalized) return settled();
 		const discoveryPromise = discoverSessionId({
 			configDir,
 			cwd,
@@ -820,6 +859,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		if (freshSessionId) watchRotatedSession(freshSessionId, Date.now());
 		// Await the whole paced prompt before the resubmit loop can press Enter.
 		await driver.send(prompt);
+		if (finalized) return settled();
 		startResubmitLoop();
 		let discovered: { sessionId: string; jsonlPath: string };
 		try {
@@ -840,6 +880,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			}
 			return new Promise<never>(() => undefined);
 		}
+		if (finalized) return settled();
 		resolvedSessionId = discovered.sessionId;
 		emitter.emitInit({ sessionId: discovered.sessionId, model: null, cwd });
 		initEmitted = true;
@@ -849,6 +890,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		await tailer.start();
 		flushPending();
 	}
+	if (finalized) return settled();
 
 	// Watchdog: trips when no JSONL bytes have arrived for maxWaitSeconds.
 	// JsonlTailer seeds lastByteAt at start() time, so a fresh tailer with
@@ -931,6 +973,29 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		process.exit(1);
 	});
 
+	// Same Stop contract as run mode: quit the TUI, then exit with the stop code.
+	// The probe has no result envelope to write, so there is nothing to settle.
+	installStopSignalHandlers({
+		onStop: (signal) => {
+			if (statusFinalized) return;
+			statusFinalized = true;
+			void driver
+				.quit()
+				.catch(() => {
+					/* already gone; nothing to escalate against */
+				})
+				.finally(() => {
+					process.exit(STOP_EXIT_CODES[signal]);
+				});
+		},
+		onForce: (signal) => {
+			driver.kill('SIGKILL');
+			process.exit(STOP_EXIT_CODES[signal]);
+		},
+	});
+	// A Stop may land mid-probe: stop sending /usage and wait for its exit.
+	const stopped = (): Promise<never> => new Promise<never>(() => undefined);
+
 	// Measured before start() so the retry budget below covers claude's boot too:
 	// the caller's 30s kill timer starts when this process does, not when the TUI
 	// becomes ready.
@@ -939,6 +1004,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 
 	await driver.start();
 	await waitForEvent(driver, 'ready');
+	if (statusFinalized) return stopped();
 
 	// Wait out one /usage paint: an initial hold to let it start rendering, then
 	// debounce on no-new-lines until the stream has been quiet for
@@ -999,6 +1065,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// usage-parser.test.ts, "stacked /usage panels".
 		driver.send('/usage');
 		await settleUsagePanel();
+		if (statusFinalized) return stopped();
 
 		// Parse from the full raw screen capture, not the `\n`-delimited 'line'
 		// events: heavier /usage panels (Team/Enterprise accounts, or any account
@@ -1020,6 +1087,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 
 		if (Date.now() + retryDelay + STATUS_ATTEMPT_COST_MS > deadline) break;
 		await new Promise<void>((resolve) => setTimeout(resolve, retryDelay));
+		if (statusFinalized) return stopped();
 		retryDelay = Math.min(retryDelay * 2, STATUS_RETRY_MAX_DELAY_MS);
 	}
 

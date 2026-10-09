@@ -3,6 +3,8 @@ import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
+import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 
 /**
  * Kill/interrupt handle for server-backed processes that have no OS child
@@ -139,6 +141,16 @@ export interface ManagedProcess {
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
 	usageIsCumulative?: boolean;
+	/**
+	 * The maestro-lib UsageAccumulator instance doing the actual delta
+	 * normalization for this process (see `normalizeUsageToDelta` in
+	 * StdoutHandler.ts). `lastUsageTotals`/`usageIsCumulative` above are kept
+	 * in sync from its `lastTotals`/`isCumulative` getters after every call -
+	 * they still need to exist as their own fields because
+	 * `plugin-event-listener.ts` and the existing test suite read them
+	 * directly, not through the accumulator.
+	 */
+	usageAccumulator?: UsageAccumulator;
 	emittedToolCallIds?: Set<string>;
 	querySource?: 'user' | 'auto';
 	tabId?: string;
@@ -191,6 +203,11 @@ export interface CommandResult {
 	exitCode: number;
 }
 
+export interface TurnSettlement {
+	outcome: TurnOutcome;
+	answerCaptured: boolean;
+}
+
 /**
  * Events emitted by ProcessManager
  */
@@ -200,7 +217,7 @@ export interface ProcessManagerEvents {
 	/** `signal` is set only when the process was terminated by a signal
 	 *  (WIFSIGNALED). node-pty reports those with `code` 0, so the code alone
 	 *  cannot distinguish a clean exit from a kill. */
-	exit: (sessionId: string, code: number, signal?: number) => void;
+	exit: (sessionId: string, code: number, signal?: number, settlement?: TurnSettlement) => void;
 	spawn: (config: ProcessConfig) => void;
 	'command-exit': (sessionId: string, code: number) => void;
 	usage: (sessionId: string, stats: UsageStats) => void;

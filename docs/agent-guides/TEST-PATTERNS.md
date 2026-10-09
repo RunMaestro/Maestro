@@ -334,9 +334,10 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 
 ### Isolating a Test From the Developer's Shell (`isolateAgentEnv`)
 
-Agent env defaults are **shell-wins by design**: `applyEnvLayers` in
-`src/cli/services/agent-spawner.ts` layers an agent's `defaultEnvVars` /
-`batchModeEnvVars` UNDER `process.env`, so a user who exported a value keeps it.
+Agent env defaults are **shell-wins by design** on the CLI: the `cli` surface
+of `buildAgentEnvironment()` (`src/shared/maestro-lib/launch/env.ts`) layers an
+agent's `defaultEnvVars` / `batchModeEnvVars` UNDER `process.env`, so a user who
+exported a value keeps it.
 That means any assertion about a DEFAULT value is really an assertion about
 whatever the test runner's shell happened to export, and it fails on that
 machine only.
@@ -670,6 +671,49 @@ it('syncs sessions across providers', async () => {
 	});
 });
 ```
+
+### Turn Recordings (one turn, three pipelines)
+
+`src/__tests__/main/process-manager/recordings/` holds whole agent turns: the
+stdout chunks as they arrived, the stderr, and how the process closed. Every
+recording in `RECORDINGS` (`fixtures.ts`) is replayed through all three places
+that run an agent, so a change that breaks a provider's turn fails in each:
+
+| Harness                                                          | What it replays through                                      |
+| ---------------------------------------------------------------- | ------------------------------------------------------------ |
+| `recordings/turn-recordings.test.ts`                             | desktop: `StdoutHandler` + `ExitHandler`                     |
+| `src/__tests__/cli/services/turn-recordings.cli.test.ts`         | the CLI: `spawnAgent`, with an `EXPECTED` entry per turn     |
+| `src/__tests__/shared/maestro-lib/run/run-to-completion.test.ts` | the library: a real process (`fake-agent.mjs`) vs in-process |
+
+Three kinds of recording, and the difference matters when one fails:
+
+- **Synthetic** (`fixtures.ts`): hand-written Claude Code turns, one per edge
+  case (a cut stream, a bad exit with an answer, an in-band error).
+- **Captured** (`captured.ts`, `captured/*.json`): real turns from a real
+  binary, byte for byte. Claude Code and OpenCode today.
+- **Documented-format** (`documented.ts`): one normal turn per remaining
+  provider, written from the wire format its parser documents. They prove the
+  pipeline handles a well-formed turn for that provider. They do NOT prove the
+  provider's current release still writes that format; only a capture does.
+
+To capture a real turn on a machine where the provider is installed and logged
+in:
+
+```bash
+node scripts/record-provider-turn.mjs --agent codex --out codex-normal.json
+```
+
+The tool starts the provider with Maestro's own arguments (planned by
+`planSessionTurn`), in a clean environment, and records every chunk. `--resume
+<session id>` records a resumed turn; `--stop SIGINT --stop-after <text>`
+records a stopped one (SIGINT is the desktop Stop button, SIGTERM a CLI stop);
+`--keep-env <NAME>` lets an API key or a config directory through. It trims a
+Claude-style init event, points the working directory at `/project`, and
+refuses to write a file that still contains a home directory path, the local
+user name or an email address. Move the file into `captured/`, register it in
+`captured.ts` with `fromCapture()`, and delete that provider's entry from
+`documented.ts`. The CLI harness fails until the new recording has an
+`EXPECTED` entry, on purpose.
 
 ---
 

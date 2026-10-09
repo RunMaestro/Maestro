@@ -8,7 +8,7 @@ import {
 } from '../../../main/agents';
 
 // Mock dependencies
-vi.mock('../../../main/utils/execFile', () => ({
+vi.mock('../../../shared/maestro-lib/launch/exec-file', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
@@ -97,6 +97,12 @@ import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../main/agents
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { setMaestroLibLogger } from '../../../shared/maestro-lib/host';
+
+// The library logs and reports through its host (shared/maestro-lib/host.ts),
+// which the real desktop modules register into on load. They are mocked here,
+// so register the mocks instead.
+setMaestroLibLogger(logger);
 
 describe('agent-detector', () => {
 	let detector: AgentDetector;
