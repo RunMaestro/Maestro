@@ -170,7 +170,98 @@ Exit codes recorded: run 1 `0` (drained), runs 2 and 3 `137` (kill -9), run 4
 Throwaway files (the Dockerfile, the stub, the seed and HTTP scripts) lived in
 a scratch directory and are not committed.
 
+## Current state, 2026-10-09
+
+Where the work stands on `feat/cue-server` at `40767c62f`: eleven local
+commits on top of `6fa5ca2d7` (the PR #1747 head, CI green), not pushed. Five
+are docs fixes found by today's live runs, four are fixes (`7346b7c5a`,
+`f491decce`, `e8362fc51`, `a0de9a0f3`), and two came out of the review of
+those (`b187db7c7`, `40767c62f`). The live runs used builds of `6fa5ca2d7`
+(the VM) and `b42db6468` (the container), so the four fixes are verified by
+tests, except the core-dump limit, which was checked live after an upgrade.
+Today's detailed records are at the end of this file, from
+[Stage B](#stage-b-packaged-install-on-a-debian-12-vm) on.
+
+With today's GitHub run, all twelve Cue trigger types have now run live: nine
+in Stage A and the regression pass, `github.pull_request`, `github.issue` and
+`github.label` today. The plan's 24 hour soak was replaced, by agreement with
+the client, with a stability run of **about 4.6 hours** on a local VM; every
+target passed.
+
+### Findings
+
+| Finding                                                                                                                      | Where it came from                            | State                                                                                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| ReFS reports `FILE_INVALID_FILE_ID` as every inode, so two workspace folders matched                                         | `3392fcd76` (2026-10-08)                      | Fixed, `611fd1cf5`                                                                                                               |
+| Import-restart test teardown can hit EBUSY / EPERM on Windows                                                                | `bb1d1084d` (2026-10-08, test)                | Fixed, `611fd1cf5`                                                                                                               |
+| A pause longer than an interval ran that interval twice at resume                                                            | `247b04bb0` (2026-10-08)                      | Fixed, `57a536438`; live rerun                                                                                                   |
+| No 503 during a drain                                                                                                        | Pre-existing                                  | Fixed, `26d24ae1e`; live again today under systemd (S6) and Compose (D2)                                                         |
+| Non-JSON text on stdout under `--log-format json`                                                                            | Pre-existing                                  | Fixed, `2cb5a8f37`; engine journal and container logs all JSON today                                                             |
+| `bundle export` accepts a `cue.yaml` that `bundle validate` rejects                                                          | Pre-existing (Stage A)                        | Fixed for the config rules, `7346b7c5a`, **tests only**; an owner the bundle leaves out still exports (open)                     |
+| `install.sh` exited 100 when apt failed, not the documented 0, 1 or 3                                                        | Stage B                                       | Fixed, `e8362fc51`, **tests only** (the exit trap runs in `sh` in the test)                                                      |
+| The unit allowed core dumps (`LimitCORE=infinity`); a watchdog SIGABRT could write the engine's memory, secrets included     | Stage B (S4)                                  | Fixed, `e8362fc51`; **verified live**: after an upgrade `LimitCORE=0` and the engine's own core limit 0                          |
+| `docker compose up -d --build` installs Claude Code only                                                                     | Container                                     | Fixed, `e8362fc51` (build args), **tests only**                                                                                  |
+| Compose names miss the docs' `docker` commands; a wrong volume name is created empty with no warning                         | Container                                     | Docs `d275e09a2`, then fixed names in `e8362fc51`, **tests only**                                                                |
+| A GitHub PR or issue trigger whose first poll is empty seeds, rather than fires, the first real item                         | Pre-existing (since `f3e8d093f`), desktop too | Fixed, `f491decce`, **tests only**. **Desktop behaviour change.** Today's live run seeded the repository first to work around it |
+| An agent exported from a workspace it does not own is refused by every import (`unknown-agent` owner)                        | Pre-existing                                  | Fixed, `a0de9a0f3`, **tests only**                                                                                               |
+| `server-packaging.test.ts` fails on a Windows checkout with CRLF                                                             | Windows review of today's diff                | Fixed, `b187db7c7` (reproduced against a CRLF copy)                                                                              |
+| Docs: not-ready start loops, crash kills the run's children, Compose secret mode, `docker stop` timeout, unhealthy, and more | Stage B, container, GitHub                    | Fixed, see [Docs fixes](#docs-fixes-from-the-live-runs)                                                                          |
+| `file.changed` misses a watched folder created after the engine started                                                      | Pre-existing, desktop too                     | **Open**                                                                                                                         |
+| `cue trigger <name>` also fires same-pipeline siblings with the same trigger                                                 | Pre-existing, by design                       | **Open** (docs only)                                                                                                             |
+| A `cue.yaml` reload fires that workspace's `time.heartbeat` subscriptions again ("initial")                                  | Pre-existing; seen again today                | **Open**, not yet judged a bug                                                                                                   |
+
+### Checks, latest result
+
+| Check                                                                                                        | Latest result                                                                                                    | Where                                                         |
+| ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `prettier --check` (changed files), `lint`, `lint:eslint`, `lint:doc-refs`, `docs:verify`                    | Pass on HEAD (`docs:verify` 694 paths)                                                                           | [Gates](#gates-2026-10-09)                                    |
+| Targeted Vitest for today's changes                                                                          | Pass: 14 files, 332 tests; `server-packaging.test.ts` 26 after `b187db7c7`                                       | [Gates](#gates-2026-10-09)                                    |
+| Full suite (`npm run test`)                                                                                  | **Not run today.** Last pass on `26d24ae1e` (2026-10-08)                                                         | Regression pass on HEAD                                       |
+| Windows review of today's diff                                                                               | Read only; one fix, `b187db7c7`                                                                                  | [Windows review](#windows-review-2026-10-09)                  |
+| Packaged install on a fresh Debian 12 VM (`install.sh`), sign-in, export, import of a pipeline and an agent  | Pass on `6fa5ca2d7`                                                                                              | [Stage B](#stage-b-packaged-install-on-a-debian-12-vm)        |
+| Upgrade by rerunning `install.sh`                                                                            | Pass on `40767c62f`: exit 0, `LimitCORE=0`, healthy after start                                                  | [Upgrade check](#upgrade-check)                               |
+| systemd `Type=notify` readiness; a not-ready start never goes active                                         | Pass on `6fa5ca2d7`                                                                                              | [Service checks under systemd](#service-checks-under-systemd) |
+| Watchdog serviced every 15 s; a stalled engine killed and restarted                                          | Pass on `6fa5ca2d7`                                                                                              | [Service checks under systemd](#service-checks-under-systemd) |
+| Drain under `systemctl stop`, 503 with `Retry-After: 30` during it                                           | Pass on `6fa5ca2d7`                                                                                              | [Service checks under systemd](#service-checks-under-systemd) |
+| kill -9 with one run in flight and one queued, under systemd                                                 | Pass on `6fa5ca2d7`                                                                                              | [Service checks under systemd](#service-checks-under-systemd) |
+| Engine journal is JSON                                                                                       | Pass on `6fa5ca2d7`, across SIGABRT and SIGKILL                                                                  | [Service checks under systemd](#service-checks-under-systemd) |
+| Container: build with both CLIs, volumes, healthcheck, drain, plain stop, hard stop, restart, `/run/secrets` | Pass on `b42db6468`                                                                                              | [Container under Compose](#container-under-compose)           |
+| GitHub triggers: all three types, webhook and poll dedupe both ways, redelivery, bad signature               | Pass on `b42db6468`                                                                                              | [GitHub triggers live](#github-triggers-live)                 |
+| Schedule (Claude), chain (OpenCode), fan-in, signed webhook                                                  | Pass on `6fa5ca2d7` (VM, every hour for 4.6 h) and `b42db6468` (container)                                       | Stage B, container, stability run                             |
+| `send` (new and resumed) and `playbook` on a server                                                          | Pass on `6fa5ca2d7` (VM) and `b42db6468` (container, `send`)                                                     | Stage B, container                                            |
+| `app.startup`, `time.heartbeat` cadence                                                                      | Pass on `6fa5ca2d7`: `beat` every 5 minutes, 55 runs in 4.59 h                                                   | [Stability run](#stability-run)                               |
+| `file.changed` (folder present at start), `time.once`, status and inspect read-only                          | Pass on `26d24ae1e`, not rerun                                                                                   | Regression pass on HEAD                                       |
+| `task.pending`, `cli.trigger`                                                                                | Pass on `3bc48cbe9`; `cli.trigger` also today (drain checks)                                                     | Stage A; Stage B                                              |
+| Pause catch-up (SIGSTOP 150 s)                                                                               | Pass after `57a536438`, not rerun                                                                                | Rerun of the pause catch-up after the fix                     |
+| TUI stop removes the tool child, both providers                                                              | Pass on `3bc48cbe9`                                                                                              | Stage A                                                       |
+| Idle engine under 150 MB and 1% CPU                                                                          | Pass on `6fa5ca2d7` over 4.6 h: peak 140.3 MiB = 147.1 MB; CPU 0.295%. Stage A's figure was 121.6 MiB = 127.5 MB | [Stability run](#stability-run)                               |
+| No upward trend in memory or open files; restarts, health, `quick_check`, runs, webhooks                     | Pass on `6fa5ca2d7` over 4.6 h                                                                                   | [Stability run](#stability-run)                               |
+| Webhook start p95 under 1 s                                                                                  | Pass on `3bc48cbe9` (53 ms), not remeasured                                                                      | Stage A, Measurements                                         |
+| 24 hour soak                                                                                                 | **Replaced by agreement** with the 4.6 hour stability run                                                        | [Stability run](#stability-run)                               |
+
+### Open items
+
+- A `cue.yaml` reload fires the workspace's `time.heartbeat` subscriptions again ("initial").
+- `file.changed` misses a folder created after the engine starts (pre-existing, desktop too).
+- `cue trigger <name>` also fires same-pipeline siblings with the same trigger; the `cli.trigger` docs do not say so.
+- No committed container end-to-end test (the plan's automated test); today's container runs were manual.
+- No real host suspend run (SIGSTOP and fake-timer tests only).
+- No Windows host run; the Windows reviews were by reading, and windows-latest in CI is the first real run.
+- No `--log-level`: in JSON mode debug output is dropped and cannot be turned on.
+- A pipeline whose owner matches no agent still exports a bundle that `bundle validate` reports and import refuses.
+- Import refuses `command.mode: cli` nodes on the desktop too, not only on a server.
+- GitHub seen rows expire after 30 days, so a subscription quiet for that long re-seeds; malformed `gh` output on a first poll does the same.
+- After a hard container kill the next engine waits about 3 minutes for the lock, its message names its own pid, and it then logs a spurious `Sleep detected` gap.
+- A fan-in fires after a failed upstream run (existing behaviour; a `filter` on status is the way to require success).
+- `cue activity` needs the desktop app, so a server has no CLI view of run history (a CLI parity gap).
+- A readiness gap for a webhook secret shared by two subscriptions names only one of them.
+- The GitHub token's minimum permissions are not documented.
+- Codex not run (not installed).
+
 ## Current state, 2026-10-08
+
+Superseded by [Current state, 2026-10-09](#current-state-2026-10-09); kept as
+the record of that day.
 
 Where today's work stands on `feat/cue-server` after the three fixes
 (`57a536438`, `2cb5a8f37`, `26d24ae1e`). The sections below it are the
@@ -212,7 +303,7 @@ is the latest live run.
 | JSON-only output: stdout only `--json` results, every stderr line JSON                   | Pass on HEAD (3 engine runs, 162 stderr lines)                                        | Regression pass on HEAD                   |
 | `send` (new and resumed), `playbook`, `run-doc`, `goal-run`, both providers              | Pass on `3bc48cbe9`, not rerun (no change to those paths)                             | Stage A                                   |
 | TUI stop removes the tool child, both providers                                          | Pass on `3bc48cbe9`                                                                   | Stage A                                   |
-| Idle engine under 150 MB and 1% CPU                                                      | Pass on `3bc48cbe9` (121.6 MB, 0.148%), not remeasured                                | Stage A, Measurements                     |
+| Idle engine under 150 MB and 1% CPU                                                      | Pass on `3bc48cbe9` (121.6 MiB = 127.5 MB, 0.148%), not remeasured                    | Stage A, Measurements                     |
 | Webhook start p95 under 1 s                                                              | Pass on `3bc48cbe9` (53 ms), not remeasured                                           | Stage A, Measurements                     |
 
 ### Open items
@@ -427,7 +518,7 @@ Code 2.1.295 here); the driver therefore polled `pgrep` for the `sleep`.
 
 | Measurement                                                   | Target        | Result                                                                                                                                                                                                                                                 |
 | ------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Idle engine RSS, 72 samples over 721 s (`/proc/<pid>/status`) | under 150 MB  | **Pass**: 121.6 MB throughout                                                                                                                                                                                                                          |
+| Idle engine RSS, 72 samples over 721 s (`/proc/<pid>/status`) | under 150 MB  | **Pass**: 121.6 MiB = 127.5 MB throughout (VmRSS 124556 KiB in all 72 samples; first written as "121.6 MB", corrected 2026-10-09)                                                                                                                      |
 | Idle engine CPU, same window (`/proc/<pid>/stat` ticks)       | under 1%      | **Pass**: 0.148% average, 0.30% in the busiest 10 s. The window included the engine's own 2 minute `beat` and 1 minute `todo` scans, no agent turn                                                                                                     |
 | Webhook start latency, 25 signed deliveries 2 s apart         | p95 under 1 s | **Pass**: from the request leaving to the `runStarted` log line, p50 50 ms, p95 53 ms, max 53 ms. The `runStarted` line came 13 to 15 ms before the 202 response in every case (a 2xx follows the start), so measured from the response it is negative |
 
@@ -634,3 +725,270 @@ Gates on `26d24ae1e`:
 | `npm run lint:doc-refs`  | Pass, 40 docs                                                                         |
 | `npm run docs:verify`    | Pass, 693 asserted paths, 0 missing                                                   |
 | `npm run test`           | Pass: 2069 files passed, 1 skipped; 47,018 tests passed, 90 skipped, 0 failed (779 s) |
+
+## Stage B, packaged install on a Debian 12 VM
+
+Dated 2026-10-09, against `feat/cue-server` at `6fa5ca2d7`, following
+`docs/maestro-cue-server.md` (Option 1) as written. Every place the docs were
+wrong or unclear is under [Docs fixes](#docs-fixes-from-the-live-runs).
+
+| What        | Version                                                                                                 |
+| ----------- | ------------------------------------------------------------------------------------------------------- |
+| VM          | incus 6.0.5 VM on this host, `images:debian/12`, Debian 12.15, x86_64, 2 vCPU, 2.8 GiB RAM, no snapshot |
+| Tarball     | `npm run build:server`, `maestro-server-0.18.9-RC.tgz`, 1681904 bytes, better-sqlite3 12.11.1           |
+| Node.js     | v24.21.0, installed by `install.sh` from nodejs.org                                                     |
+| Claude Code | 2.1.295, a Claude Pro login, model `haiku`                                                              |
+| OpenCode    | 1.18.35, an OpenCode Zen key, model `opencode/big-pickle` (free)                                        |
+| gh, git     | 2.102.0, 2.39.5                                                                                         |
+
+Pipeline `Soak`, three agents seeded in a desktop-format data dir on the host:
+`SoakClaude` (Claude Code: `hourly`, a `time.heartbeat` every 60 minutes with a
+one-word turn, and `slow`, a `cli.trigger` turn that runs `sleep 300` in Bash),
+`SoakOpen` (OpenCode: `after-claude`, `agent.completed` from `hourly`) and
+`SoakOps` (shell steps appending to a log: `join` fan-in of the two, `beat`
+every 5 minutes, `hook` a signed `webhook.received` with `secret_env:
+SOAK_HOOK_SECRET`, `boot` on `app.startup`, `todo` on `task.pending`, `files`
+on `file.changed`; later `slowhook`, a webhook step that sleeps 45 s). A
+separate agent bundle `SoakSolo` (OpenCode) carried one playbook and no
+subscriptions.
+
+### Install, sign-in, export and import
+
+| Step                                                                                        | Result                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bundle export` of the pipeline and of the agent, on the host                               | exit 0 both; 3 agents / 3 workspaces / `Secrets to set on import: SOAK_HOOK_SECRET`; 1 agent. `bundle validate` PASS 0/0 both                                                                                                                                                                                              |
+| `install.sh --agent-cli @anthropic-ai/claude-code --agent-cli opencode-ai` on a fresh VM    | exit 0; git, gh, Node, both CLIs, `maestro-cli` 0.18.9-RC, unit installed, disabled, inactive                                                                                                                                                                                                                              |
+| Sign-in as `maestro`: `claude` then `/login`; `opencode auth login`                         | Done at a terminal by the user; credential files in `maestro`'s home, mode 600, contents not read                                                                                                                                                                                                                          |
+| Workspaces                                                                                  | `git clone` of each workspace from a git bundle file, standing in for a hosted remote                                                                                                                                                                                                                                      |
+| `bundle validate --check-env`, `bundle inspect`, `bundle import --dry-run`, `bundle import` | exit 0 throughout; dry run listed every shell command; 4 agents and the playbook after import                                                                                                                                                                                                                              |
+| Secret as a systemd credential                                                              | `/etc/maestro/credentials/SOAK_HOOK_SECRET` (0600) and a drop-in with `LoadCredential=`                                                                                                                                                                                                                                    |
+| `cue engine check`                                                                          | From a shell: exit 1, `[secret-missing]` (the credential file is visible only to the service, as documented). Under `systemd-run` with the unit's settings: exit 0, no gaps                                                                                                                                                |
+| `systemctl enable --now maestro-cue`                                                        | active within 3 s, `/healthz` and `/readyz` 200                                                                                                                                                                                                                                                                            |
+| First chain                                                                                 | `hourly` on Claude completed; `after-claude` on OpenCode failed with 402 (the account has no credit for paid models), so the free model was chosen and both bundles re-exported and imported with `--force` by the documented "Add or replace" steps; the next chain completed (Claude 3.9 s, OpenCode 6.0 s), then `join` |
+| On-demand verbs (`mrun` as documented)                                                      | `send` answered `OK`, the resumed `send` returned the codeword, same session; `playbook` 1/1 task in 19.7 s, every `--json` line parsed                                                                                                                                                                                    |
+| Signed webhook through the credential                                                       | unsigned 401; signed 202 and `hook` ran; the same id again 200 `duplicate`                                                                                                                                                                                                                                                 |
+
+Getting the VM online took three attempts, none caused by Maestro: the host
+has no IPv6 egress while the bridge gave the VM an IPv6 address
+(`ipv6.address none` set on the bridge), the uplink's round trip briefly
+exceeded Node 24's 250 ms happy-eyeballs window, and Docker's `FORWARD DROP`
+blocked the bridge until two `DOCKER-USER` rules were added. One of those
+attempts showed `install.sh` exiting 100 when apt failed, which `e8362fc51`
+fixes.
+
+### Service checks under systemd
+
+Unit as installed plus the `LoadCredential=` drop-in.
+
+| #   | Check                                         | Observed                                                                                                                                                                                                                                                                                                  | Result |
+| --- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| S1  | A not-ready start never goes active           | With the credential cleared: `activating`, then `auto-restart` every 5.3 s, never `active`; probes never answer; each attempt logs `Not ready [secret-missing]` and exits 1. The docs said the start "stops"; it retries until the gap closes (docs fixed)                                                | Pass   |
+| S2  | READY is what makes it active                 | With the start held 8 s, the unit stayed `activating` until `Ready: ... no gaps`, then `watchdog ping every 15s`, `Engine started`, then `active` with both probes 200                                                                                                                                    | Pass   |
+| S3  | The watchdog is serviced                      | A ping every 15.0 s (`WatchdogUSec=30s`)                                                                                                                                                                                                                                                                  | Pass   |
+| S4  | A stalled engine is caught                    | SIGSTOP: `Watchdog timeout (limit 30s)`, SIGABRT, `Failed with result 'watchdog'`, restart; new process active 30 s after the stop, `NRestarts=1`, probes 200. No core file, but the unit then allowed one (`LimitCORE=infinity`): fixed in `e8362fc51`                                                   | Pass   |
+| S5  | No double fire after that restart             | One each of `beat`, `boot`, `hourly` (initial), then the chain; no catch-up                                                                                                                                                                                                                               | Pass   |
+| S6  | Drain under `systemctl stop`                  | `cue trigger slow` (a Claude turn running `sleep 300`), then stop: `/readyz` 503, two signed deliveries answered 503 with `Retry-After: 30` and not recorded; at 90 s the run was stopped through the ladder; inactive after 90.8 s, exit 0, `Result=success`; no `sleep` or `claude` left; run `stopped` | Pass   |
+| S7  | kill -9 with one run in flight and one queued | Both deliveries 202; kill -9: systemd killed the rest of the cgroup at once and restarted the engine in 6.4 s; the new engine marked the running one failed, restored the queued one and ran it once; redeliveries 200 `duplicate`; queue empty                                                           | Pass   |
+| S8  | Journal is JSON                               | Engine lines 296 of 296 JSON over the boot, across SIGABRT and SIGKILL. `journalctl -u maestro-cue` also shows systemd's own text lines (docs now give `_SYSTEMD_UNIT=` for the engine alone)                                                                                                             | Pass   |
+
+## Container under Compose
+
+Dated 2026-10-09, `packaging/server/compose.yaml` built at `b42db6468` (before
+the fixed Compose names), following `docs/maestro-cue-server.md` (Option 2).
+Docker Engine 29.8.1, Compose v5.5.1; image on node:24-bookworm-slim (Node
+v24.21.0), Claude Code 2.1.295, OpenCode 1.18.35, `maestro` uid 999. The same
+`Soak` bundles; logins as on the VM, in the home volume.
+
+| #   | Check                             | Observed                                                                                                                                                                                                              | Result |
+| --- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| -   | Build with both CLIs              | `docker compose build --build-arg AGENT_CLIS="@anthropic-ai/claude-code opencode-ai"`, exit 0, 4 min 57 s; 1.44 GB on disk                                                                                            | Pass   |
+| -   | Volumes, import, check            | Clones, `bundle validate --check-env`, dry run, import and `cue engine check` through `docker compose run`; both volumes created; `no gaps`                                                                           | Pass   |
+| -   | Secrets via `/run/secrets`        | A Compose file secret mounted at `/run/secrets/SOAK_HOOK_SECRET`; a 0600 host file was unreadable to uid 999 (`secret-unusable`), 0644 in a 0700 folder worked (docs fixed); signed webhook 202, then 200 `duplicate` | Pass   |
+| -   | Healthcheck                       | `healthy` 7 s after `up -d`                                                                                                                                                                                           | Pass   |
+| -   | Chain and `send`                  | Claude 3 s, OpenCode 4 s, `join`; `send` and a resumed `send` on the same session                                                                                                                                     | Pass   |
+| D1  | `cue trigger` reaches the engine  | Through the trigger inbox in the data dir                                                                                                                                                                             | Pass   |
+| D2  | Drain under `docker compose stop` | `/readyz` 503 while Docker health stayed `healthy`; two deliveries 503 with `Retry-After: 30`; the `sleep 300` turn stopped at 90 s; exit 0 after 91.0 s, not OOM; run `stopped`                                      | Pass   |
+| D3  | Plain `docker stop`               | Not a hard kill: the container carries Compose's 120 s stop timeout, so the running step finished and the queued one was persisted, exit 0 (docs said 10 s; fixed)                                                    | Pass   |
+| D4  | Queue survives a stop             | The queued delivery ran once after `start`; redeliveries 200 `duplicate`                                                                                                                                              | Pass   |
+| D5  | 10 s grace                        | `docker stop -t 10`: exit 137 mid-drain, as documented                                                                                                                                                                | Pass   |
+| D6  | Start after the hard kill         | The next engine refused the left-behind lock and Docker restarted it with back-off until the lock was taken over 2 min 48 s after the kill; then the running delivery was marked failed and the queued one ran once   | Pass   |
+| D7  | No double fire after D6           | One of each trigger; a spurious `Sleep detected (gap: 3m)` fired nothing                                                                                                                                              | Pass   |
+| D8  | Restart                           | `docker compose restart`: graceful drain (43.8 s), healthy 5 s after the new start, queued delivery ran once                                                                                                          | Pass   |
+| D9  | Healthcheck goes unhealthy        | SIGSTOP: `unhealthy` at +87 s; Docker does not restart an unhealthy container (docs say so now and give `docker restart -t 120`); healthy again after SIGCONT                                                         | Pass   |
+| D10 | Logs are JSON                     | Every `docker logs` line parsed, including after SIGKILL and the lock refusals                                                                                                                                        | Pass   |
+
+The Compose project named its volumes `server_maestro-home` and
+`server_maestro-work` and the container `server-maestro-cue-1`, so the docs'
+plain `docker` commands missed them and a mistyped volume was created empty
+with `No agents found.`. `d275e09a2` documented the Compose form;
+`e8362fc51` then gave `compose.yaml` fixed names so the plain commands work,
+and passes `AGENT_CLIS` to the build. Neither change was run against a live
+stack today.
+
+## GitHub triggers live
+
+Dated 2026-10-09, against the Compose container above (image built at
+`b42db6468`, so without `f491decce`: the repository was seeded with an issue,
+a PR and a label before the first poll). A private scratch repository, a
+fine-grained token scoped to it alone, a webhook on `pull_request` and
+`issues` events with a random secret held as a Compose secret, reached
+through a tunnel. Three subscriptions on one webhook path, each polling every
+minute and appending a line to a log: `github.pull_request`, `github.issue`,
+and `github.label` (`gh_labels: cue-go`). Added by a hot reload; first polls
+seeded the existing items.
+
+| #   | Check                                | Observed                                                                                                                                                                         | Result |
+| --- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| G1  | Each type fires once from a delivery | A new issue, a new PR, and the label added to the PR: each delivery 202 and its subscription fired within 0.2 s; the others logged why they skipped                              | Pass   |
+| G2  | Webhook, then poll: fires once       | Two poll cycles later, no further run for those items                                                                                                                            | Pass   |
+| G3  | GitHub redelivery fires nothing      | Redeliver of two handled deliveries: 200 `{"accepted":0,"duplicate":true}`, `already handled - ignoring the redelivery`                                                          | Pass   |
+| G4  | Bad signature refused                | A wrong signature and no signature: 401, nothing fired                                                                                                                           | Pass   |
+| G5  | Poll only: fires once                | With the tunnel's origin down, a new issue and a label add failed at GitHub with 502; the next poll fired each once                                                              | Pass   |
+| G6  | Its later redelivery fires nothing   | Redeliver of the two failed deliveries: 202 (they never reached Maestro, so they are not repeats), then `already fired` for each change; nothing ran (docs fixed in `8e05eed23`) | Pass   |
+
+A first attempt (G0) fired every trigger correctly but every shell step
+failed: an unquoted ` #` in the test's own YAML started a comment. Afterwards
+the webhook was deleted, the tunnel stopped, the subscriptions removed by a
+reload and the GitHub secrets taken out of the container. The token's minimum
+permissions were not established (the test token also wrote to the
+repository), so the docs do not state them yet.
+
+## Stability run
+
+Dated 2026-10-09 16:41:39 to 21:16:47 UTC: **about 4.6 hours, not 24.** The
+client agreed to a run of a few hours on a local VM in place of the plan's 24
+hour soak. The Stage B VM and engine (MainPID 5543, up since 16:24:10, build
+of `6fa5ca2d7`), not restarted, re-imported or edited for the run. A monitor
+in its own transient unit sampled every 60 s (unit state, `NRestarts`, the
+engine's `/proc`, the probes, `PRAGMA quick_check` on `cue.db` opened
+read-only) and sent a signed webhook every 10 minutes, then repeated the
+previous id.
+
+Units: the monitor read VmRSS in KiB. MiB = KiB / 1024; MB = KiB x 1024 /
+10^6. The 150 MB target is read as MB.
+
+276 samples, every interval 60.0 to 60.1 s: no gap, so the host did not
+sleep. One MainPID, `active` in all 276, no sample error.
+
+| Memory (VmRSS)                              | KiB    | MiB   | MB    |
+| ------------------------------------------- | ------ | ----- | ----- |
+| Start                                       | 129088 | 126.1 | 132.2 |
+| After warm-up (first hour, incl. one chain) | 135768 | 132.6 | 139.0 |
+| End                                         | 133132 | 130.0 | 136.3 |
+| Highest sample (20:23)                      | 143320 | 140.0 | 146.8 |
+| Peak (VmHWM) at the end                     | 143644 | 140.3 | 147.1 |
+
+- Slope: whole run +0.42 MiB/h; first hour +4.04 MiB/h; after warm-up
+  -0.60 MiB/h. Not flat: from warm-up to 20:22 RSS rose 3.2 MiB/h with the
+  heap (33 to 38.3 MiB); one major collection at 20:23 (heap to 32.2 MiB, with
+  no run active) brought RSS back to 128.8 MiB, and it rose 1.8 MiB/h after.
+  One such cycle in 4.6 hours, so the run cannot show that later peaks stay at
+  140 MiB.
+- CPU, engine, per 60 s: median 0.267%, max 1.116% (that collection, the only
+  sample over 1%); 0.295% over the whole run. With agents and steps (the
+  service's cgroup): median 0.326%, max 31.7% during an agent turn.
+- Open files 27, threads 11, direct children 0 and cgroup processes 1 in every
+  sample. Every run finished between two samples (the longest chain took
+  19.7 s), so these are idle-engine figures; no sample caught a turn.
+- `NRestarts` 1 in every sample (from S4) and after the final stop.
+  `/healthz` and `/readyz` non-200: 0 of 276 each. `quick_check` not `ok`: 0
+  of 276. Engine journal: 0 warn or error lines.
+- Runs (`cue.db`, read-only): `hourly`, `after-claude` and `join` +4 each (one
+  chain an hour); `beat` +55 (12 an hour for 4.59 h); `hook` +28; `boot`,
+  `slow`, `slowhook`, `todo`, `files` +0. No run failed or stopped in the window
+  (the three such rows in `cue.db` are from Stage B's checks, before it).
+- Hourly chains (Claude, then OpenCode, then `join`): 14.1, 10.9, 12.9 and
+  19.7 s.
+- Webhooks: 28 new deliveries all 202 (6 to 37 ms); 27 repeats all 200
+  `duplicate` (1 to 19 ms); `hook` ran once per new delivery.
+- Final stop, `systemctl stop maestro-cue`: drain with 0 runs in flight, 0.0 s,
+  exit 0, `Result=success`, no lock left.
+
+| Target                               | Figure                                                              | Verdict                                 |
+| ------------------------------------ | ------------------------------------------------------------------- | --------------------------------------- |
+| Idle engine under 150 MB             | peak 140.3 MiB = 147.1 MB; median 133.2 MiB = 139.7 MB              | **Pass**, 2.9 MB under at the peak      |
+| Idle engine under 1% CPU             | 0.295% over the run, median 0.267%; one 60 s sample 1.116%          | **Pass**                                |
+| No upward memory trend after warm-up | -0.60 MiB/h; end 2.6 MiB below the post-warm-up value; one GC cycle | **Pass** for 4.6 h, not proof over 24 h |
+| No upward open-files trend           | 27 throughout                                                       | **Pass**                                |
+| `NRestarts` unchanged at 1           | 1 in 276 of 276                                                     | **Pass**                                |
+| Health and readiness 200 throughout  | 0 non-200 of 276 each                                               | **Pass**                                |
+| `quick_check` ok throughout          | 0 failures of 276                                                   | **Pass**                                |
+| No failed runs                       | 0 in the window                                                     | **Pass**                                |
+| Webhooks 202, then 200 duplicate     | 28 of 28, 27 of 27                                                  | **Pass**                                |
+
+Stage A's "121.6 MB" was the same KiB-to-MiB division (VmRSS 124556 KiB), so
+it is 121.6 MiB = 127.5 MB; corrected in its section.
+
+### Upgrade check
+
+After the run, the server tarball built from `40767c62f` was installed over
+the VM's by rerunning `install.sh` with the same `--agent-cli` options, as the
+Upgrade section says. Before: `LimitCORE=infinity`, service enabled and
+stopped. Installer exit 0, `installed (not started)` (it restarts a running
+service and starts an enabled one only with `--enable`, as documented). After:
+`systemctl show -p LimitCORE` 0, the `LoadCredential=` drop-in kept. Started:
+`Ready: ... no gaps`, the engine's own core file limit 0, `/healthz` and
+`/readyz` 200, the start's chain completed, 0 warn or error lines. Stopped
+again with a clean drain.
+
+## Today's fixes, docs fixes and gates
+
+Dated 2026-10-09. The four fixes were made on a separate branch cut from
+`e93772001` and cherry-picked onto `feat/cue-server` in order with no
+conflict; nothing was pushed.
+
+### Fixes
+
+| Commit      | What                                                                                                                                                                                                                                    | Verified                                                  |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `7346b7c5a` | `bundle export` refuses, writing nothing, a generated `cue.yaml` that breaks a config rule `bundle validate` checks; every problem named by workspace and subscription; `BUNDLE_INVALID`, exit 1; the Bundles tab keeps the line breaks | Tests only                                                |
+| `f491decce` | A `github.pull_request` or `github.issue` subscription whose first poll is empty records a seed marker, so the first real item fires instead of being seeded. **Desktop behaviour change**                                              | Tests only (the live GitHub run used an image without it) |
+| `e8362fc51` | `install.sh` exits only 0, 1 or 3; `LimitCORE=0` in the unit, `ulimits: core: 0` in Compose, `--ulimit core=0` in the docs' `docker run`; Compose passes `AGENT_CLIS` to the build and uses fixed names                                 | `LimitCORE=0` live (upgrade check); the rest tests only   |
+| `a0de9a0f3` | An agent exported from a workspace it does not own leaves `owner_agent_id` out when every exported subscription is pinned, so the bundle imports and runs                                                                               | Tests only                                                |
+| `b187db7c7` | `server-packaging.test.ts` reads the server doc with LF line endings, so a CRLF checkout on windows-latest does not fail                                                                                                                | Reproduced against a CRLF copy; test passes               |
+
+### Docs fixes from the live runs
+
+| Commit      | What                                                                                                                                                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `67308b870` | Stage B: keeping Claude Code when adding another `--agent-cli`; a `systemd-run` form of `cue engine check` with the unit's credentials; OpenCode's login file; `_SYSTEMD_UNIT=` for engine lines alone                                      |
+| `b42db6468` | A not-ready start retries every 5 s; a watchdog timeout kills with SIGABRT and restarts; when the engine dies, systemd kills the run's children and the restarted engine marks those runs failed                                            |
+| `d275e09a2` | Container: Compose names (later replaced by fixed names in `e8362fc51`), build args, a Compose secret keeps the host file's mode, `docker stop` uses the container's stop timeout, unhealthy is not restarted, `cue trigger` in a container |
+| `e93772001` | A webhook's `secret_env` is read from a credential file, then `/run/secrets`, then the environment                                                                                                                                          |
+| `8e05eed23` | Redelivering a delivery that never reached Maestro answers 202, not 200, and fires nothing when the change already fired                                                                                                                    |
+| `40767c62f` | Export refuses config-rule problems only (an owner the bundle leaves out still exports and is reported by validate and import); readiness does check `owner_agent_id`                                                                       |
+
+### Gates, 2026-10-09
+
+On `a0de9a0f3` (after the cherry-pick); after `b187db7c7` and `40767c62f`
+the touched files were checked again.
+
+| Command                                                                                                                                                                                | Result                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `npx prettier --check` on every file changed since `6fa5ca2d7` that Prettier parses                                                                                                    | Pass                                                                                    |
+| `npm run lint`                                                                                                                                                                         | Pass, three TypeScript configs                                                          |
+| `npm run lint:eslint`                                                                                                                                                                  | Pass, including the dash pass                                                           |
+| `npm run lint:doc-refs`                                                                                                                                                                | Pass, 40 docs                                                                           |
+| `npm run docs:verify`                                                                                                                                                                  | Pass, 694 asserted paths, 0 missing                                                     |
+| Vitest: `main/cue/bundle`, `bundle-export`, `cue-bundle-service`, `BundlesTab`, `cue-github-poller`, `cue-github-webhook`, `cue-readiness`, `server-packaging`, `cue-electron-imports` | Pass: 14 files, 332 tests; `server-packaging.test.ts` again after `b187db7c7`: 26 tests |
+| `npm run test`                                                                                                                                                                         | **Not run in this session**                                                             |
+
+A sweep of every commit since `6fa5ca2d7` found no em or en dash and nothing
+that identifies a personal account, a scratch repository or a tunnel.
+
+### Windows review, 2026-10-09
+
+Read from `git diff 6fa5ca2d7..HEAD`; nothing was run on a Windows host.
+
+| Area                                                            | Finding                                                                                                                                           |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Export refusal: config lookup by file                           | Safe. Both sides use the same forward-slash archive path, never an OS path                                                                        |
+| Export refusal: line breaks in the message                      | Safe. A plain `\n`, as the tests assert                                                                                                           |
+| CLI exit code and `--json` output                               | Safe. Exit 1 with the code and details as JSON                                                                                                    |
+| Bundles tab                                                     | Safe. `whitespace-pre-line` shows the breaks on any platform                                                                                      |
+| Poller seed marker                                              | Safe. A fixed key, no paths                                                                                                                       |
+| New exporter, service and CLI tests                             | Safe. Temp dirs from `os.tmpdir()` and `path.join`                                                                                                |
+| Installer tests that run `sh`                                   | Safe. All `skipIf(win32)`; the ones that run match text in `install.sh`, which stays LF                                                           |
+| `server-packaging.test.ts` reading `docs/maestro-cue-server.md` | **Risk, fixed in `b187db7c7`.** `docs/` is not pinned to LF and CI does not override `core.autocrlf`, so the `docker run` match would have failed |
+| Packaging files stay LF                                         | Safe. `packaging/server/** text eol=lf`, confirmed with `git check-attr`                                                                          |
+| A Windows host                                                  | Not run; windows-latest in CI is the first real run                                                                                               |
