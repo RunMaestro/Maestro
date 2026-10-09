@@ -297,9 +297,14 @@ describe('startTurn', () => {
 		const { lines, handlers } = recorder();
 		let reported = 0;
 
+		// The long line is the unterminated tail. A long line followed by its
+		// newline only trips the cap when the pipe delivers the two in separate
+		// reads; when they coalesce the line is complete and nothing is dropped,
+		// which made this test flake under CI load. An unterminated tail is
+		// over the cap however the pipe splits it.
 		const turn = startTurn(
 			fakeAgentSpec(scratch.dir, {
-				chunks: ['y'.repeat(4096), '\nshort\n'],
+				chunks: ['short\n', 'y'.repeat(4096)],
 				close: { code: 0, signal: null },
 			}),
 			{ ...handlers, onOversizedLine: (dropped) => (reported += dropped) },
