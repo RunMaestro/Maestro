@@ -1,14 +1,21 @@
 /**
- * Tests for CreatePRModal - the form is a VIEW over prCreationStore.
+ * Tests for CreatePRModal.
  *
- * The behaviour that matters is what survives a close: `gh pr create` can take
- * a while, and until the request moved to the store, dismissing this form threw
- * away the PR's outcome (and any error) with it.
+ * Two things matter here and they are independent.
+ *
+ * The form is a VIEW over prCreationStore: `gh pr create` can take a while, and
+ * until the request moved to the store, dismissing this form threw away the PR's
+ * outcome (and any error) with it.
+ *
+ * And Create Pull Request is reachable by right-clicking any Left Bar row, so the
+ * agent whose branch the PR opens from is frequently not the highlighted one. Only
+ * `cwd` and the branch reach this component, so the agent name has to be threaded
+ * in from the host (`AppWorktreeModals`).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CreatePRModal } from '../../../renderer/components/CreatePRModal';
 import { usePRCreationStore, prRunKey } from '../../../renderer/stores/prCreationStore';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -39,6 +46,12 @@ function renderModal(overrides: Partial<React.ComponentProps<typeof CreatePRModa
 	return { ...render(<CreatePRModal {...props} />), props };
 }
 
+async function clickCreatePR() {
+	const button = await screen.findByRole('button', { name: /create pr/i });
+	await waitFor(() => expect(button).toBeEnabled());
+	fireEvent.click(button);
+}
+
 describe('CreatePRModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -54,8 +67,7 @@ describe('CreatePRModal', () => {
 
 	it('hands the request to the store instead of holding it', async () => {
 		renderModal();
-		const button = await screen.findByRole('button', { name: /create pr/i });
-		fireEvent.click(button);
+		await clickCreatePR();
 
 		expect(createPR).toHaveBeenCalledWith(WORKTREE, 'main', 'visual polish', '');
 		expect(usePRCreationStore.getState().runs[KEY]?.status).toBe('running');
@@ -63,7 +75,7 @@ describe('CreatePRModal', () => {
 
 	it('offers Run in Background while the request is in flight', async () => {
 		renderModal();
-		fireEvent.click(await screen.findByRole('button', { name: /create pr/i }));
+		await clickCreatePR();
 
 		expect(screen.getByText('Creating...')).toBeInTheDocument();
 		const close = screen.getByTestId('create-pr-close');
@@ -75,7 +87,7 @@ describe('CreatePRModal', () => {
 
 	it('re-attaches to the running request rather than resetting the form', async () => {
 		const first = renderModal();
-		fireEvent.click(await screen.findByRole('button', { name: /create pr/i }));
+		await clickCreatePR();
 		first.unmount();
 
 		renderModal();
@@ -110,7 +122,52 @@ describe('CreatePRModal', () => {
 			await screen.findByText('no commits between main and visual-polish')
 		).toBeInTheDocument();
 		// And it can be retried from there.
-		fireEvent.click(screen.getByRole('button', { name: /create pr/i }));
+		await clickCreatePR();
 		expect(createPR).toHaveBeenCalledTimes(1);
+	});
+});
+
+function renderHeaderModal(agentName?: string) {
+	render(
+		<CreatePRModal
+			isOpen
+			onClose={vi.fn()}
+			theme={mockTheme}
+			worktreePath="/repo"
+			worktreeBranch="fix/crash"
+			availableBranches={['main', 'rc']}
+			agentName={agentName}
+		/>
+	);
+}
+
+describe('CreatePRModal header', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		window.maestro.git.checkGhCli = vi
+			.fn()
+			.mockResolvedValue({ installed: true, authenticated: true });
+	});
+
+	it('names the agent the PR is opened from', () => {
+		renderHeaderModal('Sonoma-Fix');
+
+		expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Sonoma-Fix');
+	});
+
+	it('keeps the heading the bare action', () => {
+		// The name must not fold into the heading: that is what an aria-label and
+		// a title-derived persisted size would pick up.
+		renderHeaderModal('Sonoma-Fix');
+
+		const heading = screen.getByRole('heading');
+		expect(heading).toHaveTextContent('Create Pull Request');
+		expect(heading).not.toHaveTextContent('Sonoma-Fix');
+	});
+
+	it('renders no subtitle when no agent name was threaded through', () => {
+		renderHeaderModal(undefined);
+
+		expect(screen.queryByTestId('modal-subtitle')).not.toBeInTheDocument();
 	});
 });

@@ -32,7 +32,17 @@ export interface UseResizableModalOptions {
 	enabled?: boolean;
 	viewportPadding?: number;
 	externalRef?: RefObject<HTMLDivElement>;
-	/** Defaults to `center` (a modal). See `ModalResizeAnchor`. */
+	/**
+	 * How the frame grows under a drag.
+	 *
+	 * `center` (default) is for a centered dialog: it stays centered while it
+	 * grows, so each edge only moves half of what the pointer does and the delta
+	 * is doubled to keep the edge under the cursor.
+	 *
+	 * `top-left` is for a free-positioned window pinned by its top-left corner.
+	 * Its origin does not move, so the delta applies 1:1 - doubling it there
+	 * would make the frame race away from the pointer at twice its speed.
+	 */
 	anchor?: ModalResizeAnchor;
 }
 
@@ -53,25 +63,25 @@ function nextSizeForDirection({
 	startSize,
 	deltaX,
 	deltaY,
-	anchor,
+	edgeScale,
 }: {
 	direction: ModalResizeDirection;
 	startSize: ModalSize;
 	deltaX: number;
 	deltaY: number;
-	anchor: ModalResizeAnchor;
+	/** 2 for a centered dialog (both edges move), 1 for a top-left-anchored one. */
+	edgeScale: number;
 }): ModalSize {
 	// A centered surface moves both of its edges, so it has to grow by twice the
 	// cursor delta to keep the dragged corner under the pointer. A top-left
 	// anchored one only moves the dragged edge, so it tracks the cursor 1:1.
-	const scale = anchor === 'center' ? 2 : 1;
 	let width = startSize.width;
 	let height = startSize.height;
 
-	if (direction.includes('e')) width += deltaX * scale;
-	if (direction.includes('w')) width -= deltaX * scale;
-	if (direction.includes('s')) height += deltaY * scale;
-	if (direction.includes('n')) height -= deltaY * scale;
+	if (direction.includes('e')) width += deltaX * edgeScale;
+	if (direction.includes('w')) width -= deltaX * edgeScale;
+	if (direction.includes('s')) height += deltaY * edgeScale;
+	if (direction.includes('n')) height -= deltaY * edgeScale;
 
 	return { width, height };
 }
@@ -86,6 +96,7 @@ export function useResizableModal({
 	externalRef,
 	anchor = 'center',
 }: UseResizableModalOptions): UseResizableModalReturn {
+	const edgeScale = anchor === 'center' ? 2 : 1;
 	const internalRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
 	const modalRef = externalRef ?? internalRef;
 	const savedSize = useSettingsStore((state) => state.modalSizes[resizeKey]);
@@ -214,7 +225,7 @@ export function useResizableModal({
 						startSize,
 						deltaX: moveEvent.clientX - startX,
 						deltaY: moveEvent.clientY - startY,
-						anchor,
+						edgeScale,
 					})
 				);
 				applySize(currentSize);
@@ -257,7 +268,7 @@ export function useResizableModal({
 			document.addEventListener('mouseup', handleMouseUp);
 			window.addEventListener('blur', handleWindowBlur);
 		},
-		[anchor, applySize, cancelPersistResizedSize, clamp, enabled, resizeKey, setModalSize, size]
+		[applySize, cancelPersistResizedSize, clamp, edgeScale, enabled, resizeKey, setModalSize, size]
 	);
 
 	// Clearing the saved size re-runs the resolve effect above, which recomputes

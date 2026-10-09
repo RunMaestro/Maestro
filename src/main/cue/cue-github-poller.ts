@@ -339,7 +339,8 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			// first, so without this a `gh repo view` 5xx during an outage would
 			// still page Sentry once per tick for every auto-detect trigger
 			// (MAESTRO-KE). Skipping the poll and returning null is unchanged.
-			if (!isGitHubConnectivityError(err)) {
+			// A stale `gh` token is the same story with a different cause.
+			if (!isGitHubConnectivityError(err) && !isGitHubAuthError(err)) {
 				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			}
 			return null;

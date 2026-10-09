@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Minimize2, Trash2, X } from 'lucide-react';
+import { Minimize2, Trash2, X, History, ArrowLeft, PencilLine } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { GhostIconButton } from './ui/GhostIconButton';
-import { ConfirmModal } from './ConfirmModal';
 import { FeedbackChatView } from './FeedbackChatView';
+import { FeedbackDraftsList } from './FeedbackDraftsList';
+import { FeedbackIssueHistoryList } from './FeedbackIssueHistoryList';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useFeedbackIssueHistoryStore } from '../stores/feedbackIssueHistoryStore';
 import { useUIStore } from '../stores/uiStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 
@@ -57,11 +59,43 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 	const [phase, setPhase] = useState<AnimPhase>('open');
 	const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 	const cardRef = useRef<HTMLDivElement>(null);
+	const [showDrafts, setShowDrafts] = useState(false);
+	const [showHistory, setShowHistory] = useState(false);
+	const [resumeNonce, setResumeNonce] = useState(0);
 
 	const isMinimized = useFeedbackDraftStore((s) => s.isMinimized);
 	const hasDraft = useFeedbackDraftStore((s) => s.hasDraft);
 	const setMinimized = useFeedbackDraftStore((s) => s.setMinimized);
 	const setLeftSidebarOpen = useUIStore((s) => s.setLeftSidebarOpen);
+	const drafts = useFeedbackDraftStore((s) => s.drafts);
+	const resumeDraftId = useFeedbackDraftStore((s) => s.resumeDraftId);
+	const issues = useFeedbackIssueHistoryStore((s) => s.issues);
+	const openIssueCount = issues.filter((i) => i.state === 'open').length;
+
+	// Refresh persisted drafts when the modal mounts so the Drafts list is fresh.
+	useEffect(() => {
+		void useFeedbackDraftStore.getState().loadDrafts();
+	}, []);
+
+	// Load submitted-issue history on mount so the history badge is populated.
+	useEffect(() => {
+		void useFeedbackIssueHistoryStore.getState().loadIssues();
+	}, []);
+
+	const handleToggleHistory = useCallback(() => {
+		setShowHistory((v) => {
+			const next = !v;
+			if (next) {
+				setShowDrafts(false);
+				void useFeedbackIssueHistoryStore.getState().refreshStates();
+			}
+			return next;
+		});
+	}, []);
+
+	const handleDeleteIssue = useCallback((issueNumber: number) => {
+		void useFeedbackIssueHistoryStore.getState().deleteIssue(issueNumber);
+	}, []);
 
 	// --- Apply / clear animation transforms on the card ---
 	const applyTransform = useCallback((anchor: MinimizeAnchor | null, animate: boolean) => {
@@ -88,7 +122,16 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 	}, []);
 
 	// --- Minimize handler ---
-	const handleMinimize = useCallback(() => {
+	const handleMinimize = useCallback(async () => {
+		// Persist the in-flight draft so it survives an app restart, not just the
+		// in-memory minimized state. If the write fails, do NOT minimize (which
+		// would hide the failure); keep the modal open so the error surfaces.
+		const { activeDraft, saveDraft } = useFeedbackDraftStore.getState();
+		if (activeDraft) {
+			const savedId = await saveDraft(activeDraft);
+			if (savedId === null) return;
+		}
+
 		// Make sure the Feedback button is in the DOM so we have a target.
 		setLeftSidebarOpen(true);
 
@@ -171,10 +214,54 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 		setConfirmCloseOpen(true);
 	}, []);
 
-	const handleConfirmDiscard = useCallback(() => {
+	const handleSaveAndClose = useCallback(async () => {
+		setConfirmCloseOpen(false);
+		const { activeDraft, saveDraft } = useFeedbackDraftStore.getState();
+		if (activeDraft) {
+			const savedId = await saveDraft(activeDraft);
+			// Persist failed: keep the modal open (the editor surfaces the error)
+			// instead of closing and losing the in-memory draft.
+			if (savedId === null) return;
+		}
+		onClose();
+	}, [onClose]);
+
+	const handleDiscard = useCallback(() => {
+		// "Discard" abandons the unsaved in-progress edits and closes. It must NOT
+		// delete an already-saved draft: a resumed draft keeps its last saved
+		// state, and deletion is an explicit action from the Drafts list.
 		setConfirmCloseOpen(false);
 		onClose();
 	}, [onClose]);
+
+	const handleResume = useCallback(async (id: string) => {
+		const { activeDraft, activeDraftId, saveDraft } = useFeedbackDraftStore.getState();
+		// Clicking the already-active draft is a no-op: remounting the editor from
+		// the persisted copy would silently discard the user's unsaved in-progress
+		// edits, so leave the live editor untouched and just close the list.
+		if (activeDraftId === id) {
+			setShowDrafts(false);
+			return;
+		}
+		// Preserve any unsaved in-progress editor before we unmount it to resume a
+		// different draft, so switching drafts never silently discards work.
+		if (activeDraft) {
+			const savedId = await saveDraft(activeDraft);
+			if (savedId === null) {
+				// Saving the current draft failed; stay on the editor and surface
+				// the error rather than dropping the user's work.
+				setShowDrafts(false);
+				return;
+			}
+		}
+		setShowDrafts(false);
+		useFeedbackDraftStore.getState().requestResume(id);
+		setResumeNonce((n) => n + 1);
+	}, []);
+
+	const handleDeleteDraft = useCallback((id: string) => {
+		void useFeedbackDraftStore.getState().deleteDraft(id);
+	}, []);
 
 	const isHidden = phase === 'minimized';
 
@@ -223,6 +310,51 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 									</GhostIconButton>
 								)}
 								<GhostIconButton
+									onClick={() => {
+										setShowHistory(false);
+										setShowDrafts((v) => !v);
+									}}
+									ariaLabel="View saved drafts"
+									color={showDrafts ? theme.colors.accent : theme.colors.textDim}
+									title="Saved drafts"
+								>
+									<span className="relative inline-flex">
+										<PencilLine className="w-4 h-4" />
+										{drafts.length > 0 && (
+											<span
+												className="absolute -top-2 -right-2 text-3xs font-bold rounded-full px-1 leading-tight"
+												style={{
+													backgroundColor: theme.colors.accent,
+													color: theme.colors.accentForeground,
+												}}
+											>
+												{drafts.length}
+											</span>
+										)}
+									</span>
+								</GhostIconButton>
+								<GhostIconButton
+									onClick={handleToggleHistory}
+									ariaLabel="View submitted issues"
+									color={showHistory ? theme.colors.accent : theme.colors.textDim}
+									title="Submitted issues"
+								>
+									<span className="relative inline-flex">
+										<History className="w-4 h-4" />
+										{openIssueCount > 0 && (
+											<span
+												className="absolute -top-2 -right-2 text-3xs font-bold rounded-full px-1 leading-tight"
+												style={{
+													backgroundColor: theme.colors.success,
+													color: theme.colors.accentForeground,
+												}}
+											>
+												{openIssueCount}
+											</span>
+										)}
+									</span>
+								</GhostIconButton>
+								<GhostIconButton
 									onClick={handleMinimize}
 									ariaLabel="Minimize feedback"
 									color={theme.colors.textDim}
@@ -242,28 +374,130 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 						</div>
 					}
 				>
-					<FeedbackChatView
-						theme={theme}
-						sessions={sessions}
-						onCancel={handleCloseRequest}
-						onWidthChange={setWidth}
-						onSubmitSuccess={(sessionId) => {
-							onSwitchToSession(sessionId);
-							onClose();
-						}}
-					/>
+					<div className="relative flex-1 flex flex-col min-h-0">
+						<FeedbackChatView
+							key={resumeNonce}
+							theme={theme}
+							sessions={sessions}
+							onCancel={handleCloseRequest}
+							onWidthChange={setWidth}
+							resumeDraftId={resumeDraftId}
+							onRequestMinimize={handleMinimize}
+							onSubmitSuccess={(sessionId) => {
+								onSwitchToSession(sessionId);
+								onClose();
+							}}
+						/>
+						{showDrafts && (
+							<div
+								className="absolute inset-0 z-10 flex flex-col"
+								style={{ backgroundColor: theme.colors.bgSidebar }}
+							>
+								<div
+									className="flex items-center gap-2 p-3 border-b shrink-0"
+									style={{ borderColor: theme.colors.border }}
+								>
+									<GhostIconButton
+										onClick={() => setShowDrafts(false)}
+										ariaLabel="Back to feedback"
+										color={theme.colors.textDim}
+										title="Back"
+									>
+										<ArrowLeft className="w-4 h-4" />
+									</GhostIconButton>
+									<span className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
+										Saved Drafts
+									</span>
+								</div>
+								<div className="flex-1 min-h-0 overflow-y-auto">
+									<FeedbackDraftsList
+										theme={theme}
+										drafts={drafts}
+										onResume={handleResume}
+										onDelete={handleDeleteDraft}
+									/>
+								</div>
+							</div>
+						)}
+						{showHistory && (
+							<div
+								className="absolute inset-0 z-10 flex flex-col"
+								style={{ backgroundColor: theme.colors.bgSidebar }}
+							>
+								<div
+									className="flex items-center gap-2 p-3 border-b shrink-0"
+									style={{ borderColor: theme.colors.border }}
+								>
+									<GhostIconButton
+										onClick={() => setShowHistory(false)}
+										ariaLabel="Back to feedback"
+										color={theme.colors.textDim}
+										title="Back"
+									>
+										<ArrowLeft className="w-4 h-4" />
+									</GhostIconButton>
+									<span className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
+										Submitted Issues
+									</span>
+								</div>
+								<div className="flex-1 min-h-0 overflow-y-auto">
+									<FeedbackIssueHistoryList
+										theme={theme}
+										issues={issues}
+										onDelete={handleDeleteIssue}
+									/>
+								</div>
+							</div>
+						)}
+					</div>
 				</Modal>
 			</div>
 			{confirmCloseOpen && (
-				<ConfirmModal
+				<Modal
 					theme={theme}
-					title="Discard Feedback?"
-					message="This deletes your in-progress feedback and stops the agent working on it. Closing the window instead keeps everything running in the background."
-					confirmLabel="Discard"
-					destructive
-					onConfirm={handleConfirmDiscard}
+					title="Save this draft?"
+					priority={MODAL_PRIORITIES.CONFIRM}
 					onClose={() => setConfirmCloseOpen(false)}
-				/>
+					width={460}
+					zIndex={10000}
+					footer={
+						<>
+							<button
+								type="button"
+								onClick={handleDiscard}
+								className="px-4 py-1.5 rounded border transition-colors hover:bg-white/5 text-sm"
+								style={{ borderColor: theme.colors.border, color: theme.colors.error }}
+							>
+								Discard
+							</button>
+							<div className="flex-1" />
+							<button
+								type="button"
+								onClick={() => setConfirmCloseOpen(false)}
+								className="px-4 py-1.5 rounded border transition-colors hover:bg-white/5 text-sm"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								Keep editing
+							</button>
+							<button
+								type="button"
+								onClick={handleSaveAndClose}
+								className="px-4 py-1.5 rounded transition-colors hover:opacity-90 text-sm"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground,
+								}}
+							>
+								Save & Close
+							</button>
+						</>
+					}
+				>
+					<p className="leading-relaxed text-sm" style={{ color: theme.colors.textMain }}>
+						Keep your in-progress feedback as a resumable draft, or discard it. Saved drafts can be
+						resumed from the Drafts list later.
+					</p>
+				</Modal>
 			)}
 		</>
 	);

@@ -23,7 +23,7 @@ import fs from 'fs/promises';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../../constants';
 import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
 import {
@@ -35,6 +35,7 @@ import {
 } from '../../utils/statsCache';
 import { app } from 'electron';
 import { captureException } from '../../utils/sentry';
+import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
 	snapshotStarredTranscript,
 	releaseTranscriptMirror,
@@ -149,6 +150,7 @@ function extractTextFromContent(content: unknown): string {
  */
 export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	const { claudeSessionOriginsStore, getMainWindow } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// ============ List Sessions ============
 
@@ -522,8 +524,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:getProjectStats',
 		withIpcErrorLogging(handlerOpts('getProjectStats'), async (projectPath: string) => {
-			const mainWindow = getMainWindow();
-
 			// Helper to send progressive updates to renderer
 			const sendUpdate = (stats: {
 				totalSessions: number;
@@ -535,9 +535,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				processedCount?: number;
 				isComplete: boolean;
 			}) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('claude:projectStatsUpdate', { projectPath, ...stats });
-				}
+				safeSend('claude:projectStatsUpdate', { projectPath, ...stats });
 			};
 
 			// Helper to parse a single session file
@@ -710,8 +708,16 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						isComplete: processedCount >= sessionsToProcess.length,
 					});
 				} catch (error) {
-					void captureException(error);
-					logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
+					// A transcript we merely discovered under `~/.claude/projects` can be
+					// unreadable or gone by the time we read it - environmental, not a
+					// Maestro fault, so warn locally and keep it out of Sentry
+					// (MAESTRO-YJ). Everything else still reports.
+					if (isExpectedSessionReadError(error)) {
+						logger.warn(`Session file not readable: ${filename}`, LOG_CONTEXT, { error });
+					} else {
+						void captureException(error);
+						logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
+					}
 				}
 			}
 
@@ -789,8 +795,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:getGlobalStats',
 		withIpcErrorLogging(handlerOpts('getGlobalStats'), async () => {
-			const mainWindow = getMainWindow();
-
 			// Helper to send progressive updates
 			const sendUpdate = (stats: {
 				totalSessions: number;
@@ -803,9 +807,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				totalSizeBytes: number;
 				isComplete: boolean;
 			}) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('claude:globalStatsUpdate', stats);
-				}
+				safeSend('claude:globalStatsUpdate', stats);
 			};
 
 			const homeDir = os.homedir();
@@ -978,8 +980,13 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const currentTotals = calculateGlobalTotals(newCache);
 					sendUpdate({ ...currentTotals, isComplete: processedCount >= sessionsToProcess.length });
 				} catch (error) {
-					void captureException(error);
-					logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
+					// See the per-project loop above (MAESTRO-YJ).
+					if (isExpectedSessionReadError(error)) {
+						logger.warn(`Global session file not readable: ${sessionKey}`, LOG_CONTEXT, { error });
+					} else {
+						void captureException(error);
+						logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
+					}
 				}
 			}
 

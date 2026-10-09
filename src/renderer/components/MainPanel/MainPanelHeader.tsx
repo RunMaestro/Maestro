@@ -1,5 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Wand2, Columns, GitBranch, List, Server, Bookmark, Brain } from 'lucide-react';
+// Menu + Command are rc-only: the narrow-viewport sidebar opener and the Quick
+// Actions button, neither of which exists on main's header.
+import {
+	Wand2,
+	Columns,
+	GitBranch,
+	List,
+	Server,
+	Bookmark,
+	Brain,
+	Menu,
+	Command,
+} from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { GitStatusWidget } from '../GitStatusWidget';
@@ -7,7 +19,19 @@ import { GitPillMenu } from '../GitPillMenu';
 import { useHoverTooltip } from '../../hooks';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import { useUIStore } from '../../stores/uiStore';
+import { getModalActions } from '../../stores/modalStore';
+import { useViewportBreakpoint, usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import {
+	useContextTimelineStore,
+	CONTEXT_SURFACE_CLOSE_DELAY_MS,
+	CONTEXT_SURFACE_GAP,
+	CONTEXT_TIMELINE_RESIZE_KEY,
+	resolveContextSurfaceWidth,
+	type TimelineAnchorRect,
+} from '../../stores/contextTimelineStore';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import { calculateDisplayInputTokens } from '../../utils/contextUsage';
@@ -24,6 +48,20 @@ import {
 	formatConversationDuration,
 } from '../../../shared/tabConversationStats';
 import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+
+/** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
+function rectOf(el: HTMLElement): TimelineAnchorRect {
+	const r = el.getBoundingClientRect();
+	return {
+		top: r.top,
+		left: r.left,
+		bottom: r.bottom,
+		right: r.right,
+		width: r.width,
+		height: r.height,
+	};
+}
 
 /**
  * How long the pointer must rest on the git pill before the menu opens. Long
@@ -100,6 +138,16 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSessionIdPill = useSettingsStore((s) => s.showSessionIdPill);
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
+	const leftSidebarHidden = useUIStore((s) => s.leftSidebarHidden);
+	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
+	const { isXs, isNarrow } = useViewportBreakpoint();
+	const isPhone = usePhoneLayout();
+	// On web-desktop phones the collapsed 64px strip is hidden entirely (see
+	// index.css), so the collapsed sidebar has no visible affordance to reopen
+	// it. Surface the inline hamburger in that case too - not just when the
+	// sidebar is fully hidden. On the Electron desktop app isWebDesktop() is
+	// false, so this reduces to the original leftSidebarHidden-only behavior.
+	const showSidebarOpener = leftSidebarHidden || (isWebDesktop() && isXs && !leftSidebarOpen);
 
 	// Claude Max plan usage (5-hour / weekly windows). Shown for any Claude
 	// Code session - the source account is always derivable from session env
@@ -132,14 +180,46 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// pills (SSH host + branch) means either one opens the menu, and it also
 	// excludes them from click-outside so clicking a pill can't close it.
 	const gitPillRef = useRef<HTMLDivElement>(null);
-	const contextTooltip = useHoverTooltip(150);
+	const contextTooltip = useHoverTooltip(CONTEXT_SURFACE_CLOSE_DELAY_MS);
+
+	// The gauge has two surfaces - Context Details on hover, the Context Timeline
+	// on click - and they are alternatives for one spot, never a stack. The popover
+	// stays hidden while ANY timeline panel is open (there is one app-wide, and it
+	// anchors under this gauge), whatever the hover state says.
+	const timelinePanelOpen = useContextTimelineStore((s) => s.panelSessionId !== null);
+	const contextDetailsVisible = contextTooltip.isOpen && !timelinePanelOpen;
+	// The popover's bordered box, measured at click time so the timeline opens in
+	// exactly the space the popover held.
+	const contextDetailsRef = useRef<HTMLDivElement>(null);
+	const closeContextTooltip = contextTooltip.close;
+	// The popover has no handles of its own (it closes on hover-out), so it takes
+	// the width the user dragged the Timeline to. Resizing one resizes both.
+	const contextSurfaceWidth = resolveContextSurfaceWidth(
+		useSettingsStore((s) => s.modalSizes[CONTEXT_TIMELINE_RESIZE_KEY])
+	);
+
+	// Swap one surface for the other. The popover's size is read while it is still
+	// laid out, then it is closed before the toggle. A toggle with no popover on
+	// screen (keyboard focus) passes no size and the timeline uses its default.
+	const toggleContextTimeline = useCallback(
+		(gauge: HTMLElement) => {
+			const box = contextDetailsRef.current?.getBoundingClientRect();
+			const sourceSize =
+				box && box.width > 0 && box.height > 0
+					? { width: Math.round(box.width), height: Math.round(box.height) }
+					: null;
+			closeContextTooltip();
+			useContextTimelineStore.getState().togglePanel(activeSession.id, rectOf(gauge), sourceSize);
+		},
+		[activeSession.id, closeContextTooltip]
+	);
 
 	// Message count and elapsed span for the tab in view - the same figures the
 	// HTML export prints, so they can be read without exporting. Walking the log
-	// array costs O(entries), so it only runs while the popover is actually open.
+	// array costs O(entries), so it only runs while the popover is on screen.
 	const conversationStats = useMemo(
-		() => (contextTooltip.isOpen ? computeTabConversationStats(activeTab?.logs) : null),
-		[contextTooltip.isOpen, activeTab?.logs]
+		() => (contextDetailsVisible ? computeTabConversationStats(activeTab?.logs) : null),
+		[contextDetailsVisible, activeTab?.logs]
 	);
 
 	// The git menu opens on hover. The open delay keeps it from popping up while
@@ -234,6 +314,29 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 		/>
 	) : null;
 
+	// Goal-Driven runs have no task list, so they report a self-reported percent
+	// instead of an X/Y task count.
+	const autoRunProgressLabel = currentSessionBatchState
+		? currentSessionBatchState.goalMode
+			? `${currentSessionBatchState.goalProgress ?? 0}%`
+			: `${currentSessionBatchState.completedTasks}/${currentSessionBatchState.totalTasks}`
+		: null;
+	// The phone pill is a bare glyph, so everything it drops has to survive
+	// somewhere the user can still reach - the tooltip is that somewhere. On a
+	// desktop the count and the branch icon are ON the pill, so repeating them
+	// here would only restate what the user is already looking at.
+	const autoRunPillTitle = isCurrentSessionStopping
+		? 'Stopping after current task...'
+		: [
+				'Click to stop auto-run',
+				isPhone ? autoRunProgressLabel : null,
+				isPhone && currentSessionBatchState?.worktreeActive
+					? `Worktree: ${currentSessionBatchState.worktreeBranch || 'active'}`
+					: null,
+			]
+				.filter(Boolean)
+				.join(' - ');
+
 	return (
 		<div
 			ref={headerRef}
@@ -245,6 +348,35 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			data-tour="header-controls"
 		>
 			<div className="flex items-center gap-4 min-w-0 overflow-hidden">
+				{/* Inline hamburger - appears when the left sidebar is fully hidden,
+				    or (on web-desktop phones) when it is collapsed, since the 64px
+				    collapsed strip is hidden there. Renders INSIDE the header row
+				    so it shifts content rightward instead of floating over the
+				    session name. */}
+				{showSidebarOpener && (
+					<button
+						type="button"
+						onClick={() => {
+							useUIStore.getState().setLeftSidebarHidden(false);
+							useUIStore.getState().setLeftSidebarOpen(true);
+						}}
+						className="shrink-0 p-1 rounded hover:bg-white/5 transition-colors"
+						style={{ color: theme.colors.textDim }}
+						aria-label="Show agents sidebar"
+						title="Show sidebar"
+					>
+						<Menu className="w-4 h-4" />
+					</button>
+				)}
+				{/* The minimized player's last resort.
+				    With the Left Bar hidden there is no header to park it in, so
+				    minimizing took the widget off screen and left nothing behind -
+				    the same stranding the collapsed rail had, one state further on.
+				    This is the established spot for a control whose home is off
+				    screen: the sidebar opener beside it exists for the same reason.
+				    Self-gating (it draws nothing unless the player is minimized) and
+				    compact, since the header has no room for a filename. */}
+				{showSidebarOpener && <NowPlayingIndicator theme={theme} compact />}
 				<div className="flex items-center gap-2 text-sm font-medium min-w-0 overflow-hidden">
 					{/* Session name - hidden at narrow widths via CSS container query */}
 					{showAgentName && (
@@ -264,7 +396,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					    something else genuinely needs the pixels. */}
 					<div
 						ref={gitPillRef}
-						className="relative min-w-0 flex items-center gap-2"
+						className="header-git-pill relative min-w-0 flex items-center gap-2"
 						{...gitPillHoverHandlers}
 					>
 						{/* SSH Host Pill - show SSH remote name when running remotely (replaces the
@@ -283,11 +415,15 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								<span className="truncate uppercase">{sshRemoteName}</span>
 							</button>
 						) : (
+							/* The LOCAL badge carries the `header-local-badge` hook so the phone
+							   layout can retire it. It is inert for non-git agents (no menu, no
+							   hover handlers), so on a 390px header it spends width to say
+							   nothing; the git pill keeps its icon because that one opens a menu. */
 							<button
 								className={`flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border min-w-0 cursor-pointer outline-none ${
 									activeSession.isGitRepo
 										? 'border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20'
-										: 'border-blue-500/30 text-blue-500 bg-blue-500/10'
+										: 'header-local-badge border-blue-500/30 text-blue-500 bg-blue-500/10'
 								}`}
 								onClick={handleGitPillClick}
 								title={activeSession.isGitRepo && gitInfo?.branch ? gitInfo.branch : undefined}
@@ -351,30 +487,36 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						onStopBatchRun?.(activeSession.id);
 					}}
 					disabled={isCurrentSessionStopping}
-					className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-bold text-xs transition-all shrink-0 ${isCurrentSessionStopping ? 'cursor-not-allowed' : 'hover:opacity-90 cursor-pointer'}`}
+					className={`flex items-center rounded-lg font-bold text-xs transition-all shrink-0 ${isPhone ? 'justify-center px-2 py-1.5' : 'gap-1.5 px-3.5 py-1.5'} ${isCurrentSessionStopping ? 'cursor-not-allowed' : 'hover:opacity-90 cursor-pointer'}`}
 					style={{
 						backgroundColor: isCurrentSessionStopping ? theme.colors.warning : theme.colors.error,
 						color: isCurrentSessionStopping ? theme.colors.bgMain : 'white',
 						pointerEvents: isCurrentSessionStopping ? 'none' : 'auto',
 					}}
-					title={
-						isCurrentSessionStopping ? 'Stopping after current task...' : 'Click to stop auto-run'
-					}
+					aria-label={isCurrentSessionStopping ? 'Stopping auto-run' : 'Stop auto-run'}
+					title={autoRunPillTitle}
 				>
 					{isCurrentSessionStopping ? <Spinner size={16} /> : <Wand2 className="w-4 h-4" />}
-					<span className="uppercase tracking-wider">
-						{isCurrentSessionStopping ? 'Stopping' : 'Auto'}
-					</span>
-					{/* Hide progress count when stopping - spinner is sufficient */}
-					{currentSessionBatchState && !isCurrentSessionStopping && (
-						<span className="text-2xs opacity-80">
-							{currentSessionBatchState.completedTasks}/{currentSessionBatchState.totalTasks}
-						</span>
-					)}
-					{currentSessionBatchState?.worktreeActive && (
-						<span title={`Worktree: ${currentSessionBatchState.worktreeBranch || 'active'}`}>
-							<GitBranch className="w-3.5 h-3.5 ml-0.5" />
-						</span>
+					{/* On a phone the header has room for the glyph and nothing
+					    else - the label, the progress count and the worktree
+					    icon all move into the tooltip above. */}
+					{!isPhone && (
+						<>
+							<span className="uppercase tracking-wider">
+								{isCurrentSessionStopping ? 'Stopping' : 'Auto'}
+							</span>
+							{/* Hide progress count when stopping - spinner is sufficient.
+					    Goal-Driven runs have no task list, so show the self-reported
+					    percent instead of an X/Y task count. */}
+							{currentSessionBatchState && !isCurrentSessionStopping && (
+								<span className="text-2xs opacity-80">{autoRunProgressLabel}</span>
+							)}
+							{currentSessionBatchState?.worktreeActive && (
+								<span title={`Worktree: ${currentSessionBatchState.worktreeBranch || 'active'}`}>
+									<GitBranch className="w-3.5 h-3.5 ml-0.5" />
+								</span>
+							)}
+						</>
 					)}
 				</button>
 			)}
@@ -430,39 +572,33 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					hasCapability('supportsUsageStats') &&
 					activeTabContextWindow > 0 && (
 						<div
-							className="header-context-widget flex flex-col items-end mr-2 relative cursor-pointer"
+							className="header-context-widget flex items-center mr-2 relative cursor-pointer rounded outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1"
+							data-testid="header-context-widget"
+							role="button"
+							tabIndex={0}
+							aria-label="Toggle context timeline"
 							{...contextTooltip.triggerHandlers}
+							onClick={(e) => toggleContextTimeline(e.currentTarget)}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									toggleContextTimeline(e.currentTarget);
+								}
+							}}
 						>
-							{/* Full label shown at wide widths, compact label shown at narrow widths via CSS */}
+							{/* Plain-text readout: "X% context remaining" - clearer than a
+							    gauge bar at narrow widths and avoids redundant label+bar. */}
 							<span
-								className="header-context-label-full text-2xs font-bold uppercase"
-								style={{ color: theme.colors.textDim }}
+								className="text-xs font-mono font-medium tabular-nums whitespace-nowrap"
+								style={{
+									color: getContextColor(activeTabContextUsage, theme),
+								}}
 							>
-								Context Window
+								{Math.round(activeTabContextUsage)}%
 							</span>
-							<span
-								className="header-context-label-compact text-2xs font-bold uppercase hidden"
-								style={{ color: theme.colors.textDim }}
-								aria-hidden="true"
-							>
-								Context
-							</span>
-							{/* Gauge width controlled via CSS container query */}
-							<div
-								className="header-context-gauge w-24 h-1.5 rounded-full mt-1 overflow-hidden"
-								style={{ backgroundColor: theme.colors.border }}
-							>
-								<div
-									className="h-full transition-all duration-500 ease-out"
-									style={{
-										width: `${activeTabContextUsage}%`,
-										backgroundColor: getContextColor(activeTabContextUsage, theme),
-									}}
-								/>
-							</div>
 
 							{/* Context Window Tooltip */}
-							{contextTooltip.isOpen && activeSession.inputMode === 'ai' && (
+							{contextDetailsVisible && activeSession.inputMode === 'ai' && (
 								<>
 									{/* Invisible bridge to prevent hover gap */}
 									<div
@@ -470,13 +606,15 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 										style={{ top: '100%' }}
 										{...contextTooltip.contentHandlers}
 									/>
+									{/* Same width and gap as the Context Timeline, so a click swaps
+									    one surface for the other in place. */}
 									<div
-										className={`absolute top-full right-0 pt-2 z-50 pointer-events-auto ${
-											showBatchUsage && batchUsageSnapshot ? 'w-72' : 'w-64'
-										}`}
+										className="absolute top-full right-0 z-50 pointer-events-auto"
+										style={{ paddingTop: CONTEXT_SURFACE_GAP, width: contextSurfaceWidth }}
 										{...contextTooltip.contentHandlers}
 									>
 										<div
+											ref={contextDetailsRef}
 											className="border rounded-lg p-3 shadow-xl"
 											style={{
 												backgroundColor: theme.colors.bgSidebar,
@@ -735,7 +873,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 																	●
 																</span>
 																<span>
-																	Not logged in — run{' '}
+																	Not logged in - run{' '}
 																	<code style={{ color: theme.colors.accent }}>/login</code>.
 																</span>
 															</div>
@@ -801,11 +939,13 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						</div>
 					)}
 
+				<PluginUiItemsSlot surface="toolbar" />
+
 				{/* Memory Viewer Button - only show if agent maintains per-project memory */}
 				{hasCapability('supportsProjectMemory') && (
 					<button
 						onClick={() => setMemoryViewerOpen(true)}
-						className="p-2 rounded hover:bg-white/5"
+						className="header-secondary-btn p-2 rounded hover:bg-white/5"
 						title={`Memory Viewer (${shortcuts.openMemoryViewer ? formatShortcutKeys(shortcuts.openMemoryViewer.keys) : formatShortcutKeys(['Meta', 'Shift', 'm'])})`}
 						data-tour="memory-viewer-button"
 					>
@@ -820,11 +960,25 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							setActiveAgentSessionId(null);
 							setAgentSessionsOpen(true);
 						}}
-						className="p-2 rounded hover:bg-white/5"
+						className="header-secondary-btn p-2 rounded hover:bg-white/5"
 						title={`Agent Sessions (${shortcuts.agentSessions ? formatShortcutKeys(shortcuts.agentSessions.keys) : formatShortcutKeys(['Meta', 'Shift', 'l'])})`}
 						data-tour="agent-sessions-button"
 					>
 						<List className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+					</button>
+				)}
+
+				{/* Quick Actions / command palette opener. Cmd+K is keyboard-only, so
+				    surface a tap target on narrow (phone / small tablet) viewports where
+				    there is no keyboard. Hidden on wide layouts, where Cmd+K suffices. */}
+				{isNarrow && (
+					<button
+						onClick={() => getModalActions().setQuickActionOpen(true)}
+						className="p-2 rounded hover:bg-white/5"
+						aria-label="Quick Actions"
+						title={`Quick Actions (${formatShortcutKeys(shortcuts.quickAction.keys)})`}
+					>
+						<Command className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 					</button>
 				)}
 

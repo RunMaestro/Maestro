@@ -8,8 +8,8 @@
  */
 
 import type { ToolType } from '../types';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 import type { FeedbackAccount } from '../../shared/feedbackAccounts';
-import { getStdinFlags } from '../utils/spawnHelpers';
 
 // ============================================================================
 // Types
@@ -269,6 +269,54 @@ function normalizeResponse(raw: any): FeedbackParsedResponse {
 	};
 }
 
+function redactProviderSecrets(output: string): string {
+	return output
+		.replace(
+			/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|TOKEN|ACCESS_TOKEN|SECRET)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,
+			'$1[REDACTED]'
+		)
+		.replace(/\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
+		.replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
+		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
+		.replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]');
+}
+
+function summarizeProcessFailure(output: string): string {
+	const cleaned = redactProviderSecrets(stripAnsiCodes(output))
+		.split('\n')
+		.map((line) => line.trimEnd())
+		.filter((line) => line.trim().length > 0);
+	if (cleaned.length === 0) return '';
+
+	const tail = cleaned.slice(-8).join('\n');
+	const maxLength = 600;
+	return tail.length > maxLength ? `...${tail.slice(-maxLength)}` : tail;
+}
+
+function indentForMarkdownCode(output: string): string {
+	return output
+		.split('\n')
+		.map((line) => `    ${line}`)
+		.join('\n');
+}
+
+function buildProviderFailureMessage(params: {
+	agentName: string;
+	binaryPath: string;
+	reason: string;
+	output?: string;
+}): string {
+	const detail = params.output ? summarizeProcessFailure(params.output) : '';
+
+	return (
+		`The ${params.agentName} provider ${params.reason}.\n\n` +
+		`**Binary:** ${params.binaryPath}\n\n` +
+		(detail
+			? `**Output:**\n\n${indentForMarkdownCode(detail)}`
+			: 'No output was captured. The binary may have failed to launch, may need authentication, or may be the wrong install. If you have multiple installs, confirm the selected provider path.')
+	);
+}
+
 /**
  * Pull the shell command out of a tool-execution event.
  *
@@ -292,7 +340,6 @@ export class FeedbackConversationManager {
 	private sessionId: string | null = null;
 	private agentType: ToolType | null = null;
 	private systemPrompt = '';
-	private outputBuffer = '';
 	private dataCleanup?: () => void;
 	private exitCleanup?: () => void;
 	private thinkingCleanup?: () => void;
@@ -353,33 +400,54 @@ export class FeedbackConversationManager {
 			throw new Error('No active feedback conversation. Call start() first.');
 		}
 
-		this.outputBuffer = '';
+		const currentSessionId = this.sessionId;
+		const currentAgentType = this.agentType;
+		const currentSystemPrompt = this.systemPrompt;
+		const account = this.account;
 
-		const agent = await window.maestro.agents.get(this.agentType);
+		const agent = await window.maestro.agents.get(currentAgentType);
 		if (!agent) {
-			throw new Error(`Agent ${this.agentType} not found`);
+			throw new Error(`The ${currentAgentType} provider could not be found.`);
 		}
 
-		const account = this.account;
+		const binaryPath = agent.path || agent.command || currentAgentType;
+		// What the failure messages name: an account's own binary is the one that
+		// actually runs (the main process swaps it in via sessionCustomPath).
+		const displayBinaryPath = account?.customPath || binaryPath;
+		const agentName = agent.name || currentAgentType;
 		const isRemote = Boolean(account?.sshRemoteId);
 		// An account's own binary stands in for detection, which only knows the
-		// provider-level path.
+		// provider-level path. A missing agent is reported as a failed turn rather
+		// than thrown, so the caller can fall through to another account.
 		if (!isRemote && !agent.available && !account?.customPath) {
-			const error = `${this.agentType} is not installed`;
+			const error = `The ${agentName} provider is not available. Maestro resolved its binary to "${binaryPath}", but it reported as not runnable. Check that it is installed, on your PATH, and authenticated.`;
 			callbacks?.onError?.(error);
-			return { response: { ...DEFAULT_FEEDBACK_RESPONSE }, failed: true, error };
+			return { response: { ...DEFAULT_FEEDBACK_RESPONSE, message: error }, failed: true, error };
 		}
 
-		const prompt = this.buildPrompt(userMessage, history);
+		const prompt = this.buildPrompt(userMessage, history, currentSystemPrompt);
 
-		const currentSessionId = this.sessionId;
+		let outputBuffer = '';
+		let settled = false;
 		return new Promise<FeedbackTurnResult>((resolve) => {
+			const resolveOnce = (result: FeedbackTurnResult) => {
+				if (settled) return;
+				settled = true;
+				if (this.sessionId === currentSessionId) {
+					this.cleanupListeners();
+				}
+				// Surface the terminal response to the caller for *every* outcome
+				// (success, provider failure, timeout) so UI state like feedback
+				// readiness always reflects the final result instead of going stale.
+				callbacks?.onComplete?.(result.response);
+				resolve(result);
+			};
+
 			// Activity timeout
 			const resetTimeout = () => {
 				if (this.timeoutId) clearTimeout(this.timeoutId);
 				this.timeoutId = setTimeout(() => {
-					this.cleanupListeners();
-					resolve({
+					resolveOnce({
 						response: {
 							...DEFAULT_FEEDBACK_RESPONSE,
 							message: 'The agent took too long to respond. Please try again.',
@@ -392,8 +460,8 @@ export class FeedbackConversationManager {
 
 			// Data listener
 			this.dataCleanup = window.maestro.process.onData((sid: string, data: string) => {
-				if (sid === this.sessionId) {
-					this.outputBuffer += data;
+				if (sid === currentSessionId) {
+					outputBuffer += data;
 					resetTimeout();
 					callbacks?.onChunk?.(data);
 				}
@@ -403,7 +471,7 @@ export class FeedbackConversationManager {
 			if (callbacks?.onThinkingChunk) {
 				this.thinkingCleanup = window.maestro.process.onThinkingChunk?.(
 					(sid: string, content: string) => {
-						if (sid === this.sessionId && content) {
+						if (sid === currentSessionId && content) {
 							resetTimeout();
 							callbacks.onThinkingChunk?.(content);
 						}
@@ -445,38 +513,37 @@ export class FeedbackConversationManager {
 
 			// Exit listener
 			this.exitCleanup = window.maestro.process.onExit((sid: string, code: number) => {
-				if (sid !== this.sessionId) return;
-				this.cleanupListeners();
+				if (sid !== currentSessionId) return;
 
 				if (code === 0) {
-					const parsed = extractJsonFromOutput(this.outputBuffer);
+					const parsed = extractJsonFromOutput(outputBuffer);
 					const response = parsed ?? DEFAULT_FEEDBACK_RESPONSE;
-					callbacks?.onComplete?.(response);
-					resolve({ response, failed: false });
+					resolveOnce({ response, failed: false });
 				} else {
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath: displayBinaryPath,
+						reason: `exited with code ${code} before it could respond`,
+						output: outputBuffer,
+					});
 					const errorResponse = {
 						...DEFAULT_FEEDBACK_RESPONSE,
-						message: 'Something went wrong processing your message. Please try again.',
+						message,
 					};
-					const tail = this.outputBuffer.trim().slice(-300);
-					const error = `Agent exited with code ${code}${tail ? `: ${tail}` : ''}`;
+					const detail = summarizeProcessFailure(outputBuffer);
+					const error = `Agent exited with code ${code}: ${detail || '(no output)'}`;
 					callbacks?.onError?.(error);
-					resolve({ response: errorResponse, failed: true, error });
+					resolveOnce({ response: errorResponse, failed: true, error });
 				}
 			});
 
 			// Build args based on agent type
 			const argsForSpawn = this.buildArgsForAgent(agent);
-			const commandToUse = agent.path || agent.command;
 
-			// Get stdin flags for Windows
-			const stdinFlags = getStdinFlags({
-				isSshSession: isRemote,
-				supportsStreamJsonInput: Boolean(agent?.capabilities?.supportsStreamJsonInput),
-				hasImages: false,
-			});
-
-			// Spawn agent.
+			// Spawn agent. A synchronous throw here (before a promise is returned)
+			// would bypass the .then/.catch chain below and leave resolveOnce
+			// unreached, hanging the turn until the inactivity timeout. Promise
+			// resolution funnels both sync and async failures through one path.
 			//
 			// readOnlyMode is what makes live diagnostics safe to hand to a feedback
 			// agent: the spawner appends the provider's CLI-enforced read-only flags
@@ -484,23 +551,70 @@ export class FeedbackConversationManager {
 			// Codex, `--agent plan` for OpenCode) and skips the batch-mode permission
 			// grants. The agent can read logs and query maestro-cli; it cannot write,
 			// install, or change a setting in the app it is filing a bug about.
-			window.maestro.process.spawn({
-				sessionId: currentSessionId,
-				toolType: this.agentType!,
-				cwd: isRemote && account?.remoteCwd ? account.remoteCwd : this.cwd,
-				command: commandToUse,
-				args: argsForSpawn,
-				prompt,
-				readOnlyMode: true,
-				// The account: its env replaces the provider-level set, exactly as
-				// the agent it came from is spawned.
-				sessionCustomEnvVars: account?.env,
-				sessionCustomPath: account?.customPath,
-				sessionSshRemoteConfig: account?.sshRemoteId
-					? { enabled: true, remoteId: account.sshRemoteId }
-					: undefined,
-				...stdinFlags,
-			} as any);
+			//
+			// Note there is deliberately no stdin-flag plumbing here: prompt delivery
+			// is decided in the main process, never in the renderer (#1280).
+			let spawnPromise: Promise<{ success?: boolean; pid?: number } | undefined>;
+			try {
+				spawnPromise = Promise.resolve(
+					window.maestro.process.spawn({
+						sessionId: currentSessionId,
+						toolType: currentAgentType,
+						cwd: isRemote && account?.remoteCwd ? account.remoteCwd : this.cwd,
+						command: binaryPath,
+						args: argsForSpawn,
+						prompt,
+						readOnlyMode: true,
+						// The account: its env replaces the provider-level set, exactly as
+						// the agent it came from is spawned.
+						sessionCustomEnvVars: account?.env,
+						sessionCustomPath: account?.customPath,
+						sessionSshRemoteConfig: account?.sshRemoteId
+							? { enabled: true, remoteId: account.sshRemoteId }
+							: undefined,
+					} as any)
+				);
+			} catch (error: unknown) {
+				spawnPromise = Promise.reject(error);
+			}
+
+			spawnPromise
+				.then((spawnResult: { success?: boolean; pid?: number } | undefined) => {
+					if (spawnResult?.success !== false) return;
+
+					const output = `Process spawn returned success=false${
+						typeof spawnResult.pid === 'number' ? ` (pid ${spawnResult.pid})` : ''
+					}`;
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath: displayBinaryPath,
+						reason: 'could not be started',
+						output,
+					});
+					callbacks?.onError?.(output);
+					resolveOnce({
+						response: { ...DEFAULT_FEEDBACK_RESPONSE, message },
+						failed: true,
+						error: output,
+					});
+				})
+				.catch((error: unknown) => {
+					const output = redactProviderSecrets(
+						error instanceof Error ? error.message : String(error)
+					);
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath: displayBinaryPath,
+						reason: 'could not be started',
+						output,
+					});
+					callbacks?.onError?.(output);
+					resolveOnce({
+						response: { ...DEFAULT_FEEDBACK_RESPONSE, message },
+						failed: true,
+						error: output,
+					});
+				});
 		});
 	}
 
@@ -529,10 +643,10 @@ export class FeedbackConversationManager {
 				return args;
 			}
 			case 'codex': {
-				// batchModeArgs is intentionally omitted: it is pure permission bypass,
-				// and Codex's readOnlyArgs already carries the non-interactive flags
-				// (--dangerously-bypass-approvals-and-sandbox, --skip-git-repo-check)
-				// alongside --sandbox read-only.
+				// batchModeArgs is intentionally omitted: it is pure permission bypass
+				// (--dangerously-bypass-approvals-and-sandbox nullifies --sandbox
+				// read-only). Codex's readOnlyArgs carries --sandbox read-only and
+				// --skip-git-repo-check; `exec` is non-interactive on its own.
 				const args = [...baseArgs];
 				if (agent.jsonOutputArgs) args.push(...agent.jsonOutputArgs);
 				return args;
@@ -550,8 +664,12 @@ export class FeedbackConversationManager {
 	/**
 	 * Build the full prompt with conversation context
 	 */
-	private buildPrompt(userMessage: string, history: FeedbackMessage[]): string {
-		let prompt = this.systemPrompt + '\n\n';
+	private buildPrompt(
+		userMessage: string,
+		history: FeedbackMessage[],
+		systemPrompt: string
+	): string {
+		let prompt = systemPrompt + '\n\n';
 
 		if (history.length > 0) {
 			prompt += '## Conversation So Far\n\n';
@@ -605,7 +723,6 @@ export class FeedbackConversationManager {
 		this.agentType = null;
 		this.account = undefined;
 		this.systemPrompt = '';
-		this.outputBuffer = '';
 	}
 
 	get isActive(): boolean {

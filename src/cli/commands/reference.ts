@@ -67,6 +67,20 @@ function flatten(info: CommandInfo, out: CommandInfo[]): void {
 	for (const sub of info.subcommands) flatten(sub, out);
 }
 
+/**
+ * Mintlify parses the page as MDX, so a bare `<agent>` in prose is an unclosed
+ * JSX tag and `{x}` is an expression: either one fails the whole docs deploy.
+ * Escape them everywhere except inside code spans, where they are literal.
+ */
+export function escapeMdxProse(text: string): string {
+	return text
+		.split(/(`[^`]*`)/)
+		.map((part, i) =>
+			i % 2 === 1 ? part : part.replace(/</g, '&lt;').replace(/[{}]/g, (c) => `\\${c}`)
+		)
+		.join('');
+}
+
 function toMarkdown(root: CommandInfo): string {
 	const lines: string[] = [];
 	lines.push('# maestro-cli Command Reference');
@@ -84,7 +98,7 @@ function toMarkdown(root: CommandInfo): string {
 		lines.push(`## \`${sig}\``);
 		lines.push('');
 		if (cmd.description) {
-			lines.push(cmd.description);
+			lines.push(escapeMdxProse(cmd.description));
 			lines.push('');
 		}
 		const realOptions = cmd.options.filter((o) => o.flags !== '-h, --help');
@@ -96,8 +110,9 @@ function toMarkdown(root: CommandInfo): string {
 					opt.defaultValue !== undefined && opt.defaultValue !== false
 						? `\`${JSON.stringify(opt.defaultValue)}\``
 						: '-';
-				const desc = (opt.description || '-').replace(/\|/g, '\\|');
-				lines.push(`| \`${opt.flags}\` | ${desc} | ${def} |`);
+				const desc = escapeMdxProse(opt.description || '-').replace(/\|/g, '\\|');
+				const flags = opt.flags.replace(/\|/g, '\\|');
+				lines.push(`| \`${flags}\` | ${desc} | ${def} |`);
 			}
 			lines.push('');
 		}

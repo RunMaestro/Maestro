@@ -37,6 +37,8 @@ import { getSettingsStore } from '../stores/getters';
 import { isInitialized } from '../stores/instances';
 import { generateDebugPackage, type DebugPackageDependencies } from '../debug-package';
 import { captureException, captureMessage } from '../utils/sentry';
+import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
+import { generateUUID } from '../../shared/uuid';
 import { isMacOS, isWindows } from '../../shared/platformDetection';
 import type { MaestroCliManager } from '../maestro-cli-manager';
 import {
@@ -47,9 +49,14 @@ import {
 	type FeedbackAuthResponse,
 	type FeedbackCategory,
 	type FeedbackConversationSubmitPayload,
+	type FeedbackDraft,
+	type FeedbackDraftAttachment,
+	type FeedbackDraftMessage,
+	type FeedbackDraftResponse,
 	type FeedbackIssueSearchResponse,
 	type FeedbackSubmissionPayload as FeedbackSubmitPayload,
 	type FeedbackSubmitResponse,
+	type SubmittedIssue,
 	type FeedbackGhLoginCommand,
 	GH_LOGIN_ARGS,
 } from '../../shared/feedback';
@@ -61,6 +68,13 @@ const LOG_CONTEXT = '[Feedback]';
 const FEEDBACK_REPO = 'RunMaestro/Maestro';
 const REPO_PROBE_TIMEOUT_MS = 15_000;
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
+const MAX_DRAFTS = 30;
+const MAX_DRAFT_ATTACHMENTS = 5;
+const MAX_DRAFT_MESSAGES = 200;
+const MAX_DRAFT_MESSAGE_LENGTH = 20000;
+const DRAFTS_FILE_NAME = 'feedback-drafts.json';
+const SUBMITTED_ISSUES_FILE_NAME = 'feedback-submitted-issues.json';
+const MAX_SUBMITTED_ISSUES = 100;
 
 /** How to install gh here, by the package manager this platform ships or favors. */
 function ghNotInstalledMessage(): string {
@@ -216,6 +230,266 @@ function readOptionalField(
 	}
 
 	return { value: sanitized };
+}
+
+/**
+ * Resolve the path to the persisted feedback drafts file (a single
+ * app-global JSON document under userData, mirroring playbooks' storage).
+ */
+function getDraftsFilePath(): string {
+	return path.join(app.getPath('userData'), DRAFTS_FILE_NAME);
+}
+
+// Serialize every read-modify-write cycle against the single drafts file so
+// concurrent autosave + manual saves (and deletes) cannot interleave and
+// clobber each other. Backed by the shared keyed-write-queue utility, with
+// atomicWriteJson giving partial-read-safe writes (mirrors group-chat-storage).
+const draftsWriteQueue = createKeyedWriteQueue();
+const enqueueDraftWrite = <T>(fn: () => Promise<T>): Promise<T> =>
+	draftsWriteQueue.enqueue(DRAFTS_FILE_NAME, fn);
+
+/**
+ * Read all persisted feedback drafts. Returns an empty array when the file is
+ * missing or malformed, matching readPlaybooks() in playbooks.ts.
+ */
+async function readDrafts(): Promise<FeedbackDraft[]> {
+	try {
+		const content = await fs.readFile(getDraftsFilePath(), 'utf-8');
+		const data = JSON.parse(content);
+		return Array.isArray(data.drafts) ? data.drafts : [];
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Persist the full drafts list. Ensures the parent directory exists for parity
+ * with writePlaybooks(); userData itself already exists at runtime.
+ */
+async function writeDrafts(drafts: FeedbackDraft[]): Promise<void> {
+	const filePath = getDraftsFilePath();
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await atomicWriteJson(filePath, { drafts });
+}
+
+/** Resolve the submitted-issue history file (mirrors getDraftsFilePath). */
+function getSubmittedIssuesFilePath(): string {
+	return path.join(app.getPath('userData'), SUBMITTED_ISSUES_FILE_NAME);
+}
+
+// Serialize read-modify-write cycles against the single history file so a
+// record-on-submit, a delete, and a state refresh cannot interleave and clobber
+// each other (mirrors the drafts write queue above).
+const submittedIssuesWriteQueue = createKeyedWriteQueue();
+const enqueueSubmittedIssuesWrite = <T>(fn: () => Promise<T>): Promise<T> =>
+	submittedIssuesWriteQueue.enqueue(SUBMITTED_ISSUES_FILE_NAME, fn);
+
+async function readSubmittedIssues(): Promise<SubmittedIssue[]> {
+	try {
+		const content = await fs.readFile(getSubmittedIssuesFilePath(), 'utf-8');
+		const data = JSON.parse(content);
+		return Array.isArray(data.issues) ? data.issues : [];
+	} catch {
+		return [];
+	}
+}
+
+async function writeSubmittedIssues(issues: SubmittedIssue[]): Promise<void> {
+	const filePath = getSubmittedIssuesFilePath();
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await atomicWriteJson(filePath, { issues });
+}
+
+/**
+ * Record a freshly-created issue in the submitted-issue history. Best-effort: a
+ * persistence failure must never fail the submit that produced it.
+ */
+async function recordSubmittedIssue(params: {
+	issueUrl: string;
+	title: string;
+	category: FeedbackCategory;
+}): Promise<void> {
+	const match = params.issueUrl.match(/\/issues\/(\d+)/);
+	if (!match) return;
+	const number = Number(match[1]);
+	if (!Number.isFinite(number)) return;
+	try {
+		await enqueueSubmittedIssuesWrite(async () => {
+			const issues = await readSubmittedIssues();
+			const now = Date.now();
+			const idx = issues.findIndex((i) => i.number === number);
+			const entry: SubmittedIssue = {
+				number,
+				url: params.issueUrl,
+				title: params.title,
+				category: params.category,
+				submittedAt: idx >= 0 ? issues[idx].submittedAt : now,
+				state: 'open',
+				lastCheckedAt: now,
+			};
+			if (idx >= 0) issues[idx] = entry;
+			else issues.push(entry);
+			issues.sort((a, b) => b.submittedAt - a.submittedAt);
+			await writeSubmittedIssues(issues.slice(0, MAX_SUBMITTED_ISSUES));
+		});
+	} catch (e) {
+		void captureException(e);
+		logger.warn(`Failed to record submitted issue: ${e}`, LOG_CONTEXT);
+	}
+}
+
+/**
+ * Fetch current open/closed state for the given issue numbers via a single
+ * `gh api graphql` call. Returns null on any gh/network/auth failure so callers
+ * can fall back to cached state.
+ */
+async function fetchIssueStates(numbers: number[]): Promise<Map<number, 'open' | 'closed'> | null> {
+	const unique = Array.from(new Set(numbers.filter((n) => Number.isFinite(n))));
+	if (unique.length === 0) return new Map();
+	const fields = unique.map((n) => `i${n}: issue(number: ${n}) { number state }`).join(' ');
+	const query = `query { repository(owner: "RunMaestro", name: "Maestro") { ${fields} } }`;
+	const result = await execFileNoThrow(
+		await resolveFeedbackGhCommand(),
+		['api', 'graphql', '-f', `query=${query}`],
+		undefined,
+		getExpandedEnv()
+	);
+	if (result.exitCode !== 0) return null;
+	try {
+		const repo = JSON.parse(result.stdout)?.data?.repository;
+		if (!repo || typeof repo !== 'object') return null;
+		const states = new Map<number, 'open' | 'closed'>();
+		for (const value of Object.values(repo)) {
+			const issue = value as { number?: number; state?: string } | null;
+			if (issue && typeof issue.number === 'number' && typeof issue.state === 'string') {
+				states.set(issue.number, issue.state.toUpperCase() === 'CLOSED' ? 'closed' : 'open');
+			}
+		}
+		return states;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Validate + clamp a single draft attachment, dropping anything that is not a
+ * base64 image data URL (reuses the submit handler's attachment filter style).
+ */
+function normalizeDraftAttachments(raw: unknown): FeedbackDraftAttachment[] {
+	if (!Array.isArray(raw)) return [];
+	return raw
+		.filter(
+			(a): a is FeedbackDraftAttachment =>
+				Boolean(a) &&
+				typeof a.id === 'string' &&
+				typeof a.name === 'string' &&
+				typeof a.dataUrl === 'string' &&
+				a.dataUrl.startsWith('data:image/') &&
+				typeof a.sizeBytes === 'number'
+		)
+		.slice(0, MAX_DRAFT_ATTACHMENTS)
+		.map((a) => ({
+			id: a.id,
+			name: sanitizeTextInput(a.name).slice(0, MAX_SUMMARY_LENGTH) || a.name,
+			dataUrl: a.dataUrl,
+			sizeBytes: a.sizeBytes,
+		}));
+}
+
+/**
+ * Validate + clamp a single draft message. Returns null for non-object input.
+ */
+function normalizeDraftMessage(raw: unknown): FeedbackDraftMessage | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const m = raw as Record<string, unknown>;
+	const role: FeedbackDraftMessage['role'] =
+		m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user';
+	const content = typeof m.content === 'string' ? m.content.slice(0, MAX_DRAFT_MESSAGE_LENGTH) : '';
+	const message: FeedbackDraftMessage = {
+		role,
+		content,
+		timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
+	};
+	if (typeof m.confidence === 'number') {
+		message.confidence = m.confidence;
+	}
+	if (isFeedbackCategory(m.category)) {
+		message.category = m.category;
+	}
+	if (typeof m.summary === 'string') {
+		message.summary = m.summary.slice(0, MAX_SUMMARY_LENGTH);
+	}
+	return message;
+}
+
+/**
+ * Validate + clamp the persisted submit-ready response. Returns null when the
+ * payload is absent or malformed so a resumed draft simply behaves as not-ready.
+ */
+function normalizeDraftResponse(raw: unknown): FeedbackDraftResponse | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const structuredRaw =
+		r.structured && typeof r.structured === 'object'
+			? (r.structured as Record<string, unknown>)
+			: {};
+	const clampField = (value: unknown): string =>
+		typeof value === 'string' ? value.slice(0, MAX_DRAFT_MESSAGE_LENGTH) : '';
+	return {
+		confidence:
+			typeof r.confidence === 'number' ? Math.max(0, Math.min(100, Math.round(r.confidence))) : 0,
+		ready: r.ready === true,
+		message: typeof r.message === 'string' ? r.message.slice(0, MAX_DRAFT_MESSAGE_LENGTH) : '',
+		category: isFeedbackCategory(r.category) ? r.category : 'general_feedback',
+		summary: typeof r.summary === 'string' ? r.summary.slice(0, MAX_SUMMARY_LENGTH) : '',
+		structured: {
+			expectedBehavior: clampField(structuredRaw.expectedBehavior),
+			actualBehavior: clampField(structuredRaw.actualBehavior),
+			reproductionSteps: clampField(structuredRaw.reproductionSteps),
+			additionalContext: clampField(structuredRaw.additionalContext),
+		},
+	};
+}
+
+/**
+ * Sanitize an incoming draft payload into a fully-formed FeedbackDraft,
+ * minting an id when one is not supplied (the renderer normally supplies it).
+ */
+function normalizeDraft(raw: unknown): FeedbackDraft {
+	const d = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+	const now = Date.now();
+	const messages = Array.isArray(d.messages)
+		? (d.messages
+				.map(normalizeDraftMessage)
+				.filter((m): m is FeedbackDraftMessage => m !== null)
+				.slice(-MAX_DRAFT_MESSAGES) as FeedbackDraftMessage[])
+		: [];
+	const confidence =
+		typeof d.confidence === 'number' ? Math.max(0, Math.min(100, Math.round(d.confidence))) : 0;
+	return {
+		id: typeof d.id === 'string' && d.id ? d.id : generateUUID(),
+		suggestedName:
+			typeof d.suggestedName === 'string'
+				? sanitizeTextInput(d.suggestedName).slice(0, MAX_SUMMARY_LENGTH)
+				: '',
+		category: isFeedbackCategory(d.category) ? d.category : 'general_feedback',
+		summary:
+			typeof d.summary === 'string'
+				? sanitizeTextInput(d.summary).slice(0, MAX_SUMMARY_LENGTH)
+				: '',
+		confidence,
+		agentType: typeof d.agentType === 'string' && d.agentType ? d.agentType : 'claude-code',
+		messages,
+		attachments: normalizeDraftAttachments(d.attachments),
+		inputDraft:
+			typeof d.inputDraft === 'string'
+				? sanitizeTextInput(d.inputDraft).slice(0, MAX_DRAFT_MESSAGE_LENGTH)
+				: '',
+		includeDebugPackage: d.includeDebugPackage === true,
+		createdAt: typeof d.createdAt === 'number' ? d.createdAt : now,
+		updatedAt: typeof d.updatedAt === 'number' ? d.updatedAt : now,
+		lastResponse: normalizeDraftResponse(d.lastResponse),
+	};
 }
 
 function getPlatformLabel(platform: NodeJS.Platform): string {
@@ -411,6 +685,54 @@ async function uploadAttachments(
 	}
 
 	return { markdown: uploadedMarkdown.join('\n\n') };
+}
+
+/**
+ * Upload a local .zip (debug package or performance trace) to the public
+ * attachments repo and return a markdown link, or '' on failure. Shared by the
+ * support-package and performance-trace paths so the upload logic lives once.
+ */
+async function uploadFeedbackZip(zipPath: string, linkText: string): Promise<string> {
+	const zipData = await fs.readFile(zipPath);
+	const zipBase64 = zipData.toString('base64');
+	const owner = await getGitHubLogin();
+	await ensureAttachmentsRepo(owner);
+	const zipFilename = path.basename(zipPath);
+	const repoPath = `feedback/${Date.now()}-${zipFilename}`;
+	const payloadPath = path.join(os.tmpdir(), `maestro-feedback-zip-${Date.now()}.json`);
+	await fs.writeFile(
+		payloadPath,
+		JSON.stringify({
+			message: `Add feedback attachment ${Date.now()}`,
+			content: zipBase64,
+		}),
+		'utf8'
+	);
+	try {
+		const uploadResult = await execFileNoThrow(
+			await resolveFeedbackGhCommand(),
+			[
+				'api',
+				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
+				'--method',
+				'PUT',
+				'--input',
+				payloadPath,
+			],
+			undefined,
+			getExpandedEnv()
+		);
+		if (uploadResult.exitCode !== 0) {
+			return '';
+		}
+		const uploadJson = JSON.parse(uploadResult.stdout);
+		const rawUrl =
+			uploadJson.content?.download_url ||
+			`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
+		return `[${linkText}](${rawUrl})`;
+	} finally {
+		await fs.unlink(payloadPath).catch(() => {});
+	}
 }
 
 async function composeFeedbackPrompt(
@@ -995,6 +1317,15 @@ export async function submitFeedback(
 		return ghFailureResult(issueCreate.stderr, 'Failed to create GitHub issue.');
 	}
 
+	const issueUrl = issueCreate.stdout.trim();
+	if (issueUrl) {
+		await recordSubmittedIssue({
+			issueUrl,
+			title: buildIssueTitle(normalizedPayload.category, normalizedPayload.summary),
+			category: normalizedPayload.category,
+		});
+	}
+
 	return { success: true };
 }
 
@@ -1132,50 +1463,37 @@ export async function submitFeedbackConversation(
 	let debugPackageMarkdown = '';
 	if (payload.includeDebugPackage && debugPackageDeps) {
 		try {
-			const tmpDir = os.tmpdir();
-			const packageResult = await generateDebugPackage(tmpDir, debugPackageDeps);
+			const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps);
 			if (packageResult.success && packageResult.path) {
-				const zipData = await fs.readFile(packageResult.path);
-				const zipBase64 = zipData.toString('base64');
-				const owner = await getGitHubLogin();
-				await ensureAttachmentsRepo(owner);
-				const zipFilename = path.basename(packageResult.path);
-				const repoPath = `feedback/${Date.now()}-${zipFilename}`;
-				const payloadPath = path.join(tmpDir, `maestro-feedback-debug-${Date.now()}.json`);
-				await fs.writeFile(
-					payloadPath,
-					JSON.stringify({
-						message: `Add feedback debug package ${Date.now()}`,
-						content: zipBase64,
-					}),
-					'utf8'
-				);
-				const uploadResult = await execFileNoThrow(
-					await resolveFeedbackGhCommand(),
-					[
-						'api',
-						`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
-						'--method',
-						'PUT',
-						'--input',
-						payloadPath,
-					],
-					undefined,
-					getExpandedEnv()
-				);
-				await fs.unlink(payloadPath).catch(() => {});
-				await fs.unlink(packageResult.path).catch(() => {});
-				if (uploadResult.exitCode === 0) {
-					const uploadJson = JSON.parse(uploadResult.stdout);
-					const rawUrl =
-						uploadJson.content?.download_url ||
-						`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
-					debugPackageMarkdown = `[maestro-debug-package.zip](${rawUrl})`;
+				try {
+					debugPackageMarkdown = await uploadFeedbackZip(
+						packageResult.path,
+						'maestro-debug-package.zip'
+					);
+				} finally {
+					await fs.unlink(packageResult.path).catch(() => {});
 				}
 			}
 		} catch (e) {
 			void captureException(e);
 			logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
+		}
+	}
+
+	// Upload performance trace if one was captured from the modal. The temp
+	// zip is consumed here and deleted regardless of upload outcome.
+	let performanceTraceMarkdown = '';
+	if (typeof payload.performanceTracePath === 'string' && payload.performanceTracePath) {
+		try {
+			performanceTraceMarkdown = await uploadFeedbackZip(
+				payload.performanceTracePath,
+				'maestro-performance-trace.zip'
+			);
+		} catch (e) {
+			void captureException(e);
+			logger.warn(`Failed to upload performance trace: ${e}`, LOG_CONTEXT);
+		} finally {
+			await fs.unlink(payload.performanceTracePath).catch(() => {});
 		}
 	}
 
@@ -1191,6 +1509,7 @@ export async function submitFeedbackConversation(
 		contextField.value ? `## Additional Context\n${contextField.value}` : null,
 		attachmentMarkdown ? `## Screenshots / Recordings\n${attachmentMarkdown}` : null,
 		debugPackageMarkdown ? `## Support Package\n${debugPackageMarkdown}` : null,
+		performanceTraceMarkdown ? `## Performance Trace\n${performanceTraceMarkdown}` : null,
 	]
 		.filter(Boolean)
 		.join('\n\n');
@@ -1230,6 +1549,9 @@ export async function submitFeedbackConversation(
 
 		// gh issue create prints the issue URL to stdout
 		const issueUrl = issueCreate.stdout.trim();
+		if (issueUrl) {
+			await recordSubmittedIssue({ issueUrl, title, category: payload.category });
+		}
 		return { success: true, issueUrl: issueUrl || undefined };
 	} finally {
 		await fs.unlink(bodyFile).catch(() => {});
@@ -1263,4 +1585,89 @@ export async function composeFeedbackPromptFromText(payload: {
 	const { prompt } = await composeFeedbackPrompt(trimmedFeedback, normalizedAttachments);
 
 	return { prompt };
+}
+
+/** Persisted feedback drafts, most-recently-updated first. */
+export async function listFeedbackDrafts(): Promise<{ drafts: FeedbackDraft[] }> {
+	const drafts = await readDrafts();
+	drafts.sort((a, b) => b.updatedAt - a.updatedAt);
+	return { drafts };
+}
+
+/**
+ * Upsert a draft by id (a new one is minted when missing), then persist the
+ * trimmed, most-recent-first list.
+ */
+export async function saveFeedbackDraft(draft: unknown): Promise<{ draft: FeedbackDraft }> {
+	const incoming = normalizeDraft(draft);
+	return enqueueDraftWrite(async () => {
+		const drafts = await readDrafts();
+		const now = Date.now();
+		const index = drafts.findIndex((d) => d.id === incoming.id);
+		let saved: FeedbackDraft;
+		if (index >= 0) {
+			saved = {
+				...drafts[index],
+				...incoming,
+				createdAt: drafts[index].createdAt,
+				updatedAt: now,
+			};
+			drafts[index] = saved;
+		} else {
+			saved = { ...incoming, createdAt: now, updatedAt: now };
+			drafts.push(saved);
+		}
+		drafts.sort((a, b) => b.updatedAt - a.updatedAt);
+		await writeDrafts(drafts.slice(0, MAX_DRAFTS));
+		return { draft: saved };
+	});
+}
+
+/** Delete a draft by id, then persist the remaining list. */
+export async function deleteFeedbackDraft(id: string): Promise<void> {
+	await enqueueDraftWrite(async () => {
+		const drafts = await readDrafts();
+		await writeDrafts(drafts.filter((d) => d.id !== id));
+	});
+}
+
+/** Submitted-issue history, most-recent-first. */
+export async function listSubmittedIssues(): Promise<{ issues: SubmittedIssue[] }> {
+	const issues = await readSubmittedIssues();
+	issues.sort((a, b) => b.submittedAt - a.submittedAt);
+	return { issues };
+}
+
+/** Delete one history record locally (does not touch GitHub). */
+export async function deleteSubmittedIssue(issueNumber: number): Promise<void> {
+	await enqueueSubmittedIssuesWrite(async () => {
+		const issues = await readSubmittedIssues();
+		await writeSubmittedIssues(issues.filter((i) => i.number !== issueNumber));
+	});
+}
+
+/**
+ * Refresh open/closed state for stored issues via one gh GraphQL call. Falls
+ * back to the cached list unchanged on any gh/network/auth error.
+ */
+export async function refreshSubmittedIssueStates(): Promise<{ issues: SubmittedIssue[] }> {
+	const stored = await readSubmittedIssues();
+	stored.sort((a, b) => b.submittedAt - a.submittedAt);
+	if (stored.length === 0) return { issues: stored };
+
+	const states = await fetchIssueStates(stored.map((i) => i.number));
+	if (!states) return { issues: stored };
+
+	const now = Date.now();
+	const next = stored.map((issue) => {
+		const state = states.get(issue.number);
+		return state ? { ...issue, state, lastCheckedAt: now } : issue;
+	});
+	// Re-read before persisting so a concurrent delete is not clobbered.
+	await enqueueSubmittedIssuesWrite(async () => {
+		const current = await readSubmittedIssues();
+		const byNumber = new Map(next.map((i) => [i.number, i]));
+		await writeSubmittedIssues(current.map((i) => byNumber.get(i.number) ?? i));
+	});
+	return { issues: next };
 }

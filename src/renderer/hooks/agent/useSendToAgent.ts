@@ -510,8 +510,6 @@ export function useSendToAgent(): UseSendToAgentResult {
  * Dependencies for the useSendToAgentWithSessions hook variant
  */
 export interface UseSendToAgentWithSessionsDeps {
-	/** All sessions in the app */
-	sessions: Session[];
 	/** Session setter for updating app state */
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Callback after transfer creates a new session. Receives session ID and name for notification purposes. */
@@ -551,7 +549,6 @@ export interface UseSendToAgentWithSessionsResult extends UseSendToAgentResult {
  *   executeTransfer,
  *   cancelTransfer,
  * } = useSendToAgentWithSessions({
- *   sessions,
  *   setSessions,
  *   onSessionCreated: (id, name) => toast(`Created ${name}`),
  *   onNavigateToSession: (id) => setActiveSessionId(id),
@@ -560,7 +557,7 @@ export interface UseSendToAgentWithSessionsResult extends UseSendToAgentResult {
 export function useSendToAgentWithSessions(
 	deps: UseSendToAgentWithSessionsDeps
 ): UseSendToAgentWithSessionsResult {
-	const { sessions, setSessions, onSessionCreated, onNavigateToSession } = deps;
+	const { setSessions, onSessionCreated, onNavigateToSession } = deps;
 	const baseHook = useSendToAgent();
 
 	/**
@@ -704,7 +701,7 @@ Please confirm you've reviewed this context and let me know you're ready to cont
 
 			return result;
 		},
-		[sessions, setSessions, onSessionCreated, onNavigateToSession, baseHook]
+		[setSessions, onSessionCreated, onNavigateToSession, baseHook]
 	);
 
 	return {

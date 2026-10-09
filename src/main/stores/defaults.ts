@@ -8,6 +8,7 @@
 import path from 'path';
 import { isWindows } from '../../shared/platformDetection';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
+import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
 
 import type {
@@ -90,6 +91,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	fileEditorFontSize: 0,
 	documentGraphFontSize: 0,
 	fontZoom: 1,
+	// The user's own saved fonts and sizes, so the Factory Reset presets are
+	// safe to try. Null until they save one. See shared/typographySnapshot.ts.
 	typographySnapshot: null,
 	typographyPromptSeen: false,
 	themePromptSeen: false,
@@ -106,6 +109,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	webAuthEnabled: false,
 	webAuthToken: null,
 	persistentWebLink: false,
+	webInterfaceAutoStart: false,
 	webInterfaceUseCustomPort: false,
 	webInterfaceCustomPort: 8080,
 	sshRemotes: [],
@@ -117,7 +121,11 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	wakatimeApiKey: '',
 	wakatimeDetailedTracking: false,
 	totalActiveTimeMs: 0,
+	delegationMilestone: 0,
 	lastSelectedPromptId: null,
+	modalSizes: {},
+	concertoStageFloating: false,
+	concertoStagePosition: null,
 	spellCheck: false,
 	usageRefreshIntervals: {},
 	annotatorPenColor: '#9146FF',
@@ -132,6 +140,23 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextFont: 'sans-serif',
 	annotatorTextBgColor: '',
 	globalShowHotkey: [],
+	// Utility agent for auxiliary tasks (tab naming, context grooming); null = use session agent
+	utilityAgentId: null,
+	utilityModelId: null,
+	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
+	coworkingBrowserInteraction: [],
+	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)
+	coworkingBrowserInteractionConfirm: {},
+	// Coworking: opt-in background webview host for cross-session browser access + LRU cap
+	coworkingBackgroundBrowsers: false,
+	coworkingBackgroundBrowsersLimit: 2,
+	// Auto-resume agents that paused on a token/API/credit limit
+	autoResumeOnLimit: true,
+	autoResumeCheckIntervalHours: 2,
+	autoResumeGiveUpDays: 7,
+	// Main-side gates (Cue engine boot start, stats recording) read this raw, so
+	// it must match the renderer's defaults. See shared/encoreFeatureDefaults.ts.
+	encoreFeatures: { ...ENCORE_FEATURE_DEFAULTS },
 	cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	groupCueEntries: true,
 };

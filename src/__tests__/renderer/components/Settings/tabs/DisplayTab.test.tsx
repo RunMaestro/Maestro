@@ -42,6 +42,7 @@ const mockSetBionifyReadingMode = vi.fn();
 const mockSetBionifyIntensity = vi.fn();
 const mockSetBionifyAlgorithm = vi.fn();
 const mockSetUserMessageAlignment = vi.fn();
+const mockSetGroupChatAutoScroll = vi.fn();
 const mockSetFileExplorerIconTheme = vi.fn();
 const mockSetUseNativeTitleBar = vi.fn();
 const mockSetAutoHideMenuBar = vi.fn();
@@ -85,6 +86,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setBionifyAlgorithm: mockSetBionifyAlgorithm,
 		userMessageAlignment: 'right',
 		setUserMessageAlignment: mockSetUserMessageAlignment,
+		groupChatAutoScroll: true,
+		setGroupChatAutoScroll: mockSetGroupChatAutoScroll,
 		fileExplorerIconTheme: 'flat',
 		setFileExplorerIconTheme: mockSetFileExplorerIconTheme,
 		useNativeTitleBar: false,
@@ -262,6 +265,22 @@ describe('DisplayTab', () => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		mockUseSettingsOverrides = {};
+	});
+
+	describe('Group Chats', () => {
+		it('should render and toggle the auto-scroll setting', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			expect(screen.getByText('Group Chats')).toBeInTheDocument();
+			const toggle = screen.getByRole('switch', {
+				name: 'Auto-scroll group chats to newest message',
+			});
+			expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+			fireEvent.click(toggle);
+
+			expect(mockSetGroupChatAutoScroll).toHaveBeenCalledWith(false);
+		});
 	});
 
 	describe('Files Pane Icon Theme', () => {
@@ -929,7 +948,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: '1000' }));
+			fireEvent.click(screen.getByRole('button', { name: '1.0K' }));
 			expect(mockSetMaxLogBuffer).toHaveBeenCalledWith(1000);
 		});
 
@@ -940,7 +959,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: '5000' }));
+			fireEvent.click(screen.getByRole('button', { name: '5.0K' }));
 			expect(mockSetMaxLogBuffer).toHaveBeenCalledWith(5000);
 		});
 
@@ -951,7 +970,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: '10000' }));
+			fireEvent.click(screen.getByRole('button', { name: '10.0K' }));
 			expect(mockSetMaxLogBuffer).toHaveBeenCalledWith(10000);
 		});
 
@@ -962,7 +981,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: '25000' }));
+			fireEvent.click(screen.getByRole('button', { name: '25.0K' }));
 			expect(mockSetMaxLogBuffer).toHaveBeenCalledWith(25000);
 		});
 

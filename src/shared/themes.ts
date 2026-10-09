@@ -565,6 +565,27 @@ export const THEMES: Record<ThemeId, Theme> = {
 			error: '#ff5555',
 		},
 	},
+	'indigo-blue': {
+		id: 'indigo-blue',
+		name: 'Indigo Blue',
+		mode: 'dark',
+		colors: {
+			bgMain: '#010204',
+			bgTitleBar: '#010204',
+			bgSidebar: '#020203',
+			bgActivity: '#030507',
+			border: '#06070a',
+			textMain: '#f2ebc0',
+			textDim: '#c7c2b3',
+			accent: '#1f2f63',
+			accentDim: 'rgba(14, 22, 46, 1)',
+			accentText: '#a9b8df',
+			accentForeground: '#ffffff',
+			success: '#a5b0ca',
+			warning: '#d0a795',
+			error: '#ff5555',
+		},
+	},
 	// Light themes
 	'github-light': {
 		id: 'github-light',
@@ -598,7 +619,9 @@ export const THEMES: Record<ThemeId, Theme> = {
 			bgSidebar: '#eee8d5',
 			bgActivity: '#e6dfc8',
 			border: '#d3cbb7',
-			textMain: '#5f737b',
+			// Solarized base02. The previous #5f737b sat at 4.61:1, which left dimmed
+			// secondary text below the 3:1 floor no matter how light the dimming.
+			textMain: '#073642',
 			textDim: '#606969',
 			accent: '#207c76',
 			accentDim: 'rgba(32, 124, 118, 0.1)',

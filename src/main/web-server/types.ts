@@ -3,12 +3,25 @@
  * All web server components should import types from this file to avoid duplication.
  */
 
+import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
+import type { CadenzaPayload } from '../../shared/cadenza-types';
+import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type { AgentDelegationNotice } from '../../shared/agentDelegation';
+import type { WebActingUser } from '../../shared/webLogin';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	MovementDesignerInspection,
+} from '../../shared/concerto-html';
 import type { MediaOpenMode } from '../../shared/mediaTypes';
 import type { DebugPackageDependencies } from '../debug-package';
 
@@ -52,7 +65,7 @@ export interface AITabData {
 	name: string | null;
 	starred: boolean;
 	inputValue: string;
-	usageStats?: SessionUsageStats | null;
+	usageStats?: UsageStats | null;
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
@@ -179,34 +192,12 @@ export interface SessionBroadcastData {
 
 /**
  * Auto Run state for broadcast messages.
+ *
+ * Alias of the shared cross-boundary shape. The renderer's IPC signature, the
+ * main-process handler, and this file all name the same type so a new field
+ * cannot be added at one end and silently dropped at another.
  */
-export interface AutoRunState {
-	isRunning: boolean;
-	totalTasks: number;
-	completedTasks: number;
-	currentTaskIndex: number;
-	isStopping?: boolean;
-	/** Total number of documents in the run (multi-document progress) */
-	totalDocuments?: number;
-	/** Current document being processed (0-based, multi-document progress) */
-	currentDocumentIndex?: number;
-	/** Total tasks across all documents (multi-document progress) */
-	totalTasksAcrossAllDocs?: number;
-	/** Completed tasks across all documents (multi-document progress) */
-	completedTasksAcrossAllDocs?: number;
-	/** True if batch is paused waiting for error resolution (Phase 5.10) */
-	errorPaused?: boolean;
-	/** Human-readable description of the error that paused the run */
-	errorMessage?: string;
-	/** Error type tag (e.g. 'rate_limit', 'auth', 'context_window') */
-	errorType?: string;
-	/** Whether the error is recoverable (resume vs. abort) */
-	errorRecoverable?: boolean;
-	/** Document index that hit the error (for skip-document UI) */
-	errorDocumentIndex?: number;
-	/** Description of the task that failed (for UI display) */
-	errorTaskDescription?: string;
-}
+export type AutoRunState = AutoRunBroadcastState;
 
 /**
  * CLI activity data for session state broadcasts.
@@ -229,6 +220,20 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/**
+	 * The Web Login account behind this socket, resolved once at the upgrade
+	 * from the session cookie. Undefined when the gate is off and for
+	 * `maestro-cli` (admitted by its secret, not signed in), both of which mean
+	 * "the desktop" to `getActingUser()`. Every bridge dispatch from this client
+	 * runs in this user's acting context.
+	 */
+	user?: WebActingUser;
+	/**
+	 * The session the account was resolved from. Revocation is keyed on THIS,
+	 * not on the account: a password reset or a logout removes the session
+	 * while the account stays, and the socket must still go.
+	 */
+	sessionId?: string;
 }
 
 /**
@@ -242,6 +247,18 @@ export interface WebClientMessage {
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
+	/**
+	 * `dispatch --notify-on-complete <agent>`: agent to wake with a real turn
+	 * when THIS dispatch finishes. Accepted on send_command,
+	 * new_ai_tab_with_prompt and enqueue_command.
+	 */
+	notifyOnComplete?: string;
+	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	callbackTab?: string;
+	/** Overrides the default callback prompt body. */
+	callbackPrompt?: string;
+	/** Give-up window for the callback, in seconds. */
+	callbackTimeout?: number;
 	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
 	background?: boolean;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
@@ -333,16 +350,42 @@ export type NewTabCallback = (
 	background?: boolean
 ) => Promise<{ tabId: string } | null>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
+export interface RenameTabResult {
+	success: boolean;
+	error?: string;
+	unconfirmed?: boolean;
+}
+
+export function normalizeRenameTabResult(result: unknown): RenameTabResult {
+	if (typeof result === 'boolean') return { success: result };
+	if (result && typeof result === 'object' && 'success' in result) {
+		const candidate = result as { success?: unknown; error?: unknown; unconfirmed?: unknown };
+		return {
+			success: candidate.success === true,
+			...(typeof candidate.error === 'string' ? { error: candidate.error } : {}),
+			...(candidate.unconfirmed === true ? { unconfirmed: true } : {}),
+		};
+	}
+	return { success: false, error: 'Invalid rename tab response' };
+}
+
 export type RenameTabCallback = (
 	sessionId: string,
 	tabId: string,
 	newName: string
-) => Promise<boolean>;
+) => Promise<boolean | RenameTabResult>;
 export type StarTabCallback = (
 	sessionId: string,
 	tabId: string,
 	starred: boolean
 ) => Promise<boolean>;
+/**
+ * One snooze verb, forwarded to the renderer - which owns the authoritative
+ * snooze state - and answered with whatever it did. Resolves rather than
+ * rejects on a miss: the caller is a CLI process reporting to a human, and a
+ * thrown error there reads as a broken command instead of "no such snooze".
+ */
+export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
 export type ReorderTabCallback = (
 	sessionId: string,
 	fromIndex: number,
@@ -398,12 +441,132 @@ export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
  * --new-tab`) can address the same tab on later calls without owning a persistent
  * channel.
  */
-export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
+/**
+ * Consult another agent and return its answer (`maestro-cli ask`).
+ *
+ * Rides the same cross-agent consult path a typed `@mention` does - a hidden
+ * tab on the target, no focus, no unread - but resolves with the answer instead
+ * of streaming it into a chat bubble, because the caller here is an agent
+ * waiting on a tool result rather than a human reading a transcript.
+ */
+export type ConsultAgentParams = {
+	targetSessionId: string;
+	question: string;
+	/** The calling agent, when it named itself. Attribution + continuity. */
+	fromSessionId?: string;
+	/** The calling agent's AI tab, when its spawn stamped one. Places the consult pill. */
+	fromTabId?: string;
+	/** Forward the caller's transcript as context (off by default). */
+	withContext?: boolean;
+	/** How long the caller is willing to wait, already clamped by the CLI. */
+	timeoutMs: number;
+};
+export type ConsultAgentResult = {
+	success: boolean;
+	answer?: string;
+	error?: string;
+	canceled?: boolean;
+	targetAgentName?: string;
+	targetTabId?: string;
+};
+export type ConsultAgentCallback = (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
+/**
+ * Mark a delivered CLI dispatch in the transcript of the agent that ran it
+ * (`maestro-cli dispatch` from an agent's shell). Fire-and-forget: the dispatch
+ * already succeeded, and the pill is a record of it, not part of it.
+ */
+export type NoteAgentDelegationCallback = (notice: AgentDelegationNotice) => void;
+/**
+ * Result of `dispatch --new-tab`. The tab is created either way; `queued` says
+ * whether its prompt started immediately or joined the agent's execution queue
+ * because the agent was mid-turn. `error` carries the renderer's own reason for
+ * a refusal, so the CLI can report what actually happened instead of inferring
+ * one from a missing tab id.
+ */
+export type NewAITabWithPromptResult = {
+	success: boolean;
+	tabId?: string;
+	queued?: boolean;
+	error?: string;
+};
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
 	prompt: string,
 	background?: boolean
 ) => Promise<NewAITabWithPromptResult>;
+/**
+ * Result of enqueuing (or immediately dispatching) a CLI prompt into the
+ * renderer's authoritative execution queue. When the target session is busy the
+ * prompt joins `session.executionQueue` (FIFO by timestamp); when idle it is
+ * dispatched immediately through the same path as a plain `dispatch`. Surfaced
+ * so `maestro-cli dispatch --queue` can report the queue position to callers.
+ */
+export type EnqueueCommandFailureReason = 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
+export type EnqueueCommandResult = {
+	success: boolean;
+	tabId?: string;
+	/** True when the prompt was queued (session busy); false when dispatched now. */
+	queued?: boolean;
+	/** 1-based position in the queue when queued (1 = next to run). */
+	queuePosition?: number;
+	/** Total number of items in the queue after enqueuing. */
+	queueLength?: number;
+	/** Id of the queued item, for later tracking or removal. */
+	itemId?: string;
+	error?: string;
+	/**
+	 * Machine-readable cause of a failure, so callers can react to a specific
+	 * one without parsing `error`. Dispatch callbacks use `tab-not-found` to
+	 * fall back to agent-level delivery when a `--callback-tab` has since been
+	 * closed (see `deliverCallback` in `dispatch-callbacks/`).
+	 */
+	reason?: EnqueueCommandFailureReason;
+};
+export type EnqueueCommandCallback = (
+	sessionId: string,
+	command: string,
+	inputMode?: 'ai' | 'terminal',
+	tabId?: string,
+	images?: string[],
+	background?: boolean
+) => Promise<EnqueueCommandResult>;
+/**
+ * A single queued item, mirrored from the renderer's executionQueue for CLI
+ * inspection (`maestro-cli queue list`). Tracks the renderer QueuedItem shape.
+ */
+export interface QueuedItemSnapshot {
+	id: string;
+	timestamp: number;
+	tabId: string;
+	type: 'message' | 'command';
+	text?: string;
+	command?: string;
+	commandArgs?: string;
+	tabName?: string;
+	paused?: boolean;
+}
+/**
+ * Per-session queue snapshot returned by the list_queue round-trip. Carries the
+ * session state alongside the queued items so `maestro-cli queue list` can show
+ * whether the agent is currently busy.
+ */
+export interface QueueSessionSnapshot {
+	sessionId: string;
+	name: string;
+	state: string;
+	items: QueuedItemSnapshot[];
+}
+export type ListQueueResult = {
+	success: boolean;
+	queues: QueueSessionSnapshot[];
+	error?: string;
+};
+export type ListQueueCallback = (sessionId?: string) => Promise<ListQueueResult>;
+export type RemoveQueueItemResult = { success: boolean; removed: boolean; error?: string };
+export type RemoveQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<RemoveQueueItemResult>;
 /**
  * Opens a URL as a browser tab in the desktop app.
  *
@@ -629,6 +792,23 @@ export interface NotifyCenterFlashParams {
 }
 
 export type NotifyToastCallback = (params: NotifyToastParams) => Promise<boolean>;
+/** Open/update/close an agent-driven cadenza view. Resolves true on success. */
+export type CadenzaViewCallback = (params: CadenzaPayload) => Promise<boolean>;
+
+/** Add/update/move/remove/clear an item on the agent-driven movement. */
+export type MovementViewCallback = (params: MovementPayload) => Promise<boolean>;
+
+/** Read the current movement snapshot (items + size) for agent awareness. */
+export type GetMovementStateCallback = () => Promise<MovementStateSnapshot | null>;
+/** Capture the live HTML Movement viewport plus its runtime diagnostics. */
+export type GetMovementDesignerInspectionCallback = (
+	id: string
+) => Promise<MovementDesignerInspection | null>;
+/** Perform one selector-scoped action inside a sandboxed HTML Movement. */
+export type InteractMovementDesignerCallback = (
+	id: string,
+	action: ConcertoDesignerAction
+) => Promise<ConcertoDesignerActionResult>;
 export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
 /**
  * Everything a support package collects from (agent detector, process manager,
@@ -645,6 +825,13 @@ export type ConfigureAutoRunCallback = (
 		maxLoops?: number;
 		saveAsPlaybook?: string;
 		launch?: boolean;
+		/**
+		 * Per-run model/effort override (CLI `--model` / `--effort`). Wins over the
+		 * session's configured model for this run's spawns only; never written back
+		 * to the session. Absent means "use the agent default".
+		 */
+		model?: string;
+		effort?: string;
 		worktree?: {
 			enabled: boolean;
 			path: string;
@@ -654,6 +841,37 @@ export type ConfigureAutoRunCallback = (
 		};
 	}
 ) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+
+/**
+ * Launch a Goal-Driven Auto Run that the DESKTOP owns, from the CLI
+ * (`goal-run --visible`). Distinct from `ConfigureAutoRunCallback`, which is
+ * document/playbook-driven: goal mode has no documents, so it carries a
+ * `GoalRunConfig` instead and routes to the same `startBatchRun({ goalConfig })`
+ * entry point the Auto Run modal's Go button uses.
+ *
+ * Resolves only once the renderer has confirmed the run actually reached a
+ * running state (or failed to start). Reporting "launched" before that would
+ * hand the CLI a success for a run that silently bailed on a missing prompt
+ * template or the Auto Run kill switch.
+ */
+export type LaunchGoalRunCallback = (
+	sessionId: string,
+	config: {
+		goal: string;
+		exitCriteria?: string;
+		maxIterations?: number | null;
+		/** Per-run model/effort override - wins over the session model for this run only. */
+		model?: string;
+		effort?: string;
+	}
+) => Promise<{
+	success: boolean;
+	/** Id of the AI tab the run surfaces on, for the `maestro://` deep link. */
+	tabId?: string;
+	/** Stable machine-readable failure code (AGENT_BUSY, SESSION_NOT_FOUND, ...). */
+	code?: string;
+	error?: string;
+}>;
 
 /**
  * Callback type for fetching current theme.
@@ -709,6 +927,8 @@ export interface SessionHistoryResult {
 	sessionId: string;
 	agentId: string;
 	agentSessionId: string | null;
+	/** Agent working directory, when known. Used for project-scoped automation. */
+	projectPath?: string;
 	messages: SessionHistoryMessage[];
 }
 
@@ -780,6 +1000,7 @@ export interface GroupData {
 	id: string;
 	name: string;
 	emoji: string | null;
+	parentGroupId?: string;
 	sessionIds: string[];
 }
 
@@ -903,8 +1124,19 @@ export interface NotificationEvent {
 export type GetSettingsCallback = () => WebSettings;
 export type SetSettingCallback = (key: string, value: SettingValue) => Promise<boolean>;
 export type GetGroupsCallback = () => GroupData[];
-export type CreateGroupCallback = (name: string, emoji?: string) => Promise<{ id: string } | null>;
+export type CreateGroupCallback = (
+	name: string,
+	emoji?: string,
+	parentGroupId?: string,
+	appearance?: GroupAppearance
+) => Promise<{ id: string } | null>;
 export type RenameGroupCallback = (groupId: string, name: string) => Promise<boolean>;
+/**
+ * Apply a validated group update. Resolves `false` when the group is gone or
+ * the requested reparent would break the one-level nesting rule - the renderer
+ * is the only place that can answer either question.
+ */
+export type UpdateGroupCallback = (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
 export type DeleteGroupCallback = (groupId: string) => Promise<boolean>;
 export type MoveSessionToGroupCallback = (
 	sessionId: string,
@@ -923,6 +1155,14 @@ export interface CreateSessionConfig {
 	customModel?: string;
 	customEffort?: string;
 	customContextWindow?: number;
+	/**
+	 * Provenance of {@link customContextWindow} (finding AD1). `'user-edited'`
+	 * only when a human deliberately chose the number - typing
+	 * `--context-window` on the CLI qualifies. The desktop New Agent modal does
+	 * NOT set it: its control is seeded from the agent-level config, so that
+	 * write is a materialization of the default rather than a choice.
+	 */
+	contextWindowSource?: 'user-edited';
 	customProviderPath?: string;
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

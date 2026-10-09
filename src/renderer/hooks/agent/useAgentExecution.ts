@@ -7,7 +7,7 @@ import {
 	resolveQueuedItemTarget,
 } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
@@ -16,10 +16,12 @@ import {
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
-// Type-only, so the cycle with useDocumentProcessor (which imports
-// AgentSpawnErrorKind from here) is erased at build. One definition of the
-// override shape keeps the declared signature and the implementation in step.
-import type { AutoRunTurnOverrides } from '../batch/useDocumentProcessor';
+import {
+	FALLBACK_CONTEXT_WINDOW,
+	getModelContextWindowOverride,
+} from '../../../shared/agentConstants';
+import { isFailedSynopsisResponse } from '../../../shared/synopsis';
+import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
 
@@ -39,6 +41,28 @@ export interface AgentSpawnResult {
 	errorKind?: AgentSpawnErrorKind;
 }
 
+/**
+ * Per-spawn options for `spawnAgentForSession`.
+ *
+ * The model/effort overrides are run-scoped: an Auto Run can use a different
+ * model than the agent's configured default without writing anything back to
+ * the session. They win over `session.customModel` / `session.customEffort`
+ * because the Auto Run spawn path has no active tab to consult.
+ */
+export interface SpawnAgentOptions {
+	isAutoRun?: boolean;
+	/** Overrides session.customModel for this spawn only */
+	modelOverride?: string;
+	/** Overrides session.customEffort for this spawn only */
+	effortOverride?: string;
+}
+
+/**
+ * The subset of spawn options the batch/goal runners forward from a
+ * `BatchRunConfig`. `isAutoRun` is supplied by the wiring layer, not the runner.
+ */
+export type SpawnAgentRunOverrides = Pick<SpawnAgentOptions, 'modelOverride' | 'effortOverride'>;
+
 export type AgentSpawnErrorKind =
 	| 'watchdog-stalled'
 	| 'watchdog-timeout'
@@ -52,8 +76,8 @@ const BATCH_WATCHDOG_CHECK_MS = 15 * 1000; // Check every 15 seconds
  * Dependencies for the useAgentExecution hook.
  */
 export interface UseAgentExecutionDeps {
-	/** Current active session (null if none selected) */
-	activeSession: Session | null;
+	/** Active session id (null if none selected). Session fields are read from sessionsRef at call time. */
+	activeSessionId: string | null;
 	/** Ref to sessions for accessing latest state without re-renders */
 	sessionsRef: React.MutableRefObject<Session[]>;
 	/** Session state setter */
@@ -77,9 +101,7 @@ export interface UseAgentExecutionReturn {
 		sessionId: string,
 		prompt: string,
 		cwdOverride?: string,
-		options?: {
-			isAutoRun?: boolean;
-		} & AutoRunTurnOverrides
+		options?: SpawnAgentOptions
 	) => Promise<AgentSpawnResult>;
 	/** Spawn an agent with a prompt for the active session */
 	spawnAgentWithPrompt: (prompt: string) => Promise<AgentSpawnResult>;
@@ -158,7 +180,7 @@ export interface UseAgentExecutionReturn {
  */
 export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutionReturn {
 	const {
-		activeSession,
+		activeSessionId,
 		sessionsRef,
 		setSessions,
 		processQueuedItemRef,
@@ -201,6 +223,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * @param sessionId - The session ID to spawn the agent for
 	 * @param prompt - The prompt to send to the agent
 	 * @param cwdOverride - Optional override for working directory (e.g., for worktree mode)
+	 * @param options - Per-spawn options, including the run-scoped model/effort overrides
 	 */
 	const spawnAgentForSession = useCallback(
 		async (
@@ -208,13 +231,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			prompt: string,
 			cwdOverride?: string,
 			/**
-			 * `modelOverride` / `effortOverride` are the per-task values from an
-			 * Auto Run document's model hint. Absent on every other call path, in
-			 * which case the agent's own configured values are used.
+			 * `modelOverride` / `effortOverride` carry whatever the caller resolved for
+			 * this spawn: an Auto Run document's per-task model hint, else the run-scoped
+			 * override from the Auto Run config or `--model`. Absent on every other call
+			 * path, in which case the agent's own configured values are used.
 			 */
-			options?: {
-				isAutoRun?: boolean;
-			} & AutoRunTurnOverrides
+			options?: SpawnAgentOptions
 		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -526,36 +548,60 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						})
 					);
 
-					// Watchdog for hung Auto Run batch tasks: detect long silence and force-kill.
-					// A value of 0 means "unlimited" - skip the watchdog entirely.
+					// Watchdog for hung Auto Run batch tasks. Two independent triggers,
+					// each with a 0 = "unlimited" sentinel that disables it:
+					//   1. Inactivity: force-kill after a stretch of NO output. Catches a
+					//      truly silent/hung agent.
+					//   2. Max duration: force-kill once total wall-clock runtime exceeds a
+					//      cap, regardless of output. Catches a stuck-but-chatty agent that
+					//      keeps emitting (resetting lastOutputAt) yet never finishes the
+					//      task, which would otherwise defeat the inactivity watchdog and
+					//      hang the whole multi-document Auto Run loop forever, since the
+					//      per-document loop only advances once processTask resolves.
+					// Both resolve the task as a failure so the batch loop terminates this
+					// document (see isWatchdogFailure handling in useBatchRunner).
 					if (isBatchProcess) {
-						const inactivityTimeoutMin = useSettingsStore.getState().autoRunInactivityTimeoutMin;
-						if (inactivityTimeoutMin > 0) {
-							const inactivityTimeoutMs = inactivityTimeoutMin * 60 * 1000;
+						const { autoRunInactivityTimeoutMin, autoRunMaxTaskDurationMin } =
+							useSettingsStore.getState();
+						const inactivityTimeoutMs =
+							autoRunInactivityTimeoutMin > 0 ? autoRunInactivityTimeoutMin * 60 * 1000 : 0;
+						const maxDurationMs =
+							autoRunMaxTaskDurationMin > 0 ? autoRunMaxTaskDurationMin * 60 * 1000 : 0;
 
+						if (inactivityTimeoutMs > 0 || maxDurationMs > 0) {
 							inactivityTimer = setInterval(() => {
 								if (settled) return;
-								if (Date.now() - lastOutputAt <= inactivityTimeoutMs) return;
-								window.maestro.process.kill(targetSessionId).catch(() => {});
-								resolveOnce({
-									success: false,
-									error: `Agent task stalled: no output for ${inactivityTimeoutMin} minutes`,
-									errorKind: 'watchdog-stalled',
-									response: responseText,
-									agentSessionId,
-									usageStats: taskUsageStats,
-								});
+								const now = Date.now();
+
+								// Absolute wall-clock cap (activity-independent).
+								if (maxDurationMs > 0 && now - queryStartTime > maxDurationMs) {
+									window.maestro.process.kill(targetSessionId).catch(() => {});
+									resolveOnce({
+										success: false,
+										error: `Agent task exceeded the maximum duration of ${autoRunMaxTaskDurationMin} minutes`,
+										errorKind: 'watchdog-timeout',
+										response: responseText,
+										agentSessionId,
+										usageStats: taskUsageStats,
+									});
+									return;
+								}
+
+								// Silence-based inactivity watchdog.
+								if (inactivityTimeoutMs > 0 && now - lastOutputAt > inactivityTimeoutMs) {
+									window.maestro.process.kill(targetSessionId).catch(() => {});
+									resolveOnce({
+										success: false,
+										error: `Agent task stalled: no output for ${autoRunInactivityTimeoutMin} minutes`,
+										errorKind: 'watchdog-stalled',
+										response: responseText,
+										agentSessionId,
+										usageStats: taskUsageStats,
+									});
+								}
 							}, BATCH_WATCHDOG_CHECK_MS);
 						}
 					}
-
-					// Spawn the agent for batch processing
-					// Use effectiveCwd which may be a worktree path for parallel execution
-					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-						isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
-						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Batch/Auto Run does not send images
-					});
 
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
 					window.maestro.process
@@ -568,20 +614,35 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							prompt,
 							appendSystemPrompt,
 							readOnlyMode: false, // Auto Run needs to make changes, not plan
+							// Auto Run runs unattended in --print mode, so it must have full
+							// access - the same permission level as an interactive tab set to
+							// "full". Without this, agents whose bypass is gated on full access
+							// (e.g. Claude Code's --dangerously-skip-permissions in fullAccessArgs)
+							// fall back to the default permission model, can't get tool approvals
+							// non-interactively, and deadlock the run.
+							permissionMode: 'full',
 							// Per-session config overrides (if set)
 							sessionCustomPath: session.customPath,
 							sessionCustomArgs: session.customArgs,
+							sessionAdditionalDirectories: session.additionalDirectories,
 							sessionCustomEnvVars: session.customEnvVars,
+							// A resolved override (document model hint, Auto Run model picker,
+							// CLI --model) wins over the session's configured model. There is no
+							// active tab in this path, so the override sits directly above
+							// session.customModel and never touches the session itself - it dies
+							// when the run ends.
 							sessionCustomModel: options?.modelOverride ?? session.customModel,
-							// The agent's effort was silently dropped here while the CLI Auto Run
-							// path passed it through, so the same playbook ran at different effort
-							// depending on whether it was launched from the app or maestro-cli.
+							// Auto Run is session-level (no active tab), so the session's effort
+							// is the source. Interactive spawns pass this too; omitting it here
+							// dropped the user's configured reasoning effort in Auto Run, which for
+							// Codex meant no reasoning summary was streamed (Thought Stream stayed
+							// stuck on "Waiting for the agent to start thinking...") - see #1147.
+							// It also made the same playbook run at a different effort depending on
+							// whether it was launched from the app or maestro-cli, which passed it.
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
 							// Origin of the turn. Auto Run is the one dispatcher that reaches
 							// this path without a human in the loop; everything else here is a
 							// slash command or another user action, so it stays 'user'.
@@ -609,10 +670,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 */
 	const spawnAgentWithPrompt = useCallback(
 		async (prompt: string): Promise<AgentSpawnResult> => {
-			if (!activeSession) return { success: false };
-			return spawnAgentForSession(activeSession.id, prompt, undefined, { isAutoRun: false });
+			if (!activeSessionId) return { success: false };
+			return spawnAgentForSession(activeSessionId, prompt, undefined, { isAutoRun: false });
 		},
-		[activeSession, spawnAgentForSession]
+		[activeSessionId, spawnAgentForSession]
 	);
 
 	/**
@@ -637,6 +698,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
 				customModel?: string;
+				customEffort?: string;
 				customContextWindow?: number;
 				// Claude token-source selection. The synopsis spawns under a synthetic
 				// sessionId, so the process:spawn handler can't resolve the token mode
@@ -665,6 +727,23 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				}
 
 				const cheapSynopsis = cheapTurnSettings(toolType);
+
+				// The cheap tier is a MODEL swap, and a model carries a context
+				// window with it. Resuming replays the whole transcript, so
+				// downgrading an agent running Anthropic's 1M beta (`opus[1m]`)
+				// onto a 200k model makes every synopsis of a long conversation
+				// fail with "Prompt is too long" - the transcript fit the tab's
+				// model and cannot fit the cheap one. Keep the tab's model
+				// whenever the downgrade would shrink the window; effort still
+				// drops to the bottom rung, since that costs nothing to read.
+				const tabContextWindow = getModelContextWindowOverride(sessionConfig?.customModel);
+				const cheapContextWindow = getModelContextWindowOverride(cheapSynopsis.model);
+				const downgradeShrinksWindow =
+					(tabContextWindow ?? FALLBACK_CONTEXT_WINDOW) >
+					(cheapContextWindow ?? FALLBACK_CONTEXT_WINDOW);
+				const synopsisModel = downgradeShrinksWindow
+					? sessionConfig?.customModel
+					: (cheapSynopsis.model ?? sessionConfig?.customModel);
 
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
@@ -719,18 +798,34 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					);
 
 					cleanupFns.push(
-						window.maestro.process.onExit((sid: string) => {
+						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
 								cleanup();
 								const ctx = lastSynopsisUsageEvent
 									? (estimateContextUsage(lastSynopsisUsageEvent, toolType) ?? undefined)
 									: undefined;
+								// A failed synopsis still writes to stdout: the provider
+								// prints its error ("Prompt is too long") and exits. Reported
+								// as a success, that text is parsed as a summary and lands in
+								// History as the record of the turn, AND stamps
+								// lastSynopsisTime - so the next synopsis skips everything the
+								// agent did before the failure. Report the failure instead and
+								// let the caller write nothing.
+								const failed =
+									(typeof code === 'number' && code !== 0) ||
+									isFailedSynopsisResponse(responseText, toolType);
 								resolve({
-									success: true,
+									success: !failed,
 									response: responseText,
 									agentSessionId,
 									usageStats: synopsisUsageStats,
 									contextUsage: ctx,
+									...(failed
+										? {
+												error: stripAnsiCodes(responseText).trim() || `exit code ${code}`,
+												errorKind: 'process-exit' as const,
+											}
+										: {}),
 								});
 							}
 						})
@@ -746,11 +841,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							effectiveSessionSshRemoteConfig = mainSession.sessionSshRemoteConfig;
 						}
 					}
-					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-						isSshSession: !!effectiveSessionSshRemoteConfig?.enabled,
-						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Resume path does not send images
-					});
 					window.maestro.process
 						.spawn({
 							sessionId: targetSessionId,
@@ -776,14 +866,15 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// tab's model, because running a few sentences of prose on the model
 							// that just did the engineering is pure waste - one premium turn per
 							// completed turn, forever. Falls back to the tab's own model where
-							// the provider has no tier mapping.
+							// the provider has no tier mapping, or where the cheap model's
+							// context window is smaller than the tab's (see synopsisModel).
 							//
 							// Safe only because the synopsis is a LEAF: every caller discards the
 							// agentSessionId it returns rather than adopting it, so the cheap
 							// model cannot follow the conversation into the next real turn. A
 							// future caller that adopts that id must revisit this.
-							sessionCustomModel: cheapSynopsis.model ?? sessionConfig?.customModel,
-							sessionCustomEffort: cheapSynopsis.effort,
+							sessionCustomModel: synopsisModel,
+							sessionCustomEffort: cheapSynopsis.effort ?? sessionConfig?.customEffort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the
@@ -793,8 +884,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							...getClaudeTokenSourceFields(sessionConfig),
 							// Always use effective SSH remote config if available
 							sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
 						})
 						.catch(() => {
 							cleanup();

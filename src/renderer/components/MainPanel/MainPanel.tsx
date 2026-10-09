@@ -9,38 +9,88 @@ import { TabBar } from '../TabBar';
 import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
+import {
+	useAgentModelEffortOptions,
+	resolveModelEffort,
+} from '../../hooks/agent/useAgentModelEffortOptions';
 import { useUIStore } from '../../stores/uiStore';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
+import { getTabDerivedState } from '../../hooks/tabs/useTabHandlers';
+import {
+	breakApartGroup,
+	collectLeafTabRefs,
+	generateGroupName,
+	resolveTabRefTitle,
+} from '../../utils/panelLayout';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
+import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingBufferResponder';
+import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
+import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { useRemoteTerminalBufferResponder } from '../../hooks/terminal/useRemoteTerminalBufferResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
-import { aiTabFocusFields, getTabDisplayName } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	computeQueuedTabIds,
+	computeUnreadGroupIds,
+	focusAiTabInSession,
+	groupFocusFields,
+} from '../../utils/tabHelpers';
+import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { useGitInfo } from '../../hooks/mainPanel/useGitInfo';
-import { useProviderTurnOptions } from '../../hooks/agent/useProviderTurnOptions';
 import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
+import { PianolaDashboard } from '../PianolaDashboard';
+import { PianolaDashboardTab } from '../PianolaDashboard/PianolaTabControls';
+import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
+import { CoworkingBackgroundBrowsers } from '../coworking/CoworkingBackgroundBrowsers';
+import { useWindowOwnsSession } from '../../contexts/WindowContext';
+import type { PaneFileActions, PaneTabActions } from './TiledLayout';
+import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
+
+/**
+ * Empty placeholder shown when this window has no agent to display - either no
+ * agent is active, or the active agent now lives in another window (multi-window
+ * scoping). Kept module-scope so both the "no active session" and "active agent
+ * owned elsewhere" branches render the identical clean state.
+ */
+function EmptyMainPanel({ theme }: { theme: Theme }) {
+	return (
+		<div
+			className="flex-1 flex flex-col items-center justify-center min-w-0 relative opacity-30"
+			style={{ backgroundColor: theme.colors.bgMain }}
+		>
+			<Wand2 className="w-16 h-16 mb-4" style={{ color: theme.colors.textDim }} />
+			<p className="text-sm" style={{ color: theme.colors.textDim }}>
+				No agents. Create one to get started.
+			</p>
+		</div>
+	);
+}
 
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
 // due to input value changes. The component will only re-render when its props actually change.
 export const MainPanel = React.memo(
 	forwardRef<MainPanelHandle, MainPanelProps>(function MainPanel(props, ref) {
+		// PERF: Self-source the full active Session so streaming log/token updates
+		// re-render MainPanel without requiring MaestroConsoleInner to re-render.
+		const activeSession = useSessionStore(selectActiveSession);
+
 		const {
 			logViewerOpen,
 			agentSessionsOpen,
 			memoryViewerOpen,
 			activeAgentSessionId,
-			activeSession,
-			thinkingItems,
 			theme,
 			stagedImages,
 			commandHistoryOpen,
@@ -59,12 +109,15 @@ export const MainPanel = React.memo(
 			atMentionOpen,
 			atMentionFilter,
 			atMentionStartIndex,
-			atMentionSuggestions,
+			atMentionItems,
+			atMentionCounts,
+			atMentionCategory,
 			selectedAtMentionIndex,
 			setAtMentionOpen,
 			setAtMentionFilter,
 			setAtMentionStartIndex,
 			setSelectedAtMentionIndex,
+			setAtMentionCategory,
 			setGitDiffPreview,
 			setLogViewerOpen,
 			setAgentSessionsOpen,
@@ -127,8 +180,13 @@ export const MainPanel = React.memo(
 			onCancelMerge,
 			// Inline wizard exit handler
 			onExitWizard,
-			onStopWizardTurn,
 		} = props;
+
+		// The panel's 400px floor keeps the header usable when the desktop layout
+		// squeezes it between two sidebars. A phone is 390px wide with no sidebars
+		// beside it, so the floor made the panel 10px wider than the screen and
+		// pushed the header's last button past the edge.
+		const phone = usePhoneLayout();
 
 		// Phase 3C: Direct store subscriptions (migrated from props)
 		const logLevel = useSettingsStore((s) => s.logLevel);
@@ -145,15 +203,83 @@ export const MainPanel = React.memo(
 		);
 		const showUnreadOnly = useUIStore((s) => s.showUnreadOnly);
 
+		// Pianola workspace: the pinned Chat/Dashboard view toggle and a live count
+		// of agents waiting on the user (badged on the Dashboard tab).
+		const pianolaView = useUIStore((s) => s.pianolaView);
+		const setPianolaView = useUIStore((s) => s.setPianolaView);
+		const pianolaNeedsInputCount = useSessionStore(
+			(s) =>
+				s.sessions.filter((x) => !x.isPianola && !x.parentSessionId && x.state === 'waiting_input')
+					.length
+		);
+		// Pianola's manager chrome is Encore-gated, and RENDER has to ask the same
+		// question the navigable lists do. The agent persists in the session store
+		// after the flag is switched off (so re-enabling restores the same chat) and
+		// `filterSessionsVisibleInSidebar` drops it from the Left Bar and its keyboard
+		// orders - but any path that still reaches it (the command palette's agent
+		// switcher, a toast jump, `maestro-cli focus-agent`) would otherwise paint the
+		// Pianola Dashboard over the main panel for a feature the user has switched
+		// off, with no Left Bar row to click back from. Gated here it falls through to
+		// the ordinary claude-code agent render.
+		const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+		const showPianolaWorkspace = Boolean(activeSession?.isPianola) && Boolean(pianolaEnabled);
+
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
 		const isCurrentSessionStopping = currentSessionBatchState?.isStopping || false;
+
+		// Pianola uses the standard multi-type TabBar. Selecting or creating ANY
+		// tab must leave the pinned Dashboard view and show that tab's content, so
+		// wrap the tab handlers to flip pianolaView→'chat' first. Memoized to keep
+		// TabBar's React.memo effective (stable identities across renders).
+		const pianolaTabHandlers = useMemo(() => {
+			// Required handlers stay functions (safe no-op if the raw prop is
+			// missing); optional handlers preserve `undefined` so NewTabPopover
+			// doesn't show dead File/Browser/Terminal actions.
+			const req =
+				<A extends unknown[]>(fn?: (...a: A) => void) =>
+				(...a: A) => {
+					setPianolaView('chat');
+					fn?.(...a);
+				};
+			const opt = <A extends unknown[]>(fn?: (...a: A) => void) =>
+				fn
+					? (...a: A) => {
+							setPianolaView('chat');
+							fn(...a);
+						}
+					: undefined;
+			return {
+				onTabSelect: req(props.onTabSelect),
+				onNewTab: req(props.onNewTab),
+				onNewFileTab: opt(props.onNewFileTab),
+				onNewBrowserTab: opt(props.onNewBrowserTab),
+				onNewTerminalTab: opt(props.onNewTerminalTab),
+				onFileTabSelect: opt(props.onFileTabSelect),
+				onBrowserTabSelect: opt(props.onBrowserTabSelect),
+				onTerminalTabSelect: opt(props.onTerminalTabSelect),
+			};
+		}, [
+			setPianolaView,
+			props.onTabSelect,
+			props.onNewTab,
+			props.onNewFileTab,
+			props.onNewBrowserTab,
+			props.onNewTerminalTab,
+			props.onFileTabSelect,
+			props.onBrowserTabSelect,
+			props.onTerminalTabSelect,
+		]);
 
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
 		// Imperative handle for the currently-mounted BrowserTabView. Only the active browser
 		// tab is rendered, so this points to that one (or null if no browser tab is active).
 		const browserViewRef = useRef<BrowserTabViewHandle | null>(null);
+		// Per-tab BrowserTabView handle map for the active agent's mounted browser
+		// tabs (visible + kept-alive hidden). Lifted here so the coworking browser
+		// responder can reach a mounted tab's handle without stealing focus.
+		const browserViewRefs = useRef<Map<string, BrowserTabViewHandle>>(new Map());
 		// Terminal session mounting lifecycle (refs, state, effects)
 		const {
 			terminalViewRefs,
@@ -162,6 +288,13 @@ export const MainPanel = React.memo(
 			terminalSearchOpen,
 			setTerminalSearchOpen,
 		} = useTerminalMounting(activeSession);
+
+		// Coworking - mirror active session's terminal tabs into the main-process registry
+		// so the MCP `list_terminals` tool is accurate, and answer buffer-fetch requests
+		// from main via the per-session TerminalView ref map. Both hooks no-op when the
+		// `coworking` Encore flag is off.
+		useCoworkingRegistrySync();
+		useCoworkingBufferResponder(terminalViewRefs);
 
 		// Serve CLI/web `read-terminal` requests. Lives here because the xterm
 		// scrollback exists only in the mounted TerminalView, not in the store.
@@ -185,13 +318,10 @@ export const MainPanel = React.memo(
 			onCloseOtherTabs,
 			onCloseTabsLeft,
 			onCloseTabsRight,
-			// Unified tab system props (Phase 4)
-			unifiedTabs,
-			activeFileTabId,
-			activeFileTab,
-			activeBrowserTabId,
+			// Unified tab system: paint state is derived below from self-sourced session
 			onFileTabSelect,
 			onFileTabClose,
+			onFileTabRename,
 			onNewFileTab,
 			onNewBrowserTab,
 			onBrowserTabSelect,
@@ -209,17 +339,33 @@ export const MainPanel = React.memo(
 			onTerminalTabConfigureStartupCommand,
 		} = props;
 
+		// PERF: Tab strip / file-nav paint derived here from the full session this
+		// panel already subscribes to - not from App chrome equality (which would
+		// wake MaestroConsoleInner on every busy/tab-state flip).
+		const {
+			activeTab: derivedActiveTab,
+			unifiedTabs,
+			activeFileTab,
+			fileTabBackHistory,
+			fileTabForwardHistory,
+			fileTabCanGoBack,
+			fileTabCanGoForward,
+			activeFileTabNavIndex,
+		} = useMemo(() => getTabDerivedState(activeSession), [activeSession]);
+		const activeFileTabId = activeSession?.activeFileTabId ?? null;
+		const activeBrowserTabId = activeSession?.activeBrowserTabId ?? null;
+		const fileGistUrls = useTabStore((s) => s.fileGistUrls);
+		const hasGist = activeFileTab ? !!fileGistUrls[activeFileTab.path] : false;
+
+		// Coworking browser responder - answers browser-op requests by resolving
+		// the target tab's live (or kept-alive hidden) webview handle. It never
+		// switches the user's visible tab. No-ops when the `coworking` Encore flag
+		// is off.
+		useCoworkingBrowserResponder(browserViewRefs);
+
 		// Get the active tab for header display
-		// The header should show the active tab's data (UUID, name, cost, context), not session-level data
-		// PERF: Memoize the lookup to avoid O(n) search on every render - will still update when
-		// aiTabs array or activeTabId changes (which happens when tabs change, not on every keystroke)
-		const activeTab = useMemo(
-			() =>
-				activeSession?.aiTabs?.find((tab) => tab.id === activeSession.activeTabId) ??
-				activeSession?.aiTabs?.[0] ??
-				null,
-			[activeSession?.aiTabs, activeSession?.activeTabId]
-		);
+		// Prefer local derivation from the full session (includes live usage/cost).
+		const activeTab = useMemo(() => derivedActiveTab ?? null, [derivedActiveTab]);
 		const activeTabError = activeTab?.agentError;
 
 		// Whether the agent has any tab at all. An agent is allowed to have zero AI
@@ -257,14 +403,14 @@ export const MainPanel = React.memo(
 		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
 
 		// Model/Effort pills: available options, current values, and agent-level
-		// defaults. Shared with the queued-message edit modal, which offers the
-		// same two pickers and must show the same provider-shaped options.
+		// defaults. Shared with the keyboard-only Model & Effort modal and with the
+		// queued-message edit modal, so all three show the same truth.
 		const {
 			models: pillModels,
 			efforts: pillEfforts,
 			defaultModel: agentDefaultModel,
 			defaultEffort: agentDefaultEffort,
-		} = useProviderTurnOptions(activeSession?.toolType);
+		} = useAgentModelEffortOptions(activeSession?.toolType);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		// Navigate to agent/tab when clicking an agent pill in the log viewer
@@ -283,10 +429,67 @@ export const MainPanel = React.memo(
 			[setLogViewerOpen, setActiveSessionId, setSessions]
 		);
 
+		// Activate a tiled tab group (clicking its chip in the tab strip): render the
+		// group's layout and clear the standalone active-tab ids so no single-view
+		// content competes with it for the panel.
+		//
+		// Via groupFocusFields, which also points activeTabId at the group's focused AI
+		// pane. This handler used to set activeGroupId alone, so the shared input area -
+		// which always targets activeTabId - stayed aimed at the standalone tab that was
+		// active before the click. Typing into a visible tile delivered the message to a
+		// conversation that isn't even in the group.
+		const handleGroupSelect = useCallback(
+			(groupId: string) => {
+				if (!activeSession) return;
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== activeSession.id) return s;
+						const group = s.tabGroups?.find((g) => g.id === groupId);
+						return group ? { ...s, ...groupFocusFields(group) } : s;
+					})
+				);
+			},
+			[activeSession, setSessions]
+		);
+
+		// Rename a group chip. Delegates to the tab-store rename action, resolving the
+		// auto-name fallback (used when the user clears the field) from the group's
+		// first pane title via the shared resolver so it matches the drop-time name.
+		const renameGroupAction = useTabStore((s) => s.renameGroup);
+		const handleGroupRename = useCallback(
+			(groupId: string, name: string) => {
+				if (!activeSession) return;
+				const group = activeSession.tabGroups?.find((g) => g.id === groupId);
+				const firstRef = group ? collectLeafTabRefs(group.layout)[0] : undefined;
+				const fallback = firstRef
+					? generateGroupName(resolveTabRefTitle(activeSession, firstRef))
+					: (group?.name ?? 'Group');
+				renameGroupAction(groupId, name, fallback);
+			},
+			[activeSession, renameGroupAction]
+		);
+
+		// Set a group chip's emoji from the shared emoji selector. Empty string clears
+		// it back to the default grid glyph. The tab-store action persists it.
+		const setGroupEmojiAction = useTabStore((s) => s.setGroupEmoji);
+
+		// Break a group apart into standalone tabs (the confirm dialog lives in the
+		// group chip). Promotes every pane back to the tab bar in left-to-right order,
+		// drops the group, and lands focus on the first promoted tab.
+		const handleGroupBreakApart = useCallback(
+			(groupId: string) => {
+				if (!activeSession) return;
+				updateSessionWith(activeSession.id, (s) => breakApartGroup(s, groupId));
+			},
+			[activeSession]
+		);
+
 		// Resolved current model/effort: tab override > session override > agent config > empty
-		const resolvedModel = activeTab?.customModel || activeSession?.customModel || agentDefaultModel;
-		const resolvedEffort =
-			activeTab?.customEffort || activeSession?.customEffort || agentDefaultEffort;
+		const { model: resolvedModel, effort: resolvedEffort } = resolveModelEffort(
+			activeTab,
+			activeSession,
+			{ defaultModel: agentDefaultModel, defaultEffort: agentDefaultEffort }
+		);
 
 		const setTabModel = useTabStore((s) => s.setTabModel);
 		const setTabEffort = useTabStore((s) => s.setTabEffort);
@@ -310,14 +513,17 @@ export const MainPanel = React.memo(
 		// Opening the snooze picker needs nothing from App.tsx, so it talks to the
 		// modal store directly instead of adding another link to the
 		// App -> useMainPanelProps -> MainPanel -> TabBar prop chain.
+		//
+		// Every chip in the strip routes here - AI, file, terminal, browser, and a
+		// tiled group - so the id is resolved by `resolveSnoozeTarget` rather than
+		// looked up in one array. It used to search `aiTabs` only and return early
+		// for everything else, which made "Snooze Tab" on the other three chips and
+		// "Snooze group" on a group chip silently do nothing.
 		const handleOpenSnooze = useCallback((tabId: string) => {
 			const session = selectActiveSession(useSessionStore.getState());
-			const tab = session?.aiTabs.find((t) => t.id === tabId);
-			if (!tab) return;
-			useModalStore.getState().openModal('snoozeTab', {
-				tabId,
-				tabLabel: getTabDisplayName(tab, session?.agentSessionId),
-			});
+			const target = resolveSnoozeTarget(session, tabId);
+			if (!target) return;
+			useModalStore.getState().openModal('snoozeTab', target);
 		}, []);
 
 		// Expose methods to parent via ref
@@ -633,25 +839,135 @@ export const MainPanel = React.memo(
 			sendBrowserContentToAgent: handleSendBrowserContentToAgent,
 		};
 
+		// Bundle the per-kind pane dropdown actions once so a single stable object
+		// threads down to TiledLayout (instead of ~15 separate props). Mirrors the exact
+		// handlers + availability gates the TabBar chips use, so a tiled tab's chevron
+		// menu offers the same actions its strip chip would. Close dispatches per kind.
+		const paneTabActions = useMemo<PaneTabActions>(
+			() => ({
+				onStar: onTabStar,
+				onMarkUnread: onTabMarkUnread,
+				onCopyContext,
+				onExportHtml,
+				onPublishGist: props.onPublishTabGist,
+				onMergeWith,
+				onSendToAgent,
+				onSummarizeAndContinue,
+				onCopyTerminalBuffer: props.onCopyText ? handleCopyTerminalBuffer : undefined,
+				onSendTerminalBufferToAgent: props.onSendTextToAgent
+					? handleSendTerminalBufferToAgent
+					: undefined,
+				onPublishTerminalBufferGist: props.onPublishTextAsGist
+					? handlePublishTerminalBufferGist
+					: undefined,
+				onConfigureTerminalStartup: onTerminalTabConfigureStartupCommand,
+				onCopyBrowserContent: props.onCopyText ? handleCopyBrowserContent : undefined,
+				onSendBrowserContentToAgent: props.onSendTextToAgent
+					? handleSendBrowserContentToAgent
+					: undefined,
+				onCloseTab: (ref: UnifiedTabRef) => {
+					if (ref.type === 'ai') onTabClose?.(ref.id);
+					else if (ref.type === 'file') onFileTabClose?.(ref.id);
+					else if (ref.type === 'terminal') onTerminalTabClose?.(ref.id);
+					else if (ref.type === 'browser') onBrowserTabClose?.(ref.id);
+				},
+			}),
+			[
+				onTabStar,
+				onTabMarkUnread,
+				onCopyContext,
+				onExportHtml,
+				props.onPublishTabGist,
+				onMergeWith,
+				onSendToAgent,
+				onSummarizeAndContinue,
+				props.onCopyText,
+				props.onSendTextToAgent,
+				props.onPublishTextAsGist,
+				handleCopyTerminalBuffer,
+				handleSendTerminalBufferToAgent,
+				handlePublishTerminalBufferGist,
+				onTerminalTabConfigureStartupCommand,
+				handleCopyBrowserContent,
+				handleSendBrowserContentToAgent,
+				onTabClose,
+				onFileTabClose,
+				onTerminalTabClose,
+				onBrowserTabClose,
+			]
+		);
+
+		// The UNBOUND (tab-id-keyed) file handlers, bundled for tiled file panes. The
+		// single view binds these to the active file tab via useFilePreviewHandlers; a
+		// pane runs the same hook against its own tab id, so it needs them unbound.
+		const paneFileActions = useMemo<PaneFileActions>(
+			() => ({
+				onFileTabClose,
+				onFileTabEditModeChange,
+				onFileTabEditContentChange,
+				onFileTabScrollPositionChange: props.onFileTabScrollPositionChange,
+				onFileTabSearchQueryChange: props.onFileTabSearchQueryChange,
+				onReloadFileTab: props.onReloadFileTab,
+				onFileTabNavigateToIndex: props.onNavigateToIndex,
+				fileTree: props.fileTree,
+				onFileClick: props.onFileClick,
+				onOpenFuzzySearch: props.onOpenFuzzySearch,
+				onShortcutUsed: props.onShortcutUsed,
+			}),
+			[
+				onFileTabClose,
+				onFileTabEditModeChange,
+				onFileTabEditContentChange,
+				props.onFileTabScrollPositionChange,
+				props.onFileTabSearchQueryChange,
+				props.onReloadFileTab,
+				props.onNavigateToIndex,
+				props.fileTree,
+				props.onFileClick,
+				props.onOpenFuzzySearch,
+				props.onShortcutUsed,
+			]
+		);
+
+		// Group ids that survive the unread filter (any collapsed member is unread), so
+		// the TabBar can gate group chips the same way it gates AI tabs. Only computed
+		// while the filter is active (undefined otherwise -> all groups shown).
+		const unreadGroupIds = useMemo(
+			() => (showUnreadOnly && activeSession ? computeUnreadGroupIds(activeSession) : undefined),
+			[showUnreadOnly, activeSession]
+		);
+
+		// Ids of AI tabs with queued execution items, so the TabBar keeps them visible under
+		// the unread filter (pending queued work needs attention). Undefined outside the filter.
+		// Depend on the executionQueue array (not the full session) so streaming/token updates
+		// that leave the queue untouched preserve the Set identity and TabBar's memoization.
+		const executionQueue = activeSession?.executionQueue;
+		const queuedTabIds = useMemo(
+			() => (showUnreadOnly && executionQueue ? computeQueuedTabIds(executionQueue) : undefined),
+			[showUnreadOnly, executionQueue]
+		);
+
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
+			props.onComposerFocus?.();
 			if (activeSession) {
 				setActiveSessionId(activeSession.id);
 				useUIStore.getState().setActiveFocus('main');
 			}
-		}, [activeSession, setActiveSessionId]);
+		}, [activeSession, setActiveSessionId, props.onComposerFocus]);
 
-		// Memoized session click handler for InputArea's ThinkingStatusPill
-		// Avoids creating new function reference on every render
+		// Memoized session click handler for InputArea's ThinkingStatusPill.
+		// Targets the clicked session by ID rather than routing through onTabSelect
+		// (which resolves whichever agent is active at event time) - the pill lists
+		// thinking tabs across ALL agents, so a cross-agent jump must not depend on
+		// the active-session switch having landed first.
 		const handleSessionClick = useCallback(
 			(sessionId: string, tabId?: string) => {
 				setActiveSessionId(sessionId);
-				if (tabId && onTabSelect) {
-					onTabSelect(tabId);
-				}
+				updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 			},
-			[setActiveSessionId, onTabSelect]
+			[setActiveSessionId]
 		);
 
 		// File preview handlers (memos + callbacks)
@@ -713,87 +1029,91 @@ export const MainPanel = React.memo(
 		// don't mount this zone.
 		const chatDropZone = useChatFileDropZone(theme, handleDrop);
 
-		// Show log viewer
-		if (logViewerOpen) {
-			return (
-				<div
-					className="flex-1 flex flex-col min-w-0 relative"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<LogViewer
-						theme={theme}
-						onClose={() => setLogViewerOpen(false)}
-						logLevel={logLevel}
-						savedSelectedLevels={logViewerSelectedLevels}
-						onSelectedLevelsChange={useSettingsStore.getState().setLogViewerSelectedLevels}
-						onShortcutUsed={props.onShortcutUsed}
-						onSessionClick={handleLogSessionClick}
-					/>
-				</div>
-			);
+		// Multi-window scoping: this window only renders an agent it owns. If the
+		// store's active agent lives in (or has moved to) another window, fall back
+		// to the clean empty state instead of showing a stale view (or that agent's
+		// own session/memory overlays). Outside a WindowProvider (single-window /
+		// isolation tests) this is always true, so behaviour is unchanged.
+		const ownsActiveSession = useWindowOwnsSession(activeSession?.id);
+		if (activeSession && !ownsActiveSession) {
+			return <EmptyMainPanel theme={theme} />;
 		}
 
-		// Show agent sessions browser (only if agent supports session storage)
-		if (agentSessionsOpen && hasCapability('supportsSessionStorage')) {
+		// Coworking hosts (approval dialog + background browser webviews) mount
+		// OUTSIDE the branch switch below so an approval requested while the log,
+		// sessions, or memory viewer (or the empty state) is showing still has a
+		// mount point and the agent's browser tool call never hangs.
+		const renderBranch = () => {
+			// Show log viewer
+			if (logViewerOpen) {
+				return (
+					<div
+						className="flex-1 flex flex-col min-w-0 relative"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<LogViewer
+							theme={theme}
+							onClose={() => setLogViewerOpen(false)}
+							logLevel={logLevel}
+							savedSelectedLevels={logViewerSelectedLevels}
+							onSelectedLevelsChange={useSettingsStore.getState().setLogViewerSelectedLevels}
+							onShortcutUsed={props.onShortcutUsed}
+							onSessionClick={handleLogSessionClick}
+						/>
+					</div>
+				);
+			}
+
+			// Show agent sessions browser (only if agent supports session storage)
+			if (agentSessionsOpen && hasCapability('supportsSessionStorage')) {
+				return (
+					<div
+						className="flex-1 flex flex-col min-w-0 relative"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<AgentSessionsBrowser
+							theme={theme}
+							activeSession={activeSession || undefined}
+							activeAgentSessionId={activeAgentSessionId}
+							onClose={() => setAgentSessionsOpen(false)}
+							onResumeSession={onResumeAgentSession}
+							onNewSession={onNewAgentSession}
+							onUpdateTab={props.onUpdateTabByClaudeSessionId}
+						/>
+					</div>
+				);
+			}
+
+			// Show memory viewer (only if agent supports per-project memory)
+			if (memoryViewerOpen && hasCapability('supportsProjectMemory')) {
+				return (
+					<div
+						className="flex-1 flex flex-col min-w-0 relative"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<MemoryViewer
+							theme={theme}
+							activeSession={activeSession || undefined}
+							onClose={() => setMemoryViewerOpen(false)}
+						/>
+					</div>
+				);
+			}
+
+			// Show empty state when no active session
+			if (!activeSession) {
+				return <EmptyMainPanel theme={theme} />;
+			}
+
+			// File preview eligibility checked inline below
+
+			// Show normal session view
 			return (
-				<div
-					className="flex-1 flex flex-col min-w-0 relative"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<AgentSessionsBrowser
-						theme={theme}
-						activeSession={activeSession || undefined}
-						activeAgentSessionId={activeAgentSessionId}
-						onClose={() => setAgentSessionsOpen(false)}
-						onResumeSession={onResumeAgentSession}
-						onNewSession={onNewAgentSession}
-						onUpdateTab={props.onUpdateTabByClaudeSessionId}
-					/>
-				</div>
-			);
-		}
-
-		// Show memory viewer (only if agent supports per-project memory)
-		if (memoryViewerOpen && hasCapability('supportsProjectMemory')) {
-			return (
-				<div
-					className="flex-1 flex flex-col min-w-0 relative"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<MemoryViewer
-						theme={theme}
-						activeSession={activeSession || undefined}
-						onClose={() => setMemoryViewerOpen(false)}
-					/>
-				</div>
-			);
-		}
-
-		// Show empty state when no active session
-		if (!activeSession) {
-			return (
-				<div
-					className="flex-1 flex flex-col items-center justify-center min-w-0 relative opacity-30"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<Wand2 className="w-16 h-16 mb-4" style={{ color: theme.colors.textDim }} />
-					<p className="text-sm" style={{ color: theme.colors.textDim }}>
-						No agents. Create one to get started.
-					</p>
-				</div>
-			);
-		}
-
-		// File preview eligibility checked inline below
-
-		// Show normal session view
-		return (
-			<>
 				<ErrorBoundary>
 					<div
-						className="flex-1 flex flex-col relative isolate"
+						className="flex-1 h-full min-h-0 max-h-full flex flex-col relative isolate overflow-hidden"
 						style={{
-							minWidth: '400px',
+							minWidth: phone ? undefined : '400px',
 							backgroundColor: theme.colors.bgMain,
 						}}
 						onClick={() => useUIStore.getState().setActiveFocus('main')}
@@ -829,254 +1149,381 @@ export const MainPanel = React.memo(
 							/>
 						)}
 
-						{/* Tab Bar - shown in AI and terminal modes when we have tabs of any kind.
-						    An agent can sit at zero AI tabs while terminal/file/browser tabs are
-						    open, so gating this on aiTabs alone would hide the whole strip (and
-						    the "+" button) and strand the user in whatever view was last active. */}
-						{hasAnyTab && onTabSelect && onTabClose && onNewTab && (
-							<TabBar
-								tabs={activeSession.aiTabs}
-								activeTabId={activeSession.activeTabId}
-								theme={theme}
-								sessionId={activeSession.id}
-								sessionAgentSessionId={activeSession.agentSessionId}
-								onTabSelect={onTabSelect}
-								onTabClose={onTabClose}
-								onNewTab={onNewTab}
-								onRequestRename={onRequestTabRename}
-								onTabReorder={onTabReorder}
-								onUnifiedTabReorder={onUnifiedTabReorder}
-								onTabStar={onTabStar}
-								onTabMarkUnread={onTabMarkUnread}
-								onMergeWith={onMergeWith}
-								onSendToAgent={onSendToAgent}
-								onSummarizeAndContinue={onSummarizeAndContinue}
-								onCopyContext={onCopyContext}
-								onExportHtml={onExportHtml}
-								onSnooze={handleOpenSnooze}
-								onPublishGist={props.onPublishTabGist}
-								ghCliAvailable={props.ghCliAvailable}
-								showUnreadOnly={showUnreadOnly}
-								onToggleUnreadFilter={onToggleUnreadFilter}
-								onOpenTabSearch={onOpenTabSearch}
-								onOpenOutputSearch={onOpenOutputSearch}
-								onOpenCrossTabSearch={onOpenCrossTabSearch}
-								onCloseAllTabs={onCloseAllTabs}
-								onCloseOtherTabs={onCloseOtherTabs}
-								onCloseTabsLeft={onCloseTabsLeft}
-								onCloseTabsRight={onCloseTabsRight}
-								// Unified tab system props (Phase 4)
-								unifiedTabs={unifiedTabs}
-								activeFileTabId={activeFileTabId}
-								activeBrowserTabId={activeBrowserTabId}
-								onFileTabSelect={onFileTabSelect}
-								onFileTabClose={onFileTabClose}
-								onPublishFileGist={props.onPublishTextAsGist ? handlePublishFileTabGist : undefined}
-								onNewFileTab={onNewFileTab}
-								onNewBrowserTab={onNewBrowserTab}
-								onBrowserTabSelect={onBrowserTabSelect}
-								onBrowserTabClose={onBrowserTabClose}
-								onBrowserTabRename={onBrowserTabRename}
-								onBrowserTabResetName={onBrowserTabResetName}
-								// Terminal tab props (Phase 8)
-								onNewTerminalTab={onNewTerminalTab}
-								activeTerminalTabId={activeSession.activeTerminalTabId}
-								inputMode={activeSession.inputMode}
-								onTerminalTabSelect={onTerminalTabSelect}
-								onTerminalTabClose={onTerminalTabClose}
-								onTerminalTabRename={onTerminalTabRename}
-								onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
-								onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
-								onPublishTerminalBufferGist={
-									props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
-								}
-								onSendTerminalBufferToAgent={
-									props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
-								}
-								onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
-								onSendBrowserContentToAgent={
-									props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
-								}
-								// Accessibility
-								colorBlindMode={colorBlindMode}
-								// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
-								sshRemote={Boolean(filePreviewSshRemoteId)}
-							/>
+						{/* Pianola is a manager surface: it uses the standard multi-type TabBar
+						    (chat/file/terminal/browser tabs, same "+" menu) with a pinned
+						    Dashboard view button + a Clear-chat action slotted in. */}
+						{showPianolaWorkspace ? (
+							onTabSelect && onTabClose && onNewTab ? (
+								<TabBar
+									tabs={activeSession.aiTabs}
+									activeTabId={pianolaView === 'dashboard' ? '' : activeSession.activeTabId}
+									theme={theme}
+									sessionId={activeSession.id}
+									sessionAgentSessionId={activeSession.agentSessionId}
+									onTabSelect={pianolaTabHandlers.onTabSelect}
+									onTabClose={onTabClose}
+									onNewTab={pianolaTabHandlers.onNewTab}
+									onRequestRename={onRequestTabRename}
+									onTabReorder={onTabReorder}
+									onUnifiedTabReorder={onUnifiedTabReorder}
+									onTabStar={onTabStar}
+									onTabMarkUnread={onTabMarkUnread}
+									onMergeWith={onMergeWith}
+									onSendToAgent={onSendToAgent}
+									onSummarizeAndContinue={onSummarizeAndContinue}
+									onCopyContext={onCopyContext}
+									onExportHtml={onExportHtml}
+									onPublishGist={props.onPublishTabGist}
+									ghCliAvailable={props.ghCliAvailable}
+									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
+									unreadGroupIds={unreadGroupIds}
+									onToggleUnreadFilter={onToggleUnreadFilter}
+									onOpenTabSearch={onOpenTabSearch}
+									onOpenOutputSearch={onOpenOutputSearch}
+									onCloseAllTabs={onCloseAllTabs}
+									onCloseOtherTabs={onCloseOtherTabs}
+									onCloseTabsLeft={onCloseTabsLeft}
+									onCloseTabsRight={onCloseTabsRight}
+									unifiedTabs={unifiedTabs}
+									activeFileTabId={pianolaView === 'dashboard' ? null : activeFileTabId}
+									activeBrowserTabId={pianolaView === 'dashboard' ? null : activeBrowserTabId}
+									onFileTabSelect={pianolaTabHandlers.onFileTabSelect}
+									onFileTabClose={onFileTabClose}
+									onFileTabRename={onFileTabRename}
+									onPublishFileGist={
+										props.onPublishTextAsGist ? handlePublishFileTabGist : undefined
+									}
+									onNewFileTab={pianolaTabHandlers.onNewFileTab}
+									onNewBrowserTab={pianolaTabHandlers.onNewBrowserTab}
+									onBrowserTabSelect={pianolaTabHandlers.onBrowserTabSelect}
+									onBrowserTabClose={onBrowserTabClose}
+									onBrowserTabRename={onBrowserTabRename}
+									onBrowserTabResetName={onBrowserTabResetName}
+									onNewTerminalTab={pianolaTabHandlers.onNewTerminalTab}
+									activeTerminalTabId={
+										pianolaView === 'dashboard' ? null : activeSession.activeTerminalTabId
+									}
+									inputMode={pianolaView === 'dashboard' ? 'ai' : activeSession.inputMode}
+									onTerminalTabSelect={pianolaTabHandlers.onTerminalTabSelect}
+									onTerminalTabClose={onTerminalTabClose}
+									onTerminalTabRename={onTerminalTabRename}
+									onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
+									onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
+									onPublishTerminalBufferGist={
+										props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
+									}
+									onSendTerminalBufferToAgent={
+										props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
+									}
+									onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
+									onSendBrowserContentToAgent={
+										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
+									}
+									colorBlindMode={colorBlindMode}
+									sshRemote={Boolean(filePreviewSshRemoteId)}
+									leadingSlot={
+										<PianolaDashboardTab
+											theme={theme}
+											active={pianolaView === 'dashboard'}
+											needsInputCount={pianolaNeedsInputCount}
+											onClick={() => setPianolaView('dashboard')}
+										/>
+									}
+								/>
+							) : null
+						) : (
+							/* Tab Bar - shown in AI and terminal modes when we have tabs of any kind.
+							   An agent can sit at zero AI tabs while terminal/file/browser tabs are
+							   open, so gating this on aiTabs alone would hide the whole strip (and
+							   the "+" button) and strand the user in whatever view was last active. */
+							hasAnyTab &&
+							onTabSelect &&
+							onTabClose &&
+							onNewTab && (
+								<TabBar
+									tabs={activeSession.aiTabs}
+									activeTabId={activeSession.activeTabId}
+									theme={theme}
+									sessionId={activeSession.id}
+									sessionAgentSessionId={activeSession.agentSessionId}
+									onTabSelect={onTabSelect}
+									onTabClose={onTabClose}
+									onNewTab={onNewTab}
+									onRequestRename={onRequestTabRename}
+									onTabReorder={onTabReorder}
+									onUnifiedTabReorder={onUnifiedTabReorder}
+									onTabStar={onTabStar}
+									onTabMarkUnread={onTabMarkUnread}
+									onMergeWith={onMergeWith}
+									onSendToAgent={onSendToAgent}
+									onSummarizeAndContinue={onSummarizeAndContinue}
+									onCopyContext={onCopyContext}
+									onExportHtml={onExportHtml}
+									onSnooze={handleOpenSnooze}
+									onPublishGist={props.onPublishTabGist}
+									ghCliAvailable={props.ghCliAvailable}
+									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
+									onToggleUnreadFilter={onToggleUnreadFilter}
+									onOpenTabSearch={onOpenTabSearch}
+									onOpenOutputSearch={onOpenOutputSearch}
+									onOpenCrossTabSearch={onOpenCrossTabSearch}
+									onCloseAllTabs={onCloseAllTabs}
+									onCloseOtherTabs={onCloseOtherTabs}
+									onCloseTabsLeft={onCloseTabsLeft}
+									onCloseTabsRight={onCloseTabsRight}
+									// Unified tab system props (Phase 4)
+									unifiedTabs={unifiedTabs}
+									activeFileTabId={activeFileTabId}
+									activeBrowserTabId={activeBrowserTabId}
+									onFileTabSelect={onFileTabSelect}
+									onFileTabClose={onFileTabClose}
+									onFileTabRename={onFileTabRename}
+									onPublishFileGist={
+										props.onPublishTextAsGist ? handlePublishFileTabGist : undefined
+									}
+									onNewFileTab={onNewFileTab}
+									onNewBrowserTab={onNewBrowserTab}
+									onBrowserTabSelect={onBrowserTabSelect}
+									onBrowserTabClose={onBrowserTabClose}
+									onBrowserTabRename={onBrowserTabRename}
+									onBrowserTabResetName={onBrowserTabResetName}
+									// Terminal tab props (Phase 8)
+									onNewTerminalTab={onNewTerminalTab}
+									activeTerminalTabId={activeSession.activeTerminalTabId}
+									inputMode={activeSession.inputMode}
+									onTerminalTabSelect={onTerminalTabSelect}
+									onTerminalTabClose={onTerminalTabClose}
+									onTerminalTabRename={onTerminalTabRename}
+									onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
+									onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
+									onPublishTerminalBufferGist={
+										props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
+									}
+									onSendTerminalBufferToAgent={
+										props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
+									}
+									onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
+									onSendBrowserContentToAgent={
+										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
+									}
+									// Tab tiling (split panes)
+									tabGroups={activeSession.tabGroups}
+									unreadGroupIds={unreadGroupIds}
+									activeGroupId={activeSession.activeGroupId}
+									onGroupSelect={handleGroupSelect}
+									onGroupRename={handleGroupRename}
+									onGroupSetEmoji={setGroupEmojiAction}
+									onGroupBreakApart={handleGroupBreakApart}
+									// Accessibility
+									colorBlindMode={colorBlindMode}
+									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
+									sshRemote={Boolean(filePreviewSshRemoteId)}
+								/>
+							)
 						)}
 
-						{/* Agent Error Banner */}
-						{activeTabError && (
-							<AgentErrorBanner
-								error={activeTabError}
-								theme={theme}
-								onShowDetails={
-									props.onShowAgentErrorModal ? () => props.onShowAgentErrorModal?.() : undefined
-								}
-								onClear={props.onClearAgentError}
-							/>
-						)}
+						{/* Pianola's Dashboard view replaces the chat content while selected; the
+						    Chat view (and every non-Pianola agent) renders the normal content. */}
+						{showPianolaWorkspace && pianolaView === 'dashboard' ? (
+							<ErrorBoundary>
+								<PianolaDashboard theme={theme} onJumpToAgent={setActiveSessionId} />
+							</ErrorBoundary>
+						) : (
+							<>
+								{/* Agent Error Banner */}
+								{activeTabError && (
+									<AgentErrorBanner
+										error={activeTabError}
+										theme={theme}
+										onShowDetails={
+											props.onShowAgentErrorModal
+												? () => props.onShowAgentErrorModal?.()
+												: undefined
+										}
+										onClear={props.onClearAgentError}
+									/>
+								)}
 
-						{/* Content area */}
-						<MainPanelContent
-							activeSession={activeSession}
-							activeTab={activeTab}
-							theme={theme}
-							activeFileTabId={activeFileTabId}
-							activeFileTab={activeFileTab}
-							activeBrowserTabId={activeBrowserTabId}
-							memoizedFilePreviewFile={memoizedFilePreviewFile}
-							filePreviewCwd={filePreviewCwd}
-							filePreviewSshRemoteId={filePreviewSshRemoteId}
-							filePreviewContainerRef={filePreviewContainerRef}
-							filePreviewRef={filePreviewRef}
-							handleFilePreviewClose={handleFilePreviewClose}
-							handleFilePreviewEditModeChange={handleFilePreviewEditModeChange}
-							handleFilePreviewSave={handleFilePreviewSave}
-							handleFilePreviewEditContentChange={handleFilePreviewEditContentChange}
-							handleFilePreviewScrollPositionChange={handleFilePreviewScrollPositionChange}
-							handleFilePreviewSearchQueryChange={handleFilePreviewSearchQueryChange}
-							handleFilePreviewReload={handleFilePreviewReload}
-							handleBrowserTabUpdate={onBrowserTabUpdate}
-							browserViewRef={browserViewRef}
-							terminalViewRefs={terminalViewRefs}
-							mountedTerminalSessionIds={mountedTerminalSessionIds}
-							mountedTerminalSessionsRef={mountedTerminalSessionsRef}
-							terminalSearchOpen={terminalSearchOpen}
-							setTerminalSearchOpen={setTerminalSearchOpen}
-							onTerminalCopySelection={props.onCopyText ? handleCopyTerminalSelection : undefined}
-							onTerminalSendSelectionToAgent={
-								props.onSendTextToAgent ? handleSendTerminalSelectionToAgent : undefined
-							}
-							isMobileLandscape={isMobileLandscape}
-							activeTabContextUsage={activeTabContextUsage}
-							contextWarningsEnabled={contextWarningsEnabled}
-							contextWarningYellowThreshold={contextWarningYellowThreshold}
-							contextWarningRedThreshold={contextWarningRedThreshold}
-							handleInputFocus={handleInputFocus}
-							handleSessionClick={handleSessionClick}
-							isCurrentSessionAutoMode={isCurrentSessionAutoMode}
-							currentSessionBatchState={currentSessionBatchState}
-							hasCapability={hasCapability}
-							setInputValue={setInputValue}
-							stagedImages={stagedImages}
-							setStagedImages={setStagedImages}
-							setLightboxImage={setLightboxImage}
-							commandHistoryOpen={commandHistoryOpen}
-							setCommandHistoryOpen={setCommandHistoryOpen}
-							commandHistoryFilter={commandHistoryFilter}
-							setCommandHistoryFilter={setCommandHistoryFilter}
-							commandHistorySelectedIndex={commandHistorySelectedIndex}
-							setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
-							slashCommandOpen={slashCommandOpen}
-							setSlashCommandOpen={setSlashCommandOpen}
-							slashCommands={slashCommands}
-							selectedSlashCommandIndex={selectedSlashCommandIndex}
-							setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
-							tabCompletionOpen={tabCompletionOpen}
-							setTabCompletionOpen={setTabCompletionOpen}
-							tabCompletionSuggestions={tabCompletionSuggestions}
-							selectedTabCompletionIndex={selectedTabCompletionIndex}
-							setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
-							tabCompletionFilter={tabCompletionFilter}
-							setTabCompletionFilter={setTabCompletionFilter}
-							atMentionOpen={atMentionOpen}
-							setAtMentionOpen={setAtMentionOpen}
-							atMentionFilter={atMentionFilter}
-							setAtMentionFilter={setAtMentionFilter}
-							atMentionStartIndex={atMentionStartIndex}
-							setAtMentionStartIndex={setAtMentionStartIndex}
-							atMentionSuggestions={atMentionSuggestions}
-							selectedAtMentionIndex={selectedAtMentionIndex}
-							setSelectedAtMentionIndex={setSelectedAtMentionIndex}
-							inputRef={inputRef}
-							logsEndRef={logsEndRef}
-							terminalOutputRef={terminalOutputRef}
-							toggleInputMode={toggleInputMode}
-							processInput={processInput}
-							handleInterrupt={handleInterrupt}
-							handleInputKeyDown={handleInputKeyDown}
-							handlePaste={handlePaste}
-							handleDrop={handleDrop}
-							thinkingItems={thinkingItems}
-							onStopBatchRun={onStopBatchRun}
-							onRemoveQueuedItem={onRemoveQueuedItem}
-							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
-							onEditQueuedItem={onEditQueuedItem}
-							onReorderQueuedItem={onReorderQueuedItem}
-							onForceSendQueuedItem={onForceSendQueuedItem}
-							forcedParallelEnabled={forcedParallelEnabled}
-							getForceSendContext={getForceSendContext}
-							onOpenQueueBrowser={onOpenQueueBrowser}
-							showFlashNotification={showFlashNotification}
-							summarizeProgress={summarizeProgress}
-							summarizeResult={summarizeResult}
-							summarizeStartTime={summarizeStartTime}
-							isSummarizing={isSummarizing}
-							onCancelSummarize={onCancelSummarize}
-							onSummarizeAndContinue={onSummarizeAndContinue}
-							mergeProgress={mergeProgress}
-							mergeResult={mergeResult}
-							mergeStartTime={mergeStartTime}
-							isMerging={isMerging}
-							mergeSourceName={mergeSourceName}
-							mergeTargetName={mergeTargetName}
-							onCancelMerge={onCancelMerge}
-							onExitWizard={onExitWizard}
-							onStopWizardTurn={onStopWizardTurn}
-							onDeleteLog={props.onDeleteLog}
-							onScrollPositionChange={props.onScrollPositionChange}
-							onAtBottomChange={props.onAtBottomChange}
-							onInputBlur={props.onInputBlur}
-							onOpenPromptComposer={props.onOpenPromptComposer}
-							onReplayMessage={props.onReplayMessage}
-							onForkConversation={props.onForkConversation}
-							onSessionRecover={props.onSessionRecover}
-							isRecoveringSession={props.isRecoveringSession}
-							sessionRecoveryError={props.sessionRecoveryError}
-							fileTree={props.fileTree}
-							onFileClick={props.onFileClick}
-							refreshFileTree={props.refreshFileTree}
-							onOpenSavedFileInTab={props.onOpenSavedFileInTab}
-							onShowAgentErrorModal={props.onShowAgentErrorModal}
-							canGoBack={props.canGoBack}
-							canGoForward={props.canGoForward}
-							onNavigateBack={props.onNavigateBack}
-							onNavigateForward={props.onNavigateForward}
-							backHistory={props.backHistory}
-							forwardHistory={props.forwardHistory}
-							currentHistoryIndex={props.currentHistoryIndex}
-							onNavigateToIndex={props.onNavigateToIndex}
-							onOpenFuzzySearch={props.onOpenFuzzySearch}
-							onShortcutUsed={props.onShortcutUsed}
-							ghCliAvailable={props.ghCliAvailable}
-							onPublishGist={props.onPublishGist}
-							hasGist={props.hasGist}
-							onOpenInGraph={props.onOpenInGraph}
-							onOpenInBrowser={props.onOpenInBrowser}
-							onPublishMessageGist={props.onPublishMessageGist}
-							onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
-							onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
-							onToggleTabShowThinking={props.onToggleTabShowThinking}
-							onToggleTabEnterToSend={props.onToggleTabEnterToSend}
-							onWizardComplete={props.onWizardComplete}
-							onWizardCompleteAndStartAutoRun={props.onWizardCompleteAndStartAutoRun}
-							onWizardDocumentSelect={props.onWizardDocumentSelect}
-							onWizardContentChange={props.onWizardContentChange}
-							onWizardLetsGo={props.onWizardLetsGo}
-							onWizardRetry={props.onWizardRetry}
-							onWizardClearError={props.onWizardClearError}
-							onToggleWizardShowThinking={props.onToggleWizardShowThinking}
-							onWizardCancelGeneration={props.onWizardCancelGeneration}
-							// Model/Effort quick-change pills
-							currentModel={resolvedModel}
-							currentEffort={resolvedEffort}
-							availableModels={pillModels}
-							availableEfforts={pillEfforts}
-							onModelChange={handleModelChange}
-							onEffortChange={handleEffortChange}
-						/>
+								{/* Content area */}
+								<MainPanelContent
+									activeSession={activeSession}
+									activeTab={activeTab}
+									theme={theme}
+									activeFileTabId={activeFileTabId}
+									activeFileTab={activeFileTab}
+									activeBrowserTabId={activeBrowserTabId}
+									memoizedFilePreviewFile={memoizedFilePreviewFile}
+									filePreviewCwd={filePreviewCwd}
+									filePreviewSshRemoteId={filePreviewSshRemoteId}
+									filePreviewContainerRef={filePreviewContainerRef}
+									filePreviewRef={filePreviewRef}
+									handleFilePreviewClose={handleFilePreviewClose}
+									handleFilePreviewEditModeChange={handleFilePreviewEditModeChange}
+									handleFilePreviewSave={handleFilePreviewSave}
+									handleFilePreviewEditContentChange={handleFilePreviewEditContentChange}
+									handleFilePreviewScrollPositionChange={handleFilePreviewScrollPositionChange}
+									handleFilePreviewSearchQueryChange={handleFilePreviewSearchQueryChange}
+									handleFilePreviewReload={handleFilePreviewReload}
+									handleBrowserTabUpdate={onBrowserTabUpdate}
+									browserViewRef={browserViewRef}
+									browserViewRefs={browserViewRefs}
+									terminalViewRefs={terminalViewRefs}
+									mountedTerminalSessionIds={mountedTerminalSessionIds}
+									mountedTerminalSessionsRef={mountedTerminalSessionsRef}
+									terminalSearchOpen={terminalSearchOpen}
+									setTerminalSearchOpen={setTerminalSearchOpen}
+									onTerminalCopySelection={
+										props.onCopyText ? handleCopyTerminalSelection : undefined
+									}
+									onTerminalSendSelectionToAgent={
+										props.onSendTextToAgent ? handleSendTerminalSelectionToAgent : undefined
+									}
+									isMobileLandscape={isMobileLandscape}
+									activeTabContextUsage={activeTabContextUsage}
+									contextWarningsEnabled={contextWarningsEnabled}
+									contextWarningYellowThreshold={contextWarningYellowThreshold}
+									contextWarningRedThreshold={contextWarningRedThreshold}
+									handleInputFocus={handleInputFocus}
+									handleSessionClick={handleSessionClick}
+									isCurrentSessionAutoMode={isCurrentSessionAutoMode}
+									currentSessionBatchState={currentSessionBatchState}
+									hasCapability={hasCapability}
+									setInputValue={setInputValue}
+									stagedImages={stagedImages}
+									setStagedImages={setStagedImages}
+									setLightboxImage={setLightboxImage}
+									commandHistoryOpen={commandHistoryOpen}
+									setCommandHistoryOpen={setCommandHistoryOpen}
+									commandHistoryFilter={commandHistoryFilter}
+									setCommandHistoryFilter={setCommandHistoryFilter}
+									commandHistorySelectedIndex={commandHistorySelectedIndex}
+									setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
+									slashCommandOpen={slashCommandOpen}
+									setSlashCommandOpen={setSlashCommandOpen}
+									slashCommands={slashCommands}
+									selectedSlashCommandIndex={selectedSlashCommandIndex}
+									setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
+									tabCompletionOpen={tabCompletionOpen}
+									setTabCompletionOpen={setTabCompletionOpen}
+									tabCompletionSuggestions={tabCompletionSuggestions}
+									selectedTabCompletionIndex={selectedTabCompletionIndex}
+									setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
+									tabCompletionFilter={tabCompletionFilter}
+									setTabCompletionFilter={setTabCompletionFilter}
+									atMentionOpen={atMentionOpen}
+									setAtMentionOpen={setAtMentionOpen}
+									atMentionFilter={atMentionFilter}
+									setAtMentionFilter={setAtMentionFilter}
+									atMentionStartIndex={atMentionStartIndex}
+									setAtMentionStartIndex={setAtMentionStartIndex}
+									atMentionItems={atMentionItems}
+									atMentionCounts={atMentionCounts}
+									atMentionCategory={atMentionCategory}
+									setAtMentionCategory={setAtMentionCategory}
+									selectedAtMentionIndex={selectedAtMentionIndex}
+									setSelectedAtMentionIndex={setSelectedAtMentionIndex}
+									inputRef={inputRef}
+									logsEndRef={logsEndRef}
+									terminalOutputRef={terminalOutputRef}
+									toggleInputMode={toggleInputMode}
+									processInput={processInput}
+									handleInterrupt={handleInterrupt}
+									handleInputKeyDown={handleInputKeyDown}
+									handlePaste={handlePaste}
+									handleDrop={handleDrop}
+									onStopBatchRun={onStopBatchRun}
+									onRemoveQueuedItem={onRemoveQueuedItem}
+									onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+									onEditQueuedItem={onEditQueuedItem}
+									onReorderQueuedItem={onReorderQueuedItem}
+									onForceSendQueuedItem={onForceSendQueuedItem}
+									forcedParallelEnabled={forcedParallelEnabled}
+									getForceSendContext={getForceSendContext}
+									onOpenQueueBrowser={onOpenQueueBrowser}
+									showFlashNotification={showFlashNotification}
+									summarizeProgress={summarizeProgress}
+									summarizeResult={summarizeResult}
+									summarizeStartTime={summarizeStartTime}
+									isSummarizing={isSummarizing}
+									onCancelSummarize={onCancelSummarize}
+									onSummarizeAndContinue={onSummarizeAndContinue}
+									mergeProgress={mergeProgress}
+									mergeResult={mergeResult}
+									mergeStartTime={mergeStartTime}
+									isMerging={isMerging}
+									mergeSourceName={mergeSourceName}
+									mergeTargetName={mergeTargetName}
+									onCancelMerge={onCancelMerge}
+									onExitWizard={onExitWizard}
+									onStopWizardTurn={props.onStopWizardTurn}
+									paneTabActions={paneTabActions}
+									paneFileActions={paneFileActions}
+									onDeleteLog={props.onDeleteLog}
+									onScrollPositionChange={props.onScrollPositionChange}
+									onAtBottomChange={props.onAtBottomChange}
+									onInputBlur={props.onInputBlur}
+									onOpenPromptComposer={props.onOpenPromptComposer}
+									onReplayMessage={props.onReplayMessage}
+									onForkConversation={props.onForkConversation}
+									onSessionRecover={props.onSessionRecover}
+									isRecoveringSession={props.isRecoveringSession}
+									sessionRecoveryError={props.sessionRecoveryError}
+									fileTree={props.fileTree}
+									onFileClick={props.onFileClick}
+									refreshFileTree={props.refreshFileTree}
+									onOpenSavedFileInTab={props.onOpenSavedFileInTab}
+									onShowAgentErrorModal={props.onShowAgentErrorModal}
+									canGoBack={fileTabCanGoBack}
+									canGoForward={fileTabCanGoForward}
+									onNavigateBack={props.onNavigateBack}
+									onNavigateForward={props.onNavigateForward}
+									backHistory={fileTabBackHistory}
+									forwardHistory={fileTabForwardHistory}
+									currentHistoryIndex={activeFileTabNavIndex}
+									onNavigateToIndex={props.onNavigateToIndex}
+									onOpenFuzzySearch={props.onOpenFuzzySearch}
+									onShortcutUsed={props.onShortcutUsed}
+									ghCliAvailable={props.ghCliAvailable}
+									onPublishGist={props.onPublishGist}
+									hasGist={hasGist}
+									onOpenInGraph={props.onOpenInGraph}
+									onOpenInBrowser={props.onOpenInBrowser}
+									onPublishMessageGist={props.onPublishMessageGist}
+									onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
+									onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
+									onToggleTabShowThinking={props.onToggleTabShowThinking}
+									onToggleTabEnterToSend={props.onToggleTabEnterToSend}
+									onWizardComplete={props.onWizardComplete}
+									onWizardCompleteAndStartAutoRun={props.onWizardCompleteAndStartAutoRun}
+									onWizardDocumentSelect={props.onWizardDocumentSelect}
+									onWizardContentChange={props.onWizardContentChange}
+									onWizardLetsGo={props.onWizardLetsGo}
+									onWizardRetry={props.onWizardRetry}
+									onWizardClearError={props.onWizardClearError}
+									onToggleWizardShowThinking={props.onToggleWizardShowThinking}
+									onWizardCancelGeneration={props.onWizardCancelGeneration}
+									// Model/Effort quick-change pills
+									currentModel={resolvedModel}
+									currentEffort={resolvedEffort}
+									availableModels={pillModels}
+									availableEfforts={pillEfforts}
+									onModelChange={handleModelChange}
+									onEffortChange={handleEffortChange}
+								/>
+							</>
+						)}
 					</div>
 				</ErrorBoundary>
+			);
+		};
+
+		return (
+			<>
+				{renderBranch()}
+				<CoworkingApprovalHost theme={theme} />
+				<CoworkingBackgroundBrowsers theme={theme} />
 			</>
 		);
 	})

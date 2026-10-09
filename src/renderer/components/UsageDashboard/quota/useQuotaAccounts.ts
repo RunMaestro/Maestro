@@ -157,11 +157,39 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		// account sampled in a previous run whose session was since deleted.
 		// Keeping the tab lets the user still see the cached data.
 		for (const key of Object.keys(snapshots)) keys.add(normalizeKey(key));
+
+		// Collapse case-variant spellings of the same path - e.g. the canonical
+		// `/Users/me/.claude-x` from the fs scan vs a `/users/me/.claude-x` typed
+		// into a session's CLAUDE_CONFIG_DIR. On a case-insensitive filesystem
+		// (macOS, Windows) those are one directory, so showing two rows is a bug.
+		// Two real account dirs never differ only by case, so folding on lowercase
+		// is safe. Prefer the spelling that has a snapshot so the data-bearing
+		// (main-derived, correctly-cased) key wins; otherwise keep the first seen,
+		// which is the fs-discovered key before any session-typed variant.
+		const byFold = new Map<string, string>();
+		for (const key of keys) {
+			const fold = key.toLowerCase();
+			const existing = byFold.get(fold);
+			if (existing === undefined || (!snapshots[existing] && snapshots[key])) {
+				byFold.set(fold, key);
+			}
+		}
+
+		// The counts were tallied per raw spelling, so fold them the same way. A
+		// count left under a spelling that just lost the fold would be stranded:
+		// its key is no longer in the list, and the surviving row would under-report
+		// its agents - exactly the tab/badge disagreement this map exists to prevent.
+		const foldedCounts: Record<string, number> = {};
+		for (const [rawKey, count] of Object.entries(counts)) {
+			const survivor = byFold.get(rawKey.toLowerCase()) ?? rawKey;
+			foldedCounts[survivor] = (foldedCounts[survivor] ?? 0) + count;
+		}
+
 		return {
-			configuredAccountKeys: Array.from(keys).sort((a, b) =>
+			configuredAccountKeys: Array.from(byFold.values()).sort((a, b) =>
 				deriveShortName(a).localeCompare(deriveShortName(b))
 			),
-			agentCountsByAccount: counts,
+			agentCountsByAccount: foldedCounts,
 		};
 	}, [
 		accountKeys,

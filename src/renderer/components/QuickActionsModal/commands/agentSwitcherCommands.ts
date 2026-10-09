@@ -3,12 +3,16 @@ import { sessionJumpShortcut } from '../../../utils/sessionJumpSlots';
 import { getTabDisplayName } from '../../../utils/tabHelpers';
 import type { QuickAction } from '../types';
 import { alphabetizeKey } from '../utils/quickActionSorting';
+import { makeAgentJumpAction, type GetSessionWindow } from './agentJumpAction';
 
 interface BuildAgentSwitcherCommandsArgs {
 	sessions: Session[];
 	activeBatchSessionIds: string[];
 	setActiveSessionId: (id: string) => void;
 	revealJumpTarget: (session: Session) => void;
+	/** Multi-window: resolves an agent's owning window so cross-window picks focus
+	 * that window instead of stealing the agent. Omitted = single-window behavior. */
+	getSessionWindow?: GetSessionWindow;
 	/** Agent ID -> Opt+Cmd+# digit, for agents in the Left Bar's first ten slots. */
 	jumpSlots?: Map<string, string>;
 }
@@ -18,6 +22,7 @@ export function buildAgentSwitcherCommands({
 	activeBatchSessionIds,
 	setActiveSessionId,
 	revealJumpTarget,
+	getSessionWindow,
 	jumpSlots,
 }: BuildAgentSwitcherCommandsArgs): QuickAction[] {
 	const batchSessionIdSet = new Set(activeBatchSessionIds);
@@ -44,10 +49,12 @@ export function buildAgentSwitcherCommands({
 			id: `jump-${session.id}`,
 			label: session.name,
 			shortcut: jumpDigit ? sessionJumpShortcut(jumpDigit) : undefined,
-			action: () => {
-				setActiveSessionId(session.id);
-				revealJumpTarget(session);
-			},
+			action: makeAgentJumpAction({
+				session,
+				setActiveSessionId,
+				revealJumpTarget,
+				getSessionWindow,
+			}),
 			subtext: undefined,
 			isRunningAgent,
 			isInBatch,

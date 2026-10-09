@@ -60,6 +60,57 @@ export async function resolveConfiguredContextWindow(
 }
 
 /**
+ * Synchronous cache of resolved configured windows, so hot per-turn paths (the
+ * usage listener that feeds the Context Timeline) can honor a provider-configured
+ * window - which only `resolveConfiguredContextWindow` knows, via the async
+ * `getConfig` step - without awaiting on every event. Keyed by the inputs that
+ * determine the result. A provider-config edit that doesn't change the key
+ * (e.g. changing the agent's configured contextWindow in settings) is picked up
+ * on the next app load; the per-session sync inputs are part of the key, so
+ * changing those re-resolves immediately.
+ */
+const configuredWindowCache = new Map<string, number>();
+const pendingConfiguredWindowResolves = new Set<string>();
+
+function configuredWindowCacheKey(session: ContextWindowSource): string {
+	return `${session.toolType ?? ''}|${session.customContextWindow ?? ''}|${session.customModel ?? ''}`;
+}
+
+/**
+ * Synchronously read the cached configured window for a session, or 0 when it has
+ * not been resolved yet. Pair with {@link ensureConfiguredContextWindowCached} to
+ * populate the cache off the hot path.
+ */
+export function getCachedConfiguredContextWindow(session: ContextWindowSource): number {
+	return configuredWindowCache.get(configuredWindowCacheKey(session)) ?? 0;
+}
+
+/** Test-only: clear the configured-window cache so cases don't leak into each other. */
+export function __resetConfiguredContextWindowCacheForTests(): void {
+	configuredWindowCache.clear();
+	pendingConfiguredWindowResolves.clear();
+}
+
+/**
+ * Resolve the configured window for a session and cache it, unless a value is
+ * already cached or a resolve is already in flight for the same key. Safe to
+ * fire-and-forget from a hot path; the resolved value (including 0) is cached so
+ * the async `getConfig` runs at most once per distinct input set.
+ */
+export function ensureConfiguredContextWindowCached(session: ContextWindowSource): void {
+	const key = configuredWindowCacheKey(session);
+	if (configuredWindowCache.has(key) || pendingConfiguredWindowResolves.has(key)) return;
+	pendingConfiguredWindowResolves.add(key);
+	void resolveConfiguredContextWindow(session)
+		.then((value) => {
+			configuredWindowCache.set(key, value);
+		})
+		.finally(() => {
+			pendingConfiguredWindowResolves.delete(key);
+		});
+}
+
+/**
  * Resolve the context window to use for decision-making: the configured window,
  * or the agent's default (then the global fallback) when the agent doesn't
  * report one. Terminal agents have no context window and resolve to 0.

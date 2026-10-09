@@ -26,6 +26,7 @@ import { notifyToast } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { generateId } from '../../../utils/ids';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
 
 /**
@@ -81,6 +82,7 @@ function buildBatchModeBanner(
 }
 
 export function useAgentClaudeModeResolvedListener(): void {
+	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 
@@ -93,6 +95,8 @@ export function useAgentClaudeModeResolvedListener(): void {
 					configDirKey: string;
 				}
 			) => {
+				// Window scoping: ignore agents this window doesn't own (broadcast events).
+				if (!ownedGate.current?.(sessionId)) return;
 				// Strip the tab/role suffix the spawner uses for AI tabs so we land
 				// on the parent session that actually owns `claudeInteractive`.
 				let actualSessionId: string;
@@ -169,14 +173,14 @@ export function useAgentClaudeModeResolvedListener(): void {
 					notifyToast({
 						color: 'yellow',
 						title: 'Switched to API Limits',
-						message: 'Max plan quota hit — agents on this account are falling back to billed API.',
+						message: 'Max plan quota hit - agents on this account are falling back to billed API.',
 					});
 				} else if (providerTransitioned && resolution.mode === 'interactive') {
 					notifyToast({
 						color: 'green',
 						title: 'Switched to Time Limits',
 						message:
-							'Max plan quota window has reset — agents on this account are back on Time Limits.',
+							'Max plan quota window has reset - agents on this account are back on Time Limits.',
 					});
 				}
 
@@ -190,5 +194,5 @@ export function useAgentClaudeModeResolvedListener(): void {
 		return () => {
 			unsubscribe?.();
 		};
-	}, []);
+	}, [ownedGate]);
 }

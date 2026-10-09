@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useAutosizeTextarea } from '../../../hooks/ui/useAutosizeTextarea';
-import { EXTERNAL_TEXTAREA_MAX_HEIGHT } from '../../../utils/textareaSizing';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../utils/textareaSizing';
 
 interface UseInputAreaAutosizeArgs {
 	inputRef: React.RefObject<HTMLTextAreaElement>;
@@ -15,9 +15,8 @@ interface UseInputAreaAutosizeArgs {
 }
 
 /**
- * AI composer binding over {@link useAutosizeTextarea}: the external (non
- * keystroke) height cap, plus the tab id so switching tabs re-measures the
- * restored draft.
+ * AI composer binding over {@link useAutosizeTextarea}: the composer's height
+ * cap, plus the tab id so switching tabs re-measures the restored draft.
  */
 export function useInputAreaAutosize({
 	inputRef,
@@ -28,7 +27,11 @@ export function useInputAreaAutosize({
 	useAutosizeTextarea({
 		textareaRef: inputRef,
 		value: inputValue,
-		maxHeight: EXTERNAL_TEXTAREA_MAX_HEIGHT,
+		// The AI composer uses ONE cap on both paths. Two different caps between
+		// this effect and the keystroke rAF is what desynced the caret row from the
+		// rendered height once the box started scrolling internally (issue #1321),
+		// so the external path resizes to the same 176 the keystroke path does.
+		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
 		resetKey: activeTabId,
 		deferredResizeRef: keystrokeResizeScheduledRef,
 	});

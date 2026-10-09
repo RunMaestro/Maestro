@@ -42,9 +42,19 @@ interface FileTreeRowProps {
 	fileTreeFilter: string;
 	htmlDoubleClickOpensInBrowser: boolean;
 	sshRemoteId: string | undefined;
+	isTouchPointer: boolean;
+	longPressTimerRef: React.MutableRefObject<number | null>;
+	longPressFiredRef: React.MutableRefObject<boolean>;
 	lastClickedUnderFilterRef: React.MutableRefObject<string | null>;
 	setActiveFocus: (focus: FocusArea) => void;
 	handleRowSelectionClick: (e: React.MouseEvent, globalIndex: number, fullPath: string) => void;
+	openContextMenuAt: (
+		x: number,
+		y: number,
+		node: FileNode,
+		path: string,
+		globalIndex: number
+	) => void;
 	handleContextMenu: (
 		e: React.MouseEvent,
 		node: FileNode,
@@ -98,9 +108,13 @@ export const FileTreeRow = memo(function FileTreeRow({
 	fileTreeFilter,
 	htmlDoubleClickOpensInBrowser,
 	sshRemoteId,
+	isTouchPointer,
+	longPressTimerRef,
+	longPressFiredRef,
 	lastClickedUnderFilterRef,
 	setActiveFocus,
 	handleRowSelectionClick,
+	openContextMenuAt,
 	handleContextMenu,
 	handleFolderDragEnter,
 	handleFolderDragOver,
@@ -149,6 +163,20 @@ export const FileTreeRow = memo(function FileTreeRow({
 	const isKeyboardSelected =
 		activeFocus === 'right' && activeRightTab === 'files' && globalIndex === selectedFileIndex;
 	const isMultiSelected = selectedPaths.has(fullPath);
+
+	const openFile = () => {
+		if (isFolder) return;
+		const isHtml = /\.html?$/i.test(node.name);
+		if (htmlDoubleClickOpensInBrowser && isHtml && !sshRemoteId && onOpenBrowserTabAt) {
+			const encodedPath = absolutePath
+				.split('/')
+				.map((seg) => encodeURIComponent(seg))
+				.join('/');
+			onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
+			return;
+		}
+		void handleFileClick(node, fullPath);
+	};
 
 	// Indent guides. The default is one full-height line per ancestor level.
 	// With branch connectors on (Settings > Display), a line only runs the full
@@ -275,7 +303,53 @@ export const FileTreeRow = memo(function FileTreeRow({
 					e.preventDefault();
 				}
 			}}
+			onTouchStart={(e) => {
+				longPressFiredRef.current = false;
+				if (longPressTimerRef.current) {
+					window.clearTimeout(longPressTimerRef.current);
+				}
+				const touch = e.touches[0];
+				const x = touch.clientX;
+				const y = touch.clientY;
+				longPressTimerRef.current = window.setTimeout(() => {
+					longPressFiredRef.current = true;
+					openContextMenuAt(x, y, node, fullPath, globalIndex);
+					const swallow = (ev: Event) => {
+						ev.stopPropagation();
+						document.removeEventListener('mousedown', swallow, true);
+						document.removeEventListener('click', swallow, true);
+					};
+					document.addEventListener('mousedown', swallow, true);
+					document.addEventListener('click', swallow, true);
+					window.setTimeout(() => {
+						document.removeEventListener('mousedown', swallow, true);
+						document.removeEventListener('click', swallow, true);
+					}, 1000);
+				}, 500);
+			}}
+			onTouchMove={() => {
+				if (longPressTimerRef.current) {
+					window.clearTimeout(longPressTimerRef.current);
+					longPressTimerRef.current = null;
+				}
+			}}
+			onTouchEnd={() => {
+				if (longPressTimerRef.current) {
+					window.clearTimeout(longPressTimerRef.current);
+					longPressTimerRef.current = null;
+				}
+			}}
+			onTouchCancel={() => {
+				if (longPressTimerRef.current) {
+					window.clearTimeout(longPressTimerRef.current);
+					longPressTimerRef.current = null;
+				}
+			}}
 			onClick={(e) => {
+				if (longPressFiredRef.current) {
+					longPressFiredRef.current = false;
+					return;
+				}
 				if (fileTreeFilter.length > 0) {
 					lastClickedUnderFilterRef.current = fullPath;
 				}
@@ -294,24 +368,13 @@ export const FileTreeRow = memo(function FileTreeRow({
 					} else {
 						toggleFolder(fullPath, session.id, setSessions);
 					}
+				} else if (isTouchPointer) {
+					openFile();
 				}
 			}}
 			onDoubleClick={() => {
-				if (isFolder) return;
-				// Optional shortcut: HTML files can default to opening in the
-				// Maestro browser instead of the preview. SSH skips this (file://
-				// can't reach the remote host); the right-click menu still offers
-				// both paths regardless of the setting.
-				const isHtml = /\.html?$/i.test(node.name);
-				if (htmlDoubleClickOpensInBrowser && isHtml && !sshRemoteId && onOpenBrowserTabAt) {
-					const encodedPath = absolutePath
-						.split('/')
-						.map((seg) => encodeURIComponent(seg))
-						.join('/');
-					onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
-					return;
-				}
-				handleFileClick(node, fullPath);
+				if (isTouchPointer) return;
+				openFile();
 			}}
 			onContextMenu={(e) => handleContextMenu(e, node, fullPath, globalIndex)}
 		>

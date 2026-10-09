@@ -10,6 +10,7 @@
  * anything else flattens to an explicit file list.
  */
 
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 
 vi.mock('fs', () => ({
@@ -22,12 +23,17 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
 }));
 
+const PROJECT_ROOT = path.resolve('test-fixtures', 'open-graph', 'project');
+const FILE_A = path.join(PROJECT_ROOT, 'a.md');
+const FILE_B = path.join(PROJECT_ROOT, 'b.md');
+const DOCS_DIR = path.join(PROJECT_ROOT, 'docs');
+
 const mockSession = {
 	id: 'session-123',
 	name: 'Test Agent',
 	toolType: 'claude-code',
-	cwd: '/home/user/project',
-	projectRoot: '/home/user/project',
+	cwd: PROJECT_ROOT,
+	projectRoot: PROJECT_ROOT,
 };
 vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(() => mockSession),
@@ -87,13 +93,13 @@ describe('open-graph command', () => {
 		const captured = captureSend();
 		vi.mocked(statSync).mockReturnValue(asFile());
 
-		await openGraph(['/home/user/project/a.md', '/home/user/project/b.md'], {
+		await openGraph([FILE_A, FILE_B], {
 			agent: 'session-123',
 		});
 
 		expect(captured.sent.type).toBe('open_document_graph');
 		expect(captured.sent.sessionId).toBe('session-123');
-		expect(captured.sent.files).toEqual(['/home/user/project/a.md', '/home/user/project/b.md']);
+		expect(captured.sent.files).toEqual([FILE_A, FILE_B]);
 		expect(captured.sent.directory).toBeUndefined();
 		expect(consoleSpy).toHaveBeenCalled();
 	});
@@ -104,9 +110,9 @@ describe('open-graph command', () => {
 		const captured = captureSend();
 		vi.mocked(statSync).mockReturnValue(asDirectory());
 
-		await openGraph(['/home/user/project/docs'], { agent: 'session-123' });
+		await openGraph([DOCS_DIR], { agent: 'session-123' });
 
-		expect(captured.sent.directory).toBe('/home/user/project/docs');
+		expect(captured.sent.directory).toBe(DOCS_DIR);
 		expect(captured.sent.files).toEqual([]);
 	});
 
@@ -121,13 +127,13 @@ describe('open-graph command', () => {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		] as any);
 
-		await openGraph(['/home/user/project/a.md', '/home/user/project/docs'], {
+		await openGraph([FILE_A, DOCS_DIR], {
 			agent: 'session-123',
 		});
 
 		expect(captured.sent.directory).toBeUndefined();
-		expect(captured.sent.files).toContain('/home/user/project/a.md');
-		expect(captured.sent.files).toContain('/home/user/project/docs/one.md');
+		expect(captured.sent.files).toContain(FILE_A);
+		expect(captured.sent.files).toContain(path.join(DOCS_DIR, 'one.md'));
 		// Only markdown is graphable, so a stray text file must not ride along.
 		expect(captured.sent.files?.some((f) => f.endsWith('skip.txt'))).toBe(false);
 	});
@@ -136,30 +142,30 @@ describe('open-graph command', () => {
 		const captured = captureSend();
 		vi.mocked(statSync).mockReturnValue(asFile());
 
-		await openGraph(['/home/user/project/a.md', '/home/user/project/a.md'], {
+		await openGraph([FILE_A, FILE_A], {
 			agent: 'session-123',
 		});
 
-		expect(captured.sent.files).toEqual(['/home/user/project/a.md']);
+		expect(captured.sent.files).toEqual([FILE_A]);
 	});
 
 	it('passes an explicit --focus through as an absolute path', async () => {
 		const captured = captureSend();
 		vi.mocked(statSync).mockReturnValue(asFile());
 
-		await openGraph(['/home/user/project/a.md', '/home/user/project/b.md'], {
+		await openGraph([FILE_A, FILE_B], {
 			agent: 'session-123',
-			focus: '/home/user/project/b.md',
+			focus: FILE_B,
 		});
 
-		expect(captured.sent.focusPath).toBe('/home/user/project/b.md');
+		expect(captured.sent.focusPath).toBe(FILE_B);
 	});
 
 	it('leaves focusPath unset so the app auto-centers when none is given', async () => {
 		const captured = captureSend();
 		vi.mocked(statSync).mockReturnValue(asFile());
 
-		await openGraph(['/home/user/project/a.md'], { agent: 'session-123' });
+		await openGraph([FILE_A], { agent: 'session-123' });
 
 		expect(captured.sent.focusPath).toBeUndefined();
 	});
@@ -176,7 +182,7 @@ describe('open-graph command', () => {
 	it('errors on a path that does not exist', async () => {
 		vi.mocked(existsSync).mockReturnValue(false);
 
-		await openGraph(['/home/user/project/missing.md'], { agent: 'session-123' });
+		await openGraph([path.join(PROJECT_ROOT, 'missing.md')], { agent: 'session-123' });
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Not found'));
 		expect(processExitSpy).toHaveBeenCalledWith(1);
@@ -185,7 +191,7 @@ describe('open-graph command', () => {
 	it('errors on a non-markdown file rather than silently dropping it', async () => {
 		vi.mocked(statSync).mockReturnValue(asFile());
 
-		await openGraph(['/home/user/project/notes.txt'], { agent: 'session-123' });
+		await openGraph([path.join(PROJECT_ROOT, 'notes.txt')], { agent: 'session-123' });
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith(
 			expect.stringContaining('Not a markdown document')

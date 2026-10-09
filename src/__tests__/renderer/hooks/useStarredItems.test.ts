@@ -12,6 +12,7 @@
  *   - Project-path normalization when matching a closed session to its parent
  *   - Rows are sorted by display name; section disabled yields an empty list
  *   - activateStarredItem focuses an open tab, and offers to remove an aged-out star
+ *   - Rows owned by Pianola are dropped while its Encore flag is off
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -231,6 +232,57 @@ describe('useStarredItems', () => {
 		expect(session?.inputMode).toBe('ai');
 	});
 
+	it('activateStarredItem focuses the PANE of a starred tab that is tiled into a group', async () => {
+		// Bug: a starred tab folded into a tiled group has no standalone chip, so
+		// setting activeTabId alone left the group's other pane focused (or rendered
+		// the tab as a dedicated view outside its group). Activation must select the
+		// owning group and point focusedPaneId at that tab's leaf.
+		useSessionStore.setState({
+			sessions: [
+				makeSession({
+					id: 's1',
+					activeGroupId: null,
+					aiTabs: [
+						{ id: 't1', starred: true, agentSessionId: 'asid-1', name: 'Tab One' },
+						{ id: 't2', agentSessionId: 'asid-2', name: 'Tab Two' },
+					] as never,
+					activeTabId: 't2',
+					tabGroups: [
+						{
+							id: 'g1',
+							name: 'Group',
+							focusedPaneId: 'leaf-2',
+							createdAt: 0,
+							layout: {
+								kind: 'split',
+								id: 'split-1',
+								direction: 'row',
+								sizes: [0.5, 0.5],
+								children: [
+									{ kind: 'leaf', id: 'leaf-1', tab: { type: 'ai', id: 't1' } },
+									{ kind: 'leaf', id: 'leaf-2', tab: { type: 'ai', id: 't2' } },
+								],
+							},
+						},
+					] as never,
+				}),
+			],
+		} as never);
+
+		const { result } = renderHook(() => useStarredItems({}));
+		const row = result.current.starredItems[0];
+
+		await act(async () => {
+			await result.current.activateStarredItem(row);
+		});
+
+		const session = useSessionStore.getState().sessions.find((s) => s.id === 's1');
+		expect(session?.activeGroupId).toBe('g1');
+		expect(session?.tabGroups?.[0].focusedPaneId).toBe('leaf-1');
+		expect(session?.activeTabId).toBe('t1');
+		expect(session?.inputMode).toBe('ai');
+	});
+
 	it('dismisses an active group chat when activating a starred item (regression #1175)', async () => {
 		// Bug: clicking a Starred Session while a group chat was open did nothing.
 		// The group chat view is gated on a truthy activeGroupChatId and renders on
@@ -255,6 +307,33 @@ describe('useStarredItems', () => {
 
 		expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
 		expect(useSessionStore.getState().activeSessionId).toBe('s1');
+	});
+
+	it('activateStarredItem clears active group chat before resuming a closed starred session', async () => {
+		const onJumpToStarredSession = vi.fn().mockResolvedValue(true);
+		useGroupChatStore.setState({ activeGroupChatId: 'group-1' } as never);
+		mockNamedSessions([makeNamed({ agentSessionId: 'asid-closed', sessionName: 'Closed One' })]);
+		useSessionStore.setState({
+			sessions: [makeSession({ id: 's1', projectRoot: '/proj' })],
+		} as never);
+
+		const { result } = renderHook(() => useStarredItems({ onJumpToStarredSession }));
+		await waitFor(() => expect(result.current.starredItems).toHaveLength(1));
+		const closedRow = result.current.starredItems[0];
+
+		await act(async () => {
+			await result.current.activateStarredItem(closedRow);
+		});
+
+		expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+		expect(useSessionStore.getState().activeSessionId).toBe('s1');
+		expect(onJumpToStarredSession).toHaveBeenCalledWith(
+			'claude-code',
+			'/proj',
+			'asid-closed',
+			'Closed One',
+			's1'
+		);
 	});
 
 	it('offers to remove an aged-out star when the closed session can no longer be resumed', async () => {
@@ -286,5 +365,81 @@ describe('useStarredItems', () => {
 			expect.stringContaining('no longer available'),
 			expect.any(Function)
 		);
+	});
+
+	// Multi-window: the Starred section is scoped to the agents THIS window owns,
+	// keyed on each row's parentSessionId, so a window only lists starred tabs of
+	// agents visible in it.
+	describe('ownsSession scoping (multi-window)', () => {
+		beforeEach(() => {
+			useSessionStore.setState({
+				sessions: [
+					makeSession({
+						id: 's1',
+						name: 'Owned',
+						aiTabs: [{ id: 't1', starred: true, agentSessionId: 'a1', name: 'Owned Tab' }] as never,
+					}),
+					makeSession({
+						id: 's2',
+						name: 'Elsewhere',
+						aiTabs: [{ id: 't2', starred: true, agentSessionId: 'a2', name: 'Other Tab' }] as never,
+					}),
+				],
+			} as never);
+		});
+
+		it('lists every starred row when ownsSession is omitted (single-window / no provider)', () => {
+			const { result } = renderHook(() => useStarredItems({}));
+			expect(result.current.starredItems.map((i) => i.displayName)).toEqual([
+				'Other Tab',
+				'Owned Tab',
+			]);
+		});
+
+		it('keeps only rows whose owning agent (parentSessionId) this window owns', () => {
+			const ownsSession = (id: string) => id === 's1';
+			const { result } = renderHook(() => useStarredItems({ ownsSession }));
+			expect(result.current.starredItems).toHaveLength(1);
+			expect(result.current.starredItems[0]).toMatchObject({
+				parentSessionId: 's1',
+				displayName: 'Owned Tab',
+			});
+		});
+	});
+	describe('pianola encore flag', () => {
+		beforeEach(() => {
+			useSessionStore.setState({
+				sessions: [
+					makeSession({
+						id: 'p',
+						name: 'Pianola',
+						isPianola: true,
+						aiTabs: [
+							{ id: 'tp', starred: true, agentSessionId: 'ap', name: 'Manager Tab' },
+						] as never,
+					}),
+					makeSession({
+						id: 's1',
+						name: 'Alpha',
+						aiTabs: [{ id: 't1', starred: true, agentSessionId: 'a1', name: 'Alpha Tab' }] as never,
+					}),
+				],
+			} as never);
+		});
+
+		it('drops rows owned by Pianola while the flag is off', () => {
+			useSettingsStore.setState({ encoreFeatures: { pianola: false } } as never);
+			const { result } = renderHook(() => useStarredItems({}));
+			expect(result.current.starredItems.map((i) => i.displayName)).toEqual(['Alpha Tab']);
+		});
+
+		it('keeps Pianola rows once the flag is on', () => {
+			useSettingsStore.setState({ encoreFeatures: { pianola: true } } as never);
+			const { result } = renderHook(() => useStarredItems({}));
+			expect(result.current.starredItems.map((i) => i.displayName)).toEqual([
+				'Alpha Tab',
+				'Manager Tab',
+			]);
+		});
 	});
 });

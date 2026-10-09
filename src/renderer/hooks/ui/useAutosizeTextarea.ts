@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import type React from 'react';
-import { resizeTextareaToContent, shouldScrollTextareaToEnd } from '../../utils/textareaSizing';
+import { resizeTextareaToContent, scrollTextareaToCaretEnd } from '../../utils/textareaSizing';
 
 interface UseAutosizeTextareaArgs {
 	textareaRef:
@@ -41,19 +41,11 @@ export function useAutosizeTextarea({
 	resetKey,
 	deferredResizeRef,
 }: UseAutosizeTextareaArgs): void {
-	const previousValueRef = useRef(value);
-
 	useEffect(() => {
 		const el = textareaRef.current;
 		if (el && !deferredResizeRef?.current) {
 			resizeTextareaToContent(el, maxHeight);
-
-			if (
-				shouldScrollTextareaToEnd(el.selectionEnd, previousValueRef.current.length, value.length)
-			) {
-				el.scrollTop = el.scrollHeight;
-			}
+			scrollTextareaToCaretEnd(el);
 		}
-		previousValueRef.current = value;
 	}, [value, resetKey, maxHeight, textareaRef, deferredResizeRef]);
 }

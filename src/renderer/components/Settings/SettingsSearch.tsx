@@ -169,8 +169,9 @@ export function SettingsSearchInput({
 						{/* Phantom placeholder text positions the kbd hint right after where the real placeholder ends. */}
 						<span style={{ color: 'transparent' }}>Search settings...</span>
 						<kbd
+							data-shortcut-hint=""
 							className="text-2xs px-1.5 py-0.5 rounded font-mono opacity-40"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							{formatShortcutKeys(['Meta', 'f'])}
 						</kbd>
@@ -274,10 +275,7 @@ export function SettingsSearchResults({
 												{highlightMatch(setting.label, query, theme)}
 											</div>
 											{setting.description && (
-												<div
-													className="text-xs mt-0.5 opacity-60"
-													style={{ color: theme.colors.textDim }}
-												>
+												<div className="text-xs mt-0.5 opacity-70">
 													{highlightMatch(setting.description, query, theme)}
 												</div>
 											)}

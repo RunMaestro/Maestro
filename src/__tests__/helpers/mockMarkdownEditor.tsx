@@ -34,6 +34,13 @@ interface MockEditorProps {
 	readOnly?: boolean;
 	showLineNumbers?: boolean;
 	className?: string;
+	/**
+	 * Surface typography. The real editor hands these to CodeMirror's theme
+	 * compartment; the double puts them on the textarea's inline style so a
+	 * suite can still assert that a surface's font setting reaches the editor.
+	 */
+	fontFamily?: string;
+	baseFontPx?: number;
 }
 
 /**
@@ -42,7 +49,17 @@ interface MockEditorProps {
  */
 export function markdownEditorModuleMock() {
 	const MarkdownEditor = React.forwardRef<unknown, MockEditorProps>(function MockMarkdownEditor(
-		{ value, onChange, onKeyDown, onPaste, placeholder, readOnly, className },
+		{
+			value,
+			onChange,
+			onKeyDown,
+			onPaste,
+			placeholder,
+			readOnly,
+			className,
+			fontFamily,
+			baseFontPx,
+		},
 		ref
 	) {
 		const textareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -118,6 +135,10 @@ export function markdownEditorModuleMock() {
 				placeholder={placeholder}
 				readOnly={readOnly}
 				className={className}
+				style={{
+					...(fontFamily ? { fontFamily } : {}),
+					...(baseFontPx ? { fontSize: `${baseFontPx}px` } : {}),
+				}}
 				onChange={(e) => onChange?.(e.target.value)}
 				onKeyDown={(e) => onKeyDown?.(e.nativeEvent)}
 				onPaste={(e) => onPaste?.(e.nativeEvent as ClipboardEvent)}

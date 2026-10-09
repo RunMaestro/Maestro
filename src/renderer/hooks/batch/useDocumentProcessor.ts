@@ -15,8 +15,9 @@
 import { useCallback } from 'react';
 import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
+import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
-import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
+import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
@@ -76,6 +77,13 @@ export interface DocumentProcessorConfig {
 	 */
 	sshRemoteId?: string;
 
+	/**
+	 * Run-scoped model/effort override from the BatchRunConfig. Absent (or with
+	 * absent members) means the spawn falls back to the session's configured
+	 * model/effort, then the agent default. `ignoreModelHints` drops the
+	 * document's own markers from that chain.
+	 */
+	runOverrides?: DocumentRunOverrides;
 	/**
 	 * Notes the operator sent while the run was in flight. Prepended to this
 	 * task's prompt so a course correction lands without stopping the run.
@@ -199,6 +207,14 @@ export interface AutoRunTurnOverrides {
 	modelOverride?: string;
 	effortOverride?: string;
 }
+
+/**
+ * The run-scoped settings a BatchRunConfig hands the document processor: the
+ * spawn overrides, plus whether this run ignores the document's MAESTRO:MODEL
+ * markers. That flag never reaches a spawn - it decides which settings the spawn
+ * is given - so it lives here rather than on SpawnAgentOptions.
+ */
+export type DocumentRunOverrides = SpawnAgentRunOverrides & { ignoreModelHints?: boolean };
 
 /**
  * Spawn one Auto Run task.
@@ -344,6 +360,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				customPrompt,
 				taskSelectionMode,
 				sshRemoteId,
+				runOverrides,
 				steeringNotes,
 			} = config;
 
@@ -393,11 +410,23 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// dispatch rather than tracked as run state, so editing the document
 			// mid-run takes effect on the next task and there is nothing to get out
 			// of sync. Mirrors the CLI engine, which reads the same helpers.
+			// Three sources can name a model, narrowest first: the document's hint for
+			// THIS phase, the override set on this run in the Auto Run config, then the
+			// agent's own setting. `resolveTurnSettings` already prefers the hint over
+			// whatever baseline it is handed, so the run-scoped override goes in as that
+			// baseline. Passing the hint alone (or the run override alone) would make
+			// starting a run with an explicit model silently do nothing on any document
+			// that carries a MAESTRO:MODEL marker, or vice versa.
+			// With hints ignored the document is not consulted at all: the run's own
+			// pickers, then the agent's settings, decide every task.
+			const ignoreModelHints = runOverrides?.ignoreModelHints === true;
+			const baselineModel = runOverrides?.modelOverride ?? session.customModel;
+			const baselineEffort = runOverrides?.effortOverride ?? session.customEffort;
 			const turnSettings = resolveTurnSettings(
 				session.toolType,
-				findActiveModelHint(documentContent),
-				session.customModel,
-				session.customEffort
+				ignoreModelHints ? null : findActiveModelHint(documentContent),
+				baselineModel,
+				baselineEffort
 			);
 			for (const warning of turnSettings.warnings) {
 				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
@@ -412,12 +441,18 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// halfway down. The loop comes back around and re-resolves for the
 			// rest. Same content and baseline as the resolve above, so the two
 			// cannot disagree about where the boundary is.
-			const hintSegment = countTasksUnderActiveHint(
-				documentContent,
-				session.toolType,
-				session.customModel,
-				session.customEffort
-			);
+			// No hints means one setting for the whole document, so there is no
+			// boundary to stop at. The baseline must include the run override: measured
+			// against the agent's own model instead, a run that picked the model a
+			// marker also names would split where the settings are identical.
+			const hintSegment = ignoreModelHints
+				? undefined
+				: countTasksUnderActiveHint(
+						documentContent,
+						session.toolType,
+						baselineModel,
+						baselineEffort
+					);
 			const promptWithSelectionBlock = customPrompt.replace(
 				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
 				getTaskSelectionBlock(taskSelectionMode, hintSegment)
@@ -433,7 +468,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// substitution on purpose: a `{{...}}` the operator typed into a note is
 			// their literal text, not a variable for Maestro to expand.
 			const steeringBlock = formatSteeringNotesBlock(steeringNotes ?? []);
-			const finalPrompt = steeringBlock
+			const steeredPrompt = steeringBlock
 				? `${steeringBlock}\n\n---\n\n${substitutedPrompt}`
 				: substitutedPrompt;
 			if (steeringBlock) {
@@ -443,6 +478,13 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 					{ document: filename }
 				);
 			}
+
+			// Each task spawns a fresh provider session, so prefix the agent's New
+			// Session Message onto every spawn (matches interactive behavior). It
+			// wraps the steered prompt rather than the bare one, so the session
+			// message still opens the turn and the operator's note stays directly
+			// ahead of the task it is steering.
+			const finalPrompt = prependNewSessionMessage(steeredPrompt, session.newSessionMessage);
 
 			// Capture start time for elapsed time tracking. Sleep-aware: a task that
 			// spans a lid close must not report the sleep as agent work time.

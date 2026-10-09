@@ -8,8 +8,9 @@
  * "one decision, honored across every surface" guarantee can't silently drift.
  */
 
-import * as path from 'path';
 import { describe, it, expect } from 'vitest';
+import path from 'path';
+import os from 'os';
 import {
 	resolveClaudeSpawnModeCore,
 	findPackagedAppHost,
@@ -61,8 +62,9 @@ describe('isMaestroPBinaryPath', () => {
 
 describe('resolveConfigDirKeyFromEnv', () => {
 	it('uses CLAUDE_CONFIG_DIR when set (resolved to absolute)', () => {
-		const key = resolveConfigDirKeyFromEnv({ CLAUDE_CONFIG_DIR: '/home/u/.claude' });
-		expect(key).toBe('/home/u/.claude');
+		const configDir = path.join(os.tmpdir(), '.claude-test');
+		const key = resolveConfigDirKeyFromEnv({ CLAUDE_CONFIG_DIR: configDir });
+		expect(key).toBe(path.resolve(configDir));
 	});
 
 	it('falls back to ~/.claude when unset', () => {

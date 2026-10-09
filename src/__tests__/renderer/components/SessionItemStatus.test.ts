@@ -62,3 +62,66 @@ describe('getEnhancedStatusColor busy labels', () => {
 		expect(getEnhancedStatusColor(session, mockTheme, true).label).toBe('Auto Run active');
 	});
 });
+
+/**
+ * A cross-agent consult runs under a synthetic process id and writes into a
+ * hidden tab, so it never reaches `session.state`. Before this the consulted
+ * agent drew a green "Ready" dot for the entire time it was working - and for a
+ * Claude agent the user had never opened, a dim "No active Claude session" one,
+ * because a fresh consult tab has no provider session until the answer lands.
+ */
+describe('getEnhancedStatusColor consult state', () => {
+	it('shows a pulsing busy dot while an idle agent answers a consult', () => {
+		const status = getEnhancedStatusColor(
+			boundSession({ state: 'idle' }),
+			mockTheme,
+			false,
+			false,
+			false,
+			true
+		);
+
+		expect(status.label).toBe('Answering a consult');
+		expect(status.animate).toBe(true);
+		expect(status.color).toBe(mockTheme.colors.warning);
+	});
+
+	// The whole point of the ordering: an unbound Claude agent is the COMMON
+	// consult target, so the hollow dot must not mask live work.
+	it('outranks the unbound-Claude hollow dot', () => {
+		const unbound = createMockSession({ state: 'idle', agentSessionId: undefined, aiTabs: [] });
+
+		const status = getEnhancedStatusColor(unbound, mockTheme, false, false, false, true);
+
+		expect(status.label).toBe('Answering a consult');
+		expect(status.color).toBe(mockTheme.colors.warning);
+	});
+
+	// Both draw the same dot, so the agent's own turn keeps the more specific
+	// wording rather than being relabelled by a consult running beside it.
+	it('defers to the agent own turn for the label', () => {
+		const busy = boundSession({ state: 'busy', busySource: 'ai' });
+
+		expect(getEnhancedStatusColor(busy, mockTheme, false, false, false, true).label).toBe(
+			'Thinking'
+		);
+	});
+
+	// A stuck auto-retry is a "needs attention" state; a consult is not.
+	it('stays below an active outage', () => {
+		const status = getEnhancedStatusColor(
+			boundSession({ state: 'idle' }),
+			mockTheme,
+			false,
+			false,
+			true,
+			true
+		);
+
+		expect(status.label).toBe('Auto-retrying (stuck)');
+	});
+
+	it('leaves an idle agent alone when nothing is consulting it', () => {
+		expect(label(boundSession({ state: 'idle' }))).toBe('Ready');
+	});
+});

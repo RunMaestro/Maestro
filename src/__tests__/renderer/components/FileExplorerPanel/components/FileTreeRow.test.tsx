@@ -79,9 +79,13 @@ const defaultProps = {
 	fileTreeFilter: '',
 	htmlDoubleClickOpensInBrowser: false,
 	sshRemoteId: undefined,
+	isTouchPointer: false,
+	longPressTimerRef: { current: null as number | null },
+	longPressFiredRef: { current: false },
 	lastClickedUnderFilterRef: { current: null as string | null },
 	setActiveFocus: vi.fn(),
 	handleRowSelectionClick: vi.fn(),
+	openContextMenuAt: vi.fn(),
 	handleContextMenu: vi.fn(),
 	handleFolderDragEnter: vi.fn(),
 	handleFolderDragOver: vi.fn(),
@@ -294,6 +298,44 @@ describe('FileTreeRow', () => {
 		);
 		fireEvent.click(container.firstElementChild!);
 		expect(handleRowSelectionClick).toHaveBeenCalled();
+	});
+
+	it('opens files on a single tap for touch pointers', () => {
+		const handleFileClick = vi.fn().mockResolvedValue(undefined);
+		const { container } = render(
+			<FileTreeRow {...defaultProps} isTouchPointer handleFileClick={handleFileClick} />
+		);
+
+		fireEvent.click(container.firstElementChild!);
+
+		// Two arguments, not three: the third slot used to carry the active
+		// session, which handleFileClick never read (it resolves the session from
+		// the store). It now belongs to an optional FileClickOptions.
+		expect(handleFileClick).toHaveBeenCalledWith(fileNode, 'App.tsx');
+	});
+
+	it('opens the context menu on touch long press', () => {
+		vi.useFakeTimers();
+		const openContextMenuAt = vi.fn();
+		const longPressTimerRef = { current: null as number | null };
+		const longPressFiredRef = { current: false };
+		const { container } = render(
+			<FileTreeRow
+				{...defaultProps}
+				openContextMenuAt={openContextMenuAt}
+				longPressTimerRef={longPressTimerRef}
+				longPressFiredRef={longPressFiredRef}
+			/>
+		);
+
+		fireEvent.touchStart(container.firstElementChild!, {
+			touches: [{ clientX: 100, clientY: 200 }],
+		});
+		vi.advanceTimersByTime(500);
+
+		expect(openContextMenuAt).toHaveBeenCalledWith(100, 200, fileNode, 'App.tsx', 0);
+		expect(longPressFiredRef.current).toBe(true);
+		vi.useRealTimers();
 	});
 
 	it('applies keyboard-selected background when globalIndex matches selectedFileIndex', () => {

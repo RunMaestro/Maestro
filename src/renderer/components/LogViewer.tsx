@@ -17,6 +17,7 @@ import { blendColors, readableTextOn, transparentize } from '../../shared/colorC
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useThrottledCallback } from '../hooks';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ConfirmModal } from './ConfirmModal';
@@ -108,6 +109,9 @@ export function LogViewer({
 	const [logs, setLogs] = useState<SystemLogEntry[]>([]);
 	const [filteredLogs, setFilteredLogs] = useState<SystemLogEntry[]>([]);
 	const [searchOpen, setSearchOpen] = useState(false);
+	// Phone: a shorter title, no entry count, and a search button, since the
+	// only way into search was Cmd+F and a phone has no keyboard to press it on.
+	const phone = usePhoneLayout();
 	const [searchQuery, setSearchQuery] = useState('');
 
 	// Resolve agent name to session ID for navigation from autorun/cue pills
@@ -462,15 +466,33 @@ export function LogViewer({
 				className="px-4 border-b flex items-center justify-between sticky top-0 z-10 h-16 shrink-0"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
-				<div className="flex items-center gap-3">
-					<h2 className="text-lg font-bold" style={{ color: theme.colors.textMain }}>
-						Maestro System Logs
+				<div className="flex items-center gap-3 min-w-0">
+					<h2
+						className={`font-bold whitespace-nowrap truncate ${phone ? 'text-base' : 'text-lg'}`}
+						style={{ color: theme.colors.textMain }}
+					>
+						{phone ? 'System Logs' : 'Maestro System Logs'}
 					</h2>
-					<span className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
-						{filteredLogs.length} {filteredLogs.length === 1 ? 'entry' : 'entries'}
-					</span>
+					{!phone && (
+						<span
+							className="text-xs opacity-50 whitespace-nowrap"
+							style={{ color: theme.colors.textDim }}
+						>
+							{filteredLogs.length} {filteredLogs.length === 1 ? 'entry' : 'entries'}
+						</span>
+					)}
 				</div>
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-2 shrink-0">
+					<button
+						onClick={() => setSearchOpen(true)}
+						className="p-2 rounded row-hover transition-all"
+						style={{ color: searchOpen ? theme.colors.accent : theme.colors.textDim }}
+						title={`Search logs (${formatShortcutKeys(['Meta', 'f'])})`}
+						aria-label="Search logs"
+						disabled={searchOpen}
+					>
+						<Search className="w-4 h-4" />
+					</button>
 					{/* Expand/Collapse All buttons */}
 					{expandableIndices.length > 0 && (
 						<>
@@ -524,11 +546,11 @@ export function LogViewer({
 
 			{/* Level Filters */}
 			<div
-				className="px-4 py-2 border-b flex items-center gap-2"
+				className="px-4 py-2 border-b flex items-center gap-2 overflow-x-auto no-scrollbar"
 				style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 			>
 				<span
-					className="text-xs font-bold opacity-70 uppercase mr-2"
+					className="text-xs font-bold opacity-70 uppercase mr-2 shrink-0"
 					style={{ color: theme.colors.textDim }}
 				>
 					Filter:
@@ -558,7 +580,7 @@ export function LogViewer({
 							});
 						}
 					}}
-					className="px-3 py-1 rounded text-xs font-bold transition-all"
+					className="px-3 py-1 rounded text-xs font-bold transition-all shrink-0 whitespace-nowrap"
 					style={{
 						// ALL is highlighted when all enabled levels are selected
 						backgroundColor: Array.from(enabledLevels).every((level) => selectedLevels.has(level))
@@ -592,7 +614,7 @@ export function LogViewer({
 									return newSet;
 								});
 							}}
-							className="px-3 py-1 rounded text-xs font-bold transition-all"
+							className="px-3 py-1 rounded text-xs font-bold transition-all shrink-0 whitespace-nowrap"
 							style={{
 								backgroundColor: isEnabled && isSelected ? getLevelColor(level) : 'transparent',
 								color:
@@ -883,6 +905,7 @@ export function LogViewer({
 			{!searchOpen && (
 				<div
 					className="px-4 py-2 border-t flex items-center justify-center text-xs opacity-50"
+					data-shortcut-hint=""
 					style={{
 						backgroundColor: theme.colors.bgMain,
 						borderColor: theme.colors.border,

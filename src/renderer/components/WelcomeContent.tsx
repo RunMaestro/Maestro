@@ -60,7 +60,7 @@ export function WelcomeContent({
 						<strong style={{ color: theme.colors.textMain }}>
 							Manage multiple AI agents in parallel
 						</strong>{' '}
-						— Run several coding assistants simultaneously, each in their own session, switching
+						- Run several coding assistants simultaneously, each in their own session, switching
 						between them effortlessly.
 					</p>
 				</div>
@@ -79,7 +79,7 @@ export function WelcomeContent({
 						<strong style={{ color: theme.colors.textMain }}>
 							Enable unattended automation via Auto Run
 						</strong>{' '}
-						— Queue up task lists in markdown documents and let your agents execute them while you
+						- Queue up task lists in markdown documents and let your agents execute them while you
 						step away.
 					</p>
 				</div>
@@ -99,8 +99,8 @@ export function WelcomeContent({
 					they do when running the provider directly.
 				</p>
 				<p>
-					Agents run in auto-approve mode with tool calls accepted automatically. Toggle Read-Only
-					mode for guardrails.
+					Agents default to Full Access mode with tool calls accepted automatically. Switch to
+					Standard or Read Only mode via the toolbar for guardrails.
 				</p>
 			</div>
 

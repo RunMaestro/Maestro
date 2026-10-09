@@ -4,13 +4,15 @@ description: Coordinate multiple AI agents in a single conversation with a moder
 icon: comments
 ---
 
-<Note>
-  Group Chat is currently in **Beta**. The feature is functional but under active development.
-</Note>
+Group Chat lets you coordinate multiple AI agents in a single conversation. You appoint one agent as the **moderator** and hand it your question; it orchestrates the discussion from there, routing to the right agents, following up when an answer is thin, and synthesizing what comes back.
 
-Group Chat lets you coordinate multiple AI agents in a single conversation. A moderator AI orchestrates the discussion, routing questions to the right agents and synthesizing their responses.
+The point of a Group Chat is that you are **delegating the moderating**. In an ordinary chat you can [`@mention`](./cross-agent-mentions) other agents too, but each mention is a single-turn consult and you are the one who keeps the conversation going. A moderator acts as your fiduciary in that job, wrangling the agents to work together across as many turns as the question needs. For a side-by-side overview of both approaches, see [Agent Collaboration](./agent-collaboration).
 
 ![Group chat](./screenshots/group-chat.png)
+
+<Tip>
+  Just need a quick one-off answer from another agent? [Cross-Agent Mentions](./cross-agent-mentions) let you `@mention` an agent inline from any chat. That answer arrives once and stops there: no moderator, no shared room, and no second round unless you type it. Reach for Group Chat when the agents need to deliberate together over several turns.
+</Tip>
 
 ## When to Use Group Chat
 
@@ -22,7 +24,7 @@ Group Chat lets you coordinate multiple AI agents in a single conversation. A mo
 
 ## How It Works
 
-1. **Create a Group Chat** - Use keyboard shortcut `Opt+Cmd+C` / `Alt+Ctrl+C`, click "+ New Chat" in the Group Chats section of the sidebar, or use Quick Actions (`Cmd+K` / `Ctrl+K`)
+1. **Create a Group Chat** - Use keyboard shortcut `Opt+Cmd+G` / `Alt+Ctrl+G`, click "+ New Chat" in the Group Chats section of the sidebar, or use Quick Actions (`Cmd+K` / `Ctrl+K`)
 2. **Select a moderator** - Choose which AI agent (Claude Code, OpenCode, or Codex) will coordinate the conversation
 3. **@mention agents** - In your message, @mention any Maestro session (e.g., `@Frontend`, `@Backend`). Agents are automatically added as participants when mentioned.
 4. **Send your question** - The moderator receives it first and decides how to proceed
@@ -43,7 +45,9 @@ The moderator is an AI that controls the conversation flow:
 - **Follow-up**: If agent responses are incomplete, keeps asking until satisfied
 - **Synthesis**: Combines multiple agent perspectives into a final answer
 
-The moderator won't return to you until your question is properly answered - it will keep going back to agents as many times as needed.
+The moderator won't return to you until your question is properly answered - it will keep going back to agents as many times as needed. That is the capability you are buying, and it is the one thing a [Cross-Agent Mention](./cross-agent-mentions) cannot do: a mention is answered in a single turn, so every round after the first is yours to drive.
+
+Participants do not see each other's replies automatically. The moderator decides who hears what, quoting an earlier agent's answer forward when a later one needs it, which is why a Group Chat produces a coordinated result rather than several agents talking past each other.
 
 ## Example Conversation
 
@@ -141,3 +145,23 @@ The Group Chat input supports the same features as direct agent conversations:
 - **Prompt Composer** - Open the full prompt composer with `Cmd+Shift+P` / `Ctrl+Shift+P`
 - **Enter/Cmd+Enter toggle** - Switch between send behaviors
 - **Message queuing** - Messages are queued if the moderator or agents are busy
+
+### The message queue
+
+A message you send while the chat is busy waits in the queue until the moderator
+is free. The queue belongs to the chat, not to the window you typed in, so:
+
+- It is the same queue on every device. Something queued from your phone shows up
+  on the desktop and is sent from there.
+- It survives a reload, a closed browser tab, and quitting the app. A queue left
+  over from a previous session comes back **paused**, so relaunching Maestro does
+  not start a moderator just to flush it.
+- **Stop All pauses it.** Nothing queued is sent until you press Resume, so
+  stopping the room does not immediately restart it.
+- If a message cannot be sent, it is **kept**, not dropped. The chat pauses and
+  says why, and the same failing send is not retried on its own. Fix the cause and
+  press **Resume**.
+
+You can reorder queued messages by dragging them, or remove one you no longer
+want. The message currently being handed to the moderator is marked
+"Sending, cannot remove", because it has already left.

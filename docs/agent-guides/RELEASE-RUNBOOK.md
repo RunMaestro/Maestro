@@ -155,9 +155,8 @@ Start only after every release in scope verifies.
 1. Re-read the published notes (`gh release view <tag> -R RunMaestro/Maestro`).
    The copy comes from the published text, never from a draft.
 2. **Do not repeat the last announcement.** Read the previous email template
-   (newest file in `scripts/email-templates/announcements/`) and the previous
-   Discord post (`scripts/announce-drafts/`). Lead with what is new since then;
-   anything the last email already covered gets one short line at most.
+   and Discord post. Lead with what is new since then; anything the last email
+   already covered gets one short line at most.
 3. Discord: `--preview` first, then post one message to #announcements with
    `--everyone`. Report the message ID. CI no longer posts releases to Discord,
    so this is the only announcement.

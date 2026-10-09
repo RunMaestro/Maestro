@@ -1,0 +1,286 @@
+/**
+ * Unified "extension" model for the Extensions (Encore) marketplace.
+ *
+ * The Extensions view lists TWO sources behind one tiled grid:
+ *  - first-party Encore features (the `encoreFeatures.*` flags), and
+ *  - community plugins (from `window.maestro.plugins.list()`).
+ *
+ * Both are projected onto a single `UnifiedExtension` shape so the grid, the
+ * category/search/only-installed filters, and the details pane treat them
+ * uniformly. This module is pure (no React, no window) so it is trivially
+ * testable and shared between the grid and the details pane.
+ */
+
+import type { PluginCategory } from '../../../../shared/plugins/plugin-manifest';
+import { ENCORE_FEATURE_DEFAULTS } from '../../../../shared/encoreFeatureDefaults';
+import {
+	FIRST_PARTY_PLUGIN_DEFINITIONS,
+	type FirstPartyEncoreFlag,
+	type FirstPartyPluginDefinition,
+} from '../../../../shared/plugins/first-party';
+import type { PluginRecord, PluginSignatureInfo } from '../../../../shared/plugins/plugin-registry';
+import { PLUGIN_CATEGORIES } from '../../../../shared/plugins/plugin-manifest';
+import type { EncoreFeatureFlags } from '../../../types';
+
+export type ExtensionKind = 'builtin' | 'plugin';
+
+/**
+ * State pill shown on a tile.
+ *  - 'not-installed': a first-party feature that is turned off (enabling it is
+ *    how you "install" it - built-ins are bundled but inactive until enabled).
+ *  - 'installed': a plugin present on disk but disabled.
+ *  - 'enabled': active (feature flag on / plugin enabled).
+ */
+export type ExtensionState = 'not-installed' | 'installed' | 'enabled';
+
+/** Trust status mirrored from a plugin's signature verification. */
+export type ExtensionTrust = PluginSignatureInfo['status'];
+
+/** A first-party Encore feature surfaced as a tile. Every built-in is
+ * plugin-backed: its identity/category/permissions come from the shared
+ * first-party registry (src/shared/plugins/first-party.ts). */
+export interface BuiltinFeatureDef {
+	flag: keyof EncoreFeatureFlags;
+	/** Graduated: ships enabled, so it wears the Encore badge. */
+	encore?: boolean;
+	/** Still proving itself: bundled but off until the user opts in. */
+	beta?: boolean;
+	pluginBacking: FirstPartyPluginDefinition;
+}
+
+/**
+ * Whether a first-party flag has graduated to an Encore Feature.
+ *
+ * The badge is DERIVED from the shipped default rather than hand-listed: a
+ * capability starts as a plugin (bundled, off, opt-in) and becomes an Encore
+ * Feature the day its entry in ENCORE_FEATURE_DEFAULTS flips to true. Keeping
+ * a separate list meant flipping a default and forgetting the badge, which is
+ * how Cue and Director's Notes kept reading "Beta" after they shipped on.
+ */
+export function isEncoreFlag(flag: keyof EncoreFeatureFlags): boolean {
+	return (ENCORE_FEATURE_DEFAULTS as Readonly<Record<string, boolean>>)[flag] === true;
+}
+
+// The registry's flag union must stay a subset of the renderer's
+// EncoreFeatureFlags (shared code cannot import renderer types directly).
+type _FirstPartyFlagsAreEncoreFlags = FirstPartyEncoreFlag extends keyof EncoreFeatureFlags
+	? true
+	: never;
+const _firstPartyFlagsAssignable: _FirstPartyFlagsAreEncoreFlags = true;
+void _firstPartyFlagsAssignable;
+
+/** One tile in the grid, regardless of source. */
+export interface UnifiedExtension {
+	/** Stable, source-namespaced key: `builtin:<flag>` or `plugin:<id>`. */
+	key: string;
+	kind: ExtensionKind;
+	/** Encore flag name (builtin) or plugin id (plugin). */
+	id: string;
+	name: string;
+	description: string;
+	category: PluginCategory;
+	state: ExtensionState;
+	/** Graduated first-party feature: ships on, wears the Encore badge. */
+	encore?: boolean;
+	beta?: boolean;
+	pluginBacked?: boolean;
+	firstParty?: boolean;
+	pluginId?: string;
+	permissions?: FirstPartyPluginDefinition['permissions'];
+	/** How to actually use the feature, rendered under the description. */
+	usage?: FirstPartyPluginDefinition['usage'];
+	settingsNamespace?: string;
+	backgroundServiceId?: string;
+	/** Ship date as `YYYY-MM-DD`. Always present on a built-in; only present on
+	 * a plugin whose manifest declares one. */
+	releaseDate?: string;
+	// --- plugin-only ---
+	tier?: number;
+	trust?: ExtensionTrust;
+	version?: string;
+	author?: string;
+	loadStatus?: PluginRecord['loadStatus'];
+	record?: PluginRecord;
+	// --- builtin-only ---
+	flag?: keyof EncoreFeatureFlags;
+}
+
+/** The first-party Encore features the marketplace surfaces (NOT the `plugins`
+ * subsystem flag itself, which is the master switch handled separately).
+ * Projected from the shared first-party plugin registry; `beta` is a
+ * marketplace-presentation concern, so it stays here. */
+export const BUILTIN_FEATURES: readonly BuiltinFeatureDef[] = FIRST_PARTY_PLUGIN_DEFINITIONS.map(
+	(def) => {
+		const encore = isEncoreFlag(def.encoreFlag);
+		return { flag: def.encoreFlag, encore, beta: !encore, pluginBacking: def };
+	}
+);
+
+/** Display labels for the category filter bar + tile badge. */
+export const CATEGORY_LABELS: Record<PluginCategory, string> = {
+	automation: 'Automation',
+	agents: 'Agents',
+	insights: 'Insights',
+	ui: 'UI',
+	data: 'Data',
+	devtools: 'Dev Tools',
+	other: 'Other',
+};
+
+/** Pill text per state. */
+export const STATE_LABELS: Record<ExtensionState, string> = {
+	'not-installed': 'Not installed',
+	installed: 'Installed',
+	enabled: 'Enabled',
+};
+
+/**
+ * The filter-bar options: 'all', the cross-cutting 'encore' designation, then
+ * every known category. 'encore' is not a category - a graduated feature still
+ * belongs to Automation or Insights - so it narrows by badge instead, which is
+ * what makes "show me what ships on" a single click.
+ */
+export type CategoryFilter = PluginCategory | 'all' | 'encore';
+export const CATEGORY_FILTERS: readonly CategoryFilter[] = ['all', 'encore', ...PLUGIN_CATEGORIES];
+
+/** Label for a filter pill. Categories come from CATEGORY_LABELS. */
+export function filterLabel(filter: CategoryFilter): string {
+	if (filter === 'all') return 'All';
+	if (filter === 'encore') return 'Encore';
+	return CATEGORY_LABELS[filter];
+}
+
+/** The badge a tile wears, or null for an unbadged community plugin. */
+export function extensionBadge(
+	ext: UnifiedExtension
+): { label: string; tone: 'accent' | 'warning' } | null {
+	if (ext.encore) return { label: 'Encore', tone: 'accent' };
+	if (ext.beta) return { label: 'Beta', tone: 'warning' };
+	return null;
+}
+
+/** Project a first-party feature flag onto a tile. */
+export function builtinExtension(
+	def: BuiltinFeatureDef,
+	flags: EncoreFeatureFlags
+): UnifiedExtension {
+	const on = flags[def.flag] === true;
+	const backing = def.pluginBacking;
+	return {
+		key: `builtin:${def.flag}`,
+		kind: 'builtin',
+		id: def.flag,
+		name: backing.name,
+		description: backing.description,
+		category: backing.category,
+		state: on ? 'enabled' : 'not-installed',
+		encore: def.encore,
+		beta: def.beta,
+		pluginBacked: true,
+		firstParty: backing.firstParty,
+		pluginId: backing.id,
+		permissions: backing.permissions,
+		usage: backing.usage,
+		settingsNamespace: backing.settingsNamespace,
+		backgroundServiceId: backing.backgroundServices[0]?.id,
+		releaseDate: backing.releaseDate,
+		flag: def.flag,
+	};
+}
+
+/** Project a discovered plugin record onto a tile. */
+export function pluginExtension(record: PluginRecord): UnifiedExtension {
+	const m = record.manifest;
+	return {
+		key: `plugin:${record.id}`,
+		kind: 'plugin',
+		id: record.id,
+		name: m?.name ?? record.id,
+		description: m?.description ?? '',
+		category: m?.category ?? 'other',
+		state: record.enabled ? 'enabled' : 'installed',
+		tier: m?.tier,
+		trust: record.signature?.status,
+		beta: m?.beta,
+		version: m?.version,
+		author: m?.author,
+		releaseDate: m?.releaseDate,
+		loadStatus: record.loadStatus,
+		record,
+	};
+}
+
+/** Build the full, source-merged tile list (features first, then plugins). */
+export function buildExtensions(
+	flags: EncoreFeatureFlags,
+	plugins: PluginRecord[]
+): UnifiedExtension[] {
+	const builtins = BUILTIN_FEATURES.map((def) => builtinExtension(def, flags));
+	const pluginTiles = plugins.map(pluginExtension);
+	return [...builtins, ...pluginTiles];
+}
+
+/** Apply the category + only-installed + search filters, in that order. */
+export function filterExtensions(
+	all: UnifiedExtension[],
+	opts: { category: CategoryFilter; onlyInstalled: boolean; query: string }
+): UnifiedExtension[] {
+	const q = opts.query.trim().toLowerCase();
+	return all.filter((ext) => {
+		if (opts.category === 'encore') {
+			if (!ext.encore) return false;
+		} else if (opts.category !== 'all' && ext.category !== opts.category) return false;
+		if (opts.onlyInstalled && ext.state === 'not-installed') return false;
+		if (q !== '') {
+			const haystack =
+				`${ext.name} ${ext.description} ${CATEGORY_LABELS[ext.category]}`.toLowerCase();
+			if (!haystack.includes(q)) return false;
+		}
+		return true;
+	});
+}
+
+/** How the grid is ordered. */
+export type ExtensionSort = 'name' | 'newest';
+
+/** Segments for the sort control, in bar order. */
+export const SORT_OPTIONS: ReadonlyArray<{ value: ExtensionSort; label: string; title: string }> = [
+	{ value: 'name', label: 'A-Z', title: 'Sort alphabetically by name' },
+	{ value: 'newest', label: 'Newest', title: 'Sort by release date, newest first' },
+];
+
+/** Just the values, as a stable module-level array (a fresh `.map()` per render
+ * would be a new identity every time a caller passes it to a hook). */
+export const EXTENSION_SORT_VALUES: readonly ExtensionSort[] = SORT_OPTIONS.map((o) => o.value);
+
+/** localStorage key for the remembered sort mode. */
+export const EXTENSION_SORT_STORAGE_KEY = 'extensions.sort';
+
+function byName(a: UnifiedExtension, b: UnifiedExtension): number {
+	return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+}
+
+/**
+ * Order the tiles. Non-mutating.
+ *
+ * Each mode carries its OWN direction rather than sharing one flag: names read
+ * forwards (A-Z) and dates read backwards (newest first), so a single toggle
+ * that flipped both would show Z-A or oldest-first the moment you switched
+ * columns - the same rule `useTableSort` applies to table headers.
+ *
+ * A plugin with no `releaseDate` sorts after everything dated, and name is the
+ * tiebreak in both modes so the grid never reshuffles between renders.
+ */
+export function sortExtensions(all: UnifiedExtension[], sort: ExtensionSort): UnifiedExtension[] {
+	const sorted = [...all];
+	if (sort === 'name') return sorted.sort(byName);
+	return sorted.sort((a, b) => {
+		if (a.releaseDate !== b.releaseDate) {
+			if (!a.releaseDate) return 1;
+			if (!b.releaseDate) return -1;
+			// ISO YYYY-MM-DD compares correctly as a string, so no Date parsing.
+			return b.releaseDate.localeCompare(a.releaseDate);
+		}
+		return byName(a, b);
+	});
+}

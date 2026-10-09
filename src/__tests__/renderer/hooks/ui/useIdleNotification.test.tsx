@@ -1,145 +1,207 @@
-/**
- * Tests for useIdleNotification.
- *
- * The rule under test: announce idle only when there is genuinely nothing left
- * to do. "No turn in flight" is NOT the same question - the exit reducer parks
- * an agent at `state: 'idle'` while holding its queue whenever a retry is
- * counting down, so a busy -> idle edge can happen with a dozen messages still
- * lined up. A paused item is waiting on the user rather than on us, so a queue
- * holding only paused items is genuinely finished and must still announce.
- */
-
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { act } from 'react';
 import { useIdleNotification } from '../../../../renderer/hooks/ui/useIdleNotification';
-import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import {
+	useSessionStore,
+	selectHasAnyRunnableQueuedWork,
+} from '../../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 import { useBatchStore } from '../../../../renderer/stores/batchStore';
 import { createMockSession } from '../../../helpers/mockSession';
 import type { QueuedItem, Session } from '../../../../renderer/types';
 
+/**
+ * The idle notification must stay quiet while an agent still has work that
+ * would actually run. `busy` alone is only true while a turn is in flight, and
+ * the dequeue is atomic, so a draining queue leaves the agent genuinely `idle`
+ * in the gap between two queued turns - which is where it used to announce
+ * "Maestro is idle" once per gap.
+ */
+
 const speak = vi.fn().mockResolvedValue(undefined);
 
 function queuedItem(overrides: Partial<QueuedItem> = {}): QueuedItem {
 	return {
-		id: 'q-1',
-		timestamp: 1700000000000,
+		id: 'q1',
+		timestamp: 1,
 		tabId: 'tab-1',
 		type: 'message',
 		text: 'do the thing',
 		...overrides,
-	} as QueuedItem;
-}
-
-/** Put a single agent in the store with the given state and queue. */
-function setSession(state: Session['state'], executionQueue: QueuedItem[] = []): void {
-	useSessionStore.setState({
-		sessions: [createMockSession({ id: 'sess-1', state, executionQueue })],
-	});
-}
-
-beforeEach(() => {
-	speak.mockClear();
-	(globalThis as any).window.maestro = {
-		...((globalThis as any).window.maestro ?? {}),
-		notification: { speak },
 	};
+}
 
-	useSessionStore.setState({ sessions: [] });
-	useBatchStore.setState({ batches: {} } as any);
-	useNotificationStore.setState((s) => ({
-		config: {
-			...s.config,
-			idleNotificationEnabled: true,
-			idleNotificationCommand: 'say Maestro is idle',
-		},
-	}));
-});
+function setSessions(sessions: Session[]): void {
+	useSessionStore.setState({ sessions });
+}
 
 describe('useIdleNotification', () => {
-	it('does not announce idle while an agent still has runnable queued work', () => {
-		setSession('busy', [queuedItem()]);
-		const { rerender } = renderHook(() => useIdleNotification());
-
-		// Turn ends, but the queue is held (a retry is counting down). The agent
-		// is genuinely idle and genuinely not finished.
-		act(() => setSession('idle', [queuedItem()]));
-		rerender();
-
-		expect(speak).not.toHaveBeenCalled();
+	beforeEach(() => {
+		speak.mockClear();
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			notification: { speak },
+		};
+		useBatchStore.setState({ batchRunStates: {} });
+		useNotificationStore.getState().setIdleNotification(true, 'say Maestro is idle');
+		setSessions([]);
 	});
 
-	it('announces idle when the queue holds only paused items', () => {
-		setSession('busy', [queuedItem({ paused: true })]);
-		const { rerender } = renderHook(() => useIdleNotification());
-
-		act(() => setSession('idle', [queuedItem({ paused: true })]));
-		rerender();
-
-		// A held item waits on the user, so this agent really is done.
-		expect(speak).toHaveBeenCalledTimes(1);
-	});
-
-	it('announces once on the busy -> idle edge with an empty queue', () => {
-		setSession('busy', []);
-		const { rerender } = renderHook(() => useIdleNotification());
-
-		act(() => setSession('idle', []));
-		rerender();
-		expect(speak).toHaveBeenCalledTimes(1);
-
-		// Staying idle must not re-announce - it fires on the edge, not the level.
-		act(() => setSession('idle', []));
-		rerender();
-		expect(speak).toHaveBeenCalledTimes(1);
-	});
-
-	it('announces when the queue drains down to only paused items', () => {
-		setSession('busy', [queuedItem(), queuedItem({ id: 'q-2', paused: true })]);
-		const { rerender } = renderHook(() => useIdleNotification());
-
-		// The runnable item is still queued: silent.
-		act(() => setSession('idle', [queuedItem(), queuedItem({ id: 'q-2', paused: true })]));
-		rerender();
-		expect(speak).not.toHaveBeenCalled();
-
-		// It ran and left only the held one behind: now we are done.
-		act(() => setSession('idle', [queuedItem({ id: 'q-2', paused: true })]));
-		rerender();
-		expect(speak).toHaveBeenCalledTimes(1);
-	});
-
-	it('stays silent when another agent still has queued work', () => {
-		useSessionStore.setState({
-			sessions: [
-				createMockSession({ id: 'sess-1', state: 'busy', executionQueue: [] }),
-				createMockSession({ id: 'sess-2', state: 'idle', executionQueue: [queuedItem()] }),
-			],
+	describe('selectHasAnyRunnableQueuedWork', () => {
+		it('counts an idle agent with a runnable queued item as having work', () => {
+			const state = {
+				sessions: [createMockSession({ state: 'idle', executionQueue: [queuedItem()] })],
+			};
+			expect(selectHasAnyRunnableQueuedWork(state as never)).toBe(true);
 		});
+
+		it('does not count a queue holding only paused items', () => {
+			const state = {
+				sessions: [
+					createMockSession({
+						state: 'idle',
+						executionQueue: [queuedItem({ paused: true }), queuedItem({ id: 'q2', paused: true })],
+					}),
+				],
+			};
+			expect(selectHasAnyRunnableQueuedWork(state as never)).toBe(false);
+		});
+
+		it('counts a mixed queue, because one item would still run', () => {
+			const state = {
+				sessions: [
+					createMockSession({
+						state: 'idle',
+						executionQueue: [queuedItem({ paused: true }), queuedItem({ id: 'q2' })],
+					}),
+				],
+			};
+			expect(selectHasAnyRunnableQueuedWork(state as never)).toBe(true);
+		});
+
+		it('tolerates a session with no queue field at all', () => {
+			const session = createMockSession({ state: 'idle' });
+			delete (session as Partial<Session>).executionQueue;
+			expect(selectHasAnyRunnableQueuedWork({ sessions: [session] } as never)).toBe(false);
+		});
+	});
+
+	it('stays silent in the gap between two queued turns', () => {
+		// Turn 1 running, with the next item still queued behind it.
+		setSessions([createMockSession({ state: 'busy', executionQueue: [queuedItem({ id: 'q2' })] })]);
 		const { rerender } = renderHook(() => useIdleNotification());
 
-		useSessionStore.setState({
-			sessions: [
-				createMockSession({ id: 'sess-1', state: 'idle', executionQueue: [] }),
-				createMockSession({ id: 'sess-2', state: 'idle', executionQueue: [queuedItem()] }),
-			],
-		});
-		act(() => {});
+		// Turn 1 ends. The session is idle but q2 has not been dispatched yet -
+		// this is the window that used to fire.
+		setSessions([createMockSession({ state: 'idle', executionQueue: [queuedItem({ id: 'q2' })] })]);
 		rerender();
 
 		expect(speak).not.toHaveBeenCalled();
 	});
 
-	it('does not announce when the setting is disabled', () => {
-		useNotificationStore.setState((s) => ({
-			config: { ...s.config, idleNotificationEnabled: false },
-		}));
-		setSession('busy', []);
+	it('stays silent when a different agent still has queued work', () => {
+		// The selector spans every session, so the agent that finishes its turn is
+		// not necessarily the one holding work. Idle is a fleet-wide question.
+		setSessions([
+			createMockSession({ id: 'sess-1', state: 'busy', executionQueue: [] }),
+			createMockSession({
+				id: 'sess-2',
+				state: 'idle',
+				executionQueue: [queuedItem({ id: 'q2' })],
+			}),
+		]);
 		const { rerender } = renderHook(() => useIdleNotification());
 
-		act(() => setSession('idle', []));
+		setSessions([
+			createMockSession({ id: 'sess-1', state: 'idle', executionQueue: [] }),
+			createMockSession({
+				id: 'sess-2',
+				state: 'idle',
+				executionQueue: [queuedItem({ id: 'q2' })],
+			}),
+		]);
 		rerender();
+
+		expect(speak).not.toHaveBeenCalled();
+	});
+
+	it('fires once when the last queued item finishes and the queue is empty', () => {
+		setSessions([createMockSession({ state: 'busy', executionQueue: [] })]);
+		const { rerender } = renderHook(() => useIdleNotification());
+
+		setSessions([createMockSession({ state: 'idle', executionQueue: [] })]);
+		rerender();
+
+		expect(speak).toHaveBeenCalledTimes(1);
+		expect(speak).toHaveBeenCalledWith('Maestro is idle', 'say Maestro is idle');
+
+		// Still idle on a later render - the edge already fired, so it must not repeat.
+		rerender();
+		expect(speak).toHaveBeenCalledTimes(1);
+	});
+
+	it('fires when the only queued items are paused, because they can never start', () => {
+		setSessions([
+			createMockSession({ state: 'busy', executionQueue: [queuedItem({ paused: true })] }),
+		]);
+		const { rerender } = renderHook(() => useIdleNotification());
+
+		setSessions([
+			createMockSession({ state: 'idle', executionQueue: [queuedItem({ paused: true })] }),
+		]);
+		rerender();
+
+		expect(speak).toHaveBeenCalledTimes(1);
+	});
+
+	it('speaks only after the whole queue drains, not once per item', () => {
+		const drain: Array<{ state: Session['state']; queue: QueuedItem[] }> = [
+			{ state: 'busy', queue: [queuedItem({ id: 'q2' }), queuedItem({ id: 'q3' })] },
+			{ state: 'idle', queue: [queuedItem({ id: 'q2' }), queuedItem({ id: 'q3' })] },
+			{ state: 'busy', queue: [queuedItem({ id: 'q3' })] },
+			{ state: 'idle', queue: [queuedItem({ id: 'q3' })] },
+			{ state: 'busy', queue: [] },
+			{ state: 'idle', queue: [] },
+		];
+
+		setSessions([createMockSession({ state: 'busy', executionQueue: drain[0].queue })]);
+		const { rerender } = renderHook(() => useIdleNotification());
+
+		for (const step of drain) {
+			setSessions([createMockSession({ state: step.state, executionQueue: step.queue })]);
+			rerender();
+		}
+
+		// Three turns, two intermediate gaps, exactly one announcement.
+		expect(speak).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not fire while an Auto Run batch is still running', () => {
+		setSessions([createMockSession({ state: 'busy', executionQueue: [] })]);
+		const { rerender } = renderHook(() => useIdleNotification());
+
+		useBatchStore.setState({
+			batchRunStates: { 'session-1': { isRunning: true } as never },
+		});
+		setSessions([createMockSession({ state: 'idle', executionQueue: [] })]);
+		rerender();
+
+		expect(speak).not.toHaveBeenCalled();
+	});
+
+	it('stays silent when the notification is disabled', () => {
+		useNotificationStore.getState().setIdleNotification(false, 'say Maestro is idle');
+		setSessions([createMockSession({ state: 'busy', executionQueue: [] })]);
+		const { rerender } = renderHook(() => useIdleNotification());
+
+		setSessions([createMockSession({ state: 'idle', executionQueue: [] })]);
+		rerender();
+
+		expect(speak).not.toHaveBeenCalled();
+	});
+
+	it('does not fire on mount when already idle', () => {
+		setSessions([createMockSession({ state: 'idle', executionQueue: [] })]);
+		renderHook(() => useIdleNotification());
 
 		expect(speak).not.toHaveBeenCalled();
 	});

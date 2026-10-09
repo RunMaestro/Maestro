@@ -5,7 +5,7 @@
  * patterns used throughout the application.
  */
 
-export { Modal, ModalFooter } from './Modal';
+export { Modal, ModalFooter, ModalSubtitle } from './Modal';
 export type { ModalProps, ModalFooterProps } from './Modal';
 
 export { FormInput } from './FormInput';
@@ -14,11 +14,18 @@ export type { FormInputProps } from './FormInput';
 export { FilterInput } from './FilterInput';
 export type { FilterInputProps } from './FilterInput';
 
-export { EmojiPickerField } from './EmojiPickerField';
-export type { EmojiPickerFieldProps } from './EmojiPickerField';
+export { EmojiPickerField, EmojiPickerOverlay, GroupAppearancePicker } from './EmojiPickerField';
+export type {
+	EmojiPickerFieldProps,
+	EmojiPickerOverlayProps,
+	GroupAppearancePickerProps,
+} from './EmojiPickerField';
 
 export { ToggleSwitch, ToggleSwitchTrack } from './ToggleSwitch';
 export type { ToggleSwitchProps, ToggleSwitchTrackProps, ToggleSwitchSize } from './ToggleSwitch';
+
+export { ProviderAvailabilityBar, PROVIDER_BAR_NAV_EXEMPT_ATTR } from './ProviderAvailabilityBar';
+export type { ProviderAvailabilityBarProps } from './ProviderAvailabilityBar';
 
 export { CollapsedCommandsNotice } from './CollapsedCommandsNotice';
 export type { CollapsedCommandsNoticeProps } from './CollapsedCommandsNotice';
@@ -57,11 +64,16 @@ export type { TurnSettingPillsProps } from './TurnSettingPills';
 export { HoverTooltip } from './HoverTooltip';
 export type { HoverTooltipProps } from './HoverTooltip';
 
+export { ResizeHandles } from './ResizeHandles';
+
 export { CalendarPicker } from './CalendarPicker';
 export type { CalendarPickerProps } from './CalendarPicker';
 
 export { EscCloseButton } from './EscCloseButton';
 export type { EscCloseButtonProps } from './EscCloseButton';
+
+export { Keycap, KeycapHint } from './Keycap';
+export type { KeycapProps, KeycapHintProps, KeycapTone } from './Keycap';
 
 export { CopyIconButton } from './CopyIconButton';
 export type { CopyIconButtonProps } from './CopyIconButton';
@@ -82,6 +94,12 @@ export type { TextareaLineNumbersProps, LineNumberGutterMetrics } from './Textar
 
 export { CornerDot } from './CornerDot';
 export type { CornerDotProps } from './CornerDot';
+
+export { CountBadge } from './CountBadge';
+export type { CountBadgeProps } from './CountBadge';
+
+export { MiniBadge } from './MiniBadge';
+export type { MiniBadgeProps } from './MiniBadge';
 
 export { ShortcutHint, shortcutSuffix } from './ShortcutHint';
 export type { ShortcutHintProps } from './ShortcutHint';

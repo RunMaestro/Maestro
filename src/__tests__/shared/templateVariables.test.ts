@@ -71,6 +71,7 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		expect(variables).toContain('{{AGENT_GROUP}}');
 		expect(variables).toContain('{{AGENT_SESSION_ID}}');
 		expect(variables).toContain('{{AGENT_HISTORY_PATH}}');
+		expect(variables).toContain('{{TAB_ID}}');
 		expect(variables).toContain('{{TAB_NAME}}');
 		expect(variables).toContain('{{TOOL_TYPE}}');
 	});
@@ -236,6 +237,18 @@ describe('substituteTemplateVariables', () => {
 			expect(result).toBe('Tab: My Custom Tab');
 		});
 
+		it('should replace {{TAB_ID}} with the active tab id', () => {
+			const context = createTestContext({ activeTabId: 'tab-abc-123' });
+			const result = substituteTemplateVariables('Tab: {{TAB_ID}}', context);
+			expect(result).toBe('Tab: tab-abc-123');
+		});
+
+		it('should replace {{TAB_ID}} with an empty string when there is no tab (headless spawn)', () => {
+			const context = createTestContext({ activeTabId: undefined });
+			const result = substituteTemplateVariables('Tab: {{TAB_ID}}', context);
+			expect(result).toBe('Tab: ');
+		});
+
 		it('should have {{TAB_NAME}} and {{SESSION_NAME}} as aliases (both return session.name)', () => {
 			const context = createTestContext({
 				session: createTestSession({ name: 'Aliased Name' }),
@@ -366,6 +379,27 @@ describe('substituteTemplateVariables', () => {
 			const result = substituteTemplateVariables('Folder: {{AUTORUN_FOLDER}}', context);
 			expect(result).toBe('Folder: /full/path/.maestro/playbooks');
 		});
+
+		it('should replace {{WORKTREE_BASE_PATH}} with the configured worktree directory', () => {
+			const context = createTestContext({
+				session: createTestSession({
+					worktreeConfig: { basePath: '/Users/test/Project-WorkTrees' },
+				}),
+			});
+			const result = substituteTemplateVariables('Worktrees: {{WORKTREE_BASE_PATH}}', context);
+			expect(result).toBe('Worktrees: /Users/test/Project-WorkTrees');
+		});
+
+		it('should render {{WORKTREE_BASE_PATH}} empty when no worktree directory is configured', () => {
+			// Deliberately no fallback: a guessed path is exactly where an agent
+			// would `git worktree add` by hand, producing a checkout the desktop
+			// never registers. Empty tells the prompt to use create-worktree.
+			const context = createTestContext({
+				session: createTestSession({ worktreeConfig: undefined }),
+			});
+			const result = substituteTemplateVariables('Worktrees: {{WORKTREE_BASE_PATH}}', context);
+			expect(result).toBe('Worktrees: ');
+		});
 	});
 
 	describe('Legacy Project Variables (backwards compatibility)', () => {
@@ -448,6 +482,22 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('Loop: {{LOOP_NUMBER}}', context);
 			expect(result).toBe('Loop: 00000');
+		});
+
+		it('should replace {{LOOP_NUMBER_HUMAN}} with the unpadded loopNumber', () => {
+			const context = createTestContext({
+				loopNumber: 5,
+			});
+			const result = substituteTemplateVariables('Iteration: {{LOOP_NUMBER_HUMAN}}', context);
+			expect(result).toBe('Iteration: 5');
+		});
+
+		it('should replace {{LOOP_NUMBER_HUMAN}} with "1" when loopNumber is undefined', () => {
+			const context = createTestContext({
+				loopNumber: undefined,
+			});
+			const result = substituteTemplateVariables('Iteration: {{LOOP_NUMBER_HUMAN}}', context);
+			expect(result).toBe('Iteration: 1');
 		});
 	});
 

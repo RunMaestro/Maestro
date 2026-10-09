@@ -16,6 +16,7 @@ export const initialState: WizardState = {
 	plannerModel: undefined,
 	sessionSshRemoteConfig: undefined,
 	directoryPath: '',
+	additionalDirectories: [],
 	isGitRepo: false,
 	detectedAgentPath: null,
 	directoryError: null,
@@ -80,6 +81,8 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
 			return { ...state, sessionSshRemoteConfig: action.config };
 		case 'SET_DIRECTORY_PATH':
 			return { ...state, directoryPath: action.path, directoryError: null };
+		case 'SET_ADDITIONAL_DIRECTORIES':
+			return { ...state, additionalDirectories: action.directories };
 		case 'SET_IS_GIT_REPO':
 			return { ...state, isGitRepo: action.isGitRepo };
 		case 'SET_DETECTED_AGENT_PATH':

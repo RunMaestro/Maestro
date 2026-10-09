@@ -52,6 +52,30 @@ describe('create-agent command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 		});
 
+		it('does not record provenance when --context-window is not passed', async () => {
+			let sentPayload: Record<string, unknown> = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'id-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', model: 'gpt-4' });
+
+			// No window, so nothing to describe. A provenance marker with no value
+			// would outrank the provider's report on whatever gets set later.
+			expect(sentPayload.customContextWindow).toBeUndefined();
+			expect(sentPayload.contextWindowSource).toBeUndefined();
+		});
+
 		it('should send config fields when provided', async () => {
 			let sentPayload: Record<string, unknown> = {};
 			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
@@ -89,6 +113,11 @@ describe('create-agent command', () => {
 			expect(sentPayload.customPath).toBe('/usr/local/bin/codex');
 			expect(sentPayload.customArgs).toBe('--verbose');
 			expect(sentPayload.customContextWindow).toBe(128000);
+			// Typing the flag is a deliberate choice, so it must carry provenance or
+			// the provider's reported window silently overrides it and the user has
+			// to re-apply the same number with `update-agent` (finding AD1, review
+			// of PR #1362). `update-agent` already did this; `create-agent` did not.
+			expect(sentPayload.contextWindowSource).toBe('user-edited');
 			expect(sentPayload.customProviderPath).toBe('/custom/path');
 			expect(sentPayload.customEnvVars).toEqual({ FOO: 'bar', BAZ: 'qux' });
 		});

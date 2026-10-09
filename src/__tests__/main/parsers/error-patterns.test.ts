@@ -145,40 +145,28 @@ describe('error-patterns', () => {
 		});
 
 		describe('session_not_found patterns', () => {
-			// Issue #307: Gemini rejects a malformed stored transcript with a bare
-			// 400 INVALID_ARGUMENT, and every later prompt on that session fails
-			// identically. Classifying it as session_not_found is what surfaces the
-			// "Start New Session" recovery action instead of a futile retry.
-			it('should match the Gemini "Request contains an invalid argument" 400', () => {
-				const result = matchErrorPattern(
-					OPENCODE_ERROR_PATTERNS,
-					'Request contains an invalid argument.'
-				);
+			// Verified: opencode-ai v1.18.15, run locally.
+			// `opencode run "hi" --session ses_<bad-id>` -> "Error: Session not found"
+			// `opencode export ses_<bad-id>` -> "Error: Session not found: ses_<bad-id>"
+			it('should match the bare "Error: Session not found"', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'Error: Session not found');
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('session_not_found');
 				expect(result?.recoverable).toBe(true);
 			});
 
-			it('should match the INVALID_ARGUMENT status from a provider response body', () => {
+			it('should match "Session not found: ses_<id>"', () => {
 				const result = matchErrorPattern(
 					OPENCODE_ERROR_PATTERNS,
-					'{ "error": { "code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT" } }'
+					'Session not found: ses_abc123def456'
 				);
-				expect(result).not.toBeNull();
 				expect(result?.type).toBe('session_not_found');
 			});
 
-			it('should still match "session not found"', () => {
-				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'session not found');
-				expect(result).not.toBeNull();
-				expect(result?.type).toBe('session_not_found');
-			});
-
-			it('should NOT match normal text mentioning arguments', () => {
+			it('should NOT match unrelated lines that merely mention "session" and "not found" separately', () => {
 				const falsePositives = [
-					'passing an invalid argument name would fail',
-					'the function takes three arguments',
-					'validate arguments before use',
+					'the session config file was not found',
+					'session store connection lost; retry not found necessary',
 				];
 
 				for (const text of falsePositives) {
@@ -198,6 +186,44 @@ describe('error-patterns', () => {
 					'{ "error": { "code": 400, "message": "Model \'foo-bar\' is not a valid model", "status": "INVALID_ARGUMENT" } }'
 				);
 				expect(result).toBeNull();
+			});
+			it('should NOT match normal text mentioning arguments', () => {
+				const falsePositives = [
+					'passing an invalid argument name would fail',
+					'the function takes three arguments',
+					'validate arguments before use',
+				];
+
+				for (const text of falsePositives) {
+					const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, text);
+					expect(result).toBeNull();
+				}
+			});
+			// Issue #307: Gemini rejects a malformed stored transcript with a bare
+			// 400 INVALID_ARGUMENT, and every later prompt on that session fails
+			// identically. Classifying it as session_not_found is what surfaces the
+			// "Start New Session" recovery action instead of a futile retry.
+			it('should match the Gemini "Request contains an invalid argument" 400', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'Request contains an invalid argument.'
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+				expect(result?.recoverable).toBe(true);
+			});
+			it('should match the INVALID_ARGUMENT status from a provider response body', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'{ "error": { "code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT" } }'
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
+			it('should still match "session not found"', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'session not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
 			});
 		});
 	});
@@ -644,6 +670,93 @@ describe('error-patterns', () => {
 				});
 			});
 		});
+
+		describe('Grok-specific patterns', () => {
+			const GROK_ERROR_PATTERNS = getErrorPatterns('grok');
+
+			describe('session_not_found patterns', () => {
+				// Real stderr from `grok -p "hi" --resume <bad-uuid>
+				// --output-format streaming-json` (grok v0.2.93). Stdout carries
+				// no JSON error event for this failure, so the stderr string is
+				// the only signal.
+				it('should match the Grok "Failed to restore session" resume failure', () => {
+					const stderr =
+						'Error: Failed to restore session from remote: fetching session record: session get failed: 404 Not Found';
+					const result = matchErrorPattern(GROK_ERROR_PATTERNS, stderr);
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('session_not_found');
+					expect(result?.recoverable).toBe(true);
+				});
+
+				it('should match the standalone "session get failed" cause', () => {
+					const result = matchErrorPattern(
+						GROK_ERROR_PATTERNS,
+						'session get failed: 404 Not Found'
+					);
+					expect(result?.type).toBe('session_not_found');
+				});
+
+				it('should NOT match the informational "not found locally" restore line', () => {
+					// This line also precedes successful remote restores.
+					const result = matchErrorPattern(
+						GROK_ERROR_PATTERNS,
+						'Session 019f47fb-2316-7f21-98db-55907d4ddb60 not found locally, restoring from remote...'
+					);
+					expect(result).toBeNull();
+				});
+			});
+
+			describe('auth_expired patterns', () => {
+				it('should match multi-token authentication failures', () => {
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'Not authenticated. Please run grok login')?.type
+					).toBe('auth_expired');
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'Authentication failed on remote host')?.type
+					).toBe('auth_expired');
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'HTTP 401 Unauthorized request')?.type
+					).toBe('auth_expired');
+				});
+
+				it('should NOT match bare 401 status alone', () => {
+					// Bare codes misclassify unrelated failures into auth recovery UX.
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Error 401')).toBeNull();
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'status 401')).not.toBeNull();
+				});
+			});
+
+			describe('rate_limited patterns', () => {
+				it('should match multi-token rate limit failures', () => {
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Rate limit exceeded')?.type).toBe(
+						'rate_limited'
+					);
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Too many requests, slow down')?.type).toBe(
+						'rate_limited'
+					);
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'HTTP 429 from API')?.type).toBe(
+						'rate_limited'
+					);
+				});
+
+				it('should NOT match bare 429 status alone', () => {
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Error 429')).toBeNull();
+				});
+			});
+
+			describe('agent_crashed patterns', () => {
+				// Real message from `grok -p "hi" -m nonexistent-model-xyz`
+				// (grok v0.2.93).
+				it('should match the Grok bad-model failure', () => {
+					const message =
+						"Couldn't set model 'nonexistent-model-xyz': Invalid params: \"unknown model id\". Run 'grok models' to see available models.";
+					const result = matchErrorPattern(GROK_ERROR_PATTERNS, message);
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('agent_crashed');
+					expect(result?.recoverable).toBe(true);
+				});
+			});
+		});
 	});
 
 	describe('SSH_ERROR_PATTERNS', () => {
@@ -838,6 +951,57 @@ describe('error-patterns', () => {
 				const result = matchSshErrorPattern('ssh: protocol error');
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
+			});
+		});
+
+		describe('Windows remote host (issue #995)', () => {
+			// Maestro builds the remote command for a POSIX shell
+			// (/bin/bash --norc --noprofile). On a Windows SSH remote the default
+			// shell (cmd.exe or PowerShell) cannot run it and the agent dies with a
+			// bare exit 1. These cases prove the cryptic crash now maps to a clear,
+			// actionable message naming the host-side fix (OpenSSH DefaultShell).
+			it('should map cmd.exe "is not recognized as an internal or external command" to the actionable message', () => {
+				const result = matchSshErrorPattern(
+					"'/bin/bash' is not recognized as an internal or external command, operable program or batch file."
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+				expect(result?.recoverable).toBe(false);
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
+			});
+
+			it('should map PowerShell "is not recognized as the name of a cmdlet" to the actionable message', () => {
+				const result = matchSshErrorPattern(
+					"/bin/bash : The term '/bin/bash' is not recognized as the name of a cmdlet, function, script file, or operable program."
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
+			});
+
+			it('should map Windows "The system cannot find the path specified" to the actionable message', () => {
+				const result = matchSshErrorPattern('The system cannot find the path specified.');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
+			});
+
+			it('should NOT apply the Windows message to a POSIX remote failure (POSIX remotes unaffected)', () => {
+				// A real POSIX-remote "command not found" still maps to its own
+				// agent-specific message, never the Windows-remote message.
+				const result = matchSshErrorPattern('bash: claude: command not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+				expect(result?.message).toContain('Claude command not found');
+				expect(result?.message).not.toContain('Windows shell');
+			});
+
+			it('should return null for normal POSIX output mentioning bash (no false positive)', () => {
+				const result = matchSshErrorPattern('Running /bin/bash to set up the environment');
+				expect(result).toBeNull();
 			});
 		});
 

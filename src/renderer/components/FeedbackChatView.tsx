@@ -26,8 +26,12 @@ import {
 	PlusCircle,
 	Check,
 	Copy,
+	Save,
+	Gauge,
 	Terminal,
 } from 'lucide-react';
+import { formatSize } from '../../shared/formatters';
+import { useUIStore } from '../stores/uiStore';
 import { Spinner } from './ui/Spinner';
 import { AccountPill, ghAccountLabel } from './ui/AccountPill';
 import { GitHubLoginModal } from './GitHubLoginModal';
@@ -44,7 +48,7 @@ import {
 } from '../services/feedbackConversation';
 import { openUrl } from '../utils/openUrl';
 import { captureException } from '../utils/sentry';
-import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useFeedbackDraftStore, type FeedbackDraft } from '../stores/feedbackDraftStore';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 import {
@@ -111,6 +115,13 @@ interface FeedbackChatViewProps {
 	onSubmitSuccess: (sessionId: string) => void;
 	/** Called when the view's desired modal width changes */
 	onWidthChange?: (width: number) => void;
+	/** When set, hydrate the view from this persisted draft on mount */
+	resumeDraftId?: string | null;
+	/**
+	 * Minimize the modal (keeping the draft) so the user can reproduce an issue.
+	 * Invoked when a performance-trace recording starts.
+	 */
+	onRequestMinimize?: () => void;
 }
 
 // ============================================================================
@@ -119,7 +130,22 @@ interface FeedbackChatViewProps {
 
 type ExistingIssue = FeedbackIssueMatch;
 
-export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackChatViewProps) {
+export function FeedbackChatView({
+	theme,
+	onCancel,
+	onWidthChange,
+	resumeDraftId,
+	onRequestMinimize,
+}: FeedbackChatViewProps) {
+	// Resolve the draft to resume exactly once, at mount, so initial state can
+	// be seeded synchronously before the auto-start effect picks an agent.
+	const resumeDraftRef = useRef<FeedbackDraft | null>(
+		resumeDraftId
+			? (useFeedbackDraftStore.getState().drafts.find((d) => d.id === resumeDraftId) ?? null)
+			: null
+	);
+	const resumeDraft = resumeDraftRef.current;
+
 	// --- State ---
 	const [step, setStep] = useState<'gh-check' | 'chat' | 'matching' | 'submitting' | 'done'>(
 		'gh-check'
@@ -152,21 +178,41 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	);
 	const [agentsLoaded, setAgentsLoaded] = useState(false);
 	const [agentsDetectError, setAgentsDetectError] = useState<string | null>(null);
-	const [messages, setMessages] = useState<FeedbackMessage[]>([]);
-	const [inputValue, setInputValue] = useState('');
+	const [messages, setMessages] = useState<FeedbackMessage[]>(() => resumeDraft?.messages ?? []);
+	const [inputValue, setInputValue] = useState(() => resumeDraft?.inputDraft ?? '');
 	const [isLoading, setIsLoading] = useState(false);
-	const [confidence, setConfidence] = useState(0);
-	const [isReady, setIsReady] = useState(false);
-	const [lastResponse, setLastResponse] = useState<FeedbackParsedResponse | null>(null);
-	const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
+	const [confidence, setConfidence] = useState(() => resumeDraft?.confidence ?? 0);
+	const [isReady, setIsReady] = useState(() => resumeDraft?.lastResponse?.ready ?? false);
+	const [lastResponse, setLastResponse] = useState<FeedbackParsedResponse | null>(
+		() => resumeDraft?.lastResponse ?? null
+	);
+	const [attachments, setAttachments] = useState<FeedbackAttachment[]>(
+		() => resumeDraft?.attachments ?? []
+	);
 	const [isDragging, setIsDragging] = useState(false);
-	const [includeDebugPackage, setIncludeDebugPackage] = useState(false);
+	const [includeDebugPackage, setIncludeDebugPackage] = useState(
+		() => resumeDraft?.includeDebugPackage ?? false
+	);
+	// --- Performance trace capture ---
+	const [isTracing, setIsTracing] = useState(false); // recording in flight
+	const [traceBusy, setTraceBusy] = useState(false); // stopping/bundling
+	const [tracePath, setTracePath] = useState<string | null>(null); // captured temp zip
+	const [traceSizeBytes, setTraceSizeBytes] = useState(0);
+	const [traceError, setTraceError] = useState('');
+	const setProfilingActive = useUIStore((s) => s.setProfilingActive);
 	const [submitError, setSubmitError] = useState('');
 	const [matchingIssues, setMatchingIssues] = useState<ExistingIssue[]>([]);
 	const [searchingIssues, setSearchingIssues] = useState(false);
 	const [subscribingTo, setSubscribingTo] = useState<number | null>(null);
 	const [createdIssueUrl, setCreatedIssueUrl] = useState<string | null>(null);
 	const [copiedUrl, setCopiedUrl] = useState(false);
+	const [isSavingDraft, setIsSavingDraft] = useState(false);
+	const [draftSaved, setDraftSaved] = useState(false);
+	// Subscribe so the live snapshot re-publishes with the freshly minted id
+	// after a save (preventing duplicate drafts) and so the editor can surface
+	// draft-save failures.
+	const activeDraftId = useFeedbackDraftStore((s) => s.activeDraftId);
+	const saveError = useFeedbackDraftStore((s) => s.saveError);
 	// Diagnostics the agent ran on this machine during the current turn. Cleared
 	// at the start of each send so the list always describes the turn in flight.
 	const [diagnostics, setDiagnostics] = useState<FeedbackDiagnostic[]>([]);
@@ -179,6 +225,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const startedRef = useRef(false);
+	// Mirror trace state into refs so the unmount cleanup (empty-dep effect) can
+	// stop an in-flight recording / drop an unsubmitted temp trace without
+	// re-subscribing. submittedRef flips true once the report is sent, so we
+	// don't discard a trace the submit handler already consumed.
+	const isTracingRef = useRef(false);
+	const tracePathRef = useRef<string | null>(null);
+	const submittedRef = useRef(false);
 	// Set once any turn has been answered. Until then a failed turn falls through
 	// to the next account; after it, a failure is reported rather than silently
 	// moving the conversation to a different account.
@@ -242,7 +295,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 				if (mounted) {
 					setAccounts(result.accounts);
 					lastWorkingKeyRef.current = result.lastWorkingKey;
-					setActiveAccountKey(result.accounts.find(isFeedbackAccountUsable)?.key ?? null);
+					// A resumed draft keeps its provider when an account for it can
+					// still run; otherwise (or for a fresh chat) the first usable one.
+					const usable = result.accounts.filter(isFeedbackAccountUsable);
+					const resumed = resumeDraft
+						? usable.find((account) => account.toolType === resumeDraft.agentType)
+						: undefined;
+					setActiveAccountKey((resumed ?? usable[0])?.key ?? null);
 					setAgentsLoaded(true);
 				}
 			} catch (error) {
@@ -279,21 +338,46 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		return () => {
 			managerRef.current.cleanup();
 			useFeedbackDraftStore.getState().reset();
+			// Never leave a recording running or a large temp trace behind when the
+			// modal is torn down. If the report was submitted, the main process
+			// already consumed and deleted the trace zip, so skip that path.
+			if (isTracingRef.current) {
+				setProfilingActive(false);
+				void window.maestro.debug
+					.stopProfilingToFile()
+					.then((r) => {
+						if (r?.path) void window.maestro.debug.discardTrace(r.path);
+					})
+					.catch(() => {});
+			}
+			if (tracePathRef.current && !submittedRef.current) {
+				void window.maestro.debug.discardTrace(tracePathRef.current);
+			}
 		};
-	}, []);
+	}, [setProfilingActive]);
+
+	// --- Resume bookkeeping: bind this editor to the resumed draft's id so
+	//     saves upsert (not duplicate), and consume the one-shot resume flag.
+	useEffect(() => {
+		if (!resumeDraft) return;
+		useFeedbackDraftStore.setState({ activeDraftId: resumeDraft.id });
+		useFeedbackDraftStore.getState().clearResume();
+	}, [resumeDraft]);
 
 	// --- Publish draft state so the sidebar Feedback button + close handler
-	//     know whether the user has work in progress. Closing parks a draft
+	//     know whether the user has work worth keeping. Closing parks a draft
 	//     rather than discarding it, so this counts anything the user would be
 	//     annoyed to retype: a sent message, text still sitting in the composer,
-	//     or staged screenshots. Once the issue is submitted (step === 'done')
-	//     there's nothing left to keep.
+	//     or staged screenshots. An in-flight recording or a captured-but-
+	//     unsubmitted trace counts too. Once the issue is submitted
+	//     (step === 'done') there's nothing left to keep.
 	useEffect(() => {
 		const hasSentMessage = messages.some((m) => m.role === 'user');
 		const hasUnsentWork = inputValue.trim().length > 0 || attachments.length > 0;
-		const hasDraft = (hasSentMessage || hasUnsentWork) && step !== 'done';
+		const hasTraceWork = isTracing || tracePath !== null;
+		const hasDraft = (hasSentMessage || hasUnsentWork || hasTraceWork) && step !== 'done';
 		useFeedbackDraftStore.getState().setHasDraft(hasDraft);
-	}, [messages, step, inputValue, attachments]);
+	}, [messages, attachments, inputValue, step, isTracing, tracePath]);
 
 	// --- Background issue search - fires after every agent response ---
 	const runIssueSearch = useCallback(async (query: string) => {
@@ -477,12 +561,17 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					summary: response.summary,
 				},
 			]);
-		} catch {
+		} catch (error) {
+			captureException(error, { extra: { source: 'FeedbackChatView.sendMessage' } });
+			const detail =
+				error instanceof Error && error.message
+					? error.message
+					: 'Something went wrong. Please try again.';
 			setMessages((prev) => [
 				...prev,
 				{
 					role: 'assistant',
-					content: 'Something went wrong. Please try again.',
+					content: detail,
 					timestamp: Date.now(),
 				},
 			]);
@@ -509,9 +598,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 				additionalContext: lastResponse.structured.additionalContext || undefined,
 				attachments: attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
 				includeDebugPackage,
+				performanceTracePath: tracePath ?? undefined,
 			});
 
 			if (result.success) {
+				// The main process consumed and deleted the temp trace on success;
+				// mark it so the unmount cleanup doesn't try to discard it again.
+				if (tracePath) submittedRef.current = true;
 				setCreatedIssueUrl(result.issueUrl ?? null);
 				setStep('done');
 			} else {
@@ -524,7 +617,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 			setSubmitError(error instanceof Error ? error.message : 'Submission failed.');
 			setStep('chat');
 		}
-	}, [lastResponse, attachments, includeDebugPackage]);
+	}, [lastResponse, attachments, includeDebugPackage, tracePath]);
 	const createNewIssueRef = useRef<typeof createNewIssue | null>(null);
 	createNewIssueRef.current = createNewIssue;
 
@@ -650,6 +743,74 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		setAttachments((prev) => prev.filter((a) => a.id !== id));
 	}, []);
 
+	// --- Performance trace capture ---
+	// Keep refs in sync so the unmount cleanup can act on the latest values.
+	useEffect(() => {
+		isTracingRef.current = isTracing;
+		tracePathRef.current = tracePath;
+	}, [isTracing, tracePath]);
+
+	// Reconcile with the main-process recording singleton on mount: a recording
+	// may already be running (started here before a minimize, or via Cmd+K), in
+	// which case the control should show "Stop" instead of "Start".
+	useEffect(() => {
+		let mounted = true;
+		(async () => {
+			try {
+				const status = await window.maestro.debug.getProfilingStatus();
+				if (mounted && status.active) setIsTracing(true);
+			} catch {
+				// best-effort reconcile
+			}
+		})();
+		return () => {
+			mounted = false;
+		};
+	}, []);
+
+	const startTrace = useCallback(async () => {
+		setTraceError('');
+		try {
+			await window.maestro.debug.startProfiling();
+			setIsTracing(true);
+			setProfilingActive(true);
+			// Minimize so the user can reproduce the slow behavior; the recording
+			// keeps running in the main process. Reopening reconciles the Stop state.
+			onRequestMinimize?.();
+		} catch (e) {
+			setTraceError(e instanceof Error ? e.message : 'Failed to start recording.');
+		}
+	}, [onRequestMinimize, setProfilingActive]);
+
+	const stopTrace = useCallback(async () => {
+		setTraceBusy(true);
+		setTraceError('');
+		try {
+			const result = await window.maestro.debug.stopProfilingToFile();
+			setIsTracing(false);
+			setProfilingActive(false);
+			if (result.success && result.path) {
+				setTracePath(result.path);
+				setTraceSizeBytes(result.bundleSizeBytes);
+			} else {
+				setTraceError(result.error || 'Failed to capture the trace.');
+			}
+		} catch (e) {
+			setIsTracing(false);
+			setProfilingActive(false);
+			setTraceError(e instanceof Error ? e.message : 'Failed to capture the trace.');
+		} finally {
+			setTraceBusy(false);
+		}
+	}, [setProfilingActive]);
+
+	const removeTrace = useCallback(() => {
+		const path = tracePath;
+		setTracePath(null);
+		setTraceSizeBytes(0);
+		if (path) void window.maestro.debug.discardTrace(path);
+	}, [tracePath]);
+
 	// --- Key handler ---
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -660,6 +821,67 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		},
 		[sendMessage]
 	);
+
+	// --- Persisted draft helpers ---
+	const serializeDraft = useCallback((): FeedbackDraft => {
+		const firstUserMessage = messages.find((m) => m.role === 'user');
+		const rawName =
+			lastResponse?.summary || firstUserMessage?.content || inputValue || 'Untitled feedback';
+		const suggestedName = rawName.trim().slice(0, 60) || 'Untitled feedback';
+		const now = Date.now();
+		return {
+			id: activeDraftId ?? '',
+			suggestedName,
+			category: lastResponse?.category ?? 'general_feedback',
+			summary: lastResponse?.summary ?? '',
+			confidence,
+			// The provider the chat is running as, so a resume picks an account
+			// for the same provider.
+			agentType: activeAccount?.toolType ?? resumeDraft?.agentType ?? 'claude-code',
+			messages,
+			attachments,
+			inputDraft: inputValue,
+			includeDebugPackage,
+			createdAt: now,
+			updatedAt: now,
+			lastResponse,
+		};
+	}, [
+		messages,
+		attachments,
+		inputValue,
+		lastResponse,
+		confidence,
+		activeAccount,
+		resumeDraft,
+		includeDebugPackage,
+		activeDraftId,
+	]);
+
+	// Keep a live snapshot in the store so FeedbackModal can persist on
+	// minimize/close without reaching into this component's local state.
+	useEffect(() => {
+		const hasContent =
+			messages.some((m) => m.role === 'user') ||
+			attachments.length > 0 ||
+			inputValue.trim().length > 0;
+		useFeedbackDraftStore.getState().setActiveDraft(hasContent ? serializeDraft() : null);
+	}, [serializeDraft, messages, attachments, inputValue]);
+
+	const handleSaveDraft = useCallback(async () => {
+		setIsSavingDraft(true);
+		try {
+			const savedId = await useFeedbackDraftStore.getState().saveDraft(serializeDraft());
+			if (savedId !== null) {
+				setDraftSaved(true);
+				window.setTimeout(() => setDraftSaved(false), 2000);
+			}
+			// On failure the store sets `saveError`, surfaced as a banner below;
+			// do not flash "Saved" for a write that did not persist.
+		} finally {
+			setIsSavingDraft(false);
+		}
+	}, [serializeDraft]);
 
 	// ========================================================================
 	// Render
@@ -1131,6 +1353,21 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							</span>
 						)}
 						<div className="flex-1" />
+						<button
+							type="button"
+							onClick={handleSaveDraft}
+							disabled={isSavingDraft || step === 'submitting'}
+							className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0 border"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								color: theme.colors.textDim,
+								borderColor: theme.colors.border,
+							}}
+							title="Save this feedback as a resumable draft"
+						>
+							{isSavingDraft ? <Spinner size={12} /> : <Save className="w-3 h-3" />}
+							{draftSaved ? 'Saved' : 'Save draft'}
+						</button>
 						{isReady && (
 							<button
 								type="button"
@@ -1144,6 +1381,15 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							</button>
 						)}
 					</div>
+					{saveError && (
+						<div
+							className="mt-1.5 text-2xs font-medium"
+							style={{ color: theme.colors.error }}
+							role="alert"
+						>
+							{saveError}
+						</div>
+					)}
 					<div
 						className="h-1.5 rounded-full overflow-hidden"
 						style={{ backgroundColor: theme.colors.border }}
@@ -1287,7 +1533,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							}}
 						>
 							<p className="text-xs font-semibold mb-2" style={{ color: theme.colors.textMain }}>
-								Similar existing issues found — does any of these match?
+								Similar existing issues found - does any of these match?
 							</p>
 							<div className="flex flex-col gap-1.5">
 								{matchingIssues.slice(0, 5).map((issue) => (
@@ -1351,7 +1597,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 								className="mt-2 text-2xs transition-colors hover:underline"
 								style={{ color: theme.colors.textDim }}
 							>
-								None of these match — I have a new issue
+								None of these match - I have a new issue
 							</button>
 						</div>
 					)}
@@ -1441,8 +1687,8 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 						/>
 					</div>
 
-					{/* Support package + error */}
-					<div className="pb-2 flex items-center gap-3">
+					{/* Support package + performance trace + error */}
+					<div className="pb-2 flex items-center gap-3 flex-wrap">
 						<label
 							className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
 							title="Attaches diagnostics to the public issue. No conversations, secrets, file paths, project names, username, or computer name are included."
@@ -1459,13 +1705,71 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 								Include support package
 							</span>
 						</label>
-						{submitError && (
+
+						{/* Performance trace: record -> reproduce -> stop -> attach */}
+						{tracePath ? (
+							<span
+								className="flex items-center gap-1.5 shrink-0 px-2 py-1 rounded"
+								style={{
+									backgroundColor: `${theme.colors.success}18`,
+									color: theme.colors.textMain,
+								}}
+								title="A performance trace is attached to this report"
+							>
+								<Gauge className="w-3 h-3" style={{ color: theme.colors.success }} />
+								<span className="text-2xs">Performance trace ({formatSize(traceSizeBytes)})</span>
+								<button
+									type="button"
+									onClick={removeTrace}
+									className="p-0.5 rounded hover:opacity-70"
+									aria-label="Remove performance trace"
+									title="Remove performance trace"
+								>
+									<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+								</button>
+							</span>
+						) : isTracing ? (
+							<button
+								type="button"
+								onClick={stopTrace}
+								disabled={traceBusy}
+								className="flex items-center gap-1.5 shrink-0 px-2 py-1 rounded border disabled:opacity-50"
+								style={{ borderColor: theme.colors.error, color: theme.colors.error }}
+								title="Stop recording and attach the trace"
+							>
+								{traceBusy ? (
+									<Spinner size={12} />
+								) : (
+									<span
+										className="w-2 h-2 rounded-full animate-pulse"
+										style={{ backgroundColor: theme.colors.error }}
+									/>
+								)}
+								<span className="text-2xs font-semibold">
+									{traceBusy ? 'Saving trace...' : 'Stop recording'}
+								</span>
+							</button>
+						) : (
+							<button
+								type="button"
+								onClick={startTrace}
+								disabled={step === 'submitting'}
+								className="flex items-center gap-1.5 shrink-0 px-2 py-1 rounded border disabled:opacity-40"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+								title="Record a performance trace, then reproduce the slow behavior"
+							>
+								<Gauge className="w-3 h-3" />
+								<span className="text-2xs">Record performance trace</span>
+							</button>
+						)}
+
+						{(traceError || submitError) && (
 							<p
 								className="text-2xs truncate"
 								style={{ color: theme.colors.error }}
-								title={submitError}
+								title={traceError || submitError}
 							>
-								{submitError}
+								{traceError || submitError}
 							</p>
 						)}
 						{submitError && ghLoginRetry && (
@@ -1483,6 +1787,11 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							</button>
 						)}
 					</div>
+					{isTracing && !traceBusy && (
+						<p className="pb-2 text-2xs" style={{ color: theme.colors.textDim, opacity: 0.8 }}>
+							Recording... reproduce the issue, then reopen this window and click Stop recording.
+						</p>
+					)}
 
 					{/* Text input + send + submit */}
 					<div>

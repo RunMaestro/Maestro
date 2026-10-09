@@ -10,7 +10,9 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../../../main/utils/agent-args';
+import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
+import { getAgentDefinition } from '../../../main/agents/definitions';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -277,6 +279,100 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	// -- permissionMode --
+	it('adds fullAccessArgs when permissionMode is full', () => {
+		const agent = makeAgent({ fullAccessArgs: ['--bypass-all'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'full',
+		});
+		expect(result).toContain('--bypass-all');
+	});
+
+	it('falls back to yoloModeArgs when permissionMode is full and fullAccessArgs absent', () => {
+		const agent = makeAgent({ yoloModeArgs: ['--dangerously-bypass'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'full',
+		});
+		expect(result).toContain('--dangerously-bypass');
+	});
+
+	it('adds no bypass args when permissionMode is standard', () => {
+		const agent = makeAgent({
+			fullAccessArgs: ['--bypass-all'],
+			yoloModeArgs: ['--dangerously-bypass'],
+			readOnlyArgs: ['--plan'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'standard',
+		});
+		expect(result).not.toContain('--bypass-all');
+		expect(result).not.toContain('--dangerously-bypass');
+		expect(result).not.toContain('--plan');
+	});
+
+	it('adds readOnlyArgs when permissionMode is readonly', () => {
+		const agent = makeAgent({ readOnlyArgs: ['--permission-mode', 'plan'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'readonly',
+		});
+		expect(result).toContain('--permission-mode');
+		expect(result).toContain('plan');
+	});
+
+	it('permissionMode full takes precedence over legacy readOnlyMode: true', () => {
+		const agent = makeAgent({
+			fullAccessArgs: ['--bypass-all'],
+			readOnlyArgs: ['--plan'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'full',
+			readOnlyMode: true, // should be ignored when permissionMode is set
+		});
+		expect(result).toContain('--bypass-all');
+		expect(result).not.toContain('--plan');
+	});
+
+	it('permissionMode standard suppresses bypass args even when yoloMode: true is also passed', () => {
+		const agent = makeAgent({ yoloModeArgs: ['--dangerously-bypass'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'standard',
+			yoloMode: true, // should be ignored when permissionMode is set
+		});
+		expect(result).not.toContain('--dangerously-bypass');
+	});
+
+	// -- real claude-code definition: full access is what grants the bypass --
+	it("claude-code with permissionMode 'full' adds --dangerously-skip-permissions", () => {
+		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');
+		expect(claude).toBeDefined();
+		const result = buildAgentArgs(claude!, {
+			baseArgs: ['--print'],
+			prompt: 'do the thing',
+			permissionMode: 'full',
+		});
+		expect(result).toContain('--dangerously-skip-permissions');
+	});
+
+	it('claude-code with an unset permissionMode (no yoloMode) does NOT add --dangerously-skip-permissions', () => {
+		// Resolution of an unset permissionMode -> full access now happens in the
+		// renderer (resolveTabPermissionMode), NOT here. buildAgentArgs still
+		// treats a literal undefined as non-full, so callers MUST resolve first.
+		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');
+		expect(claude).toBeDefined();
+		const result = buildAgentArgs(claude!, {
+			baseArgs: ['--print'],
+			prompt: 'do the thing',
+			permissionMode: undefined,
+		});
+		expect(result).not.toContain('--dangerously-skip-permissions');
+	});
+
 	it('deduplicates Codex bypass flag when batch and yolo args both include it', () => {
 		const agent = makeAgent({
 			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
@@ -328,7 +424,7 @@ describe('buildAgentArgs', () => {
 	});
 
 	// -- combined --
-	it('combines multiple options together', () => {
+	it('combines options in read-only mode', () => {
 		const agent = makeAgent({
 			batchModePrefix: ['run'],
 			batchModeArgs: ['--skip-git'],
@@ -346,7 +442,6 @@ describe('buildAgentArgs', () => {
 			cwd: '/tmp',
 			readOnlyMode: true,
 			modelId: 'gpt-4',
-			yoloMode: true,
 			agentSessionId: 'abc',
 		});
 
@@ -365,10 +460,141 @@ describe('buildAgentArgs', () => {
 			'plan',
 			'--model',
 			'gpt-4',
-			'--yolo',
 			'--resume',
 			'abc',
 		]);
+	});
+
+	it('combines options in full-access mode', () => {
+		const agent = makeAgent({
+			batchModePrefix: ['run'],
+			batchModeArgs: ['--skip-git'],
+			jsonOutputArgs: ['--format', 'json'],
+			workingDirArgs: (dir: string) => ['-C', dir],
+			readOnlyArgs: ['--agent', 'plan'],
+			modelArgs: (model: string) => ['--model', model],
+			yoloModeArgs: ['--yolo'],
+			resumeArgs: (sid: string) => ['--resume', sid],
+		});
+
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: 'do stuff',
+			cwd: '/tmp',
+			modelId: 'gpt-4',
+			yoloMode: true,
+			agentSessionId: 'abc',
+		});
+
+		// batchModeArgs (--skip-git) IS included when not in read-only mode.
+		// workingDirArgs (-C /tmp) is prepended so the directory flag lands before
+		// the batchModePrefix subcommand (#959).
+		// readOnlyArgs are NOT included in full-access mode.
+		expect(result).toEqual([
+			'-C',
+			'/tmp',
+			'run',
+			'--print',
+			'--skip-git',
+			'--format',
+			'json',
+			'--yolo',
+			'--model',
+			'gpt-4',
+			'--resume',
+			'abc',
+		]);
+	});
+
+	it('builds Hermes batch args for the documented Maestro launch path', () => {
+		const hermes = AGENT_DEFINITIONS.find((agent) => agent.id === 'hermes');
+		expect(hermes).toBeDefined();
+		const prompt = 'Summarize the current branch status';
+
+		const baseArgs = buildAgentArgs(hermes!, {
+			baseArgs: [],
+			prompt,
+			modelId: 'anthropic/claude-sonnet-4-20250514',
+		});
+		const result = [...baseArgs, ...hermes!.promptArgs!(prompt)];
+
+		expect(result).toEqual([
+			'chat',
+			'-Q',
+			'--yolo',
+			'-m',
+			'anthropic/claude-sonnet-4-20250514',
+			'-q',
+			'Summarize the current branch status',
+		]);
+	});
+
+	it('builds Pi batch args for the documented Maestro launch path', () => {
+		const pi = AGENT_DEFINITIONS.find((agent) => agent.id === 'pi');
+		expect(pi).toBeDefined();
+		const prompt = 'Plan the next implementation step';
+
+		const baseArgs = buildAgentArgs(pi!, {
+			baseArgs: [],
+			prompt,
+			modelId: 'claude-sonnet-4.5',
+		});
+		const result = [...baseArgs, prompt];
+
+		expect(result).toEqual([
+			'-p',
+			'--mode',
+			'json',
+			'--model',
+			'claude-sonnet-4.5',
+			'Plan the next implementation step',
+		]);
+		expect(pi!.imageArgs!('/tmp/screenshot.png')).toEqual(['@/tmp/screenshot.png']);
+		expect(
+			buildAgentArgs(pi!, {
+				baseArgs: [],
+				prompt,
+				agentSessionId: 'pi-session-1',
+				readOnlyMode: true,
+			})
+		).toEqual([
+			'-p',
+			'--mode',
+			'json',
+			'--tools',
+			'read,grep,find,ls',
+			'--session',
+			'pi-session-1',
+		]);
+		expect(
+			pi!.configOptions?.find((option) => option.key === 'model')?.argBuilder?.('gpt-5')
+		).toEqual(['--model', 'gpt-5']);
+	});
+
+	it('builds Qwen read-only args with --approval-mode plan and never -y', () => {
+		const qwen = AGENT_DEFINITIONS.find((agent) => agent.id === 'qwen3-coder');
+		expect(qwen).toBeDefined();
+		const result = buildAgentArgs(qwen!, {
+			baseArgs: [],
+			prompt: 'review this code',
+			readOnlyMode: true,
+		});
+		// batchModeArgs (-y) is skipped in read-only; plan mode denies write/shell/edit
+		expect(result).toContain('--approval-mode');
+		expect(result).toContain('plan');
+		expect(result).not.toContain('-y');
+	});
+
+	it('builds omp read-only args restricting tools to read/search', () => {
+		const omp = AGENT_DEFINITIONS.find((agent) => agent.id === 'omp');
+		expect(omp).toBeDefined();
+		const result = buildAgentArgs(omp!, {
+			baseArgs: [],
+			prompt: 'review this code',
+			readOnlyMode: true,
+		});
+		expect(result).toContain('--tools');
+		expect(result).toContain('read,grep,glob');
 	});
 
 	// -- readOnlyMode + batchModeArgs interaction (TASK-S05) --
@@ -560,6 +786,104 @@ describe('buildAgentArgs', () => {
 			expect(result).toContain('stream-json');
 		});
 
+		// Grok desktop spawn composition, using the REAL definition rather than a
+		// hand-rolled mock. The desktop path (src/main/ipc/handlers/process.ts)
+		// composes args as buildAgentArgs -> applyAgentConfigOverrides, then
+		// ChildProcessSpawner appends promptArgs last. Grok's clap hard-errors on
+		// repeated value flags ("cannot be used multiple times"), so every value
+		// flag must appear exactly once in the final invocation.
+		describe('Grok: desktop spawn path composition (real definition)', () => {
+			const grokDef = getAgentDefinition('grok');
+			const grok = {
+				...grokDef,
+				available: true,
+				capabilities: {} as AgentConfig['capabilities'],
+			} as AgentConfig;
+
+			/** Mirror the desktop handler: buildAgentArgs -> config overrides -> promptArgs. */
+			function composeDesktopArgs(options: {
+				prompt: string;
+				cwd?: string;
+				agentSessionId?: string;
+				readOnlyMode?: boolean;
+				yoloMode?: boolean;
+				sessionCustomModel?: string;
+			}): string[] {
+				const built = buildAgentArgs(grok, {
+					baseArgs: grok.args,
+					prompt: options.prompt,
+					cwd: options.cwd,
+					readOnlyMode: options.readOnlyMode,
+					yoloMode: options.yoloMode,
+					agentSessionId: options.agentSessionId,
+				});
+				const resolved = applyAgentConfigOverrides(grok, built, {
+					sessionCustomModel: options.sessionCustomModel,
+				});
+				return [...resolved.args, ...grok.promptArgs!(options.prompt)];
+			}
+
+			it('composes --cwd, --resume, -m, and -p together in one legal invocation', () => {
+				const result = composeDesktopArgs({
+					prompt: 'hello',
+					cwd: '/project',
+					agentSessionId: 'sess-uuid',
+					sessionCustomModel: 'grok-composer-2.5-fast',
+				});
+
+				expect(result).toEqual([
+					'--cwd',
+					'/project',
+					'--always-approve',
+					'--output-format',
+					'streaming-json',
+					'--resume',
+					'sess-uuid',
+					'-m',
+					'grok-composer-2.5-fast',
+					'-p',
+					'hello',
+				]);
+
+				// clap rejects repeated flags: every flag token must be unique
+				const flags = result.filter((a) => a.startsWith('-'));
+				expect(new Set(flags).size).toBe(flags.length);
+			});
+
+			it('read-only mode emits exactly one --permission-mode and drops --always-approve', () => {
+				const result = composeDesktopArgs({
+					prompt: 'inspect only',
+					cwd: '/project',
+					readOnlyMode: true,
+				});
+
+				// batchModeArgs (--always-approve) conflicts with read-only intent
+				// and is skipped; readOnlyArgs supplies --permission-mode plan.
+				expect(result).not.toContain('--always-approve');
+				expect(result.filter((a) => a === '--permission-mode')).toHaveLength(1);
+				expect(result[result.indexOf('--permission-mode') + 1]).toBe('plan');
+			});
+
+			it('yolo + batch mode dedupes --always-approve to a single occurrence', () => {
+				// batchModeArgs === yoloModeArgs === ['--always-approve'] by design;
+				// a repeated boolean flag would make grok's clap exit 2.
+				const result = composeDesktopArgs({
+					prompt: 'do it',
+					cwd: '/project',
+					yoloMode: true,
+				});
+
+				expect(result.filter((a) => a === '--always-approve')).toHaveLength(1);
+			});
+
+			it('default config emits no -m or --reasoning-effort (empty defaults build no args)', () => {
+				const result = composeDesktopArgs({ prompt: 'hi' });
+
+				expect(result).not.toContain('-m');
+				expect(result).not.toContain('--reasoning-effort');
+			});
+		});
+
 		it('Factory Droid: readOnly works without extra flags (exec is read-only by default)', () => {
 			const droidAgent = makeAgent({
 				id: 'factory-droid',
@@ -662,6 +986,68 @@ describe('applyAgentConfigOverrides', () => {
 		});
 		expect(r3.args).toEqual(['--model', 'session-model']);
 		expect(r3.modelSource).toBe('session');
+	});
+
+	// -- effort precedence --
+	// Effort follows the same rules as model, which is also what the effort pill
+	// shows (tab > agent override > agent config). An empty session override means
+	// "cleared", not "no effort at all".
+	it('effort precedence: session overrides agent config, empty falls back', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'effort',
+					type: 'select',
+					label: 'Effort',
+					description: 'Effort',
+					options: ['', 'low', 'high', 'max'],
+					default: '',
+					argBuilder: (val: any) => (val ? ['--effort', String(val)] : []),
+				},
+			],
+		});
+
+		// agent config value is used when the session has no override
+		const r1 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+		});
+		expect(r1.args).toEqual(['--effort', 'high']);
+
+		// session override wins
+		const r2 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+			sessionCustomEffort: 'max',
+		});
+		expect(r2.args).toEqual(['--effort', 'max']);
+
+		// cleared session override falls back to the agent config
+		const r3 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+			sessionCustomEffort: '',
+		});
+		expect(r3.args).toEqual(['--effort', 'high']);
+	});
+
+	it('reasoningEffort honors the session override (Codex-style agents)', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'reasoningEffort',
+					type: 'select',
+					label: 'Reasoning Effort',
+					description: 'Reasoning Effort',
+					options: ['low', 'high'],
+					default: 'low',
+					argBuilder: (val: any) => (val ? ['-c', `model_reasoning_effort="${val}"`] : []),
+				},
+			],
+		});
+
+		const result = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { reasoningEffort: 'low' },
+			sessionCustomEffort: 'high',
+		});
+		expect(result.args).toEqual(['-c', 'model_reasoning_effort="high"']);
 	});
 
 	it('uses agentConfigValues for non-model config options', () => {
@@ -1070,5 +1456,123 @@ describe('getContextWindowValue', () => {
 
 		const result = getContextWindowValue(agent, { contextWindow: 50000 }, undefined);
 		expect(result).toBe(50000);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Additional Directories -> native provider grant flags
+// ---------------------------------------------------------------------------
+describe('buildAgentArgs: additionalDirectories', () => {
+	const RO = { path: '/ref/docs', read: true, write: false };
+	const WO = { path: '/out/drop', read: false, write: true };
+	const RW = { path: '/shared/src', read: true, write: true };
+	const INERT = { path: '/ignored', read: false, write: false };
+
+	/** Stand-in for a provider whose flag means "allow access" (Claude, Copilot). */
+	const accessAgent = makeAgent({
+		additionalDirArgs: (dirs) =>
+			dirs.filter((d) => d.read || d.write).flatMap((d) => ['--add-dir', d.path]),
+	});
+
+	it('emits nothing for a provider with no native mechanism', () => {
+		const agent = makeAgent(); // no additionalDirArgs
+		expect(buildAgentArgs(agent, { baseArgs: [], additionalDirectories: [RW] })).toEqual([]);
+	});
+
+	it('emits nothing when the session has no grants', () => {
+		expect(buildAgentArgs(accessAgent, { baseArgs: [], additionalDirectories: [] })).toEqual([]);
+		expect(buildAgentArgs(accessAgent, { baseArgs: [] })).toEqual([]);
+	});
+
+	it('lets the provider decide which grants its flag can express', () => {
+		expect(
+			buildAgentArgs(accessAgent, { baseArgs: [], additionalDirectories: [RO, WO, RW, INERT] })
+		).toEqual(['--add-dir', '/ref/docs', '--add-dir', '/out/drop', '--add-dir', '/shared/src']);
+	});
+
+	it('survives the repeated-flag dedupe', () => {
+		// buildAgentArgs dedupes repeated flag tokens, which would keep the first
+		// --add-dir, drop the second, and leave the orphaned path behind as a stray
+		// positional the CLI would read as the prompt. Regression guard.
+		const args = buildAgentArgs(accessAgent, {
+			baseArgs: [],
+			additionalDirectories: [RO, RW],
+		});
+
+		expect(args.filter((a) => a === '--add-dir')).toHaveLength(2);
+		expect(args).toEqual(['--add-dir', '/ref/docs', '--add-dir', '/shared/src']);
+	});
+
+	it('keeps the grant flags ahead of a trailing prompt positional', () => {
+		// Callers append the prompt AFTER buildAgentArgs returns, so the last thing
+		// we emit must still be a flag/value pair, never a dangling flag.
+		const args = buildAgentArgs(accessAgent, {
+			baseArgs: ['--print'],
+			additionalDirectories: [RW],
+		});
+
+		expect(args).toEqual(['--print', '--add-dir', '/shared/src']);
+		expect(args[args.length - 1]).not.toMatch(/^-/);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Antigravity CLI (`agy`) - real definition wiring
+// ---------------------------------------------------------------------------
+describe('buildAgentArgs with the Antigravity definition', () => {
+	const antigravity = () =>
+		({
+			...getAgentDefinition('antigravity'),
+			available: true,
+			capabilities: {} as AgentConfig['capabilities'],
+		}) as AgentConfig;
+
+	it('composes a headless run that auto-approves tools and streams JSON', () => {
+		const result = buildAgentArgs(antigravity(), { baseArgs: [], prompt: 'hi' });
+
+		expect(result).toEqual(['--dangerously-skip-permissions', '--output-format', 'stream-json']);
+	});
+
+	it('resumes a specific conversation by id', () => {
+		const result = buildAgentArgs(antigravity(), {
+			baseArgs: [],
+			prompt: 'follow up',
+			agentSessionId: '055a398f-db14-4c5f-abbb-1bf03f8120a7',
+		});
+
+		expect(result).toContain('--conversation');
+		expect(result).toContain('055a398f-db14-4c5f-abbb-1bf03f8120a7');
+	});
+
+	it('drops the permission-skip flag in read-only mode and sandboxes the terminal instead', () => {
+		const result = buildAgentArgs(antigravity(), {
+			baseArgs: [],
+			prompt: 'read only please',
+			readOnlyMode: true,
+		});
+
+		expect(result).not.toContain('--dangerously-skip-permissions');
+		expect(result).toContain('--sandbox');
+	});
+
+	it('raises the headless timeout past the 5m CLI default without any user config', () => {
+		const { args } = applyAgentConfigOverrides(antigravity(), [], {});
+
+		expect(args).toEqual(['--print-timeout', '30m']);
+	});
+
+	it('adds model and effort flags only once the user sets them', () => {
+		const { args } = applyAgentConfigOverrides(antigravity(), [], {
+			agentConfigValues: { model: 'gemini-3.6-flash-high', effort: 'high' },
+		});
+
+		expect(args).toEqual([
+			'--model',
+			'gemini-3.6-flash-high',
+			'--effort',
+			'high',
+			'--print-timeout',
+			'30m',
+		]);
 	});
 });

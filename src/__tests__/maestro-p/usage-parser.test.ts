@@ -28,7 +28,9 @@ interface FixtureExpected {
 }
 
 function loadFixture(name: string): { raw: string; expected: FixtureExpected } {
-	const raw = fs.readFileSync(path.join(FIXTURES_DIR, `${name}.txt`), 'utf-8');
+	const raw = fs
+		.readFileSync(path.join(FIXTURES_DIR, `${name}.txt`), 'utf-8')
+		.replaceAll('\\u2014', '\u2014');
 	const expected = JSON.parse(
 		fs.readFileSync(path.join(FIXTURES_DIR, `${name}.expected.json`), 'utf-8')
 	) as FixtureExpected;

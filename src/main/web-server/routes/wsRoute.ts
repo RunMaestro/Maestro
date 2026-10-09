@@ -17,6 +17,8 @@
 
 import { FastifyInstance } from 'fastify';
 import { logger } from '../../utils/logger';
+import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
+import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
 import type {
 	Theme,
 	WebClient,
@@ -64,6 +66,23 @@ export interface WsRouteCallbacks {
 	onClientDisconnect: (clientId: string) => void;
 	onClientError: (clientId: string, error: Error) => void;
 	handleMessage: (clientId: string, message: WebClientMessage) => void;
+	/** Per-server-run id a web-desktop client echoes back when it reconnects. */
+	getBridgeEpoch?: () => string;
+	/**
+	 * The broadcast counter at connect time, the baseline a fresh client resumes
+	 * from. See `BroadcastService.getBridgeSeq`.
+	 */
+	getBridgeSeq?: () => number;
+	/**
+	 * Frames a reconnecting web-desktop client missed, narrowed to what its
+	 * subscription would have received live, or `null` when it must reload
+	 * instead. See `BroadcastService.resumeBridgeClient`.
+	 */
+	resumeBridgeClient?: (
+		epoch: string,
+		lastSeq: number,
+		subscribedSessionId?: string
+	) => string[] | null;
 }
 
 /**
@@ -95,6 +114,8 @@ export class WsRoute {
 		const token = this.securityToken;
 
 		server.get(`/${token}/ws`, { websocket: true }, (socket, request) => {
+			// Origin first, before Web Login: a refused page must not even learn
+			// whether a login is required.
 			if (this.callbacks.isOriginAllowed?.(request.headers.origin, request.headers.host) !== true) {
 				logger.warn(`Refused WebSocket from origin ${String(request.headers.origin)}`, LOG_CONTEXT);
 				socket.close(WS_CLOSE_POLICY_VIOLATION, 'Origin not allowed');
@@ -103,15 +124,51 @@ export class WsRoute {
 
 			const clientId = `web-client-${++this.clientIdCounter}`;
 
+			// The Web Login gate. The bridge is the whole app, so this is the
+			// enforcement point that matters most - a socket minted here can invoke
+			// every registered ipcMain handler. Closed BEFORE `onClientConnect`, so
+			// an unauthorized socket never enters `webClients` and can never be
+			// broadcast to. The dedicated close code is what tells the shim to go to
+			// the login page instead of reconnecting forever against a wall.
+			//
+			// maestro-cli is authorized by the per-boot secret in its upgrade
+			// headers, never by arriving over loopback: the tunnel arrives that
+			// way too.
+			const auth = resolveWebRequestAuth(request);
+			if (!isWebRequestAuthorized(auth)) {
+				logger.warn(`Refused unauthenticated WebSocket upgrade (${clientId})`, LOG_CONTEXT);
+				socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+				return;
+			}
+
 			// Extract sessionId from query string if provided (for session-specific subscriptions)
 			const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
 			const sessionId = url.searchParams.get('sessionId') || undefined;
+
+			// A web-desktop client reconnecting after a dropped socket says where it
+			// left off. If every frame since then is still buffered it is replayed
+			// right after `connected` and the page carries on; otherwise `resumed`
+			// is false and the client reloads to resync from scratch. The replay is
+			// narrowed by the subscription in THIS URL: a resuming client's
+			// subscription is whatever it reconnects with, so a client that changes
+			// it mid-session (`subscribe` / `select_session`) must carry the current
+			// one in its reconnect URL. The web-desktop bundle never sends either
+			// and reconnects as the dashboard client it connected as.
+			const sinceParam = url.searchParams.get('since');
+			const epochParam = url.searchParams.get('epoch');
+			const replay =
+				sinceParam !== null && epochParam !== null
+					? (this.callbacks.resumeBridgeClient?.(epochParam, Number(sinceParam), sessionId) ?? null)
+					: null;
 
 			const client: WebClient = {
 				socket,
 				id: clientId,
 				connectedAt: Date.now(),
 				subscribedSessionId: sessionId,
+				// Resolved once, here: the cookie is only on the upgrade request, so
+				// there is no later point at which a frame can say who sent it.
+				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
 			};
 
 			// Notify parent about connection
@@ -128,9 +185,17 @@ export class WsRoute {
 					clientId,
 					message: 'Connected to Maestro Web Interface',
 					subscribedSessionId: sessionId,
+					bridgeEpoch: this.callbacks.getBridgeEpoch?.(),
+					bridgeSeq: this.callbacks.getBridgeSeq?.(),
+					resumed: replay !== null,
 					timestamp: Date.now(),
 				})
 			);
+
+			if (replay) {
+				logger.info(`Resumed ${clientId} with ${replay.length} replayed frame(s)`, LOG_CONTEXT);
+				for (const frame of replay) socket.send(frame);
+			}
 
 			// Send initial sessions list (all sessions, not just "live" ones)
 			if (this.callbacks.getSessions) {

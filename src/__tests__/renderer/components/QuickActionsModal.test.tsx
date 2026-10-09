@@ -177,6 +177,8 @@ const createDefaultProps = (
 	setRenameGroupId: vi.fn(),
 	setRenameGroupValue: vi.fn(),
 	setRenameGroupEmoji: vi.fn(),
+	setRenameGroupIcon: vi.fn(),
+	setRenameGroupColor: vi.fn(),
 	setCreateGroupModalOpen: vi.fn(),
 	setLeftSidebarOpen: vi.fn(),
 	setRightPanelOpen: vi.fn(),
@@ -1450,6 +1452,8 @@ describe('QuickActionsModal', () => {
 			expect(props.setRenameGroupId).toHaveBeenCalledWith('group-1');
 			expect(props.setRenameGroupValue).toHaveBeenCalledWith('Test Group');
 			expect(props.setRenameGroupEmoji).toHaveBeenCalledWith('📁');
+			expect(props.setRenameGroupIcon).toHaveBeenCalledWith(undefined);
+			expect(props.setRenameGroupColor).toHaveBeenCalledWith(undefined);
 			expect(props.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
@@ -2093,6 +2097,38 @@ describe('QuickActionsModal', () => {
 		});
 	});
 
+	describe('Maestro Cue action', () => {
+		it('displays the openCue shortcut keys on the Maestro Cue command', () => {
+			const props = createDefaultProps({
+				onOpenMaestroCue: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					openCue: { id: 'openCue', keys: ['Alt', 'q'], enabled: true },
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+			expect(screen.getByText(formatShortcutKeys(['Alt', 'q']))).toBeInTheDocument();
+		});
+	});
+
+	describe('Execution Queue action', () => {
+		it('displays the executionQueue shortcut keys on the View Execution Queue command', () => {
+			const props = createDefaultProps({
+				onOpenQueueBrowser: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					executionQueue: { id: 'executionQueue', keys: ['Cmd', 'Shift', 'X'], enabled: true },
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('View Execution Queue')).toBeInTheDocument();
+			expect(screen.getByText(formatShortcutKeys(['Cmd', 'Shift', 'X']))).toBeInTheDocument();
+		});
+	});
+
 	describe('Agent switcher mode (Cmd+O)', () => {
 		it('shows agent-specific placeholder when initialMode is agents', () => {
 			const props = createDefaultProps({ initialMode: 'agents' });
@@ -2128,6 +2164,48 @@ describe('QuickActionsModal', () => {
 			expect(screen.queryByText('Create New Agent')).not.toBeInTheDocument();
 			expect(screen.queryByText('Toggle Left Panel')).not.toBeInTheDocument();
 			expect(screen.queryByText('Open Settings')).not.toBeInTheDocument();
+		});
+
+		it('hides the Pianola agent while its Encore flag is off', async () => {
+			// Pianola persists in the session store after the flag is switched off, so
+			// the palette has to apply the same visibility predicate the Left Bar does -
+			// otherwise it hands the user an agent with no row to come back to.
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+			} as never);
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					{ ...createMockSession({ id: 'pianola-1', name: 'Pianola' }), isPianola: true },
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Pianola')).not.toBeInTheDocument();
+		});
+
+		it('lists the Pianola agent once its Encore flag is on', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
+			} as never);
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					{ ...createMockSession({ id: 'pianola-1', name: 'Pianola' }), isPianola: true },
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Pianola')).toBeInTheDocument();
+
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+			} as never);
 		});
 
 		it('filters agents by search text in agents mode', () => {

@@ -1,4 +1,6 @@
 import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
+import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
+import type { AdditionalDirectory } from './types';
 
 /**
  * Template Variable System for Auto Run and Custom AI Commands
@@ -15,17 +17,22 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{AGENT_GROUP}}       - Agent's group name (if grouped)
  *   {{AGENT_SESSION_ID}}  - Agent session ID (for conversation continuity)
  *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
+ *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
  *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
  *
  * Path Variables:
  *   {{CWD}}               - Current working directory
  *   {{AUTORUN_FOLDER}}    - Auto Run documents folder path
+ *   {{ADDITIONAL_DIRECTORIES}} - Markdown block of extra granted directories (empty when none)
+ *   {{WORKTREE_BASE_PATH}} - Directory where this agent's git worktrees are created (empty when none is configured)
  *
  * Auto Run Variables:
  *   {{DOCUMENT_NAME}}     - Current Auto Run document name (without .md)
  *   {{DOCUMENT_PATH}}     - Full path to current Auto Run document
  *   {{LOOP_NUMBER}}       - Current loop iteration (5-digit padded, e.g., 00001)
+ *   {{GOAL}}              - Goal-Driven Auto Run: the free-text objective the agent pursues
+ *   {{GOAL_EXIT_CRITERIA}} - Goal-Driven Auto Run: free-text description of what "done" looks like
  *
  * Date/Time Variables:
  *   {{DATE}}              - Current date (YYYY-MM-DD)
@@ -55,7 +62,7 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
  *
  * Cue Variables (Cue automation only):
- *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger)
+ *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger, webhook.received)
  *   {{CUE_EVENT_TIMESTAMP}} - Cue event timestamp
  *   {{CUE_TRIGGER_NAME}}   - Cue trigger/subscription name
  *   {{CUE_RUN_ID}}         - Cue run UUID
@@ -96,6 +103,12 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  *
  *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
+ *
+ *   {{CUE_WEBHOOK_BODY}}        - Webhook payload, pretty-printed JSON (webhook.received events)
+ *   {{CUE_WEBHOOK_EVENT}}       - Vendor event name, e.g. "pull_request" (webhook.received events)
+ *   {{CUE_WEBHOOK_PATH}}        - Path segment the delivery arrived on (webhook.received events)
+ *   {{CUE_WEBHOOK_DELIVERY_ID}} - Vendor delivery id (webhook.received events)
+ *   {{CUE_WEBHOOK_HEADERS}}     - Request headers as key: value lines, secrets redacted (webhook.received events)
  */
 
 /**
@@ -104,12 +117,22 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  * platform is exposed via the preload bridge at `window.maestro.platform`.
  */
 function getCurrentPlatform(): string {
-	if (typeof process !== 'undefined' && process.platform) {
-		return process.platform;
-	}
-
+	// Renderer FIRST: the real OS platform arrives via the preload bridge. This
+	// must win over `process.platform`, because the renderer's `process` polyfill
+	// (process-shim.js) reports platform `'browser'`, which would otherwise mask
+	// the real OS and send agents a wrong (Linux) maestro-cli path on Windows/mac.
 	if (typeof globalThis !== 'undefined' && (globalThis as any).maestro?.platform) {
 		return (globalThis as any).maestro.platform;
+	}
+
+	// Node (main process / CLI): the genuine process.platform. Guard against the
+	// shim's 'browser' value in case this ever runs in a polyfilled context.
+	if (
+		typeof process !== 'undefined' &&
+		process.platform &&
+		(process.platform as string) !== 'browser'
+	) {
+		return process.platform;
 	}
 	return 'linux'; // safe fallback
 }
@@ -120,6 +143,17 @@ function getCurrentPlatform(): string {
  * so the returned value includes the `node` invocation with the full path.
  */
 export function getMaestroCLIPath(): string {
+	// Prefer the real, on-disk path the main process resolved and handed to the
+	// renderer via preload (`window.maestro.maestroCliPath`). This is correct in
+	// both dev (`dist/cli/maestro-cli.js`) and packaged builds, so it beats the
+	// platform-default guesses below. Absent in pure Node contexts (CLI), which
+	// fall through to the platform default.
+	const resolved =
+		typeof globalThis !== 'undefined' ? (globalThis as any).maestro?.maestroCliPath : undefined;
+	if (typeof resolved === 'string' && resolved) {
+		return `node "${resolved}"`;
+	}
+
 	const platform = getCurrentPlatform();
 	switch (platform) {
 		case 'darwin':
@@ -149,6 +183,13 @@ export interface TemplateSessionInfo {
 	agentSessionId?: string;
 	isGitRepo?: boolean;
 	contextUsage?: number;
+	/** Extra directories granted beyond the working directory (prompt-level grants). */
+	additionalDirectories?: AdditionalDirectory[];
+	/**
+	 * Per-agent worktree settings. Only `basePath` is read here: it becomes
+	 * {{WORKTREE_BASE_PATH}}, the one place an agent may create a worktree.
+	 */
+	worktreeConfig?: { basePath?: string };
 }
 
 export interface TemplateContext {
@@ -162,6 +203,14 @@ export interface TemplateContext {
 	// Auto Run document context
 	documentName?: string;
 	documentPath?: string;
+	// Goal-Driven Auto Run context (only set for goal-driven runs)
+	goal?: string;
+	goalExitCriteria?: string;
+	/**
+	 * Pre-formatted handoff block from the previous goal iteration (see
+	 * src/shared/goalDriven/goalHandoff.ts). Empty on the first iteration.
+	 */
+	predecessorHandoff?: string;
 	// History file path for task recall
 	historyFilePath?: string;
 	// Conductor profile (user's About Me from settings)
@@ -229,6 +278,17 @@ export interface TemplateContext {
 		fromAgent?: string;
 		// time.once fields - originally-scheduled fire timestamp (ISO-8601 with TZ).
 		fireAt?: string;
+		// webhook.received fields
+		/** Path segment the delivery arrived on (the part after `/cue/`). */
+		webhookPath?: string;
+		/** Vendor event name from `X-GitHub-Event` / `X-GitLab-Event` / etc. */
+		webhookEvent?: string;
+		/** Vendor delivery id, or a locally generated UUID when absent. */
+		webhookDeliveryId?: string;
+		/** Pretty-printed JSON payload (raw text for non-JSON bodies), truncated. */
+		webhookBody?: string;
+		/** Request headers as `key: value` lines, with auth material redacted. */
+		webhookHeaders?: string;
 	};
 }
 
@@ -236,6 +296,10 @@ export interface TemplateContext {
 // Variables marked as autoRunOnly are only shown in Auto Run contexts, not in AI Commands settings
 // Variables marked as cueOnly are only shown in Cue automation contexts
 export const TEMPLATE_VARIABLES = [
+	{
+		variable: '{{ADDITIONAL_DIRECTORIES}}',
+		description: 'Extra granted directories with read/write access (empty when none)',
+	},
 	{ variable: '{{AGENT_DEEP_LINK}}', description: 'Deep link to this agent (maestro://)' },
 	{ variable: '{{AGENT_GROUP}}', description: 'Agent group name' },
 	{ variable: '{{AGENT_ID}}', description: 'Agent UUID (for CLI targeting)' },
@@ -245,6 +309,11 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
 	{ variable: '{{AUTORUN_FOLDER}}', description: 'Auto Run folder path', autoRunOnly: true },
+	{
+		variable: '{{WORKTREE_BASE_PATH}}',
+		description: 'Directory where git worktrees are created (empty when not configured)',
+	},
+	{ variable: '{{TAB_ID}}', description: "This conversation's tab ID (for CLI targeting)" },
 	{ variable: '{{TAB_NAME}}', description: 'Custom tab name' },
 	{ variable: '{{CONTEXT_USAGE}}', description: 'Context usage %' },
 	{
@@ -260,7 +329,7 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{CUE_FROM_AGENT}}',
 		description:
-			'Upstream agent/session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)',
+			'Upstream agent/session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)',
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
@@ -365,6 +434,31 @@ export const TEMPLATE_VARIABLES = [
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_TRIGGER_NAME}}', description: 'Cue trigger name', cueOnly: true },
+	{
+		variable: '{{CUE_WEBHOOK_BODY}}',
+		description: 'Webhook payload, pretty-printed JSON (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_DELIVERY_ID}}',
+		description: 'Webhook delivery id (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_EVENT}}',
+		description: 'Vendor event name, e.g. "pull_request" (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_HEADERS}}',
+		description: 'Request headers as key: value lines, secrets redacted',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_PATH}}',
+		description: 'Path segment the delivery arrived on (webhook.received events)',
+		cueOnly: true,
+	},
 	{ variable: '{{CWD}}', description: 'Working directory' },
 	{ variable: '{{DATE}}', description: 'Date (YYYY-MM-DD)' },
 	{ variable: '{{DATETIME}}', description: 'Full datetime' },
@@ -373,6 +467,21 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{DOCUMENT_NAME}}', description: 'Current document name', autoRunOnly: true },
 	{ variable: '{{DOCUMENT_PATH}}', description: 'Current document path', autoRunOnly: true },
 	{ variable: '{{GIT_BRANCH}}', description: 'Git branch name' },
+	{
+		variable: '{{GOAL}}',
+		description: 'Goal-Driven Auto Run objective',
+		autoRunOnly: true,
+	},
+	{
+		variable: '{{GOAL_EXIT_CRITERIA}}',
+		description: 'Goal-Driven Auto Run exit criteria',
+		autoRunOnly: true,
+	},
+	{
+		variable: '{{PREDECESSOR_HANDOFF}}',
+		description: "Goal-Driven Auto Run: previous iteration's handoff note (empty on the first)",
+		autoRunOnly: true,
+	},
 	{ variable: '{{GROUP_DEEP_LINK}}', description: 'Deep link to agent group (maestro://)' },
 	{ variable: '{{IS_GIT_REPO}}', description: 'Is git repo (true/false)' },
 	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
@@ -381,8 +490,12 @@ export const TEMPLATE_VARIABLES = [
 		description: 'Loop iteration (00001, 00002...)',
 		autoRunOnly: true,
 	},
+	{
+		variable: '{{LOOP_NUMBER_HUMAN}}',
+		description: 'Loop iteration, unpadded (1, 2, 3...)',
+		autoRunOnly: true,
+	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
-	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
 	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
@@ -411,6 +524,9 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		loopNumber,
 		documentName,
 		documentPath,
+		goal,
+		goalExitCriteria,
+		predecessorHandoff,
 		historyFilePath,
 		conductorProfile,
 	} = context;
@@ -428,15 +544,26 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_GROUP: groupName || '',
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
+		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,
+		// playbooks, Cue) that have no desktop tab of their own.
+		TAB_ID: activeTabId || '',
 		TAB_NAME: session.name,
 		TOOL_TYPE: session.toolType,
 
 		// Path variables
 		CWD: session.cwd,
+		// Renders the whole "## Additional Directories" section, or '' when the
+		// agent has no grants - an empty heading reads like a failed load.
+		ADDITIONAL_DIRECTORIES: formatAdditionalDirectoriesForPrompt(session.additionalDirectories),
 		AUTORUN_FOLDER:
 			autoRunFolder ||
 			session.autoRunFolderPath ||
 			`${session.fullPath || session.projectRoot || session.cwd}/.maestro/playbooks`,
+		// Deliberately NOT defaulted: the desktop falls back to `<parent>/worktrees`
+		// only inside its own create flow. An agent told a guessed path would
+		// `git worktree add` there by hand, and that worktree is exactly the kind
+		// the app never learns about. Empty means "use create-worktree".
+		WORKTREE_BASE_PATH: session.worktreeConfig?.basePath || '',
 
 		// Aliases (not documented in TEMPLATE_VARIABLES but still supported for internal use and backwards compatibility)
 		SESSION_ID: session.id,
@@ -452,8 +579,17 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		DOCUMENT_NAME: documentName || '',
 		DOCUMENT_PATH: documentPath || '',
 
+		// Goal-Driven Auto Run variables
+		GOAL: goal || '',
+		GOAL_EXIT_CRITERIA: goalExitCriteria || '',
+		// Pre-formatted handoff from the prior iteration; empty when there is none.
+		PREDECESSOR_HANDOFF: predecessorHandoff || '',
+
 		// Loop tracking (1-indexed, defaults to 1 if not in loop mode, 5-digit padded)
 		LOOP_NUMBER: String(loopNumber ?? 1).padStart(5, '0'),
+		// Same iteration counter without zero-padding, for human-readable display
+		// (e.g. the Goal-Driven prompt's "Iteration: 3").
+		LOOP_NUMBER_HUMAN: String(loopNumber ?? 1),
 
 		// Date/Time variables
 		DATE: now.toISOString().split('T')[0],
@@ -533,6 +669,13 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 
 		// Cue time.once variables
 		CUE_FIRE_AT: context.cue?.fireAt || '',
+
+		// Cue webhook.received variables
+		CUE_WEBHOOK_PATH: context.cue?.webhookPath || '',
+		CUE_WEBHOOK_EVENT: context.cue?.webhookEvent || '',
+		CUE_WEBHOOK_DELIVERY_ID: context.cue?.webhookDeliveryId || '',
+		CUE_WEBHOOK_BODY: context.cue?.webhookBody || '',
+		CUE_WEBHOOK_HEADERS: context.cue?.webhookHeaders || '',
 	};
 
 	// Add dynamic per-source output variables from the Cue context.
@@ -552,9 +695,12 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 	// Perform case-insensitive replacement
 	let result = template;
 	for (const [key, value] of Object.entries(replacements)) {
-		// Match {{KEY}} with case insensitivity
+		// Match {{KEY}} with case insensitivity. The replacement goes through a
+		// function so `$&`/`$1` sequences inside a value (a directory path, a
+		// Cue output blob) are inserted literally instead of being read as
+		// replacement patterns.
 		const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'gi');
-		result = result.replace(regex, value);
+		result = result.replace(regex, () => value);
 	}
 
 	return result;

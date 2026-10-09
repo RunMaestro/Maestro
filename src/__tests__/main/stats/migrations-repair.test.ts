@@ -4,10 +4,21 @@
  * Regression tests for MAESTRO-113/114: `table query_events has no column named
  * input_tokens` on every query event.
  *
- * rc and main number their stats migrations differently past v7 (rc's v8 is
- * multi_window_usage_daily; main's v8 is the token columns). user_version is
- * only a number, so a database last opened by an rc build already "covers"
- * main's v8 and the version check skipped it.
+ * rc and main number their stats migrations differently past v7, and
+ * user_version is only a number. main's v8 is the query_events token columns
+ * while rc's v8 is multi_window_usage_daily; rc's token columns are v9, its
+ * resilience_events v10, its wizard_runs v11, its user_name column v12, and
+ * its wizard_runs.active_ms column v13 (main's v11). So a
+ * database last opened by the OTHER branch reports a version that "covers" a
+ * migration it never ran, the version check skips it, and every write touching
+ * the missing schema fails.
+ *
+ * These tests are written from rc's side of that split: the skipped body is
+ * whichever one rc numbers differently, so the fixture here is a main-shaped
+ * database. `isApplied` is what repairs it, and each guard has to test the
+ * schema ITS OWN migration creates - a guard that drifts onto its neighbour
+ * (which is exactly what a naive merge of main's patch produces against rc's
+ * renumbering) reports a table as present because an unrelated one is.
  *
  * These run against a real SQLite engine (`node:sqlite`) behind a thin
  * better-sqlite3-shaped adapter. The mocked DB in stats-db.test.ts answers every
@@ -32,6 +43,9 @@ import { runMigrations, getCurrentVersion } from '../../../main/stats/migrations
 import { ADD_QUERY_EVENT_TOKEN_COLUMNS } from '../../../main/stats/schema';
 import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
+
+/** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
+const RC_TARGET_VERSION = 13;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -67,12 +81,13 @@ function hasTable(db: Database.Database, table: string): boolean {
 }
 
 /**
- * Fully migrate, then strip whatever main's v8+ migrations created that an rc
- * build at `version` would not have, and stamp the rc version number.
+ * Fully migrate, then strip whatever an install stamped `version` by the other
+ * branch would not have created, and stamp that version number.
  */
-function rcShapedDb(
+function crossBranchDb(
 	version: number,
 	missing: {
+		multiWindow?: boolean;
 		tokenColumns?: boolean;
 		resilience?: boolean;
 		wizard?: boolean;
@@ -81,6 +96,7 @@ function rcShapedDb(
 ): Database.Database {
 	const db = openDb();
 	runMigrations(db);
+	if (missing.multiWindow) db.exec('DROP TABLE multi_window_usage_daily');
 	if (missing.tokenColumns) {
 		for (const column of ADD_QUERY_EVENT_TOKEN_COLUMNS) {
 			db.exec(`ALTER TABLE query_events DROP COLUMN ${column}`);
@@ -89,7 +105,6 @@ function rcShapedDb(
 	if (missing.resilience) db.exec('DROP TABLE resilience_events');
 	if (missing.wizard) db.exec('DROP TABLE wizard_runs');
 	if (missing.wizardActiveMs) db.exec('ALTER TABLE wizard_runs DROP COLUMN active_ms');
-	db.exec('CREATE TABLE IF NOT EXISTS multi_window_usage_daily (date TEXT PRIMARY KEY)');
 	db.pragma(`user_version = ${version}`);
 	return db;
 }
@@ -103,16 +118,31 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		const db = openDb();
 		runMigrations(db);
 
-		expect(getCurrentVersion(db)).toBe(11);
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
 		expect(columnNames(db, 'query_events')).toEqual(
 			expect.arrayContaining([...ADD_QUERY_EVENT_TOKEN_COLUMNS])
 		);
+		expect(hasTable(db, 'multi_window_usage_daily')).toBe(true);
 		expect(logger.warn).not.toHaveBeenCalled();
 	});
 
-	it('adds the token columns to an rc v8 database so the query event insert prepares (MAESTRO-114)', () => {
-		// rc v8 = multi_window_usage_daily; token columns arrived in rc's v9.
-		const db = rcShapedDb(8, { tokenColumns: true, resilience: true, wizard: true });
+	it('creates multi_window_usage_daily for a main-shaped v10 database', () => {
+		// main's v10 is wizard_runs, so an install stamped 10 by main has the token
+		// columns, resilience_events and wizard_runs but never ran rc's v8.
+		const db = crossBranchDb(10, { multiWindow: true });
+		expect(hasTable(db, 'multi_window_usage_daily')).toBe(false);
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'multi_window_usage_daily')).toBe(true);
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v8');
+		// Repair leaves user_version alone; the pending migrations still run.
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it('adds the token columns back so the query event insert prepares (MAESTRO-114)', () => {
+		const db = crossBranchDb(RC_TARGET_VERSION, { tokenColumns: true });
 		expect(() => db.prepare(INSERT_QUERY_EVENT_SQL)).toThrow(/no column named input_tokens/);
 
 		runMigrations(db);
@@ -121,38 +151,40 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 			expect.arrayContaining([...ADD_QUERY_EVENT_TOKEN_COLUMNS])
 		);
 		expect(() => db.prepare(INSERT_QUERY_EVENT_SQL)).not.toThrow();
-		expect(hasTable(db, 'resilience_events')).toBe(true);
-		expect(hasTable(db, 'wizard_runs')).toBe(true);
-		expect(getCurrentVersion(db)).toBe(11);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v9');
 	});
 
-	it('creates wizard_runs for an rc v10 database that already had tokens and resilience', () => {
-		// rc v10 = resilience_events; wizard_runs is rc's v11.
-		const db = rcShapedDb(10, { wizard: true });
+	it('repairs several missing bodies in one pass', () => {
+		const db = crossBranchDb(RC_TARGET_VERSION, { resilience: true, wizard: true });
 
 		runMigrations(db);
 
+		expect(hasTable(db, 'resilience_events')).toBe(true);
 		expect(hasTable(db, 'wizard_runs')).toBe(true);
-		expect(logger.warn).toHaveBeenCalledTimes(1);
-		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v10');
+		expect(logger.warn).toHaveBeenCalledTimes(2);
 	});
 
-	it('adds active_ms to an rc v12 database whose wizard_runs predates it', () => {
-		// rc v11 = wizard_runs without active_ms; rc v12 is unrelated to wizards.
-		const db = rcShapedDb(12, { wizardActiveMs: true });
+	it('leaves a database with complete schema untouched', () => {
+		const db = crossBranchDb(RC_TARGET_VERSION, {});
+
+		runMigrations(db);
+
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+		expect(logger.warn).not.toHaveBeenCalled();
+	});
+
+	it('adds active_ms back to a database stamped v13 without it', () => {
+		// rc's v13 is wizard_runs.active_ms, which main numbers v11. A database
+		// whose version covers v13 but whose wizard_runs predates the column must
+		// still get it, or every wizard run insert fails.
+		const db = crossBranchDb(RC_TARGET_VERSION, { wizardActiveMs: true });
+		expect(columnNames(db, 'wizard_runs')).not.toContain('active_ms');
 
 		runMigrations(db);
 
 		expect(columnNames(db, 'wizard_runs')).toContain('active_ms');
-		expect(getCurrentVersion(db)).toBe(12);
-	});
-
-	it('leaves a newer rc database with complete schema untouched', () => {
-		const db = rcShapedDb(12, {});
-
-		runMigrations(db);
-
-		expect(getCurrentVersion(db)).toBe(12);
-		expect(logger.warn).not.toHaveBeenCalled();
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v13');
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
 	});
 });

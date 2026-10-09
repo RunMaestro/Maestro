@@ -3,14 +3,25 @@ import { Info, Copy, Check, X, Folder } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
-import type { AgentConfig, ToolType } from '../../types';
+import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { formatTokensCompact } from '../../../shared/formatters';
+import { getActiveTab } from '../../utils/tabHelpers';
+import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
+import {
+	resolveContextWindow,
+	isStoredContextWindowOverridden,
+} from '../../utils/contextWindowPrecedence';
+import type { AdditionalDirectory, AgentConfig, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
+import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
+import { useHomeDir } from '../../hooks/utils/useHomeDir';
 import { SshRemoteSelector } from '../shared/SshRemoteSelector';
+import { getEffortConfigKey } from '../../utils/agentEffort';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
@@ -41,8 +52,17 @@ export function EditAgentModal({
 	const [workingDir, setWorkingDir] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');
 	const [newSessionMessage, setNewSessionMessage] = useState('');
+	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
+	const homeDir = useHomeDir();
 	const [agent, setAgent] = useState<AgentConfig | null>(null);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
+	/**
+	 * The context window the config panel was SEEDED with, so save can tell a
+	 * deliberate edit from an untouched round-trip (finding AD1). A ref, not
+	 * state: nothing renders from it and it must not retrigger the seeding
+	 * effect that writes it.
+	 */
+	const seededContextWindowRef = useRef<number | undefined>(undefined);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [customPath, setCustomPath] = useState('');
@@ -63,6 +83,10 @@ export function EditAgentModal({
 	// Agent Resilience (auto-retry) toggles. Both default ON; read with `?? true`.
 	const [retryOnAvailabilityErrors, setRetryOnAvailabilityErrors] = useState(true);
 	const [retryOnTokenExhaustion, setRetryOnTokenExhaustion] = useState(true);
+	// Codex automatic usage resets. Defaults OFF - see `codexAutoResetOnExhaustion`
+	// on Session for why this one does NOT follow the resilience flags' default-on
+	// rule: reset credits are finite and irreversible.
+	const [codexAutoReset, setCodexAutoReset] = useState(false);
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -78,6 +102,10 @@ export function EditAgentModal({
 	);
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+	// Agent-level config as loaded, before the session's per-session overrides are
+	// merged in for display. Blur-saves of agent-level options rebuild from this so
+	// they never write (or erase) the per-session model/contextWindow/effort.
+	const globalConfigRef = useRef<Record<string, any>>({});
 
 	// Clear copy timeout and reset copied state on unmount, close, or session change
 	useEffect(() => {
@@ -121,10 +149,17 @@ export function EditAgentModal({
 		const activeToolType = selectedToolType;
 		const isProviderSwitch = activeToolType !== session.toolType;
 
-		// Load agent definition to get configOptions
-		window.maestro.agents
-			.detect()
-			.then((agents: AgentConfig[]) => {
+		// Load agent definition (for configOptions) and the agent-level config together:
+		// seeding the config panel needs the agent's effort key, which only the
+		// definition knows, so resolving them in two independent chains would race.
+		Promise.all([
+			window.maestro.agents.detect(),
+			window.maestro.agents.getConfig(activeToolType).catch((err) => {
+				logger.error('Failed to load agent config:', undefined, err);
+				return {} as Record<string, any>;
+			}),
+		])
+			.then(([agents, globalConfig]: [AgentConfig[], Record<string, any>]) => {
 				if (stale) return;
 				const foundAgent = agents.find((a) => a.id === activeToolType);
 				setAgent(foundAgent || null);
@@ -175,6 +210,47 @@ export function EditAgentModal({
 				} else {
 					setEditDynamicOptions({});
 				}
+
+				// Keep the pristine agent-level config so blur-saves of agent-level
+				// options can be written back without dropping the values this modal
+				// manages per-session (agents:setConfig replaces the whole object).
+				globalConfigRef.current = globalConfig;
+
+				// Seed the panel from the agent-level config, then let the session's own
+				// overrides win. Model, contextWindow and effort are per-session: showing
+				// the agent-level effort here while the session override silently drove
+				// the spawn is what made "Effort: high" run at max.
+				if (isProviderSwitch) {
+					// When provider changed, use agent-level defaults for the new provider
+					setAgentConfig(globalConfig);
+					// The new provider's default is the seed, so leaving it alone is not
+					// an edit. The provider switch clears the old override anyway.
+					seededContextWindowRef.current = globalConfig.contextWindow;
+				} else {
+					// Empty string means explicitly cleared, undefined means never set (use agent-level default)
+					const effortKey = getEffortConfigKey(foundAgent);
+					const modelValue =
+						session.customModel !== undefined ? session.customModel : (globalConfig.model ?? '');
+					const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
+					// Remember what the control was SEEDED with so save can tell an
+					// actual edit from an untouched round-trip. Seeding from
+					// `globalConfig.contextWindow` when the session has no override is
+					// exactly how the agent-level default gets materialized into a
+					// per-session value just by opening this modal and pressing Save
+					// (finding P1); without this the write would be indistinguishable
+					// from a deliberate choice (finding AD1).
+					seededContextWindowRef.current = contextWindowValue;
+					const effortValue =
+						session.customEffort !== undefined
+							? session.customEffort
+							: (globalConfig[effortKey] ?? '');
+					setAgentConfig({
+						...globalConfig,
+						model: modelValue,
+						contextWindow: contextWindowValue,
+						[effortKey]: effortValue,
+					});
+				}
 			})
 			.catch((err) => {
 				logger.error('Failed to detect agents:', undefined, err);
@@ -184,29 +260,6 @@ export function EditAgentModal({
 					setLoadingModels(false);
 				}
 			});
-		// Load agent config for defaults, but use session-level overrides when available
-		// Both model and contextWindow are now per-session
-		window.maestro.agents
-			.getConfig(activeToolType)
-			.then((globalConfig) => {
-				if (stale) return;
-				if (isProviderSwitch) {
-					// When provider changed, use global defaults for the new provider
-					setAgentConfig(globalConfig);
-				} else {
-					// Use session-level values if set, otherwise use global defaults
-					// Empty string means explicitly cleared, undefined means never set (use global default)
-					const modelValue =
-						session.customModel !== undefined ? session.customModel : (globalConfig.model ?? '');
-					const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
-					setAgentConfig({
-						...globalConfig,
-						model: modelValue,
-						contextWindow: contextWindowValue,
-					});
-				}
-			})
-			.catch((err) => logger.error('Failed to load agent config:', undefined, err));
 
 		// Load SSH remote config from session (per-session, not global).
 		// Always surface the `shareHistoryToProjectDir` flag even when SSH is
@@ -267,6 +320,7 @@ export function EditAgentModal({
 			// Both default ON; `undefined` (never configured) reads as enabled.
 			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
 			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
+			setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
 		}
 
 		return () => {
@@ -281,6 +335,9 @@ export function EditAgentModal({
 			setWorkingDir(session.projectRoot);
 			setNudgeMessage(session.nudgeMessage || '');
 			setNewSessionMessage(session.newSessionMessage || '');
+			// Clone the grants so editing a row doesn't mutate the persisted array
+			// in the session store before the user hits Save.
+			setAdditionalDirectories((session.additionalDirectories ?? []).map((d) => ({ ...d })));
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 		}
@@ -363,6 +420,57 @@ export function EditAgentModal({
 		if (folder) setWorkingDir(folder);
 	}, []);
 
+	/** Live store entry for this agent; see the snapshot note in the memo below. */
+	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
+
+	/**
+	 * Advisory note for the context-window control when the stored value is NOT
+	 * the one in use (#1370, following finding AD1).
+	 *
+	 * Only this surface can compute it: the decision needs the session AND its
+	 * live usage stats, which `AgentConfigPanel` does not receive. The ranking
+	 * itself is deliberately NOT re-derived here - `resolveContextWindow` is the
+	 * same helper the header gauge resolves through, so the note and the gauge
+	 * cannot disagree about which window won.
+	 */
+	const configOptionNotes = useMemo(() => {
+		// The `session` prop is a snapshot taken when the modal opened
+		// (`openModal('editAgent', { session })`), which is right for the form
+		// fields - they must not change under someone mid-edit. The note describes
+		// what the gauge is doing RIGHT NOW though, and a turn completing while
+		// this is open changes that, so it reads the live store entry instead
+		// (review of #1371).
+		const current = liveSession ?? session;
+		if (!current) return undefined;
+		// Mid provider switch the panel already shows the NEW provider's config
+		// while this would still describe the OLD provider's window, captioning
+		// the wrong control. The switch clears the stored window anyway.
+		if (providerChanged) return undefined;
+		const activeTab = getActiveTab(current);
+		const resolved = resolveContextWindow({
+			customModel: current.customModel,
+			customContextWindow: current.customContextWindow,
+			contextWindowSource: current.contextWindowSource,
+			reportedWindow: activeTab?.usageStats?.contextWindow,
+			reportedResolved: activeTab?.usageStats?.contextWindowResolved,
+			// Deliberately omitted: the agent-level configured window ranks BELOW
+			// the stored value, so it can never be what overrides it. Leaving it
+			// out keeps this from waiting on the async lookup the panel does not do.
+		});
+		// Nothing stored means nothing to override, and a value that won needs no
+		// explaining.
+		if (!current.customContextWindow || !isStoredContextWindowOverridden(resolved)) {
+			return undefined;
+		}
+		const winner =
+			resolved.source === 'model-marker'
+				? `the selected model (${formatTokensCompact(resolved.window)})`
+				: `the provider, which reports ${formatTokensCompact(resolved.window)}`;
+		return {
+			contextWindow: `Currently overridden by ${winner}. Edit this field to use your own value instead.`,
+		};
+	}, [liveSession, session, providerChanged]);
+
 	const handleSave = useCallback(() => {
 		if (!session) return;
 		const name = instanceName.trim();
@@ -372,13 +480,27 @@ export function EditAgentModal({
 		const result = validateEditSession(name, session.id, existingSessions);
 		if (!result.valid || workingDirError || newWorkingDirUnverified) return;
 
-		// Get model and contextWindow from agentConfig (which is updated via onConfigChange)
+		// Get model, contextWindow and effort from agentConfig (updated via onConfigChange).
 		// Pass empty string to explicitly clear (distinguishes from undefined = never set)
 		const modelValue = agentConfig.model?.trim() ?? undefined;
 		const contextWindowValue =
 			typeof agentConfig.contextWindow === 'number' && agentConfig.contextWindow > 0
 				? agentConfig.contextWindow
 				: undefined;
+		// Provenance for that number (finding AD1). Only a value the user actually
+		// moved off the seed counts as intent; an untouched round-trip keeps
+		// whatever provenance the session already had, which for everything stored
+		// before AD1 is none - so P1's "provider report wins" stands for it.
+		const contextWindowSource =
+			contextWindowValue === undefined
+				? // Clearing the control clears the value, so its provenance goes with
+					// it - keeping a stale 'user-edited' would let the NEXT value
+					// inherit precedence nobody asked for.
+					undefined
+				: contextWindowValue !== seededContextWindowRef.current
+					? ('user-edited' as const)
+					: session.contextWindowSource;
+		const effortValue = agentConfig[getEffortConfigKey(agent)]?.trim() ?? undefined;
 
 		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config.
 		// When disabled or no remoteId, we explicitly pass enabled: false to ensure local execution.
@@ -415,6 +537,7 @@ export function EditAgentModal({
 			customArgs.trim() || undefined,
 			Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
 			modelValue,
+			effortValue,
 			contextWindowValue,
 			sessionSshRemoteConfig,
 			// Preserve the explicit tri-state: an explicit `false` (API) must NOT
@@ -424,8 +547,11 @@ export function EditAgentModal({
 			enableMaestroP ? maestroPMode : undefined,
 			retryOnAvailabilityErrors,
 			retryOnTokenExhaustion,
+			normalizeAdditionalDirectories(additionalDirectories, homeDir),
+			contextWindowSource,
 			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
-			workingDirChanged ? trimmedWorkingDir : undefined
+			workingDirChanged ? trimmedWorkingDir : undefined,
+			codexAutoReset
 		);
 		onClose();
 	}, [
@@ -437,6 +563,8 @@ export function EditAgentModal({
 		newWorkingDirUnverified,
 		nudgeMessage,
 		newSessionMessage,
+		additionalDirectories,
+		homeDir,
 		customPath,
 		customArgs,
 		customEnvVars,
@@ -446,6 +574,8 @@ export function EditAgentModal({
 		maestroPPath,
 		retryOnAvailabilityErrors,
 		retryOnTokenExhaustion,
+		codexAutoReset,
+		agent,
 		agentConfig,
 		sshRemoteConfig,
 		selectedToolType,
@@ -678,6 +808,15 @@ export function EditAgentModal({
 					)}
 				</div>
 
+				{/* Additional Directories: extra read/write grants beyond the working dir */}
+				<AdditionalDirectoriesSection
+					theme={theme}
+					directories={additionalDirectories}
+					onChange={setAdditionalDirectories}
+					disableBrowse={!!isSshEnabled}
+					nativelyEnforced={!!agent?.capabilities?.supportsAdditionalDirectories}
+				/>
+
 				{/* New Session Message */}
 				<NudgeMessageField
 					theme={theme}
@@ -706,6 +845,7 @@ export function EditAgentModal({
 						<AgentConfigPanel
 							theme={theme}
 							agent={agent}
+							configOptionNotes={configOptionNotes}
 							customPath={customPath}
 							onCustomPathChange={setCustomPath}
 							onCustomPathBlur={() => {
@@ -761,25 +901,31 @@ export function EditAgentModal({
 								setAgentConfig((prev) => ({ ...prev, [key]: value }));
 							}}
 							onConfigBlur={(key, value) => {
-								// Both model and contextWindow are now saved per-session on modal save
-								// Other config options (if any) can still be saved at agent level
-								const updatedConfig = { ...agentConfig, [key]: value };
+								// model, contextWindow and effort are per-session: they are saved on
+								// modal save and must never leak into the agent-level config, which
+								// only supplies the defaults for newly created agents.
+								const effortKey = getEffortConfigKey(agent);
+								if (key === 'model' || key === 'contextWindow' || key === effortKey) return;
+
+								// agents:setConfig replaces the whole object, so rebuild from the
+								// agent-level config we loaded: dropping the per-session keys from
+								// `agentConfig` alone would erase the agent-level model/effort
+								// defaults every time an unrelated option was edited.
 								const {
 									model: _model,
 									contextWindow: _contextWindow,
+									[effortKey]: _effort,
 									...otherConfig
-								} = updatedConfig;
-								if (Object.keys(otherConfig).length > 0) {
-									void window.maestro.agents
-										.setConfig(selectedToolType, otherConfig)
-										.catch((error) => {
-											logger.error(
-												`Failed to persist config for ${selectedToolType}:`,
-												undefined,
-												error
-											);
-										});
-								}
+								} = { ...agentConfig, [key]: value };
+								void window.maestro.agents
+									.setConfig(selectedToolType, { ...globalConfigRef.current, ...otherConfig })
+									.catch((error) => {
+										logger.error(
+											`Failed to persist config for ${selectedToolType}:`,
+											undefined,
+											error
+										);
+									});
 							}}
 							availableModels={availableModels}
 							loadingModels={loadingModels}
@@ -801,6 +947,8 @@ export function EditAgentModal({
 								/* Saved on modal save */
 							}}
 							detectedMaestroPPath={detectedMaestroPPath}
+							codexAutoResetOnExhaustion={codexAutoReset}
+							onCodexAutoResetChange={setCodexAutoReset}
 						/>
 					</div>
 				)}

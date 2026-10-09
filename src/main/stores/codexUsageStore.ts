@@ -13,6 +13,7 @@ import os from 'os';
 import path from 'path';
 import Store from 'electron-store';
 
+import type { CodexResetCreditCounts } from '../../shared/codexResetCredits';
 import { partitionSnapshotsByAge, SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
 
 export { SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
@@ -49,6 +50,13 @@ export interface CodexUsageSnapshot {
 	session?: CodexUsageWindow;
 	weekly?: CodexUsageWindow;
 	additionalLimits?: CodexAdditionalLimit[];
+	/**
+	 * Reset-credit inventory, which the usage payload carries for free. The
+	 * per-credit list lives behind `fetchCodexResetCredits()`; this is only the
+	 * count, so the dashboard can render "2 resets available" without a second
+	 * request per account per refresh.
+	 */
+	resetCredits?: CodexResetCreditCounts;
 	error?: string;
 }
 

@@ -16,6 +16,7 @@ import type { AgentDetector } from './detector';
 import type { AgentConfigsData, SessionsData } from '../stores/types';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { isAccountDirName } from '../../shared/providerProfiles';
 import { resolveCodexHomeKey, setCodexUsageSnapshot } from '../stores/codexUsageStore';
 import { getRememberedQuotaAccountKeys, rememberQuotaAccounts } from '../stores/quotaAccountsStore';
 import { sampleCodexUsage } from './codex-usage-sampler';
@@ -37,8 +38,6 @@ interface SamplingTarget {
 	codexHomeKey: string;
 }
 
-const ACCOUNT_DIR_EXCLUDE_RE =
-	/(^|[-_.])(backup|bak|old|archive|archived|stage|local|server)([-_.]|$)/i;
 const RECOVERABLE_DISCOVERY_ERROR_CODES = new Set(['ENOENT', 'EACCES', 'ENOTDIR']);
 const RECOVERABLE_SAMPLE_ERROR_CODES = new Set([
 	'ENOENT',
@@ -50,10 +49,6 @@ const RECOVERABLE_SAMPLE_ERROR_CODES = new Set([
 	'ETIMEDOUT',
 	'EAI_AGAIN',
 ]);
-
-function isLikelyCodexAccountDirName(name: string): boolean {
-	return name === '.codex' || name.startsWith('.codex-');
-}
 
 function getErrorCode(err: unknown): string | undefined {
 	if (!err || typeof err !== 'object' || !('code' in err)) return undefined;
@@ -96,8 +91,7 @@ export async function discoverCodexHomes(homeDir = os.homedir()): Promise<string
 		// A symlinked CODEX_HOME is a normal two-account setup and `isDirectory()`
 		// is false for it; the `auth.json` check below follows the link.
 		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-		if (!isLikelyCodexAccountDirName(entry.name)) continue;
-		if (ACCOUNT_DIR_EXCLUDE_RE.test(entry.name)) continue;
+		if (!isAccountDirName(entry.name, '.codex')) continue;
 		const codexHome = path.join(homeDir, entry.name);
 		const authPath = path.join(codexHome, 'auth.json');
 		try {

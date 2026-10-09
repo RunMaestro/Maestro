@@ -22,7 +22,7 @@ import * as path from 'path';
 import { app } from 'electron';
 import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
-import { atomicWriteText, createKeyedWriteQueue } from './utils/atomic-json-store';
+import { atomicWriteFile, createKeyedWriteQueue } from './utils/atomic-json-store';
 import { parseJsonWithBom, stripJsonBom } from '../shared/jsonUtils';
 import { HistoryEntry } from '../shared/types';
 import {
@@ -41,6 +41,7 @@ import {
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
+	normalizeHistoryEntries,
 } from '../shared/history';
 
 /**
@@ -307,7 +308,7 @@ export class HistoryManager {
 					// kept slice is reversed on the way to disk.
 					const kept = sessionEntries.slice(0, migrationLimit).reverse();
 					const filePath = this.getSessionFilePath(sessionId);
-					await atomicWriteText(filePath, kept.map(serializeHistoryEntryLine).join(''));
+					await atomicWriteFile(filePath, kept.map(serializeHistoryEntryLine).join(''));
 					logger.debug(
 						`Migrated ${sessionEntries.length} entries for session ${sessionId}`,
 						LOG_CONTEXT
@@ -391,7 +392,7 @@ export class HistoryManager {
 		const fileOrder = [...legacyEntries].reverse();
 		const serialized = fileOrder.map(serializeHistoryEntryLine).join('');
 
-		await atomicWriteText(jsonlPath, serialized);
+		await atomicWriteFile(jsonlPath, serialized);
 		try {
 			await fsp.rename(legacyPath, `${legacyPath}.migrated`);
 		} catch (renameError) {
@@ -470,7 +471,12 @@ export class HistoryManager {
 	 */
 	async getEntries(sessionId: string): Promise<HistoryEntry[]> {
 		const entries = await this.readEntriesInFileOrder(sessionId);
-		return entries.reverse();
+		// Re-map legacy cross-agent consults (written as AUTO before the AGENT
+		// type existed) so no consumer has to special-case them. Applied here
+		// rather than in the file-order reader because the trim/prune paths write
+		// what they read back to disk, and a read is not the moment to rewrite
+		// entries the user has not touched.
+		return normalizeHistoryEntries(entries.reverse());
 	}
 
 	/**
@@ -575,7 +581,7 @@ export class HistoryManager {
 				return;
 			}
 
-			await atomicWriteText(filePath, trimmed.map(serializeHistoryEntryLine).join(''));
+			await atomicWriteFile(filePath, trimmed.map(serializeHistoryEntryLine).join(''));
 			logger.debug(
 				`Rotated history for session ${sessionId}: ${entries.length} -> ${trimmed.length}`,
 				LOG_CONTEXT
@@ -665,7 +671,7 @@ export class HistoryManager {
 			if (next === null) return false;
 
 			try {
-				await atomicWriteText(
+				await atomicWriteFile(
 					this.getSessionFilePath(sessionId),
 					next.map(serializeHistoryEntryLine).join('')
 				);
@@ -816,6 +822,17 @@ export class HistoryManager {
 	/**
 	 * Update sessionName for all entries matching a given agentSessionId.
 	 * This is used when a tab is renamed to retroactively update past history entries.
+	 *
+	 * BEST EFFORT, deliberately. Relabelling old entries is a nicety over the
+	 * authoritative name the provider's own session metadata holds, so a session
+	 * whose file cannot be read or written is logged and skipped rather than
+	 * failing the whole rename. Two consequences follow for callers: the returned
+	 * count is the number of entries actually REWRITTEN, so a tab with no history
+	 * yet (its `agentSessionId` is stamped at the start of a turn, while the entry
+	 * carrying it is written at the end) and a tab already carrying this name both
+	 * return 0; and a partial run still returns a nonzero count. Do NOT read the
+	 * count as "the rename persisted" - it answers only "how many old labels
+	 * changed".
 	 */
 	async updateSessionNameByClaudeSessionId(
 		agentSessionId: string,
@@ -842,7 +859,7 @@ export class HistoryManager {
 					}
 
 					if (perSessionUpdates > 0) {
-						await atomicWriteText(
+						await atomicWriteFile(
 							this.getSessionFilePath(sessionId),
 							entries.map(serializeHistoryEntryLine).join('')
 						);

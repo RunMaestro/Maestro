@@ -46,7 +46,9 @@ vi.mock('../../../main/utils/logger', () => ({
 
 describe('app-lifecycle/settings-watcher', () => {
 	let send: ReturnType<typeof vi.fn>;
-	let getMainWindow: () => BrowserWindow | null;
+	// rc broadcasts the reload to EVERY open window rather than just the main
+	// one, so the watcher takes an enumerator instead of a getMainWindow.
+	let getBroadcastWindows: () => BrowserWindow[];
 
 	/** Fire a change event for `filename` on every registered watcher. */
 	function emitChange(filename: string) {
@@ -58,7 +60,7 @@ describe('app-lifecycle/settings-watcher', () => {
 	async function startWatcher() {
 		const { createSettingsWatcher } = await import('../../../main/app-lifecycle/settings-watcher');
 		const watcher = createSettingsWatcher({
-			getMainWindow,
+			getBroadcastWindows,
 			getSettingsPath: () => '/test/sync',
 			getAgentConfigsPath: () => '/test/sync',
 		});
@@ -75,7 +77,7 @@ describe('app-lifecycle/settings-watcher', () => {
 			isDestroyed: () => false,
 			webContents: { send, isDestroyed: () => false },
 		} as unknown as BrowserWindow;
-		getMainWindow = () => win;
+		getBroadcastWindows = () => [win];
 		mockExistsSync.mockReturnValue(true);
 
 		const { resetInternalWriteTracking } = await import('../../../main/stores/write-tracker');

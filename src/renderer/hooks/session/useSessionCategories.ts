@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
-import { passesUnreadFilter, sessionMatchesFilter } from '../../utils/sidebarMembership';
+import { passesUnreadFilter } from '../../utils/sidebarMembership';
 import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
@@ -29,6 +29,13 @@ export function useSessionCategories(
 	showUnreadAgentsOnly = false,
 	activeSessionId?: string | null,
 	activeBatchSessionIds: string[] = [],
+	// Multi-window: optionally narrow the session universe BEFORE categorization so
+	// a secondary window's Left Bar categorizes only the agents it owns. This hook
+	// reads `sessions` straight from the store (below) rather than from the
+	// `sortedSessions` param, so scoping the param alone would NOT scope the
+	// rendered category lists - the scope has to be applied here. No-op (identity)
+	// when omitted, so the primary window and every existing caller are unchanged.
+	scopeSessions?: (list: Session[]) => Session[],
 	// Comma-joined signature of agents with an active Agent Resilience outage.
 	// Stuck agents are treated as "needs attention" and surface in the unread
 	// filter alongside genuinely unread ones (see stuckOutageSessionIds below).
@@ -37,10 +44,14 @@ export function useSessionCategories(
 	// PERF: Match SessionList's sidebar-only equality so categorization doesn't
 	// recompute on every streaming flush - only when a sidebar-relevant field
 	// (state, name, group/bookmark/parent membership, AI tab unread/state) shifts.
-	const sessions = useStoreWithEqualityFn(
+	const allSessions = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => s.sessions,
 		sidebarSessionEquality
+	);
+	const sessions = useMemo(
+		() => (scopeSessions ? scopeSessions(allSessions) : allSessions),
+		[allSessions, scopeSessions]
 	);
 	const groups = useSessionStore((s) => s.groups);
 
@@ -125,22 +136,51 @@ export function useSessionCategories(
 			// Exclude worktree children from main list (they appear under parent)
 			if (s.parentSessionId) continue;
 
-			const children = worktreeChildrenByParentId.get(s.id) ?? [];
-			// Shared with the Cmd+[ / Cmd+] cycle so the two cannot disagree about
-			// which agents are on screen - that disagreement is what made the cycle
-			// walk agents the sidebar was not drawing.
+			// Pianola is the pinned manager agent: it renders in its own top
+			// section, never in Bookmarks/Groups/Ungrouped, so exclude it here.
+			if (s.isPianola) continue;
+
+			// Apply the unread-agents filter through the SHARED predicate, which the
+			// Cmd+[ / Cmd+] cycle also uses - the two disagreeing about which agents
+			// are on screen is what made the cycle walk agents the sidebar was not
+			// drawing. It keeps the active session (or its parent) visible either way.
 			if (
 				!passesUnreadFilter(s, {
 					showUnreadAgentsOnly,
 					activeSessionId,
-					worktreeChildren: children,
+					worktreeChildren: worktreeChildrenByParentId.get(s.id) ?? [],
 					batchSessionIds,
 					stuckOutageIds: stuckOutageSessionIds,
 				})
 			) {
 				continue;
 			}
-			if (sessionMatchesFilter(s, query, children)) filtered.push(s);
+
+			if (!query) {
+				filtered.push(s);
+			} else {
+				// Match session name
+				if (s.name.toLowerCase().includes(query)) {
+					filtered.push(s);
+					continue;
+				}
+				// Match any AI tab name
+				if (s.aiTabs?.some((tab) => tab.name?.toLowerCase().includes(query))) {
+					filtered.push(s);
+					continue;
+				}
+				// Match worktree children branch names
+				const worktreeChildren = worktreeChildrenByParentId.get(s.id);
+				if (
+					worktreeChildren?.some(
+						(child) =>
+							child.worktreeBranch?.toLowerCase().includes(query) ||
+							child.name.toLowerCase().includes(query)
+					)
+				) {
+					filtered.push(s);
+				}
+			}
 		}
 
 		// Step 2: Categorize sessions in a single pass

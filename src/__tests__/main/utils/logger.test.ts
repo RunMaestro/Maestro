@@ -920,7 +920,7 @@ describe('Logger', () => {
 				expect(fs.existsSync(expectedTarget)).toBe(true);
 
 				// Console should log the migration
-				expect(consoleLogSpy).toHaveBeenCalledWith(
+				expect(consoleErrorSpy).toHaveBeenCalledWith(
 					expect.stringContaining(
 						`[Logger] Migrated legacy log file to maestro-debug-${expectedDateStr}.log`
 					)

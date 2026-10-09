@@ -1,8 +1,10 @@
 import type { Session } from '../../../types';
 import type { ActiveTabInfo, QuickAction } from '../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
-import { getTabDisplayName } from '../../../utils/tabHelpers';
+import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
 import { useModalStore } from '../../../stores/modalStore';
+import { resolveModelEffortTabId } from '../../../utils/panelLayout';
+import { visibleAiTabs } from '../../../utils/tabHelpers';
 
 interface BuildNewTabCommandsArgs {
 	activeSession: Session | undefined;
@@ -23,6 +25,8 @@ interface BuildNewTabCommandsArgs {
 
 interface BuildTabCommandsArgs {
 	activeSession: Session | undefined;
+	/** Set while a group chat owns the main panel. Suppresses tab-scoped entries a room cannot answer. */
+	activeGroupChatId?: string | null;
 	isAiMode?: boolean;
 	activeTabInfo: ActiveTabInfo;
 	enterToSendAI: boolean;
@@ -48,6 +52,7 @@ interface BuildTabCommandsArgs {
 		showSnoozeList?: QuickAction['shortcut'];
 		focusActiveTab?: QuickAction['shortcut'];
 		clearTerminal?: QuickAction['shortcut'];
+		openModelEffort?: QuickAction['shortcut'];
 	};
 	tabShortcuts?: Record<string, QuickAction['shortcut']>;
 	toggleInputMode: () => void;
@@ -125,6 +130,7 @@ export function buildNewTabCommands({
 
 export function buildTabCommands({
 	activeSession,
+	activeGroupChatId,
 	isAiMode,
 	activeTabInfo,
 	enterToSendAI,
@@ -258,15 +264,15 @@ export function buildTabCommands({
 		});
 	}
 
-	if (isAiMode && activeSession?.aiTabs && activeSession.aiTabs.length > 0 && onCloseAllTabs) {
+	// Count only what the strip draws: hidden consult tabs survive a close-all, so
+	// including them would name a number the user can neither see nor close.
+	const closableTabCount = visibleAiTabs(activeSession?.aiTabs).length;
+	if (isAiMode && closableTabCount > 0 && onCloseAllTabs) {
 		commands.push({
 			id: 'closeAllTabs',
 			label: 'Close All Tabs',
 			shortcut: tabShortcuts?.closeAllTabs,
-			subtext:
-				activeSession.aiTabs.length === 1
-					? 'Close 1 tab'
-					: `Close all ${activeSession.aiTabs.length} tabs`,
+			subtext: closableTabCount === 1 ? 'Close 1 tab' : `Close all ${closableTabCount} tabs`,
 			action: () => {
 				onCloseAllTabs();
 				setQuickActionOpen(false);
@@ -328,11 +334,35 @@ export function buildTabCommands({
 		});
 	}
 
-	// Snooze the active AI tab. AI-only: file/terminal/browser tabs have no
-	// conversation to come back to.
+	// Retune the active AI tab's model and reasoning effort. AI-only, and absent
+	// while a group chat owns the view: the palette is reachable from a room, and
+	// `activeSession` still points at the agent selected before the room opened,
+	// so the entry would have retuned a background tab the user is not looking
+	// at. `resolveModelEffortTabId` owns both rules, and the shortcut resolves
+	// its target through the same function.
+	const modelEffortTabId = resolveModelEffortTabId(activeSession, activeGroupChatId);
+	if (modelEffortTabId) {
+		commands.push({
+			id: 'changeModelEffort',
+			label: 'Change Tabs Model and Effort',
+			subtext: 'Pick a model and effort level with the arrow keys',
+			shortcut: shortcuts.openModelEffort,
+			action: () => {
+				setQuickActionOpen(false);
+				useModalStore.getState().openModal('modelEffort', { tabId: modelEffortTabId });
+			},
+		});
+	}
+
+	// Snooze the active AI tab. The palette acts on the active tab, and the
+	// non-AI kinds have their own snooze entry on their chip menu, so this stays
+	// AI-only. The dialog's own shape still comes from `resolveSnoozeTarget`
+	// rather than a literal here, so what it offers is derived from the tab in
+	// exactly one place.
 	if (activeSession && activeTabType === 'ai') {
 		const activeTab = activeSession.aiTabs?.find((t) => t.id === activeSession.activeTabId);
-		if (activeTab) {
+		const snoozeTarget = activeTab ? resolveSnoozeTarget(activeSession, activeTab.id) : null;
+		if (snoozeTarget) {
 			commands.push({
 				id: 'snoozeTab',
 				label: 'Snooze Tab',
@@ -340,10 +370,7 @@ export function buildTabCommands({
 				shortcut: tabShortcuts?.snoozeTab,
 				action: () => {
 					setQuickActionOpen(false);
-					useModalStore.getState().openModal('snoozeTab', {
-						tabId: activeTab.id,
-						tabLabel: getTabDisplayName(activeTab, activeSession.agentSessionId),
-					});
+					useModalStore.getState().openModal('snoozeTab', snoozeTarget);
 				},
 			});
 		}

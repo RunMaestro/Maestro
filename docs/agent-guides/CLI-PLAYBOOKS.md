@@ -26,6 +26,7 @@ src/cli/
 │   ├── create-agent.ts       # Create agent via WebSocket (requires running app)
 │   ├── create-worktree.ts    # Create worktree agent off a parent via WebSocket (requires running app)
 │   ├── create-ssh-remote.ts  # Create SSH remote via disk I/O
+│   ├── goal-run.ts            # Goal-Driven Auto Run (free-text objective)
 │   ├── list-agents.ts
 │   ├── list-groups.ts
 │   ├── list-playbooks.ts
@@ -36,6 +37,7 @@ src/cli/
 │   ├── refresh-files.ts
 │   ├── remove-agent.ts       # Remove agent via WebSocket (requires running app)
 │   ├── update-agent.ts       # Move agent to group / change cwd via WebSocket (requires running app)
+│   ├── update-ssh-remote.ts  # Edit an SSH remote via disk I/O
 │   ├── remove-ssh-remote.ts  # Remove SSH remote via disk I/O
 │   ├── run-playbook.ts
 │   ├── run-doc.ts            # Run raw Auto Run docs headlessly (no saved playbook)
@@ -49,10 +51,12 @@ src/cli/
 │   ├── show-playbook.ts
 │   └── status.ts
 ├── services/               # Business logic
+│   ├── agent-busy.ts        # Shared busy-state check (desktop + CLI activity)
 │   ├── agent-sessions.ts    # Read Claude Code session files
 │   ├── agent-busy.ts        # Busy-state checks + --wait loop (shared by playbook/run-doc)
 │   ├── agent-spawner.ts     # Spawn agent CLIs
-│   ├── batch-processor.ts   # Playbook execution engine
+│   ├── batch-processor.ts   # Playbook (Spec-Driven) execution engine
+│   ├── goal-runner.ts       # Goal-Driven Auto Run engine (shared goalDriven core)
 │   ├── maestro-client.ts    # IPC client to running Maestro desktop app
 │   ├── session-command.ts   # Shared helpers for desktop-driving commands (see below)
 │   ├── playbooks.ts         # Playbook file management
@@ -87,6 +91,7 @@ The CLI imports directly from `src/shared/` and some `src/main/` modules:
 - **Output parsers**: `src/main/parsers/` (Claude, Codex, OpenCode, Factory Droid)
 - **Template variables**: `src/shared/templateVariables.ts`
 - **Prompt templates**: `src/prompts/` (auto-run prompts)
+- **Goal-Driven core**: `src/shared/goalDriven/` (marker parsing + exit evaluation shared by the CLI `goal-runner` and the desktop `useGoalRunner` hook)
 
 The CLI avoids Electron-specific imports (no `electron`, no `electron-store`, no IPC).
 
@@ -195,7 +200,7 @@ maestro-cli show playbook <id> [--json]
 Run a playbook (batch execution of Auto Run documents).
 
 ```bash
-maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait]
+maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
 ```
 
 Options:
@@ -206,15 +211,36 @@ Options:
 - `--debug` - Detailed debug output
 - `--verbose` - Show full prompt sent to agent on each iteration
 - `--wait` - Wait for agent to become available if busy
+- `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
+- `--ignore-model-hints` - Skip the documents' `MAESTRO:MODEL` markers so every task runs at the run override or the agent default
 
 This command is lazy-loaded to avoid eager resolution of prompt templates.
+
+### `goal-run <agent-id> <goal>`
+
+Launch a Goal-Driven Auto Run: instead of working through a checklist of documents (the `playbook` command), pursue a single free-text objective. Each iteration spawns a FRESH agent that makes one increment of progress, self-reports how far along it is via Maestro markers, and exits, repeating until the goal is reached, a deadlock is declared, the iteration limit is hit, or progress stalls.
+
+```bash
+maestro-cli goal-run <agent-id> "<goal>" [--exit-criteria <text>] [--max-iterations <n>] [--no-history] [--json] [--verbose] [--model <model>] [--effort <effort>]
+```
+
+Options:
+
+- `--exit-criteria <text>` - What "done" looks like and when to declare a deadlock (guides the agent; not matched automatically)
+- `--max-iterations <n>` - Cap iterations (default: infinite, bounded by `GOAL_RUN_HARD_ITERATION_CAP`)
+- `--no-history` - Skip writing history entries
+- `--json` - Output as JSON Lines (events: `goal_start`, `goal_iteration_start`, `goal_iteration_complete`, `goal_complete`)
+- `--verbose` - Show full prompt sent to agent on each iteration
+- `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
+
+Implemented by `services/goal-runner.ts` (`runGoal`), the CLI counterpart to the desktop `useGoalRunner` hook. Both drive the SAME pure engine in `src/shared/goalDriven/*` (marker parsing + exit evaluation) so CLI and desktop behave identically. Like `playbook`, it is lazy-loaded, refuses to start when the agent is busy (`services/agent-busy.ts`), and threads per-agent SSH remote + model/effort/args/env overrides into every spawn.
 
 ### `run-doc <docs...>`
 
 Run one or more raw Auto Run `.md` documents without a saved playbook. Mirrors `playbook` but builds an ephemeral `Playbook` on the fly (`src/cli/commands/run-doc.ts`), then drives it through the same `batch-processor` generator. Headless and self-contained - it does **not** route through the desktop renderer (unlike `auto-run --launch`), so it runs whether or not the Maestro window is open. This is the path group-chat participants use to execute a document they just wrote.
 
 ```bash
-maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait]
+maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
 ```
 
 - `-a, --agent <id>` (required) - target agent by ID (full/partial) or display name
@@ -223,6 +249,21 @@ maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [-
 - Busy-state detection and `--wait` are shared with `playbook` via `src/cli/services/agent-busy.ts` (`checkAgentBusy`, `waitForAgentAvailable`).
 
 Note: `resolveAgentId()` in `src/cli/services/storage.ts` resolves `--agent` by ID first, then falls back to an exact case-insensitive display-name match, so name targeting works across `run-doc`, `playbook` lookups, `list playbooks`, and `auto-run`.
+
+### Per-run model override
+
+`--model <model>` and `--effort <effort>` are registered on all four Auto Run entry points (`playbook`, `run-doc`, `goal-run`, `auto-run` in `src/cli/index.ts`). The value is **run-scoped**: it wins over `session.customModel` / `session.customEffort` for every spawn the run makes, and nothing is ever written back to the session, so the agent's interactive tabs are unaffected and the override dies with the run. Resolution order for an Auto Run spawn is `run override -> session.customModel -> agent default`.
+
+Threading, by entry point:
+
+- **Headless (`playbook`, `run-doc`, `goal-run`)** - the flag rides the command's options object into `services/goal-runner.ts` (`RunGoalOptions`) or `services/batch-processor.ts` (`runPlaybook` options), and both pass `runModel ?? session.customModel` / `runEffort ?? session.customEffort` at every `spawnAgent` call site. `agent-spawner.ts` already accepted `customModel` / `customEffort`, so it needed no change. Note the synopsis and goal-handoff spawns take the override too, so the summary runs on the same model as the work it summarizes.
+- **Desktop-routed (`auto-run`)** - the flags travel in the `configure_auto_run` WebSocket message (`commands/auto-run.ts`), are validated as optional non-empty strings in `handleConfigureAutoRun` (`src/main/web-server/handlers/messageHandlers/autoRun.ts`), pass through `ConfigureAutoRunCallback` (`src/main/web-server/types.ts`) and `CallbackRegistry.configureAutoRun`, and land on the `BatchRunConfig` built in `useAppRemoteEventListeners.ts`. From there the desktop runners apply them via `spawnAgentForSession`'s `modelOverride` / `effortOverride` options.
+
+Conventions to preserve when touching this:
+
+- **Spread-when-set everywhere.** Producers use `...(model && { model })` so an unset override is absent, never an empty string. The CLI trims first (`options.model?.trim() || undefined`), so `--model "   "` reads as unset.
+- **No CLI-side validation.** Valid model names are provider-specific and only the desktop/provider layer knows them, so the CLI passes the value through. The WebSocket boundary rejects non-strings and blank strings, nothing more.
+- **The override is config, not session state.** In particular `buildWorktreeSession` (`src/renderer/utils/worktreeSession.ts`) still copies the PARENT session's `customModel` into a worktree child - do not "fix" that to use the run override. Worktree dispatch gets the override for free because it hands the same `BatchRunConfig` to the same runners.
 
 ### `send <agent-id> <message>`
 
@@ -327,7 +368,7 @@ maestro-cli list ssh-remotes [--json]
 Create a new SSH remote configuration. Direct disk I/O via `readSshRemotes()`/`writeSshRemotes()`.
 
 ```bash
-maestro-cli create-ssh-remote <name> -H <host> [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--ssh-config] [--disabled] [--set-default] [--json]
+maestro-cli create-ssh-remote <name> -H <host> [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--ssh-option KEY=VALUE]... [--ssh-config] [--disabled] [--set-default] [--json]
 ```
 
 Options:
@@ -337,8 +378,30 @@ Options:
 - `--ssh-config` - Use `~/.ssh/config` mode; host becomes the Host pattern
 - `--set-default` - Writes `defaultSshRemoteId` to settings
 - `--env KEY=VALUE` - Repeatable remote environment variable
+- `--ssh-option KEY=VALUE` - Repeatable extra `ssh -o` option, validated by
+  `validateSshOption()` in `src/shared/sshOptions.ts`
 
 Generates a UUID via `crypto.randomUUID()` for the remote ID.
+
+### `update-ssh-remote <remote-id>`
+
+Edit an existing SSH remote in place. Same direct disk I/O and partial ID
+matching as the other two.
+
+```bash
+maestro-cli update-ssh-remote <remote-id> [-n <name>] [-H <host>] [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--clear-env] [--ssh-option KEY=VALUE]... [--clear-ssh-options] [--ssh-config <bool>] [--enabled <bool>] [--set-default] [--json]
+```
+
+`--env` and `--ssh-option` MERGE into the existing maps rather than replacing
+them, so setting one option cannot silently drop the others; `--clear-env` and
+`--clear-ssh-options` empty the respective map first. An empty string to `-u` or
+`-k` clears that field.
+
+`--json` (and `list ssh-remotes --json`) reports `resolvedSshOptions` alongside
+the stored `sshOptions`: the full merged set `ssh` receives once
+`resolveSshOptions()` has folded the overrides over Maestro's defaults. That is
+the field that answers "did my override take effect?" - the stored map alone
+cannot, since a reserved key is dropped and a default may already hold the slot.
 
 ### `remove-ssh-remote <remote-id>`
 
@@ -698,26 +761,27 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 
 ## Key Files Reference
 
-| Concern             | Primary Files                                                                          |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| CLI entry point     | `src/cli/index.ts`                                                                     |
-| Storage reader      | `src/cli/services/storage.ts`                                                          |
-| Agent spawner       | `src/cli/services/agent-spawner.ts`                                                    |
-| Batch processor     | `src/cli/services/batch-processor.ts`                                                  |
-| Playbook management | `src/cli/services/playbooks.ts`                                                        |
-| Agent sessions      | `src/cli/services/agent-sessions.ts`                                                   |
-| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                   |
-| Human output        | `src/cli/output/formatter.ts`                                                          |
-| JSONL output        | `src/cli/output/jsonl.ts`                                                              |
-| Send command        | `src/cli/commands/send.ts`                                                             |
-| Run playbook        | `src/cli/commands/run-playbook.ts`                                                     |
-| Create agent        | `src/cli/commands/create-agent.ts`                                                     |
-| Remove agent        | `src/cli/commands/remove-agent.ts`                                                     |
-| Update agent        | `src/cli/commands/update-agent.ts`                                                     |
-| SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `remove-ssh-remote.ts` |
-| Shared types        | `src/shared/types.ts`                                                                  |
-| Template variables  | `src/shared/templateVariables.ts`                                                      |
-| Agent definitions   | `src/main/agents/definitions.ts`                                                       |
-| Agent IDs           | `src/shared/agentIds.ts`                                                               |
-| CLI activity        | `src/shared/cli-activity.ts`                                                           |
-| Prompt templates    | `src/prompts/`                                                                         |
+| Concern             | Primary Files                                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| CLI entry point     | `src/cli/index.ts`                                                                                             |
+| Storage reader      | `src/cli/services/storage.ts`                                                                                  |
+| Agent spawner       | `src/cli/services/agent-spawner.ts`                                                                            |
+| Batch processor     | `src/cli/services/batch-processor.ts`                                                                          |
+| Playbook management | `src/cli/services/playbooks.ts`                                                                                |
+| Agent sessions      | `src/cli/services/agent-sessions.ts`                                                                           |
+| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                                           |
+| Human output        | `src/cli/output/formatter.ts`                                                                                  |
+| JSONL output        | `src/cli/output/jsonl.ts`                                                                                      |
+| Send command        | `src/cli/commands/send.ts`                                                                                     |
+| Run playbook        | `src/cli/commands/run-playbook.ts`                                                                             |
+| Create agent        | `src/cli/commands/create-agent.ts`                                                                             |
+| Remove agent        | `src/cli/commands/remove-agent.ts`                                                                             |
+| Update agent        | `src/cli/commands/update-agent.ts`                                                                             |
+| SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `update-ssh-remote.ts`, `remove-ssh-remote.ts` |
+| SSH `-o` resolution | `src/shared/sshOptions.ts`                                                                                     |
+| Shared types        | `src/shared/types.ts`                                                                                          |
+| Template variables  | `src/shared/templateVariables.ts`                                                                              |
+| Agent definitions   | `src/main/agents/definitions.ts`                                                                               |
+| Agent IDs           | `src/shared/agentIds.ts`                                                                                       |
+| CLI activity        | `src/shared/cli-activity.ts`                                                                                   |
+| Prompt templates    | `src/prompts/`                                                                                                 |

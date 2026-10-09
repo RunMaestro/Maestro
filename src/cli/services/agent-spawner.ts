@@ -5,11 +5,17 @@ import { spawn, SpawnOptions, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { AgentSshRemoteConfig, ToolType, UsageStats } from '../../shared/types';
+import type {
+	AdditionalDirectory,
+	AgentSshRemoteConfig,
+	ToolType,
+	UsageStats,
+} from '../../shared/types';
 import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
+import { checkCustomPath } from '../../main/agents/path-prober';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -21,7 +27,7 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
-import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
+import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
@@ -137,6 +143,7 @@ type SpawnOverrides = Pick<
 	| 'customArgs'
 	| 'customEnvVars'
 	| 'appendSystemPrompt'
+	| 'additionalDirectories'
 	| 'querySource'
 >;
 
@@ -307,25 +314,11 @@ function getExpandedPath(): string {
 }
 
 /**
- * Check if a file exists and is executable
+ * Resolve a configured executable path, including known rotating install locations.
  */
-async function isExecutable(filePath: string): Promise<boolean> {
-	try {
-		const stats = await fs.promises.stat(filePath);
-		if (!stats.isFile()) return false;
-
-		// On Unix, check executable permission
-		if (!isWindows()) {
-			try {
-				await fs.promises.access(filePath, fs.constants.X_OK);
-			} catch {
-				return false;
-			}
-		}
-		return true;
-	} catch {
-		return false;
-	}
+async function resolveExecutablePath(filePath: string): Promise<string | undefined> {
+	const detection = await checkCustomPath(filePath);
+	return detection.exists ? detection.path : undefined;
 }
 
 /**
@@ -373,9 +366,10 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 	// 1. Check for custom path in settings
 	const customPath = getAgentCustomPath(toolType);
 	if (customPath) {
-		if (await isExecutable(customPath)) {
-			cachedPaths.set(toolType, customPath);
-			return { available: true, path: customPath, source: 'settings' };
+		const resolvedCustomPath = await resolveExecutablePath(customPath);
+		if (resolvedCustomPath) {
+			cachedPaths.set(toolType, resolvedCustomPath);
+			return { available: true, path: resolvedCustomPath, source: 'settings' };
 		}
 		console.error(
 			`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`
@@ -877,6 +871,18 @@ async function spawnJsonLineAgent(
 	// Build args from agent definition (without the prompt or model/customArgs -
 	// those come from applyAgentConfigOverrides via configOptions).
 	const preOverrideArgs: string[] = [];
+
+	// Codex requires `-C <dir>` as a ROOT-level global flag that MUST precede the
+	// `exec` subcommand (and therefore everything after it, including
+	// `resume <id>`). Placed later, Codex silently ignores it on fresh runs (#959)
+	// and HARD-FAILS on resume with "unexpected argument '-C' found", which broke
+	// Maestro Relay follow-up messages to Codex agents. Mirror the desktop path
+	// (`src/main/utils/agent-args.ts`), which prepends workingDirArgs before the
+	// batchModePrefix. See #960.
+	if (toolType === 'codex' && def?.workingDirArgs) {
+		preOverrideArgs.push(...def.workingDirArgs(cwd));
+	}
+
 	if (def?.batchModePrefix) preOverrideArgs.push(...def.batchModePrefix);
 
 	// In read-only mode, filter out YOLO/bypass args from batchModeArgs
@@ -899,10 +905,11 @@ async function spawnJsonLineAgent(
 		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
 	}
 
-	// Codex requires explicit working directory arg (other agents use process cwd)
-	if (toolType === 'codex' && def?.workingDirArgs) {
-		preOverrideArgs.push(...def.workingDirArgs(cwd));
-	}
+	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact
+	// mapping the desktop uses via `buildAgentArgs`, so a CLI/playbook spawn and
+	// an interactive turn hand the provider identical flags. Providers with no
+	// native mechanism emit nothing here and rely on the prompt block instead.
+	preOverrideArgs.push(...buildAdditionalDirArgs(def, overrides.additionalDirectories));
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
@@ -1027,6 +1034,12 @@ async function spawnJsonLineAgent(
 
 		let jsonBuffer = '';
 		let result: string | undefined;
+		// Accumulated partial text deltas, used as a fallback when no result
+		// event carries text. Grok streams its answer solely as token-sized
+		// `text` deltas (whitespace embedded, so direct concatenation) and its
+		// terminal `end` event has no text. Mirrors spawnClaudeAgent's
+		// assistantText fallback. Reasoning deltas are excluded.
+		let streamedText = '';
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let stderr = '';
@@ -1050,6 +1063,10 @@ async function spawnJsonLineAgent(
 
 			if (event.type === 'result' && event.text) {
 				result = result ? `${result}\n${event.text}` : event.text;
+			}
+
+			if (event.type === 'text' && event.isPartial && !event.isReasoning && event.text) {
+				streamedText += event.text;
 			}
 
 			if (event.type === 'error' && event.text && !errorText) {
@@ -1095,8 +1112,18 @@ async function spawnJsonLineAgent(
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
 
-			if (code === 0 && !errorText) {
-				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
+			// Soft success: agents like Grok may exit non-zero after a full
+			// answer (e.g. --max-turns) with no structured error event. Prefer
+			// the streamed answer over raw stderr when there is no errorText.
+			const responseText = result || streamedText || undefined;
+			const hasAnswer = Boolean(responseText?.trim());
+			if (!errorText && (code === 0 || hasAnswer)) {
+				resolve({
+					success: true,
+					response: responseText,
+					agentSessionId: sessionId,
+					usageStats,
+				});
 			} else {
 				resolve({
 					success: false,
@@ -1133,6 +1160,15 @@ export interface SpawnAgentOptions {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/**
+	 * Per-session Additional Directories. Providers that declare
+	 * `supportsAdditionalDirectories` translate these into native grant flags via
+	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
+	 * receives them in the `{{ADDITIONAL_DIRECTORIES}}` system-prompt block built
+	 * by `prepareMaestroSystemPromptCli()`. Mirrors the desktop `process:spawn`
+	 * handler's `sessionAdditionalDirectories`.
+	 */
+	additionalDirectories?: AdditionalDirectory[];
 	/**
 	 * Per-session SSH remote config. When `enabled`, the spawn is wrapped with
 	 * ssh so the agent runs on the remote host. Required for parity with the
@@ -1184,6 +1220,7 @@ export async function spawnAgent(
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
 		appendSystemPrompt: options?.appendSystemPrompt,
+		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).

@@ -321,4 +321,36 @@ describe('createCueDispatchService', () => {
 			expect(logs.some(([level, msg]) => level === 'warn' && /no prompt/.test(msg))).toBe(false);
 		});
 	});
+
+	describe('onTriggerFired (cue.fired plugin hook)', () => {
+		it('fires once per dispatch with the source event TYPE only (no prompt text)', () => {
+			const { deps } = makeDeps();
+			const onTriggerFired = vi.fn();
+			const svc = createCueDispatchService({ ...deps, onTriggerFired });
+			const sub = makeSub({ prompt: 'secret prompt body that must never leak' });
+			const event = createCueEvent('time.heartbeat', 'my-sub');
+
+			svc.dispatchSubscription('owner', sub, event, 'src');
+
+			expect(onTriggerFired).toHaveBeenCalledTimes(1);
+			expect(onTriggerFired).toHaveBeenCalledWith('time.heartbeat');
+			// Exactly one string arg - no object/extra args that could carry a prompt.
+			const call = onTriggerFired.mock.calls[0];
+			expect(call).toHaveLength(1);
+			expect(typeof call[0]).toBe('string');
+		});
+
+		it('fires once for a fan-out dispatch (per subscription, not per target)', () => {
+			const { deps } = makeDeps();
+			const onTriggerFired = vi.fn();
+			const svc = createCueDispatchService({ ...deps, onTriggerFired });
+			const sub = makeSub({ fan_out: ['alpha', 'bravo'], prompt: 'p' });
+			const event = createCueEvent('time.heartbeat', 'my-sub');
+
+			svc.dispatchSubscription('owner', sub, event, 'src');
+
+			expect(onTriggerFired).toHaveBeenCalledTimes(1);
+			expect(onTriggerFired).toHaveBeenCalledWith('time.heartbeat');
+		});
+	});
 });

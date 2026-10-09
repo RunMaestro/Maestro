@@ -1,0 +1,190 @@
+/**
+ * Token-usage shapes for the Cost & Tokens dashboard.
+ *
+ * These sit in `shared/` so the Electron main process (which reads each agent's
+ * on-disk session transcripts and does the aggregation) and the renderer (which
+ * renders the charts) speak the same vocabulary. No Electron imports here.
+ *
+ * Ground truth is each agent's own session storage, not the stats SQLite DB:
+ * every storage already parses its transcript into per-session token totals, and
+ * three of the five (claude, opencode, copilot) additionally know the model id
+ * behind every usage record. The types below carry that per-model split all the
+ * way to the UI. Cost math reuses `modelPricing.ts` (provider-reported cost when
+ * present, rate-table estimate otherwise - flagged via `costEstimated`).
+ */
+
+import type { TokenCounts } from './modelPricing';
+
+/**
+ * Per-agent token coverage, mirroring the Cue accessor's classification so both
+ * surfaces label partial data the same way.
+ *
+ * - `full` - all four token fields populated; cost present when the agent tracks
+ *   it (claude-code, opencode), estimated from the rate table otherwise.
+ * - `partial` - a structural gap: codex reports no cache-creation split and no
+ *   cost; copilot-cli only emits tokens at `session.shutdown` (in-flight sessions
+ *   read as zero).
+ * - `unsupported` - agent has no readable on-disk token data.
+ */
+export type TokenCoverage = 'full' | 'partial' | 'unsupported';
+
+/** Account key for agents with no multi-account concept (everything but Claude today). */
+export const DEFAULT_ACCOUNT_KEY = 'default';
+
+/**
+ * Token + cost totals for a single model within a session (or rolled up across
+ * many sessions in an aggregate). The four token fields are structurally
+ * compatible with {@link TokenCounts}, so this can be passed straight to
+ * `calculateModelCost`.
+ */
+export interface ModelTokenUsage extends Required<
+	Pick<TokenCounts, 'inputTokens' | 'outputTokens'>
+> {
+	/**
+	 * Normalized model id (via `normalizeModelId`), e.g. `claude-opus-4-8`. Empty
+	 * string when the transcript carried no model id (rare fallback bucket).
+	 */
+	model: string;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	/**
+	 * USD cost for this model's tokens. Provider-reported when the agent tracks
+	 * cost; otherwise computed from the `modelPricing` rate table.
+	 */
+	costUsd: number;
+	/** True when `costUsd` was estimated from the rate table, not provider-reported. */
+	costEstimated: boolean;
+}
+
+/**
+ * One session's token consumption, split by model. Produced by the token-usage
+ * accessor from a single on-disk transcript and cached per source-file
+ * fingerprint. Session totals are the sum across `byModel`.
+ */
+export interface SessionTokenBreakdown {
+	/** Provider session id (e.g. Claude's `session_id`) the totals were read from. */
+	sessionId: string;
+	agentType: string;
+	projectPath: string;
+	/**
+	 * Which provider account produced this session. For Claude this is the
+	 * canonical `CLAUDE_CONFIG_DIR` path (users run several Max accounts from
+	 * separate `~/.claude*` homes, and each writes its own transcript tree).
+	 * Agents without a multi-account concept use {@link DEFAULT_ACCOUNT_KEY}.
+	 */
+	accountKey: string;
+	/** Latest activity timestamp (ms since epoch); drives time bucketing. 0 if unknown. */
+	timestampMs: number;
+	/**
+	 * How the session was started, when the storage records it. Feeds the Source
+	 * Distribution chart's token mode; sessions with no recorded origin are left
+	 * out of that split rather than guessed at.
+	 */
+	origin?: 'user' | 'auto';
+	byModel: ModelTokenUsage[];
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	costUsd: number;
+	/** True when any contributing model bucket was rate-table estimated. */
+	costEstimated: boolean;
+	coverage: TokenCoverage;
+}
+
+/** Rolled-up token + cost totals over an arbitrary set of sessions/models. */
+export interface TokenUsageTotals {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	costUsd: number;
+	/** True when any part of `costUsd` was rate-table estimated. */
+	costEstimated: boolean;
+	sessionCount: number;
+}
+
+/** A named group of totals (one agent, one model, or one project). */
+export interface TokenUsageGroup extends TokenUsageTotals {
+	/** Stable grouping key: agent id, normalized model id, or project path. */
+	key: string;
+	/** Human-facing label for the group. */
+	label: string;
+}
+
+/** Totals within one time slice of the timeline. */
+export interface TokenUsageTimeBucket extends TokenUsageTotals {
+	/** Bucket start, ms since epoch. */
+	startMs: number;
+}
+
+/**
+ * The full dashboard payload: grand totals plus breakdowns by agent, model, and
+ * project, a timeline, and the per-agent coverage map so the UI can flag which
+ * groups carry partial (or estimated) data.
+ */
+export interface TokenUsageAggregate {
+	totals: TokenUsageTotals;
+	byAgent: TokenUsageGroup[];
+	byModel: TokenUsageGroup[];
+	byProject: TokenUsageGroup[];
+	/**
+	 * Per-provider-account totals - for Claude, one entry per Max account
+	 * (`CLAUDE_CONFIG_DIR`). Single `default` entry for single-account agents.
+	 */
+	byAccount: TokenUsageGroup[];
+	timeline: TokenUsageTimeBucket[];
+	/**
+	 * Token counts bucketed to match `StatsAggregation`'s shapes, so the existing
+	 * dashboard charts can add a Tokens metric mode.
+	 */
+	series: TokenSeries;
+	coverageByAgent: Record<string, TokenCoverage>;
+	/** When the aggregate was computed (ms since epoch). */
+	generatedAtMs: number;
+}
+
+/**
+ * Token counts bucketed the same ways `StatsAggregation` buckets queries and
+ * duration, so the dashboard charts can offer a "Tokens" metric mode alongside
+ * their existing Queries/Time (or Count/Duration) toggles without each chart
+ * re-deriving its own grouping.
+ *
+ * Fidelity note: a session's tokens are attributed to its LAST-ACTIVITY
+ * timestamp, because that is the one timestamp the per-session transcript parse
+ * yields. Sessions that span several days therefore land wholly on their final
+ * day/hour. Most sessions are short, so day-level series are close to exact;
+ * `byHour` is the coarsest of these and should be read as "when sessions
+ * finished", not "when every token was spent".
+ */
+export interface TokenSeries {
+	/** Total tokens keyed by local `YYYY-MM-DD`. */
+	byDay: Record<string, number>;
+	/** Total tokens keyed by local hour-of-day (`'0'`-`'23'`). */
+	byHour: Record<string, number>;
+	/** Tokens per agent type, then per local `YYYY-MM-DD`. */
+	byAgentByDay: Record<string, Record<string, number>>;
+	/**
+	 * Tokens per PROVIDER session id, then per local `YYYY-MM-DD`. The renderer
+	 * joins these onto Maestro agents via each agent's tab `agentSessionId`s,
+	 * since only the renderer knows that mapping.
+	 */
+	bySessionByDay: Record<string, Record<string, number>>;
+	/** Tokens split by how the session was started (sessions with no origin are excluded). */
+	bySource: { user: number; auto: number };
+}
+
+/** Bucket granularity for the timeline series. */
+export type TokenTimelineGranularity = 'day' | 'week' | 'month';
+
+/** Request options for a token-usage aggregate. */
+export interface TokenUsageQuery {
+	/** Inclusive lower bound on session activity (ms since epoch). Omit for all-time. */
+	sinceMs?: number;
+	/** Inclusive upper bound on session activity (ms since epoch). Omit for now. */
+	untilMs?: number;
+	/** Timeline bucket granularity. Defaults to `day`. */
+	granularity?: TokenTimelineGranularity;
+}

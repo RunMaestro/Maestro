@@ -400,6 +400,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									onTriggerSubscription={triggerSubscription}
 									onStopRun={stopRun}
 									onStopAll={stopAll}
+									focusSessionId={cueModalData?.focusSessionId}
 								/>
 							</div>
 						) : activeTab === 'scheduled' ? (

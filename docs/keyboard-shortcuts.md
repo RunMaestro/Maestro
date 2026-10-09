@@ -30,44 +30,47 @@ Tips and gotchas:
 
 ## Global Shortcuts
 
-| Action                      | macOS                 | Windows/Linux          |
-| --------------------------- | --------------------- | ---------------------- |
-| Quick Actions               | `Cmd+K`               | `Ctrl+K`               |
-| Agent Switcher              | `Cmd+O`               | `Ctrl+O`               |
-| Toggle Left Panel           | `Opt+Cmd+Left`        | `Alt+Ctrl+Left`        |
-| Toggle Right Panel          | `Opt+Cmd+Right`       | `Alt+Ctrl+Right`       |
-| New Agent                   | `Cmd+N`               | `Ctrl+N`               |
-| New Agent Wizard            | `Cmd+Shift+N`         | `Ctrl+Shift+N`         |
-| New Group Chat              | `Opt+Cmd+C`           | `Alt+Ctrl+C`           |
-| Remove Agent                | `Cmd+Shift+Backspace` | `Ctrl+Shift+Backspace` |
-| Move Agent to Group         | `Opt+Cmd+M`           | `Alt+Ctrl+M`           |
-| Open Memory Viewer          | `Cmd+Shift+M`         | `Ctrl+Shift+M`         |
-| Previous Agent              | `Cmd+[`               | `Ctrl+[`               |
-| Next Agent                  | `Cmd+]`               | `Ctrl+]`               |
-| Navigate Back               | `Cmd+Shift+,`         | `Ctrl+Shift+,`         |
-| Navigate Forward            | `Cmd+Shift+.`         | `Ctrl+Shift+.`         |
-| Jump to Agent (1-9, 0=10th) | `Opt+Cmd+NUMBER`      | `Alt+Ctrl+NUMBER`      |
-| New Terminal Tab            | `Cmd+J`               | `Ctrl+J`               |
-| Toggle Input/Output Focus   | `Cmd+.`               | `Ctrl+.`               |
-| Focus Left Panel            | `Cmd+Shift+A`         | `Ctrl+Shift+A`         |
-| Show Shortcuts Help         | `Cmd+/`               | `Ctrl+/`               |
-| Open Settings               | `Cmd+,`               | `Ctrl+,`               |
-| Open Agent Settings         | `Opt+Cmd+,`           | `Alt+Ctrl+,`           |
-| View Agent Sessions         | `Cmd+Shift+L`         | `Ctrl+Shift+L`         |
-| System Log Viewer           | `Opt+Cmd+L`           | `Alt+Ctrl+L`           |
-| System Process Monitor      | `Opt+Cmd+P`           | `Alt+Ctrl+P`           |
-| Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
-| View Execution Queue        | `Cmd+Shift+X`         | `Ctrl+Shift+X`         |
-| Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
-| Jump to Bottom              | `Opt+J`               | `Alt+J`                |
-| Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
-| Maestro Symphony            | `Opt+Cmd+Y`           | `Alt+Ctrl+Y`           |
-| Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
-| Maestro Cue                 | `Opt+Q`               | `Alt+Q`                |
-| Edit Image from Clipboard   | `Opt+Cmd+E`           | `Alt+Ctrl+E`           |
-| Forced Parallel Send        | `Cmd+Shift+Enter`     | `Ctrl+Shift+Enter`     |
-| Cycle Focus Areas           | `Tab`                 | `Tab`                  |
-| Cycle Focus Backwards       | `Shift+Tab`           | `Shift+Tab`            |
+| Action                        | macOS                   | Windows/Linux             |
+| ----------------------------- | ----------------------- | ------------------------- |
+| Quick Actions                 | `Cmd+K`                 | `Ctrl+K`                  |
+| Agent Switcher                | `Cmd+O`                 | `Ctrl+O`                  |
+| Toggle Left Panel             | `Opt+Cmd+Left`          | `Alt+Ctrl+Left`           |
+| Toggle Right Panel            | `Opt+Cmd+Right`         | `Alt+Ctrl+Right`          |
+| New Agent                     | `Cmd+N`                 | `Ctrl+N`                  |
+| New Agent Wizard              | `Cmd+Shift+N`           | `Ctrl+Shift+N`            |
+| New Group Chat                | `Opt+Cmd+G`             | `Alt+Ctrl+G`              |
+| Remove Agent                  | `Cmd+Shift+Backspace`   | `Ctrl+Shift+Backspace`    |
+| Move Agent to Group           | `Opt+Cmd+M`             | `Alt+Ctrl+M`              |
+| Open Memory Viewer            | `Cmd+Shift+M`           | `Ctrl+Shift+M`            |
+| Jump to Session (1-9, 0=10th) | `Opt+Cmd+1`-`Opt+Cmd+0` | `Alt+Ctrl+1`-`Alt+Ctrl+0` |
+| Previous Agent                | `Cmd+[`                 | `Ctrl+[`                  |
+| Next Agent                    | `Cmd+]`                 | `Ctrl+]`                  |
+| Navigate Back                 | `Cmd+Shift+,`           | `Ctrl+Shift+,`            |
+| Navigate Forward              | `Cmd+Shift+.`           | `Ctrl+Shift+.`            |
+| Jump to Agent (1-9, 0=10th)   | `Opt+Cmd+NUMBER`        | `Alt+Ctrl+NUMBER`         |
+| New Terminal Tab              | `Cmd+J`                 | `Ctrl+J`                  |
+| Toggle Input/Output Focus     | `Cmd+.`                 | `Ctrl+.`                  |
+| Focus Left Panel              | `Cmd+Shift+A`           | `Ctrl+Shift+A`            |
+| Show Shortcuts Help           | `Cmd+/`                 | `Ctrl+/`                  |
+| Open Settings                 | `Cmd+,`                 | `Ctrl+,`                  |
+| Open Agent Settings           | `Opt+Cmd+,`             | `Alt+Ctrl+,`              |
+| View Agent Sessions           | `Cmd+Shift+L`           | `Ctrl+Shift+L`            |
+| System Log Viewer             | `Opt+Cmd+L`             | `Alt+Ctrl+L`              |
+| System Process Monitor        | `Opt+Cmd+P`             | `Alt+Ctrl+P`              |
+| Usage Dashboard               | `Opt+Cmd+U`             | `Alt+Ctrl+U`              |
+| View Execution Queue          | `Cmd+Shift+X`           | `Ctrl+Shift+X`            |
+| Jump to Nearest Terminal      | `Opt+Cmd+J`             | `Alt+Ctrl+J`              |
+| Jump to Bottom                | `Cmd+Shift+J`           | `Ctrl+Shift+J`            |
+| Toggle Bookmark               | `Cmd+Shift+B`           | `Ctrl+Shift+B`            |
+| Maestro Symphony              | `Opt+Cmd+Y`             | `Alt+Ctrl+Y`              |
+| Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
+| Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
+| Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
+| Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
+| Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
+| Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
+| Cycle Focus Areas             | `Tab`                   | `Tab`                     |
+| Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
 
 The full-window surfaces in that table (Settings, Usage Dashboard, Director's
 Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory)
@@ -125,7 +128,7 @@ Team Chat / Moderator Only switches how much of the room you read. Moderator Onl
 
 | Action                       | macOS                          | Windows/Linux                    |
 | ---------------------------- | ------------------------------ | -------------------------------- |
-| Team Chat / Moderator Only   | `Opt+Cmd+G`                    | `Alt+Ctrl+G`                     |
+| Team Chat / Moderator Only   | `Opt+Cmd+Shift+G`              | `Alt+Ctrl+Shift+G`               |
 | Cycle Participants / History | `Cmd+Shift+[` or `Cmd+Shift+]` | `Ctrl+Shift+[` or `Ctrl+Shift+]` |
 | Go to Participants Tab       | `Cmd+Shift+F`                  | `Ctrl+Shift+F`                   |
 | Go to History Tab            | `Cmd+Shift+H`                  | `Ctrl+Shift+H`                   |
@@ -180,6 +183,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
 | Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
 | Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
 | Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
 | Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
 | Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
@@ -195,6 +199,10 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
 | Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
 | Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
+
+In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
+Right Bar instead, switching between the Participants and History panels. The Right
+Bar opens if it was closed.
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
@@ -212,7 +220,43 @@ The Tab Switcher provides fuzzy search across all open tabs with quick navigatio
 
 The bulk close operations (Close All, Close Others, Close Left, Close Right) are also available via the [Tab Menu](./context-management#tab-close-operations) hover overlay and Quick Actions (`Cmd+K`).
 
-In the **Snooze Tab** dialog, `Cmd+Enter` (`Ctrl+Enter` on Windows/Linux) sets the snooze from anywhere in the dialog - including the note field, where plain `Enter` stays a newline.
+In the **Snooze Tab** dialog, `Cmd+Enter` (`Ctrl+Enter` on Windows/Linux) sets the snooze from anywhere in the dialog - including the note and prompt fields, where plain `Enter` stays a newline.
+
+### Pane Shortcuts (Tiled Tabs)
+
+These act on the tiled set showing in the Main Panel. See [Tiling Tabs](./general-usage#tiling-tabs) for what tiling is and how to create one.
+
+| Action                    | macOS              | Windows/Linux      |
+| ------------------------- | ------------------ | ------------------ |
+| Focus Pane Left           | `Ctrl+Cmd+Left`    | `Ctrl+Win+Left`    |
+| Focus Pane Right          | `Ctrl+Cmd+Right`   | `Ctrl+Win+Right`   |
+| Focus Pane Up             | `Ctrl+Cmd+Up`      | `Ctrl+Win+Up`      |
+| Focus Pane Down           | `Ctrl+Cmd+Down`    | `Ctrl+Win+Down`    |
+| Focus Previous Pane       | `Opt+[`            | `Alt+[`            |
+| Focus Next Pane           | `Opt+]`            | `Alt+]`            |
+| Split Pane (Side by Side) | `Ctrl+Cmd+D`       | `Ctrl+Win+D`       |
+| Split Pane (Stacked)      | `Ctrl+Cmd+Shift+D` | `Ctrl+Win+Shift+D` |
+| Maximize / Restore Pane   | `Ctrl+Cmd+Z`       | `Ctrl+Win+Z`       |
+| Rebalance Panes           | `Ctrl+Cmd+=`       | `Ctrl+Win+=`       |
+| Close Focused Pane        | `Ctrl+Cmd+W`       | `Ctrl+Win+W`       |
+| Tile New AI Chat Below    | `Ctrl+Cmd+T`       | `Ctrl+Win+T`       |
+| Tile New Browser Below    | `Ctrl+Cmd+B`       | `Ctrl+Win+B`       |
+| Tile New File Below       | `Ctrl+Cmd+F`       | `Ctrl+Win+F`       |
+| Tile New Terminal Below   | `Ctrl+Cmd+J`       | `Ctrl+Win+J`       |
+
+<Note>
+The pane family deliberately requires **both** Ctrl and Cmd so it can never collide with the plain-Cmd equivalents (`Cmd+W` closes a tab, `Ctrl+Cmd+W` closes a pane). On Windows and Linux the second modifier is the Windows / Super key.
+</Note>
+
+Focus arrows move to the pane nearest in that direction and stop at the edge of the layout. The previous/next pair cycles through every pane in order and wraps around, which is the reliable way through an uneven grid.
+
+Maximize expands the focused pane to fill the panel and hides the rest; press it again to restore the layout. Rebalance resets every split to equal sizes after you have dragged dividers around.
+
+Closing a pane returns its tab to the tab bar rather than closing it. When only one pane is left the group dissolves and that tab goes back to the bar too.
+
+Each of the four also has a key of its own, on `Ctrl+Cmd` beside the rest of the pane family. The letter is the same one the plain "new tab" chord uses, so the tiled twin is that letter with one more modifier: `Cmd+T` opens a new AI chat, `Ctrl+Cmd+T` splits the view and puts one in the bottom half. You can also run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four.
+
+A freshly tiled pane takes the keyboard, and the caret lands in whatever that pane's input is: the chat box for an AI tab, the command prompt for a terminal, the address bar (URL selected) for a browser, the editor for a file. See [Tiling Tabs](./general-usage#tiling-tabs).
 
 ## Input & Output
 
@@ -232,13 +276,19 @@ In the **Snooze Tab** dialog, `Cmd+Enter` (`Ctrl+Enter` on Windows/Linux) sets t
 | Page Up/Down             | `Alt+Up/Down Arrow` while in output               |
 | Jump to Top/Bottom       | `Cmd+Up/Down Arrow` while in output               |
 
-## Font Size
+## Font Zoom
 
-| Action             | macOS         | Windows/Linux  |
-| ------------------ | ------------- | -------------- |
-| Increase Font Size | `Cmd+=`       | `Ctrl+=`       |
-| Decrease Font Size | `Cmd+-`       | `Ctrl+-`       |
-| Reset Font Size    | `Cmd+Shift+0` | `Ctrl+Shift+0` |
+| Action     | macOS         | Windows/Linux  |
+| ---------- | ------------- | -------------- |
+| Zoom In    | `Cmd+=`       | `Ctrl+=`       |
+| Zoom Out   | `Cmd+-`       | `Ctrl+-`       |
+| Reset Zoom | `Cmd+Shift+0` | `Ctrl+Shift+0` |
+
+Zoom is a multiplier over every surface at once, so the sizes you set for the
+interface, AI chat, terminal, file preview, and file editor keep their relative
+proportions as you scale. Reset returns the zoom to 100% and leaves those
+per-surface sizes exactly as you set them - to restore the sizes themselves, use
+**Factory Reset Fonts** at the top of Settings -> Display.
 
 ## Command Terminal
 
@@ -370,7 +420,7 @@ the find bar or editing the document. The same list is in the command palette as
 **Jump to Heading**, offered only while a markdown file is open in preview.
 
 The three zoom keys are bare - no modifier - and are distinct from the app-wide
-`Cmd+=` / `Cmd+-` in [Font Size](#font-size), which resizes the whole interface.
+`Cmd+=` / `Cmd+-` in [Font Zoom](#font-zoom), which scales the whole interface.
 They apply only where the zoom moves type (markdown, code, and text views), and
 they never fire while you are typing, so the find bar and the markdown editor
 keep those keys. The same steps are available from the zoom pill that rests in
@@ -452,6 +502,43 @@ into a memory stays a slash. `Cmd+F` works from anywhere, including the editor.
 from the filter box it returns you to the list **keeping your query**, so you
 can filter and then arrow through the hits; pressing it again clears the
 filter, and once more closes the viewer.
+
+## Git Log
+
+Open it with `Cmd+Shift+G` (`Ctrl+Shift+G`). The viewer has two views, List and
+Graph, and remembers which one you left it on.
+
+| Action                         | macOS                      | Windows/Linux        |
+| ------------------------------ | -------------------------- | -------------------- |
+| Search the log                 | `Cmd+F` or `/`             | `Ctrl+F` or `/`      |
+| Previous / next view           | `Cmd+Shift+[` / `]`        | `Ctrl+Shift+[` / `]` |
+| Previous / next commit         | `Up/Down Arrow` or `j`/`k` | same                 |
+| Jump a page of commits         | `PageUp` / `PageDown`      | same                 |
+| Newest / oldest commit         | `Home` / `End`             | same                 |
+| Previous / next branch (Graph) | `Left/Right Arrow`         | same                 |
+| Clear the search / close       | `Esc`                      | `Esc`                |
+
+The search box narrows both views at once. It matches the commit hash (full or
+short), the message, the author, a branch or tag name, and the date, and several
+words are ANDed, so `fix usage` finds `fix(usage): ...`. `Up`/`Down` and the page
+keys keep stepping the commits while you are still typing, so you can filter and
+walk the hits without leaving the box; `j`/`k` stay letters there. `Esc` clears
+the query first and only closes the viewer once the box is empty.
+
+Graph view is FILTERED, not just highlighted: the commits that do not match are
+contracted out of the graph and the survivors reconnect to their nearest matching
+ancestor, so the branch lines still show which of the remaining commits came
+after which.
+
+In Graph view each axis answers one question, and both read off what is drawn.
+`Up`/`Down` follow the branch line the selected commit sits on, skipping commits
+drawn beside it on other branches, and stop at that branch's newest and oldest
+commit. `Left`/`Right` are the only keys that cross branches: they move to the
+line drawn immediately left or right, landing at the height you were already at,
+so the selection slides sideways instead of jumping to another branch's tip.
+`Home`/`End` and the page keys also stay on the current branch. Clicking a commit
+message selects it, the same as clicking its dot. The graph is built from every
+branch, so all of this reaches commits the List view does not hold.
 
 ## Maestro Prompts (Settings)
 
@@ -551,6 +638,8 @@ Most shortcuts can be remapped to fit your workflow:
 4. Press your desired key combination
 5. The new binding is saved immediately
 
+Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls and Open Leaderboard are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
+
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 
 **Tips:**
@@ -575,11 +664,12 @@ The recorder refuses these with an explanation. If you had one of them bound in 
 
 When a default binding has to move to free a combo for a new action, Maestro migrates it for you on the next launch - but only if you were still on the old default. If you had personally rebound that action, your binding is left untouched and you may need to move it yourself.
 
-| Action                    | Was           | Now           | Freed for                        |
-| ------------------------- | ------------- | ------------- | -------------------------------- |
-| Focus Active Tab          | `Opt+Cmd+F`   | `Opt+Cmd+Up`  | Search Messages (All Agent Tabs) |
-| Move Agent to Group       | `Cmd+Shift+M` | `Opt+Cmd+M`   | Open Memory Viewer               |
-| Auto Run Expanded Preview | `Cmd+Shift+E` | `Cmd+Shift+3` | Edit Last Queued Message         |
+| Action                    | Was              | Now            | Freed for                             |
+| ------------------------- | ---------------- | -------------- | ------------------------------------- |
+| Focus Active Tab          | `Opt+Cmd+F`      | `Opt+Cmd+Up`   | Search Messages (All Agent Tabs)      |
+| Move Agent to Group       | `Cmd+Shift+M`    | `Opt+Cmd+M`    | Open Memory Viewer                    |
+| Auto Run Expanded Preview | `Cmd+Shift+E`    | `Cmd+Shift+3`  | Edit Last Queued Message              |
+| Next Unread / Draft Tab   | `Cmd+Shift+Down` | `Opt+Cmd+Down` | Reserved by the OS (select-to-bottom) |
 
 If `Opt+Cmd+F` still focuses the active tab instead of opening cross-tab search, you had a custom binding on it: open **Settings** → **Shortcuts**, clear it from **Focus Active Tab**, and the new default takes over.
 
