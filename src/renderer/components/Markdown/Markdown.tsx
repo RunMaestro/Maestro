@@ -285,7 +285,13 @@ export const Markdown = memo(function Markdown({
 			// that owns it, e.g. GroupChatMessages) instead of inheriting it, and
 			// make the Settings -> Display -> AI Chat size row a no-op for chat
 			// prose. `prose-sm` alone still keeps the tighter chat spacing.
-			className={`prose prose-sm max-w-none ${className}`}
+			// whitespace-normal: some callers (the Thinking block, collapsed AI
+			// messages) sit inside a `whitespace-pre-wrap` box for their raw-text
+			// branch. Inherited, that turns the "\n" text nodes react-markdown
+			// emits between table/list elements into visible blank lines (#1726).
+			// Line breaks the user wrote are already <br>s via chatLineBreaks, and
+			// code fences set their own white-space.
+			className={`prose prose-sm max-w-none whitespace-normal ${className}`}
 			style={{ color: theme.colors.textMain, lineHeight: 1.4, paddingLeft: '0.5em' }}
 		>
 			{markdown}
