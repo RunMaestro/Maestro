@@ -115,4 +115,16 @@ describe('findPendingHitlGate', () => {
 		const content = '<!-- MAESTRO:HITL reason="crlf" -->\r\n- [ ] gated\r\n';
 		expect(findPendingHitlGate(content)?.reason).toBe('crlf');
 	});
+
+	it('recognizes plus tasks and checkmark completions through shared classification', () => {
+		const pending = ['<!-- MAESTRO:HITL reason="plus" -->', '+ [ ] approve'].join('\n');
+		expect(findPendingHitlGate(pending)?.reason).toBe('plus');
+
+		const consumed = [
+			'<!-- MAESTRO:HITL reason="already approved" -->',
+			'+ [✓] approved',
+			'- [ ] follow-up',
+		].join('\n');
+		expect(findPendingHitlGate(consumed)).toBeNull();
+	});
 });
