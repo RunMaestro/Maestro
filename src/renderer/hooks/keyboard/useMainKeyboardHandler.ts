@@ -866,6 +866,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setLogViewerOpen(true);
 				trackShortcut('systemLogs');
+			} else if (ctx.isShortcut(e, 'switchAccount')) {
+				e.preventDefault();
+				useModalStore.getState().openModal('accountSwitcher');
+				trackShortcut('switchAccount');
 			} else if (ctx.isShortcut(e, 'processMonitor')) {
 				e.preventDefault();
 				ctx.setProcessMonitorOpen(true);

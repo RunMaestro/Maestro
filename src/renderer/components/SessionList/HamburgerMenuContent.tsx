@@ -15,6 +15,7 @@ import {
 	Music,
 	Command,
 	Zap,
+	UserRoundCog,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -22,6 +23,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { openUrl } from '../../utils/openUrl';
+import { useModalStore } from '../../stores/modalStore';
 
 interface HamburgerMenuContentProps {
 	theme: Theme;
@@ -240,6 +242,31 @@ export function HamburgerMenuContent({
 				>
 					{formatShortcutKeys(shortcuts.processMonitor.keys)}
 				</span>
+			</button>
+			<button
+				onClick={() => {
+					useModalStore.getState().openModal('accountSwitcher');
+					setMenuOpen(false);
+				}}
+				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+			>
+				<UserRoundCog className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<div className="flex-1">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Switch Account
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Run this agent on another provider login
+					</div>
+				</div>
+				{shortcuts.switchAccount?.keys.length ? (
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{formatShortcutKeys(shortcuts.switchAccount.keys)}
+					</span>
+				) : null}
 			</button>
 			{encoreFeatures.usageStats && (
 				<button

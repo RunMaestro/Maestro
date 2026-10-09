@@ -125,6 +125,11 @@ export interface RenameTabModalData {
 	initialName: string;
 }
 
+/** Switch Account modal data - which agent to switch. Defaults to the active agent. */
+export interface AccountSwitcherModalData {
+	sessionId?: string;
+}
+
 /** Snooze tab modal data - which AI tab is being snoozed, and how to label it */
 export interface SnoozeTabModalData {
 	tabId: string;
@@ -307,6 +312,7 @@ export type ModalId =
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'
+	| 'accountSwitcher'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -500,6 +506,7 @@ export interface ModalDataMap {
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
 	reauth: ReauthModalData;
+	accountSwitcher: AccountSwitcherModalData;
 	deleteAgent: DeleteAgentModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;

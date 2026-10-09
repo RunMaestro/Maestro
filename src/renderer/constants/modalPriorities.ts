@@ -162,6 +162,9 @@ export const MODAL_PRIORITIES = {
 	/** Snooze history log (opens above the snoozed tabs list) */
 	SNOOZE_HISTORY: 703,
 
+	/** Switch Account (pick the provider account an agent runs as) */
+	ACCOUNT_SWITCHER: 702,
+
 	/** Prompt composer modal for long prompts */
 	PROMPT_COMPOSER: 725,
 

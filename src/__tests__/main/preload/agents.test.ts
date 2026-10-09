@@ -422,6 +422,32 @@ describe('Agents Preload API', () => {
 			expect(result).toEqual(keys);
 		});
 
+		it('should invoke agents:getProviderAccounts', async () => {
+			const accounts = [{ accountKey: '/Users/me/.claude-work', email: 'a@x.com', signedIn: true }];
+			mockInvoke.mockResolvedValue(accounts);
+
+			const result = await api.getProviderAccounts('claude-code');
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getProviderAccounts', 'claude-code');
+			expect(result).toEqual(accounts);
+		});
+
+		it('should invoke agents:carryProviderSession', async () => {
+			const req = {
+				toolType: 'claude-code',
+				fromAccountKey: '/Users/me/.claude',
+				toAccountKey: '/Users/me/.claude-work',
+				sessionId: 'abc',
+				cwd: '/Users/me/project',
+			};
+			mockInvoke.mockResolvedValue('copied');
+
+			const result = await api.carryProviderSession(req);
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:carryProviderSession', req);
+			expect(result).toBe('copied');
+		});
+
 		it('should invoke agents:getKnownEnvVarKeys', async () => {
 			const envVarKeys = {
 				byProvider: { 'claude-code': ['CLAUDE_CONFIG_DIR'] },
