@@ -613,6 +613,8 @@ export interface WorktreeConfig {
 	branchName: string;
 	createPROnCompletion: boolean;
 	prTargetBranch: string;
+	/** Custom GitHub CLI binary used for this run's pull request. */
+	ghPath?: string;
 }
 
 // Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
@@ -651,6 +653,16 @@ export interface BatchRunConfig {
 	taskSelectionMode?: TaskSelectionMode;
 	worktree?: WorktreeConfig;
 	worktreeTarget?: WorktreeRunTarget;
+	/** Per-run overrides; never change the session's interactive settings. */
+	model?: string;
+	effort?: string;
+	ignoreModelHints?: boolean;
+	/** Missing auto-resume fields use resolveAutoResumePolicy's defaults. */
+	autoResumeOnError?: boolean;
+	autoResumeAfterMin?: number;
+	maxAutoResumes?: number;
+	/** Presence selects goal-driven rather than document/task-driven mode. */
+	goalConfig?: import('./goalDriven/types').GoalRunConfig;
 }
 
 // ============================================================================

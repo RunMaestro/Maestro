@@ -1,47 +1,12 @@
 /**
- * useAutoRunStateMirror - render another client's Auto Run.
+ * Mirror the host renderer's Auto Run state into attached clients.
  *
- * Auto Run is renderer-owned state. The run loop is a live async closure, its
- * document/task cursors are `let` bindings inside it, and `batchRunStates` is a
- * plain in-memory zustand store - all of it in whichever client pressed Go (or,
- * for a CLI-launched run, the desktop window main forwarded
- * `remote:configureAutoRun` to). Nothing about a run is written to the session,
- * to settings, or to disk.
+ * The host owns the live loop, process queue, timing and error-resolution
+ * promises. Browsers/Lite only render its autorun_state frames and dispatch
+ * lifecycle controls back to that owner through useBatchProcessor.
  *
- * So a web-desktop browser client, which is a second full renderer over the
- * WebSocket bridge, had no way to learn that a run existed. Every Auto Run
- * surface - the Left Bar batch pill, the thinking pill, the Right Panel active
- * run card, the editor lock - reads `batchRunStates`, and in a browser tab that
- * store stayed empty for the whole run. The agent read as completely idle while
- * the desktop app showed it working.
- *
- * The state was already on the wire: the owning client pushes it to main on
- * every progress tick (`web:broadcastAutoRunState`) and main fans it out to all
- * WebSocket clients as an `autorun_state` packet, replaying the current state
- * for every live run when a client connects. The mobile web app consumes it.
- * The web-desktop shim's frame router simply had no case for it, so it was
- * parsed and dropped. This hook is the consumer for the channel the shim now
- * maps it onto.
- *
- * The mirror runs in BOTH directions, and the second one needed its own
- * plumbing (issue #1519). `autorun_state` only ever reaches WebSocket clients,
- * so a run started in a BROWSER tab had no path back to the Electron app and
- * the desktop drew the agent as idle for the entire run. Main closes that half
- * by forwarding a bridge-originated broadcast straight to the desktop windows
- * on this same channel (`forwardAutoRunStateToDesktopWindows` in
- * `main/ipc/handlers/web.ts`). One consumer, two producers.
- *
- * Note this fixes only VISIBILITY, in both directions. A run still dies with
- * the client that owns it, because the loop and its cursors live there; that is
- * issue #1470 and it needs the ownership primitive described below.
- *
- * What it deliberately does NOT do: take over. The entry it writes is stamped
- * `mirrored: true`, every Auto Run mutator refuses to act on a mirrored entry,
- * and the controls that call them render disabled. Resuming or steering a run
- * from a non-owning client needs a renderer-liveness/ownership primitive that
- * does not exist yet (see issue #1470); without it, two clients driving one
- * agent can spawn duplicate tasks into the same working tree. Displaying is
- * safe, so displaying is all this does.
+ * Frames never overwrite a live locally-owned run. Mirrored entries remain
+ * marked as such so local runner internals cannot mistake them for ownership.
  */
 
 import { useCallback, useEffect } from 'react';
@@ -50,6 +15,7 @@ import type { AgentErrorType } from '../../../shared/types';
 import type { BatchRunState } from '../../types';
 import { useBatchStore } from '../../stores/batchStore';
 import { DEFAULT_BATCH_STATE } from './batchReducer';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * Tooltip for an Auto Run control disabled because the run belongs to another
@@ -280,22 +246,7 @@ export function resetMirrorFrameClock(): void {
 	lastFrameAt.clear();
 }
 
-/**
- * Subscribe to Auto Run state broadcast by other Maestro clients.
- *
- * Mount once, alongside the batch processor. Runs in BOTH builds, and that is
- * the point: mirroring used to be gated to the web-desktop build, on the
- * reasoning that the Electron renderer is not a WebSocket client so the channel
- * could never fire there. True of the channel, wrong about the need - it left a
- * run STARTED in a browser tab invisible in the desktop app for its whole
- * duration (issue #1519). Main now forwards a bridge-originated frame to the
- * desktop windows (`forwardAutoRunStateToDesktopWindows`), so the desktop has a
- * producer and needs its consumer.
- *
- * A desktop window is never handed its own run back - main forwards only
- * bridge-originated frames - and `applyAutoRunMirrorFrame` refuses to overwrite
- * a live local run regardless, so the owner keeps its controls.
- */
+/** Subscribe to host state without taking ownership of its runner. */
 export function useAutoRunStateMirror(): void {
 	const handleFrame = useCallback((sessionId: string, state: AutoRunBroadcastState | null) => {
 		applyAutoRunMirrorFrame(sessionId, state);
@@ -315,14 +266,12 @@ export function useAutoRunStateMirror(): void {
 	}, []);
 }
 
-/**
- * Subscribing form of {@link isMirroredBatchRun} for components.
- *
- * Use it to disable an Auto Run control rather than to hide the run: the point
- * of the mirror is that the run IS visible here, only not steerable from here.
- */
+/** Native mirrors stay read-only; web/Lite controls are dispatched to the owner. */
 export function useIsMirroredBatchRun(sessionId: string | undefined): boolean {
 	return useBatchStore(
-		useCallback((s) => s.batchRunStates[sessionId ?? '']?.mirrored === true, [sessionId])
+		useCallback(
+			(s) => !isWebDesktop() && s.batchRunStates[sessionId ?? '']?.mirrored === true,
+			[sessionId]
+		)
 	);
 }

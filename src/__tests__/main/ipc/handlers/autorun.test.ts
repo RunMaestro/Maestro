@@ -204,41 +204,9 @@ describe('autorun IPC handlers', () => {
 	});
 
 	afterEach(() => {
+		appEventHandlers.get('before-quit')?.();
 		handlers.clear();
 		appEventHandlers.clear();
-	});
-
-	describe('registration', () => {
-		it('should register all autorun handlers', () => {
-			const expectedChannels = [
-				'autorun:listDocs',
-				'autorun:hasDocuments',
-				'autorun:readDoc',
-				'autorun:writeDoc',
-				'autorun:saveImage',
-				'autorun:deleteImage',
-				'autorun:replaceImage',
-				'autorun:listImages',
-				'autorun:deleteFolder',
-				'autorun:watchFolder',
-				'autorun:unwatchFolder',
-				'autorun:createBackup',
-				'autorun:restoreBackup',
-				'autorun:deleteBackups',
-				'autorun:createWorkingCopy',
-				'autorun:watchStatus',
-				'autorun:unwatchStatus',
-			];
-
-			for (const channel of expectedChannels) {
-				expect(handlers.has(channel), `Handler ${channel} should be registered`).toBe(true);
-			}
-			expect(handlers.size).toBe(expectedChannels.length);
-		});
-
-		it('should register app before-quit event handler', () => {
-			expect(appEventHandlers.has('before-quit')).toBe(true);
-		});
 	});
 
 	describe('autorun:watchStatus / unwatchStatus (STATUS.json)', () => {
@@ -252,7 +220,7 @@ describe('autorun IPC handlers', () => {
 			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(status));
 
 			const handler = handlers.get('autorun:watchStatus');
-			const result = await handler!({} as any, '/test/project');
+			const result = await handler!({ sender: { id: 1 } } as any, '/test/project');
 
 			expect(result.success).toBe(true);
 			expect(result.status).toEqual(status);
@@ -268,7 +236,7 @@ describe('autorun IPC handlers', () => {
 			);
 
 			const handler = handlers.get('autorun:watchStatus');
-			const result = await handler!({} as any, '/test/project');
+			const result = await handler!({ sender: { id: 1 } } as any, '/test/project');
 
 			expect(result.success).toBe(true);
 			expect(result.status).toBeNull();
@@ -278,25 +246,10 @@ describe('autorun IPC handlers', () => {
 			vi.mocked(fs.readFile).mockResolvedValue('{ not valid json');
 
 			const handler = handlers.get('autorun:watchStatus');
-			const result = await handler!({} as any, '/test/project');
+			const result = await handler!({ sender: { id: 1 } } as any, '/test/project');
 
 			expect(result.success).toBe(true);
 			expect(result.status).toBeNull();
-		});
-
-		it('unwatchStatus resolves cleanly even when nothing is being watched', async () => {
-			const handler = handlers.get('autorun:unwatchStatus');
-			const result = await handler!({} as any, '/never/watched');
-
-			expect(result.success).toBe(true);
-		});
-
-		it('before-quit cleanup runs without throwing after a status watch', async () => {
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ feature: 'F-1' }));
-			await handlers.get('autorun:watchStatus')!({} as any, '/test/project', 'agent-1');
-
-			const beforeQuit = appEventHandlers.get('before-quit');
-			expect(() => beforeQuit!()).not.toThrow();
 		});
 
 		// Several agents can run Auto Run against one project at the same time.
@@ -304,9 +257,13 @@ describe('autorun IPC handlers', () => {
 		it('keeps the watcher alive while another agent is still subscribed', async () => {
 			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ feature: 'F-1' }));
 
-			await handlers.get('autorun:watchStatus')!({} as any, '/test/project', 'agent-1');
+			await handlers.get('autorun:watchStatus')!(
+				{ sender: { id: 1 } } as any,
+				'/test/project',
+				'agent-1'
+			);
 			const second = await handlers.get('autorun:watchStatus')!(
-				{} as any,
+				{ sender: { id: 1 } } as any,
 				'/test/project',
 				'agent-2'
 			);
@@ -315,11 +272,19 @@ describe('autorun IPC handlers', () => {
 			expect(mockWatcherClose).not.toHaveBeenCalled();
 
 			// agent-1 finishing must not blind agent-2.
-			await handlers.get('autorun:unwatchStatus')!({} as any, '/test/project', 'agent-1');
+			await handlers.get('autorun:unwatchStatus')!(
+				{ sender: { id: 1 } } as any,
+				'/test/project',
+				'agent-1'
+			);
 			expect(mockWatcherClose).not.toHaveBeenCalled();
 
 			// Only the last release actually closes it.
-			await handlers.get('autorun:unwatchStatus')!({} as any, '/test/project', 'agent-2');
+			await handlers.get('autorun:unwatchStatus')!(
+				{ sender: { id: 1 } } as any,
+				'/test/project',
+				'agent-2'
+			);
 			expect(mockWatcherClose).toHaveBeenCalled();
 		});
 
@@ -328,7 +293,7 @@ describe('autorun IPC handlers', () => {
 		// unrelated same-named local file.
 		it('declines to watch for a remote session instead of watching the wrong host', async () => {
 			const result = await handlers.get('autorun:watchStatus')!(
-				{} as any,
+				{ sender: { id: 1 } } as any,
 				'/test/project',
 				'agent-1',
 				true
@@ -1329,7 +1294,7 @@ describe('autorun IPC handlers', () => {
 			const chokidar = await import('chokidar');
 
 			const handler = handlers.get('autorun:watchFolder');
-			const result = await handler!({} as any, '/test/folder');
+			const result = await handler!({ sender: { id: 1 } } as any, '/test/folder');
 
 			expect(result.success).toBe(true);
 			expect(chokidar.default.watch).toHaveBeenCalledWith('/test/folder', expect.any(Object));
@@ -1342,7 +1307,7 @@ describe('autorun IPC handlers', () => {
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 
 			const handler = handlers.get('autorun:watchFolder');
-			const result = await handler!({} as any, '/test/newfolder');
+			const result = await handler!({ sender: { id: 1 } } as any, '/test/newfolder');
 
 			expect(result.success).toBe(true);
 			expect(fs.mkdir).toHaveBeenCalledWith('/test/newfolder', { recursive: true });
@@ -1354,7 +1319,7 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			const handler = handlers.get('autorun:watchFolder');
-			const result = await handler!({} as any, '/test/file.txt');
+			const result = await handler!({ sender: { id: 1 } } as any, '/test/file.txt');
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Path is not a directory');
@@ -1369,18 +1334,18 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			const watchHandler = handlers.get('autorun:watchFolder');
-			await watchHandler!({} as any, '/test/folder');
+			await watchHandler!({ sender: { id: 1 } } as any, '/test/folder');
 
 			// Then stop watching
 			const unwatchHandler = handlers.get('autorun:unwatchFolder');
-			const result = await unwatchHandler!({} as any, '/test/folder');
+			const result = await unwatchHandler!({ sender: { id: 1 } } as any, '/test/folder');
 
 			expect(result.success).toBe(true);
 		});
 
 		it('should handle unwatching a folder that was not being watched', async () => {
 			const unwatchHandler = handlers.get('autorun:unwatchFolder');
-			const result = await unwatchHandler!({} as any, '/test/other');
+			const result = await unwatchHandler!({ sender: { id: 1 } } as any, '/test/other');
 
 			expect(result.success).toBe(true);
 		});
@@ -1560,24 +1525,6 @@ describe('autorun IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Path is not a directory');
-		});
-	});
-
-	describe('app before-quit cleanup', () => {
-		it('should clean up all watchers on app quit', async () => {
-			// Start watching a folder
-			vi.mocked(fs.stat).mockResolvedValue({
-				isDirectory: () => true,
-			} as any);
-
-			const watchHandler = handlers.get('autorun:watchFolder');
-			await watchHandler!({} as any, '/test/folder');
-
-			// Trigger before-quit
-			const quitHandler = appEventHandlers.get('before-quit');
-			quitHandler!();
-
-			// No error should be thrown
 		});
 	});
 

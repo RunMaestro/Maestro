@@ -2784,7 +2784,7 @@ describe('TabSwitcherModal', () => {
 		describe('browser tab support', () => {
 			// Helper to create a test browser tab
 			const createTestBrowserTab = (
-				overrides: Partial<import('../../../renderer/types').BrowserTab> = {}
+				overrides: Partial<import('../../../shared/browserPage').BrowserTab> = {}
 			) => ({
 				id: `browser-tab-${Math.random().toString(36).substr(2, 9)}`,
 				url: 'https://example.com',

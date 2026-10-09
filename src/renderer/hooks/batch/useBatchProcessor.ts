@@ -29,6 +29,9 @@ import {
 import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
 import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { notifyToast } from '../../stores/notificationStore';
+import type { AutoRunRemoteControl } from '../../../shared/autoRunRemote';
 
 export interface BatchCompleteInfo {
 	sessionId: string;
@@ -337,7 +340,12 @@ export function useBatchProcessor({
 	// mode; otherwise we run the existing document/task loop. The signature is
 	// unchanged so no caller breaks.
 	const startBatchRun = useCallback(
-		(sessionId: string, config: BatchRunConfig, folderPath: string) => {
+		async (sessionId: string, config: BatchRunConfig, folderPath: string) => {
+			if (isWebDesktop()) {
+				const result = await window.maestro.web.startAutoRun(sessionId, config, folderPath);
+				if (!result.success) throw new Error(result.error || 'Host rejected Auto Run start');
+				return;
+			}
 			if (config.goalConfig) {
 				return startGoalRun(sessionId, config, folderPath);
 			}
@@ -346,6 +354,80 @@ export function useBatchProcessor({
 		[startGoalRun, startDocumentBatchRun]
 	);
 
+	const sendRemoteControl = useCallback(
+		async (sessionId: string, control: AutoRunRemoteControl) => {
+			const result = await window.maestro.web.controlAutoRun(sessionId, control);
+			if (!result.success) throw new Error(result.error || 'Host rejected Auto Run control');
+		},
+		[]
+	);
+	const requestRemoteControl = useCallback(
+		(sessionId: string, control: AutoRunRemoteControl) => {
+			void sendRemoteControl(sessionId, control).catch((error: unknown) => {
+				notifyToast({
+					type: 'error',
+					title: 'Auto Run control failed',
+					message: error instanceof Error ? error.message : String(error),
+				});
+			});
+		},
+		[sendRemoteControl]
+	);
+
+	useEffect(() => {
+		if (isWebDesktop()) return;
+		return window.maestro.process.onRemoteControlAutoRun?.(
+			(sessionId, control, responseChannel) => {
+				void (async () => {
+					const state = useBatchStore.getState().batchRunStates[sessionId];
+					if (!state?.isRunning || state.mirrored)
+						throw new Error('No host-owned Auto Run is active for this agent');
+					switch (control.action) {
+						case 'stop':
+							stopBatchRun(sessionId);
+							break;
+						case 'kill':
+							await killBatchRun(sessionId);
+							break;
+						case 'pause':
+							pauseBatchOnError(
+								sessionId,
+								control.error,
+								control.documentIndex,
+								control.taskDescription
+							);
+							break;
+						case 'resume':
+						case 'skip-document':
+						case 'abort':
+							if (!state.errorPaused) throw new Error('Auto Run is not paused');
+							if (control.action === 'resume') resumeAfterError(sessionId);
+							else if (control.action === 'skip-document') skipCurrentDocument(sessionId);
+							else abortBatchOnError(sessionId);
+							break;
+						default:
+							throw new Error('Unknown Auto Run control');
+					}
+					window.maestro.process.sendRemoteAutoRunResponse(responseChannel, { success: true });
+				})().catch((error: unknown) => {
+					window.maestro.process.sendRemoteAutoRunResponse(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		);
+	}, [
+		stopBatchRun,
+		killBatchRun,
+		pauseBatchOnError,
+		resumeAfterError,
+		skipCurrentDocument,
+		abortBatchOnError,
+	]);
+
+	const remoteClient = isWebDesktop();
+
 	return {
 		batchRunStates,
 		getBatchState,
@@ -353,14 +435,32 @@ export function useBatchProcessor({
 		activeBatchSessionIds,
 		stoppingBatchSessionIds,
 		startBatchRun,
-		stopBatchRun,
-		killBatchRun,
+		stopBatchRun: remoteClient
+			? (sessionId) => requestRemoteControl(sessionId, { action: 'stop' })
+			: stopBatchRun,
+		killBatchRun: remoteClient
+			? (sessionId) => sendRemoteControl(sessionId, { action: 'kill' })
+			: killBatchRun,
 		customPrompts,
 		setCustomPrompt,
 		// Error handling (Phase 5.10)
-		pauseBatchOnError,
-		skipCurrentDocument,
-		resumeAfterError,
-		abortBatchOnError,
+		pauseBatchOnError: remoteClient
+			? (sessionId, error, documentIndex, taskDescription) =>
+					requestRemoteControl(sessionId, {
+						action: 'pause',
+						error,
+						documentIndex,
+						taskDescription,
+					})
+			: pauseBatchOnError,
+		skipCurrentDocument: remoteClient
+			? (sessionId) => requestRemoteControl(sessionId, { action: 'skip-document' })
+			: skipCurrentDocument,
+		resumeAfterError: remoteClient
+			? (sessionId) => requestRemoteControl(sessionId, { action: 'resume' })
+			: resumeAfterError,
+		abortBatchOnError: remoteClient
+			? (sessionId) => requestRemoteControl(sessionId, { action: 'abort' })
+			: abortBatchOnError,
 	};
 }

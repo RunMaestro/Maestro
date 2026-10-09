@@ -12,7 +12,8 @@ import {
 	RotateCcw,
 	VenetianMask,
 } from 'lucide-react';
-import type { BrowserTab, Theme } from '../../types';
+import type { Theme } from '../../types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { LongPressable } from '../shared/LongPressable';

@@ -19,6 +19,98 @@ import { captureException } from './sentry-shim';
 // rival shapes this replaced.
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../shared/webClientConfig';
 import { WEB_LOGIN_PATHS, WEB_LOGIN_WS_CLOSE_CODE } from '../shared/webLogin';
+import { selectHostFolder, selectHostSaveFile } from './remote-file-dialog';
+import {
+	readClientViewState,
+	writeClientViewState,
+} from '../renderer/utils/activeSessionPersistence';
+
+const UNCERTAIN_SUBMISSION_KEY = 'maestro:web-desktop:uncertain-submission';
+
+// IPC queries follow the preload getter/list/read naming convention. The
+// non-prefixed query methods below are explicit exceptions, not error filters.
+const READ_ONLY_CHANNELS = new Set([
+	'plugins:contributions',
+	'agentRun:events',
+	'agentRun:show',
+	'campaign:show',
+	'attachments:load',
+	'fs:directoryInfo',
+	'fs:directorySize',
+	'fs:homeDir',
+	'fs:stat',
+	'fs:fetchImageAsBase64',
+	'git:branch',
+	'git:branches',
+	'git:commitCount',
+	'git:diff',
+	'git:graph',
+	'git:info',
+	'git:log',
+	'git:numstat',
+	'git:remote',
+	'git:scanWorktreeDirectory',
+	'git:show',
+	'git:showFile',
+	'git:status',
+	'git:tags',
+	'git:worktreeInfo',
+	'groupChat:load',
+	'history:reload',
+	'images:resolve',
+	'memory:orphans',
+	'pianola:supervisor-list',
+	'feedback:drafts:list',
+	'feedback:issues:list',
+	'feedback:search-issues',
+	'parquet:open',
+	'ssh-remote:test',
+	'cue:validateYaml',
+	'cue:loadPipelineLayout',
+]);
+
+function isSubmissionChannel(channel: string): boolean {
+	// Diagnostics are not user work and must never create submission alerts.
+	if (channel === 'logger:log') return false;
+	const operation = channel.slice(channel.indexOf(':') + 1);
+	return (
+		!READ_ONLY_CHANNELS.has(channel) &&
+		!/^(?:get|list|read|has|is|detect|discover|search|check|count|inspect|query)(?:$|[A-Z:-])/.test(
+			operation
+		)
+	);
+}
+function showSubmissionNotice(message: string): void {
+	writeClientViewState(UNCERTAIN_SUBMISSION_KEY, message);
+	const render = () => {
+		let notice = document.getElementById('maestro-submission-notice');
+		if (!notice) {
+			notice = document.createElement('div');
+			notice.id = 'maestro-submission-notice';
+			notice.setAttribute('role', 'alert');
+			notice.style.cssText =
+				'position:fixed;bottom:12px;left:12px;right:12px;z-index:100000;background:#713f12;color:white;padding:12px;border:1px solid #facc15;border-radius:6px';
+			document.body.appendChild(notice);
+		}
+		notice.replaceChildren(document.createTextNode(message + ' '));
+		const dismiss = document.createElement('button');
+		dismiss.textContent = 'Dismiss';
+		dismiss.onclick = () => {
+			writeClientViewState(UNCERTAIN_SUBMISSION_KEY, '');
+			notice?.remove();
+		};
+		notice.appendChild(dismiss);
+	};
+	if (document.body) render();
+	else document.addEventListener('DOMContentLoaded', render, { once: true });
+}
+
+function setConnectionState(
+	state: 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
+): void {
+	(window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__ = state;
+	window.dispatchEvent(new CustomEvent('maestro:bridge-state', { detail: { state } }));
+}
 
 type Listener = (event: { senderFrame: null }, ...args: unknown[]) => void;
 
@@ -43,6 +135,7 @@ export const BRIDGE_PONG_TIMEOUT_MS = 8000;
 interface PendingInvoke {
 	resolve: (value: unknown) => void;
 	reject: (reason: unknown) => void;
+	channel: string;
 }
 
 interface BridgeConfig {
@@ -93,7 +186,8 @@ class BridgeClient {
 	// listener yet; the first subscriber drains the latest frame per session.
 	private pendingAutoRunFrames = new Map<string, unknown>();
 	private nextRequestId = 1;
-	private queue: string[] = [];
+	private connected = false;
+	private uncertainPersistence = false;
 	// True once any connection has been established, so a later open is known
 	// to be a RE-connect. Mobile browsers suspend the socket on every app switch
 	// and screen lock, which makes reconnecting the common case.
@@ -124,6 +218,13 @@ class BridgeClient {
 
 	constructor(config: BridgeConfig) {
 		this.ready = new Promise((r) => (this.resolveReady = r));
+		setConnectionState('connecting');
+		try {
+			const notice = readClientViewState(UNCERTAIN_SUBMISSION_KEY);
+			if (notice) showSubmissionNotice(notice);
+		} catch {
+			/* Storage may be disabled. */
+		}
 		this.connect(config.wsUrl);
 		document.addEventListener('visibilitychange', () => {
 			if (!document.hidden) this.probeHeartbeat();
@@ -140,8 +241,9 @@ class BridgeClient {
 	}
 
 	private markReady(): void {
+		this.connected = true;
+		setConnectionState('connected');
 		this.resolveReady();
-		for (const frame of this.queue.splice(0)) this.ws?.send(frame);
 		window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
 	}
 
@@ -194,7 +296,10 @@ class BridgeClient {
 				this.ws?.close(1003, 'invalid bridge frame');
 				return;
 			}
-			if (typeof msg.seq === 'number') this.lastSeq = msg.seq;
+			if (typeof msg.seq === 'number') {
+				if (msg.seq <= this.lastSeq) return;
+				this.lastSeq = msg.seq;
+			}
 			if (msg.type === 'connected') {
 				if (typeof msg.bridgeEpoch === 'string') this.epoch = msg.bridgeEpoch;
 				// A fresh connection's baseline is the server's counter at the moment
@@ -212,9 +317,10 @@ class BridgeClient {
 					this.markReady();
 					return;
 				}
-				// The server could not replay the gap (it restarted, or the gap
-				// outran its buffer). The desktop's live store is the only source of
-				// truth left, and reloading re-bootstraps from it.
+				// Lost epoch/history requires a fresh authoritative bootstrap, not
+				// mutation replay. Client-local drafts and uncertainty survive reload.
+				this.connected = false;
+				setConnectionState('reconnecting');
 				window.location.reload();
 				return;
 			}
@@ -224,7 +330,20 @@ class BridgeClient {
 				if (!pending) return;
 				this.pending.delete(requestId);
 				if (msg.ok) pending.resolve(msg.result);
-				else pending.reject(new Error(String(msg.error ?? 'bridge error')));
+				else {
+					const error = String(msg.error ?? 'bridge error');
+					if (isSubmissionChannel(pending.channel))
+						showSubmissionNotice(
+							'Submission rejected for ' +
+								pending.channel +
+								': ' +
+								error +
+								'. It was not automatically retried.'
+						);
+					if (pending.channel === 'sessions:setMany' || pending.channel === 'sessions:setAll')
+						this.uncertainPersistence = true;
+					pending.reject(new Error(error));
+				}
 				return;
 			}
 			let channel: string | undefined;
@@ -272,6 +391,21 @@ class BridgeClient {
 			}
 		});
 		this.ws.addEventListener('close', (ev?: CloseEvent) => {
+			this.connected = false;
+			setConnectionState(ev?.code === WEB_LOGIN_WS_CLOSE_CODE ? 'disconnected' : 'reconnecting');
+			for (const pending of this.pending.values()) {
+				const submission = isSubmissionChannel(pending.channel);
+				const message = submission
+					? 'Submission uncertainty: connection lost before acknowledgement of ' +
+						pending.channel +
+						'. The host may have accepted it. Check host state before submitting again; it was not automatically retried.'
+					: 'connection lost before response to ' + pending.channel;
+				if (submission) showSubmissionNotice(message);
+				if (pending.channel === 'sessions:setMany' || pending.channel === 'sessions:setAll')
+					this.uncertainPersistence = true;
+				pending.reject(new Error('bridge disconnected: ' + message));
+			}
+			this.pending.clear();
 			// The server refused this socket because Web Login is on and the
 			// browser holds no valid session. Reconnecting cannot fix that - it
 			// would spin against the wall once a second forever, with the page
@@ -291,16 +425,7 @@ class BridgeClient {
 			// the interval outlives every socket it was started for and a long
 			// session accumulates one probe loop per reconnect.
 			this.stopHeartbeat();
-			// Reject every in-flight invoke. After reconnect the new server has
-			// no memory of these request IDs, so the promises would otherwise
-			// hang forever and freeze any React component awaiting them.
-			const disconnected = new Error('bridge disconnected');
-			for (const pending of this.pending.values()) pending.reject(disconnected);
-			this.pending.clear();
-			// Queued frames belong to a dead session - drop them so we don't
-			// replay invokes the caller has already given up on.
-			this.queue.length = 0;
-			this.ready = new Promise((r) => (this.resolveReady = r));
+			if (this.hadOpenConnection) this.ready = new Promise((r) => (this.resolveReady = r));
 			setTimeout(() => this.connect(url), 1000);
 		});
 		this.ws.addEventListener('error', (err: Event) => {
@@ -376,18 +501,46 @@ class BridgeClient {
 		this.pongDeadline = undefined;
 	}
 
-	private sendFrame(frame: object): void {
-		const json = JSON.stringify(frame);
-		if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(json);
-		else this.queue.push(json);
-	}
-
 	async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+		// Startup reads can wait for their first socket. Actions during a later
+		// outage must fail now, not quietly run when the connection returns.
+		if (this.hadOpenConnection && !this.connected) {
+			const submission = isSubmissionChannel(channel);
+			const message = submission
+				? 'Not submitted: host connection is unavailable. Reconnect and review host state before submitting again.'
+				: 'host connection is unavailable';
+			if (submission) showSubmissionNotice(message);
+			throw new Error('bridge disconnected: ' + message);
+		}
+		if (
+			this.uncertainPersistence &&
+			(channel === 'sessions:setMany' || channel === 'sessions:setAll')
+		) {
+			throw new Error(
+				'Submission uncertainty: reload the host view before saving more shared session changes.'
+			);
+		}
 		await this.ready;
+		if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+			throw new Error('bridge disconnected: request was not submitted');
+		}
 		const requestId = this.nextRequestId++;
 		return new Promise((resolve, reject) => {
-			this.pending.set(requestId, { resolve, reject });
-			this.sendFrame({ type: 'bridge.invoke', requestId, channel, args });
+			this.pending.set(requestId, { resolve, reject, channel });
+			try {
+				this.ws!.send(JSON.stringify({ type: 'bridge.invoke', requestId, channel, args }));
+			} catch (error) {
+				this.pending.delete(requestId);
+				if (isSubmissionChannel(channel))
+					showSubmissionNotice(
+						'Submission uncertainty: transport failed while sending ' +
+							channel +
+							'. Check host state before submitting again.'
+					);
+				if (channel === 'sessions:setMany' || channel === 'sessions:setAll')
+					this.uncertainPersistence = true;
+				reject(error);
+			}
 		});
 	}
 
@@ -432,7 +585,23 @@ class BridgeClient {
 const bridge = new BridgeClient({ wsUrl: getWsUrl() });
 
 export const ipcRenderer = {
-	invoke: (channel: string, ...args: unknown[]) => bridge.invoke(channel, ...args),
+	invoke: (channel: string, ...args: unknown[]) => {
+		if (channel === 'logger:log') {
+			// Error reporting must not reject into the global error reporter during
+			// a disconnect. Keep the diagnostic locally; do not queue or replay it.
+			return bridge.invoke(channel, ...args).catch((error: unknown) => {
+				console.warn('[bridge] Host logger unavailable; recorded locally:', ...args, error);
+			});
+		}
+		if (channel === 'dialog:selectFolder')
+			return selectHostFolder((name, ...values) => bridge.invoke(name, ...values));
+		if (channel === 'dialog:saveFile')
+			return selectHostSaveFile(
+				(name, ...values) => bridge.invoke(name, ...values),
+				args[0] as Parameters<typeof selectHostSaveFile>[1]
+			);
+		return bridge.invoke(channel, ...args);
+	},
 	send: (channel: string, ...args: unknown[]) => {
 		// ipcRenderer.send is fire-and-forget by contract, but on the WS bridge
 		// we still get a rejection if the channel is unknown or the server-side
@@ -517,10 +686,7 @@ export const webFrame = {
 };
 
 export const webUtils = {
-	getPathForFile: (file: File): string => {
-		const maybePath = (file as File & { path?: unknown }).path;
-		return typeof maybePath === 'string' ? maybePath : '';
-	},
+	getPathForFile: (_file: File): string => '',
 };
 
 export default { ipcRenderer, contextBridge, shell, webFrame, webUtils };

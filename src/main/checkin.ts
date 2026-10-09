@@ -87,7 +87,7 @@ async function getOrCreateInstallId(app: App): Promise<string> {
  * application's package.json, and an unpackaged launch may have none in scope -
  * Electron then returns the version of the Electron binary itself, which lands
  * in the analytics as a bogus app version. The e2e suite launches
- * `dist/main/index.js` directly (a file, so no package.json), and gives each run
+ * `dist/main/bootstrap.js` directly (a file, so no package.json), and gives each run
  * a throwaway data dir, so every run also minted a fresh install id. That put
  * hundreds of phantom one-shot "installs" on Electron version numbers into the
  * dataset. Developer machines and CI are not the install base; skip them.

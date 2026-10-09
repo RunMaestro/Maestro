@@ -8,6 +8,8 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { BatchRunConfig } from '../../shared/types';
+import type { AutoRunRemoteControl, AutoRunRemoteResult } from '../../shared/autoRunRemote';
 
 /**
  * Auto Run state for broadcasting
@@ -55,6 +57,26 @@ export interface AiTabState {
  */
 export function createWebApi() {
 	return {
+		startAutoRun: (sessionId: string, config: BatchRunConfig, folderPath: string) =>
+			ipcRenderer.invoke(
+				'web:startAutoRun',
+				sessionId,
+				config,
+				folderPath
+			) as Promise<AutoRunRemoteResult>,
+		controlAutoRun: (sessionId: string, control: AutoRunRemoteControl) =>
+			ipcRenderer.invoke('web:controlAutoRun', sessionId, control) as Promise<AutoRunRemoteResult>,
+		/** Private host readiness probe; never exposed through the remote bridge. */
+		onLiteReady: (getReady: () => boolean) => {
+			const handler = (_event: Electron.IpcRendererEvent, responseChannel: string) => {
+				if (responseChannel.startsWith('remote:liteReady:response:')) {
+					ipcRenderer.send(responseChannel, getReady());
+				}
+			};
+			ipcRenderer.on('remote:liteReady', handler);
+			return () => ipcRenderer.removeListener('remote:liteReady', handler);
+		},
+
 		// Atomically reserve one agent before a renderer starts an Auto Run. Main
 		// owns the claim so simultaneous desktop/browser starts cannot both win.
 		claimAutoRunStart: (sessionId: string) =>
@@ -110,6 +132,7 @@ export function createWebApi() {
  */
 export function createWebserverApi() {
 	return {
+		openLitePairing: () => ipcRenderer.invoke('webserver:openLitePairing') as Promise<void>,
 		getUrl: () => ipcRenderer.invoke('webserver:getUrl'),
 		getConnectedClients: () => ipcRenderer.invoke('webserver:getConnectedClients'),
 	};

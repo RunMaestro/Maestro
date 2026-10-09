@@ -24,7 +24,8 @@ import {
 	getTerminalTabDisplayName,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
+import type { Session, AITab, ToolType, Group, BatchRunConfig } from '../../types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
 import {
@@ -437,8 +438,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// usable immediately no matter which agent is on screen.
 		//
 		// Safe to call unconditionally: the spawn dedupes in-flight calls by process
-		// id, and once the PID lands TerminalView's own `pid !== 0` check stops it
-		// spawning a second one when it later mounts.
+		// id, and the runtime initialization marker stops TerminalView spawning
+		// a second one when it later mounts, including ConPTY with PID 0.
 		const sessionForSpawn = selectSessionById(sessionId)(useSessionStore.getState());
 		if (sessionForSpawn) {
 			void spawnPtyForTab({
@@ -512,27 +513,28 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		// The PTY lives in the main process and outlives its React view, so a
 		// write lands even when the owning agent is not on screen. A tab that was
-		// never rendered has no PTY at all though (pid 0), and only the ACTIVE
+		// never initialized has no PTY at all, and only the ACTIVE
 		// session has a live TerminalView that would spawn one. Waiting for a
 		// background agent would stall until the timeout for a shell that is
 		// never coming, so wait only when it can actually arrive - and never
 		// switch agents to force it, since that would yank the screen away to
 		// service a background command.
-		let pid = tab.pid;
-		if (pid === 0 && tab.state !== 'exited') {
+		let initialized = tab.ptyInitialized || tab.pid !== 0;
+		if (!initialized && tab.state !== 'exited') {
 			const isActiveSession = useSessionStore.getState().activeSessionId === owner.id;
 			if (isActiveSession) {
 				const deadline = Date.now() + 4000;
-				while (pid === 0 && Date.now() < deadline) {
+				while (!initialized && Date.now() < deadline) {
 					await new Promise((resolve) => setTimeout(resolve, 100));
-					pid =
-						(sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []).find(
-							(t) => t.id === tab.id
-						)?.pid ?? 0;
+					const current = (
+						sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []
+					).find((t) => t.id === tab.id);
+					initialized = !!current && (current.ptyInitialized || current.pid !== 0);
+					if (current?.state === 'exited') break;
 				}
 			}
 		}
-		if (pid === 0) {
+		if (!initialized || tab.state === 'exited') {
 			ack(false, {
 				error:
 					tab.state === 'exited'

@@ -106,6 +106,7 @@ export function useCueAiChat({
 			? `${AI_SYSTEM_PROMPT}\n\nThe config file is at: ${yamlPath}\n\n${text}`
 			: text;
 
+		let errorReported = false;
 		try {
 			const appendSystemPrompt = await prepareMaestroSystemPrompt({
 				session,
@@ -177,6 +178,7 @@ export function useCueAiChat({
 			const cleanupError = window.maestro.process.onAgentError(
 				(sid: string, error: { message: string }) => {
 					if (sid === spawnSessionIdRef.current) {
+						errorReported = true;
 						const msg = error.message || 'Agent encountered an error.';
 						setChatMessages((prev) => [...prev, { role: 'assistant', text: msg }]);
 						setChatBusy(false);
@@ -188,7 +190,9 @@ export function useCueAiChat({
 
 			await window.maestro.process.spawn(spawnConfig);
 		} catch {
-			setChatMessages((prev) => [...prev, { role: 'assistant', text: 'Failed to start agent.' }]);
+			if (!errorReported) {
+				setChatMessages((prev) => [...prev, { role: 'assistant', text: 'Failed to start agent.' }]);
+			}
 			setChatBusy(false);
 			aiCleanupRef.current.forEach((fn) => fn());
 			aiCleanupRef.current = [];

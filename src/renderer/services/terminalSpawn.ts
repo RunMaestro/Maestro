@@ -13,7 +13,7 @@
  * callers share it (a caller that HAS a rendered terminal passes its measured
  * cols/rows in, but nothing here goes looking for them):
  *
- *   - `TerminalView`, when a tab it is rendering has no PID yet
+ *   - `TerminalView`, when a tab has not initialized its host PTY yet
  *   - the `open-terminal` remote handler, the moment it creates the tab
  *
  * Callers differ only in how they REPORT failure: the view can write into the
@@ -38,8 +38,8 @@ import type { Session, TerminalTab } from '../types';
  * agent, so guarding on the bare id would make two different agents' terminals
  * dedupe each other and the second one would silently never start.
  *
- * This only covers the window before the PID lands in the store. Once it has,
- * `pid !== 0` is the durable guard and survives remounting.
+ * This only covers concurrent calls within this renderer. Successful initialization
+ * is tracked separately from the PID, which ConPTY can report as zero.
  */
 const spawnInFlight = new Set<string>();
 
@@ -81,7 +81,13 @@ export async function spawnPtyForTab(options: SpawnPtyForTabOptions): Promise<vo
 	const tabId = tab.id;
 	const terminalSessionId = getTerminalSessionId(session.id, tabId);
 
-	if (spawnInFlight.has(terminalSessionId)) return;
+	if (
+		tab.ptyInitialized ||
+		tab.pid !== 0 ||
+		tab.state === 'exited' ||
+		spawnInFlight.has(terminalSessionId)
+	)
+		return;
 	spawnInFlight.add(terminalSessionId);
 
 	// "Persistent" tabs carry user intent to keep running: a configured startup
@@ -154,7 +160,7 @@ export async function spawnPtyForTab(options: SpawnPtyForTabOptions): Promise<vo
 			onPid(tabId, result.pid);
 			// Run the user-configured startup command. The PTY buffers stdin, so the
 			// shell will execute it once initialization (rc files, etc.) finishes.
-			if (tab.startupCommand) {
+			if (tab.startupCommand && !result.attached) {
 				window.maestro.process.write(terminalSessionId, tab.startupCommand + '\n').catch(() => {
 					// Write failures are surfaced by the process exit handler
 				});

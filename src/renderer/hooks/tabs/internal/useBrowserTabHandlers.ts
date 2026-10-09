@@ -1,82 +1,87 @@
 import { useCallback } from 'react';
 import { updateBrowserTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
-import type { BrowserTab } from '../../../types';
+
 import {
 	closeBrowserTab as closeBrowserTabHelper,
 	ensureInUnifiedTabOrder,
 } from '../../../utils/tabHelpers';
 import { DEFAULT_BROWSER_TAB_URL } from '../../../utils/browserTabPersistence';
-import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrderUtils';
+
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useUIStore } from '../../../stores/uiStore';
-import { createBrowserTab, normalizeBrowserTabUpdates } from './browserTabHelpers';
 import type { BrowserTabHandlersReturn } from './types';
+import {
+	activateBrowserTab,
+	createBrowserTab,
+	normalizeBrowserTabUpdates,
+} from './browserTabHelpers';
+import { isWebDesktop } from '../../../utils/runtimeContext';
+import { notifyCenterFlash } from '../../../stores/centerFlashStore';
+import type { BrowserTab, BrowserTabCreationOptions } from '../../../../shared/browserPage';
 
 export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
-	const handleNewBrowserTab = useCallback((options?: { ephemeral?: boolean }) => {
-		const { activeSessionId } = useSessionStore.getState();
-		const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
-		// Captured inside the updater so focus is only requested for a tab that was
-		// actually created.
-		let createdTabId: string | null = null;
-		updateSessionWith(activeSessionId, (s) => {
-			const newBrowserTab = createBrowserTab(s.id, homeUrl, {
-				title: homeUrl === DEFAULT_BROWSER_TAB_URL ? undefined : homeUrl,
-				isLoading: homeUrl !== DEFAULT_BROWSER_TAB_URL,
-				ephemeral: options?.ephemeral,
-			});
-			createdTabId = newBrowserTab.id;
-
-			return {
-				...s,
-				browserTabs: [...(s.browserTabs || []), newBrowserTab],
-				activeFileTabId: null,
-				activeBrowserTabId: newBrowserTab.id,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
-				// A newly-created standalone browser tab takes over the panel, so it
-				// must leave any active tiled group (mirrors handleSelectBrowserTab).
-				activeGroupId: null,
-				unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
-					type: 'browser',
-					id: newBrowserTab.id,
-				}),
+	const openBrowserTab = useCallback(
+		(url: string, options: BrowserTabCreationOptions, focusAddress: boolean) => {
+			const { activeSessionId } = useSessionStore.getState();
+			if (
+				!activeSessionId ||
+				!useSessionStore.getState().sessions.some((session) => session.id === activeSessionId)
+			)
+				return;
+			const focus = (id: string) => {
+				if (focusAddress && useSessionStore.getState().activeSessionId === activeSessionId)
+					useUIStore.getState().requestTabFocus({ type: 'browser', id });
 			};
-		});
-		// A new browser tab is opened to go somewhere, so put the caret in the address
-		// bar (selected) rather than leaving it wherever it was. The request retries
-		// until the keep-alive overlay that owns the input has mounted.
-		if (createdTabId) {
-			useUIStore.getState().requestTabFocus({ type: 'browser', id: createdTabId });
-		}
-	}, []);
-
-	const handleOpenBrowserTabAt = useCallback((url: string, options?: { title?: string }) => {
-		if (!url) return;
-		const { activeSessionId } = useSessionStore.getState();
-		updateSessionWith(activeSessionId, (s) => {
-			const newBrowserTab = createBrowserTab(s.id, url, {
-				title: options?.title ?? url,
-				isLoading: true,
+			if (isWebDesktop()) {
+				void window.maestro.browserSession
+					.createTab(activeSessionId, { ...options, url })
+					.then((tab) => {
+						updateSessionWith(activeSessionId, (session) => activateBrowserTab(session, tab));
+						focus(tab.id);
+					})
+					.catch((error) =>
+						notifyCenterFlash({
+							color: 'red',
+							message: 'Could not create host browser tab',
+							detail: error instanceof Error ? error.message : String(error),
+						})
+					);
+				return;
+			}
+			let id: string | null = null;
+			updateSessionWith(activeSessionId, (session) => {
+				const tab = createBrowserTab(session.id, url, {
+					title: options.title,
+					ephemeral: options.ephemeral,
+					isLoading: url !== DEFAULT_BROWSER_TAB_URL,
+				});
+				id = tab.id;
+				return activateBrowserTab(session, tab);
 			});
-
-			return {
-				...s,
-				browserTabs: [...(s.browserTabs || []), newBrowserTab],
-				activeFileTabId: null,
-				activeBrowserTabId: newBrowserTab.id,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
-				// A programmatically-opened standalone browser tab takes over the
-				// panel, so it must leave any active tiled group.
-				activeGroupId: null,
-				unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
-					type: 'browser',
-					id: newBrowserTab.id,
-				}),
-			};
-		});
-	}, []);
+			if (id) focus(id);
+		},
+		[]
+	);
+	const handleNewBrowserTab = useCallback(
+		(options?: { ephemeral?: boolean }) => {
+			const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
+			openBrowserTab(
+				homeUrl,
+				{
+					title: homeUrl === DEFAULT_BROWSER_TAB_URL ? undefined : homeUrl,
+					ephemeral: options?.ephemeral,
+				},
+				true
+			);
+		},
+		[openBrowserTab]
+	);
+	const handleOpenBrowserTabAt = useCallback(
+		(url: string, options?: { title?: string }) => {
+			if (url) openBrowserTab(url, { title: options?.title ?? url }, false);
+		},
+		[openBrowserTab]
+	);
 
 	const handleSelectBrowserTab = useCallback((tabId: string) => {
 		const { activeSessionId } = useSessionStore.getState();

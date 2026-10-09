@@ -456,18 +456,20 @@ export function updateTerminalTabState(
 
 /**
  * Update the PTY process ID for a terminal tab.
- * Called after the PTY is spawned and the PID is known.
+ * Called after successful host PTY creation or attachment, including ConPTY PID 0.
  *
  * @param session - The Maestro session
  * @param tabId - The ID of the terminal tab to update
- * @param pid - The PTY process ID (0 means not yet spawned)
+ * @param pid - The PTY process ID (0 when the backend has not published one)
  * @returns New session with the tab PID updated
  */
 export function updateTerminalTabPid(session: Session, tabId: string, pid: number): Session {
 	const terminalTabs = session.terminalTabs || [];
 	return {
 		...session,
-		terminalTabs: terminalTabs.map((tab) => (tab.id === tabId ? { ...tab, pid } : tab)),
+		terminalTabs: terminalTabs.map((tab) =>
+			tab.id === tabId ? { ...tab, pid, ptyInitialized: true } : tab
+		),
 	};
 }
 
@@ -489,7 +491,9 @@ export function restartTerminalTab(session: Session, tabId: string): Session {
 	return {
 		...session,
 		terminalTabs: terminalTabs.map((tab) =>
-			tab.id === tabId ? { ...tab, pid: 0, state: 'idle', exitCode: undefined } : tab
+			tab.id === tabId
+				? { ...tab, pid: 0, ptyInitialized: false, state: 'idle', exitCode: undefined }
+				: tab
 		),
 		activeTerminalTabId: tabId,
 		activeFileTabId: null,

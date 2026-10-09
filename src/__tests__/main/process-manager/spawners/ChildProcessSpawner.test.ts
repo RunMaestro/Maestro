@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
+import { existsSync, readFileSync, unlinkSync } from 'fs';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,8 @@ vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 	collectMaestroEnvVars: vi.fn(() => ({})),
 }));
 
-vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
+vi.mock('../../../../main/process-manager/utils/imageUtils', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/process-manager/utils/imageUtils')>()),
 	saveImageToTempFile: vi.fn(),
 	buildImagePromptPrefix: vi.fn((paths: string[]) => {
 		if (paths.length === 0) return '';
@@ -921,6 +923,134 @@ describe('ChildProcessSpawner', () => {
 		});
 		afterEach(() => {
 			vi.mocked(isWindows).mockReturnValue(false);
+		});
+		it('delivers a long OMP prompt as a UTF-8 attachment while preserving launch options and images', () => {
+			const { spawner, processes } = createTestContext();
+			const omp = getAgentDefinition('omp')!;
+			const prompt = '---\nPrivate playbook "quoted" & %PATH% 日本語\n'.repeat(1000);
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(getRealAgentCapabilities('omp'));
+			vi.mocked(saveImageToTempFile).mockReturnValueOnce('/tmp/maestro-image-0.png');
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'omp',
+					command: 'omp.exe',
+					args: [
+						'-p',
+						'--mode',
+						'json',
+						'--model',
+						'openai-codex/gpt-6.1-sol',
+						'--resume',
+						'saved-session',
+						'--tools',
+						'read,grep,glob',
+					],
+					prompt,
+					images: ['data:image/png;base64,abc123'],
+					imageArgs: omp.imageArgs,
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			const promptFile = args.at(-1)!.slice(1);
+			try {
+				expect(args.slice(0, -1)).toEqual([
+					'-p',
+					'--mode',
+					'json',
+					'--model',
+					'openai-codex/gpt-6.1-sol',
+					'--resume',
+					'saved-session',
+					'--tools',
+					'read,grep,glob',
+					'@/tmp/maestro-image-0.png',
+				]);
+				expect(readFileSync(promptFile, 'utf8')).toBe(prompt);
+				expect(processes.get('test-session')?.tempFiles).toContain(promptFile);
+				expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+			} finally {
+				if (args.at(-1)!.startsWith('@')) unlinkSync(promptFile);
+			}
+		});
+
+		it('reports a synchronous spawn failure and removes its temporary prompt attachment', async () => {
+			const { spawner, processes } = createTestContext();
+			let promptFile = '';
+			mockSpawn.mockImplementationOnce((_command, args: string[]) => {
+				promptFile = args.at(-1)!.slice(1);
+				throw Object.assign(new Error('spawn ENAMETOOLONG'), { code: 'ENAMETOOLONG' });
+			});
+			const result = spawner.spawn(
+				createBaseConfig({
+					toolType: 'omp',
+					command: 'omp.exe',
+					args: ['-p', '--mode', 'json'],
+					prompt: 'Long prompt'.repeat(10000),
+				})
+			);
+			expect(result).toMatchObject({ success: false, pid: -1, error: 'spawn ENAMETOOLONG' });
+			await vi.waitFor(() => expect(existsSync(promptFile)).toBe(false));
+			expect(processes.has('test-session')).toBe(false);
+		});
+
+		it('cleans a failed child attachment and publishes one failure rather than a second close outcome', async () => {
+			const { spawner, emitter, processes } = createTestContext();
+			const exit = vi.fn();
+			emitter.on('exit', exit);
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'omp',
+					command: 'omp.exe',
+					args: ['-p', '--mode', 'json'],
+					prompt: 'Prompt content',
+				})
+			);
+			const promptFile = processes.get('test-session')!.tempFiles![0];
+			const errorHandler = mockChildProcess.on.mock.calls.find(
+				([event]: [string]) => event === 'error'
+			)[1];
+			const closeHandler = mockChildProcess.on.mock.calls.find(
+				([event]: [string]) => event === 'close'
+			)[1];
+			errorHandler(new Error('spawn ENOENT'));
+			closeHandler(-1);
+			expect(exit).toHaveBeenCalledExactlyOnceWith('test-session', 1);
+			expect(processes.has('test-session')).toBe(false);
+			await vi.waitFor(() => expect(existsSync(promptFile)).toBe(false));
+		});
+
+		it('removes a replaced turn attachment without settling or deleting its live successor', async () => {
+			const { spawner, emitter, processes } = createTestContext();
+			const exit = vi.fn();
+			emitter.on('exit', exit);
+			const config = createBaseConfig({
+				toolType: 'omp',
+				command: 'omp.exe',
+				args: ['-p', '--mode', 'json'],
+				prompt: 'First prompt',
+			});
+			spawner.spawn(config);
+			const firstChild = mockChildProcess;
+			const firstFile = processes.get('test-session')!.tempFiles![0];
+			spawner.spawn({ ...config, prompt: 'Successor prompt' });
+			const successor = processes.get('test-session')!;
+			const secondFile = successor.tempFiles![0];
+			try {
+				firstChild.on.mock.calls.find(([event]: [string]) => event === 'close')[1](143);
+				await vi.waitFor(() => expect(existsSync(firstFile)).toBe(false));
+				expect(existsSync(secondFile)).toBe(true);
+				expect(processes.get('test-session')).toBe(successor);
+				expect(exit).not.toHaveBeenCalled();
+			} finally {
+				unlinkSync(secondFile);
+			}
+		});
+
+		it('does not report success when Node returns a pidless child', () => {
+			const { spawner } = createTestContext();
+			mockSpawn.mockImplementationOnce(() => ({ ...createMockChildProcess(), pid: undefined }));
+			const result = spawner.spawn(createBaseConfig({ command: 'missing.exe', prompt: 'hello' }));
+			expect(result).toMatchObject({ success: false, pid: -1 });
 		});
 
 		it('delivers a long Hermes query through stdin with explicit one-shot query selection', () => {

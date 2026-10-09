@@ -69,3 +69,6 @@ yarn-error.log*
 
 # Bundled-plugin signing artifact (release-time build output; dev signs locally)
 examples/plugins/*/signature.json
+
+# Superseded local-only Lite prototype and visual verification artifacts
+src/main/lite/discovery-pairing-prototype/

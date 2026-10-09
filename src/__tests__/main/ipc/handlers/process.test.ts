@@ -498,16 +498,15 @@ describe('process IPC handlers', () => {
 			mockProcessManager.spawn.mockReturnValue({ pid: -1, success: false });
 
 			const handler = handlers.get('process:spawn');
-			const result = await handler!({} as any, {
-				sessionId: 'session-3',
-				toolType: 'claude-code',
-				cwd: '/test',
-				command: 'invalid-command',
-				args: [],
-			});
-
-			expect(result.pid).toBe(-1);
-			expect(result.success).toBe(false);
+			await expect(
+				handler!({} as Electron.IpcMainInvokeEvent, {
+					sessionId: 'session-3',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'invalid-command',
+					args: [],
+				})
+			).rejects.toThrow('Failed to spawn claude-code');
 		});
 
 		it('should pass environment variables to spawn', async () => {

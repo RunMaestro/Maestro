@@ -14,7 +14,7 @@ import {
 	resolveBrowserTabNavigationTarget,
 	toWebviewSrc,
 } from '../../../renderer/utils/browserTabPersistence';
-import type { BrowserTab } from '../../../renderer/types';
+import type { BrowserTab } from '../../../shared/browserPage';
 
 describe('browserTabPersistence', () => {
 	describe('resolveBrowserTabNavigationTarget', () => {

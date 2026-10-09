@@ -51,8 +51,9 @@ export function useAITabHandlers(
 			// on a phone means tapping the composer anyway. The textarea is not
 			// keyed on the tab, so it keeps focus through the switch below.
 			inputRef?.current?.focus();
+			// Create on the host without moving another client's selected session or tab.
 			void window.maestro.web
-				.requestNewTab(activeSessionId, false)
+				.requestNewTab(activeSessionId, true)
 				.then((result) => {
 					if (!result?.tabId) return;
 					// Draw the tab NOW rather than waiting to be told about it. The

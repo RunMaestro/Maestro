@@ -6,12 +6,12 @@
  * strings. This file only answers "are we on macOS?" for the renderer.
  */
 
-import { isMacOSPlatform } from './platformUtils';
+import { isMacOSKeyboard } from './platformUtils';
 import { formatKeyFor, formatShortcutKeysFor } from '../../shared/shortcutKeys';
 
-// Detect if running on macOS - uses window.maestro.platform (Electron preload bridge)
+// Shortcut hints follow the physical client keyboard, not a remote execution host.
 function isMac(): boolean {
-	return isMacOSPlatform();
+	return isMacOSKeyboard();
 }
 
 /**

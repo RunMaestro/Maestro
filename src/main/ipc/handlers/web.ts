@@ -21,15 +21,15 @@
  *
  * Extracted from main/index.ts to improve code organization.
  */
-
 import { ipcMain, app, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
-import { isWebContentsAvailable } from '../../utils/safe-send';
 import { WebServer } from '../../web-server';
 import type { WebServerOptions } from '../../web-server/WebServer';
 import type { AITabData } from '../../web-server/services/broadcastService';
 import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
 import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
+import type { BatchRunConfig } from '../../../shared/types';
+import type { AutoRunRemoteControl } from '../../../shared/autoRunRemote';
 import type { SettingsStoreInterface } from '../../stores/types';
 import {
 	writeCliServerInfo,
@@ -243,73 +243,26 @@ export function stopCliDiscoveryWatchdog(): void {
 }
 
 /**
- * True when this invoke arrived over the web-desktop WebSocket bridge rather
- * than from an Electron renderer.
- *
- * `handleBridgeInvoke` dispatches to the registered `ipcMain` handler with a
- * synthetic event (`FAKE_EVENT` in `web-server/handlers/bridgeHandlers.ts`)
- * stamped `type: 'bridge'`; a real `IpcMainInvokeEvent` has no `type`. This is
- * the only thing that tells main WHICH client owns an Auto Run, and the whole
- * echo-safety of the forward below rests on it.
- */
-function isBridgeOriginatedInvoke(event: unknown): boolean {
-	return (event as { type?: unknown } | null)?.type === 'bridge';
-}
-
-/**
- * Mirror a web-owned Auto Run into the Electron desktop windows.
- *
- * Auto Run is renderer-owned state, so a run started in a web-desktop browser
- * tab lives entirely in that tab. #1508 taught the browser to RENDER a run
- * owned by the desktop (`autorun_state` -> `remote:autoRunStateMirror`), but
- * only in that direction: the desktop is not a WebSocket client, so nothing
- * carried the reverse. The desktop drew the agent as idle for the whole run.
- *
- * Two deliberate narrowings:
- *
- * 1. **Bridge-originated frames only.** A desktop-owned run must never be
- *    forwarded, or the owning window would receive its own state back and
- *    `applyAutoRunMirrorFrame` could stamp its own live run `mirrored: true` -
- *    which disables Stop, Skip, Resume and Abort on the window that is actually
- *    driving the run. The renderer has an ownership guard of its own, but the
- *    cheapest way to be sure is not to send the echo in the first place.
- *
- * 2. **Not `safeSend`.** `safeSend` fans every push out to the bridge as well,
- *    which would deliver this frame to web clients a second time on a second
- *    channel - they already receive it as `autorun_state`. The desktop windows
- *    are the entire audience for this message, so it goes straight to them.
- *
- * Still out of scope: desktop window A does not mirror into desktop window B.
- * That needs the same echo reasoning applied per-window and is not what #1519
- * reports.
- */
-function forwardAutoRunStateToDesktopWindows(
-	event: unknown,
-	sessionId: string,
-	state: AutoRunBroadcastState | null
-): void {
-	if (!isBridgeOriginatedInvoke(event)) return;
-
-	for (const win of BrowserWindow.getAllWindows()) {
-		try {
-			if (isWebContentsAvailable(win)) {
-				win.webContents.send('remote:autoRunStateMirror', sessionId, state);
-			}
-		} catch (error) {
-			// A window closing mid-broadcast is routine, not a fault. Keep going so
-			// one dead window never costs the others their frame.
-			logger.debug('Failed to mirror Auto Run state to a desktop window', 'WebHandlers', {
-				error: String(error),
-			});
-		}
-	}
-}
-
-/**
  * Register all web/live-related IPC handlers.
  */
 export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	const { getWebServer, setWebServer, createWebServer, settingsStore } = deps;
+	ipcMain.handle(
+		'web:startAutoRun',
+		async (_, sessionId: string, config: BatchRunConfig, folderPath: string) => {
+			const server = getWebServer();
+			if (!server) return { success: false, error: 'Host Auto Run owner is unavailable' };
+			return server.requestStartAutoRun(sessionId, config, folderPath);
+		}
+	);
+	ipcMain.handle(
+		'web:controlAutoRun',
+		async (_, sessionId: string, control: AutoRunRemoteControl) => {
+			const server = getWebServer();
+			if (!server) return { success: false, error: 'Host Auto Run owner is unavailable' };
+			return server.requestControlAutoRun(sessionId, control);
+		}
+	);
 
 	// Broadcast user input to web clients (called when desktop sends a message)
 	ipcMain.handle(
@@ -340,7 +293,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 	ipcMain.handle(
 		'web:broadcastAutoRunState',
-		async (event, sessionId: string, state: AutoRunBroadcastState | null) => {
+		async (_, sessionId: string, state: AutoRunBroadcastState | null) => {
 			// Feed the first-party main-process tracker FIRST, unconditionally.
 			// The web-server branch below returns early when Live Mode is off, so
 			// anything downstream of it (dispatch callbacks, and later Cue's
@@ -348,13 +301,6 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			// finished. Auto Run finality is main-process state now, not a
 			// web-broadcast side effect.
 			getAutoRunStateTracker().update(sessionId, state);
-
-			// A run OWNED by a web-desktop browser client has to reach the desktop
-			// windows too, or the desktop renders the agent as idle for the whole
-			// run. Web clients are already served by the `autorun_state` packet
-			// below; the desktop is not a WebSocket client, so this is its only
-			// path to the frame.
-			forwardAutoRunStateToDesktopWindows(event, sessionId, state);
 
 			const webServer = getWebServer();
 			if (webServer) {
@@ -679,6 +625,14 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	});
 
 	// Web server management
+	ipcMain.handle('webserver:openLitePairing', async (event) => {
+		const parent = BrowserWindow.fromWebContents(event.sender);
+		if (!parent || event.senderFrame !== event.sender.mainFrame)
+			throw new Error('Host-local window required');
+		const server = getWebServer();
+		if (!server?.isActive()) throw new Error('Existing Maestro server is not running');
+		await server.openLitePairing(parent);
+	});
 	ipcMain.handle('webserver:getUrl', async () => {
 		return getWebServer()?.getSecureUrl();
 	});

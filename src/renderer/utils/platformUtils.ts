@@ -28,6 +28,14 @@ export function isLinuxPlatform(): boolean {
 	return getPlatform() === 'linux';
 }
 
+/** Physical client keyboard conventions; remote commands still use the host platform above. */
+export function isMacOSKeyboard(): boolean {
+	if (window.__MAESTRO_CONFIG__) {
+		return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+	}
+	return isMacOSPlatform();
+}
+
 /**
  * The platform's name for its file manager, for use inside a sentence.
  *   darwin (and other/unknown) → "Finder"

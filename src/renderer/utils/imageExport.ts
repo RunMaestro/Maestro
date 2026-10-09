@@ -18,6 +18,7 @@ import { DIAGRAMS_DIR } from '../../shared/maestro-paths';
 import { joinPath, isAbsolutePath, fileTimestampSlug } from '../../shared/formatters';
 import { requestFileTreeRefresh } from './fileTreeRefresh';
 import { isSessionImageRef } from '../../shared/sessionImageRefs';
+import { isWebDesktop } from './runtimeContext';
 
 /** Anything the right-click menu can copy or save. */
 export type ExportableImage = SVGSVGElement | HTMLImageElement;
@@ -453,7 +454,7 @@ export async function saveImageElementToDisk(el: ExportableImage): Promise<SaveI
 	const defaultName = svg ? 'maestro-diagram.svg' : `maestro-image.${sourceExt}`;
 
 	const saveFile = window.maestro?.dialog?.saveFile;
-	if (!saveFile) {
+	if (!saveFile || isWebDesktop()) {
 		// No native dialog (web renderer): fall back to a plain browser download.
 		if (svg) downloadSvg(svg, defaultName);
 		else downloadDataUrl(sourceDataUrl!, defaultName);
@@ -508,7 +509,7 @@ export async function saveImageDataUrlToDisk(
 	const name = defaultName?.trim() || `maestro-image.${ext}`;
 
 	const saveFile = window.maestro?.dialog?.saveFile;
-	if (!saveFile) {
+	if (!saveFile || isWebDesktop()) {
 		downloadDataUrl(dataUrl, name);
 		return { saved: true };
 	}

@@ -12,6 +12,7 @@ import {
 	registerBatchResumer,
 } from '../../../../../renderer/stores/retryStore';
 import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageStore';
+import * as runtimeContext from '../../../../../renderer/utils/runtimeContext';
 
 let handler: ((sessionId: string, error: any) => void) | undefined;
 let authExpiredHandler: ((payload: any) => void) | undefined;
@@ -103,6 +104,30 @@ describe('useAgentErrorListener', () => {
 		const agentErrorEntry = modal.modals.get('agentError');
 		expect(agentErrorEntry).toBeDefined();
 		expect(agentErrorEntry?.data).toEqual({ sessionId: 'sess-1' });
+	});
+	it('renders remote errors without scheduling a second host retry', () => {
+		const remote = vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
+		const tab = createMockAITab({ id: 'remote-tab' });
+		const session = createMockSession({
+			id: 'remote-agent',
+			aiTabs: [tab],
+			activeTabId: 'remote-tab',
+		});
+		useSessionStore.setState({ sessions: [session] });
+		seedSnapshot('remote-agent', 'remote-tab');
+		const { unmount } = renderHook(() => useAgentErrorListener(makeDeps()));
+		try {
+			handler!('remote-agent-ai-remote-tab', overloadError);
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.agentError?.message).toBe(overloadError.message);
+			expect(updated.aiTabs[0].logs.find((log) => log.source === 'error')?.text).toBe(
+				overloadError.message
+			);
+			expect(useRetryStore.getState().retries).toEqual({});
+		} finally {
+			unmount();
+			remote.mockRestore();
+		}
 	});
 
 	// An expired token downs every agent and pipeline on the provider at once,

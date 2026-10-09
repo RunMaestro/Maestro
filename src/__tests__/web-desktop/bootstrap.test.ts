@@ -10,6 +10,31 @@ const { bootWebDesktop, ensureWebProcess, reportBootFailure } =
 	await import('../../web-desktop/bootstrap');
 
 describe('web-desktop bootstrap process shim', () => {
+	it('uses the injected execution host before preload reads process.platform', async () => {
+		const browserWindow = {
+			__MAESTRO_CONFIG__: {
+				securityToken: 'test',
+				sessionId: null,
+				tabId: null,
+				apiBase: '/test/api',
+				wsUrl: '/test/ws',
+				hostPlatform: 'win32',
+			},
+			process: { env: {}, versions: {}, platform: 'darwin', argv: [] },
+		} as unknown as Window;
+		await bootWebDesktop(browserWindow, {
+			preload: async () => {
+				expect(browserWindow.process?.platform).toBe('win32');
+			},
+			renderer: async () => {},
+		});
+	});
+
+	it('initializes a missing process with the execution host OS', () => {
+		const browserWindow = { __MAESTRO_CONFIG__: { hostPlatform: 'win32' } } as unknown as Window;
+		ensureWebProcess(browserWindow);
+		expect(browserWindow.process?.platform).toBe('win32');
+	});
 	it('supplies an empty argv array before evaluating the shared preload', async () => {
 		const browserWindow = {
 			process: {

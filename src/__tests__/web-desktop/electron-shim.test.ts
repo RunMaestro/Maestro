@@ -322,6 +322,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 
 		// First successful open: a normal boot, no reload. The server names its
 		// run and reports where its counter stands at connect time.
+		first.readyState = InertWebSocket.OPEN;
 		first.emit('open');
 		first.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-1', bridgeSeq: 5 }));
 		expect(window.location.reload).not.toHaveBeenCalled();
@@ -334,32 +335,23 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		expect(url.searchParams.get('since')).toBe('5');
 		expect(url.searchParams.get('epoch')).toBe('run-1');
 
-		// An invoke issued during the gap waits for the resume decision rather
-		// than hanging or being dropped.
+		// Actions issued during a gap fail immediately, never wait then run.
 		second.readyState = InertWebSocket.OPEN;
-		const invoke = ipcRenderer.invoke('some:channel');
+		const invoke = ipcRenderer.invoke('process:spawn', { sessionId: 'remote' });
+		await expect(invoke).rejects.toThrow('Not submitted');
 		second.emit('open');
 		expect(second.sent).toHaveLength(0);
 
-		// The server replayed everything missed: no reload, and the queued invoke
-		// goes out on the new socket. The counter on a RESUMED `connected` must
-		// not move lastSeq: the replayed frames that follow carry their own seq,
-		// and jumping ahead would skip any of them lost to a second drop.
+		// Event replay still resumes in place without resubmitting rejected work.
 		second.emit(
 			'message',
 			frame({ type: 'connected', bridgeEpoch: 'run-1', bridgeSeq: 99, resumed: true })
 		);
 		await new Promise((r) => setTimeout(r, 0));
 		expect(window.location.reload).not.toHaveBeenCalled();
-		const sentInvoke = second.sent
-			.map((f) => JSON.parse(f))
-			.find((f) => f.channel === 'some:channel');
-		expect(sentInvoke).toBeDefined();
-		second.emit(
-			'message',
-			frame({ type: 'bridge.response', requestId: sentInvoke.requestId, ok: true, result: 'ok' })
-		);
-		await expect(invoke).resolves.toBe('ok');
+		expect(
+			second.sent.map((data) => JSON.parse(data)).some((packet) => packet.type === 'bridge.invoke')
+		).toBe(false);
 		second.emit('message', frame({ type: 'bridge.event', channel: 'noop', args: [], seq: 6 }));
 
 		// Drop again; this time the server cannot replay the gap (it restarted).
@@ -375,6 +367,128 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		fourth.emit('open');
 		fourth.emit('message', frame({ type: 'connected' }));
 		expect(window.location.reload).toHaveBeenCalledTimes(2);
+	});
+	it('shows lost-acknowledgement uncertainty and never reissues an accepted mutation', async () => {
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		const submission = ipcRenderer.invoke('process:spawn', { sessionId: 'accepted-on-host' });
+		const rejected = expect(submission).rejects.toThrow('Submission uncertainty');
+		await Promise.resolve();
+		expect(
+			socket.sent
+				.map((data) => JSON.parse(data))
+				.filter((packet) => packet.channel === 'process:spawn')
+		).toHaveLength(1);
+		const next = reconnect(socket);
+		await rejected;
+		expect(document.getElementById('maestro-submission-notice')?.textContent).toContain(
+			'host may have accepted it'
+		);
+		next.readyState = InertWebSocket.OPEN;
+		next.emit('open');
+		next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		await Promise.resolve();
+		expect(
+			next.sent.map((data) => JSON.parse(data)).some((packet) => packet.channel === 'process:spawn')
+		).toBe(false);
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission')).toContain(
+			'process:spawn'
+		);
+	});
+	it('preserves capability-read rejection without showing a submission banner while mutation rejection remains visible', async () => {
+		document.getElementById('maestro-submission-notice')?.remove();
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission');
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		const query = ipcRenderer.invoke('plugins:contributions');
+		const queryRejected = expect(query).rejects.toThrow('PluginsDisabled');
+		await Promise.resolve();
+		const queryRequest = JSON.parse(socket.sent.at(-1)!);
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.response',
+				requestId: queryRequest.requestId,
+				ok: false,
+				error: 'PluginsDisabled',
+			})
+		);
+		await queryRejected;
+		expect(document.getElementById('maestro-submission-notice')).toBeNull();
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission')).toBeNull();
+		const mutation = ipcRenderer.invoke('agentRun:event', { runId: 'rejected', type: 'note' });
+		const mutationRejected = expect(mutation).rejects.toThrow('Permission denied');
+		await Promise.resolve();
+		const mutationRequest = JSON.parse(socket.sent.at(-1)!);
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.response',
+				requestId: mutationRequest.requestId,
+				ok: false,
+				error: 'Permission denied',
+			})
+		);
+		await mutationRejected;
+		expect(document.getElementById('maestro-submission-notice')?.textContent).toContain(
+			'Submission rejected for agentRun:event'
+		);
+	});
+
+	it('rejects disconnected reads without claiming a submission was lost and without replaying them', async () => {
+		document.getElementById('maestro-submission-notice')?.remove();
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission');
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		const query = ipcRenderer.invoke('sessions:getBootstrap');
+		const queryRejected = expect(query).rejects.toThrow('bridge disconnected');
+		await Promise.resolve();
+		const next = reconnect(socket);
+		await queryRejected;
+		expect(document.getElementById('maestro-submission-notice')).toBeNull();
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission')).toBeNull();
+		await expect(ipcRenderer.invoke('plugins:contributions')).rejects.toThrow(
+			'host connection is unavailable'
+		);
+		expect(document.getElementById('maestro-submission-notice')).toBeNull();
+		next.readyState = InertWebSocket.OPEN;
+		next.emit('open');
+		next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		expect(
+			next.sent.map((data) => JSON.parse(data)).some((packet) => packet.type === 'bridge.invoke')
+		).toBe(false);
+	});
+	it('records disconnected diagnostics locally without rejection, replay, or a submission warning', async () => {
+		document.getElementById('maestro-submission-notice')?.remove();
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission');
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		const next = reconnect(socket);
+		const localLog = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			await expect(
+				ipcRenderer.invoke('logger:log', 'error', 'Disconnected diagnostic', 'OfflineSmoke')
+			).resolves.toBeUndefined();
+			expect(localLog.mock.calls.some((args) => args.includes('Disconnected diagnostic'))).toBe(
+				true
+			);
+			expect(document.getElementById('maestro-submission-notice')).toBeNull();
+			expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission')).toBeNull();
+			next.readyState = InertWebSocket.OPEN;
+			next.emit('open');
+			next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+			expect(
+				next.sent.map((data) => JSON.parse(data)).some((packet) => packet.channel === 'logger:log')
+			).toBe(false);
+		} finally {
+			localLog.mockRestore();
+		}
 	});
 });
 

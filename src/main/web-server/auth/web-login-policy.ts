@@ -58,6 +58,16 @@ export function isCliRequest(request: Pick<FastifyRequest, 'headers'>): boolean 
 	return isCliSecret(request.headers[CLI_SECRET_HEADER]);
 }
 
+const deviceAuthorizers = new WeakMap<object, () => WebActingUser | undefined>();
+/** Only the dedicated device route installs this resolver after verifying a pairing credential.
+ * No request header or cookie can install it; legacy browser/login policy is unchanged. */
+export function bindPairedDeviceAuth(
+	request: object,
+	authorize: () => WebActingUser | undefined
+): void {
+	deviceAuthorizers.set(request, authorize);
+}
+
 export interface WebRequestAuth {
 	/** The `webLogin` Encore flag at the time of the request. */
 	required: boolean;
@@ -67,6 +77,7 @@ export interface WebRequestAuth {
 	sessionId: string | undefined;
 	/** `maestro-cli` presenting this boot's secret. Never gated, never signed in. */
 	cli: boolean;
+	method?: 'device-pairing';
 }
 
 /**
@@ -76,6 +87,15 @@ export interface WebRequestAuth {
  * AUTHORIZED when `!required || cli || user`.
  */
 export function resolveWebRequestAuth(request: Pick<FastifyRequest, 'headers'>): WebRequestAuth {
+	const device = deviceAuthorizers.get(request);
+	if (device)
+		return {
+			required: true,
+			user: device(),
+			sessionId: undefined,
+			cli: false,
+			method: 'device-pairing',
+		};
 	const sessionId = readSessionCookie(request);
 	const user = getWebUserStore().resolveSession(sessionId);
 	return {

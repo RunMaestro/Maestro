@@ -225,50 +225,110 @@ of taking a second round trip or trusting a value the caller guessed.
 
 ## Covered
 
-| Point-and-click action                             | CLI                                                                                              |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Bookmark / unbookmark an agent (Cmd+Shift+B)       | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                          |
-| Create / rename / remove an agent                  | `create-agent`, `rename-agent`, `remove-agent`                                                   |
-| Edit Agent modal fields                            | `update-agent`, `settings agent set`                                                             |
-| Switch an agent's provider                         | `update-agent --provider --force`                                                                |
-| Move an agent to a group                           | `update-agent --group`                                                                           |
-| Change working directory                           | `update-agent --cwd`                                                                             |
-| SSH remote execution config                        | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                     |
-| Edit an SSH remote, incl. its `ssh -o` list        | `update-ssh-remote --ssh-option / --clear-ssh-options`                                           |
-| Focus an agent, switch AI/Shell mode               | `focus-agent`, `switch-mode`                                                                     |
-| Create / rename / remove a group                   | `create-group`, `rename-group`, `remove-group`                                                   |
-| Group icon, color, and nesting                     | `create-group --icon/--color/--parent`, `update-group`                                           |
-| Create a worktree agent                            | `create-worktree`                                                                                |
-| New / close / rename a tab                         | `tab new`, `tab close`, `tab rename`                                                             |
-| Star a tab (Cmd+Shift+S)                           | `tab star` / `tab unstar`                                                                        |
-| Mark a tab unread                                  | `tab unread` / `tab read`                                                                        |
-| Toggle Save to History                             | `tab save-to-history`                                                                            |
-| Composer chips: thinking, read-only access         | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                            |
-| Model / effort pills on one tab                    | `tab model`, `tab effort` (`inherit` clears the override)                                        |
-| Enter-to-send chip                                 | `tab enter-to-send`                                                                              |
-| Read one tab's settings back                       | `tab show`, or `session list --json`                                                             |
-| Move Tab to First / Last                           | `tab move <tab-id> first\|last\|<index>`                                                         |
-| Send a message, or run a shell command             | `send`, `dispatch`, `send-terminal`                                                              |
-| Consult another agent (`@mention`)                 | `ask <agent> "<question>" --from <caller>`                                                       |
-| Open a file / URL / terminal tab                   | `open-file`, `open-browser`, `open-terminal`                                                     |
-| Open a modal or dashboard                          | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
-| Auto Run: start, stop, resume, skip, abort         | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                              |
-| Settings, theme, Encore features                   | `settings`, `theme`, `set-theme`, `encore`                                                       |
-| Toasts and center flashes                          | `notify toast`, `notify flash`                                                                   |
-| Save a pasted chat image (right-click)             | `image save` (`image list` to find it)                                                           |
-| Cue subscriptions and scheduled tasks              | `cue trigger`, `cue schedule`, `cue pipeline`                                                    |
-| Snooze a tab, list / wake / dismiss what is parked | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history` |
-| Send Feedback modal (open / file / +1)             | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                      |
-| Feedback: screenshots, support package box         | `feedback submit --attach <png...> --support-package`                                            |
-| Feedback: Running as (account picker)              | `feedback accounts [--use <key> \| --clear]`                                                     |
-| Feedback: Log in to GitHub / Check Again           | `feedback login`, `feedback auth --fresh`                                                        |
-| Create Debug Package (support package)             | `support-package -o <dir> [--no-logs ...]`                                                       |
-| Start / End Performance Profiling                  | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                 |
-| Cue dashboard: subscription on/off switch          | `cue enable <sub>`, `cue disable <sub>` (any event type)                                         |
-| Cue dashboard: activity log                        | `cue activity [-a <agent>] [-n <limit>]`                                                         |
-| Auto Run panel: progress                           | `auto-run-status -a <agent>`                                                                     |
-| Auto Run panel: Change folder                      | `auto-run-folder <path> -a <agent>`                                                              |
-| Playbook Exchange: browse, README, install         | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
+| Point-and-click action                                | CLI                                                                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Bookmark / unbookmark an agent (Cmd+Shift+B)          | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                            |
+| Create / rename / remove an agent                     | `create-agent`, `rename-agent`, `remove-agent`                                                                     |
+| Edit Agent modal fields                               | `update-agent`, `settings agent set`                                                                               |
+| Switch an agent's provider                            | `update-agent --provider --force`                                                                                  |
+| Move an agent to a group                              | `update-agent --group`                                                                                             |
+| Change working directory                              | `update-agent --cwd`                                                                                               |
+| SSH remote execution config                           | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                                       |
+| Edit an SSH remote, incl. its `ssh -o` list           | `update-ssh-remote --ssh-option / --clear-ssh-options`                                                             |
+| Focus an agent, switch AI/Shell mode                  | `focus-agent`, `switch-mode`                                                                                       |
+| Create / rename / remove a group                      | `create-group`, `rename-group`, `remove-group`                                                                     |
+| Group icon, color, and nesting                        | `create-group --icon/--color/--parent`, `update-group`                                                             |
+| Create a worktree agent                               | `create-worktree`                                                                                                  |
+| New / close / rename a tab                            | `tab new`, `tab close`, `tab rename`                                                                               |
+| Star a tab (Cmd+Shift+S)                              | `tab star` / `tab unstar`                                                                                          |
+| Mark a tab unread                                     | `tab unread` / `tab read`                                                                                          |
+| Toggle Save to History                                | `tab save-to-history`                                                                                              |
+| Composer chips: thinking, read-only access            | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                                              |
+| Model / effort pills on one tab                       | `tab model`, `tab effort` (`inherit` clears the override)                                                          |
+| Enter-to-send chip                                    | `tab enter-to-send`                                                                                                |
+| Read one tab's settings back                          | `tab show`, or `session list --json`                                                                               |
+| Move Tab to First / Last                              | `tab move <tab-id> first\|last\|<index>`                                                                           |
+| Send a message, or run a shell command                | `send`, `dispatch`, `send-terminal`                                                                                |
+| Consult another agent (`@mention`)                    | `ask <agent> "<question>" --from <caller>`                                                                         |
+| Open a file / URL / terminal tab                      | `open-file`, `open-browser`, `open-terminal`                                                                       |
+| Open a modal or dashboard                             | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                                  |
+| Auto Run: start, stop, resume, skip, abort            | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                                                |
+| Settings, theme, Encore features                      | `settings`, `theme`, `set-theme`, `encore`                                                                         |
+| Toasts and center flashes                             | `notify toast`, `notify flash`                                                                                     |
+| Save a pasted chat image (right-click)                | `image save` (`image list` to find it)                                                                             |
+| Cue subscriptions and scheduled tasks                 | `cue trigger`, `cue schedule`, `cue pipeline`                                                                      |
+| Snooze a tab, list / wake / dismiss what is parked    | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history`                   |
+| Send Feedback modal (open / file / +1)                | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                                        |
+| Feedback: screenshots, support package box            | `feedback submit --attach <png...> --support-package`                                                              |
+| Feedback: Run as (account picker)                     | `feedback accounts [--use <key> \| --clear]`                                                                       |
+| Feedback: Log in to GitHub / Check Again              | `feedback login`, `feedback auth --fresh`                                                                          |
+| Create Debug Package (support package)                | `support-package -o <dir> [--no-logs ...]`                                                                         |
+| Start / End Performance Profiling                     | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                                   |
+| Cue dashboard: subscription on/off switch             | `cue enable <sub>`, `cue disable <sub>` (any event type)                                                           |
+| Cue dashboard: activity log                           | `cue activity [-a <agent>] [-n <limit>]`                                                                           |
+| Auto Run panel: progress                              | `auto-run-status -a <agent>`                                                                                       |
+| Auto Run panel: Change folder                         | `auto-run-folder <path> -a <agent>`                                                                                |
+| Playbook Exchange: browse, README, install            | `marketplace list`, `marketplace show <id>`, `marketplace import`                                                  |
+| Lite: list / edit / save / delete connection profiles | `lite profile list`, `lite profile read <id>`, `lite profile save --file <json>`, `lite profile remove <id> --yes` |
+| Lite: forget validated host identity                  | `lite profile reset-identity <id> --yes`                                                                           |
+| Lite: connect / reconnect / disconnect / status       | `lite connect <id>`, `lite reconnect`, `lite disconnect`, `lite status`                                            |
+| Lite: connections / commands / dismiss / close        | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                    |
+
+### Isolated Lite connection controls
+
+`maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
+server. It calls the same native dispatcher used by Lite's trusted connection UI
+and menu. Profile persistence, URL/SSH validation, TLS, host authentication,
+validated identity, and tunnel ownership remain native; the CLI implements none
+of those policies. The endpoint imports no full-mode process manager, stores,
+agent detector, or web server.
+
+Discovery lives in `lite-control.json` inside Lite's isolated user-data directory.
+The transport is a per-boot authenticated Windows named pipe or Unix socket,
+not a network listener: remote host web content cannot access it. The shared
+platform path resolver uses the application's normal `maestro` data path plus
+`Lite`, or `$MAESTRO_USER_DATA/Lite` when a base-path override is supplied. Dev
+and packaged Lite use the same default policy. To select an isolated instance
+explicitly, launch `Maestro --lite --lite-user-data <directory>` and run
+`maestro-cli lite --user-data <directory> ...`. These flags name the **final**
+Lite directory, without appending another `Lite`. Relative CLI paths and `~`
+use the existing CLI path resolver.
+
+Startup checks ownership by probing the discovered OS-local endpoint, not by
+trusting a PID that may have been reused. Missing/refused endpoints permit stale
+discovery recovery; accepting endpoints retain ownership regardless of recorded
+PID. Only Lite's generated local named-pipe/temporary Unix socket shapes are
+eligible for a probe; incomplete or nonlocal discovery is replaced without
+connecting to it. Permission errors and inconclusive probe timeouts fail closed.
+Native Lite also holds its isolated user-data single-instance lock during startup.
+
+All commands return readable JSON, including current native state after writes;
+`profile read` and `profile save` also return the individual `profile`. State
+includes connection `status`, optional `error`/`selected`, `picker`,
+`commandsVisible`, `profiles`, and SSH config `aliases`. Profiles expose connection URLs (including Remote
+Control path tokens) to the authorized local caller; never publish this output
+or the local discovery secret. Save takes a complete JSON file with the same
+fields as read: `id`, `name`, `transport` (`ssh` or `https`), `url`, and `ssh`
+for SSH. A minimal direct profile is:
+
+```json
+{
+	"id": "my-host",
+	"name": "My host",
+	"transport": "https",
+	"url": "https://host.example/remote-control-token"
+}
+```
+
+Deletion, validated-identity reset, and close require `--yes`, never native
+dialogs. Dismiss returns to the remote view, or stays on setup when disconnected;
+it never closes Lite. Save and connect uses `lite profile save` followed by
+`lite connect <id>` only after a successful save. A connection's asynchronous progress is readable through `lite
+status`; connection success never bypasses host-side login or identity checks.
+Closing/disconnecting Lite never stops host workloads. Errors return
+`success: false` with a nonzero exit status. A missing acknowledgement reports
+uncertainty and never retries a potentially mutating command; read status before
+acting again.
 
 ## Open gaps
 

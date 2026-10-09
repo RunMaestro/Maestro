@@ -32,7 +32,7 @@ import { isLikelyConcatenatedToolNames } from '../../../constants/app';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import { canAppendToLogEntry } from '../../../utils/logEntries';
 import type { LogEntry } from '../../../types';
 
@@ -45,7 +45,7 @@ export function useAgentThinkingListener(): void {
 		new Map()
 	);
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;

@@ -433,6 +433,7 @@ describe('useRemoteIntegration', () => {
 
 	const mockWeb = {
 		...window.maestro.web,
+		onLiteReady: vi.fn((_getReady: () => boolean) => () => {}),
 		broadcastTabsChange: vi.fn(),
 		broadcastSessionState: vi.fn(),
 	};
@@ -492,7 +493,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteSetSettingHandler = undefined;
 
 		// Reset zustand stores so cross-test state doesn't leak.
-		useSessionStore.setState({ sessions: [] });
+		useSessionStore.setState({ sessions: [], initialLoadComplete: false, sessionsReadOk: false });
 		useNotificationStore.setState({ toasts: [] });
 		useMovementStore.setState({ items: [], dismissedItems: [] });
 		useConcertoCreationActivityStore.setState({ tracks: [] });
@@ -552,6 +553,17 @@ describe('useRemoteIntegration', () => {
 			defaultShowThinking: 'off' as const,
 		};
 	};
+
+	it('reports host readiness only after initialization and a successful session read', () => {
+		const deps = createDeps({ sessions: [] });
+		renderHook(() => useRemoteIntegration(deps));
+		const probe = mockWeb.onLiteReady.mock.calls[0][0];
+		expect(probe()).toBe(false);
+		act(() => useSessionStore.setState({ initialLoadComplete: true }));
+		expect(probe()).toBe(false);
+		act(() => useSessionStore.setState({ sessionsReadOk: true }));
+		expect(probe()).toBe(true);
+	});
 
 	describe('active session broadcast', () => {
 		it('broadcasts active session when live mode is enabled', () => {
@@ -1098,7 +1110,7 @@ describe('useRemoteIntegration', () => {
 						agentSessionId: null,
 						name: 'New desktop tab',
 						starred: false,
-						inputValue: '',
+						inputValue: 'private desktop draft',
 						createdAt: 1700000001000,
 						state: 'idle',
 					},
@@ -1115,11 +1127,13 @@ describe('useRemoteIntegration', () => {
 			});
 			expect(updated?.aiTabs[1]).toMatchObject({
 				id: 'tab-2',
+				inputValue: '',
 				logs: [],
 				stagedImages: [],
 				saveToHistory: true,
 				showThinking: 'off',
 			});
+			expect(updated?.deferredContent?.tabIds).toEqual(['tab-2']);
 			expect(updated?.activeTabId).toBe('tab-1');
 			expect(updated?.unifiedTabOrder).toEqual([
 				{ type: 'ai', id: 'tab-1' },

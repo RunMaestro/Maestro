@@ -12,9 +12,12 @@ import {
 	persistActiveSessionId,
 	readPersistedActiveSessionId,
 	WEB_ACTIVE_SESSION_STORAGE_KEY,
+	persistClientSessionView,
+	restoreClientSessionView,
 } from '../../../renderer/utils/activeSessionPersistence';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 import { installLocalStorageMock, installSessionStorageMock } from '../../helpers/mockLocalStorage';
+import { createMockSession, createMockAITab } from '../../helpers';
 
 vi.mock('../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: vi.fn(() => false),
@@ -58,13 +61,15 @@ describe('activeSessionPersistence', () => {
 	describe('in web-desktop', () => {
 		beforeEach(() => asWebDesktop(true));
 
-		it('records its own pointer while still reporting to the shared one', () => {
+		it('records independent focus without replacing the host pointer', async () => {
+			let hostFocus = 'host-agent';
+			setActiveSessionId.mockImplementation(async (id) => {
+				hostFocus = id;
+			});
+			getActiveSessionId.mockImplementation(async () => hostFocus);
 			persistActiveSessionId('agent-2');
-			expect(sessionStorage.getItem(WEB_ACTIVE_SESSION_STORAGE_KEY)).toBe('agent-2');
-			expect(localStorage.getItem(WEB_ACTIVE_SESSION_STORAGE_KEY)).toBe('agent-2');
-			// Still reported: plugin `session.activated` and the CLI's current-agent
-			// answer are built on the shared value. Only the READ is per-client.
-			expect(setActiveSessionId).toHaveBeenCalledWith('agent-2');
+			expect(await readPersistedActiveSessionId()).toBe('agent-2');
+			expect(hostFocus).toBe('host-agent');
 		});
 
 		it('restores what THIS tab was on, not what another tab moved to', async () => {
@@ -97,18 +102,79 @@ describe('activeSessionPersistence', () => {
 			}
 		});
 
-		it('survives a Storage that refuses the write', () => {
-			// Safari private mode throws on every setItem, and a full quota throws
-			// anywhere. Losing the pointer is acceptable; throwing out of the store
-			// action that set the active agent is not.
-			const blocked = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+		it('never falls back to shared host writes when Storage refuses client focus', async () => {
+			let hostFocus = 'host-agent';
+			setActiveSessionId.mockImplementation(async (id) => {
+				hostFocus = id;
+			});
+			getActiveSessionId.mockImplementation(async () => hostFocus);
+			const blockedSession = vi.spyOn(sessionStorage, 'setItem').mockImplementation(() => {
+				throw new DOMException('QuotaExceededError');
+			});
+			const blockedLocal = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
 				throw new DOMException('QuotaExceededError');
 			});
 			try {
-				expect(() => persistActiveSessionId('agent-3')).not.toThrow();
-				expect(setActiveSessionId).toHaveBeenCalledWith('agent-3');
+				persistActiveSessionId('agent-3');
+				expect(await readPersistedActiveSessionId()).toBe('host-agent');
+				expect(hostFocus).toBe('host-agent');
 			} finally {
-				blocked.mockRestore();
+				blockedSession.mockRestore();
+				blockedLocal.mockRestore();
+			}
+		});
+		it('restores this client draft and tab after rebootstrap without copying host drafts', () => {
+			const host = createMockSession({
+				id: 'shared',
+				activeTabId: 'host-tab',
+				aiTabs: [createMockAITab({ id: 'one' })],
+			});
+			const own = {
+				...host,
+				activeTabId: 'my-tab',
+				terminalDraftInput: 'my terminal draft',
+				aiTabs: [{ ...host.aiTabs[0], inputValue: 'my unsent prompt' }],
+			};
+			persistClientSessionView(own);
+			const restored = restoreClientSessionView({
+				...host,
+				aiTabs: [{ ...host.aiTabs[0], inputValue: 'host unsent prompt' }],
+			});
+			expect(restored.activeTabId).toBe('my-tab');
+			expect(restored.aiTabs[0].inputValue).toBe('my unsent prompt');
+			expect(restored.terminalDraftInput).toBe('my terminal draft');
+			sessionStorage.clear();
+			expect(restoreClientSessionView(own).aiTabs[0].inputValue).toBe('');
+		});
+		it('preserves a native client draft across view recreation without borrowing another window draft', async () => {
+			const originalUrl = window.location.href;
+			const host = createMockSession({
+				id: 'shared',
+				aiTabs: [createMockAITab({ id: 'one', inputValue: 'host draft' })],
+			});
+			try {
+				window.history.replaceState(null, '', '?liteClientId=first-window');
+				persistClientSessionView({
+					...host,
+					activeGroupId: 'first-group',
+					aiTabs: [{ ...host.aiTabs[0], inputValue: 'first draft' }],
+				});
+				persistActiveSessionId('first-agent');
+				sessionStorage.clear();
+				window.history.replaceState(null, '', '?liteClientId=second-window');
+				expect(restoreClientSessionView(host).aiTabs[0].inputValue).toBe('');
+				persistClientSessionView({
+					...host,
+					aiTabs: [{ ...host.aiTabs[0], inputValue: 'second draft' }],
+				});
+				persistActiveSessionId('second-agent');
+				sessionStorage.clear();
+				window.history.replaceState(null, '', '?liteClientId=first-window');
+				expect(restoreClientSessionView(host).aiTabs[0].inputValue).toBe('first draft');
+				expect(restoreClientSessionView(host).activeGroupId).toBe('first-group');
+				expect(await readPersistedActiveSessionId()).toBe('first-agent');
+			} finally {
+				window.history.replaceState(null, '', originalUrl);
 			}
 		});
 	});

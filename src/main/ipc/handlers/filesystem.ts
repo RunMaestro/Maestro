@@ -62,6 +62,7 @@ import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import { captureException } from '../../utils/sentry';
 import { mapWithConcurrency, LOCAL_FILE_DELETE_CONCURRENCY } from '../../utils/concurrency';
+import { getHostDirectoryInfo } from '../../utils/host-directory';
 
 /**
  * Recursively upload a local directory to a remote host over SSH.
@@ -269,6 +270,7 @@ export function registerFilesystemHandlers(): void {
 	ipcMain.handle('fs:homeDir', () => {
 		return os.homedir();
 	});
+	ipcMain.handle('fs:directoryInfo', (_event, input?: string) => getHostDirectoryInfo(input));
 
 	// Read directory contents (supports SSH remote)
 	ipcMain.handle('fs:readDir', async (_, dirPath: string, sshRemoteId?: string) => {

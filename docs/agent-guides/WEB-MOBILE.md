@@ -70,6 +70,37 @@ The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` i
 
 This is why the renderer's own Zustand stores, IPC service wrappers, and components all work in the browser with no web-specific fork.
 
+### Maestro Lite
+
+`src/main/bootstrap.ts` selects `--lite` before importing the full main process.
+The connection picker and managed SSH tunnel live in `src/main/lite/`; the remote
+view loads this same host-served web-desktop bundle with sandboxing, context
+isolation, no Node integration, and no privileged local preload. Lite does not
+initialize local agents, process management, chat stores, automation, or a host
+server. See [Remote Control](../remote-control.md) for startup and connection setup.
+
+The authenticated `/$TOKEN/api/lite/handshake` reports persistent host identity,
+protocol compatibility, owner-renderer readiness, and registered capabilities.
+SSH forwards only through client loopback and preserves host-key checks; direct
+HTTPS requires Web Login and valid TLS. Profiles pin host identity and isolate
+cookies, navigation, and drafts by connection/host. Disconnecting Lite never
+stops accepted host work; the full host and its owning renderer must stay alive.
+
+Browser tabs use one canonical page in `src/main/browser/browser-pages.ts`.
+Native and remote views are presentations of that page, not independent guests.
+Empty offscreen startup paints are not usable frames. Disconnect releases the
+remote input/capture lease without destroying the page; actual owner-window
+destruction ends its workload. Live bootstrap includes incognito tabs without
+persisting their browsing state to disk.
+
+The bridge has explicit remote method/event inventories in
+`src/main/web-server/handlers/bridgeDenyList.ts`; registering an IPC handler does
+not expose it remotely. Host administration, credentials, and trusted native
+request/reply channels stay private. Bridge reconnect can replay received events,
+not submitted mutations: uncertain submissions require inspecting host state
+before resubmitting. Disconnected diagnostics stay local rather than recursively
+reporting bridge failures through the broken bridge.
+
 ### Two Clients, One Sessions Store
 
 The browser runs the same renderer as the desktop, which means every client
@@ -81,6 +112,12 @@ the desktop's stale copy was written again (issues #1398 / #1492).
 These rules keep the clients in sync:
 
 - **Browser bootstrap is thin.** `sessions:getBootstrap` returns agent metadata and tab structure without AI tab logs, legacy session logs, or command history. The selected conversation and legacy shell output load through `sessions:getDeferredContent`; later selected tabs and every visible pane in an active tiled group load when opened. A failed pane read does not block the other visible panes. The `deferredContent` marker tells both `sessions:setMany` and `sessions:setAll` to merge any unloaded fields from the main store before saving, including snoozed tabs. A tab closed by another client is dropped from a stale browser write, and a projected agent absent from main cannot be restored by an old browser copy. A failed initial read shows Retry and keeps persistence disabled; a bridge reconnect retries it. Desktop `sessions:getAll` still reads the full tree.
+- **Live content comes from the owning renderer.** Native snapshot requests
+  populate current incognito/browser/terminal inventory before remote restoration
+  and return the selected transcript for deferred reads. Incognito tabs stay out
+  of persisted sessions while surviving client disconnects.
+  `sessions:transcriptSync` applies owner-created row IDs and runtime state on
+  mirrors; only trusted native renderers may publish or answer snapshot requests.
 - **Agent lifecycle is pushed, not polled.** `sessions:setMany` / `sessions:setAll`
   (`src/main/ipc/handlers/persistence.ts`) report what entered and left the store
   on the `sessions:lifecycleSync` channel, and every other client applies the
@@ -91,16 +128,16 @@ These rules keep the clients in sync:
   tombstones a closed id so a peer flush already in flight cannot re-add it -
   the newest 1000, bounded by COUNT rather than age, because a suspended browser
   tab can be away for hours and no agent id is ever reused, so an old tombstone
-  has nothing left to block but a stale write. A client away long enough to
-  outlive its tombstone reloads on reconnect regardless: `BridgeClient` has no
-  replay, so it re-reads the store rather than flushing what it still held.
-  `setAll` merges its opening snapshot into the stored tree and only broadcasts
-  additions: the client may not have heard about agents a peer created, so an
-  absent id is preserved rather than treated as a close. Real closes arrive as
-  explicit `removeIds` through `setMany`. Both handlers share one main-process
-  write queue, so a final-agent backup cannot overlap a peer addition and later
-  overwrite it. The delta is deliberately lifecycle-only - tab contents, read-state and
-  queued messages are still last-writer-wins.
+  has nothing left to block but a stale write. Reconnect replays only a retained
+  event gap from the same server epoch; otherwise the client reboots from host
+  state rather than writing its stale snapshot. Both save handlers share one
+  main-process write queue. Writes carry their observed baseline and merge
+  changed fields through `src/shared/sessionPersistenceMerge.ts`, preserving
+  peer additions/deletions and reconciling observed tab and queue ordering.
+  An absent agent is not a close: explicit `removeIds` through `setMany` are
+  authoritative. Remote writes cannot replace host-owned transcripts or run
+  state, and client-local navigation and drafts never become another client
+  or the host renderer's view.
 - **Which agent a client is looking at is per-client.** Write and read it through
   `src/renderer/utils/activeSessionPersistence.ts`, never
   `window.maestro.sessions.getActiveSessionId()` directly. A browser tab reloads
@@ -110,24 +147,22 @@ These rules keep the clients in sync:
   an origin, so a localStorage-only answer would have each tab overwriting the
   other's), then `localStorage` (the last choice made in this browser, for a
   freshly opened tab), then the shared value (a first visit should land where the
-  desktop is). Writing still reports to the shared store as well, which is what
-  plugin `session.activated` events and the CLI's current-agent answer are built
-  on. The same rule holds LIVE, not just on load: the web-desktop shim
+  desktop is). Browser writes stop at client view storage: only the full native
+  renderer updates the shared focus used by plugins and CLI. Lite additionally
+  keys its view/drafts by its stable client ID. The same rule holds LIVE: the web-desktop shim
   (`src/web-desktop/electron-shim.ts`) does not route the desktop's
   `active_session_changed` packet, and it drops the `activeTabChanged` flag off
   `tabs_changed`, which is an inventory snapshot and never a navigation request.
   With several operators connected, the desktop user switching agents used to
   yank every phone along with it.
-- **One-shot turn side effects run in the desktop renderer only.** Every
-  `safeSend` is fanned out to every browser, and a web-desktop client's
-  `ownsSession` is permit-all, so with three phones on the LAN one finished turn
-  wrote four History rows, four `query_events` rows and spawned four synopses.
-  `useOwnedSideEffectGate()` (`src/renderer/hooks/agent/internal/useOwnedSessionGate.ts`)
-  is false on web-desktop; the exit and error listeners still flip the tab idle
-  there but skip the History entry, synopsis, stats row, git refresh, queue
-  dequeue and spoken notification. A browser's own queued items still send,
-  through `useQueueProcessing`'s idle drain, which is why the exit reducer holds
-  the queue on a non-owning client instead of dequeuing without dispatching.
+- **One-shot turn side effects and queue consumption belong to the host.**
+  `useOwnedSideEffectGate()`
+  (`src/renderer/hooks/agent/internal/useOwnedSessionGate.ts`) is false on
+  web-desktop. Remote clients must not write History/statistics, spawn synopses,
+  dequeue work, or run completion notifications. `useQueueProcessing` also
+  refuses remote consumption: queued work must survive the client disconnecting.
+  Auto Run starts and controls route through `web:startAutoRun` /
+  `web:controlAutoRun` to the owning renderer, not a second client-side loop.
 - **A tab the browser creates is minted by the DESKTOP, and the browser draws it
   from the answer.** `createNewAITab` (`src/renderer/hooks/tabs/internal/useAITabHandlers.ts`)
   calls `window.maestro.web.requestNewTab` rather than `createTab`, because the

@@ -13,10 +13,10 @@ import { useEffect } from 'react';
 import type { LogEntry, SessionState } from '../../../types';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { generateId } from '../../../utils/ids';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 
 export function useAgentCommandExitListener(): void {
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;

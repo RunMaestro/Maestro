@@ -195,6 +195,8 @@ export interface UseInputHandlersReturn {
 	handlePaste: (e: React.ClipboardEvent) => void;
 	/** Drag-and-drop handler (stages image files) */
 	handleDrop: (e: React.DragEvent) => void;
+	/** Explicitly upload client-picked files and mention their resulting host paths. */
+	handleUploadFiles: (files: File[]) => void;
 	/** Tab completion suggestions for terminal mode */
 	tabCompletionSuggestions: TabCompletionSuggestion[];
 	/** Unified `@` picker rows for the active category (AI mode) */
@@ -1037,6 +1039,39 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[appendMentionsToAiInput, appendMentionsToGroupChatDraft, inputRef]
 	);
 
+	const handleUploadFiles = useCallback(
+		(files: File[]) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			const chatId = useGroupChatStore.getState().activeGroupChatId;
+			if (!chatId && (session?.inputMode !== 'ai' || getCommandMode() !== 'off')) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Upload needs an agent conversation',
+					message: 'Select an AI tab before uploading attachments',
+				});
+				return;
+			}
+			const tabId = session ? getActiveTab(session)?.id : undefined;
+			const ownerId = chatId ?? session?.id;
+			if (!ownerId || (!chatId && !tabId)) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Upload needs a conversation',
+					message: 'Open an AI tab before uploading attachments',
+				});
+				return;
+			}
+			void uploadAndMentionPathlessFiles(
+				files,
+				ownerId,
+				session?.projectRoot ?? session?.fullPath,
+				!!chatId,
+				tabId
+			);
+		},
+		[getCommandMode, uploadAndMentionPathlessFiles]
+	);
+
 	const handleDrop = useCallback(
 		(e: React.DragEvent) => {
 			e.preventDefault();
@@ -1263,6 +1298,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		handleReplayMessage,
 		handlePaste,
 		handleDrop,
+		handleUploadFiles,
 		tabCompletionSuggestions,
 		atMentionItems,
 		atMentionCounts,

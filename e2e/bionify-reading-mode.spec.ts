@@ -254,7 +254,7 @@ Reading mode should emphasize this ${autoRunPhrase}.
 		};
 
 		const probeApp = await electron.launch({
-			args: [path.join(__dirname, '../dist/main/index.js')],
+			args: [path.join(__dirname, '../dist/main/bootstrap.js')],
 			env: launchEnv,
 			timeout: 30000,
 		});
@@ -276,7 +276,7 @@ Reading mode should emphasize this ${autoRunPhrase}.
 		);
 
 		const app = await electron.launch({
-			args: [path.join(__dirname, '../dist/main/index.js')],
+			args: [path.join(__dirname, '../dist/main/bootstrap.js')],
 			env: launchEnv,
 			timeout: 30000,
 		});

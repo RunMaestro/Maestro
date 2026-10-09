@@ -56,7 +56,7 @@ export function registerTerminalCallbacks(
 		return processManager.resize(`${sessionId}-terminal`, cols, rows);
 	});
 
-	// Spawn a dedicated terminal PTY for the web client
+	// Ensure the host terminal exists; reconnecting clients attach to its live handle.
 	// Uses session ID format {sessionId}-terminal so data-listener broadcasts terminal_data
 	server.setSpawnTerminalForWebCallback(
 		async (sessionId: string, config: { cwd: string; cols?: number; rows?: number }) => {
@@ -66,14 +66,6 @@ export function registerTerminalCallbacks(
 				return { success: false, pid: 0 };
 			}
 			const terminalSessionId = `${sessionId}-terminal`;
-			// Check if a process already exists for this terminal session
-			if (processManager.get(terminalSessionId)) {
-				logger.info(
-					`Terminal PTY already exists for web client: ${terminalSessionId}`,
-					'WebServer'
-				);
-				return { success: true, pid: 0 };
-			}
 			// Resolve shell: custom path > default from settings > system default
 			const customShellPath = settingsStore.get<string>('customShellPath', '');
 			const defaultShell = settingsStore.get<string>('defaultShell', getDefaultShell());

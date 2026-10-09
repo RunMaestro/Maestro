@@ -66,7 +66,7 @@ interface BrowserTabGuestContents {
 	paste(): void;
 }
 
-function isAllowedBrowserTabUrl(rawUrl: string): boolean {
+export function isAllowedBrowserTabUrl(rawUrl: string): boolean {
 	if (ALLOWED_BROWSER_TAB_ABOUT_URLS.has(rawUrl)) return true;
 
 	try {
@@ -117,6 +117,108 @@ function attachBrowserTabGuestSecurity(guestContents: BrowserTabGuestContents): 
 
 	guestContents.on('will-redirect', (event, url) => {
 		denyBrowserTabNavigation('will-redirect', event, url);
+	});
+}
+/** Apply the same browser policy to canonical offscreen pages and browser guests. */
+export function attachBrowserPageSecurity(
+	guestContents: Electron.WebContents,
+	browserWindow: BrowserWindow,
+	resolveOwner: () => BrowserWindow = () => browserWindow
+): void {
+	attachBrowserTabGuestSecurity(guestContents);
+	attachBrowserTabContextMenu(guestContents, resolveOwner);
+	// Forward app shortcuts from the webview guest process to the renderer.
+	// When a <webview> has focus, keyboard events are trapped in its guest
+	// Chromium process and never reach the renderer's window keydown handler.
+	//
+	// Strategy: inject a bubble-phase keydown listener into the guest page.
+	// After all page handlers have run, if the page did NOT call preventDefault
+	// on a Meta/Ctrl keystroke, it means the page doesn't use that shortcut -
+	// so we forward it to the app. If the page DID preventDefault, the page's
+	// shortcut takes precedence and we leave it alone.
+	const guest = guestContents;
+
+	// Intercept app shortcuts BEFORE Chromium's built-in handlers consume them.
+	// Some keys (e.g. Cmd+L for address bar focus) are handled by Chromium
+	// internally and never reach the injected JS listener below.
+	guest.on('before-input-event', (event, input) => {
+		if (!input.meta && !input.control && !input.alt) return;
+		if (input.type !== 'keyDown') return;
+		// Pressing Cmd alone fires a keyDown for "Meta" before the V of Cmd+V.
+		// Forwarding it made the renderer blur the webview, so the V landed
+		// outside the page and paste did nothing in any browser-tab field.
+		if (BARE_MODIFIER_KEYS.has(input.key)) return;
+		const k = input.key.toLowerCase();
+		// Cmd/Ctrl+V: drive paste through the trusted guest webContents API.
+		// Chromium's native paste needs the `clipboard-read` permission, which
+		// the permission handler denies to webviews as a security boundary, so
+		// native paste silently fails inside browser-tab form fields (issue
+		// #1063). guest.paste() is a privileged Electron call that bypasses
+		// that web-facing permission, mirroring the right-click Paste menu
+		// item (issue #1065).
+		const isPaste = (input.meta || input.control) && !input.alt && !input.shift && k === 'v';
+		if (isPaste) {
+			event.preventDefault();
+			guest.paste();
+			return;
+		}
+		// Let the remaining standard text-editing shortcuts pass through to
+		// the page. `f` is intentionally NOT in this list: Cmd+F must reach
+		// the renderer so the in-page find bar can open.
+		const isTextEditing =
+			(input.meta || input.control) && !input.alt && !input.shift && 'acxz'.includes(k);
+		const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
+		if (isTextEditing || isRedo) return;
+		event.preventDefault();
+		resolveOwner().webContents.send('browser-tab:shortcutKey', {
+			key: input.key,
+			code: input.code,
+			meta: input.meta,
+			control: input.control,
+			alt: input.alt,
+			shift: input.shift,
+		});
+	});
+
+	// Capture-phase listener: intercepts app shortcuts BEFORE the page
+	// can handle them.  We preventDefault+stopPropagation so the page
+	// never sees the event, then forward it to the app via console.log.
+	const shortcutInjection = `(function(){
+		if(window.__maestroShortcutListenerInstalled)return;
+		window.__maestroShortcutListenerInstalled=true;
+		document.addEventListener('keydown',function(e){
+			var hasMod=e.metaKey||e.ctrlKey;
+			var hasAlt=e.altKey;
+			if((!hasMod&&!hasAlt)||/^(Meta|Control|Alt|Shift)$/.test(e.key))return;
+			var k=e.key.toLowerCase();
+			var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
+			var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
+			if(te||re)return;
+			e.preventDefault();
+			e.stopPropagation();
+			console.log('__MAESTRO_KEY__'+JSON.stringify({
+				key:e.key,code:e.code,
+				meta:e.metaKey,control:e.ctrlKey,
+				alt:e.altKey,shift:e.shiftKey
+			}));
+		},true);
+	})();`;
+	const injectShortcutListener = () => {
+		guest.executeJavaScript(shortcutInjection).catch(() => {});
+	};
+	guest.on('dom-ready', injectShortcutListener);
+	guest.on('did-navigate', injectShortcutListener);
+	// console-message args: (event, level, message, line, sourceId)
+	guest.on('console-message', (...args: unknown[]) => {
+		const message = typeof args[2] === 'string' ? args[2] : String(args[2] ?? '');
+		const prefix = '__MAESTRO_KEY__';
+		if (!message.startsWith(prefix)) return;
+		try {
+			const input = JSON.parse(message.slice(prefix.length));
+			resolveOwner().webContents.send('browser-tab:shortcutKey', input);
+		} catch {
+			// Malformed message, ignore
+		}
 	});
 }
 
@@ -252,14 +354,14 @@ function buildBrowserTabContextMenuTemplate(
  */
 function attachBrowserTabContextMenu(
 	guest: Electron.WebContents,
-	browserWindow: BrowserWindow
+	resolveOwner: () => BrowserWindow
 ): void {
 	guest.on('context-menu', (_event, params) => {
 		const template = buildBrowserTabContextMenuTemplate(guest, params);
 		// Defensive: the builder always emits a navigation section today, but guard
 		// against a future code path returning [] so we never popup() an empty menu.
 		if (template.length === 0) return;
-		Menu.buildFromTemplate(template).popup({ window: browserWindow });
+		Menu.buildFromTemplate(template).popup({ window: resolveOwner() });
 	});
 }
 
@@ -324,105 +426,6 @@ export function attachGuestWebviewSecurity(
 			return;
 		}
 
-		attachBrowserTabGuestSecurity(guestContents as BrowserTabGuestContents);
-
-		// Electron renders no default context menu for guest <webview> content,
-		// so right-click is dead inside browser tabs until we wire one up against
-		// the guest webContents (issue #1065).
-		attachBrowserTabContextMenu(guestContents as unknown as Electron.WebContents, browserWindow);
-
-		// Forward app shortcuts from the webview guest process to the renderer.
-		// When a <webview> has focus, keyboard events are trapped in its guest
-		// Chromium process and never reach the renderer's window keydown handler.
-		//
-		// Strategy: inject a bubble-phase keydown listener into the guest page.
-		// After all page handlers have run, if the page did NOT call preventDefault
-		// on a Meta/Ctrl keystroke, it means the page doesn't use that shortcut -
-		// so we forward it to the app. If the page DID preventDefault, the page's
-		// shortcut takes precedence and we leave it alone.
-		const guest = guestContents as BrowserTabGuestContents;
-
-		// Intercept app shortcuts BEFORE Chromium's built-in handlers consume them.
-		// Some keys (e.g. Cmd+L for address bar focus) are handled by Chromium
-		// internally and never reach the injected JS listener below.
-		guest.on('before-input-event', (event, input) => {
-			if (!input.meta && !input.control && !input.alt) return;
-			if (input.type !== 'keyDown') return;
-			// Pressing Cmd alone fires a keyDown for "Meta" before the V of Cmd+V.
-			// Forwarding it made the renderer blur the webview, so the V landed
-			// outside the page and paste did nothing in any browser-tab field.
-			if (BARE_MODIFIER_KEYS.has(input.key)) return;
-			const k = input.key.toLowerCase();
-			// Cmd/Ctrl+V: drive paste through the trusted guest webContents API.
-			// Chromium's native paste needs the `clipboard-read` permission, which
-			// the permission handler denies to webviews as a security boundary, so
-			// native paste silently fails inside browser-tab form fields (issue
-			// #1063). guest.paste() is a privileged Electron call that bypasses
-			// that web-facing permission, mirroring the right-click Paste menu
-			// item (issue #1065).
-			const isPaste = (input.meta || input.control) && !input.alt && !input.shift && k === 'v';
-			if (isPaste) {
-				event.preventDefault();
-				guest.paste();
-				return;
-			}
-			// Let the remaining standard text-editing shortcuts pass through to
-			// the page. `f` is intentionally NOT in this list: Cmd+F must reach
-			// the renderer so the in-page find bar can open.
-			const isTextEditing =
-				(input.meta || input.control) && !input.alt && !input.shift && 'acxz'.includes(k);
-			const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
-			if (isTextEditing || isRedo) return;
-			event.preventDefault();
-			browserWindow.webContents.send('browser-tab:shortcutKey', {
-				key: input.key,
-				code: input.code,
-				meta: input.meta,
-				control: input.control,
-				alt: input.alt,
-				shift: input.shift,
-			});
-		});
-
-		// Capture-phase listener: intercepts app shortcuts BEFORE the page
-		// can handle them.  We preventDefault+stopPropagation so the page
-		// never sees the event, then forward it to the app via console.log.
-		const shortcutInjection = `(function(){
-			if(window.__maestroShortcutListenerInstalled)return;
-			window.__maestroShortcutListenerInstalled=true;
-			document.addEventListener('keydown',function(e){
-				var hasMod=e.metaKey||e.ctrlKey;
-				var hasAlt=e.altKey;
-				if((!hasMod&&!hasAlt)||/^(Meta|Control|Alt|Shift)$/.test(e.key))return;
-				var k=e.key.toLowerCase();
-				var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
-				var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
-				if(te||re)return;
-				e.preventDefault();
-				e.stopPropagation();
-				console.log('__MAESTRO_KEY__'+JSON.stringify({
-					key:e.key,code:e.code,
-					meta:e.metaKey,control:e.ctrlKey,
-					alt:e.altKey,shift:e.shiftKey
-				}));
-			},true);
-		})();`;
-		const injectShortcutListener = () => {
-			guest.executeJavaScript(shortcutInjection).catch(() => {});
-		};
-		guest.on('dom-ready', injectShortcutListener);
-		guest.on('did-navigate', injectShortcutListener);
-		// console-message args: (event, level, message, line, sourceId)
-		guest.on('console-message', (...args: unknown[]) => {
-			const message = typeof args[2] === 'string' ? args[2] : String(args[2] ?? '');
-			const prefix = '__MAESTRO_KEY__';
-			if (!message.startsWith(prefix)) return;
-			try {
-				const input = JSON.parse(message.slice(prefix.length));
-				browserWindow.webContents.send('browser-tab:shortcutKey', input);
-			} catch {
-				// Malformed message, ignore
-			}
-		});
+		attachBrowserPageSecurity(guestContents, browserWindow);
 	});
 }

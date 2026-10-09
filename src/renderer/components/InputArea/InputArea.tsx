@@ -77,6 +77,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		handleInputKeyDown,
 		handlePaste,
 		handleDrop,
+		onUploadFiles,
 		toggleInputMode,
 		processInput,
 		handleInterrupt,
@@ -695,6 +696,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							enterToSend={enterToSend}
 							setEnterToSend={setEnterToSend}
 							setStagedImages={setStagedImages}
+							onUploadFiles={onUploadFiles}
 							voiceSupported={voice.voiceSupported}
 							isVoiceListening={voice.isListening}
 							onToggleVoiceInput={handleToggleVoiceInput}

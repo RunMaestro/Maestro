@@ -12,7 +12,8 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { createMockSession } from '../../helpers/mockSession';
-import type { BrowserTab, Session, TerminalTab } from '../../../renderer/types';
+import type { Session, TerminalTab } from '../../../renderer/types';
+import type { BrowserTab } from '../../../shared/browserPage';
 
 function terminalTab(overrides: Partial<TerminalTab> = {}): TerminalTab {
 	return {

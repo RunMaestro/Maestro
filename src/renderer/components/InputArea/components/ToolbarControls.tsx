@@ -10,6 +10,7 @@ import {
 	MoreHorizontal,
 	PenLine,
 	Pin,
+	Upload,
 	X,
 } from 'lucide-react';
 import type { Shortcut, Session, Theme, ThinkingMode } from '../../../types';
@@ -35,12 +36,14 @@ import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
 import { ComposerOptionsSheet } from './ComposerOptionsSheet';
 import { ModelEffortPills } from './ModelEffortPills';
+import { isWebDesktop } from '../../../utils/runtimeContext';
 
 interface ToolbarControlsProps {
 	session: Session;
 	theme: Theme;
 	isTerminalMode: boolean;
 	canAttachImages: boolean;
+	onUploadFiles?: (files: File[]) => void;
 	hasReadOnlyCapability: boolean;
 	/** Whether `standard` mode is functional for this agent (has a working relay). */
 	hasStandardCapability: boolean;
@@ -86,6 +89,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 	theme,
 	isTerminalMode,
 	canAttachImages,
+	onUploadFiles,
 	hasReadOnlyCapability,
 	hasStandardCapability,
 	enterToSend,
@@ -124,6 +128,27 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// On a phone every toggle moves into the options sheet, so the inline group
 	// never renders there however the "..." was last left.
 	const showToggleGroup = !phone && (!isNarrowViewport || toolbarExpanded);
+	const fileUploadControl =
+		isAiMode && isWebDesktop() && onUploadFiles ? (
+			<label
+				className="flex items-center justify-center p-1 rounded hover:bg-white/10 cursor-pointer"
+				title="Upload local files to the host"
+				aria-label="Upload local files to the host"
+			>
+				<Upload className="w-5 h-5" />
+				<input
+					type="file"
+					multiple
+					className="hidden"
+					aria-label="Choose local files to upload to the host"
+					onChange={(event) => {
+						const files = Array.from(event.target.files ?? []);
+						event.target.value = '';
+						if (files.length > 0) onUploadFiles(files);
+					}}
+				/>
+			</label>
+		) : null;
 
 	// Voice dictation is a primary touch affordance, so it stays in the always-
 	// visible left action group (next to attach-image) rather than the collapsing
@@ -269,12 +294,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<button
 							onClick={() => document.getElementById('image-file-input')?.click()}
 							className="flex h-9 w-9 items-center justify-center rounded opacity-70"
-							title="Attach Image"
-							aria-label="Attach Image"
+							title={isWebDesktop() ? 'Upload Image to Host' : 'Attach Image'}
+							aria-label={isWebDesktop() ? 'Upload Image to Host' : 'Attach Image'}
 						>
 							<ImageIcon className="w-5 h-5" />
 						</button>
 					)}
+					{fileUploadControl}
 					{showVoiceButton && (
 						<button
 							type="button"
@@ -377,11 +403,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 					<button
 						onClick={() => document.getElementById('image-file-input')?.click()}
 						className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
-						title="Attach Image"
+						title={isWebDesktop() ? 'Upload Image to Host' : 'Attach Image'}
 					>
 						<ImageIcon className="w-4 h-4" />
 					</button>
 				)}
+				{fileUploadControl}
 				{showVoiceButton && (
 					<button
 						type="button"

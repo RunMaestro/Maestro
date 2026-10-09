@@ -41,6 +41,7 @@ import {
 } from '../../stores/retryStore';
 import { queueIsHeldByRetry } from './internal/helpers/exitDequeue';
 import { logger } from '../../utils/logger';
+import { useOwnedSideEffectGate } from './internal/useOwnedSessionGate';
 
 // ============================================================================
 // Dependencies interface
@@ -124,6 +125,7 @@ function buildDispatchDeps(d: UseQueueProcessingDeps): ProcessQueuedItemDeps {
 export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProcessingReturn {
 	const depsRef = useRef(deps);
 	depsRef.current = deps;
+	const sideEffectGate = useOwnedSideEffectGate();
 
 	// --- Narrow reactive subscriptions (not the full sessions array) ---
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
@@ -142,6 +144,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Process a queued item - delegates to agentStore action.
 	// Stable identity: conductor profile + command refs read from depsRef.
 	const processQueuedItem = useCallback(async (sessionId: string, item: QueuedItem) => {
+		if (!sideEffectGate.current?.(sessionId)) return;
 		await useAgentStore
 			.getState()
 			.processQueuedItem(sessionId, item, buildDispatchDeps(depsRef.current));
@@ -169,6 +172,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// back. `drainIdleQueues` does exactly that.
 	const dispatchQueuedItem = useCallback(
 		(session: { id: string; executionQueue: QueuedItem[] }): boolean => {
+			if (!sideEffectGate.current?.(session.id)) return false;
 			const { setSessions } = useSessionStore.getState();
 
 			// Skip paused items: dispatch the first runnable one. If all items are

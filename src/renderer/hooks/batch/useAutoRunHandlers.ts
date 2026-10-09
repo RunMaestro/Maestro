@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import type { Session, BatchRunConfig } from '../../types';
 import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -7,6 +7,13 @@ import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
 import { useBatchStore } from '../../stores/batchStore';
 import { readTaskCountsAndContent } from './useAutoRunDocumentLoader';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	reserveGoalRunLaunch,
+	releaseGoalRunLaunch,
+	waitForGoalRunStart,
+} from '../remote/goalRunLaunch';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -38,7 +45,11 @@ export interface UseAutoRunHandlersDeps {
 	autoRunDocumentList: string[];
 
 	// Batch processor hook
-	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => void;
+	startBatchRun: (
+		sessionId: string,
+		config: BatchRunConfig,
+		folderPath: string
+	) => void | Promise<void>;
 }
 
 /**
@@ -195,9 +206,16 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 	);
 
 	// Handler to start batch run from modal with multi-document support
-	const handleStartBatchRun = useCallback(
-		async (config: BatchRunConfig) => {
-			const activeSession = selectActiveSession(useSessionStore.getState());
+	const launchBatchRun = useCallback(
+		async (
+			config: BatchRunConfig,
+			requestedSessionId?: string,
+			requestedFolderPath?: string
+		): Promise<boolean> => {
+			const activeSession = requestedSessionId
+				? selectSessionById(requestedSessionId)(useSessionStore.getState())
+				: selectActiveSession(useSessionStore.getState());
+			const folderPath = requestedFolderPath ?? activeSession?.autoRunFolderPath ?? '';
 			window.maestro.logger.log('info', 'handleStartBatchRun called', 'AutoRunHandlers', {
 				hasActiveSession: !!activeSession,
 				sessionId: activeSession?.id,
@@ -207,13 +225,18 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 				worktreeBranch: config.worktree?.branchName,
 				worktreeTargetMode: config.worktreeTarget?.mode,
 			});
-			if (!activeSession || !activeSession.autoRunFolderPath) {
+			if (!activeSession || (!folderPath && !config.goalConfig)) {
 				window.maestro.logger.log(
 					'warn',
 					'handleStartBatchRun early return - missing session or folder',
 					'AutoRunHandlers'
 				);
-				return;
+				return false;
+			}
+			if (isWebDesktop()) {
+				await startBatchRun(activeSession.id, config, folderPath);
+				setBatchRunnerModalOpen(false);
+				return true;
 			}
 
 			// Determine target session ID - may differ from activeSession when running in a worktree
@@ -224,6 +247,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 					useSessionStore.getState()
 				);
 				if (!targetSession) {
+					if (requestedSessionId) throw new Error('The requested worktree agent no longer exists');
 					window.maestro.logger.log(
 						'warn',
 						`Target worktree session no longer exists: ${config.worktreeTarget.sessionId}. Falling back to active session.`,
@@ -249,7 +273,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 						title: 'Target Agent Busy',
 						message: 'Target agent is busy. Please try again.',
 					});
-					return;
+					return false;
 				} else {
 					targetSessionId = config.worktreeTarget.sessionId;
 
@@ -283,7 +307,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 				// Spawn a worktree agent and dispatch to it
 				try {
 					const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, config);
-					if (!newSessionId) return; // Error already shown via toast
+					if (!newSessionId) return false; // Error already shown via toast
 					targetSessionId = newSessionId;
 				} catch (err) {
 					window.maestro.logger.log(
@@ -296,8 +320,14 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 						title: 'Worktree Error',
 						message: err instanceof Error ? err.message : String(err),
 					});
-					return;
+					return false;
 				}
+			}
+			if (
+				requestedSessionId &&
+				useBatchStore.getState().batchRunStates[targetSessionId]?.isRunning
+			) {
+				throw new Error('Auto Run is already active for the requested target');
 			}
 
 			window.maestro.logger.log('info', 'Starting batch run', 'AutoRunHandlers', {
@@ -307,10 +337,72 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			});
 			setBatchRunnerModalOpen(false);
 			// Documents stay with the parent session's autoRunFolderPath; execution targets the worktree agent
-			startBatchRun(targetSessionId, config, activeSession.autoRunFolderPath);
+			const runPromise = Promise.resolve(startBatchRun(targetSessionId, config, folderPath));
+			void runPromise.catch((error: unknown) => {
+				notifyToast({
+					type: 'error',
+					title: 'Auto Run failed',
+					message: error instanceof Error ? error.message : String(error),
+				});
+			});
+			// Confirm startup, not completion. The existing runner keeps ownership after this reply.
+			return requestedSessionId ? waitForGoalRunStart(targetSessionId, runPromise) : true;
 		},
 		[startBatchRun, setBatchRunnerModalOpen]
 	);
+
+	const handleStartBatchRun = useCallback(
+		async (config: BatchRunConfig): Promise<void> => {
+			try {
+				await launchBatchRun(config);
+			} catch (error) {
+				notifyToast({
+					type: 'error',
+					title: 'Auto Run start failed',
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
+		},
+		[launchBatchRun]
+	);
+
+	useEffect(() => {
+		if (isWebDesktop()) return;
+		return window.maestro.process.onRemoteStartAutoRun?.(
+			(sessionId, config, folderPath, responseChannel) => {
+				void (async () => {
+					const session = selectSessionById(sessionId)(useSessionStore.getState());
+					if (!session) throw new Error('Auto Run agent no longer exists');
+					if (useSettingsStore.getState().autoRunDisabled)
+						throw new Error('Auto Run is disabled on the host');
+					if (!config.goalConfig && !config.documents?.length)
+						throw new Error('No Auto Run documents selected');
+					if (!reserveGoalRunLaunch(sessionId))
+						throw new Error('Auto Run is already active for this agent');
+					try {
+						const success = await launchBatchRun(config, sessionId, folderPath);
+						window.maestro.process.sendRemoteAutoRunResponse(
+							responseChannel,
+							success
+								? { success: true }
+								: {
+										success: false,
+										error:
+											'Host did not confirm Auto Run startup. Check host state before retrying.',
+									}
+						);
+					} finally {
+						releaseGoalRunLaunch(sessionId);
+					}
+				})().catch((error: unknown) => {
+					window.maestro.process.sendRemoteAutoRunResponse(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		);
+	}, [launchBatchRun]);
 
 	// Memoized function to get task count for a document (used by BatchRunnerModal)
 	const getDocumentTaskCount = useCallback(async (filename: string) => {

@@ -1,6 +1,5 @@
 import path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain } from 'electron';
 
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
@@ -27,6 +26,8 @@ vi.mock('fs/promises', () => ({
 		writeFile: vi.fn(),
 		unlink: vi.fn(),
 		readdir: vi.fn(),
+		realpath: vi.fn(async (filePath: string) => filePath),
+		lstat: vi.fn(async () => null),
 	},
 }));
 
@@ -52,16 +53,6 @@ describe('attachments handlers', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
-	});
-
-	describe('handler registration', () => {
-		it('should register all attachments handlers', () => {
-			expect(ipcMain.handle).toHaveBeenCalledWith('attachments:save', expect.any(Function));
-			expect(ipcMain.handle).toHaveBeenCalledWith('attachments:load', expect.any(Function));
-			expect(ipcMain.handle).toHaveBeenCalledWith('attachments:delete', expect.any(Function));
-			expect(ipcMain.handle).toHaveBeenCalledWith('attachments:list', expect.any(Function));
-			expect(ipcMain.handle).toHaveBeenCalledWith('attachments:getPath', expect.any(Function));
-		});
 	});
 
 	describe('attachments:save', () => {

@@ -186,33 +186,39 @@ interface AgentCapabilities {
 
 ### Capability-to-UI Feature Mapping
 
-| Capability                      | UI Feature                                        | Hidden When False                                                |
-| ------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
-| `supportsResume`                | Resume button                                     | Button disabled                                                  |
-| `supportsReadOnlyMode`          | Read-only toggle                                  | Toggle hidden                                                    |
-| `supportsJsonOutput`            | Output parsing                                    | Raw text fallback                                                |
-| `supportsSessionId`             | Session ID pill                                   | Pill hidden                                                      |
-| `supportsImageInput`            | Image attachment button                           | Button hidden                                                    |
-| `supportsImageInputOnResume`    | Image attach on resume                            | Button hidden on resume                                          |
-| `supportsSlashCommands`         | Slash command autocomplete                        | Autocomplete disabled                                            |
-| `supportsStreamJsonInput`       | Image via stdin (stream-json)                     | Uses file path fallback                                          |
-| `supportsPromptViaStdin`        | Windows sends long prompts over stdin             | Prompt always stays in argv (~32K limit applies)                 |
-| `supportsSessionStorage`        | Sessions browser tab                              | Tab hidden                                                       |
-| `supportsCostTracking`          | Cost widget                                       | Widget hidden                                                    |
-| `supportsUsageStats`            | Token usage display                               | Display hidden                                                   |
-| `supportsBatchMode`             | Batch processing                                  | Persistent process mode                                          |
-| `requiresPromptToStart`         | Eager spawn on create                             | Agent spawns immediately                                         |
-| `supportsStreaming`             | Real-time display                                 | Waits for full response                                          |
-| `supportsModelSelection`        | Model dropdown                                    | Dropdown hidden                                                  |
-| `supportsResultMessages`        | Show only final result                            | Shows all messages                                               |
-| `supportsThinkingDisplay`       | Thinking/reasoning panel                          | Panel hidden                                                     |
-| `supportsContextMerge`          | Receive merged context                            | Merge option hidden                                              |
-| `supportsAdditionalDirectories` | Additional Directories: native `--add-dir` grants | Section still shown; grants are prompt-only and the copy says so |
-| `supportsContextExport`         | Export context                                    | Export option hidden                                             |
-| `supportsWizard`                | Wizard agent selection                            | Agent excluded                                                   |
-| `supportsGroupChatModeration`   | Moderator dropdown                                | Agent excluded                                                   |
-| `usesJsonLineOutput`            | CLI batch parsing strategy                        | Uses JSON fallback                                               |
-| `usesCombinedContextWindow`     | Context bar display                               | Separate bars                                                    |
+| Capability                      | UI Feature                                        | Hidden When False                                                          |
+| ------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------- |
+| `supportsResume`                | Resume button                                     | Button disabled                                                            |
+| `supportsReadOnlyMode`          | Read-only toggle                                  | Toggle hidden                                                              |
+| `supportsJsonOutput`            | Output parsing                                    | Raw text fallback                                                          |
+| `supportsSessionId`             | Session ID pill                                   | Pill hidden                                                                |
+| `supportsImageInput`            | Image attachment button                           | Button hidden                                                              |
+| `supportsImageInputOnResume`    | Image attach on resume                            | Button hidden on resume                                                    |
+| `supportsSlashCommands`         | Slash command autocomplete                        | Autocomplete disabled                                                      |
+| `supportsStreamJsonInput`       | Image via stdin (stream-json)                     | Uses file path fallback                                                    |
+| `supportsPromptViaStdin`        | Windows sends long prompts over stdin             | Uses provider `promptFileArgs` when available; otherwise argv limits apply |
+| `supportsSessionStorage`        | Sessions browser tab                              | Tab hidden                                                                 |
+| `supportsCostTracking`          | Cost widget                                       | Widget hidden                                                              |
+| `supportsUsageStats`            | Token usage display                               | Display hidden                                                             |
+| `supportsBatchMode`             | Batch processing                                  | Persistent process mode                                                    |
+| `requiresPromptToStart`         | Eager spawn on create                             | Agent spawns immediately                                                   |
+| `supportsStreaming`             | Real-time display                                 | Waits for full response                                                    |
+| `supportsModelSelection`        | Model dropdown                                    | Dropdown hidden                                                            |
+| `supportsResultMessages`        | Show only final result                            | Shows all messages                                                         |
+| `supportsThinkingDisplay`       | Thinking/reasoning panel                          | Panel hidden                                                               |
+| `supportsContextMerge`          | Receive merged context                            | Merge option hidden                                                        |
+| `supportsAdditionalDirectories` | Additional Directories: native `--add-dir` grants | Section still shown; grants are prompt-only and the copy says so           |
+| `supportsContextExport`         | Export context                                    | Export option hidden                                                       |
+| `supportsWizard`                | Wizard agent selection                            | Agent excluded                                                             |
+| `supportsGroupChatModeration`   | Moderator dropdown                                | Agent excluded                                                             |
+| `usesJsonLineOutput`            | CLI batch parsing strategy                        | Uses JSON fallback                                                         |
+| `usesCombinedContextWindow`     | Context bar display                               | Separate bars                                                              |
+
+On Windows, OMP uses its provider-defined `promptFileArgs` to receive the complete
+effective UTF-8 prompt as an `@file` attachment instead of exceeding command-line
+limits. The attachment must not follow `--`, which disables OMP attachment
+expansion. OMP does not advertise bare-stdin prompt support. Temporary prompt and
+image files are cleaned up on exit and on failed or superseded launches.
 
 ### Context Window Configuration
 

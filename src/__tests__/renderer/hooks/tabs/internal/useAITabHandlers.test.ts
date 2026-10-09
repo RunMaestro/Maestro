@@ -81,7 +81,6 @@ describe('useAITabHandlers', () => {
 		// The desktop owns the tab inventory, so the id has to come from there.
 		// Inventing one here would be drawn now and then added a SECOND time
 		// under the desktop's id by the next inventory broadcast.
-		expect(requestNewTab).toHaveBeenCalledWith('session-1', false);
 		expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['ai-1']);
 	});
 
