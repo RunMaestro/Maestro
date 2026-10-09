@@ -51,15 +51,21 @@ tar -xzf maestro-server-<version>.tgz
 sudo ./maestro-server/install.sh
 ```
 
+`--agent-cli` replaces the default, so list Claude Code too when you add another agent CLI. For Claude Code and OpenCode:
+
+```bash
+sudo ./maestro-server/install.sh --agent-cli @anthropic-ai/claude-code --agent-cli opencode-ai
+```
+
 The installer adds git and the GitHub CLI, creates the `maestro` user, and picks one Node.js for everything: the one on PATH when it is 22 or newer and the `maestro` user can run it, otherwise Node.js 24 from nodejs.org. With that Node.js it installs Claude Code, the SQLite driver and the CLI, then installs the `maestro-cue` service without starting it.
 
-| Option                      | What it does                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `--agent-cli <npm package>` | Agent CLI to install instead of Claude Code. Repeat it for several, for example `@openai/codex`. |
-| `--no-agent-cli`            | Install no agent CLI                                                                             |
-| `--skip-gh`                 | Leave out the GitHub CLI                                                                         |
-| `--node-major <N>`          | Node.js major version to install when the one on PATH is not usable (default 24)                 |
-| `--enable`                  | Enable and start the service once there is something to run (see [Check](#check))                |
+| Option                      | What it does                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `--agent-cli <npm package>` | Agent CLI to install instead of Claude Code. Repeat it for several, for example `@openai/codex` or `opencode-ai`. |
+| `--no-agent-cli`            | Install no agent CLI                                                                                              |
+| `--skip-gh`                 | Leave out the GitHub CLI                                                                                          |
+| `--node-major <N>`          | Node.js major version to install when the one on PATH is not usable (default 24)                                  |
+| `--enable`                  | Enable and start the service once there is something to run (see [Check](#check))                                 |
 
 The installer exits 0 when done, 1 on an error, and 3 when everything was installed but `--enable` was refused because nothing is imported yet.
 
@@ -188,17 +194,17 @@ Cue can run every provider that has an output parser. Gemini CLI and Hermes have
 
 Readiness looks for each provider's binary on PATH; `bundle import --agent-path <agent id>=<path>` points it at another location.
 
-| Provider (agent id)             | Binary      | Key or token                                                                                                                                 | Login on the server                                       | Login stored in                         |
-| ------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------- |
-| Claude Code (`claude-code`)     | `claude`    | `ANTHROPIC_API_KEY`, or `ANTHROPIC_BASE_URL` with `ANTHROPIC_AUTH_TOKEN` for a gateway                                                       | `claude`, then `/login`                                   | `~/.claude` (or `CLAUDE_CONFIG_DIR`)    |
-| Codex (`codex`)                 | `codex`     | `OPENAI_API_KEY` (see the notes)                                                                                                             | `codex login --device-auth`                               | `~/.codex/auth.json` (or `CODEX_HOME`)  |
-| OpenCode (`opencode`)           | `opencode`  | The key of the model provider it uses. `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` pass; any other `*_API_KEY` needs `MAESTRO_SERVER_ENV_ALLOW` | `opencode auth login`                                     | OpenCode's folder under `XDG_DATA_HOME` |
-| Factory Droid (`factory-droid`) | `droid`     | `FACTORY_API_KEY`                                                                                                                            | Browser only (`droid`, then `/login`): use the key        | -                                       |
-| Copilot-CLI (`copilot-cli`)     | `copilot`   | `COPILOT_GITHUB_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN`                                                                                 | `copilot login`                                           | `~/.copilot` (or `COPILOT_HOME`)        |
-| Antigravity CLI (`antigravity`) | `agy`       | Not verified                                                                                                                                 | Run `agy` once and sign in; later runs reuse that sign-in | Not verified                            |
-| Qwen3 Coder (`qwen3-coder`)     | `qwen`      | Not verified                                                                                                                                 | `qwen`, then `/auth`                                      | Not verified                            |
-| Pi (`pi`), Oh My Pi (`omp`)     | `pi`, `omp` | The model provider's key; which names they read is not verified                                                                              | None that Maestro knows of                                | -                                       |
-| Grok CLI (`grok`)               | `grok`      | Not verified                                                                                                                                 | `grok login`                                              | Not verified                            |
+| Provider (agent id)             | Binary      | Key or token                                                                                                                                 | Login on the server                                       | Login stored in                                                |
+| ------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------- |
+| Claude Code (`claude-code`)     | `claude`    | `ANTHROPIC_API_KEY`, or `ANTHROPIC_BASE_URL` with `ANTHROPIC_AUTH_TOKEN` for a gateway                                                       | `claude`, then `/login`                                   | `~/.claude` (or `CLAUDE_CONFIG_DIR`)                           |
+| Codex (`codex`)                 | `codex`     | `OPENAI_API_KEY` (see the notes)                                                                                                             | `codex login --device-auth`                               | `~/.codex/auth.json` (or `CODEX_HOME`)                         |
+| OpenCode (`opencode`)           | `opencode`  | The key of the model provider it uses. `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` pass; any other `*_API_KEY` needs `MAESTRO_SERVER_ENV_ALLOW` | `opencode auth login`                                     | `~/.local/share/opencode/auth.json` (or under `XDG_DATA_HOME`) |
+| Factory Droid (`factory-droid`) | `droid`     | `FACTORY_API_KEY`                                                                                                                            | Browser only (`droid`, then `/login`): use the key        | -                                                              |
+| Copilot-CLI (`copilot-cli`)     | `copilot`   | `COPILOT_GITHUB_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN`                                                                                 | `copilot login`                                           | `~/.copilot` (or `COPILOT_HOME`)                               |
+| Antigravity CLI (`antigravity`) | `agy`       | Not verified                                                                                                                                 | Run `agy` once and sign in; later runs reuse that sign-in | Not verified                                                   |
+| Qwen3 Coder (`qwen3-coder`)     | `qwen`      | Not verified                                                                                                                                 | `qwen`, then `/auth`                                      | Not verified                                                   |
+| Pi (`pi`), Oh My Pi (`omp`)     | `pi`, `omp` | The model provider's key; which names they read is not verified                                                                              | None that Maestro knows of                                | -                                                              |
+| Grok CLI (`grok`)               | `grok`      | Not verified                                                                                                                                 | `grok login`                                              | Not verified                                                   |
 
 Notes:
 
@@ -274,7 +280,17 @@ docker run --rm --env-file maestro.env \
   maestro-cue cue engine check
 ```
 
-- **Secrets in credential files.** On a VM, `LoadCredential=` files are visible to the service alone, so a check from a shell reports them as missing. The service runs the same check when it starts (`--require-ready`) and logs every gap it still finds.
+- **Secrets in credential files.** On a VM, `LoadCredential=` files are visible to the service alone, so a check from a shell reports them as missing. The service runs the same check when it starts (`--require-ready`) and logs every gap it still finds. To run the check with the service's credentials before you start it, use `systemd-run` with the unit's user, env file and one `LoadCredential=` per drop-in line:
+
+  ```bash
+  sudo systemd-run --quiet --pipe --wait --collect \
+    -p User=maestro -p Group=maestro -p WorkingDirectory=/var/lib/maestro \
+    -p Environment=HOME=/var/lib/maestro -p Environment=MAESTRO_SERVER_MODE=1 \
+    -p EnvironmentFile=-/etc/maestro/maestro.env \
+    -p LoadCredential=GH_WEBHOOK_SECRET:/etc/maestro/credentials/GH_WEBHOOK_SECRET \
+    /usr/local/bin/maestro-cli cue engine check --data-dir /var/lib/maestro/data
+  ```
+
 - **Disabled subscriptions are ignored.** A subscription with `enabled: false` adds no gap: it needs no `gh`, webhook secret, provider binary or target agent until it is enabled. A `cue.yaml` that does not parse is still reported.
 - **One owner per workspace.** When several agents share a workspace, only the owner runs its unpinned subscriptions, so only the owner is checked for them: the agent named by `settings.owner_agent_id` (id, or display name), else the first agent listed. If `owner_agent_id` matches no agent there, or more than one by name, the engine runs none of them and the check reports it as a `cue-config` gap naming the setting and the workspace. A subscription with `agent_id` runs only on that agent, and only when the agent's own workspace holds it; one pinned to an agent in another workspace is reported as `unknown-agent`.
 - **Nothing to run.** A data directory with no agents, or with agents but no enabled subscription on any of them, has a `nothing-to-run` gap: the check exits 1, `--require-ready` refuses to start, and `/readyz` answers 503. That is almost always a bundle that was never imported. An exported agent brings its own subscriptions, if it had any. A server that only runs agents on demand needs no engine: leave the service off.
@@ -515,7 +531,7 @@ docker exec maestro-cue node -e "fetch('http://127.0.0.1:7433/status').then(r=>r
 
 ### Logs
 
-The engine logs one JSON object per line. On a VM they go to the journal (`journalctl -u maestro-cue`), in a container to `docker logs maestro-cue`. Every line the engine prints is JSON, so a log shipper can parse all of them: each has `timestamp`, `level` (`debug`, `info`, `warn` or `error`) and `message`, and a line about a run also carries its `runId`, `subscriptionName`, `pipelineId` and `sessionId`. Prompt text and trigger payloads are never logged.
+The engine logs one JSON object per line. On a VM they go to the journal (`journalctl -u maestro-cue`), in a container to `docker logs maestro-cue`. Every line the engine prints is JSON, so a log shipper can parse all of them. On a VM, `journalctl -u maestro-cue` also shows systemd's own lines about the unit (`Starting`, `Stopped` and the like), which are plain text; `journalctl _SYSTEMD_UNIT=maestro-cue.service -o cat` shows the engine's lines alone. Each line has `timestamp`, `level` (`debug`, `info`, `warn` or `error`) and `message`, and a line about a run also carries its `runId`, `subscriptionName`, `pipelineId` and `sessionId`. Prompt text and trigger payloads are never logged.
 
 Debug output (the `[CueDebug]` lines printed when a `cue.yaml` reloads) is left out of the JSON logs. To see it, run the engine by hand with `--log-format text` instead of `--log-format json`, which prints the debug lines as plain text. `MAESTRO_CUE_DEBUG=0` turns them off in text mode too.
 
