@@ -73,6 +73,15 @@ const UNLIMITED_NOTIFICATIONS = 0;
 const LABEL_WATERMARK_KEY = '__label_watermark__';
 
 /**
+ * `item_key` of the row that marks a pull request or issue subscription as
+ * seeded when no item row says so: its first poll failed, or succeeded with
+ * nothing to record. Without it the next poll would be a first run again and
+ * seed, rather than fire, the first real item. It never matches an item key
+ * (`githubItemKey`), so it is never decided on or fired.
+ */
+const SEED_MARKER_KEY = '__seed_marker__';
+
+/**
  * Pages of 100 issue events fetched per poll. The feed is repo-wide and
  * newest-first, and it carries every issue event (subscribed, mentioned,
  * renamed, ...), not just label changes, so a busy repo can bury a label add
@@ -584,6 +593,15 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
+	/**
+	 * Record that the first run happened. An empty list (or one the merged
+	 * filter emptied) records no item, so without this the next poll would
+	 * seed the first new item instead of firing it.
+	 */
+	function markSeeded(): void {
+		markGitHubItemSeen(subscriptionId, SEED_MARKER_KEY);
+	}
+
 	async function pollPRs(repo: string): Promise<void> {
 		// For "merged" state, query closed PRs and filter by merge status client-side
 		const ghStateArg = stateFilter === 'merged' ? 'closed' : stateFilter;
@@ -626,6 +644,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 
 		if (isFirstRun) {
+			markSeeded();
 			onLog('info', `[CUE] "${triggerName}" seeded ${items.length} existing pull_request(s)`);
 		}
 	}
@@ -664,6 +683,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 
 		if (isFirstRun) {
+			markSeeded();
 			onLog('info', `[CUE] "${triggerName}" seeded ${items.length} existing issue(s)`);
 		}
 	}
@@ -909,7 +929,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			// created during the outage by seeding them as "already seen")
 			if (!firstPollAttempted) {
 				try {
-					markGitHubItemSeen(subscriptionId, '__seed_marker__');
+					markSeeded();
 					onLog(
 						'info',
 						`[CUE] First poll for "${triggerName}" failed - seed marker set to prevent silent event loss on recovery`

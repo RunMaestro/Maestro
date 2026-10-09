@@ -412,7 +412,7 @@ Polls GitHub for new pull requests using the GitHub CLI (`gh`).
 **Behavior:**
 
 - Requires the [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated
-- On first run, seeds the "seen" list with existing PRs - only **new** PRs trigger events
+- On first run, seeds the "seen" list with existing PRs - only **new** PRs trigger events. A first poll that finds no matching PRs (a new repository, say) still counts, so the first PR opened after it fires
 - Tracks seen PRs in a local database with 30-day retention
 - Auto-detects the repository from the git remote if `repo` is not specified
 

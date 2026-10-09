@@ -546,7 +546,13 @@ describe('cue-github-poller', () => {
 		await vi.advanceTimersByTimeAsync(2000);
 
 		expect(config.onEvent).not.toHaveBeenCalled();
-		expect(mockMarkGitHubItemSeen).toHaveBeenCalledTimes(3);
+		// One row per existing item, plus the seed marker.
+		expect(mockMarkGitHubItemSeen.mock.calls.map((c) => c[1])).toEqual([
+			'pr:owner/repo:1',
+			'pr:owner/repo:2',
+			'pr:owner/repo:3',
+			'__seed_marker__',
+		]);
 		expect(config.onLog).toHaveBeenCalledWith(
 			'info',
 			expect.stringContaining('seeded 3 existing pull_request(s)')
@@ -816,6 +822,177 @@ describe('cue-github-poller', () => {
 			const event = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
 			expect(event.payload.number).toBe(1);
 
+			cleanup();
+		});
+	});
+
+	describe('a first poll that finds nothing', () => {
+		/**
+		 * A real `cue_github_seen` table in miniature, so what one poll records
+		 * decides whether the next poll is a first run.
+		 */
+		function useSeenTable(): Map<string, { lastRevision: string | null; fireCount: number }> {
+			const rows = new Map<string, { lastRevision: string | null; fireCount: number }>();
+			const rowKey = (subId: string, key: string) => `${subId}\u0000${key}`;
+			mockHasAnyGitHubSeen.mockImplementation((subId) =>
+				[...rows.keys()].some((k) => k.startsWith(`${subId}\u0000`))
+			);
+			mockMarkGitHubItemSeen.mockImplementation((subId, key, lastRevision) => {
+				if (!rows.has(rowKey(subId, key))) {
+					rows.set(rowKey(subId, key), { lastRevision: lastRevision ?? null, fireCount: 0 });
+				}
+			});
+			mockIsGitHubItemSeen.mockImplementation((subId, key) => rows.has(rowKey(subId, key)));
+			mockGetGitHubItemState.mockImplementation(
+				(subId, key) => rows.get(rowKey(subId, key)) ?? null
+			);
+			mockSetGitHubItemRevision.mockImplementation((subId, key, revision) => {
+				const row = rows.get(rowKey(subId, key));
+				rows.set(rowKey(subId, key), { lastRevision: revision, fireCount: row?.fireCount ?? 0 });
+			});
+			return rows;
+		}
+
+		/** Answer `gh <verb> list` with each poll's next list, the last one repeating. */
+		function serveLists(verb: 'pr list' | 'issue list', lists: unknown[][]) {
+			let call = 0;
+			mockExecFile.mockImplementation(
+				(
+					cmd: string,
+					args: string[],
+					_opts: unknown,
+					cb: (err: Error | null, stdout: string, stderr: string) => void
+				) => {
+					const key = `${cmd} ${args.join(' ')}`;
+					if (key.includes('--version')) return cb(null, '2.0.0', '');
+					if (key.includes(verb)) {
+						const list = lists[Math.min(call++, lists.length - 1)];
+						return cb(null, JSON.stringify(list), '');
+					}
+					cb(new Error(`Command not found: ${key}`), '', '');
+				}
+			);
+		}
+
+		const firedNumbers = (config: CueGitHubPollerConfig) =>
+			(config.onEvent as ReturnType<typeof vi.fn>).mock.calls.map(
+				(c) => (c[0] as CueEvent).payload.number
+			);
+
+		it('fires the first pull request opened after an empty first poll, once', async () => {
+			useSeenTable();
+			const config = makeConfig({ pollMinutes: 1 });
+			serveLists('pr list', [[], [samplePRs[0]]]);
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(config.onEvent).not.toHaveBeenCalled();
+
+			await vi.advanceTimersByTimeAsync(60000);
+			await vi.advanceTimersByTimeAsync(60000);
+			expect(firedNumbers(config)).toEqual([1]);
+			cleanup();
+		});
+
+		it('fires the first issue opened after an empty first poll, once', async () => {
+			useSeenTable();
+			const config = makeConfig({ eventType: 'github.issue', pollMinutes: 1 });
+			serveLists('issue list', [[], [sampleIssues[0]]]);
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(config.onEvent).not.toHaveBeenCalled();
+
+			await vi.advanceTimersByTimeAsync(60000);
+			await vi.advanceTimersByTimeAsync(60000);
+			expect(firedNumbers(config)).toEqual([10]);
+			cleanup();
+		});
+
+		it('fires a merged pull request when the first poll had only unmerged closed ones', async () => {
+			useSeenTable();
+			const config = makeConfig({ ghState: 'merged', pollMinutes: 1 });
+			const closed = { ...samplePRs[1], state: 'CLOSED', mergedAt: null };
+			const merged = { ...samplePRs[0], state: 'MERGED', mergedAt: '2026-03-05T00:00:00Z' };
+			serveLists('pr list', [[closed], [merged, closed]]);
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2000);
+			await vi.advanceTimersByTimeAsync(60000);
+			expect(firedNumbers(config)).toEqual([1]);
+			cleanup();
+		});
+
+		it('still seeds the items a first poll finds, and fires only what comes after', async () => {
+			const rows = useSeenTable();
+			const config = makeConfig({ pollMinutes: 1 });
+			serveLists('pr list', [
+				[samplePRs[0], samplePRs[1]],
+				[samplePRs[2], samplePRs[0], samplePRs[1]],
+			]);
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(rows.has('session-1:test-sub\u0000pr:owner/repo:1')).toBe(true);
+			expect(rows.has('session-1:test-sub\u0000pr:owner/repo:2')).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(60000);
+			expect(firedNumbers(config)).toEqual([3]);
+			cleanup();
+		});
+
+		it('fires the first label added after an empty first run of the label poller, once', async () => {
+			useSeenTable();
+			const config = makeConfig({ eventType: 'github.label', pollMinutes: 1 });
+			const added = {
+				id: 7000,
+				created_at: '2026-03-04T00:00:00Z',
+				label: 'ready',
+				actor: 'alice',
+				number: 42,
+				title: 'Add feature',
+				url: 'https://github.com/owner/repo/pull/42',
+				body: '',
+				state: 'open',
+				labels: ['ready'],
+				is_pr: true,
+				merged: false,
+				author: 'bob',
+				item_created_at: '2026-03-01T00:00:00Z',
+				item_updated_at: '2026-03-04T00:00:00Z',
+			};
+			let poll = 0;
+			mockExecFile.mockImplementation(
+				(
+					cmd: string,
+					args: string[],
+					_opts: unknown,
+					cb: (err: Error | null, stdout: string, stderr: string) => void
+				) => {
+					const key = `${cmd} ${args.join(' ')}`;
+					if (key.includes('--version')) return cb(null, '2.0.0', '');
+					if (key.includes('issues/events')) {
+						if (key.includes('page=1')) poll++;
+						const page = /[?&]page=(\d+)/.exec(key)?.[1];
+						return cb(null, JSON.stringify(poll >= 2 && page === '1' ? [added] : []), '');
+					}
+					cb(new Error(`Command not found: ${key}`), '', '');
+				}
+			);
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(mockSetGitHubItemRevision).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'__label_watermark__',
+				'0'
+			);
+			expect(config.onEvent).not.toHaveBeenCalled();
+
+			await vi.advanceTimersByTimeAsync(60000);
+			await vi.advanceTimersByTimeAsync(60000);
+			expect(firedNumbers(config)).toEqual([42]);
 			cleanup();
 		});
 	});
