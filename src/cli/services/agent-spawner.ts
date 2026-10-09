@@ -14,7 +14,10 @@ import type {
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
-import { getAgentDefinition, type AgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import {
+	getAgentDefinition,
+	type AgentDefinition,
+} from '../../shared/maestro-lib/providers/definitions';
 import {
 	getAgentCapabilities,
 	hasCapability,
@@ -1056,17 +1059,11 @@ async function spawnJsonLineAgent(
 		prompt
 	);
 
-	const noPromptSeparator = !!def?.noPromptSeparator;
-
-
 	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
-		: await resolveLocalAgentCommand(toolType).catch((error) => {
-				promptFileArgs?.cleanup();
-				throw error;
-			});
+		: await resolveLocalAgentCommand(toolType);
 
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
@@ -1099,99 +1096,103 @@ async function spawnJsonLineAgent(
 	);
 
 	const promptFileArgs = buildPromptFileArgs(def, effectivePrompt, plan.target.kind === 'remote');
-	let spawnCommand = plan.command;
-	let spawnArgs = promptFileArgs ? [...baseArgs, ...promptFileArgs.args] : plan.args;
-	let spawnCwd = plan.cwd;
-	let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
-	let sshStdinScript: string | undefined;
+	try {
+		let spawnCommand = plan.command;
+		let spawnArgs = promptFileArgs ? [...baseArgs, ...promptFileArgs.args] : plan.args;
+		let spawnCwd = plan.cwd;
+		let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
+		let sshStdinScript: string | undefined;
 
-	if (plan.target.kind === 'remote' && sshRemoteConfig) {
-		// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
-		// fallback for agents without native --append-system-prompt support
-		// also reaches the SSH remote. baseArgs already carries the native
-		// flag for agents that support it.
-		const wrapped = await maybeWrapSpawnWithSsh(
-			{
-				command: agentCommand,
-				args: plan.args,
-				cwd,
-				prompt: effectivePrompt,
-				customEnvVars: plan.envVars,
-				agentBinaryName: def?.binaryName,
-				noPromptSeparator,
-				promptArgs: def?.promptArgs,
-				querySource: overrides.querySource,
-			},
-			sshRemoteConfig
-		);
-		if (!wrapped.sshRemoteUsed) {
-			return sshUnresolvedFailure(sshRemoteConfig);
+		if (plan.target.kind === 'remote' && sshRemoteConfig) {
+			// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
+			// fallback for agents without native --append-system-prompt support
+			// also reaches the SSH remote. baseArgs already carries the native
+			// flag for agents that support it.
+			const wrapped = await maybeWrapSpawnWithSsh(
+				{
+					command: agentCommand,
+					args: plan.args,
+					cwd,
+					prompt: effectivePrompt,
+					customEnvVars: plan.envVars,
+					agentBinaryName: def?.binaryName,
+					noPromptSeparator: !!def?.noPromptSeparator,
+					promptArgs: def?.promptArgs,
+					querySource: overrides.querySource,
+				},
+				sshRemoteConfig
+			);
+			if (!wrapped.sshRemoteUsed) {
+				return sshUnresolvedFailure(sshRemoteConfig);
+			}
+			({ spawnCommand, spawnArgs, spawnCwd, spawnEnv, sshStdinScript } =
+				applySshWrapResult(wrapped));
 		}
-		({ spawnCommand, spawnArgs, spawnCwd, spawnEnv, sshStdinScript } = applySshWrapResult(wrapped));
-	}
 
-	// Resolve the output parser before spawning so a misconfigured agent type
-	// fails fast instead of leaving an orphaned child process. Reviewer flagged
-	// the previous post-spawn null-check as a process leak (greptile P1).
-	const parser = createOutputParser(toolType);
-	if (!parser) {
+		// Resolve the output parser before spawning so a misconfigured agent type
+		// fails fast instead of leaving an orphaned child process. Reviewer flagged
+		// the previous post-spawn null-check as a process leak (greptile P1).
+		const parser = createOutputParser(toolType);
+		if (!parser) {
+			return spawnFailureResult(`No parser available for agent type: ${toolType}`);
+		}
+
+		// The shared capture applies the provider's usage rule (Codex reports a
+		// running session total that is turned into deltas before summing; everyone
+		// else reports per-step values that sum as they are), keeps the first
+		// session id announced, and falls back to the streamed text when no result
+		// event carries any. This path settles on the text of `error` events, so the
+		// in-band classifier stays off and its outcomes are what they always were.
+		const capture = new TurnCapture(toolType, parser, { classifyInBandErrors: false });
+
+		const turn = startTurn(
+			{
+				command: spawnCommand,
+				args: spawnArgs,
+				cwd: spawnCwd,
+				env: spawnEnv,
+				stdin: sshStdinScript || plan.stdin,
+			},
+			{
+				onStdout: () => wakaHeartbeat?.(),
+				onEvent: (event) => capture.handleEvent(event),
+				onOversizedLine: warnOversizedLineBuffer,
+			},
+			{ ...cliTurnOptions(overrides.signal), parser }
+		);
+		const exit = await turn.done;
+		if (exit.spawnError) {
+			const agentName = def?.name || toolType;
+			return spawnFailureResult(`Failed to spawn ${agentName}: ${exit.spawnError.message}`);
+		}
+
+		// Soft success: agents like Grok may exit non-zero after a full
+		// answer (e.g. --max-turns) with no structured error event. The shared
+		// resolver reports that as `completed-with-warning`, still a success;
+		// the answer is preferred over raw stderr when there is no errorText.
+		return resolveCliTurnResult({
+			toolType,
+			provider: parser,
+			exitCode: exit.exitCode,
+			signal: exit.signal,
+			interrupted: exit.interrupted,
+			stderrText: exit.stderrText,
+			stdoutText: exit.stdoutText,
+			stdinError: exit.stdinError,
+			errorText: capture.errorText,
+			answerText: capture.answerText,
+			resultMessageSeen: capture.resultMessageSeen,
+			agentSessionId: capture.sessionId,
+			usageStats: capture.usage,
+			// This path has always accepted a clean exit with no answer, and a
+			// non-zero exit after a full answer (Grok with `--max-turns`).
+			strictEmptyAnswer: false,
+			answerOutranksBareExit: true,
+			droppedOutputBytes: exit.droppedOutputBytes,
+		});
+	} finally {
 		promptFileArgs?.cleanup();
-		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
 	}
-
-	// The shared capture applies the provider's usage rule (Codex reports a
-	// running session total that is turned into deltas before summing; everyone
-	// else reports per-step values that sum as they are), keeps the first
-	// session id announced, and falls back to the streamed text when no result
-	// event carries any. This path settles on the text of `error` events, so the
-	// in-band classifier stays off and its outcomes are what they always were.
-	const capture = new TurnCapture(toolType, parser, { classifyInBandErrors: false });
-
-	const turn = startTurn(
-		{
-			command: spawnCommand,
-			args: spawnArgs,
-			cwd: spawnCwd,
-			env: spawnEnv,
-			stdin: sshStdinScript || plan.stdin,
-		},
-		{
-			onStdout: () => wakaHeartbeat?.(),
-			onEvent: (event) => capture.handleEvent(event),
-			onOversizedLine: warnOversizedLineBuffer,
-		},
-		{ ...cliTurnOptions(overrides.signal), parser }
-	);
-	const exit = await turn.done.finally(() => promptFileArgs?.cleanup());
-	if (exit.spawnError) {
-		const agentName = def?.name || toolType;
-		return spawnFailureResult(`Failed to spawn ${agentName}: ${exit.spawnError.message}`);
-	}
-
-	// Soft success: agents like Grok may exit non-zero after a full
-	// answer (e.g. --max-turns) with no structured error event. The shared
-	// resolver reports that as `completed-with-warning`, still a success;
-	// the answer is preferred over raw stderr when there is no errorText.
-	return resolveCliTurnResult({
-		toolType,
-		provider: parser,
-		exitCode: exit.exitCode,
-		signal: exit.signal,
-		interrupted: exit.interrupted,
-		stderrText: exit.stderrText,
-		stdoutText: exit.stdoutText,
-		stdinError: exit.stdinError,
-		errorText: capture.errorText,
-		answerText: capture.answerText,
-		resultMessageSeen: capture.resultMessageSeen,
-		agentSessionId: capture.sessionId,
-		usageStats: capture.usage,
-		// This path has always accepted a clean exit with no answer, and a
-		// non-zero exit after a full answer (Grok with `--max-turns`).
-		strictEmptyAnswer: false,
-		answerOutranksBareExit: true,
-		droppedOutputBytes: exit.droppedOutputBytes,
-	});
 }
 
 /**
