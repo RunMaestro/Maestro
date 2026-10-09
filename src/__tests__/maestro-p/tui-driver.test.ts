@@ -257,7 +257,21 @@ describe('TuiDriver', () => {
 			const driver = await makeDriver();
 			const trustHandler = vi.fn();
 			driver.on('trust-accepted', trustHandler);
-			feed('Yes, I trust this folder\n');
+			feed('❯ 1. Yes, I trust this folder\n  2. No, exit\n');
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('\r');
+		});
+
+		it('waits for the selector to paint before answering', async () => {
+			const driver = await makeDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+			// The dialog text can land a chunk ahead of the `❯` line; an Enter sent
+			// now would confirm whichever option the selector turns out to be on.
+			feed('Quick safety check: Is this a project you created or one you trust?\n');
+			feed('  1. Yes, I trust this folder\n');
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			feed('❯ 1. Yes, I trust this folder\n  2. No, exit\n');
 			expect(trustHandler).toHaveBeenCalledTimes(1);
 			expect(mockPtyProcess.write).toHaveBeenCalledWith('\r');
 		});
@@ -439,11 +453,66 @@ describe('TuiDriver', () => {
 			feed('\r❯ Try "edit <filepath>"\n');
 			expect(readyHandler).toHaveBeenCalledTimes(1);
 		});
+	});
 
-		it('keeps the plain Enter without the opt-in', async () => {
-			await makeDriver();
+	describe('\'workspace-untrusted\' event (trust prompt on "No, exit", no opt-in)', () => {
+		// The home dir and the system temp dir: claude highlights "No, exit".
+		const PROMPT_ON_NO =
+			'Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?\n1.Yes,Itrustthisfolder\n❯2.No,exit\n';
+		const writes = () => mockPtyProcess.write.mock.calls.map((call) => call[0]);
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('emits workspace-untrusted instead of pressing Enter on "No, exit"', async () => {
+			const driver = await makeDriver();
+			const untrusted = vi.fn();
+			const trustHandler = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			driver.on('trust-accepted', trustHandler);
 			feed(PROMPT_ON_NO);
-			expect(writes()).toEqual(['\r']);
+			expect(untrusted).toHaveBeenCalledTimes(1);
+			expect(trustHandler).not.toHaveBeenCalled();
+			expect(writes()).toEqual([]);
+		});
+
+		it('never presses Enter afterwards, and neither ready nor ready-timeout fires', async () => {
+			const driver = await makeDriver();
+			const untrusted = vi.fn();
+			const readyHandler = vi.fn();
+			const readyTimeout = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			driver.on('ready', readyHandler);
+			driver.on('ready-timeout', readyTimeout);
+			feed('Quick safety check\n  1. Yes, I trust this folder\n❯ 2. No, exit\n');
+			// A redraw of the same dialog is not a second event.
+			feed('❯ 2. No, exit\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(untrusted).toHaveBeenCalledTimes(1);
+			// The dialog's own `❯ ` is not claude's input prompt.
+			expect(readyHandler).not.toHaveBeenCalled();
+			expect(readyTimeout).not.toHaveBeenCalled();
+			expect(writes()).toEqual([]);
+		});
+
+		it('is not raised when acceptWorkspaceTrust is set', async () => {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp',
+				env: {},
+				acceptWorkspaceTrust: true,
+			});
+			await driver.start();
+			const untrusted = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			feed(PROMPT_ON_NO);
+			expect(untrusted).not.toHaveBeenCalled();
+			expect(writes()).toEqual(['\x1b[B']);
 		});
 	});
 

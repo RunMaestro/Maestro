@@ -49,8 +49,10 @@ export interface TuiDriverOptions {
 	// when it highlights "No, exit" (claude 2.1.26x does in the home and temp
 	// dirs, and the blind unblock Enter would quit). Trusting grants claude read,
 	// edit, and execute rights in `cwd`, and claude remembers it, so this is only
-	// for a cwd the caller owns and keeps empty - Maestro's usage probe folder.
-	// Never set it for an agent's working directory.
+	// for a cwd the caller owns and keeps empty - Maestro's usage probe folder -
+	// or one the user explicitly opted into via MAESTRO_P_ACCEPT_WORKSPACE_TRUST.
+	// Without it, a dialog that defaults to "No, exit" is never answered: the
+	// driver emits 'workspace-untrusted' instead of pressing Enter on it.
 	acceptWorkspaceTrust?: boolean;
 }
 
@@ -305,6 +307,7 @@ export type TuiDriverEvent =
 	| 'line'
 	| 'exit'
 	| 'trust-accepted'
+	| 'workspace-untrusted'
 	| 'bypass-accepted';
 
 export class TuiDriver extends EventEmitter {
@@ -327,6 +330,12 @@ export class TuiDriver extends EventEmitter {
 	/** Set once send() starts typing; the billing check reads the screen only before that. */
 	private inputTyped = false;
 	private trustHandled = false;
+	/**
+	 * The trust dialog defaulted to "No, exit" and acceptWorkspaceTrust is off.
+	 * Terminal: no Enter is ever written after this, since any Enter would
+	 * confirm "No, exit" and claude would quit with nothing to say why.
+	 */
+	private workspaceUntrusted = false;
 	private bypassHandled = false;
 	/** Trust-prompt selection in progress (acceptWorkspaceTrust only). */
 	private trustSelection: TrustSelection | null = null;
@@ -394,6 +403,8 @@ export class TuiDriver extends EventEmitter {
 		// Mid trust selection an Enter confirms whichever option the dialog shows
 		// at that instant, and after a re-render that is "No, exit".
 		if (this.isSelectingTrust()) return false;
+		// The dialog is parked on "No, exit" and we are not allowed to move it.
+		if (this.workspaceUntrusted) return false;
 		// The bypass-permissions gate defaults to "No, exit", so a bare Enter here
 		// would quit claude. Handle it with Down+Enter first; if it fired this
 		// tick, that IS the unblock action - don't also send a plain Enter (which
@@ -452,6 +463,29 @@ export class TuiDriver extends EventEmitter {
 		this.rollingBuffer = '';
 		this.emit('bypass-accepted');
 		return true;
+	}
+
+	// The trust dialog without acceptWorkspaceTrust. Enter accepts whatever the
+	// selector is on, which is "Yes, I trust this folder" in an ordinary folder
+	// and "No, exit" in the home and temp dirs (claude 2.1.26x+). Pressing Enter
+	// on "No" quits claude and the caller only ever sees `tui_exited`, so name
+	// the failure instead and leave the dialog alone: trusting a folder is the
+	// user's call. Until a paint shows where the selector sits, wait - the
+	// blind-tap loop is still the fallback for a reworded dialog.
+	private answerTrustWithoutOptIn(): void {
+		const selected = latestTrustSelection(this.rollingBuffer);
+		if (selected === null) return;
+		this.trustHandled = true;
+		if (selected === 'no') {
+			this.workspaceUntrusted = true;
+			// Nothing left to unblock: the caller ends the run on this event, and a
+			// later blind tap or ready-timeout would only muddy the reason.
+			this.clearReadyTimers();
+			this.emit('workspace-untrusted');
+			return;
+		}
+		this.tryUnblockTap();
+		this.emit('trust-accepted');
 	}
 
 	private isSelectingTrust(): boolean {
@@ -760,8 +794,8 @@ export class TuiDriver extends EventEmitter {
 		if (this.isSelectingTrust()) {
 			this.observeTrustSelection(stripped);
 		} else if (!this.trustHandled && TRUST_PROMPT_REGEX.test(this.rollingBuffer)) {
-			this.trustHandled = true;
 			if (this.options.acceptWorkspaceTrust) {
+				this.trustHandled = true;
 				this.trustSelection = {
 					text: '',
 					downs: 0,
@@ -772,13 +806,17 @@ export class TuiDriver extends EventEmitter {
 				};
 				this.observeTrustSelection(this.rollingBuffer);
 			} else {
-				this.tryUnblockTap();
-				this.emit('trust-accepted');
+				this.answerTrustWithoutOptIn();
 			}
 		}
 		// While the trust dialog is still being answered, its `❯` selector is not
-		// the input prompt.
-		if (!this.readyEmitted && !this.isSelectingTrust() && READY_REGEX.test(this.rollingBuffer)) {
+		// the input prompt. Nor is it once the dialog is parked on "No, exit".
+		if (
+			!this.readyEmitted &&
+			!this.workspaceUntrusted &&
+			!this.isSelectingTrust() &&
+			READY_REGEX.test(this.rollingBuffer)
+		) {
 			this.readyEmitted = true;
 			this.clearReadyTimers();
 			this.emit('ready');
