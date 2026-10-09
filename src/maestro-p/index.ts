@@ -28,6 +28,7 @@ import { diagnoseApiUsageBilling } from './billing-mode';
 import { buildChildEnv } from './child-env';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
+import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { discoverSessionId, cwdSlug } from './session-watcher';
@@ -338,6 +339,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	let firstEntrySeen = false;
 	// Set once the first prompt-echo row has been compared with what we typed.
 	let promptEchoChecked = false;
+	const slashCommandPrompt = isSlashCommandPrompt(prompt);
 	let limitHit = false;
 	let aggregatedText = '';
 	const usage = emptyUsage();
@@ -513,6 +515,25 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		if (isRateLimitErrorRow(e)) {
 			markLimitHit();
 			return;
+		}
+
+		// A local slash command (`/compact`, `/clear`) ends with its output row
+		// instead of an `end_turn`, so that row is the end of the turn (see
+		// local-command-row.ts). The result carries the session id the row was
+		// written under: `/clear` rotates claude onto a new session.
+		if (slashCommandPrompt) {
+			const commandOutput = localCommandOutput(e);
+			if (commandOutput !== null) {
+				if (graceTimer) clearTimeout(graceTimer);
+				if (commandOutput && !aggregatedText) aggregatedText = commandOutput;
+				if (typeof e.sessionId === 'string' && e.sessionId) resolvedSessionId = e.sessionId;
+				graceTimer = setTimeout(() => {
+					if (!finalized) {
+						finalize({ isError: false, exitCode: 0 });
+					}
+				}, END_TURN_GRACE_MS);
+				return;
+			}
 		}
 
 		// Synthetic-model bookkeeping rows ("No response requested.") never
