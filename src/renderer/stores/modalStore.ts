@@ -234,6 +234,11 @@ export interface GitDiffModalData {
 	 * it so it can diff an agent that isn't active.
 	 */
 	cwd?: string;
+	/**
+	 * Agent the diff belongs to, so a review annotated in the viewer is sent
+	 * back to it. Omitted, the review goes to the active agent.
+	 */
+	sessionId?: string;
 }
 
 /**

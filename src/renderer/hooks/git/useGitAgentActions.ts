@@ -156,7 +156,10 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		if (diff) {
 			// Pass the repo path so the viewer opens clicked files against THIS
 			// agent's tree, not whichever agent happens to be active.
-			useModalStore.getState().openModal('gitDiff', { diff, cwd: target.cwd });
+			// The agent id routes a review annotated in the viewer back to it.
+			useModalStore
+				.getState()
+				.openModal('gitDiff', { diff, cwd: target.cwd, sessionId: target.sessionId });
 			return;
 		}
 		// Same wording as the Cmd+Shift+D path and the command palette.

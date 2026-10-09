@@ -31,6 +31,7 @@ import { SnoozedTabsModal } from '../SnoozedTabsModal';
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { resolveDiffReviewTarget, sendDiffReviewToAgent } from '../../services/diffReview';
 import { formatSnoozeTarget } from '../../../shared/snooze';
 import { mirrorSnoozedTranscript } from '../../utils/snoozeTranscriptMirror';
 import { PromptComposerModal } from '../PromptComposerModal';
@@ -535,6 +536,28 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 		[]
 	);
 
+	// Diff review: annotations left in the Git Diff viewer go back to the agent
+	// the diff was taken for (Left Bar right-click), else the active agent.
+	const gitDiffSessionId = useModalStore(selectModalData('gitDiff'))?.sessionId;
+	const diffReviewTarget = useSessionStore((s) =>
+		resolveDiffReviewTarget(s.sessions, s.activeSessionId, gitDiffSessionId)
+	);
+	const diffReviewTargetId = diffReviewTarget?.id;
+	const handleSendDiffReview = useCallback(
+		(prompt: string) => {
+			const sent = !!diffReviewTargetId && sendDiffReviewToAgent(diffReviewTargetId, prompt);
+			if (!sent) {
+				notifyCenterFlash({
+					message: 'Could not send the review',
+					detail: 'The agent has no AI tab to receive it',
+					color: 'red',
+				});
+			}
+			return sent;
+		},
+		[diffReviewTargetId]
+	);
+
 	const handleSnoozeConfirm = useCallback((tabId: string, wakeAt: number, note: string) => {
 		// Capture the session BEFORE snoozing: the tab leaves aiTabs as part of the
 		// snooze, taking its agentSessionId with it.
@@ -693,6 +716,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						theme={theme}
 						onClose={onCloseGitDiff}
 						onOpenFile={onOpenGitFile}
+						onSendReview={diffReviewTarget ? handleSendDiffReview : undefined}
+						reviewTargetName={diffReviewTarget?.name}
 					/>
 				</Suspense>
 			)}
