@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { buildSync } from 'esbuild';
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import type { PianolaProgram, PianolaAsk } from '../../../shared/pianola/pianola-programs';
+import { revisePlanTask } from '../../../shared/pianola/pianola-tasks';
 
 // `fs` is an ESM namespace here, so its exports cannot be spied on. The store's
 // rename is routed through this override so one test can interleave a second
@@ -381,6 +382,79 @@ describe('portfolio files', () => {
 		expect(tempNames.size).toBe(2);
 		expect(fs.readdirSync(dir).filter((file) => file.endsWith('.tmp'))).toEqual([]);
 	});
+	it('serializes a founder revision after an in-flight tick so the tick cannot overwrite it', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-revision-lock-'));
+		dirs.push(dir);
+		const config = { resolveDir: () => dir, indent: 2, trailingNewline: true };
+		const orchestrator = createPianolaFsStore(config);
+		const lead = createPianolaFsStore(config);
+		orchestrator.writePlans([
+			{
+				id: 'plan',
+				title: 'Plan',
+				createdAt: 1,
+				tasks: [
+					{
+						id: 'done',
+						title: 'Done',
+						prompt: 'Done',
+						dependsOn: [],
+						status: 'done',
+						runId: 'verified',
+					},
+					{
+						id: 'reviewed',
+						title: 'Answer',
+						prompt: 'Old prompt',
+						dependsOn: ['done'],
+						status: 'needs_review',
+					},
+				],
+			},
+		]);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const tick = orchestrator.withPlanLock('plan', async () => {
+			const snapshot = orchestrator.getPlan('plan')!;
+			await gate;
+			orchestrator.upsertPlan(snapshot);
+		});
+		const revision = lead.withPlanLock('plan', async () => {
+			lead.updatePlans((plans) =>
+				plans.map((entry) => revisePlanTask(entry, 'reviewed', 'Founder correction'))
+			);
+		});
+		try {
+			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+			expect(lead.getPlan('plan')!.tasks[1]).toMatchObject({
+				prompt: 'Old prompt',
+				status: 'needs_review',
+			});
+		} finally {
+			release();
+		}
+		await Promise.all([tick, revision]);
+		expect(lead.getPlan('plan')!.tasks).toEqual([
+			{
+				id: 'done',
+				title: 'Done',
+				prompt: 'Done',
+				dependsOn: [],
+				status: 'done',
+				runId: 'verified',
+			},
+			{
+				id: 'reviewed',
+				title: 'Answer',
+				prompt: 'Founder correction',
+				dependsOn: ['done'],
+				status: 'pending',
+			},
+		]);
+	});
+
 	it('holds per-program loop ownership through awaits and releases rejected operations', async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-loop-lock-'));
 		dirs.push(dir);

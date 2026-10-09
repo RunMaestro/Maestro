@@ -26,6 +26,7 @@ import {
 	getPianolaPlan,
 	upsertPianolaPlan,
 	updatePianolaPlans,
+	withPianolaPlanLock,
 	readPianolaPrograms,
 } from '../services/pianola-store';
 import {
@@ -46,6 +47,7 @@ import {
 } from '../../shared/pianola/pianola-orchestrator';
 import {
 	validatePlan,
+	revisePlanTask,
 	planProgress,
 	type PianolaPlan,
 	type PianolaTask,
@@ -722,6 +724,35 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 	}
 }
 
+/** Apply a founder correction without replacing started-plan history or its oracle. */
+export async function pianolaPlanRevise(
+	planId: string,
+	taskId: string,
+	options: { prompt: string; json?: boolean }
+): Promise<void> {
+	ensurePianolaEnabled(options.json);
+	try {
+		await withPianolaPlanLock(planId, async () => {
+			updatePianolaPlans((plans) => {
+				const plan = plans.find((entry) => entry.id === planId);
+				if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
+				const revised = revisePlanTask(plan, taskId, options.prompt);
+				assertOneActivePlanPerProgram(revised, plans);
+				return plans.map((entry) => (entry.id === planId ? revised : entry));
+			});
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
+		else console.error(message);
+		process.exitCode = 1;
+		return;
+	}
+	if (options.json)
+		console.log(JSON.stringify({ success: true, planId, taskId, status: 'pending' }));
+	else console.log(`Revised Pianola task ${planId}/${taskId}; awaiting supervised dispatch.`);
+}
+
 export interface PianolaPlanListOptions {
 	json?: boolean;
 }
@@ -1179,7 +1210,11 @@ export async function pianolaOrchestrate(
 
 			let result: OrchestratorIterationResult;
 			try {
-				result = await runOrchestratorIteration(state, deps, { concurrencyLimit });
+				result = await withPianolaPlanLock(planId, async () => {
+					const saved = getPianolaPlan(planId);
+					if (!saved) throw new Error(`No Pianola plan with id "${planId}".`);
+					return runOrchestratorIteration({ ...state, plan: saved }, deps, { concurrencyLimit });
+				});
 			} catch (error) {
 				if (error instanceof SandboxRunnerConfigurationError) {
 					if (options.json)

@@ -186,6 +186,7 @@ import { pianolaLearn } from './commands/pianola-learn';
 import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
 import {
 	pianolaPlanSet,
+	pianolaPlanRevise,
 	pianolaPlanList,
 	pianolaPlanShow,
 	pianolaOrchestrate,
@@ -2281,6 +2282,16 @@ pianolaPlan
 	.option('--file <path>', 'Read the plan JSON from this file (else reads stdin)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaPlanSet(options));
+
+pianolaPlan
+	.command('revise <planId> <taskId>')
+	.description('Revise a reviewed or failed task and queue it again without replacing its plan')
+	.requiredOption(
+		'--prompt <text>',
+		'Corrected implementation instructions; validation stays unchanged'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, taskId, options) => pianolaPlanRevise(planId, taskId, options));
 
 pianolaPlan
 	.command('list')
