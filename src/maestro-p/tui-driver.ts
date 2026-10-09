@@ -54,6 +54,10 @@ export interface TuiDriverOptions {
 	// Without it, a dialog that defaults to "No, exit" is never answered: the
 	// driver emits 'workspace-untrusted' instead of pressing Enter on it.
 	acceptWorkspaceTrust?: boolean;
+	// Ceiling on the startup handshake before 'ready-timeout' fires. Defaults to
+	// READY_TIMEOUT_MS. Run mode raises it (`--ready-timeout`) because a loaded
+	// host can take well past 8s to boot claude with its MCP servers and plugins.
+	readyTimeoutMs?: number;
 }
 
 export const DEFAULT_COLS = 200;
@@ -294,7 +298,8 @@ const ARROW_DOWN = '\x1b[B';
 // taps in a healthy session are harmless. The budget is small and the
 // total tap window (READY_MAX_TAPS × READY_TAP_INTERVAL_MS) fits inside
 // READY_TIMEOUT_MS so a hung TUI fails loudly via 'ready-timeout' instead
-// of spinning forever.
+// of spinning forever. READY_TIMEOUT_MS is only the driver's default
+// ceiling; callers pass `readyTimeoutMs` to raise it.
 export const READY_TAP_INTERVAL_MS = 1500;
 export const READY_MAX_TAPS = 3;
 export const READY_TIMEOUT_MS = 8000;
@@ -391,7 +396,7 @@ export class TuiDriver extends EventEmitter {
 			if (this.readyEmitted || this.exited) return;
 			this.clearReadyTimers();
 			this.emit('ready-timeout');
-		}, READY_TIMEOUT_MS);
+		}, this.options.readyTimeoutMs ?? READY_TIMEOUT_MS);
 	}
 
 	// Shared budget for both the trust-regex fast-path and the periodic

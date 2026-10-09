@@ -2,8 +2,8 @@
 //
 // Walks argv once and partitions tokens into three buckets:
 //   (a) consumed   - maestro-p's own flags (-p/--print/--prompt, --status,
-//                    --stream-thinking, --max-wait, --help, --version) and
-//                    their values.
+//                    --stream-thinking, --max-wait, --first-byte-timeout,
+//                    --ready-timeout, --help, --version) and their values.
 //   (b) stripped   - headless-mode flags that would corrupt the TUI spawn
 //                    (--output-format, --input-format, --verbose). Dropped
 //                    silently with a one-line stderr warning.
@@ -61,6 +61,13 @@ export interface ParsedArgs {
 	 * instead of burning the full idle budget. Always <= maxWaitSeconds.
 	 */
 	firstByteTimeoutSeconds: number;
+	/**
+	 * Budget for the claude TUI to boot and paint its input prompt (the ready
+	 * handshake), before maestro-p fails with `ready_timeout` (exit 4). Nothing
+	 * has been sent to the model at that point. Always <= firstByteTimeoutSeconds,
+	 * whose timer also spans the handshake.
+	 */
+	readyTimeoutSeconds: number;
 	resumeSessionId: string | null;
 	/**
 	 * True when invoked with `--input-format stream-json`. Maestro sets this
@@ -95,6 +102,15 @@ export const DEFAULT_MAX_WAIT_SECONDS = 300;
 // still fails before the whole `--max-wait` window. Overridable via
 // `--first-byte-timeout`.
 export const DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS = 240;
+
+// How long the claude TUI gets to boot and paint its input prompt before
+// `ready_timeout` (exit 4). This was a fixed 8s, which a loaded host blows
+// through: at a 1-minute load average of ~15 on 18 cores, up to 7 of 16 runs
+// failed at 8.0-9.9s while the same runs passed alone (issue #1765). A boot
+// that slow is still healthy, and a TUI genuinely stuck on a startup modal
+// only costs the caller the extra wait, so the default leaves 3x headroom
+// over the slowest boot observed. Overridable via `--ready-timeout`.
+export const DEFAULT_READY_TIMEOUT_SECONDS = 30;
 
 const PROMPT_VALUE_FLAGS = new Set(['-p', '--print', '--prompt']);
 const CONSUMED_BOOLEAN_FLAGS = new Set(['-h', '--help', '-v', '--version']);
@@ -182,6 +198,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 	let streamThinking = false;
 	let maxWaitSeconds = DEFAULT_MAX_WAIT_SECONDS;
 	let firstByteTimeoutSeconds = DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS;
+	let readyTimeoutSeconds = DEFAULT_READY_TIMEOUT_SECONDS;
 	let resumeSessionId: string | null = null;
 	let streamJsonInput = false;
 	const passThroughArgs: string[] = [];
@@ -286,6 +303,26 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 				} else {
 					warn(
 						`maestro-p: --first-byte-timeout "${value}" is not a positive integer; using default ${DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS}s.`
+					);
+				}
+			}
+			i += 1;
+			continue;
+		}
+
+		if (flag === '--ready-timeout') {
+			const value = consumeValue();
+			if (value === undefined) {
+				warn(
+					`maestro-p: --ready-timeout requires a value; using default ${DEFAULT_READY_TIMEOUT_SECONDS}s.`
+				);
+			} else {
+				const parsed = Number.parseInt(value, 10);
+				if (Number.isFinite(parsed) && parsed > 0) {
+					readyTimeoutSeconds = parsed;
+				} else {
+					warn(
+						`maestro-p: --ready-timeout "${value}" is not a positive integer; using default ${DEFAULT_READY_TIMEOUT_SECONDS}s.`
 					);
 				}
 			}
@@ -411,6 +448,11 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 	if (firstByteTimeoutSeconds > maxWaitSeconds) {
 		firstByteTimeoutSeconds = maxWaitSeconds;
 	}
+	// Same rule one level down: the first-byte timer is armed at spawn and spans
+	// the ready handshake, so a longer ready budget could never be reached.
+	if (readyTimeoutSeconds > firstByteTimeoutSeconds) {
+		readyTimeoutSeconds = firstByteTimeoutSeconds;
+	}
 
 	return {
 		prompt,
@@ -419,6 +461,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		streamThinking,
 		maxWaitSeconds,
 		firstByteTimeoutSeconds,
+		readyTimeoutSeconds,
 		resumeSessionId,
 		streamJsonInput,
 	};
