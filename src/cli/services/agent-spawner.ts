@@ -15,7 +15,7 @@ import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
-import { checkCustomPath } from '../../main/agents/path-prober';
+import { checkBinaryExists, checkCustomPath } from '../../main/agents/path-prober';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -28,7 +28,15 @@ import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
+import {
+	buildMcpInjection,
+	mergeMcpInjectionArgs,
+	MCP_CONFIG_BY_AGENT,
+} from '../../shared/plugins/mcp-agent-config';
+import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
+import { superviseAgentProcess } from './agent-process-supervisor';
+import { CODEX_STARTUP_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 import {
 	getClaudeTokenMode,
 	getClaudeTokenSourceFields,
@@ -59,13 +67,21 @@ type SshSpawnWrapResult = import('../../main/utils/ssh-spawn-wrapper').SshSpawnW
  * failing, so a CLI without maestro-p degrades safely.
  */
 function getCliMaestroPBinPath(): string | null {
-	const candidate = path.join(__dirname, 'maestro-p.js');
-	try {
-		fs.accessSync(candidate, fs.constants.R_OK);
-		return candidate;
-	} catch {
-		return null;
+	// Bundled CLI: dist/cli/maestro-cli.js has __dirname=dist/cli.
+	// Main-process import: tsc emits this module at dist/cli/services/, one
+	// level deeper, while the bundled maestro-p script stays at dist/cli/.
+	for (const candidate of [
+		path.join(__dirname, 'maestro-p.js'),
+		path.resolve(__dirname, '..', 'maestro-p.js'),
+	]) {
+		try {
+			fs.accessSync(candidate, fs.constants.R_OK);
+			return candidate;
+		} catch {
+			// Check the next compiled layout.
+		}
 	}
+	return null;
 }
 
 /**
@@ -132,7 +148,117 @@ type SpawnOverrides = Pick<
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
+	| 'pluginRunProofFile'
+	| 'mcpCliScriptPath'
+	| 'timeoutMs'
+	| 'signal'
+	| 'onProgress'
 >;
+
+/** Derive an action only from known tool names and narrow public metadata fields. */
+function publicToolSummary(tool: string, input: unknown): string | undefined {
+	const data =
+		input && typeof input === 'object' && !Array.isArray(input)
+			? (input as Record<string, unknown>)
+			: undefined;
+	const fileName = (value: unknown): string | undefined => {
+		if (typeof value !== 'string' || value.length > 512 || /[\x00-\x1f\x7f]/.test(value)) return;
+		const name = value.replace(/\\/g, '/').split('/').pop();
+		return name &&
+			name !== '.' &&
+			name !== '..' &&
+			name.length <= 80 &&
+			/^[\p{L}\p{N}._ -]+$/u.test(name)
+			? name
+			: undefined;
+	};
+	const targetName = (value: unknown): string | undefined =>
+		typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,47}$/.test(value) ? value : undefined;
+
+	if (tool === 'functions.exec') {
+		// The wrapper's JavaScript is untrusted. Recognize only a tool identifier;
+		// never copy the code, nested arguments, or shell text into progress.
+		const code = typeof input === 'string' ? input : data?.code;
+		if (typeof code !== 'string' || code.length > 64_000) return;
+		const shellCalls = (code.match(/\btools\.exec_command\s*\(/g) ?? []).length;
+		if (shellCalls) return shellCalls === 1 ? 'Running shell command' : 'Running shell commands';
+		return;
+	}
+	if (
+		[
+			'Bash',
+			'bash',
+			'Shell',
+			'shell',
+			'shell_command',
+			'functions.shell_command',
+			'functions.exec_command',
+			'exec_command',
+		].includes(tool)
+	) {
+		return 'Running shell command';
+	}
+	if (['Read', 'read_file', 'functions.read_file', 'fs.read'].includes(tool)) {
+		const name = fileName(data?.file_path ?? data?.path);
+		return name ? `Reading file ${name}` : 'Reading file';
+	}
+	if (
+		['Write', 'Edit', 'MultiEdit', 'write_file', 'functions.apply_patch', 'fs.write'].includes(tool)
+	) {
+		const name = fileName(data?.file_path ?? data?.path);
+		return name ? `Editing file ${name}` : 'Editing files';
+	}
+	if (
+		['Task', 'functions.collaboration.spawn_agent', 'agents.dispatch', 'agents.send'].includes(tool)
+	) {
+		const name = targetName(data?.subagent_type ?? data?.task_name ?? data?.agentId);
+		return name ? `Dispatching to agent ${name}` : 'Dispatching to agent';
+	}
+	if (['Grep', 'Glob', 'functions.web__run'].includes(tool)) return 'Searching';
+	return;
+}
+
+/** Emit only public, bounded fields; never pass parser raw/tool state downstream. */
+function emitAgentProgress(
+	callback: SpawnAgentOptions['onProgress'],
+	event: AgentSendProgressEvent
+): void {
+	if (!callback) return;
+	try {
+		callback(event);
+	} catch {
+		// A consumer callback cannot change the provider run's result.
+	}
+}
+
+/** Verified local MCP strategies need no config files. The server spec carries
+ * only a path to the owner-only run proof, never the proof bytes. */
+function localPluginMcp(
+	toolType: ToolType,
+	overrides: SpawnOverrides
+): { args: string[]; env: Record<string, string> } {
+	const cap = MCP_CONFIG_BY_AGENT[toolType];
+	if (!cap?.verified || !overrides.pluginRunProofFile || !overrides.mcpCliScriptPath)
+		return { args: [], env: {} };
+	const injection = buildMcpInjection(
+		cap,
+		{
+			command: process.execPath,
+			args: [overrides.mcpCliScriptPath, 'mcp', 'serve'],
+			env: {
+				ELECTRON_RUN_AS_NODE: '1',
+				MAESTRO_PLUGIN_RUN_TOKEN_FILE: overrides.pluginRunProofFile,
+				...(process.env.MAESTRO_USER_DATA
+					? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
+					: {}),
+				...(process.env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME } : {}),
+			},
+		},
+		{ tmpDir: os.tmpdir(), join: path.join }
+	);
+	if (injection.files.length) return { args: [], env: {} };
+	return { args: injection.globalArgs, env: injection.env };
+}
 
 /**
  * Maximum command-line length we'll accept before falling back to
@@ -363,8 +489,13 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 		);
 	}
 
-	// 2. Fall back to PATH detection
-	const pathResult = await findCommandInPath(defaultCommand);
+	// 2. Match the desktop's Codex selection. Its known-path probe prefers the
+	// standalone ~/.local/bin install before an older nvm-managed npm binary;
+	// the generic expanded-PATH probe reverses that order in packaged Maestro.
+	const pathResult =
+		toolType === 'codex'
+			? (await checkBinaryExists(defaultCommand)).path
+			: await findCommandInPath(defaultCommand);
 	if (pathResult) {
 		cachedPaths.set(toolType, pathResult);
 		return { available: true, path: pathResult, source: 'path' };
@@ -483,7 +614,7 @@ async function spawnClaudeAgent(
 	// Claude Code re-reads this flag every turn (not persisted in the session
 	// transcript), so include it on resume too - matches desktop behavior at
 	// `src/main/ipc/handlers/process.ts:254`.
-	const baseArgs = overrides.appendSystemPrompt
+	let baseArgs = overrides.appendSystemPrompt
 		? [
 				...resolvedArgs,
 				...buildAppendSystemPromptArgs(
@@ -550,6 +681,10 @@ async function spawnClaudeAgent(
 		},
 		cliSpawnCoreDeps
 	);
+	if (!sshEnabled && spawnDecision.mode !== 'interactive') {
+		const mcp = localPluginMcp('claude-code', overrides);
+		baseArgs = mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT['claude-code'], baseArgs, mcp.args);
+	}
 
 	// Beat WakaTime for the life of the run. CLI-spawned agents never reach the
 	// desktop's ProcessManager listener, so without this their time goes
@@ -621,6 +756,7 @@ async function spawnClaudeAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
+			detached: !isWindows(),
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -631,15 +767,89 @@ async function spawnClaudeAgent(
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let resultEmitted = false;
+		let resultError = false;
 		let sessionIdEmitted = false;
+		let settled = false;
+		let cancelledByAbort = false;
+		let stopReason: string | undefined;
+		const supervision = superviseAgentProcess(child, {
+			timeoutMs: overrides.timeoutMs,
+			signal: overrides.signal,
+			onStop: (reason) => {
+				stopReason = reason;
+				cancelledByAbort = true;
+			},
+			onForcedStop: () => {
+				if (settled) return;
+				settled = true;
+				supervision.dispose();
+				resolve({ success: false, error: stopReason, agentSessionId: sessionId, usageStats });
+			},
+		});
+		const progressTools = new Map<string, { tool: string; summary?: string }>();
 
 		// Process a single parsed JSON message from Claude Code's stream-json output
 
 		const processMessage = (msg: any) => {
+			if (settled) return;
+			// Cancellation may precede the final stdout line. Keep only resume and
+			// accounting metadata; never release late text or progress as an answer.
+			if (msg.session_id && !sessionIdEmitted) {
+				sessionIdEmitted = true;
+				sessionId = msg.session_id;
+			}
+			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
+				usageStats = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+			}
+			if (cancelledByAbort || overrides.signal?.aborted) return;
+			if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+				for (const block of msg.message.content) {
+					if (block?.type !== 'tool_use') continue;
+					const tool =
+						typeof block.name === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(block.name)
+							? block.name
+							: 'Tool';
+					const summary = publicToolSummary(tool, block.input);
+					if (typeof block.id === 'string' && block.id.length <= 128) {
+						progressTools.set(block.id, { tool, summary });
+						if (progressTools.size > 128) {
+							const oldest = progressTools.keys().next().value;
+							if (oldest) progressTools.delete(oldest);
+						}
+					}
+					emitAgentProgress(overrides.onProgress, {
+						type: 'tool',
+						tool,
+						status: 'started',
+						...(summary ? { summary } : {}),
+						at: new Date().toISOString(),
+					});
+				}
+			}
+			if (msg.type === 'user' && Array.isArray(msg.message?.content)) {
+				for (const block of msg.message.content) {
+					if (block?.type !== 'tool_result') continue;
+					const invocation =
+						typeof block.tool_use_id === 'string'
+							? progressTools.get(block.tool_use_id)
+							: undefined;
+					if (typeof block.tool_use_id === 'string') progressTools.delete(block.tool_use_id);
+					emitAgentProgress(overrides.onProgress, {
+						type: 'tool',
+						tool: invocation?.tool ?? 'Tool',
+						status: block.is_error ? 'failed' : 'completed',
+						...(invocation?.summary ? { summary: invocation.summary } : {}),
+						at: new Date().toISOString(),
+					});
+				}
+			}
 			// Capture result text (only once)
-			if (msg.type === 'result' && msg.result && !resultEmitted) {
-				resultEmitted = true;
-				result = msg.result;
+			if (msg.type === 'result') {
+				if (msg.is_error === true) resultError = true;
+				if (msg.result && !resultEmitted) {
+					resultEmitted = true;
+					result = msg.result;
+				}
 			}
 
 			// Accumulate text from assistant messages - Claude Code may emit
@@ -657,17 +867,6 @@ async function spawnClaudeAgent(
 						}
 					}
 				}
-			}
-
-			// Capture session_id (only once)
-			if (msg.session_id && !sessionIdEmitted) {
-				sessionIdEmitted = true;
-				sessionId = msg.session_id;
-			}
-
-			// Extract usage statistics using shared aggregator
-			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-				usageStats = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
 			}
 		};
 
@@ -700,7 +899,8 @@ async function spawnClaudeAgent(
 		finalizeAgentStdin(child, sshStdinScript);
 
 		// Handle completion
-		child.on('close', (code) => {
+		child.on('close', (code, signal) => {
+			if (settled) return;
 			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
 			if (jsonBuffer.trim()) {
 				let parsed;
@@ -713,11 +913,20 @@ async function spawnClaudeAgent(
 					processMessage(parsed);
 				}
 			}
+			settled = true;
+			supervision.dispose();
 
 			// Use accumulated assistant text as fallback when result field is empty
 			const finalResult = result || assistantText || undefined;
 
-			if (code === 0 && finalResult) {
+			if (
+				!signal &&
+				!cancelledByAbort &&
+				!overrides.signal?.aborted &&
+				!resultError &&
+				code === 0 &&
+				finalResult?.trim()
+			) {
 				resolve({
 					success: true,
 					response: finalResult,
@@ -727,7 +936,15 @@ async function spawnClaudeAgent(
 			} else {
 				resolve({
 					success: false,
-					error: stderr || `Process exited with code ${code}`,
+					error:
+						stopReason || signal || cancelledByAbort || overrides.signal?.aborted
+							? (stopReason ?? 'Agent run timed out or was cancelled')
+							: stderr ||
+								(resultError
+									? 'Agent reported an error'
+									: code === 0
+										? 'Agent returned no final text'
+										: `Process exited with code ${code}`),
 					agentSessionId: sessionId,
 					usageStats,
 				});
@@ -735,6 +952,14 @@ async function spawnClaudeAgent(
 		});
 
 		child.on('error', (error) => {
+			if (settled) return;
+			if (cancelledByAbort || overrides.signal?.aborted || error.name === 'AbortError') {
+				// Node emits close after error. Wait for it to flush buffered metadata.
+				cancelledByAbort = true;
+				return;
+			}
+			settled = true;
+			supervision.dispose();
 			resolve({
 				success: false,
 				error: `Failed to spawn Claude: ${error.message}`,
@@ -925,7 +1150,7 @@ async function spawnJsonLineAgent(
 	//    `src/main/ipc/handlers/process.ts:300-312`).
 	const supportsNativeSystemPrompt = hasCapability(toolType, 'supportsAppendSystemPrompt');
 	const isResume = !!agentSessionId;
-	const baseArgs =
+	let baseArgs =
 		overrides.appendSystemPrompt && supportsNativeSystemPrompt
 			? [
 					...resolvedArgs,
@@ -936,6 +1161,10 @@ async function spawnJsonLineAgent(
 					),
 				]
 			: resolvedArgs;
+	if (!sshRemoteConfig?.enabled) {
+		const mcp = localPluginMcp(toolType, overrides);
+		baseArgs = mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT[toolType], baseArgs, mcp.args);
+	}
 	const effectivePrompt =
 		overrides.appendSystemPrompt && !supportsNativeSystemPrompt && !isResume
 			? embedSystemPromptInPrompt(overrides.appendSystemPrompt, prompt)
@@ -1012,6 +1241,7 @@ async function spawnJsonLineAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
+			detached: !isWindows(),
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -1028,35 +1258,47 @@ async function spawnJsonLineAgent(
 		let usageStats: UsageStats | undefined;
 		let stderr = '';
 		let errorText: string | undefined;
+		const progressSummaries = new Map<string, string>();
+		let settled = false;
+		let cancelledByAbort = false;
+		let stopReason: string | undefined;
+		const supervision = superviseAgentProcess(child, {
+			timeoutMs: overrides.timeoutMs,
+			signal: overrides.signal,
+			startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
+			onStop: (reason) => {
+				stopReason = reason;
+				cancelledByAbort = true;
+			},
+			onForcedStop: () => {
+				if (settled) return;
+				settled = true;
+				supervision.dispose();
+				resolve({ success: false, error: stopReason, agentSessionId: sessionId, usageStats });
+			},
+		});
+		let codexCandidate: string | undefined;
+		let codexFinal: string | undefined;
+		const codexProgressTexts = new Set<string>();
+		const emitCodexInterim = (text: string): void => {
+			if (codexProgressTexts.has(text)) return;
+			codexProgressTexts.add(text);
+			emitAgentProgress(overrides.onProgress, {
+				type: 'commentary',
+				text: text.slice(0, 2000),
+				at: new Date().toISOString(),
+			});
+		};
 
 		// Process a single parsed event from an agent's JSON line output
 		const processEvent = (event: ReturnType<typeof parser.parseJsonLine>) => {
-			if (!event) return;
-
-			// Route through parser.extractSessionId() rather than only checking
-			// init events. Some agents (e.g. copilot-cli batch mode) never emit
-			// a session.start on stdout - the sessionId arrives only on the
-			// final `result` event. extractSessionId() encapsulates each
-			// adapter's event shape, and the !sessionId guard keeps
-			// "first-wins" semantics for adapters (codex, opencode) that
-			// already populate sessionId on multiple event types.
+			if (!event || settled) return;
+			// Some agents provide their session ID only in a terminal result event.
+			// Capture metadata even after cancellation; keep the first ID seen.
 			if (!sessionId) {
 				const extracted = parser.extractSessionId(event);
 				if (extracted) sessionId = extracted;
 			}
-
-			if (event.type === 'result' && event.text) {
-				result = result ? `${result}\n${event.text}` : event.text;
-			}
-
-			if (event.type === 'text' && event.isPartial && !event.isReasoning && event.text) {
-				streamedText += event.text;
-			}
-
-			if (event.type === 'error' && event.text && !errorText) {
-				errorText = event.text;
-			}
-
 			const usage = parser.extractUsage(event);
 			if (usage) {
 				usageStats = mergeUsageStats(usageStats, {
@@ -1068,6 +1310,95 @@ async function spawnJsonLineAgent(
 					contextWindow: usage.contextWindow || 0,
 					reasoningTokens: usage.reasoningTokens || 0,
 				});
+			}
+			if (cancelledByAbort || overrides.signal?.aborted) return;
+			if (
+				toolType === 'codex' &&
+				typeof event.raw === 'object' &&
+				event.raw !== null &&
+				((event.type === 'text' && Boolean(event.text)) ||
+					(event.type === 'result' && Boolean(event.text)) ||
+					event.type === 'tool_use' ||
+					event.type === 'usage')
+			) {
+				supervision.modelActivity();
+			}
+			if (event.type === 'tool_use') {
+				const tool =
+					typeof event.toolName === 'string' &&
+					/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(event.toolName)
+						? event.toolName
+						: 'Tool';
+				const state =
+					event.toolState && typeof event.toolState === 'object' && 'status' in event.toolState
+						? (event.toolState as { status?: unknown }).status
+						: undefined;
+				const status =
+					state === 'failed' || state === 'error'
+						? 'failed'
+						: state === 'completed' || state === 'success'
+							? 'completed'
+							: 'started';
+				const input =
+					event.toolState && typeof event.toolState === 'object' && 'input' in event.toolState
+						? (event.toolState as { input?: unknown }).input
+						: undefined;
+				let summary = status === 'started' ? publicToolSummary(tool, input) : undefined;
+				if (event.toolCallId && event.toolCallId.length <= 128) {
+					if (status === 'started' && summary) {
+						progressSummaries.set(event.toolCallId, summary);
+						if (progressSummaries.size > 128) {
+							const oldest = progressSummaries.keys().next().value;
+							if (oldest) progressSummaries.delete(oldest);
+						}
+					} else if (status !== 'started') {
+						summary = progressSummaries.get(event.toolCallId);
+						progressSummaries.delete(event.toolCallId);
+					}
+				}
+				emitAgentProgress(overrides.onProgress, {
+					type: 'tool',
+					tool,
+					status,
+					...(summary ? { summary } : {}),
+					at: new Date().toISOString(),
+				});
+			}
+			// Phase-less Codex messages remain buffered until a distinct answer
+			// follows. Only then can we safely release one as public progress.
+			if (toolType === 'codex' && event.responsePhase === 'commentary' && event.text) {
+				emitCodexInterim(event.text);
+			}
+
+			if (event.type === 'result' && event.text) {
+				if (toolType === 'codex') {
+					if (event.responsePhase === 'final') {
+						if (codexCandidate && codexCandidate !== event.text) {
+							emitCodexInterim(codexCandidate);
+						}
+						codexCandidate = undefined;
+						codexFinal = event.text;
+					} else if (!codexFinal && event.text !== codexCandidate) {
+						if (codexCandidate) emitCodexInterim(codexCandidate);
+						codexCandidate = event.text;
+					}
+				} else if (event.text !== result) {
+					result = result ? `${result}\n${event.text}` : event.text;
+				}
+			}
+
+			if (
+				toolType !== 'codex' &&
+				event.type === 'text' &&
+				event.isPartial &&
+				!event.isReasoning &&
+				event.text
+			) {
+				streamedText += event.text;
+			}
+
+			if (event.type === 'error' && event.text && !errorText) {
+				errorText = event.text;
 			}
 		};
 
@@ -1090,18 +1421,29 @@ async function spawnJsonLineAgent(
 		finalizeAgentStdin(child, sshStdinScript);
 
 		const agentName = def?.name || toolType;
-		child.on('close', (code) => {
+		child.on('close', (code, signal) => {
+			if (settled) return;
 			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
 			if (jsonBuffer.trim()) {
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
+			settled = true;
+			supervision.dispose();
 
 			// Soft success: agents like Grok may exit non-zero after a full
-			// answer (e.g. --max-turns) with no structured error event. Prefer
-			// the streamed answer over raw stderr when there is no errorText.
-			const responseText = result || streamedText || undefined;
+			// answer (e.g. --max-turns) with no structured error event. Codex's
+			// phase-less messages are complete candidates, never concatenated.
+			const responseText =
+				toolType === 'codex' ? codexFinal || codexCandidate : result || streamedText || undefined;
 			const hasAnswer = Boolean(responseText?.trim());
-			if (!errorText && (code === 0 || hasAnswer)) {
+			if (
+				!signal &&
+				!cancelledByAbort &&
+				!overrides.signal?.aborted &&
+				!errorText &&
+				hasAnswer &&
+				(code === 0 || (toolType === 'grok' && code !== null))
+			) {
 				resolve({
 					success: true,
 					response: responseText,
@@ -1111,7 +1453,12 @@ async function spawnJsonLineAgent(
 			} else {
 				resolve({
 					success: false,
-					error: errorText || stderr || `Process exited with code ${code}`,
+					error:
+						stopReason || signal || cancelledByAbort || overrides.signal?.aborted
+							? (stopReason ?? 'Agent run timed out or was cancelled')
+							: errorText ||
+								stderr ||
+								(code === 0 ? 'Agent returned no final text' : `Process exited with code ${code}`),
 					agentSessionId: sessionId,
 					usageStats,
 				});
@@ -1119,6 +1466,14 @@ async function spawnJsonLineAgent(
 		});
 
 		child.on('error', (error) => {
+			if (settled) return;
+			if (cancelledByAbort || overrides.signal?.aborted || error.name === 'AbortError') {
+				// Node emits close after error. Wait for it to flush buffered metadata.
+				cancelledByAbort = true;
+				return;
+			}
+			settled = true;
+			supervision.dispose();
 			resolve({ success: false, error: `Failed to spawn ${agentName}: ${error.message}` });
 		});
 	});
@@ -1184,6 +1539,16 @@ export interface SpawnAgentOptions {
 	 * the processes are otherwise identical. Defaults to 'user'.
 	 */
 	querySource?: QuerySource;
+	/** Owner-only file holding the main-issued proof for a local plugin MCP bridge. */
+	pluginRunProofFile?: string;
+	/** Exact bundled CLI path used by the MCP child. */
+	mcpCliScriptPath?: string;
+	/** Kill a hung provider process after this interval. */
+	timeoutMs?: number;
+	/** Abort a provider process when its plugin is disabled or crashes. */
+	signal?: AbortSignal;
+	/** Invocation-scoped public progress; no raw parser output is forwarded. */
+	onProgress?: (event: AgentSendProgressEvent) => void;
 }
 
 /**
@@ -1206,6 +1571,11 @@ export async function spawnAgent(
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		pluginRunProofFile: options?.pluginRunProofFile,
+		mcpCliScriptPath: options?.mcpCliScriptPath,
+		timeoutMs: options?.timeoutMs,
+		signal: options?.signal,
+		onProgress: options?.onProgress,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

@@ -4,17 +4,40 @@
  * bounds value bytes / key bytes / key count, persists atomically, and purges.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
+
+const { failRename, failFinalStat } = vi.hoisted(() => ({
+	failRename: { current: false },
+	failFinalStat: { current: false },
+}));
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+			if (failRename.current) throw new Error('simulated rename failure');
+			return actual.renameSync(...args);
+		},
+		lstatSync: (...args: Parameters<typeof actual.lstatSync>) => {
+			if (failFinalStat.current && String(args[0]).endsWith('store.json')) {
+				throw new Error('simulated post-rename stat failure');
+			}
+			return actual.lstatSync(...args);
+		},
+	};
+});
 
 describe('PluginKvStore', () => {
 	let base: string;
 	let store: PluginKvStore;
 
 	beforeEach(() => {
+		failRename.current = false;
+		failFinalStat.current = false;
 		base = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-kv-'));
 		store = new PluginKvStore({
 			baseDir: base,
@@ -68,11 +91,75 @@ describe('PluginKvStore', () => {
 		expect(store.get('p', 'a')).toBe('11');
 	});
 
+	it('atomically evicts the oldest key and retains it if replacement fails', () => {
+		store.set('p', 'a', '1');
+		store.set('p', 'b', '2');
+		store.set('p', 'c', '3');
+		failRename.current = true;
+		expect(() => store.set('p', 'd', '4', { evictOldestOnLimit: true })).toThrow(
+			/simulated rename failure/
+		);
+		failRename.current = false;
+		expect(store.keys('p')).toEqual(['a', 'b', 'c']);
+		expect(store.get('p', 'd')).toBeNull();
+		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['a', 'b', 'c']);
+		store.set('p', 'd', '4', { evictOldestOnLimit: true });
+		expect(store.keys('p')).toEqual(['b', 'c', 'd']);
+	});
+
+	it('moves a touched key to the end only after its replacement succeeds', () => {
+		store.set('p', 'a', '1');
+		store.set('p', 'b', '2');
+		failRename.current = true;
+		expect(() => store.set('p', 'a', '1', { touch: true })).toThrow(/simulated rename failure/);
+		failRename.current = false;
+		expect(store.keys('p')).toEqual(['a', 'b']);
+		store.set('p', 'a', '1', { touch: true });
+		expect(store.keys('p')).toEqual(['b', 'a']);
+		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['b', 'a']);
+	});
+
+	it('keeps cache aligned with disk if final hardening fails after rename', () => {
+		store.set('p', 'a', '1');
+		store.set('p', 'b', '2');
+		store.set('p', 'c', '3');
+		failFinalStat.current = true;
+		expect(() => store.set('p', 'd', '4', { evictOldestOnLimit: true })).toThrow(
+			/simulated post-rename stat failure/
+		);
+		failFinalStat.current = false;
+		expect(store.keys('p')).toEqual(['b', 'c', 'd']);
+		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['b', 'c', 'd']);
+		store.set('p', 'e', '5', { evictOldestOnLimit: true });
+		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['c', 'd', 'e']);
+	});
+
 	it('persists across instances and leaves no temp file behind', () => {
 		store.set('p', 'a', 'persisted');
 		const fresh = new PluginKvStore({ baseDir: base });
 		expect(fresh.get('p', 'a')).toBe('persisted');
 		expect(fs.readdirSync(path.join(base, 'p'))).toEqual(['store.json']);
+	});
+
+	it('keeps credential storage owner-only across atomic replacements and hardens an old store', () => {
+		store.set('relay', 'botToken', 'test-token');
+		const dir = path.join(base, 'relay');
+		const file = path.join(dir, 'store.json');
+		if (process.platform !== 'win32') {
+			expect(fs.statSync(base).mode & 0o777).toBe(0o700);
+			expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+			expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+			fs.chmodSync(base, 0o755);
+			fs.chmodSync(dir, 0o755);
+			fs.chmodSync(file, 0o644);
+			const reloaded = new PluginKvStore({ baseDir: base });
+			expect(reloaded.get('relay', 'botToken')).toBe('test-token');
+			expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+			expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+			expect(fs.statSync(base).mode & 0o777).toBe(0o700);
+		}
+		store.set('relay', 'botToken', 'rotated');
+		if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
 	});
 
 	it('purge removes the plugin store entirely', () => {

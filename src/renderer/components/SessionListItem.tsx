@@ -6,7 +6,7 @@
  * - Quick resume button (visible on hover)
  * - Session name with inline rename capability
  * - First message preview
- * - Session origin pill (MAESTRO, AUTO, CLI)
+ * - Session origin pill (MAESTRO, AUTO, Relay, CLI)
  * - Session ID pill
  * - Stats (time, messages, size, cost)
  * - Content search match info (when searching)
@@ -271,6 +271,18 @@ export const SessionListItem = React.memo(function SessionListItem({
 							title="Auto-run session"
 						>
 							AUTO
+						</span>
+					)}
+					{session.origin === 'relay' && (
+						<span
+							className="text-2xs font-bold px-1.5 py-0.5 rounded"
+							style={{
+								backgroundColor: theme.colors.accent + '40',
+								color: theme.colors.accentText,
+							}}
+							title="Session initiated through Relay"
+						>
+							Relay
 						</span>
 					)}
 					{!session.origin && (

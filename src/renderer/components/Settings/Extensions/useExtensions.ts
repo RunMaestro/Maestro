@@ -23,6 +23,7 @@ import {
 	type FirstPartyEncoreFlag,
 } from '../../../../shared/plugins/first-party';
 import type { PermissionRequest } from '../../../../shared/plugins/permissions';
+import { joinPath } from '../../../../shared/formatters';
 import { buildExtensions, type UnifiedExtension } from './extensionModel';
 
 /** Is this Encore flag one of the five first-party plugin-backed features? */
@@ -56,6 +57,7 @@ export interface UseExtensionsResult {
 	enablePluginsSubsystem: () => void;
 	togglePlugin: (record: PluginRecord) => Promise<void>;
 	installPlugin: () => Promise<void>;
+	updatePlugin: (record: PluginRecord) => Promise<void>;
 	uninstallPlugin: (record: PluginRecord) => Promise<void>;
 	revokePlugin: (id: string) => Promise<void>;
 	getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
@@ -249,6 +251,58 @@ export function useExtensions(): UseExtensionsResult {
 		}
 	}, [reload]);
 
+	const updatePlugin = useCallback(
+		async (record: PluginRecord) => {
+			setBusyId(record.id);
+			try {
+				const dir = await window.maestro.dialog.selectFolder();
+				if (!dir) return;
+				let manifestText: string | null;
+				try {
+					manifestText = await window.maestro.fs.readFile(joinPath(dir, 'plugin.json'));
+				} catch {
+					throw new Error('Could not read plugin.json in the selected folder');
+				}
+				if (!manifestText) throw new Error('Selected folder has no plugin.json');
+				let manifest: { id?: unknown };
+				try {
+					manifest = JSON.parse(manifestText) as { id?: unknown };
+				} catch {
+					throw new Error('Selected folder has an invalid plugin.json');
+				}
+				if (manifest.id !== record.id) {
+					throw new Error(`Selected folder is not for ${record.id}`);
+				}
+				// The host validates the source manifest, version, signature, and
+				// existing consent. Updating must never run uninstall/install.
+				const snap = await window.maestro.plugins.update(dir);
+				const updated = snap.plugins.find((plugin) => plugin.id === record.id);
+				const updateMessage =
+					updated?.manifest && updated.manifest.version !== record.manifest?.version
+						? `Updated ${updated.manifest.name} to v${updated.manifest.version}`
+						: 'Plugin updated from folder';
+				notifyToast({
+					color: updated?.enabled === false ? 'orange' : 'green',
+					title: 'Extensions',
+					message:
+						updated?.enabled === false
+							? `${updateMessage}. Plugin is disabled. Select Enable to review permissions for this version.`
+							: updateMessage,
+				});
+				await reload();
+			} catch (err) {
+				notifyToast({
+					color: 'red',
+					title: 'Extensions',
+					message: `Update failed: ${String(err)}`,
+				});
+			} finally {
+				setBusyId(null);
+			}
+		},
+		[reload]
+	);
+
 	const uninstallPlugin = useCallback(
 		async (record: PluginRecord) => {
 			setBusyId(record.id);
@@ -319,6 +373,7 @@ export function useExtensions(): UseExtensionsResult {
 		enablePluginsSubsystem,
 		togglePlugin,
 		installPlugin,
+		updatePlugin,
 		uninstallPlugin,
 		revokePlugin,
 		getGrants,

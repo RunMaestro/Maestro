@@ -26,6 +26,8 @@ vi.mock('electron', () => ({
 
 import { PluginManager } from '../../../main/plugins/plugin-manager';
 import { pluginsDir } from '../../../main/plugins/plugin-store-main';
+import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
+import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 
 const PLUGIN_ID = 'demo-plugin';
 
@@ -33,6 +35,7 @@ interface ManifestOpts {
 	version: string;
 	tier?: 0 | 1;
 	entry?: string;
+	permissions?: Array<{ capability: string; reason: string }>;
 }
 
 function makeManifest(opts: ManifestOpts): Record<string, unknown> {
@@ -44,6 +47,7 @@ function makeManifest(opts: ManifestOpts): Record<string, unknown> {
 		tier,
 		maestro: { minHostApi: '1.0.0' },
 		...(tier >= 1 ? { entry: opts.entry ?? 'main.js' } : {}),
+		...(opts.permissions ? { permissions: opts.permissions } : {}),
 	};
 }
 
@@ -80,6 +84,73 @@ afterEach(() => {
 });
 
 describe('PluginManager.update', () => {
+	it('preserves KV, SQL, settings, and grants while rechecking the new signature and consent', async () => {
+		const keys = makeSigningKeys();
+		const kvStore = new PluginKvStore({ baseDir: path.join(workDir, 'userData', 'plugin-data') });
+		const sqlFile = path.join(
+			workDir,
+			'userData',
+			'plugin-data',
+			'sql',
+			PLUGIN_ID,
+			'storage.sqlite'
+		);
+		const settings = new Map([['plugins.demo-plugin.token', 'saved-token']]);
+		const grants = [{ capability: 'storage:read' as const }];
+		const purgePluginData = vi.fn(() => {
+			kvStore.purge(PLUGIN_ID);
+			fs.rmSync(path.dirname(sqlFile), { recursive: true, force: true });
+			settings.clear();
+		});
+		const verifyRecord = vi.fn((record: { manifest: { version: string } | null }) => ({
+			disable: record.manifest?.version !== '1.0.0',
+		}));
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			trustedKeys: () => [keys.publicKeyB64],
+			getGrants: () => grants,
+			verifyRecord,
+			purgePluginData,
+		});
+		const src1 = writeSource(
+			path.join(workDir, 'src-v1'),
+			{ version: '1.0.0', tier: 1 },
+			{
+				'main.js': 'module.exports = "v1";',
+			}
+		);
+		signPluginDir(src1, keys);
+		expect(manager.install(src1).success).toBe(true);
+		manager.setEnabled(PLUGIN_ID, true);
+		kvStore.set(PLUGIN_ID, 'token', 'saved-token');
+		fs.mkdirSync(path.dirname(sqlFile), { recursive: true });
+		fs.writeFileSync(sqlFile, 'saved-sql-data');
+
+		const src2 = writeSource(
+			path.join(workDir, 'src-v2'),
+			{
+				version: '2.0.0',
+				tier: 1,
+				permissions: [{ capability: 'notifications:toast', reason: 'New permission' }],
+			},
+			{ 'main.js': 'module.exports = "v2";' }
+		);
+		signPluginDir(src2, keys);
+		const registry = await manager.update(src2);
+		const record = registry.records.find((entry) => entry.id === PLUGIN_ID);
+
+		expect(record?.manifest?.version).toBe('2.0.0');
+		expect(record?.signature?.status).toBe('trusted');
+		expect(verifyRecord).toHaveBeenCalledWith(
+			expect.objectContaining({ manifest: record?.manifest })
+		);
+		expect(record?.enabled).toBe(false); // new identity requires fresh consent
+		expect(grants).toEqual([{ capability: 'storage:read' }]);
+		expect(purgePluginData).not.toHaveBeenCalled();
+		expect(kvStore.get(PLUGIN_ID, 'token')).toBe('saved-token');
+		expect(fs.readFileSync(sqlFile, 'utf-8')).toBe('saved-sql-data');
+		expect(settings.get('plugins.demo-plugin.token')).toBe('saved-token');
+	});
 	it('updates to a higher version, swaps the files on disk, and preserves the enable toggle', async () => {
 		const manager = makeManager();
 		const src1 = writeSource(

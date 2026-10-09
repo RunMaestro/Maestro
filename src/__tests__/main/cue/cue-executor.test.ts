@@ -29,11 +29,27 @@ import type { TemplateContext } from '../../../shared/templateVariables';
 // transitively imports `cue-github-poller`, which calls `getExpandedEnv()` at
 // module-load time and needs `fs.existsSync` for nvm/path detection.
 const mockReadFileSync = vi.fn();
+const { injectInvalidProof } = vi.hoisted(() => ({ injectInvalidProof: { current: false } }));
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
 	return {
 		...actual,
 		readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+	};
+});
+
+vi.mock('../../../main/cue/cue-spawn-builder', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../main/cue/cue-spawn-builder')>();
+	return {
+		...actual,
+		buildSpawnSpec: async (...args: Parameters<typeof actual.buildSpawnSpec>) => {
+			const result = await actual.buildSpawnSpec(...args);
+			if (injectInvalidProof.current && result.ok) {
+				// Cleanup rejects this path after the provider has already completed.
+				result.spec.pluginRunProofFile = '/invalid/not-a-proof';
+			}
+			return result;
+		},
 	};
 });
 
@@ -267,6 +283,7 @@ const defaultAgentDef = {
 describe('cue-executor', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		injectInvalidProof.current = false;
 		vi.useFakeTimers();
 		getActiveProcesses().clear();
 
@@ -283,6 +300,16 @@ describe('cue-executor', () => {
 	});
 
 	describe('executeCuePrompt', () => {
+		it('preserves a completed run when proof cleanup fails', async () => {
+			injectInvalidProof.current = true;
+			const resultPromise = executeCuePrompt(createExecutionConfig());
+			await vi.advanceTimersByTimeAsync(0);
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+			expect(result.status).toBe('completed');
+			expect(result.exitCode).toBe(0);
+		});
+
 		// As of the Phase 2 cleanup, the executor no longer resolves prompt files -
 		// the cue-config-normalizer reads prompt_file at config-load time and stores
 		// the resolved content in `prompt`. The executor's `promptPath` parameter is

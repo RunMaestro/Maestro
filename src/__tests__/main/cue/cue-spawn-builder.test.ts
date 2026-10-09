@@ -60,6 +60,13 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+const mockPluginsEnabled = vi.fn(() => false);
+const mockActivePluginManager = vi.fn(() => null as unknown);
+vi.mock('../../../main/plugins/plugin-manager-singleton', () => ({
+	isPluginsFeatureEnabled: () => mockPluginsEnabled(),
+	getActivePluginManager: () => mockActivePluginManager(),
+}));
+
 // Mock the Claude token-source resolver's leaf dependencies so the maestro-p
 // binary reads as present and config-dir resolution is deterministic. The
 // resolver itself (resolveClaudeSpawnMode / applyClaudeSpawnDecision) and
@@ -82,6 +89,10 @@ vi.mock('fs', async (importOriginal) => {
 
 // Must import after mocks
 import { buildSpawnSpec } from '../../../main/cue/cue-spawn-builder';
+import {
+	pluginToolRunIdentity,
+	removePluginRunProofFile,
+} from '../../../main/plugins/plugin-tool-run-identity';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -131,6 +142,8 @@ function createConfig(overrides: Partial<CueExecutionConfig> = {}): CueExecution
 describe('cue-spawn-builder', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockPluginsEnabled.mockReturnValue(false);
+		mockActivePluginManager.mockReturnValue(null);
 		mockGetAgentDefinition.mockReturnValue(defaultAgentDef);
 		// The spec env spreads process.env, so an ambient MAESTRO_CLAUDE_BIN
 		// (leaked when these tests run inside a maestro/claude agent) would bleed
@@ -144,6 +157,64 @@ describe('cue-spawn-builder', () => {
 	});
 
 	describe('buildSpawnSpec', () => {
+		it('injects a run-bound local MCP bridge for a Cue agent', async () => {
+			mockPluginsEnabled.mockReturnValue(true);
+			mockActivePluginManager.mockReturnValue({ getContributions: () => ({ tools: [{}] }) });
+			const result = await buildSpawnSpec(createConfig({ enableMaestroP: false }), 'post summary');
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.args).toContain('--mcp-config');
+			expect(result.spec.pluginRunToken).toMatch(/^[0-9a-f]{64}$/);
+			expect(result.spec.pluginRunProofFile).toContain('maestro-plugin-run-');
+			expect(pluginToolRunIdentity.resolve(result.spec.pluginRunToken).callerAgentId).toBe(
+				'session-1'
+			);
+			const mcpConfigArg = result.spec.args[result.spec.args.indexOf('--mcp-config') + 1];
+			const mcpConfig = JSON.parse(mcpConfigArg) as {
+				mcpServers: { maestro: { env: { MAESTRO_PLUGIN_RUN_TOKEN_FILE: string } } };
+			};
+			expect(mcpConfig.mcpServers.maestro.env.MAESTRO_PLUGIN_RUN_TOKEN_FILE).toBe(
+				result.spec.pluginRunProofFile
+			);
+			pluginToolRunIdentity.revoke(result.spec.pluginRunToken!);
+			removePluginRunProofFile(result.spec.pluginRunProofFile!);
+		});
+		it('injects a Codex Cue MCP bridge beside exec config and before its prompt', async () => {
+			mockBuildAgentArgs.mockReturnValueOnce([
+				'exec',
+				'resume',
+				'provider-session',
+				'-c',
+				'model_reasoning_summary=auto',
+			]);
+			mockPluginsEnabled.mockReturnValue(true);
+			mockActivePluginManager.mockReturnValue({ getContributions: () => ({ tools: [{}] }) });
+			mockGetAgentDefinition.mockReturnValue({
+				...defaultAgentDef,
+				id: 'codex',
+				command: 'codex',
+				binaryName: 'codex',
+			});
+			const session = createConfig().session;
+			const result = await buildSpawnSpec(
+				createConfig({ toolType: 'codex', session: { ...session, toolType: 'codex' } }),
+				'post summary'
+			);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.args.join(' ')).toContain('mcp_servers.maestro.command');
+			const bridgeIndex = result.spec.args.findIndex((arg) =>
+				arg.startsWith('mcp_servers.maestro.command=')
+			);
+			expect(bridgeIndex).toBeGreaterThan(result.spec.args.indexOf('model_reasoning_summary=auto'));
+			expect(bridgeIndex).toBeLessThan(result.spec.args.indexOf('--'));
+			expect(result.spec.args.join(' ')).toContain(JSON.stringify(result.spec.pluginRunProofFile));
+			expect(pluginToolRunIdentity.resolve(result.spec.pluginRunToken).callerAgentId).toBe(
+				'session-1'
+			);
+			pluginToolRunIdentity.revoke(result.spec.pluginRunToken!);
+			removePluginRunProofFile(result.spec.pluginRunProofFile!);
+		});
 		it('returns error for unknown agent type', async () => {
 			mockGetAgentDefinition.mockReturnValue(undefined);
 

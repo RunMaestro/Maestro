@@ -319,7 +319,10 @@ export function createAgentSessionsApi() {
 			agentId: string,
 			projectPath: string
 		): Promise<
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		> => ipcRenderer.invoke('agentSessions:getOrigins', agentId, projectPath),
 
 		setSessionName: (

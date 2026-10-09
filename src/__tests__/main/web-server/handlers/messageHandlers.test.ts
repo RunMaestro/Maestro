@@ -34,8 +34,10 @@ import {
 import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
+	getHeadlessAgentRunner,
 } from '../../../../main/plugins/plugin-manager-singleton';
 import type { PluginManager } from '../../../../main/plugins/plugin-manager';
+import { pluginToolRunIdentity } from '../../../../main/plugins/plugin-tool-run-identity';
 import {
 	initDispatchCallbacks,
 	getDispatchCallbackRegistry,
@@ -82,6 +84,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
 	getActivePluginManager: vi.fn(),
 	isPluginsFeatureEnabled: vi.fn(),
+	getHeadlessAgentRunner: vi.fn(() => null),
 }));
 
 /**
@@ -123,6 +126,8 @@ function createMockClient(id: string = 'test-client'): WebClient {
 		socket: {
 			readyState: WebSocket.OPEN,
 			send: vi.fn(),
+			once: vi.fn(),
+			off: vi.fn(),
 		} as unknown as WebSocket,
 	};
 }
@@ -4771,6 +4776,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		invokeTool.mockReset();
 		vi.mocked(getActivePluginManager).mockReturnValue(fakeManager);
 		vi.mocked(isPluginsFeatureEnabled).mockReturnValue(true);
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(null);
 	});
 
 	it('lists declared tools with an MCP-safe name + the real toolId', () => {
@@ -4839,7 +4845,325 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		const res = lastResult();
 		expect(res.ok).toBe(true);
 		expect(res.result).toEqual({ done: true });
-		expect(invokeTool).toHaveBeenCalledWith('acme/dostuff', { value: 1 });
+		expect(invokeTool).toHaveBeenCalledWith('acme/dostuff', { value: 1 }, { callerAgentId: null });
+	});
+
+	it('binds tool identity to a run proof, ignoring forged model arguments and tabId', async () => {
+		invokeTool.mockResolvedValue({ done: true });
+		const runToken = pluginToolRunIdentity.issue('agent-a');
+		try {
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				args: { agentId: 'agent-b' },
+				tabId: 'agent-b',
+				runToken,
+			});
+			await vi.waitFor(() => expect(invokeTool).toHaveBeenCalled());
+			expect(invokeTool).toHaveBeenCalledWith(
+				'acme/dostuff',
+				{ agentId: 'agent-b' },
+				{ callerAgentId: 'agent-a' }
+			);
+		} finally {
+			pluginToolRunIdentity.revoke(runToken);
+		}
+	});
+
+	it('records a receipt only after a successful active tool call for the armed run', async () => {
+		const token = pluginToolRunIdentity.issue('agent-a', 60_000, 'acme/dostuff');
+		try {
+			invokeTool.mockResolvedValue({ messageIds: ['123'], privateBody: 'do not retain' });
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				args: { agentId: 'agent-b' },
+				runToken: token,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastResult().ok).toBe(true);
+			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([
+				{
+					runId: expect.stringMatching(/^[0-9a-f]{32}$/),
+					agentId: 'agent-a',
+					toolId: 'acme/dostuff',
+					messageIds: ['123'],
+				},
+			]);
+		} finally {
+			pluginToolRunIdentity.revoke(token);
+		}
+	});
+
+	it('records no receipt when the tool fails or its plugin deactivates', async () => {
+		const token = pluginToolRunIdentity.issue('agent-a', 60_000, 'acme/dostuff');
+		try {
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				args: { cmd: 'delete the production database and drop all tables' },
+				runToken: token,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(1));
+			expect(lastResult().blocked).toBe(true);
+			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
+			invokeTool.mockRejectedValueOnce(new Error('Discord rejected the send'));
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				runToken: token,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
+			invokeTool.mockImplementationOnce(async () => {
+				vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
+				return { messageIds: ['124'] };
+			});
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				runToken: token,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(3));
+			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
+		} finally {
+			pluginToolRunIdentity.revoke(token);
+		}
+	});
+
+	it('runs a local CLI request through the host runner and returns its provider session', async () => {
+		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(run).toHaveBeenCalled());
+		expect(run).toHaveBeenCalledWith(
+			'agent-a',
+			'hello',
+			undefined,
+			expect.any(AbortSignal),
+			'user',
+			undefined,
+			undefined
+		);
+		expect(client.socket.off).toHaveBeenCalledWith('close', expect.any(Function));
+		expect(lastResult()).toMatchObject({
+			type: 'plugins_send_agent_result',
+			available: true,
+			success: true,
+			response: 'hello',
+			sessionId: 'provider-1',
+		});
+	});
+
+	it('aborts a desktop-routed CLI send when its socket closes', async () => {
+		let finishRun!: (reply: { success: boolean; response: string | null; sessionId: null }) => void;
+		const run = vi.fn(
+			() =>
+				new Promise<{ success: boolean; response: string | null; sessionId: null }>((resolve) => {
+					finishRun = resolve;
+				})
+		);
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(run).toHaveBeenCalled());
+		const signal = vi.mocked(run).mock.calls[0][3] as AbortSignal;
+		const onClose = vi.mocked(client.socket.once).mock.calls[0][1] as () => void;
+		expect(signal.aborted).toBe(false);
+		onClose();
+		expect(signal.aborted).toBe(true);
+		finishRun({ success: false, response: null, sessionId: null });
+		await vi.waitFor(() => expect(client.socket.off).toHaveBeenCalledWith('close', onClose));
+	});
+
+	it('requires the declared tool and an actual runner receipt for a CLI delivery check', async () => {
+		const run = vi.fn(async () => ({
+			success: true,
+			response: '{"messageIds":["invented"]}',
+			sessionId: 'provider-1',
+			toolReceipts: [],
+		}));
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'report',
+			requiredToolId: 'acme/absent',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(1));
+		expect(run).not.toHaveBeenCalled();
+		expect(lastResult()).toMatchObject({
+			success: false,
+			error: 'Required plugin tool unavailable',
+		});
+
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'report',
+			requiredToolId: 'acme/dostuff',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+		expect(run).toHaveBeenCalledWith(
+			'agent-a',
+			'report',
+			undefined,
+			expect.any(AbortSignal),
+			'user',
+			undefined,
+			'acme/dostuff'
+		);
+		expect(lastResult()).toMatchObject({
+			success: false,
+			response: null,
+			error: 'Required plugin tool returned no delivery receipt',
+		});
+	});
+
+	it('preserves the provider failure when a required receipt is missing', async () => {
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(
+			vi.fn(async () => ({
+				success: false,
+				response: null,
+				sessionId: null,
+				error: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+				toolReceipts: [],
+			}))
+		);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'report',
+			requiredToolId: 'acme/dostuff',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({
+			success: false,
+			response: null,
+			error: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+			toolReceipts: [],
+		});
+	});
+
+	it('returns a verified required tool receipt from the headless runner', async () => {
+		const receipt = {
+			runId: 'a'.repeat(32),
+			agentId: 'agent-a',
+			toolId: 'acme/dostuff',
+			messageIds: ['123'],
+		};
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(
+			vi.fn(async () => ({
+				success: true,
+				response: 'done',
+				sessionId: 'provider-1',
+				toolReceipts: [receipt],
+			}))
+		);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'report',
+			requiredToolId: 'acme/dostuff',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({ success: true, toolReceipts: [receipt] });
+	});
+
+	it('fails a required delivery check when the plugin deactivates during the run', async () => {
+		const run = vi.fn(async () => {
+			vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
+			return {
+				success: true,
+				response: 'done',
+				sessionId: 'provider-1',
+				toolReceipts: [
+					{
+						runId: 'a'.repeat(32),
+						agentId: 'agent-a',
+						toolId: 'acme/dostuff',
+						messageIds: ['123'],
+					},
+				],
+			};
+		});
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'report',
+			requiredToolId: 'acme/dostuff',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({
+			success: false,
+			response: null,
+			error: 'Required plugin tool became unavailable',
+		});
+	});
+
+	it('refuses the headless runner to a non-loopback web client', async () => {
+		const run = vi.fn();
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '192.0.2.5',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({ available: false });
+		expect(run).not.toHaveBeenCalled();
+	});
+
+	it('refuses a loopback browser or proxy without the CLI secret', async () => {
+		const run = vi.fn();
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({ available: false });
+		expect(run).not.toHaveBeenCalled();
 	});
 	describe('Feedback and support package (maestro-cli feedback / support-package)', () => {
 		const lastResponse = () => {

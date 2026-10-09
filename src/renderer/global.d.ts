@@ -210,6 +210,7 @@ import type { InstallResult as PluginInstallResult } from '../main/plugins/plugi
 import type { AggregatedContributions as PluginContributions } from '../shared/plugins/contributions';
 import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
+import type { PluginRegistry } from '../shared/plugins/plugin-registry';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
@@ -1914,7 +1915,7 @@ interface MaestroAPI {
 				cacheReadTokens: number;
 				cacheCreationTokens: number;
 				durationSeconds: number;
-				origin?: 'user' | 'auto';
+				origin?: 'user' | 'auto' | 'relay';
 				sessionName?: string;
 				starred?: boolean;
 			}>;
@@ -2048,7 +2049,10 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string
 		) => Promise<
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		>;
 		setSessionName: (
 			agentId: string,
@@ -2294,7 +2298,7 @@ interface MaestroAPI {
 				cacheReadTokens: number;
 				cacheCreationTokens: number;
 				durationSeconds: number;
-				origin?: 'user' | 'auto';
+				origin?: 'user' | 'auto' | 'relay';
 				sessionName?: string;
 				starred?: boolean;
 			}>
@@ -2411,8 +2415,9 @@ interface MaestroAPI {
 				string,
 				| 'user'
 				| 'auto'
+				| 'relay'
 				| {
-						origin: 'user' | 'auto';
+						origin: 'user' | 'auto' | 'relay';
 						sessionName?: string;
 						starred?: boolean;
 						contextUsage?: number;
@@ -4599,7 +4604,7 @@ interface MaestroAPI {
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;
 		getGroupings: () => Promise<PluginGroupingSnapshot>;
-		onChanged: (callback: () => void) => () => void;
+		onChanged: (callback: (registry?: PluginRegistry) => void) => () => void;
 		onGroupingsChanged: (callback: () => void) => () => void;
 		onPanelData: (
 			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void

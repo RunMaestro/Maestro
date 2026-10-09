@@ -96,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.16.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.21.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.16.0');
+		expect(HOST_API_VERSION).toBe('1.21.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -168,6 +168,26 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 	it('validatePluginManifest agrees with the source on a malformed manifest', () => {
 		const malformed = { id: '1nope', name: '', tier: 7, maestro: {} };
 		expect(validatePluginManifest(malformed)).toEqual(srcValidatePluginManifest(malformed));
+	});
+
+	it('rejects impossible release dates in both vendored and host validators', () => {
+		const base = {
+			id: 'com.example.dated',
+			name: 'Dated',
+			version: '1.0.0',
+			tier: 0,
+			maestro: { minHostApi: HOST_API_VERSION },
+		};
+		for (const releaseDate of ['2026-02-30', '2026-04-31', '2025-02-29']) {
+			const manifest = { ...base, releaseDate };
+			expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
+			expect(validatePluginManifest(manifest).manifest).toBeNull();
+		}
+		for (const releaseDate of ['2024-02-29', '0000-01-01']) {
+			const manifest = { ...base, releaseDate };
+			expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
+			expect(validatePluginManifest(manifest).manifest).not.toBeNull();
+		}
 	});
 
 	it('validatePluginManifest agrees with the source on a well-formed manifest with category', () => {

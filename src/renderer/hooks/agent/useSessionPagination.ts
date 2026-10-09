@@ -90,7 +90,7 @@ export function useSessionPagination({
 
 	// Store origins map for merging into paginated results
 	const originsMapRef = useRef<
-		Map<string, { origin?: string; sessionName?: string; starred?: boolean }>
+		Map<string, { origin?: ClaudeSession['origin']; sessionName?: string; starred?: boolean }>
 	>(new Map());
 
 	// Load sessions on mount or when projectPath/agentId changes
@@ -111,7 +111,7 @@ export function useSessionPagination({
 				// Load session metadata (starred status, sessionName) from session origins
 				const originsMap = new Map<
 					string,
-					{ origin?: string; sessionName?: string; starred?: boolean }
+					{ origin?: ClaudeSession['origin']; sessionName?: string; starred?: boolean }
 				>();
 				const starredFromOrigins = new Set<string>();
 
@@ -161,7 +161,7 @@ export function useSessionPagination({
 						...session,
 						sessionName: originData?.sessionName || session.sessionName,
 						starred: originData?.starred || session.starred,
-						origin: (originData?.origin || session.origin) as 'user' | 'auto' | undefined,
+						origin: originData?.origin || session.origin,
 					};
 				});
 
@@ -211,7 +211,7 @@ export function useSessionPagination({
 					...session,
 					sessionName: originData?.sessionName || session.sessionName,
 					starred: originData?.starred || session.starred,
-					origin: (originData?.origin || session.origin) as 'user' | 'auto' | undefined,
+					origin: originData?.origin || session.origin,
 				};
 			});
 

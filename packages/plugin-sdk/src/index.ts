@@ -419,7 +419,11 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.16.0 for three
+ * The host API version this Maestro build implements. 1.21.0 adds isolated
+ * `agents.generateTitle`. 1.20.0 adds an optional
+ * per-call public progress callback to agents.send. 1.18.0 places settings panels in plugin details;
+ * 1.19.0 adds the isolated panel theme bridge. 1.17.0 added `agents.send` and verified plugin-tool caller context.
+ * 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
@@ -450,7 +454,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.16.0';
+export const HOST_API_VERSION = '1.21.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -605,6 +609,8 @@ export interface PluginManifest {
 	 * requires no minHostApi bump.
 	 */
 	beta?: boolean;
+	/** Optional publication day as YYYY-MM-DD, used for marketplace sorting. */
+	releaseDate?: string;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/** Relative path to the sandboxed code entrypoint. Required tier >= 1; forbidden tier 0. */
@@ -646,6 +652,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		homepage,
 		category,
 		beta,
+		releaseDate,
 		contributes,
 		entry,
 		permissions,
@@ -716,6 +723,25 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 	if (beta !== undefined && typeof beta !== 'boolean') {
 		errors.push('beta, when present, must be a boolean');
 	}
+	if (releaseDate !== undefined) {
+		if (typeof releaseDate !== 'string') {
+			errors.push('releaseDate, when present, must be a string');
+		} else if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate.trim())) {
+			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
+		} else {
+			const date = releaseDate.trim();
+			const [year, month, day] = date.split('-').map(Number);
+			const parsed = new Date(`${date}T00:00:00Z`);
+			if (
+				Number.isNaN(parsed.getTime()) ||
+				parsed.getUTCFullYear() !== year ||
+				parsed.getUTCMonth() !== month - 1 ||
+				parsed.getUTCDate() !== day
+			) {
+				errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
+			}
+		}
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -766,6 +792,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
 		...(beta === true ? { beta: true } : {}),
+		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
@@ -891,7 +918,8 @@ export interface CommandContribution {
 	description?: string;
 }
 
-/** Where a contributed panel docks. `modal` (default) keeps today's behavior. */
+/** Where a panel renders. `settings` uses its owning plugin's Settings sub-tab
+ * on hosts at 1.18.0+, while earlier hosts use the global Display tab. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /** Chrome size for a `modal` panel. `full` renders edge-to-edge (a summonable
@@ -1310,6 +1338,8 @@ export const HOST_API = {
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
+	'agents.send': { capability: 'agents:dispatch' },
+	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
 	'settings.set': { capability: 'settings:write' },
@@ -1461,10 +1491,35 @@ export interface MaestroNetApi {
 }
 
 /** List/read agents (`agents:read`) and dispatch prompts (`agents:dispatch`). */
+export type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| {
+			type: 'tool';
+			tool: string;
+			status: 'started' | 'completed' | 'failed';
+			at: string;
+			/** English public action, at most 120 chars, from allowlisted tool metadata. */
+			summary?: string;
+	  };
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
 	dispatch(agentId: string, prompt: string, opts?: unknown): Promise<unknown>;
+	/** Isolated cheap naming turn; never creates or resumes a provider conversation. */
+	generateTitle(agentId: string, firstMessage: string): Promise<string | null>;
+	/** Fresh provider session unless sessionId is supplied; never a desktop tab id. */
+	send(
+		agentId: string,
+		prompt: string,
+		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
+	): Promise<{
+		success: boolean;
+		response: string | null;
+		sessionId: string | null;
+		error?: string;
+	}>;
 }
 
 /** Read metadata-only history entries (`history:read`). */
@@ -1621,7 +1676,10 @@ export interface MaestroCommandsApi {
 
 /** Register handlers for agent tools the host invokes on this plugin. */
 export interface MaestroToolsApi {
-	register(localId: string, handler: (args: unknown) => unknown): void;
+	register(
+		localId: string,
+		handler: (args: unknown, context: { readonly callerAgentId: string | null }) => unknown
+	): void;
 }
 
 /** Ask the OS to open an external URL (`shell:openExternal`). */

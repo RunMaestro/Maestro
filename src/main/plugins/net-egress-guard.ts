@@ -16,8 +16,8 @@
  *    defeats rebinding (there is no second, unchecked resolution).
  *
  * Pure given an injected resolver, so the policy is unit-testable without a
- * network stack. The undici dispatcher (socket-level pin) is built lazily and is
- * optional; the pre-connect check is the always-on gate.
+ * network stack. The undici dispatcher (socket-level pin) is required for
+ * net.fetch; the host handler refuses requests when it cannot be built.
  */
 
 import * as dns from 'dns';
@@ -51,7 +51,7 @@ export interface EgressGuardDeps {
 	/** Ports that must never be reachable (the app's own loopback web port). */
 	blockedPorts?: () => readonly number[];
 	/** Build the connect-pinning dispatcher from the validating lookup. Defaults
-	 * to an undici Agent; returns undefined when undici is unavailable. */
+	 * to an undici Agent; the host refuses net.fetch if it is unavailable. */
 	makeDispatcher?: (lookup: GuardedLookup) => unknown;
 }
 
@@ -224,9 +224,8 @@ function defaultResolve(hostname: string): Promise<string[]> {
 
 function defaultMakeDispatcher(lookup: GuardedLookup): unknown {
 	try {
-		// undici ships with Node and Electron; built lazily so unit tests that
-		// never fetch do not require it, and a missing module degrades to the
-		// always-on pre-connect check rather than throwing.
+		// undici is an explicit runtime dependency. If packaging omits it, the
+		// host handler must fail closed rather than fetch without connection pinning.
 		const undici = require('undici') as { Agent: new (opts: unknown) => unknown };
 		return new undici.Agent({ connect: { lookup } });
 	} catch {
