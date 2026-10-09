@@ -84,6 +84,21 @@ export function cwdSlug(cwd: string): string {
 	return normalized.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
+/** Where claude keeps the transcript of `sessionId` for a project rooted at `cwd`. */
+export function sessionTranscriptPath(configDir: string, cwd: string, sessionId: string): string {
+	return path.join(configDir, 'projects', cwdSlug(cwd), `${sessionId}.jsonl`);
+}
+
+/**
+ * What `claude --print --resume <id>` says when no transcript backs the id.
+ * maestro-p reuses the exact words so the desktop's `session_not_found`
+ * pattern classifies a TUI turn the same way as a print turn, and its in-place
+ * recovery starts a fresh session instead of reporting an anonymous failure.
+ */
+export function noConversationFoundMessage(sessionId: string): string {
+	return `No conversation found with session ID: ${sessionId}`;
+}
+
 interface Candidate {
 	sessionId: string;
 	jsonlPath: string;
