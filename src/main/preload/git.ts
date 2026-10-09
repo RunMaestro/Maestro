@@ -181,7 +181,7 @@ export function createGitApi() {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		): Promise<{ stdout: string; stderr: string }> =>
+		): Promise<{ stdout: string; stderr: string; timedOut?: boolean }> =>
 			ipcRenderer.invoke('git:numstat', cwd, sshRemoteId, remoteCwd),
 
 		/**

@@ -24,6 +24,8 @@ export interface RemoteGitOptions {
 	sshRemote: SshRemoteConfig;
 	/** Working directory on the remote host */
 	remoteCwd?: string;
+	/** Kill the SSH invocation after this many milliseconds */
+	timeout?: number;
 }
 
 /**
@@ -50,7 +52,7 @@ export async function execGitRemote(
 	args: string[],
 	options: RemoteGitOptions
 ): Promise<ExecResult> {
-	const { sshRemote, remoteCwd } = options;
+	const { sshRemote, remoteCwd, timeout } = options;
 
 	if (!remoteCwd) {
 		logger.warn('No remote working directory specified for git command', LOG_CONTEXT);
@@ -74,7 +76,9 @@ export async function execGitRemote(
 	});
 
 	// Execute the SSH command
-	const result = await execFileNoThrow(sshCommand.command, sshCommand.args);
+	const result = timeout
+		? await execFileNoThrow(sshCommand.command, sshCommand.args, undefined, { timeout })
+		: await execFileNoThrow(sshCommand.command, sshCommand.args);
 
 	if (result.exitCode !== 0) {
 		logger.debug(`Remote git command failed: ${result.stderr}`, LOG_CONTEXT, {
@@ -101,17 +105,89 @@ export async function execGit(
 	args: string[],
 	localCwd: string,
 	sshRemote?: SshRemoteConfig | null,
-	remoteCwd?: string
+	remoteCwd?: string,
+	options: { timeout?: number } = {}
 ): Promise<ExecResult> {
 	if (sshRemote) {
 		return execGitRemote(args, {
 			sshRemote,
 			remoteCwd,
+			...(options.timeout ? { timeout: options.timeout } : {}),
 		});
 	}
 
 	// Local execution
-	return execFileNoThrow('git', args, localCwd);
+	return options.timeout
+		? execFileNoThrow('git', args, localCwd, { timeout: options.timeout })
+		: execFileNoThrow('git', args, localCwd);
+}
+
+/**
+ * How long a background read-only git query (the git indicator's status,
+ * branch and numstat polls) may run before the caller gets a timeout instead
+ * of an answer. A repo in an iCloud Drive / file-provider folder blocks every
+ * `git status` on the OS downloading offloaded files, which can take minutes.
+ */
+export const READ_ONLY_GIT_TIMEOUT_MS = 20_000;
+
+/** Same text `execFileNoThrow` appends to stderr when it kills a timed-out child. */
+const timeoutResult = (timeoutMs: number): ExecResult => ({
+	stdout: '',
+	stderr: `ETIMEDOUT: process timed out after ${timeoutMs}ms`,
+	exitCode: 'ETIMEDOUT',
+});
+
+/** True when a git result is a timeout rather than an answer from git. */
+export function isGitTimeout(result: ExecResult): boolean {
+	return result.exitCode === 'ETIMEDOUT';
+}
+
+// One live process per (host, folder, command). Entries are removed when the
+// git process actually exits, not when a caller gives up on it, so a process
+// that ignores its kill signal still blocks new spawns for that folder.
+const readOnlyGitInFlight = new Map<string, Promise<ExecResult>>();
+
+/**
+ * Run a read-only git query that the UI polls in the background.
+ *
+ * Three things `execGit` does not do, each of which a slow folder needs:
+ * - `--no-optional-locks`, so the query never takes `.git/index.lock` and
+ *   cannot fight the agent's own git commands for it.
+ * - A timeout: the child is killed and the caller gets an `ETIMEDOUT` result.
+ * - Single-flight per folder: a caller that arrives while the same query is
+ *   still running joins it instead of spawning another. Without this, every
+ *   poll tick on a folder where git hangs adds one more stuck process.
+ *
+ * Callers always settle within `timeoutMs`, even if the child has not exited
+ * yet; later callers keep joining that child until it does.
+ */
+export async function execGitReadOnly(
+	args: string[],
+	localCwd: string,
+	sshRemote?: SshRemoteConfig | null,
+	remoteCwd?: string,
+	timeoutMs: number = READ_ONLY_GIT_TIMEOUT_MS
+): Promise<ExecResult> {
+	const key = [sshRemote?.id ?? '', sshRemote ? (remoteCwd ?? '') : localCwd, ...args].join('\0');
+	let run = readOnlyGitInFlight.get(key);
+	if (!run) {
+		run = execGit(['--no-optional-locks', ...args], localCwd, sshRemote, remoteCwd, {
+			timeout: timeoutMs,
+		}).finally(() => {
+			readOnlyGitInFlight.delete(key);
+		});
+		readOnlyGitInFlight.set(key, run);
+	}
+
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<ExecResult>((resolve) => {
+		timer = setTimeout(() => resolve(timeoutResult(timeoutMs)), timeoutMs);
+	});
+	try {
+		return await Promise.race([run, deadline]);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 /**

@@ -10,6 +10,7 @@ import { ipcMain } from 'electron';
 import { registerGitHandlers } from '../../../../main/ipc/handlers/git';
 import * as execFile from '../../../../main/utils/execFile';
 import path from 'path';
+import type { SshRemoteConfig } from '../../../../shared/types';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -92,6 +93,8 @@ vi.mock('../../../../main/runtime/getShellPath', () => ({
 vi.mock('../../../../main/utils/remote-git', () => ({
 	execGitRemote: vi.fn(),
 	execGit: vi.fn(),
+	execGitReadOnly: vi.fn(),
+	isGitTimeout: (result: { exitCode: number | string }) => result.exitCode === 'ETIMEDOUT',
 }));
 
 // The branch-switch guard has its own suite (branch-switch-guard.test.ts). Its
@@ -172,13 +175,21 @@ describe('Git IPC handlers', () => {
 
 		// Set up execGit mock to dispatch to local or remote
 		const remoteGit = await import('../../../../main/utils/remote-git');
-		vi.mocked(remoteGit.execGit).mockImplementation(async (args, localCwd, sshRemote) => {
+		const dispatchGit = async (
+			args: string[],
+			localCwd: string,
+			sshRemote?: SshRemoteConfig | null
+		) => {
 			if (sshRemote) {
 				return remoteGit.execGitRemote(args, { sshRemote, remoteCwd: localCwd });
 			} else {
 				return execFile.execFileNoThrow('git', args, localCwd);
 			}
-		});
+		};
+		vi.mocked(remoteGit.execGit).mockImplementation(dispatchGit);
+		// The read-only runner's own behaviour (locks flag, timeout,
+		// single-flight) is covered in remote-git.test.ts.
+		vi.mocked(remoteGit.execGitReadOnly).mockImplementation(dispatchGit);
 	});
 
 	afterEach(() => {

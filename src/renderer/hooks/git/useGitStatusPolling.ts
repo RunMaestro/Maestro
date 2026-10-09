@@ -304,12 +304,21 @@ export function useGitStatusPolling(
 	const isActiveRef = useRef<boolean>(true);
 	const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
+	// Last published map, so a session whose git timed out keeps its last
+	// good counts instead of flashing to "no changes".
+	const gitStatusMapRef = useRef(gitStatusMap);
+	gitStatusMapRef.current = gitStatusMap;
+
 	// Poll git status for all Git sessions
-	const pollGitStatus = useCallback(async () => {
+	const pollGitStatusOnce = useCallback(async () => {
 		// Skip polling if document is hidden (app in background)
 		if (pauseWhenHidden && document.hidden) return;
 
 		const allSessions = sessionsRef.current;
+		const keepPrevious = (sessionId: string) => {
+			const previous = gitStatusMapRef.current.get(sessionId);
+			return previous ? ([sessionId, previous] as const) : null;
+		};
 		const gitSessions = allSessions.filter((s) => s.isGitRepo);
 		const nonGitSessions = allSessions.filter((s) => !s.isGitRepo);
 
@@ -350,6 +359,7 @@ export function useGitStatusPolling(
 						// For non-active sessions, just get basic status (file count)
 						if (!isActiveSession) {
 							const status = await gitService.getStatus(cwd, sshRemoteId);
+							if (status.timedOut) return keepPrevious(session.id);
 							if (status.notARepo) {
 								await demoteIfNoLongerGitRepo(session, cwd, sshRemoteId);
 								return null;
@@ -375,6 +385,7 @@ export function useGitStatusPolling(
 							gitService.getStatus(cwd, sshRemoteId),
 							gitService.getNumstat(cwd, sshRemoteId),
 						]);
+						if (status.timedOut || numstat.timedOut) return keepPrevious(session.id);
 						if (status.notARepo) {
 							await demoteIfNoLongerGitRepo(session, cwd, sshRemoteId);
 							return null;
@@ -458,6 +469,36 @@ export function useGitStatusPolling(
 		}
 	}, [pauseWhenHidden]);
 
+	// At most one poll at a time. On a folder where git hangs (iCloud Drive
+	// offloading), overlapping polls are how stuck `git status` processes
+	// piled up by the hundred. A timer tick that lands mid-poll is dropped;
+	// an explicit refresh joins the running poll and queues one more pass,
+	// since the running one may predate the change that asked for it.
+	const pollInFlightRef = useRef<Promise<void> | null>(null);
+	const pollAgainRef = useRef(false);
+	const runPoll = useCallback(
+		(fromTimer: boolean): Promise<void> => {
+			if (pollInFlightRef.current) {
+				if (!fromTimer) pollAgainRef.current = true;
+				return pollInFlightRef.current;
+			}
+			const run = (async () => {
+				try {
+					do {
+						pollAgainRef.current = false;
+						await pollGitStatusOnce();
+					} while (pollAgainRef.current);
+				} finally {
+					pollInFlightRef.current = null;
+				}
+			})();
+			pollInFlightRef.current = run;
+			return run;
+		},
+		[pollGitStatusOnce]
+	);
+	const pollGitStatus = useCallback(() => runPoll(false), [runPoll]);
+
 	// PERF: Track git session count to dynamically scale the polling interval
 	const gitSessionCount = useMemo(() => sessions.filter((s) => s.isGitRepo).length, [sessions]);
 	const gitSessionCountRef = useRef(gitSessionCount);
@@ -474,7 +515,7 @@ export function useGitStatusPolling(
 
 				// Check if user is still active
 				if (timeSinceLastActivity < inactivityTimeout) {
-					pollGitStatus();
+					void runPoll(true);
 				} else {
 					// User inactive - stop polling to save CPU
 					isActiveRef.current = false;
@@ -485,7 +526,7 @@ export function useGitStatusPolling(
 				}
 			}, scaledInterval);
 		}
-	}, [pollInterval, inactivityTimeout, pollGitStatus]);
+	}, [pollInterval, inactivityTimeout, pollGitStatus, runPoll]);
 
 	const stopPolling = useCallback(() => {
 		if (intervalRef.current) {

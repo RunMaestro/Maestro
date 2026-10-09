@@ -2,8 +2,13 @@ import { ipcMain, BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import chokidar, { FSWatcher } from 'chokidar';
-import { execFileNoThrow, execFileBufferNoThrow, execFileStreaming } from '../../utils/execFile';
-import { execGit } from '../../utils/remote-git';
+import {
+	execFileNoThrow,
+	execFileBufferNoThrow,
+	execFileStreaming,
+	type ExecResult,
+} from '../../utils/execFile';
+import { execGit, execGitReadOnly, isGitTimeout } from '../../utils/remote-git';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { logger } from '../../utils/logger';
 import { getSshRemoteById } from '../../stores';
@@ -330,6 +335,20 @@ async function spawnStreamingGitCommand(
 }
 
 /**
+ * Reply shape for the polled status/numstat channels. `timedOut` is present
+ * only when git did not answer, so the renderer can keep its last good value
+ * instead of reading the empty stdout as "no changes".
+ */
+function readOnlyGitReply(result: ExecResult): {
+	stdout: string;
+	stderr: string;
+	timedOut?: boolean;
+} {
+	const reply = { stdout: result.stdout, stderr: result.stderr };
+	return isGitTimeout(result) ? { ...reply, timedOut: true } : reply;
+}
+
+/**
  * Register all Git-related IPC handlers.
  *
  * These handlers provide Git operations used across the application including:
@@ -353,8 +372,13 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(['status', '--porcelain'], cwd, sshRemote, effectiveRemoteCwd);
-				return { stdout: result.stdout, stderr: result.stderr };
+				const result = await execGitReadOnly(
+					['status', '--porcelain'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				return readOnlyGitReply(result);
 			}
 		)
 	);
@@ -428,8 +452,13 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(['diff', '--numstat'], cwd, sshRemote, effectiveRemoteCwd);
-				return { stdout: result.stdout, stderr: result.stderr };
+				const result = await execGitReadOnly(
+					['diff', '--numstat'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				return readOnlyGitReply(result);
 			}
 		)
 	);
@@ -441,7 +470,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(
+				const result = await execGitReadOnly(
 					['rev-parse', '--abbrev-ref', 'HEAD'],
 					cwd,
 					sshRemote,
@@ -520,10 +549,15 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 				// Get comprehensive git info in a single call
 				const [branchResult, remoteResult, statusResult, behindAheadResult] = await Promise.all([
-					execGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd, sshRemote, effectiveRemoteCwd),
-					execGit(['remote', 'get-url', 'origin'], cwd, sshRemote, effectiveRemoteCwd),
-					execGit(['status', '--porcelain'], cwd, sshRemote, effectiveRemoteCwd),
-					execGit(
+					execGitReadOnly(
+						['rev-parse', '--abbrev-ref', 'HEAD'],
+						cwd,
+						sshRemote,
+						effectiveRemoteCwd
+					),
+					execGitReadOnly(['remote', 'get-url', 'origin'], cwd, sshRemote, effectiveRemoteCwd),
+					execGitReadOnly(['status', '--porcelain'], cwd, sshRemote, effectiveRemoteCwd),
+					execGitReadOnly(
 						['rev-list', '--left-right', '--count', '@{upstream}...HEAD'],
 						cwd,
 						sshRemote,
