@@ -70,6 +70,24 @@ ok()   { printf '%s  ok%s %s\n' "$C_GREEN" "$C_RESET" "$1"; }
 warn() { printf '%swarn%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
 die()  { printf '%serror%s %s\n' "$C_RED" "$C_RESET" "$1" >&2; exit 1; }
 
+# The exit status is 0, 1 or 3 and nothing else. Under `set -e` a failed
+# command ends the script with its own status (100 from apt-get, say), and an
+# interrupt with 128 plus the signal, so anything else becomes 1. 3 counts only
+# when --enable was refused, never when some command happened to return it.
+ENABLE_REFUSED=""
+on_exit() {
+	status=$?
+	case $status in
+		0|1) return ;;
+		3) [ -z "$ENABLE_REFUSED" ] || return 0 ;;
+	esac
+	printf '%serror%s the install stopped (status %s); see the output above\n' \
+		"$C_RED" "$C_RESET" "$status" >&2
+	exit 1
+}
+trap on_exit EXIT
+trap 'exit 130' HUP INT TERM
+
 usage() {
 	sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'
 }
@@ -275,7 +293,6 @@ if systemctl is-active --quiet maestro-cue; then
 	systemctl restart maestro-cue
 	ok "maestro-cue restarted on the new version"
 fi
-ENABLE_REFUSED=""
 if [ "$ENABLE" = 1 ]; then
 	# Already enabled (an upgrade): nothing new is being enabled, so there is
 	# nothing to gate; make sure it runs.

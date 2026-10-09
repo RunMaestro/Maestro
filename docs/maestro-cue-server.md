@@ -74,7 +74,7 @@ The installer adds git and the GitHub CLI, creates the `maestro` user, and picks
 | `--node-major <N>`          | Node.js major version to install when the one on PATH is not usable (default 24)                                  |
 | `--enable`                  | Enable and start the service once there is something to run (see [Check](#check))                                 |
 
-The installer exits 0 when done, 1 on an error, and 3 when everything was installed but `--enable` was refused because nothing is imported yet.
+The installer exits 0 when done, 1 on an error, and 3 when everything was installed but `--enable` was refused because nothing is imported yet. It never exits with anything else: a failed step (an `apt-get` or `npm` error, say) or an interrupt also exits 1, after the step's own output and a line with its original status.
 
 | Path                                      | What it holds                                                                       |
 | ----------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -111,23 +111,28 @@ The image runs as the `maestro` user under `tini`, with git and the GitHub CLI. 
 
 Use named volumes (`maestro-home` and `maestro-work` below). They outlive the container, so logins and imported agents survive a rebuild of the image.
 
-`packaging/server/compose.yaml` has the same setup for Docker Compose. Put `maestro.env` beside it and run the Compose commands from that folder.
+`packaging/server/compose.yaml` has the same setup for Docker Compose. Put `maestro.env` beside it and run `docker compose up -d --build` from that folder once the steps below are done. It gives the container and the volumes the names this page uses (`maestro-cue`, `maestro-home` and `maestro-work`), so the `docker run`, `docker exec` and `docker stop` commands here work on a Compose stack as written.
 
-Compose names what it creates after the project, which is the folder's name, `server`: the volumes are `server_maestro-home` and `server_maestro-work`, and the container is `server-maestro-cue-1`. The `docker run` and `docker exec` commands on this page use `maestro-home`, `maestro-work` and `maestro-cue`, so with Compose use its own forms, which pick the project's volumes, env file and secrets for you:
+Compose reads `AGENT_CLIS` from your shell or from a `.env` file beside `compose.yaml` (not from `maestro.env`, which goes to the container), and builds Claude Code alone when it is unset:
 
-| This page                                                                 | With Compose                                                        |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `docker build ... --build-arg AGENT_CLIS="..."`                           | `docker compose build --build-arg AGENT_CLIS="..."`                 |
-| `docker run --rm -v maestro-home:/var/lib/maestro ... maestro-cue <verb>` | `docker compose run --rm --no-deps maestro-cue <verb>`              |
-| `docker run --rm -it ... --entrypoint claude maestro-cue`                 | `docker compose run --rm --no-deps --entrypoint claude maestro-cue` |
-| `docker run -d ...`                                                       | `docker compose up -d`                                              |
-| `docker exec maestro-cue <command>`                                       | `docker compose exec maestro-cue <command>`                         |
-| `docker stop -t 120 maestro-cue`, `docker start maestro-cue`              | `docker compose stop`, `docker compose start`                       |
-| `docker logs maestro-cue`                                                 | `docker compose logs maestro-cue`                                   |
+```bash
+AGENT_CLIS="@anthropic-ai/claude-code opencode-ai" docker compose up -d --build
+```
 
-Mount a file the command reads, such as a bundle, with `-v` on `docker compose run` the same way. A volume name that does not exist yet is created empty without a warning, so a command that misses the project's volumes answers as if nothing had been imported (`list agents` prints `No agents found.` and exits 0).
+Set it the same way on every rebuild, or keep it in `.env`.
 
-`compose.yaml` passes no build arguments, so `docker compose up -d --build` builds with the default `AGENT_CLIS` (Claude Code only). To install other CLIs, run `docker compose build --build-arg AGENT_CLIS="@anthropic-ai/claude-code opencode-ai"` and then `docker compose up -d` without `--build`.
+The fixed names mean one stack per host from this file. For a second engine on the same host, copy `compose.yaml` and change `container_name`, both volume `name:` values and the published webhook port: each engine needs its own data volume, and a second engine on the same one exits at once (see "One engine per volume" under [Start in a container](#start-in-a-container)). If the host already has a `maestro-home` or `maestro-work` volume from a `docker run` setup, Compose uses it, with a warning that it did not create it.
+
+A stack created before these names were fixed has `server_maestro-home`, `server_maestro-work` and `server-maestro-cue-1`. The next `docker compose up` replaces the container with `maestro-cue` and mounts new, empty `maestro-home` and `maestro-work` volumes; the old volumes are kept but no longer used. Copy them over once, before that `up`:
+
+```bash
+docker compose stop
+for v in home work; do
+  docker run --rm --user 0 --entrypoint sh \
+    -v server_maestro-$v:/from -v maestro-$v:/to maestro-cue -c 'cp -a /from/. /to/'
+done
+docker compose up -d
+```
 
 ## Sign agents in
 
@@ -337,6 +342,7 @@ The unit runs `maestro-cli cue engine start --data-dir /var/lib/maestro/data --s
 
 - It is ready (`systemctl status` shows `active`) once agents are loaded, the lock is held and triggers are armed. A missing agent binary, secret or `gh` stops the start, and the log lists every gap. `Restart=on-failure` then tries again every 5 seconds, logging the gaps each time, until you fix them or run `sudo systemctl stop maestro-cue`. Start-up may take up to 60 seconds.
 - A watchdog restarts it if the engine stops answering for 30 seconds or loses its lock to another engine (the journal shows `Watchdog timeout` and the engine is killed with `SIGABRT`), and it restarts after a crash, 5 seconds later. When the engine dies either way, systemd kills the rest of the service with it, including agent turns and shell steps still running; the restarted engine marks those runs failed and runs what was queued.
+- It never writes a core dump (`LimitCORE=0`), and neither do its agents, which inherit the limit. The engine holds webhook secrets, tokens and provider keys in memory, and a core file would put them on disk; the watchdog's `SIGABRT` above would otherwise leave one.
 - It runs with a read-only system. Only `/var/lib/maestro` and `/srv/maestro` are writable. For workspaces elsewhere, add a drop-in with `sudo systemctl edit maestro-cue`:
 
 ```ini
@@ -348,7 +354,7 @@ ReadWritePaths=/home/me/projects
 
 ```bash
 docker run -d --name maestro-cue --restart unless-stopped --stop-timeout 120 \
-  --env-file maestro.env \
+  --ulimit core=0 --env-file maestro.env \
   -v maestro-home:/var/lib/maestro -v maestro-work:/srv/maestro \
   -p 127.0.0.1:17997:17997 \
   maestro-cue
@@ -357,6 +363,7 @@ docker run -d --name maestro-cue --restart unless-stopped --stop-timeout 120 \
 The image starts the engine with the same flags as the unit and runs in server mode the same way.
 
 - **Stop timeout.** The engine drains active runs for up to 90 seconds on stop, but `docker stop` waits only 10 seconds unless the container was created with a longer stop timeout. The `--stop-timeout 120` above and Compose's `stop_grace_period: 120s` set one, so a plain `docker stop` of either container drains in full; for a container created without it, use `docker stop -t 120`. After 10 seconds Docker kills the engine in the middle of the drain (exit code 137): the run in flight is marked failed at the next start, and the lock is left behind (see "Restart after a hard kill"). The image runs `tini` without `-g`, so the stop signal reaches the engine alone and runs in flight can finish.
+- **No core dumps.** `--ulimit core=0` (`ulimits: core: 0` in Compose) keeps a crash from writing the engine's memory, with its secrets and keys, to disk. The image cannot set it; Docker's default comes from the daemon and often allows core files. Add it to any other `docker run` that is given secrets, such as an on-demand run.
 - **One engine per volume.** A second engine started on the same data volume, in another container, sees the first one's lock while its heartbeat is fresh, logs `Another Cue engine (...) already holds the lock` and exits 1.
 - **Restart after a hard kill.** If the engine is killed without stopping (`docker kill`, out of memory, a host crash), its lock stays behind. A new container waits for that lock to go quiet: the engine refuses to start for up to 3 minutes, and the restart policy brings it back after that.
 - **Health.** The image's health check calls `/healthz` on the engine's status port, 7433, inside the container. `docker ps` shows `healthy` once it answers. If the engine stops answering, the container turns `unhealthy` after three failed checks (about 90 seconds), but Docker does not restart it: a restart policy acts only when the container exits. Restart it yourself (`docker restart -t 120 maestro-cue`), or run it under something that acts on health.
@@ -401,7 +408,7 @@ docker exec maestro-cue maestro-cli playbook <playbook-id> --json
 With no engine container running, use `docker run --rm` instead:
 
 ```bash
-docker run --rm --env-file maestro.env \
+docker run --rm --ulimit core=0 --env-file maestro.env \
   -v maestro-home:/var/lib/maestro -v maestro-work:/srv/maestro \
   maestro-cue send <agent> "Reply with the word OK" --read-only
 ```
@@ -610,4 +617,4 @@ docker stop -t 120 maestro-cue
 docker rm maestro-cue
 ```
 
-Then start it with the same `docker run -d` command as in [Start](#start-in-a-container). With Compose, `docker compose build` (with the same `--build-arg AGENT_CLIS`, if you set one) and then `docker compose up -d` does both.
+Then start it with the same `docker run -d` command as in [Start](#start-in-a-container). With Compose, `docker compose up -d --build` does both (with the same `AGENT_CLIS`, if you set one).

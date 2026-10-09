@@ -2,6 +2,16 @@
 #
 #   docker compose up -d --build
 #
+# Agent CLIs installed in the image (npm package names, space separated), from
+# the shell or a .env file beside this one; Claude Code when unset:
+#
+#   AGENT_CLIS="@anthropic-ai/claude-code @openai/codex" docker compose up -d --build
+#
+# The container and volumes have fixed names (maestro-cue, maestro-home,
+# maestro-work), so the plain docker commands in docs/maestro-cue-server.md
+# reach them. A second engine on this host needs its own copy of this file
+# with other names and another webhook port.
+#
 # One data volume per engine. A second engine on the same volume, in another
 # container, sees the first one's lock while its heartbeat is fresh, logs
 # "Another Cue engine ... already holds the lock" and exits 1, so it never runs
@@ -15,8 +25,15 @@ services:
     build:
       context: ../..
       dockerfile: packaging/server/Dockerfile
+      args:
+        AGENT_CLIS: '${AGENT_CLIS:-@anthropic-ai/claude-code}'
     image: maestro-cue
+    container_name: maestro-cue
     restart: unless-stopped
+    # No core dumps: the engine holds webhook secrets, tokens and provider keys
+    # in memory, and a core file would write them to disk.
+    ulimits:
+      core: 0
     # The engine drains active runs for up to 90 s on stop; Docker's default
     # grace period is 10 s.
     stop_grace_period: 120s
@@ -40,4 +57,6 @@ services:
 
 volumes:
   maestro-home:
+    name: maestro-home
   maestro-work:
+    name: maestro-work

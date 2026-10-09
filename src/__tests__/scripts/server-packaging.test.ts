@@ -3,14 +3,16 @@
  * same service-mode flags. These checks keep the two, the health probe, and
  * the stop timeouts from drifting apart (see docs/maestro-cue-server.md).
  * They also pin server mode in both, what it lets an agent inherit from the
- * service's environment, and the installer's --enable gate.
+ * service's environment, core dumps being off, Compose's names and build
+ * argument, and the installer's --enable gate and exit statuses.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as yaml from 'js-yaml';
 import { SERVER_ENV_ALLOW_ENV_VAR, SERVER_MODE_ENV_VAR } from '../../shared/maestro-lib/launch/env';
 import { buildAgentLaunchPlan } from '../../shared/maestro-lib/launch/launch-plan';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
@@ -109,6 +111,57 @@ describe('server packaging', () => {
 		expect(wrapper).toContain(`MAESTRO_USER_DATA:-${dataDir}`);
 		expect(unitValues('Environment')).toContain(`MAESTRO_USER_DATA=${dataDir}`);
 		expect(dockerfile).toContain(`MAESTRO_USER_DATA=${dataDir}`);
+	});
+});
+
+interface ComposeFile {
+	services: Record<
+		string,
+		{
+			build?: { args?: Record<string, string> };
+			container_name?: string;
+			ulimits?: Record<string, unknown>;
+			volumes?: string[];
+		}
+	>;
+	volumes: Record<string, { name?: string } | null>;
+}
+const composeFile = yaml.load(compose) as ComposeFile;
+const composeService = composeFile.services['maestro-cue'];
+const serverDocs = fs.readFileSync(
+	path.resolve(__dirname, '../../../docs/maestro-cue-server.md'),
+	'utf8'
+);
+
+describe('no core dumps', () => {
+	// The engine holds webhook secrets, tokens and provider keys in memory.
+	it('sets a zero core limit in the unit', () => {
+		expect(unitValue('LimitCORE')).toBe('0');
+	});
+
+	it('sets a zero core ulimit in compose and in the documented docker run', () => {
+		expect(composeService.ulimits?.core).toBe(0);
+		const run = serverDocs.match(/^docker run -d --name maestro-cue(?:.*\\\n)*.*$/m)?.[0];
+		expect(run, 'the docker run -d command in docs/maestro-cue-server.md').toBeDefined();
+		expect(run).toContain('--ulimit core=0');
+	});
+});
+
+describe('compose.yaml', () => {
+	it('passes AGENT_CLIS to the build, defaulting to the Dockerfile default', () => {
+		const dockerDefault = dockerfile.match(/^ARG AGENT_CLIS="(.*)"$/m)?.[1];
+		expect(dockerDefault).toBe('@anthropic-ai/claude-code');
+		expect(composeService.build?.args?.AGENT_CLIS).toBe(`\${AGENT_CLIS:-${dockerDefault}}`);
+	});
+
+	it('uses the fixed names the docs use for the container and both volumes', () => {
+		expect(composeService.container_name).toBe('maestro-cue');
+		expect(composeService.volumes).toEqual([
+			'maestro-home:/var/lib/maestro',
+			'maestro-work:/srv/maestro',
+		]);
+		expect(composeFile.volumes['maestro-home']?.name).toBe('maestro-home');
+		expect(composeFile.volumes['maestro-work']?.name).toBe('maestro-work');
 	});
 });
 
@@ -286,6 +339,57 @@ describe('install.sh --enable', () => {
 		expect(installer.trimEnd().endsWith('[ -z "$ENABLE_REFUSED" ] || exit 3')).toBe(true);
 		// The readiness check decides, not the installer counting files.
 		expect(installer).not.toContain('maestro-sessions.json');
+	});
+
+	describe('exit status', () => {
+		/** The installer's exit trap, then `body`, run in sh under `set -eu`. */
+		function exitStatus(body: string): { status: number | null; stderr: string } {
+			const trap = installer.match(
+				/^ENABLE_REFUSED=""\non_exit\(\) \{[\s\S]*?^trap 'exit 130' HUP INT TERM$/m
+			)?.[0];
+			if (!trap) throw new Error('the exit trap was not found in install.sh');
+			const result = spawnSync(
+				'sh',
+				['-c', ['set -eu', "C_RED=''; C_RESET=''", trap, body].join('\n')],
+				{ encoding: 'utf8' }
+			);
+			return { status: result.status, stderr: result.stderr };
+		}
+
+		it.skipIf(process.platform === 'win32')('keeps 0, 1 and a refused --enable 3', () => {
+			expect(exitStatus('true')).toEqual({ status: 0, stderr: '' });
+			expect(exitStatus('exit 1').status).toBe(1);
+			expect(exitStatus('ENABLE_REFUSED="nothing to run"; exit 3')).toEqual({
+				status: 3,
+				stderr: '',
+			});
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'turns any other failure into 1 and names the original status',
+			() => {
+				// apt-get exits 100 when a package cannot be installed.
+				const apt = exitStatus('sh -c "exit 100"\necho not reached');
+				expect(apt.status).toBe(1);
+				expect(apt.stderr).toContain('status 100');
+				// A 3 nobody meant is not "installed, --enable refused".
+				expect(exitStatus('sh -c "exit 3"').status).toBe(1);
+				expect(exitStatus('kill -INT $$; sleep 1').status).toBe(1);
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'is armed before the options are read, and the refusal is not reset after it',
+			() => {
+				const script = path.join(packagingDir, 'install.sh');
+				expect(spawnSync('sh', [script, '--help']).status).toBe(0);
+				expect(spawnSync('sh', [script, '--no-such-option']).status).toBe(1);
+				expect(installer.match(/^\s*ENABLE_REFUSED=""$/gm)).toHaveLength(1);
+				const armed = installer.indexOf('\ntrap on_exit EXIT\n');
+				expect(armed).toBeGreaterThan(-1);
+				expect(armed).toBeLessThan(installer.indexOf('while [ $# -gt 0 ]; do'));
+			}
+		);
 	});
 
 	// Needs a POSIX sh, which a Windows runner does not promise (like the gate tests above).

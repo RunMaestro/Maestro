@@ -61,6 +61,9 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
+# No core dumps: the engine holds webhook secrets, tokens and provider keys in
+# memory, and a core file would write them to disk. Agents inherit the limit.
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target
