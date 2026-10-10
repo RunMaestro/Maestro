@@ -14,9 +14,13 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSessionLifecycleSync } from '../../../../renderer/hooks/session/useSessionLifecycleSync';
 import type { Session } from '../../../../renderer/types';
-import { createMockSession, resetStore } from '../../../helpers';
+import { createMockAITab, createMockSession, resetStore } from '../../../helpers';
 
-type Payload = { added?: Session[]; removedIds?: string[] };
+type Payload = {
+	added?: Session[];
+	removedIds?: string[];
+	closedTabs?: { sessionId: string; tabId: string }[];
+};
 
 describe('useSessionLifecycleSync', () => {
 	let handler: ((payload: Payload) => void) | null;
@@ -44,6 +48,59 @@ describe('useSessionLifecycleSync', () => {
 				setActiveSessionId,
 			},
 		};
+	});
+
+	it('closes an AI tab another client closed', async () => {
+		const t1 = createMockAITab({ id: 't1' });
+		const t2 = createMockAITab({ id: 't2' });
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'a',
+					aiTabs: [t1, t2],
+					activeTabId: 't2',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 't1' },
+						{ type: 'ai', id: 't2' },
+					],
+				}),
+			],
+			activeSessionId: 'a',
+		});
+
+		renderHook(() => useSessionLifecycleSync(restoreSession));
+		handler!({ closedTabs: [{ sessionId: 'a', tabId: 't2' }] });
+
+		await waitFor(() => {
+			const [session] = useSessionStore.getState().sessions;
+			expect(session.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+			expect(session.activeTabId).toBe('t1');
+			expect(session.unifiedTabOrder).toEqual([{ type: 'ai', id: 't1' }]);
+		});
+	});
+
+	it('ignores a tab close for a tab or agent it does not hold', async () => {
+		const a = createMockSession({ id: 'a', aiTabs: [createMockAITab({ id: 't1' })] });
+		useSessionStore.setState({
+			sessions: [a, createMockSession({ id: 'b' })],
+			activeSessionId: 'a',
+		});
+
+		renderHook(() => useSessionLifecycleSync(restoreSession));
+		// The closing client hears its own push back over the web bridge.
+		handler!({
+			closedTabs: [
+				{ sessionId: 'a', tabId: 'already-gone' },
+				{ sessionId: 'unknown', tabId: 't1' },
+			],
+		});
+		// Deltas apply in order, so once this one lands the one above has too.
+		handler!({ removedIds: ['b'] });
+
+		await waitFor(() => {
+			expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['a']);
+		});
+		expect(useSessionStore.getState().sessions[0]).toBe(a);
 	});
 
 	it('adds an agent another client created', async () => {

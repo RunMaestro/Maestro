@@ -1783,6 +1783,7 @@ describe('persistence IPC handlers', () => {
 			expect(lastBridgePayload()).toEqual({
 				added: [expect.objectContaining({ id: 'from-web' })],
 				removedIds: [],
+				closedTabs: [],
 			});
 		});
 
@@ -1816,7 +1817,7 @@ describe('persistence IPC handlers', () => {
 			const handler = handlers.get('sessions:setMany');
 			await handler!({} as any, [], ['s1']);
 
-			expect(lastBridgePayload()).toEqual({ added: [], removedIds: ['s1'] });
+			expect(lastBridgePayload()).toEqual({ added: [], removedIds: ['s1'], closedTabs: [] });
 		});
 
 		it('says nothing when a flush only updates agents everyone already has', async () => {
@@ -1845,6 +1846,7 @@ describe('persistence IPC handlers', () => {
 			expect(peer.webContents.send).toHaveBeenCalledWith(SESSION_LIFECYCLE_SYNC_CHANNEL, {
 				added: [],
 				removedIds: ['s1'],
+				closedTabs: [],
 			});
 		});
 
@@ -1948,7 +1950,134 @@ describe('persistence IPC handlers', () => {
 			expect(lastBridgePayload()).toEqual({
 				added: [expect.objectContaining({ id: 'fresh' })],
 				removedIds: [],
+				closedTabs: [],
 			});
+		});
+	});
+
+	// The same problem one level down (#1492): both clients hold the agent, the
+	// browser closes a tab inside it, and the desktop's stale copy of the agent
+	// carries the tab back on its next flush.
+	describe('cross-client AI tab close sync', () => {
+		const withTabs = (tabIds: string[], activeTabId = tabIds[0] ?? '') => ({
+			id: 's1',
+			name: 'Session 1',
+			cwd: '/test',
+			projectRoot: '/test',
+			toolType: 'claude-code',
+			aiTabs: tabIds.map((id) => ({ id, logs: [] })),
+			activeTabId,
+			unifiedTabOrder: [
+				...tabIds.map((id) => ({ type: 'ai', id })),
+				{ type: 'terminal', id: 'term-1' },
+			],
+		});
+
+		const lastBridgePayload = () => {
+			const calls = vi
+				.mocked(broadcastBridgeEvent)
+				.mock.calls.filter(([channel]) => channel === SESSION_LIFECYCLE_SYNC_CHANNEL);
+			return calls.length ? (calls.at(-1)![1] as [any])[0] : null;
+		};
+		const lastPersisted = () => mockSessionsStore.set.mock.calls.at(-1)![1];
+
+		/** Client A closes `t2`; the store now holds the agent without it. */
+		const closeT2 = async () => {
+			mockSessionsStore.get.mockReturnValue([withTabs(['t1', 't2'])]);
+			await handlers.get('sessions:setMany')!({} as any, [withTabs(['t1'])], [], {
+				s1: { closed: ['t2'] },
+			});
+			mockSessionsStore.get.mockReturnValue([withTabs(['t1'])]);
+		};
+
+		it('tells peers which tab another client closed', async () => {
+			await closeT2();
+
+			expect(lastBridgePayload()).toEqual({
+				added: [],
+				removedIds: [],
+				closedTabs: [{ sessionId: 's1', tabId: 't2' }],
+			});
+		});
+
+		it("drops a closed tab from a stale peer's copy of the agent", async () => {
+			await closeT2();
+
+			// Client B never heard about the close; its whole agent still has t2,
+			// which it believes is its active tab.
+			await handlers.get('sessions:setMany')!({} as any, [withTabs(['t1', 't2'], 't2')], []);
+
+			const [stored] = lastPersisted();
+			expect(stored.aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['t1']);
+			expect(stored.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 't1' },
+				{ type: 'terminal', id: 'term-1' },
+			]);
+			expect(stored.activeTabId).toBe('t1');
+		});
+
+		it('drops it on the bootstrap setAll path too', async () => {
+			await closeT2();
+
+			await handlers.get('sessions:setAll')!({} as any, [withTabs(['t1', 't2'])]);
+
+			const [stored] = lastPersisted();
+			expect(stored.aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['t1']);
+		});
+
+		it('lets a client that reopened the tab keep it', async () => {
+			await closeT2();
+
+			// Reopen Closed Tab brings back the same id; the writer reports it.
+			await handlers.get('sessions:setMany')!({} as any, [withTabs(['t1', 't2'])], [], {
+				s1: { opened: ['t2'] },
+			});
+
+			const [stored] = lastPersisted();
+			expect(stored.aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['t1', 't2']);
+		});
+
+		it('leaves a tombstoned tab alone once the store holds it again', async () => {
+			await closeT2();
+			mockSessionsStore.get.mockReturnValue([withTabs(['t1', 't2'])]);
+
+			await handlers.get('sessions:setMany')!({} as any, [withTabs(['t1', 't2'])], []);
+
+			const [stored] = lastPersisted();
+			expect(stored.aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['t1', 't2']);
+		});
+
+		it('only guards the agent the tab was closed in', async () => {
+			await closeT2();
+			mockSessionsStore.get.mockReturnValue([withTabs(['t1']), { ...withTabs([]), id: 's2' }]);
+
+			// A tab moved to another agent keeps its id.
+			await handlers.get('sessions:setMany')!({} as any, [{ ...withTabs(['t2']), id: 's2' }], []);
+
+			const stored = lastPersisted().find((session: { id: string }) => session.id === 's2');
+			expect(stored.aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['t2']);
+		});
+
+		it('does not report tab closes for an agent removed in the same write', async () => {
+			mockSessionsStore.get.mockReturnValue([withTabs(['t1', 't2'])]);
+
+			await handlers.get('sessions:setMany')!({} as any, [], ['s1'], { s1: { closed: ['t2'] } });
+
+			expect(lastBridgePayload()?.closedTabs).toEqual([]);
+		});
+
+		it('ignores malformed tab changes from the wire', async () => {
+			mockSessionsStore.get.mockReturnValue([withTabs(['t1', 't2'])]);
+
+			await handlers.get('sessions:setMany')!({} as any, [withTabs(['t1'])], [], {
+				s1: { closed: 't2', opened: [42] },
+				s2: null,
+			} as any);
+
+			expect(lastBridgePayload()).toBeNull();
+			await expect(
+				handlers.get('sessions:setMany')!({} as any, [withTabs(['t1'])], [], null as any)
+			).resolves.toBe(true);
 		});
 	});
 

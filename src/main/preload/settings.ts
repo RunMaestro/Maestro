@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { Group } from '../../shared/types';
+import type { ClosedSessionTab, SessionTabChangesById } from '../../shared/sessionTabChanges';
 
 /**
  * Stored session data for persistence.
@@ -17,6 +18,13 @@ import type { Group } from '../../shared/types';
  * happens at the renderer and main process boundaries.
  */
 type StoredSession = Record<string, unknown>;
+
+/** What another client changed, as pushed on `sessions:lifecycleSync`. */
+type SessionLifecycleSyncEvent = {
+	added: StoredSession[];
+	removedIds: string[];
+	closedTabs?: ClosedSessionTab[];
+};
 
 /**
  * Creates the settings API object for preload exposure
@@ -51,8 +59,11 @@ export function createSessionsApi() {
 		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
-		setMany: (updates: StoredSession[], removeIds: string[] = []) =>
-			ipcRenderer.invoke('sessions:setMany', updates, removeIds),
+		setMany: (
+			updates: StoredSession[],
+			removeIds: string[] = [],
+			tabChanges?: SessionTabChangesById
+		) => ipcRenderer.invoke('sessions:setMany', updates, removeIds, tabChanges),
 		getActiveSessionId: () => ipcRenderer.invoke('sessions:getActiveSessionId') as Promise<string>,
 		setActiveSessionId: (id: string) => ipcRenderer.invoke('sessions:setActiveSessionId', id),
 		/**
@@ -67,18 +78,14 @@ export function createSessionsApi() {
 			return () => ipcRenderer.removeListener('sessions:focus-request', wrappedHandler);
 		},
 		/**
-		 * Listen for agents another client added or closed. Desktop windows and
-		 * web-desktop clients each hold their own session tree and flush it to the
-		 * same store, so without this push a client only learns what the others did
-		 * by reloading - and its stale copy resurrects agents they closed.
+		 * Listen for agents another client added or closed, and AI tabs it closed.
+		 * Desktop windows and web-desktop clients each hold their own session tree
+		 * and flush it to the same store, so without this push a client only learns
+		 * what the others did by reloading - and its stale copy resurrects agents
+		 * and tabs they closed.
 		 */
-		onLifecycleSync: (
-			handler: (payload: { added: StoredSession[]; removedIds: string[] }) => void
-		) => {
-			const wrappedHandler = (
-				_: unknown,
-				payload: { added: StoredSession[]; removedIds: string[] }
-			) => handler(payload);
+		onLifecycleSync: (handler: (payload: SessionLifecycleSyncEvent) => void) => {
+			const wrappedHandler = (_: unknown, payload: SessionLifecycleSyncEvent) => handler(payload);
 			ipcRenderer.on('sessions:lifecycleSync', wrappedHandler);
 			return () => ipcRenderer.removeListener('sessions:lifecycleSync', wrappedHandler);
 		},

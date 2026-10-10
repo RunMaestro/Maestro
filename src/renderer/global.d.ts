@@ -276,7 +276,11 @@ interface MaestroAPI {
 		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
-		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
+		setMany: (
+			updates: any[],
+			removeIds?: string[],
+			tabChanges?: import('../shared/sessionTabChanges').SessionTabChangesById
+		) => Promise<boolean>;
 		getActiveSessionId: () => Promise<string>;
 		setActiveSessionId: (id: string) => Promise<void>;
 		/**
@@ -289,11 +293,15 @@ interface MaestroAPI {
 		) => () => void;
 		/**
 		 * Listen for agents another client (a second desktop window, or a
-		 * web-desktop browser tab) added or closed, so this renderer's session list
-		 * follows along instead of only finding out on reload.
+		 * web-desktop browser tab) added or closed, and AI tabs it closed, so this
+		 * renderer follows along instead of only finding out on reload.
 		 */
 		onLifecycleSync: (
-			handler: (payload: { added: any[]; removedIds: string[] }) => void
+			handler: (payload: {
+				added: any[];
+				removedIds: string[];
+				closedTabs?: import('../shared/sessionTabChanges').ClosedSessionTab[];
+			}) => void
 		) => () => void;
 	};
 	groups: {
