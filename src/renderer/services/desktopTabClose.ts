@@ -1,10 +1,12 @@
 import { mergeDeferredItems } from '../../shared/deferredSessionContent';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
+import { useComposerInputStore } from '../stores/composerInputStore';
 import { notifyToast } from '../stores/notificationStore';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
-import type { Session } from '../types';
-import { clearLiveDraft } from '../utils/liveDraftStore';
+import type { AITab, Session } from '../types';
+import { clearLiveDraft, getLiveDraft } from '../utils/liveDraftStore';
 import { logger } from '../utils/logger';
+import { reopenClosedTabWithTiling } from '../utils/panelLayout';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { snapshotClosedTabTranscript } from '../utils/starredSessions';
 import {
@@ -16,6 +18,7 @@ import {
 
 // Keep close/reopen operations ordered across hook instances and rapid key presses.
 const tabOperations = createKeyedWriteQueue();
+const pendingReopens = new Set<string>();
 
 /** Close one browser conversation, with cleanup gated on the owner's acknowledgement. */
 export function requestDesktopTabClose(
@@ -76,20 +79,47 @@ export function requestDesktopTabCloses(
 	});
 }
 
-/** Route AI history through the desktop; leave other tab types on their local restore path. */
+/** Order browser reopen intents; route AI history through the desktop and restore other types locally. */
 export function reopenDesktopTabIfNeeded(session: Session): boolean {
 	if (!isWebDesktop()) return false;
-	const entry = session.unifiedClosedTabHistory?.[0];
-	if (entry?.type !== 'ai') return false;
+	// Coalesce repeated key presses while this intent waits for earlier closes or
+	// its own acknowledgement. Select the history head only when the queue runs.
+	if (pendingReopens.has(session.id)) return true;
+	pendingReopens.add(session.id);
 	void tabOperations.enqueue(session.id, async () => {
-		// A repeated key press may have queued this same entry before the first
-		// acknowledgement consumed it. Never mint two tabs for one history item.
-		const current = useSessionStore.getState().sessions.find((s) => s.id === session.id);
-		if (
-			!current?.unifiedClosedTabHistory?.some((e) => e.type === 'ai' && e.tab.id === entry.tab.id)
-		)
-			return;
+		let unsubscribeInventory: (() => void) | undefined;
+		let unsubscribeComposer: (() => void) | undefined;
 		try {
+			const current = useSessionStore.getState().sessions.find((s) => s.id === session.id);
+			if (!current) return;
+			const entry = current.unifiedClosedTabHistory?.[0];
+			if (entry?.type !== 'ai') {
+				updateSessionWith(session.id, (s) => reopenClosedTabWithTiling(s)?.session ?? s);
+				return;
+			}
+
+			// Remember each tab as it first becomes visible during this request.
+			// Inventory can introduce the canonical ID before the response tells us
+			// which tab it is. Only untouched fields may adopt the close snapshot.
+			const firstSeenTabs = new Map<string, AITab>(current.aiTabs.map((tab) => [tab.id, tab]));
+			const editedComposerTabs = new Set<string>();
+			unsubscribeComposer = useComposerInputStore.subscribe((state, previous) => {
+				// Loading an inventory tab into the composer is not an edit. A text
+				// change for the same owner is, even if the user later deletes it all.
+				if (
+					state.aiValueTabId &&
+					state.aiValueTabId === previous.aiValueTabId &&
+					state.aiValue !== previous.aiValue
+				) {
+					editedComposerTabs.add(state.aiValueTabId);
+				}
+			});
+			unsubscribeInventory = useSessionStore.subscribe((state) => {
+				const tabs = state.sessions.find((s) => s.id === session.id)?.aiTabs ?? [];
+				for (const tab of tabs) {
+					if (!firstSeenTabs.has(tab.id)) firstSeenTabs.set(tab.id, tab);
+				}
+			});
 			const reopened = await window.maestro.web.requestReopenTab(session.id, entry.tab.id);
 			if (!reopened?.tabId) throw new Error('The desktop could not restore the conversation.');
 			updateSessionWith(session.id, (s) => {
@@ -99,19 +129,29 @@ export function reopenDesktopTabIfNeeded(session: Session): boolean {
 					...s,
 					aiTabs: s.aiTabs
 						.filter((t) => t.id !== entry.tab.id || t.id === reopened.tabId)
-						.map((tab) =>
-							tab.id === reopened.tabId
-								? {
-										...entry.tab,
-										...tab,
-										logs: mergeDeferredItems(entry.tab.logs, tab.logs, (log) => log.id),
-										inputValue: entry.tab.inputValue,
-										stagedImages: entry.tab.stagedImages,
-										saveToHistory: entry.tab.saveToHistory,
-										showThinking: entry.tab.showThinking,
-									}
-								: tab
-						),
+						.map((tab) => {
+							if (tab.id !== reopened.tabId) return tab;
+							const firstSeen = firstSeenTabs.get(tab.id);
+							const liveDraft = getLiveDraft(tab.id);
+							return {
+								...entry.tab,
+								...tab,
+								logs: mergeDeferredItems(entry.tab.logs, tab.logs, (log) => log.id),
+								inputValue:
+									(editedComposerTabs.has(tab.id) || liveDraft !== firstSeen?.inputValue
+										? liveDraft
+										: undefined) ??
+									(tab.inputValue !== firstSeen?.inputValue
+										? tab.inputValue
+										: entry.tab.inputValue),
+								stagedImages:
+									tab.stagedImages !== firstSeen?.stagedImages
+										? tab.stagedImages
+										: entry.tab.stagedImages,
+								saveToHistory: entry.tab.saveToHistory,
+								showThinking: entry.tab.showThinking,
+							};
+						}),
 					unifiedTabOrder: s.unifiedTabOrder.filter(
 						(ref) => ref.id !== entry.tab.id || ref.id === reopened.tabId
 					),
@@ -139,6 +179,10 @@ export function reopenDesktopTabIfNeeded(session: Session): boolean {
 				title: 'Could not reopen session',
 				message: 'The desktop could not restore the conversation. Please try again.',
 			});
+		} finally {
+			unsubscribeInventory?.();
+			unsubscribeComposer?.();
+			pendingReopens.delete(session.id);
 		}
 	});
 	return true;
