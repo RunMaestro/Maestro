@@ -22,7 +22,10 @@ import {
 	cwdSlug,
 	discoverSessionId,
 	findLatestSessionId,
+	noConversationFoundMessage,
+	sessionTranscriptPath,
 } from '../../maestro-p/session-watcher';
+import { getErrorPatterns, matchErrorPattern } from '../../shared/agentErrorPatterns';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 
 const FAST_POLL_MS = 10;
@@ -149,6 +152,25 @@ describe('session-watcher', () => {
 					`cwdSlug drifted from encodeClaudeProjectPath for ${JSON.stringify(input)}`
 				).toBe(encodeClaudeProjectPath(input));
 			}
+		});
+	});
+
+	describe('sessionTranscriptPath()', () => {
+		it('points at <configDir>/projects/<slug>/<id>.jsonl, where claude writes it', () => {
+			const written = writeJsonl('abc-123');
+			expect(sessionTranscriptPath(configDir, cwd, 'abc-123')).toBe(written);
+		});
+	});
+
+	describe('noConversationFoundMessage()', () => {
+		// The desktop recovers a dead resume only when the failure classifies as
+		// session_not_found. A TUI turn must read exactly like a print turn.
+		it('classifies as session_not_found for claude-code', () => {
+			const match = matchErrorPattern(
+				getErrorPatterns('claude-code'),
+				noConversationFoundMessage('607fee3e-cf47-4ef8-a7d9-e6bb4931cca7')
+			);
+			expect(match?.type).toBe('session_not_found');
 		});
 	});
 

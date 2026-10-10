@@ -101,6 +101,12 @@ export interface SendCrossAgentRequestOptions {
 	 */
 	sourceCwd?: string;
 	/**
+	 * The source turn's final answer, when this request is a HAND-OFF rather than
+	 * a consult (see services/crossAgentHandoff). `sourceLogs` is then the
+	 * transcript BEFORE that turn, so the answer is not sent twice.
+	 */
+	handoffAnswer?: string;
+	/**
 	 * Called once with the finished answer. A typed `@mention` needs nothing here
 	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
 	 * has to hand the text back to a caller that is blocked waiting for it, so
@@ -594,6 +600,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			transcript,
 			strategy,
 			sourceCwd: opts.sourceCwd,
+			...(opts.handoffAnswer !== undefined && { handoffAnswer: opts.handoffAnswer }),
 		})
 		.then(({ requestId }) => {
 			// The terminal chunk already landed (fast failure/short response that

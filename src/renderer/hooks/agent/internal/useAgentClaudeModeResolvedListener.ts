@@ -172,15 +172,16 @@ export function useAgentClaudeModeResolvedListener(): void {
 				if (providerTransitioned && resolution.mode === 'api') {
 					notifyToast({
 						color: 'yellow',
-						title: 'Switched to API Limits',
-						message: 'Max plan quota hit - agents on this account are falling back to billed API.',
+						title: 'Switched to claude -p',
+						message:
+							'Plan limit hit - agents on this account now run through claude -p. Without an API key set, that draws from the same limit.',
 					});
 				} else if (providerTransitioned && resolution.mode === 'interactive') {
 					notifyToast({
 						color: 'green',
-						title: 'Switched to Time Limits',
+						title: 'Switched back to the TUI',
 						message:
-							'Max plan quota window has reset - agents on this account are back on Time Limits.',
+							'Plan limit window has reset - agents on this account are back on the TUI Wrapper.',
 					});
 				}
 

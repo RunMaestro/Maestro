@@ -31,7 +31,12 @@ import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
-import { cwdSlug, discoverSessionId, findLatestSessionId } from './session-watcher';
+import {
+	discoverSessionId,
+	findLatestSessionId,
+	noConversationFoundMessage,
+	sessionTranscriptPath,
+} from './session-watcher';
 import { installStopSignalHandlers, STOP_EXIT_CODES } from './stop-signals';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
@@ -109,7 +114,7 @@ program
 	.description(
 		[
 			'Wrap Claude Code so callers see `claude -p` semantics while the underlying',
-			'session runs through the interactive TUI (Claude Max quota, not API billing).',
+			'session runs through the interactive TUI, on the Claude login it is signed in with.',
 			'',
 			'Argument handling:',
 			'  - Prompt-input flags (consumed): -p, --print, --prompt',
@@ -279,6 +284,30 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	const binPath = resolveBinPath();
 	const emitter = new JsonEmitter();
 	const startMs = Date.now();
+
+	// Resuming an id with no transcript behind it cannot work: claude's TUI quits
+	// on it and the turn dies as an anonymous `tui_exited`. That is every tab of
+	// an agent moved to another host (the transcripts stayed on the old one), or
+	// of a transcript that was pruned. Fail before spawning, in claude's own
+	// words, so the desktop recovers it as session_not_found.
+	if (args.resumeSessionId) {
+		const transcriptPath = sessionTranscriptPath(configDir, cwd, args.resumeSessionId);
+		if (!fs.existsSync(transcriptPath)) {
+			const message = noConversationFoundMessage(args.resumeSessionId);
+			process.stderr.write(`maestro-p: ${message} (no transcript at ${transcriptPath})\n`);
+			emitter.emitInit({ sessionId: args.resumeSessionId, model: null, cwd });
+			emitter.emitResult({
+				sessionId: args.resumeSessionId,
+				durationMs: Date.now() - startMs,
+				isError: true,
+				error: message,
+			});
+			cleanupStreamJsonImages(tempImagePaths);
+			// stdout is asynchronous on a macOS pipe: exit once the envelope drains.
+			process.stdout.write('', () => process.exit(9));
+			return new Promise<never>(() => undefined);
+		}
+	}
 
 	// Fresh sessions: pre-assign the session id and tell the TUI to use it via
 	// `claude --session-id <uuid>`. The watcher then polls for exactly
@@ -820,7 +849,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// Resume path: the JSONL already exists from the prior turn(s); tail
 		// from EOF so we don't replay history to stdout. The wait-for-ready
 		// step ensures the TUI is accepting input before we send our reply.
-		const jsonlPath = path.join(configDir, 'projects', cwdSlug(cwd), `${resumeSessionId}.jsonl`);
+		const jsonlPath = sessionTranscriptPath(configDir, cwd, resumeSessionId);
 		tailer = new JsonlTailer({ path: jsonlPath, skipExisting: true });
 		tailer.on('entry', handleEntry);
 		tailer.on('parse-error', handleParseError);

@@ -40,6 +40,8 @@ import type { InputAreaProps } from './types';
 import { filterCommandHistory, getCurrentCommandHistory } from './utils/commandHistory';
 import { resolveCommandCwd } from '../../services/shellCommand';
 import { CommandModeBar } from './components/CommandModeBar';
+import { MentionRoutingBar } from './components/MentionRoutingBar';
+import { useMentionRouting } from './hooks/useMentionRouting';
 import { AiCommandProposal } from './components/AiCommandProposal';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
@@ -238,6 +240,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// noise, and a `$` in front of "delete the build output" is a lie.
 	const isAiCommandDraft = !isTerminalMode && commandMode === 'ai';
 	const isShellInput = isTerminalMode || isShellCommandDraft;
+	// How the draft's @agent mentions would run if sent now. Plain AI messages
+	// only: a command-mode draft is a shell line, not a message to route.
+	const mentionRouting = useMentionRouting(
+		inputValue,
+		session.id,
+		session.inputMode === 'ai' && !isTerminalMode && !isShellCommandDraft && !isAiCommandDraft
+	);
 
 	// The in-flight suggestion / proposed command for THIS tab, if any. Parked
 	// per tab, so switching away and back finds the same card waiting.
@@ -651,6 +660,14 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								isGitRepo={session.isGitRepo}
 								model={aiCommandModel}
 								effort={aiCommandEffort}
+							/>
+						)}
+
+						{mentionRouting && (
+							<MentionRoutingBar
+								theme={theme}
+								routing={mentionRouting.routing}
+								agentNames={mentionRouting.agentNames}
 							/>
 						)}
 

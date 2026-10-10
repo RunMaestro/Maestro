@@ -665,10 +665,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Resolve a message's mentions WITHOUT consulting anyone yet. The send path
 	// decides when to fire: immediately for a message that dispatches now, or at
 	// dequeue time for one that lands in the execution queue. `suppressLocal` on
-	// the returned plan means the message leads with an `@agent` mention, so only
-	// the mentioned agent(s) answer; a trailing mention (`hey @Backend,
-	// thoughts?`) or a leading `@file` mention leaves it false and the source
-	// agent answers too.
+	// the returned plan means the source agent is not sent to now: the message
+	// leads with an `@agent` mention (only the mentioned agents answer) or asks
+	// for the consult FIRST (the source agent answers once the replies are in).
+	// A trailing mention otherwise runs in parallel or hands off the answer.
 	const handleCrossAgentMentionPlan = useCallback(
 		(message: string, sourceSession: Session): CrossAgentMentionPlan | null =>
 			planCrossAgentMentions(message, sourceSession.id),
