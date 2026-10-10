@@ -206,6 +206,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'The continuation Maestro sends once every consult has replied: the replies verbatim, then finish the answer',
 		category: 'context',
 	},
+	{
+		id: 'cross-agent-consult-first',
+		filename: 'cross-agent-consult-first.md',
+		description:
+			'The turn Maestro sends after a consult the user asked to run FIRST: the replies verbatim, then the message to answer',
+		category: 'context',
+	},
+	{
+		id: 'cross-agent-handoff-pending',
+		filename: 'cross-agent-handoff-pending.md',
+		description:
+			'Appended to a turn whose result the user asked to send to another agent: the final answer is forwarded when the turn ends',
+		category: 'context',
+	},
 	// System (UI/meta)
 	{
 		id: 'tab-naming',
@@ -278,6 +292,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'includes',
 	},
 	{
+		id: '_desktop-instrumentation',
+		filename: '_desktop-instrumentation.md',
+		description:
+			'Desktop app instrumentation over CDP: CDP-accessible apps, finding a debug port, safety rules',
+		category: 'includes',
+	},
+	{
 		id: '_file-access-rules',
 		filename: '_file-access-rules.md',
 		description: 'Agent write restrictions and Auto Run folder carve-out',
@@ -332,6 +353,8 @@ export const PROMPT_IDS = {
 	CONTEXT_SUMMARIZE: 'context-summarize',
 	CROSS_AGENT_CONSULT_PENDING: 'cross-agent-consult-pending',
 	CROSS_AGENT_CONSULT_REPLY: 'cross-agent-consult-reply',
+	CROSS_AGENT_CONSULT_FIRST: 'cross-agent-consult-first',
+	CROSS_AGENT_HANDOFF_PENDING: 'cross-agent-handoff-pending',
 	// System
 	TAB_NAMING: 'tab-naming',
 	DIRECTOR_NOTES: 'director-notes',

@@ -117,6 +117,7 @@ vi.mock('../../../renderer/utils/templateVariables', () => ({
 // without standing up the whole @mention resolution + IPC pipeline.
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	dispatchCrossAgentMentionsForMessage: vi.fn(),
+	withMentionTurnNotes: (prompt: string) => prompt,
 }));
 
 beforeEach(() => {
@@ -1309,7 +1310,8 @@ describe('agentStore', () => {
 			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
 				'now ask @Backend to review',
 				expect.objectContaining({ id: 'session-1' }),
-				'tab-1'
+				'tab-1',
+				undefined
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);

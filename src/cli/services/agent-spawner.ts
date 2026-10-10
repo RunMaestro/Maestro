@@ -38,10 +38,12 @@ import {
 	resolveClaudeSpawnModeCore,
 	applyClaudeSpawnDecision,
 	buildRemoteInteractiveSpawn,
+	findPackagedAppHost,
 	isMaestroPBinaryPath,
 	resolveConfigDirKeyFromEnv,
 	defaultSelectMode,
 	type ClaudeSpawnCoreDeps,
+	type PackagedAppHost,
 } from '../../main/agents/claudeSpawnCore';
 
 // Types from the SSH wrapper are imported type-only so no runtime module load
@@ -66,6 +68,17 @@ function getCliMaestroPBinPath(): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * The packaged app to run maestro-p under when this CLI was started by a plain
+ * `node` rather than the app binary (#1770). Under the app binary (the shim
+ * MaestroCliManager installs) `process.resourcesPath` is already set and the
+ * spawn core handles it, so this only fills the gap for a system `node`.
+ */
+function getCliPackagedAppHost(): PackagedAppHost | null {
+	if (typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0) return null;
+	return findPackagedAppHost(__dirname);
 }
 
 /**
@@ -601,12 +614,15 @@ async function spawnClaudeAgent(
 		// injecting MAESTRO_CLAUDE_BIN. maestro-p strips the headless-only flags,
 		// drives the real claude TUI on the Max plan, and reads the prompt after
 		// `--`. API / direct-binary decisions leave the local spawn untouched.
+		const packagedHost = getCliPackagedAppHost();
 		const applied = applyClaudeSpawnDecision({
 			decision: spawnDecision,
 			interactiveModeArgs: def?.interactiveModeArgs,
 			command: claudeCommand,
 			args: [...baseArgs, '--', prompt],
 			customEnvVars: userCustomEnvVars,
+			execPath: packagedHost?.execPath,
+			resourcesPath: packagedHost?.resourcesPath,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;

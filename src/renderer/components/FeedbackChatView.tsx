@@ -9,7 +9,7 @@
  * - Runs as the first working account among the user's own agents (with a
  *   picker to override), falling through to the next when a first turn fails
  * - Chat interface with progress bar
- * - Screenshot drag-and-drop
+ * - Screenshot drag-and-drop and clipboard paste
  * - Support package opt-in
  * - GH CLI availability check
  */
@@ -62,6 +62,7 @@ import {
 	MAX_FEEDBACK_ATTACHMENT_BYTES as MAX_ATTACHMENT_BYTES,
 	type FeedbackIssueMatch,
 } from '../../shared/feedback';
+import { fileTimestampSlug } from '../../shared/formatters';
 
 // ============================================================================
 // Constants
@@ -737,6 +738,32 @@ export function FeedbackChatView({
 			}
 		},
 		[attachments.length]
+	);
+
+	// Chromium names raw clipboard bitmap data "image.png", so every pasted
+	// screenshot would be listed (and titled in the issue) under the same name.
+	// Those get a timestamped name; a real file copied from Finder or Explorer
+	// keeps its own.
+	const handlePaste = useCallback(
+		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+			const images = Array.from(e.clipboardData.items)
+				.filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+				.map((item) => item.getAsFile())
+				.filter((f): f is File => f != null);
+			if (images.length === 0) return;
+			// The image is the paste; don't let a text flavor riding along with it
+			// (a file name, an image URL) land in the message as well.
+			e.preventDefault();
+			const stamp = fileTimestampSlug();
+			const named = images.map((file, i) => {
+				if (file.name && !/^image\.[a-z0-9]+$/i.test(file.name)) return file;
+				const ext = file.type.split('/')[1]?.split('+')[0] || 'png';
+				const suffix = images.length > 1 ? `-${i + 1}` : '';
+				return new File([file], `screenshot-${stamp}${suffix}.${ext}`, { type: file.type });
+			});
+			void addFiles(named);
+		},
+		[addFiles]
 	);
 
 	const removeAttachment = useCallback((id: string) => {
@@ -1665,7 +1692,7 @@ export function FeedbackChatView({
 								<ImagePlus className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 								<div className="text-left">
 									<p className="text-xs font-semibold" style={{ color: theme.colors.textDim }}>
-										Drag screenshots here or click to browse
+										Drag or paste screenshots here, or click to browse
 									</p>
 									<p className="text-2xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 										PNG, JPG, GIF, or WebP. Up to {MAX_ATTACHMENTS} images, 10 MB each.
@@ -1804,6 +1831,7 @@ export function FeedbackChatView({
 								value={inputValue}
 								onChange={(e) => setInputValue(e.target.value)}
 								onKeyDown={handleKeyDown}
+								onPaste={handlePaste}
 								placeholder={
 									isReady
 										? 'Add more details, or click Submit...'

@@ -326,6 +326,13 @@ a design constraint; they are simply not built yet.
     Graph preview width via `usePersistedPanelWidth`). Pure view preferences
     with nothing for an agent to act on; the values never reach main, so a
     verb needs a renderer round trip. Double-click on the grip resets them.
+13. **Log in to a provider account** (Usage Dashboard quota row "Log in",
+    palette "Reauthenticate Provider"). The login is an interactive OAuth or
+    device-code flow in a PTY, so there is nothing a non-interactive verb could
+    complete. The capability is reachable from an agent's shell as
+    `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
+    `/login`. There is no CLI read of the quota snapshots yet, so verifying the
+    login from the CLI is part of this gap.
 
 ### Audit backlog (2026-09-27)
 

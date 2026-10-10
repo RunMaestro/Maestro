@@ -70,6 +70,29 @@ describe('cue-queue-persistence', () => {
 		});
 	}
 
+	describe('restoring only what a previous run left behind', () => {
+		// The engine snapshots persistedIds() before sessions initialize. A row
+		// persisted after that (this boot's own app.startup queued behind a
+		// busy slot) is still live in memory, so restoring it would run it twice.
+		it('restores only the ids in the snapshot and leaves later rows alone', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'from-last-run', makeEntry({ subscriptionName: 'old' }));
+			const before = p.persistedIds();
+			p.persist('s-1', 'queued-this-boot', makeEntry({ subscriptionName: 'startup' }));
+
+			const restored = p.restoreAll(before).get('s-1')!;
+			expect(restored.map((e) => e.persistId)).toEqual(['from-last-run']);
+			expect(p.persistedIds()).toEqual(new Set(['from-last-run', 'queued-this-boot']));
+		});
+
+		it('restores every row when no snapshot is given', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'a', makeEntry());
+			p.persist('s-1', 'b', makeEntry());
+			expect(p.restoreAll().get('s-1')).toHaveLength(2);
+		});
+	});
+
 	describe('persist + restore round-trip', () => {
 		it('round-trips all scalar + nested fields', () => {
 			const p = makePersistence();

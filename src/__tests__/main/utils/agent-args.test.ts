@@ -915,43 +915,58 @@ describe('buildAgentArgs', () => {
 // applyAgentConfigOverrides
 // ---------------------------------------------------------------------------
 describe('applyAgentConfigOverrides', () => {
-	it('requests Codex reasoning summaries only after the provider opts in', () => {
-		const codex = getAgentDefinition('codex');
+	describe('Codex reasoning config (#1744)', () => {
 		const baseArgs = ['exec', '--json'];
+		const codex = () => getAgentDefinition('codex');
 
-		expect(applyAgentConfigOverrides(codex, baseArgs, {}).args).toEqual(baseArgs);
-		expect(
-			applyAgentConfigOverrides(codex, baseArgs, {
+		it('inherits the Codex reasoning summary default until explicitly configured', () => {
+			expect(applyAgentConfigOverrides(codex(), baseArgs, {}).args).toEqual(baseArgs);
+		});
+
+		it.each(['auto', 'concise', 'detailed', 'none'])(
+			'forwards supported reasoning summary %s',
+			(reasoningSummary) => {
+				expect(
+					applyAgentConfigOverrides(codex(), baseArgs, {
+						agentConfigValues: { reasoningSummary },
+					}).args
+				).toEqual([...baseArgs, '-c', `model_reasoning_summary="${reasoningSummary}"`]);
+			}
+		);
+
+		// Codex refuses to load its config on an unknown variant, so a bad stored
+		// value must drop the flag rather than break every spawn.
+		it.each(['', 'invalid', ' auto ', null, 42])(
+			'drops unsupported stored reasoning summary %s',
+			(reasoningSummary) => {
+				expect(
+					applyAgentConfigOverrides(codex(), baseArgs, {
+						agentConfigValues: { reasoningSummary },
+					}).args
+				).toEqual(baseArgs);
+			}
+		);
+
+		it('keeps the summary override when Codex runs in read-only mode', () => {
+			const agent = codex();
+			const readOnlyArgs = buildAgentArgs(agent, { baseArgs, readOnlyMode: true });
+			const { args } = applyAgentConfigOverrides(agent, readOnlyArgs, {
+				readOnlyMode: true,
 				agentConfigValues: { reasoningSummary: 'auto' },
-			}).args
-		).toEqual([...baseArgs, '-c', 'model_reasoning_summary="auto"']);
+			});
+			expect(args).toEqual([...readOnlyArgs, '-c', 'model_reasoning_summary="auto"']);
+			expect(args).toContain('--sandbox');
+			expect(args).toContain('read-only');
+		});
+
+		it('sends effort as model_reasoning_effort, the key Codex reads', () => {
+			const { args } = applyAgentConfigOverrides(codex(), baseArgs, {
+				agentConfigValues: { reasoningEffort: 'high', reasoningSummary: 'none' },
+			});
+			expect(args).toContain('model_reasoning_effort="high"');
+			expect(args.some((arg) => arg.startsWith('reasoning.effort'))).toBe(false);
+		});
 	});
-
-	it.each(['', 'invalid', ' auto ', null, 42])(
-		'ignores unsupported stored Codex reasoning summary %s',
-		(reasoningSummary) => {
-			const codex = getAgentDefinition('codex');
-			const baseArgs = ['exec', '--json'];
-			expect(
-				applyAgentConfigOverrides(codex, baseArgs, {
-					agentConfigValues: { reasoningSummary },
-				}).args
-			).toEqual(baseArgs);
-		}
-	);
-
-	it.each(['auto', 'concise', 'detailed', 'none'])(
-		'forwards supported Codex reasoning summary %s',
-		(reasoningSummary) => {
-			const codex = getAgentDefinition('codex');
-			const baseArgs = ['exec', '--json'];
-			expect(
-				applyAgentConfigOverrides(codex, baseArgs, {
-					agentConfigValues: { reasoningSummary },
-				}).args
-			).toEqual([...baseArgs, '-c', `model_reasoning_summary="${reasoningSummary}"`]);
-		}
-	);
 
 	it('processes configOptions with argBuilder', () => {
 		const agent = makeAgent({

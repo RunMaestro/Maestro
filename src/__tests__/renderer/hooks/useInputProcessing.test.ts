@@ -2930,7 +2930,10 @@ describe('useInputProcessing', () => {
 				{ targetSessionIds: ['backend'], suppressLocal: true },
 				'@Backend does this look right?',
 				session,
-				session.activeTabId
+				session.activeTabId,
+				// The message's images ride along: a consult-first hold carries them
+				// into the turn that eventually answers it.
+				[]
 			);
 
 			// Local dispatch is suppressed: no spawn/write to the source agent.

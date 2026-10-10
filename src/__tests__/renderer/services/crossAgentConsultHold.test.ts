@@ -10,6 +10,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	CONSULT_INTERRUPTED_BY_RESTART,
+	buildConsultFirstContext,
+	buildConsultHoldItem,
 	buildConsultPendingNote,
 	buildConsultReplyContext,
 	consultHoldReleasedText,
@@ -22,6 +24,7 @@ import {
 	settleConsultHold,
 	settleConsultInQueue,
 	withConsultPendingNote,
+	withHandoffPendingNote,
 } from '../../../renderer/services/crossAgentConsultHold';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
@@ -220,6 +223,84 @@ describe('settleConsultInQueue', () => {
 		// Same target settling twice.
 		const released = settle(queue, BACKEND.targetSessionId);
 		expect(settle(released, BACKEND.targetSessionId)).toBe(released);
+	});
+});
+
+describe('consult-first hold', () => {
+	const FIRST_TEMPLATE =
+		'Heard from {{CONSULTED_AGENTS}}:\n\n{{CONSULT_REPLIES}}\n\nAnswer:\n\n{{USER_MESSAGE}}';
+	const deferredHold = (targets: ConsultHoldTarget[]) =>
+		hold(targets, {
+			awaitingConsult: {
+				pending: [...targets],
+				replies: [],
+				deferred: { message: 'check with @Backend first', images: ['img-1'] },
+			},
+		});
+	const settleFirst = (queue: QueuedItem[], targetSessionId: string) =>
+		settleConsultInQueue(
+			queue,
+			{
+				sourceSessionId: SOURCE_ID,
+				sourceTabId: SOURCE_TAB,
+				targetSessionId,
+				text: 'answer',
+			},
+			REPLY_TEMPLATE,
+			FIRST_TEMPLATE
+		);
+
+	it('keeps the deferred message while other consults are pending', () => {
+		const [next] = settleFirst([deferredHold([BACKEND, API])], BACKEND.targetSessionId);
+
+		expect(next.awaitingConsult?.pending).toEqual([API]);
+		expect(next.awaitingConsult?.deferred?.message).toBe('check with @Backend first');
+	});
+
+	it('releases into the turn that ANSWERS the message, carrying its images', () => {
+		// The source agent never saw the message: the released hold has to hand it
+		// over along with the replies, not ask it to "finish" an answer it never began.
+		const [next] = settleFirst([deferredHold([BACKEND])], BACKEND.targetSessionId);
+
+		expect(next.awaitingConsult).toBeUndefined();
+		expect(next.text).toBe('Backend replied. Answer the message with what came back.');
+		expect(next.agentContext).toBe(
+			'Heard from Backend:\n\n### Reply from Backend\n\nanswer\n\nAnswer:\n\ncheck with @Backend first'
+		);
+		expect(next.images).toEqual(['img-1']);
+	});
+
+	it('still hands over the message when the template has not loaded', () => {
+		expect(buildConsultFirstContext('', [{ ...BACKEND, text: 'hi' }], 'the question')).toBe(
+			'### Reply from Backend\n\nhi\n\nthe question'
+		);
+	});
+
+	it('reads as waiting to ANSWER, not to finish, while it waits', () => {
+		const session = sourceSession();
+		const item = buildConsultHoldItem({
+			session,
+			tab: session.aiTabs[0],
+			targets: [BACKEND],
+			deferred: { message: 'm' },
+		});
+
+		expect(item.text).toBe('Waiting for Backend to reply before answering.');
+		expect(consultHoldReleasedText([{ ...BACKEND, text: 'x' }], true)).toBe(
+			'Backend replied. Answer the message with what came back.'
+		);
+	});
+});
+
+describe('hand-off note', () => {
+	it('is appended once the template has loaded, naming every target', async () => {
+		stubPrompts({ 'cross-agent-handoff-pending': 'Forwarding to {{HANDOFF_AGENTS}}.' });
+		await loadCrossAgentConsultPrompts(true);
+
+		expect(withHandoffPendingNote('do it', [BACKEND, API])).toBe(
+			'do it\n\n---\n\nForwarding to Backend and API.'
+		);
+		expect(withHandoffPendingNote('do it', [])).toBe('do it');
 	});
 });
 

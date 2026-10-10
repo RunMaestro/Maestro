@@ -13,6 +13,7 @@ import path from 'path';
 import os from 'os';
 import {
 	resolveClaudeSpawnModeCore,
+	findPackagedAppHost,
 	isMaestroPBinaryPath,
 	resolveConfigDirKeyFromEnv,
 	defaultSelectMode,
@@ -176,5 +177,47 @@ describe('resolveClaudeSpawnModeCore under CLI-shaped deps', () => {
 			cliShapedDeps()
 		);
 		expect(d.mode).toBe('api');
+	});
+});
+
+describe('findPackagedAppHost (#1770)', () => {
+	const existsAmong =
+		(...present: string[]) =>
+		(p: string) =>
+			present.includes(p);
+
+	it('finds the macOS app binary beside a packaged Resources dir', () => {
+		const resources = path.join('/Applications', 'Maestro.app', 'Contents', 'Resources');
+		const binary = path.join('/Applications', 'Maestro.app', 'Contents', 'MacOS', 'Maestro');
+		expect(
+			findPackagedAppHost(
+				resources,
+				'darwin',
+				existsAmong(path.join(resources, 'app.asar'), binary)
+			)
+		).toEqual({ execPath: binary, resourcesPath: resources });
+	});
+
+	it('finds Maestro.exe on Windows and the lowercase binary on Linux', () => {
+		const resources = path.join('/opt', 'Maestro', 'resources');
+		const asar = path.join(resources, 'app.asar');
+		const exe = path.join('/opt', 'Maestro', 'Maestro.exe');
+		const linuxBin = path.join('/opt', 'Maestro', 'maestro');
+		expect(findPackagedAppHost(resources, 'win32', existsAmong(asar, exe))?.execPath).toBe(exe);
+		expect(findPackagedAppHost(resources, 'linux', existsAmong(asar, linuxBin))?.execPath).toBe(
+			linuxBin
+		);
+	});
+
+	it('returns null for a dev build with no app.asar beside the CLI', () => {
+		const devCli = path.join('/repo', 'dist', 'cli');
+		expect(findPackagedAppHost(devCli, 'darwin', () => false)).toBeNull();
+	});
+
+	it('returns null when the app binary is missing, leaving the spawn unchanged', () => {
+		const resources = path.join('/Applications', 'Maestro.app', 'Contents', 'Resources');
+		expect(
+			findPackagedAppHost(resources, 'darwin', existsAmong(path.join(resources, 'app.asar')))
+		).toBeNull();
 	});
 });

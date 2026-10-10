@@ -2,8 +2,7 @@
  * Tests for context preload API
  *
  * Coverage:
- * - createContextApi: getStoredSession, groomContext, cancelGrooming,
- *   createGroomingSession (deprecated), sendGroomingPrompt (deprecated), cleanupGroomingSession
+ * - createContextApi: getStoredSession, groomContext, cancelGrooming
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -113,46 +112,6 @@ describe('Context Preload API', () => {
 			await api.cancelGrooming();
 
 			expect(mockInvoke).toHaveBeenCalledWith('context:cancelGrooming');
-		});
-	});
-
-	describe('createGroomingSession (deprecated)', () => {
-		it('should invoke context:createGroomingSession', async () => {
-			mockInvoke.mockResolvedValue('grooming-session-id');
-
-			const result = await api.createGroomingSession('/project', 'claude-code');
-
-			expect(mockInvoke).toHaveBeenCalledWith(
-				'context:createGroomingSession',
-				'/project',
-				'claude-code'
-			);
-			expect(result).toBe('grooming-session-id');
-		});
-	});
-
-	describe('sendGroomingPrompt (deprecated)', () => {
-		it('should invoke context:sendGroomingPrompt', async () => {
-			mockInvoke.mockResolvedValue('response text');
-
-			const result = await api.sendGroomingPrompt('session-123', 'prompt text');
-
-			expect(mockInvoke).toHaveBeenCalledWith(
-				'context:sendGroomingPrompt',
-				'session-123',
-				'prompt text'
-			);
-			expect(result).toBe('response text');
-		});
-	});
-
-	describe('cleanupGroomingSession', () => {
-		it('should invoke context:cleanupGroomingSession', async () => {
-			mockInvoke.mockResolvedValue(undefined);
-
-			await api.cleanupGroomingSession('session-123');
-
-			expect(mockInvoke).toHaveBeenCalledWith('context:cleanupGroomingSession', 'session-123');
 		});
 	});
 });

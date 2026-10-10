@@ -100,6 +100,41 @@ describe('buildCrossAgentPrompt', () => {
 		);
 	});
 
+	it('frames a hand-off as a result to act on, not a question to answer', () => {
+		// A target told "you are being consulted" redoes the work it was handed.
+		const prompt = buildCrossAgentPrompt(
+			request({
+				sourceAgentName: 'Last 30 Days',
+				transcript: [entry('user', 'Hi'), entry('ai', 'Yo')],
+				userPrompt: 'feed whatever we learn over to @Kensho',
+				handoffAnswer: 'MNQ liquidity peaks at the open.',
+			})
+		);
+
+		expect(prompt).toMatch(/^You are receiving a hand-off in Maestro\./);
+		expect(prompt).toContain('the agent "Last 30 Days"');
+		expect(prompt).not.toContain('You are being consulted');
+		expect(prompt).not.toContain('Question from the user');
+		const instruction = prompt.indexOf(
+			"**The user's instruction (relayed via the source agent):**\nfeed whatever we learn over to @Kensho"
+		);
+		const result = prompt.indexOf(
+			'**Result from Last 30 Days:**\nMNQ liquidity peaks at the open.'
+		);
+		// Transcript, then the instruction, then the result.
+		expect(prompt.indexOf('**User:** Hi')).toBeLessThan(instruction);
+		expect(instruction).toBeLessThan(result);
+	});
+
+	it('does not announce a transcript for a hand-off that forwards none', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ transcript: [], userPrompt: 'let @X know', handoffAnswer: 'done' })
+		);
+
+		expect(prompt).toContain("Below is the user's instruction, then the result.");
+		expect(prompt).toContain('**Result from the source agent:**\ndone');
+	});
+
 	it('omits the transcript block entirely when there is nothing to forward', () => {
 		const prompt = buildCrossAgentPrompt(request({ transcript: [], userPrompt: 'Just this' }));
 		expect(prompt).toContain('You are being consulted');

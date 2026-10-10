@@ -4,6 +4,8 @@ import { selectActiveSession, useSessionStore } from '../../../stores/sessionSto
 import type { Session } from '../../../types';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
+import { isWebDesktop } from '../../../utils/runtimeContext';
+import { requestDesktopTabClose } from '../../../services/desktopTabClose';
 import {
 	closeBrowserTab as closeBrowserTabHelper,
 	hasActiveWizard,
@@ -62,8 +64,25 @@ export function useUnifiedTabHandlers({
 			const session = sessions.find((s) => s.id === activeSessionId);
 			if (!session) return;
 
-			const refsToClose = getRefs(session);
+			let refsToClose = getRefs(session);
 			if (refsToClose.length === 0) return;
+			if (isWebDesktop()) {
+				for (const ref of refsToClose.filter((ref) => ref.type === 'ai')) {
+					void requestDesktopTabClose(session.id, ref.id).then((sent) => {
+						if (sent && session.aiTabs.some((tab) => tab.id === ref.id && hasActiveWizard(tab))) {
+							endInlineWizard(ref.id).catch((error) =>
+								logger.warn(
+									'[useTabHandlers] Failed to end wizard on remote close:',
+									undefined,
+									error
+								)
+							);
+						}
+					});
+				}
+				refsToClose = refsToClose.filter((ref) => ref.type !== 'ai');
+				if (refsToClose.length === 0) return;
+			}
 
 			const terminalTabIds = getTerminalTabIds(refsToClose);
 			refsToClose.filter((ref) => ref.type === 'ai').forEach((ref) => clearLiveDraft(ref.id));

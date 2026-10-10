@@ -50,7 +50,9 @@ export interface CueEventRecord {
 	/**
 	 * Process exit code the run terminated with. For agent runs through
 	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
-	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 1 =
+	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 7 =
+	 * workspace_untrusted, 8 = terminal API error such as an unknown model, 9 =
+	 * resumed session has no transcript on this host, 1 =
 	 * tui_exited, 2 = limit, 0 = success). NULL when the run never produced an exit code (spawn error,
 	 * still running) or for status flips that aren't run completions.
 	 */
@@ -1051,6 +1053,25 @@ export function pruneCueEvents(olderThanMs: number): void {
 	if (result.changes > 0) {
 		log('info', `Pruned ${result.changes} old Cue event(s)`);
 	}
+}
+
+/**
+ * Settle every run a previous engine left `running`. Only called at engine
+ * start, and the single-instance desktop app is the only process that runs a
+ * Cue engine over this data directory, so no live engine can own one of these
+ * rows: its engine was killed (SIGKILL, crash, power loss) before the run
+ * finished. Left alone, the row reads as in progress
+ * forever. The run's own process may have outlived the engine and finished,
+ * but nothing recorded how, so `failed` with an explanation is the honest
+ * status. Returns how many rows were settled.
+ */
+export function failOrphanedRunningEvents(message: string): number {
+	const result = getDb()
+		.prepare(
+			`UPDATE cue_events SET status = 'failed', completed_at = ?, error_message = COALESCE(error_message, ?) WHERE status = 'running'`
+		)
+		.run(Date.now(), message);
+	return result.changes;
 }
 
 // ============================================================================

@@ -141,6 +141,7 @@ export interface InMemoryCueDb {
 	getLastHeartbeat(): number | null;
 	// Housekeeping
 	pruneCueEvents(olderThanMs: number): void;
+	failOrphanedRunningEvents(message: string): number;
 	// GitHub seen set
 	isGitHubItemSeen(subscriptionId: string, itemKey: string): boolean;
 	markGitHubItemSeen(subscriptionId: string, itemKey: string): void;
@@ -322,6 +323,19 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			return state.heartbeat;
 		},
 
+		failOrphanedRunningEvents(message) {
+			requireReady();
+			let changed = 0;
+			for (const row of state.events.values()) {
+				if (row.status !== 'running') continue;
+				row.status = 'failed';
+				row.completedAt = now();
+				row.errorMessage = row.errorMessage ?? message;
+				changed++;
+			}
+			return changed;
+		},
+
 		pruneCueEvents(olderThanMs) {
 			requireReady();
 			const cutoff = now() - olderThanMs;
@@ -490,6 +504,7 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 		updateHeartbeat: () => getDb().updateHeartbeat(),
 		getLastHeartbeat: () => getDb().getLastHeartbeat(),
 		pruneCueEvents: (olderThanMs: number) => getDb().pruneCueEvents(olderThanMs),
+		failOrphanedRunningEvents: (message: string) => getDb().failOrphanedRunningEvents(message),
 		isGitHubItemSeen: (subscriptionId: string, itemKey: string) =>
 			getDb().isGitHubItemSeen(subscriptionId, itemKey),
 		markGitHubItemSeen: (subscriptionId: string, itemKey: string) =>

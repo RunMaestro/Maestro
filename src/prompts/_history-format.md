@@ -29,8 +29,8 @@ Each `entries[]` element has the following fields (optional unless marked requir
 - `elapsedTimeMs` - wall-clock duration of the run
 - `contextUsage` - context window usage percentage at completion (0-100)
 - `usageStats` - `{ inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, totalCostUsd }`
-- `tokenSource` - Claude-only, per-turn: `'interactive'` (maestro-p TUI / Max plan quota) or `'api'` (`claude --print` / per-token billing); absent on non-Claude and older entries
-- `tokenSourceReason` - Claude-only, per-turn: `'auto'` (user/usage selected) or `'limit'` (forced API fallback because the Max plan quota was exhausted)
+- `tokenSource` - Claude-only, per-turn: `'interactive'` (maestro-p driving the Claude TUI) or `'api'` (`claude --print`); it names the interface, not the bill (signed in with a Claude plan, both draw from the same plan limits); absent on non-Claude and older entries
+- `tokenSourceReason` - Claude-only, per-turn: `'auto'` (user/usage selected) or `'limit'` (forced `claude --print` fallback because a plan window hit its limit)
 - `validated` - boolean; user marked the entry as reviewed
 - `cueTriggerName`, `cueEventType`, `cueSourceSession` - populated when `type === 'CUE'`; identify the subscription, event, and upstream agent that triggered the run
 - `hostname` - set when history is shared across machines

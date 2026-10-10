@@ -7,9 +7,13 @@
  * React, no theme) so it can be imported from renderer, main, or CLI code.
  *
  * Token source meaning:
- * - `interactive` => the turn was captured via maestro-p driving the Claude TUI
- *   (Max plan quota, ~$0 per token).
- * - `api` => the turn was captured via `claude --print` (per-token API billing).
+ * - `interactive` => the turn was captured via maestro-p driving the Claude TUI.
+ * - `api` => the turn was captured via `claude --print`.
+ *
+ * The source names the interface, not the bill. Signed in with a Claude plan,
+ * both draw from the same plan limits (`claude -p` reports `apiKeySource: none`
+ * and the plan's own `rate_limit_event` windows); an API key, gateway, or cloud
+ * provider in the environment bills that credential under either source.
  */
 
 export interface TokenSourcePillInput {
@@ -17,7 +21,7 @@ export interface TokenSourcePillInput {
 	mode: 'interactive' | 'api';
 	/**
 	 * Why the mode was chosen. `auto` = user/usage selected; `limit` = forced
-	 * API fallback because the Max plan quota was exhausted. Omit when unknown
+	 * claude -p fallback because a plan window hit its limit. Omit when unknown
 	 * (e.g. the live chat pill, which has no per-turn reason in scope).
 	 */
 	reason?: 'auto' | 'limit';
@@ -49,11 +53,11 @@ export function getTokenSourcePill(input: TokenSourcePillInput): TokenSourcePill
 	let title: string;
 	if (input.reason === 'limit') {
 		// Forced fallback wording mirrors the AgentConfigPanel pill.
-		title = 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.';
+		title = "Forced fallback: the plan's 5-hour or weekly limit was hit.";
 	} else if (isTui) {
 		title = `Captured via maestro-p driving the Claude TUI${adaptive ? ' (Dynamic Mode enabled)' : ''}`;
 	} else {
-		title = `Captured via claude --print${adaptive ? ' (Dynamic Mode enabled - fell back to API)' : ''}`;
+		title = `Captured via claude --print${adaptive ? ' (Dynamic Mode enabled - switched from the TUI)' : ''}`;
 	}
 
 	return { label, title, isTui };
