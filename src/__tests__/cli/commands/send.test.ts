@@ -33,6 +33,12 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
+	addHistoryEntry: vi.fn(),
+}));
+
+// Mock prompt-loader so the synopsis turn gets a fixed prompt
+vi.mock('../../../cli/services/prompt-loader', () => ({
+	getCliPrompt: vi.fn().mockResolvedValue('SYNOPSIS PROMPT'),
 }));
 
 // Mock usage-aggregator
@@ -56,7 +62,7 @@ vi.mock('../../../shared/maestro-lib/providers/definitions', () => ({
 import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
-import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
+import { resolveAgentId, getSessionById, addHistoryEntry } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 
@@ -469,5 +475,180 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(output.usage).toBeNull();
+	});
+
+	describe('history', () => {
+		const ready = (overrides: Partial<SessionInfo> = {}) => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(mockAgent(overrides));
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		};
+
+		it('writes a USER entry summarized by a synopsis turn resumed on the same session', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Fixed the bug.',
+					agentSessionId: 'session-xyz-789',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response:
+						'**Summary:** Fixed the tooltip clipping in FilePreview.\n\n**Details:** Moved the portal.',
+				});
+
+			await send('agent-abc', 'Fix it', {});
+
+			expect(spawnAgent).toHaveBeenCalledTimes(2);
+			const synopsisCall = vi.mocked(spawnAgent).mock.calls[1];
+			expect(synopsisCall[2]).toBe('SYNOPSIS PROMPT');
+			expect(synopsisCall[3]).toBe('session-xyz-789');
+			expect(synopsisCall[4]).toMatchObject({
+				querySource: 'auto',
+				signal: expect.any(AbortSignal),
+			});
+			expect(addHistoryEntry).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				type: 'USER',
+				sessionId: 'agent-abc-123',
+				agentSessionId: 'session-xyz-789',
+				projectPath: '/path/to/project',
+				success: true,
+				summary: 'Fixed the tooltip clipping in FilePreview.',
+			});
+			expect(typeof entry.elapsedTimeMs).toBe('number');
+			// stdout still carries only the turn's JSON
+			expect(consoleSpy).toHaveBeenCalledTimes(1);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('writes nothing with --no-history', async () => {
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { history: false });
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			expect(addHistoryEntry).not.toHaveBeenCalled();
+		});
+
+		it('skips the synopsis turn with --no-synopsis and uses the response', async () => {
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: '\nFirst line of the answer\nmore detail',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry.summary).toBe('First line of the answer');
+			expect(entry.fullResponse).toBe('\nFirst line of the answer\nmore detail');
+		});
+
+		it('still writes an entry from the response when the synopsis reports NOTHING_TO_REPORT', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'There are 4 Python files.',
+					agentSessionId: 'session-1',
+				})
+				.mockResolvedValueOnce({ success: true, response: 'NOTHING_TO_REPORT' });
+
+			await send('agent-abc', 'count files', {});
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry.summary).toBe('There are 4 Python files.');
+			expect(entry.fullResponse).toBe('There are 4 Python files.');
+		});
+
+		it('falls back to the response when the synopsis turn prints a provider error', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Refactored the parser.',
+					agentSessionId: 'session-1',
+				})
+				.mockResolvedValueOnce({ success: true, response: 'Prompt is too long' });
+
+			await send('agent-abc', 'refactor', {});
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry.summary).toBe('Refactored the parser.');
+			expect(entry.fullResponse).toBe('Refactored the parser.');
+		});
+
+		it('keeps the agent model for the synopsis when the cheap tier would shrink the context window', async () => {
+			ready({ customModel: 'opus[1m]' });
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Done', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Did it.' });
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ customModel: 'opus[1m]' });
+		});
+
+		it('records a failed turn without a synopsis turn', async () => {
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({ success: false, error: 'boom' });
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({ success: false, summary: 'Send failed: boom' });
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			errSpy.mockRestore();
+		});
+
+		it('records an interrupted turn without a synopsis turn', async () => {
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: false,
+				error: 'Interrupted',
+				outcome: 'interrupted',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({ success: false, summary: 'Send interrupted' });
+			expect(processExitSpy).toHaveBeenCalledWith(130);
+			errSpy.mockRestore();
+		});
+
+		it('keeps the send successful when the history write throws', async () => {
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+			vi.mocked(addHistoryEntry).mockImplementationOnce(() => {
+				throw new Error('disk full');
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			expect(processExitSpy).not.toHaveBeenCalled();
+			expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('disk full'));
+			errSpy.mockRestore();
+		});
 	});
 });

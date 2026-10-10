@@ -146,11 +146,15 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one      |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)        |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app |
+| Flag                 | Description                                                         |
+| -------------------- | ------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume an existing session instead of creating a new one            |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)              |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app       |
+| `--no-history`       | Do not write a History entry for this turn                          |
+| `--no-synopsis`      | Skip the synopsis turn; the History entry carries the response text |
+
+Every `send` writes a `USER` entry to the agent's History, the same file the desktop History panel reads, whether or not the desktop app is running (an open app picks it up live). A successful turn is summarized by a short synopsis turn resumed on the same provider session at the cheapest model and effort, unless that would shrink the context window, in which case the agent's own model is kept. If the synopsis reports nothing to record, fails, or prints a provider error, the first line of the response is used instead. Failed and interrupted turns are recorded without a synopsis turn. A History write that fails prints a warning on stderr and never fails the send; the JSON on stdout is unchanged either way. Use `--no-synopsis` to skip the extra turn, or `--no-history` to record nothing.
 
 For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
 
