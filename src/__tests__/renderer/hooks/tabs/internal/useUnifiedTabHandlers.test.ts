@@ -45,14 +45,46 @@ vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
 	}),
 }));
 
+const runtimeMocks = vi.hoisted(() => ({ isWebDesktop: vi.fn(() => false) }));
+vi.mock('../../../../../renderer/utils/runtimeContext', () => runtimeMocks);
+
 describe('useUnifiedTabHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		runtimeMocks.isWebDesktop.mockReturnValue(false);
 		inlineWizardMocks.endWizard.mockClear();
 	});
 
 	afterEach(() => {
 		cleanup();
+	});
+
+	it.each([
+		['handleCloseOtherTabs', ['ai-1', 'ai-3']],
+		['handleCloseTabsLeft', ['ai-1']],
+		['handleCloseTabsRight', ['ai-3']],
+	] as const)('routes browser AI tabs through the desktop for %s', async (action, expectedIds) => {
+		setupSession({
+			id: 'session-1',
+			aiTabs: [
+				createMockAITab({ id: 'ai-1' }),
+				createMockAITab({ id: 'ai-2' }),
+				createMockAITab({ id: 'ai-3' }),
+				createMockAITab({ id: 'draft', inputValue: 'preserve me' }),
+				createMockAITab({ id: 'consult', hidden: true }),
+			],
+			activeTabId: 'ai-2',
+		});
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		window.maestro.web.requestCloseTab = vi.fn().mockResolvedValue(true);
+		const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+		await act(async () => result.current[action]());
+
+		expect(vi.mocked(window.maestro.web.requestCloseTab).mock.calls).toEqual(
+			expectedIds.map((id) => ['session-1', id])
+		);
+		expect(getSession().aiTabs).toHaveLength(5);
 	});
 
 	it('reorders the unified tab order by tab id, ignoring ids that are not in it', () => {

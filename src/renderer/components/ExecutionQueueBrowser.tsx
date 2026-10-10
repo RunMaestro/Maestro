@@ -713,6 +713,7 @@ function QueueItemRow({
 
 	const isCommand = item.type === 'command';
 	const isWaitingForConnection = !!item.waitingForConnection;
+	const isAwaitingConsult = !!item.awaitingConsult;
 	const isHeldForRetry = useIsHeldRetryItem(item.id);
 	// Read up to the first 4k characters and let CSS line-clamp cap the card at
 	// three lines. The native ellipsis fills the space without wrapping past the
@@ -771,7 +772,7 @@ function QueueItemRow({
 					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
 					opacity: isDragging
 						? 0.95
-						: isPaused || isWaitingForConnection
+						: isPaused || isWaitingForConnection || isAwaitingConsult
 							? 0.45
 							: isDimmed
 								? 0.5
@@ -845,6 +846,14 @@ function QueueItemRow({
 								theme={theme}
 								color={theme.colors.warning}
 								title="This message will run after Maestro reconnects"
+							/>
+						)}
+						{isAwaitingConsult && (
+							<MiniBadge
+								label="WAITING FOR CONSULT"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This turn finishes once the agent it consulted replies"
 							/>
 						)}
 					</div>

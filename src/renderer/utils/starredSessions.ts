@@ -11,6 +11,8 @@
  */
 
 import type { Session, AITab } from '../types';
+import { getTabDisplayName } from './tabHelpers';
+import { logger } from './logger';
 import { captureException } from './sentry';
 
 /** Window event fired whenever any session's starred state changes. */
@@ -61,4 +63,19 @@ export function persistTabStarred(session: Session, tab: AITab, starred: boolean
 				},
 			});
 		});
+}
+
+/** Mirror starred transcripts at a confirmed close boundary before the provider can delete them. */
+export function snapshotClosedTabTranscript(session: Session, tab: AITab): void {
+	if (!tab.starred || !tab.agentSessionId || !session.projectRoot) return;
+	void window.maestro.agentSessions
+		.snapshotStarredTranscript(
+			session.toolType || 'claude-code',
+			session.projectRoot,
+			tab.agentSessionId,
+			getTabDisplayName(tab)
+		)
+		.catch((error) =>
+			logger.warn('Failed to mirror starred transcript on close', undefined, error)
+		);
 }

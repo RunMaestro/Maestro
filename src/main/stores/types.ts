@@ -85,6 +85,8 @@ export interface MaestroSettings {
 	 * renderer (`PersistedMediaQueue`); the main process only stores it.
 	 */
 	mediaPlayerQueue: unknown;
+	/** Provider profile key of the account that last carried a Send Feedback chat. */
+	feedbackAccountKey: string | null;
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
 	// Web interface authentication

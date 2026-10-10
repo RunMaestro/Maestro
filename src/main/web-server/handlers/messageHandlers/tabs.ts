@@ -550,6 +550,7 @@ export async function handleOpenTerminalTab(
 	const rawShell = message.shell;
 	const rawName = message.name;
 	const rawCommand = message.command;
+	const rawInputRequired = message.inputRequired;
 	const background = readBackgroundField(message);
 	// cwd/shell/name can leak local usernames or project names - log
 	// presence flags only.
@@ -593,6 +594,10 @@ export async function handleOpenTerminalTab(
 	}
 	if (rawCommand !== undefined && typeof rawCommand !== 'string') {
 		sendErrorResult('Invalid command: must be a string');
+		return;
+	}
+	if (rawInputRequired !== undefined && typeof rawInputRequired !== 'boolean') {
+		sendErrorResult('Invalid inputRequired: must be a boolean');
 		return;
 	}
 	const cwd = typeof rawCwd === 'string' ? rawCwd : undefined;
@@ -641,7 +646,17 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command }, { background })
+		.openTerminalTab(
+			sessionId,
+			{
+				cwd: resolvedCwd,
+				shell,
+				name,
+				command,
+				...(rawInputRequired === true && { inputRequired: true }),
+			},
+			{ background }
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',

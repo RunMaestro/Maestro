@@ -64,6 +64,22 @@ Whether your **current** agent also answers depends on where the mention sits:
 - **Start the message with an `@agent` mention** (`@Backend does this look right?`) and the message is treated as addressed to the mentioned agent(s) only. Your current agent stays quiet; you still see your message in the chat as the anchor for the replies that stream back.
 - **Put the mention later in the sentence** (`does this look right to @Backend?`) and your current agent answers too, with the consulted agent's reply arriving alongside it. Use this when you want both perspectives.
 
+When your current agent answers too, it does not finish before the consult does. It starts right away and does its own share of the work while the mentioned agent thinks, but it is told to hold its final answer. A **WAITING FOR CONSULT** item sits at the top of the queue in the meantime. Nothing else you send to that tab can run ahead of it. Once every mentioned agent has replied, Maestro sends the replies to your agent word for word, and your agent writes its final answer with both sets of findings in hand. If a mentioned agent fails, your agent is told why and finishes anyway. If you press **Stop**, the wait is dropped.
+
+### First, at the same time, or after: say it in plain words
+
+When both agents work on a message, your wording decides the order. You do not need special syntax. Maestro reads the words around the mention:
+
+| You write something like                                                                                                                                | What happens                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `what does @Backend think about this too?`                                                                                                              | **Parallel.** Both start now, and your agent waits for the reply before it finishes (see above).                                                                                                                  |
+| `check with @Backend first, then write the migration`, `based on what @Backend says, update the schema`, `ask @Backend about the schema, then write it` | **Consult first.** The mentioned agent answers first. Your agent does not start until the reply is in, and then gets the reply and your message together.                                                         |
+| `research MNQ and feed whatever we learn over to @Kensho`, `fix it, then send the results to @Docs`, `let @PM know`                                     | **Hand-off.** Your agent does the work first. When its turn ends, its final answer and your message go to the mentioned agent. That agent's reply shows up in your chat, and your agent is not sent another turn. |
+
+A strip above the message box shows which of these Maestro picked before you press Enter. If it guessed wrong, change the wording. Words like "first" or "based on what @agent says" mean consult first. "Then send it to @agent" or "let @agent know" means a hand-off. Leave both out and the two agents run in parallel. A message has one order. If two mentions disagree ("ask @A first, then send it to @B"), consult first wins, so both agents are consulted before your agent starts.
+
+A hand-off goes out only when your agent's turn ends cleanly. If you press **Stop**, or the turn fails, nothing is sent, and a note in the chat says so. The same wording works from `maestro-cli dispatch`, because the CLI and the message box use the same routing rules.
+
 A leading `@file` reference (`@src/app.ts what does this do?`) is a question for your current agent about that file, so it does not count as addressing another agent.
 
 <Note>

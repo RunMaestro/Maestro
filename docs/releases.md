@@ -14,40 +14,71 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ---
 
+## v1.0.x - Full Orchestra
+
+**Latest: v1.0.0** | Released October 9, 2026
+
+# 1.0.0 Highlights
+
+Maestro 1.0 is the first major release. It brings the entire 0.18 release-candidate line to the stable channel in one step, so if you have been running stable, everything below is new to you: agents that consult each other, a fleet you can spread across windows and screens, the full app in any browser, and Auto Run that keeps working toward a goal while you are away.
+
+🌐 **The whole Maestro app now runs in your browser.** Turn Live on and any laptop, tablet, or phone on your network gets the real desktop interface, not a cut-down companion. On a phone it switches to a layout built for thumbs, with drawers, a folding composer, swipe to dismiss, and a tab bar where a tap switches tabs and a long press opens the menu, and you can add it to your Home Screen. A large fleet opens quickly because each conversation loads when you open it. Want more than a URL standing between a browser and your machine? Turn on Web Login in Settings > Plugins and everyone signs in with a username and password, with every turn credited to the account that sent it.
+
+💬 **Your agents can ask each other for help.** Type `@`, pick another agent, and Maestro hands it the relevant part of your conversation, runs it in the background, and brings its answer back stamped with who replied. Each consult is read-only or read/write, so you decide whether a teammate may touch your files, and Stop ends every consult a message fanned out. When your own agent is working on the same message, it holds its final reply behind a **WAITING FOR CONSULT** item until every mentioned agent has answered, then writes its reply with their findings in hand. Agents can do the same from their own shell with `maestro-cli ask`, which lands in a private thread instead of interrupting the chat you have open.
+
+🪟 **Spread your fleet across windows and panes.** Right-click an agent and choose Move to Window to give it its own OS window on another monitor, with its tabs, files, and running turn coming along untouched. Inside any window, tile tabs together: drag a tab onto the one that is showing, or press `Ctrl+Cmd+T`, `B`, `F`, or `J` to tile a new chat, browser, file, or terminal below the pane you are in, and the new pane takes the keyboard right away. A tiled set sits in the tab bar as one chip you can rename, give an emoji, or snooze as a whole, and a tab you close and reopen goes back into the tile it came from.
+
+🎹 **Pianola watches your agents so you do not have to.** Agents rarely fail loudly. They stop and wait for a yes, and you find four of them parked on questions twenty minutes later. Pianola is a manager agent pinned to the top of the Left Bar that watches the agents you point it at, spots the ones waiting on a permission prompt, a plan, or a question, and either answers from a rule you wrote or escalates to you. Its Dashboard shows who needs you, who is working, and every decision it made and why, and it can read your past transcripts to suggest rules that match how you already answer. Pianola is an opt-in plugin, and with no rules it only reports.
+
+🎯 **Auto Run can chase a goal, show its work, and pick itself back up.** Switch the Run dialog to Goal-Driven, describe the objective in plain English, and each pass makes one increment of progress until the goal is met, a real blocker stops it, or progress stalls. `maestro-cli goal-run` runs the same thing headless. The Thought Stream shows a running agent's reasoning with every tool call reduced to one plain line, and its compass button is now where you steer a run, so a message typed in the chat goes to the agent again. A run that hits a usage limit resumes by itself once the window reopens, even across a restart, and a run stopped by an ordinary error retries on its own a few times before it asks for you.
+
+🧩 **Encore Features become plugins, and two new ones let agents see what you see.** Settings > Plugins lists every built-in feature as a card with its permissions spelled out, and the same catalog is ready for third-party plugins once you switch them on. Coworking lets Claude Code, Codex, OpenCode, and Factory Droid read your terminal scrollback and look at your in-app browser tabs, so an agent can see the stack trace your dev server just printed without you pasting it. Clicking and typing are allowed only for agents you add to a list that starts empty, and every action is audited. Concerto lets an agent answer with something you can look at: live panels of stats, tables, and progress on a floating stage. Both stay off until you turn them on.
+
+🤖 **Five more providers join the lineup.** Antigravity CLI, Grok CLI, Hermes, Oh My Pi, and Pi now run alongside Claude Code, Codex, OpenCode, Factory Droid, and Copilot CLI, locally or over SSH, and the provider pickers only offer the ones your machine can actually run.
+
+## Also in 1.0.0
+
+- 🗣️ **Group Chat is out of Beta.** Its queue belongs to the room, so it is the same on every device, survives a reload or a quit, and pauses when you press Stop All. New Group Chat moves to `Opt+Cmd+G`, since `Opt+Cmd+C` now opens the Concerto stage.
+- 🔑 **Claude Code gets a Standard permission mode**: click the permission pill to cycle Full Access, Standard, and Read-Only, and in Standard every approval and ask-back question shows up in Maestro for you to answer inline.
+- 📁 **Give an agent extra directories** in Edit Agent, each with its own read and write switch and an optional note on what it is for, passed to the provider natively wherever it supports that.
+- 🕸️ **The Git Log is a real branch graph** you can walk from the keyboard, search with `/` across hashes, messages, authors, branches, and dates, and switch branches from a dropdown.
+- 🧭 **Codex replies become clickable.** Suggested next steps turn into chips that send the prompt, file references open the file, review comments render as cards, and git suggestions show the exact command before you run it.
+- 🪝 **Fire a Cue pipeline from anything that can send an HTTP request** with the new generic webhook trigger.
+- 📊 **The Usage Dashboard gains a Delegation Score**, one number for how much of your AI time runs without you, and its Tokens and Cost cards now follow the time range you pick.
+- 📈 **Click the context gauge for the Context Timeline**, a turn-by-turn record of how a conversation filled its context window.
+- 🗂️ **Groups+ nests groups two levels deep** and gives them icons and label colors, as an opt-in plugin that `maestro-cli create-group` and `update-group` can script.
+- 🪶 **A Utility Agent setting sends tab naming and context grooming** to a cheaper or faster agent of your choosing, under Settings > General.
+- 💳 **Redeem a Codex usage reset credit from the Usage Dashboard**, or opt into auto-reset and let Maestro spend one when your workspace runs dry.
+- ⏳ **A turn an outage sends back to the queue wears an "Awaiting retry" badge**, so a prompt sitting in both the transcript and the queue no longer looks like a double send.
+- 📨 **`maestro-cli dispatch --notify-on-complete` wakes the calling agent** with the result once the work it handed off is done.
+- 😴 **Snooze a tab with a prompt to run the moment it wakes**, or park a whole tiled group, layout and all.
+- 🔐 **SSH remotes take their own `ssh -o` options**, so a bastion host or an unusual transport is a setting instead of a workaround.
+- 🆕 **Right-click a folder in the Files panel and choose New Agent Here** to start an agent right there.
+- ✏️ **Rename a file preview tab**, and scroll a crowded tab strip with the mouse wheel.
+- 🔔 **Every toast shows the time it arrived**, so a notification you come back to later still makes sense.
+- 🎨 **Indigo Blue joins the theme list.**
+- 🧠 **The model pill takes any model ID you type**, even one discovery cannot see, and Claude Code's model list now comes straight from Claude Code.
+- 🖤 **A window whose renderer dies reloads itself** instead of sitting there black.
+- ⏎ **A quick double Enter no longer queues a copy** of the message you just sent, while a genuinely new message typed in that moment still goes through.
+- 🧜 **Mermaid timelines accept clock times and `#` in their periods**, and untagged code blocks holding a directory tree or plain prose stop lighting up as Swift.
+
+---
+
 ## v0.17.x - Maestro Cue
 
-**Latest: v0.17.6** | Released October 2, 2026
+**Latest: v0.17.9** | Released January 1, 1
 
-# 0.17.6 Highlights
+## Also in 0.17.9
 
-🔍 **Pan and zoom any diagram or image, full window.** Mermaid diagrams and markdown images get an expand button, chat images open with a click, and anything else opens from its right-click menu with Expand (Pan and Zoom). Zoom at the cursor with the wheel or a pinch, drag or arrow-key to pan, double-click to fit, and diagrams stay vector-sharp however far you go in. Pinching an image in the file preview no longer zooms the whole window either.
+- 🕒 **Mermaid timelines take clock times and `#` in their periods.** A period like `16:18 : Email received` or a section titled `12:00 - 14:00` used to fail with a parse error, and `Issue #1710 : opened` rendered with its events silently missing. Both now draw exactly as written.
 
-📨 **Send to Agent waits its turn.** Handing context to a busy agent used to start it right on top of the running turn. It now opens a new tab and queues the context for when the current turn finishes, and with Forced Parallel Execution on, Force Send to Agent still runs it alongside. A dimmed Force Send also tells you why it is dimmed and takes you straight to the setting that unlocks it.
-
-🍞 **Toasts go where you want them and stay out of your way.** Pick any corner in Settings > Notifications, or search Move Toast Notifications in Quick Actions. In a bottom corner they now lift above the message input, group chat included, instead of covering what you are typing.
-
-🩹 **The outage card tells the truth.** It clears the moment a resend gets through, counts the retry that worked, and says "Quota restored." when it was your quota that came back. When a resend fails for a different reason, like an expired login, the card says auto-retry ended and names the real error instead of showing a green "Connection recovered." above it.
-
-🗣️ **Your agents can do more of Maestro for you.** `maestro-cli` now starts and drives group chats, files feedback (searching for duplicates and adding a +1 first), writes a support package, flips any Cue subscription on or off, lists recent Cue runs, reads and redirects an agent's Auto Run, browses and installs from the Playbook Exchange, and queues audio or video in the player without starting it. A failing call now reports back right away instead of hanging until it times out.
-
-## Also in 0.17.6
-
-- 💾 **Auto Run gets Save & Exit**, which saves to the loaded playbook and closes, or creates a dated, codenamed playbook when none is loaded.
-- ↕️ **Drag the Auto Run document list taller** by its bottom edge; it remembers the height, never runs off the bottom of a smaller screen, and a double-click resets it.
-- 📋 **Every code block has a working copy button**, in documents, release notes, and wizard replies as well as chat.
-- 🧭 **The Left Bar scrolls to the agent you jump to**, whether you got there by shortcut, Cmd+K, Cmd+O, a toast, or the CLI.
-- ⌨️ **Quick Actions shows each agent's Opt+Cmd+number chord** next to its name, so you pick up the shortcut while you search.
-- 📎 **@-mentions search every file in a big repo**, so the file you meant no longer loses to loose matches from deep folders.
-- 🔁 **Cue GitHub triggers fire on new comments again**, and `max_notifications` is honored, for subscriptions that set `retrigger_on_comments`.
-- ⏹️ **Cue shell commands and CLI runs appear in the Process Monitor**, badged with their trigger, and Stop ends them.
-- ⏱️ **"Time in the Wizard" counts the time you spent working**, so a wizard tab left open overnight no longer logs the whole night.
-- 🔑 **Codex sign-in works on SSH remotes** through device-code login, and the remote login hint names your provider's own command.
-- 🧰 **Install/Update CLI no longer breaks an existing `maestro-cli` link**, and its Settings section now sits right below your Conductor Profile.
-- ⏳ **Loading a big file tree shows a spinner** while Load more or Load all is scanning.
-- 📊 **Usage Dashboard agent names stop clipping**, since the name column now fits the longest one.
+- 🌳 **Directory trees and plain prose in code blocks stop lighting up as Swift.** A fence with no language tag holding `tree` output or ordinary sentences used to get colored as Swift code. Those blocks now render as plain text, and a fence tagged `swift` still highlights.
 
 ### Previous Releases in this Series
 
+- **v0.17.8** (October 4, 2026) - Security Release
+- **v0.17.7** (October 4, 2026) - Maestro Cue
+- **v0.17.6** (October 2, 2026) - Maestro Cue
 - **v0.17.5** (September 25, 2026) - Maestro Cue
 - **v0.17.4** (September 21, 2026) - Maestro Cue
 - **v0.17.3** (July 4, 2026) - Maestro Cue
@@ -507,8 +538,6 @@ Plus the pre-release ALPHA...
 - **v0.1.4** (November 27, 2025)
 - **v0.1.3** (November 27, 2025)
 - **v0.1.2** (November 27, 2025)
-- **v0.1.1** (November 27, 2025)
-- **v0.1.0** (November 27, 2025)
 
 ---
 

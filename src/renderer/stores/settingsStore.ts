@@ -462,6 +462,10 @@ export interface SettingsStoreState
 	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
+	/** Show the agent's current checklist docked above the composer. */
+	showAgentTaskListBar: boolean;
+	/** Open that docked checklist in full whenever the agent writes a new one. */
+	autoExpandAgentTaskListBar: boolean;
 	// File Edit & Preview
 	fileEditWordWrap: boolean;
 	fileEditShowLineNumbers: boolean;
@@ -575,6 +579,8 @@ export interface SettingsStoreActions
 	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
+	setShowAgentTaskListBar: (value: boolean) => void;
+	setAutoExpandAgentTaskListBar: (value: boolean) => void;
 	setFileEditWordWrap: (value: boolean) => void;
 	setFileEditShowLineNumbers: (value: boolean) => void;
 	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
@@ -822,6 +828,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
+		showAgentTaskListBar: false,
+		autoExpandAgentTaskListBar: false,
 		fileEditWordWrap: true,
 		fileEditShowLineNumbers: true,
 		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
@@ -1377,6 +1385,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setAutoHideMenuBar: (value) => {
 			set({ autoHideMenuBar: value });
 			window.maestro.settings.set('autoHideMenuBar', value);
+		},
+
+		setShowAgentTaskListBar: (value) => {
+			set({ showAgentTaskListBar: value });
+			window.maestro.settings.set('showAgentTaskListBar', value);
+		},
+
+		setAutoExpandAgentTaskListBar: (value) => {
+			set({ autoExpandAgentTaskListBar: value });
+			window.maestro.settings.set('autoExpandAgentTaskListBar', value);
 		},
 
 		setFileEditWordWrap: (value) => {
@@ -2558,6 +2576,12 @@ export async function loadAllSettings(): Promise<void> {
 
 		hydrateLeftPanelDisplaySettings(allSettings, patch);
 
+		if (allSettings['showAgentTaskListBar'] !== undefined)
+			patch.showAgentTaskListBar = allSettings['showAgentTaskListBar'] as boolean;
+
+		if (allSettings['autoExpandAgentTaskListBar'] !== undefined)
+			patch.autoExpandAgentTaskListBar = allSettings['autoExpandAgentTaskListBar'] as boolean;
+
 		if (allSettings['fileEditWordWrap'] !== undefined)
 			patch.fileEditWordWrap = allSettings['fileEditWordWrap'] as boolean;
 
@@ -2759,6 +2783,7 @@ export function getSettingsActions() {
 		setBionifyAlgorithm: state.setBionifyAlgorithm,
 		setShowHiddenFiles: state.setShowHiddenFiles,
 		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
+		setFileTreeBranchConnectors: state.setFileTreeBranchConnectors,
 		setToastWidth: state.setToastWidth,
 		setToastPosition: state.setToastPosition,
 		setTerminalWidth: state.setTerminalWidth,
@@ -2863,6 +2888,8 @@ export function getSettingsActions() {
 		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
 		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,
 		setShowLeftPanelStartupCommandIndicator: state.setShowLeftPanelStartupCommandIndicator,
+		setShowAgentTaskListBar: state.setShowAgentTaskListBar,
+		setAutoExpandAgentTaskListBar: state.setAutoExpandAgentTaskListBar,
 		setFileEditWordWrap: state.setFileEditWordWrap,
 		setFileEditShowLineNumbers: state.setFileEditShowLineNumbers,
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,

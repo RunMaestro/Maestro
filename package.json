@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "0.18.7-RC",
+	"version": "1.1.0-RC",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"author": {
@@ -14,7 +14,8 @@
 	},
 	"bin": {
 		"maestro-cli": "./dist/cli/maestro-cli.js",
-		"maestro-p": "./dist/cli/maestro-p.js"
+		"maestro-p": "./dist/cli/maestro-p.js",
+		"maestro-lib-run": "./dist/cli/maestro-lib-run.js"
 	},
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
@@ -29,7 +30,7 @@
 		"dev:web-desktop": "vite --config vite.config.web-desktop.mts",
 		"build:web-desktop": "vite build --config vite.config.web-desktop.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:main && npm run build:provenance && npm run build:preload && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:permission-relay-bridge",
+		"build": "npm run build:main && npm run build:provenance && npm run build:preload && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:maestro-lib-run && npm run build:permission-relay-bridge",
 		"build:provenance": "node scripts/write-build-provenance.mjs",
 		"verify:provenance": "node scripts/write-build-provenance.mjs --verify",
 		"build:main": "tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs",
@@ -38,6 +39,7 @@
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
 		"gen:og-image": "node scripts/generate-og-image.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
+		"build:maestro-lib-run": "node scripts/build-maestro-lib-run.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:renderer": "vite build",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
@@ -67,6 +69,7 @@
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:integration:watch": "vitest --config vitest.integration.config.ts",
 		"test:performance": "vitest run --config vitest.performance.config.mts",
+		"test:maestro-p:live": "node scripts/maestro-p-suite.mjs",
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
 		"refresh-openspec": "node scripts/refresh-openspec.mjs",
 		"refresh-bmad": "node scripts/refresh-bmad.mjs",
@@ -149,6 +152,10 @@
 					"to": "maestro-p.js"
 				},
 				{
+					"from": "dist/cli/maestro-lib-run.js",
+					"to": "maestro-lib-run.js"
+				},
+				{
 					"from": "dist/cli/permission-relay-bridge.js",
 					"to": "permission-relay-bridge.js"
 				},
@@ -204,6 +211,10 @@
 					"to": "maestro-p.js"
 				},
 				{
+					"from": "dist/cli/maestro-lib-run.js",
+					"to": "maestro-lib-run.js"
+				},
+				{
 					"from": "dist/cli/permission-relay-bridge.js",
 					"to": "permission-relay-bridge.js"
 				},
@@ -249,6 +260,10 @@
 				{
 					"from": "dist/cli/maestro-p.js",
 					"to": "maestro-p.js"
+				},
+				{
+					"from": "dist/cli/maestro-lib-run.js",
+					"to": "maestro-lib-run.js"
 				},
 				{
 					"from": "dist/cli/permission-relay-bridge.js",
@@ -344,8 +359,8 @@
 		"@emoji-mart/react": "^1.1.1",
 		"@fastify/cors": "^11.3.0",
 		"@fastify/rate-limit": "^11.2.0",
-		"@fastify/static": "^10.1.3",
-		"@fastify/websocket": "^11.3.0",
+		"@fastify/static": "^10.1.5",
+		"@fastify/websocket": "^11.3.3",
 		"@gitgraph/core": "^1.5.0",
 		"@gitgraph/react": "^1.6.0",
 		"@lezer/highlight": "^1.2.3",
@@ -371,18 +386,18 @@
 		"d3-force": "^3.0.0",
 		"date-fns": "^4.1.0",
 		"diff": "^8.0.2",
-		"dompurify": "^3.4.11",
+		"dompurify": "^3.4.16",
 		"electron-store": "^8.2.0",
 		"electron-updater": "^6.8.3",
-		"fastify": "^5.12.3",
+		"fastify": "^5.12.5",
 		"fflate": "^0.8.2",
 		"highlight.js": "^11.11.1",
 		"hyparquet": "^1.29.2",
 		"hyparquet-compressors": "^1.1.1",
 		"js-tiktoken": "^1.0.21",
 		"js-yaml": "^4.2.0",
-		"katex": "^0.16.46",
-		"markdown-it": "^14.2.0",
+		"katex": "^0.19.0",
+		"markdown-it": "^14.3.2",
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.1",
 		"node-pty": "1.2.0-beta.12",
@@ -466,7 +481,10 @@
 		"vitest": "^4.1.11"
 	},
 	"overrides": {
-		"brace-expansion": "^5.0.9",
+		"brace-expansion": "^5.0.12",
+		"global-agent": "^4.1.3",
+		"katex": "$katex",
+		"postcss-selector-parser": "^7.1.6",
 		"tar": "^7.5.17"
 	},
 	"engines": {

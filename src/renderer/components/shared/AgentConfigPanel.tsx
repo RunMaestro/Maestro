@@ -51,9 +51,11 @@ const CLAUDE_TOKEN_MODE_OPTIONS: { value: ClaudeTokenMode; label: string }[] = [
 ];
 
 const CLAUDE_TOKEN_MODE_HINTS: Record<ClaudeTokenMode, string> = {
-	api: 'Always use claude --print (per-token API credit).',
-	interactive: 'Always drive the maestro-p TUI against your Max plan quota.',
-	dynamic: 'Start on the Max plan TUI, then auto-switch to API when the quota is near exhaustion.',
+	api: 'Run every turn through claude --print. Signed in with a Claude plan, it draws from your plan limits; with an API key set, it bills that key.',
+	interactive:
+		'Run every turn through the Claude TUI via maestro-p. Signed in with a Claude plan, it draws from your plan limits.',
+	dynamic:
+		'Start on the TUI, switch to claude --print near a plan limit. The switch only helps with an API key set: signed in with a plan alone, both draw from the same limits.',
 };
 
 // Built-in environment variables that Maestro sets automatically
@@ -388,13 +390,6 @@ export interface AgentConfigPanelProps {
 	onMaestroPPathBlur?: () => void;
 	/** Auto-detected maestro-p path shown as helper text when `maestroPPath` is empty. */
 	detectedMaestroPPath?: string;
-	/** Last resolved Claude headless-mode state for this session. When provided and Adaptive Mode is on,
-	 *  the panel renders a small pill next to the toggle so the user can see whether the spawner is
-	 *  currently on Time Limits (Max plan) or has fallen back to API Limits. */
-	claudeInteractive?: {
-		mode: 'interactive' | 'api';
-		modeReason: 'auto' | 'limit';
-	};
 	// === Codex usage resets (codex agent only) ===
 	/**
 	 * Spend a rate-limit reset credit automatically when this agent hits a
@@ -449,7 +444,6 @@ export function AgentConfigPanel({
 	onMaestroPPathChange,
 	onMaestroPPathBlur,
 	detectedMaestroPPath,
-	claudeInteractive,
 	codexAutoResetOnExhaustion = false,
 	onCodexAutoResetChange,
 }: AgentConfigPanelProps): JSX.Element {
@@ -702,10 +696,11 @@ export function AgentConfigPanel({
 			</div>
 
 			{/* Claude Token Source selector - Claude Code only. Picks how this agent
-			    spends Claude quota: API (claude --print, per-token), TUI (maestro-p
-			    driving the Claude TUI against the Max plan), or Dynamic (start on the
-			    TUI, fall back to API when the 5-hour or weekly window is near
-			    exhaustion, then snap back once both windows reset). Over SSH only
+			    runs a turn: claude --print, the Claude TUI via maestro-p, or Dynamic
+			    (start on the TUI, switch to claude --print when the 5-hour or weekly
+			    window is near its limit, then snap back once both windows reset).
+			    The mode does not pick the bill: signed in with a plan, both draw
+			    from the same plan limits; an API key in the env bills that key. Over SSH only
 			    API / TUI are offered (Dynamic needs a local quota snapshot that
 			    doesn't reflect the remote account) and maestro-p runs on the remote
 			    host's PATH, so the local Maestro-P Path override is hidden. */}
@@ -733,25 +728,6 @@ export function AgentConfigPanel({
 								<RefreshCw className={`w-3 h-3 ${remoteMaestroPProbing ? 'animate-spin' : ''}`} />
 								Re-check
 							</button>
-						)}
-						{showMaestroPDetails && claudeInteractive && (
-							<span
-								className="text-2xs font-mono px-1.5 py-0.5 rounded whitespace-nowrap"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									color:
-										claudeInteractive.mode === 'interactive'
-											? theme.colors.accent
-											: (theme.colors.warning ?? theme.colors.accent),
-								}}
-								title={
-									claudeInteractive.modeReason === 'limit'
-										? 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.'
-										: 'Selected automatically based on current usage.'
-								}
-							>
-								{claudeInteractive.mode === 'interactive' ? 'Time Limits' : 'API Limits'}
-							</span>
 						)}
 					</div>
 					<ToggleButtonGroup

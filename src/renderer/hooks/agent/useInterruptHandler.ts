@@ -29,6 +29,7 @@ import {
 } from '../../utils/tabHelpers';
 import { nextRunnableQueueItem, takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { logger } from '../../utils/logger';
+import { dropMentionHandoffs } from '../../services/crossAgentHandoff';
 
 // ============================================================================
 // Dependencies interface
@@ -152,6 +153,11 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 		// authoritative list) so a Stop pressed before `crossAgent.send` resolved
 		// still lands. Non-critical: a failure here must not block the interrupt.
 		if (currentMode === 'ai') {
+			// A hand-off armed for this turn must not fire when it stops: Stop means
+			// stop, and forwarding a half-finished answer would act for the user
+			// after they said no. Cleared before the kill below, so the exit it
+			// causes finds nothing armed.
+			dropMentionHandoffs(activeSession.id);
 			try {
 				await window.maestro.crossAgent.cancel(activeSession.id);
 			} catch (crossAgentErr) {

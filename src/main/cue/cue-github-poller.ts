@@ -22,6 +22,11 @@ import {
 } from './cue-db';
 import type { CueGitHubLabelTarget } from '../../shared/cue';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
+import { ghErrorHaystack, isGitHubAuthError } from '../utils/ghErrors';
+
+// Re-exported: the auth predicate moved to utils/ghErrors so Send Feedback can
+// share it, and existing importers still reach it here.
+export { isGitHubAuthError };
 import { captureException } from '../utils/sentry';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 
@@ -114,29 +119,6 @@ export function formatNewCommentsForTemplate(comments: GitHubComment[]): string 
 export const GITHUB_RATE_LIMIT_MAX_BACKOFF_MS = 60 * 60 * 1000;
 
 /**
- * Lowercased `message` + `stderr` of a `gh` CLI failure, joined for pattern
- * matching. `gh` reports the interesting detail (rate limits, HTTP status,
- * auth hints) in stderr text rather than in a structured error code, and
- * `execFile` rejections carry it on a separate property from the message, so
- * every classifier below has to look at both.
- */
-function ghErrorHaystack(err: unknown): string {
-	const msg = (
-		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
-			? err.message
-			: String(err ?? '')
-	).toLowerCase();
-	const stderr =
-		err &&
-		typeof err === 'object' &&
-		'stderr' in err &&
-		typeof (err as { stderr: unknown }).stderr === 'string'
-			? (err as { stderr: string }).stderr.toLowerCase()
-			: '';
-	return `${msg}\n${stderr}`;
-}
-
-/**
  * Heuristic rate-limit detector for `gh` CLI failures. GitHub surfaces rate
  * limits in stderr text rather than a structured error code, so we pattern
  * match the user-visible strings. Exported for tests.
@@ -178,30 +160,6 @@ export function isGitHubConnectivityError(err: unknown): boolean {
 		haystack.includes('i/o timeout') ||
 		haystack.includes('no such host') ||
 		/\bhttp\s+5\d{2}\b/.test(haystack)
-	);
-}
-
-/**
- * Detect GitHub CLI authentication failures - an expired, revoked, or missing
- * `gh` token.
- *
- * Deliberately NOT folded into `isGitHubConnectivityError`: that predicate is
- * documented and unit-tested as *not* matching auth/configuration failures, and
- * the two want different user-facing guidance ("GitHub is unreachable, we'll
- * retry" vs "re-authenticate `gh`"). What they share is that neither is a
- * Maestro bug, so neither should page Sentry. Without this, one install whose
- * token went stale files an event on every poll tick indefinitely - MAESTRO-KE
- * collected 924 of them from a single trigger.
- */
-export function isGitHubAuthError(err: unknown): boolean {
-	const haystack = ghErrorHaystack(err);
-	return (
-		/\bhttp\s+401\b/.test(haystack) ||
-		haystack.includes('bad credentials') ||
-		haystack.includes('gh auth login') ||
-		haystack.includes('requires authentication') ||
-		haystack.includes('authentication required') ||
-		haystack.includes('not logged into any github hosts')
 	);
 }
 

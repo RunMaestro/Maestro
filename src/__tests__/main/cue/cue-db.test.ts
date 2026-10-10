@@ -117,12 +117,6 @@ vi.mock('better-sqlite3', () => ({
 	},
 }));
 
-vi.mock('electron', () => ({
-	app: {
-		getPath: vi.fn(() => os.tmpdir()),
-	},
-}));
-
 import {
 	initCueDb,
 	closeCueDb,
@@ -276,6 +270,7 @@ describe('cue-db additive column migration', () => {
 					{ name: 'exit_code' },
 					{ name: 'output_excerpt' },
 					{ name: 'full_output' },
+					{ name: 'stream_usage_json' },
 				];
 			}
 			return originalPragma?.(query);
@@ -372,12 +367,14 @@ describe('cue-db event journal', () => {
 		const lastPrepare = prepareCalls[prepareCalls.length - 1];
 		expect(lastPrepare).toContain('output_excerpt = ?');
 		expect(lastPrepare).toContain('full_output = ?');
+		expect(lastPrepare).toContain('stream_usage_json = ?');
 		const lastRun = runCalls[runCalls.length - 1];
 		// status, completed_at, provider_session_id, error_message, exit_code,
-		// output_excerpt, full_output, id
+		// output_excerpt, full_output, stream_usage_json, id
 		expect(lastRun[5]).toBe('Merged PR #12.');
 		expect(lastRun[6]).toBe('Merged PR #12.\nDetails follow.');
-		expect(lastRun[7]).toBe('evt-5');
+		expect(lastRun[7]).toBeNull(); // stream_usage_json (not passed by this call)
+		expect(lastRun[8]).toBe('evt-5');
 	});
 
 	it('should write NULL output columns for a silent run', () => {
@@ -387,7 +384,8 @@ describe('cue-db event journal', () => {
 		// No provider session id, so the columns shift left by one.
 		expect(lastRun[4]).toBeNull(); // output_excerpt
 		expect(lastRun[5]).toBeNull(); // full_output
-		expect(lastRun[6]).toBe('evt-6');
+		expect(lastRun[6]).toBeNull(); // stream_usage_json
+		expect(lastRun[7]).toBe('evt-6');
 	});
 
 	it('should query recent events with correct since parameter', () => {

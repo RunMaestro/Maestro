@@ -1595,6 +1595,31 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Open Terminal Tab (Web → Desktop)', () => {
+		it('forwards an explicit human-input request to the terminal opener', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				inputRequired: true,
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ inputRequired: true }),
+					{ background: false }
+				);
+			});
+		});
+
+		it('rejects a malformed human-input signal', () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				inputRequired: 'yes',
+			});
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+			expect((client.socket.send as any).mock.calls[0][0]).toContain('Invalid inputRequired');
+		});
+
 		it('should forward open terminal tab with sessionId', async () => {
 			handler.handleMessage(client, {
 				type: 'open_terminal_tab',

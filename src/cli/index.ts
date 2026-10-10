@@ -59,6 +59,12 @@ import {
 	cuePipelineRemove,
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
+import {
+	cueEngineStart,
+	cueEngineStop,
+	cueEngineStatus,
+	cueEngineInspect,
+} from './commands/cue-engine';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -114,7 +120,9 @@ import {
 } from './commands/movement';
 import { supportPackage } from './commands/support-package';
 import {
+	feedbackAccounts,
 	feedbackAuth,
+	feedbackLogin,
 	feedbackSearch,
 	feedbackSubmit,
 	feedbackSubscribe,
@@ -182,6 +190,7 @@ import {
 	campaignShow,
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
+import { logger } from '../main/utils/logger';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -189,6 +198,11 @@ import { mcpServe } from './commands/mcp';
 declare const __MAESTRO_CLI_VERSION__: string;
 const cliVersion: string =
 	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
+
+// stdout carries command output (often JSON that scripts parse), so the
+// main-process logger shared with modules like the WakaTime manager must keep
+// its diagnostics on stderr. See #1698.
+logger.routeConsoleToStderr();
 
 const program = new Command();
 
@@ -802,6 +816,7 @@ program
 		'Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts)'
 	)
 	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--input-required', 'Notify the user that this terminal needs human input')
 	.option('--focus', 'Switch to the terminal tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
@@ -1109,6 +1124,42 @@ cuePipeline
 	.option('--force', 'Suppress the no-op error when the pipeline is already absent')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cuePipelineRemove);
+
+// Cue engine subcommands - run Maestro Cue unattended, without the desktop
+// app, and inspect/control that runner. See `cue-engine.ts` for what the
+// standalone engine can and cannot do relative to the desktop app's own
+// instance, and `cue-engine-lock.ts` for the cross-process guard that keeps
+// this from double-firing triggers alongside a desktop app left open.
+const cueEngine = cue
+	.command('engine')
+	.description('Run Maestro Cue unattended (no desktop app) and control that runner');
+
+cueEngine
+	.command('start')
+	.description('Start the Cue engine in this process and block until Ctrl+C / stopped')
+	.option('--json', 'Print machine-readable start/failure status')
+	.action(cueEngineStart);
+
+cueEngine
+	.command('stop')
+	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
+		parseInt(v, 10)
+	)
+	.action((opts) => cueEngineStop(opts));
+
+cueEngine
+	.command('status')
+	.description('Report whether an engine is running and its last known heartbeat')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEngineStatus);
+
+cueEngine
+	.command('inspect')
+	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEngineInspect);
 
 // Director's Notes commands
 const directorNotes = program
@@ -2346,9 +2397,33 @@ const feedback = program
 
 feedback
 	.command('auth')
-	.description('Check that the GitHub CLI (gh) is installed and logged in (required to file)')
+	.description(
+		'Check that the GitHub CLI (gh) is installed, logged in, and allowed to file on the feedback repo (required to file); names the gh account, and prints the login command when signing in can fix it'
+	)
+	.option('--fresh', 'Skip the cached verdict (after logging in elsewhere)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackAuth);
+
+feedback
+	.command('login')
+	.description(
+		'Sign the GitHub CLI in for feedback (gh auth login, device code + browser), as the modal\'s "Log in to GitHub" does'
+	)
+	.option('--json', 'Output the result as JSON (for scripting)')
+	.action(feedbackLogin);
+
+feedback
+	.command('accounts')
+	.description(
+		'List the provider accounts the Feedback chat can run as, in the order it tries them (first usable one wins)'
+	)
+	.option(
+		'--use <key>',
+		'Make this account (a key from the list) the one the next chat tries first'
+	)
+	.option('--clear', 'Forget the remembered account and pick automatically again')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackAccounts);
 
 feedback
 	.command('search <query>')

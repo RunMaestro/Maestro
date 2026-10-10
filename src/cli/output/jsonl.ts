@@ -75,6 +75,10 @@ export interface CompleteEvent extends JsonlEvent {
 	// marker. `success` is `false` in this case.
 	halted?: boolean;
 	haltReason?: string;
+	// Set when the operator interrupted the run (Ctrl+C / SIGTERM). `success` is
+	// `false` in this case, but it is a stop, not a failure: the interrupted
+	// task is recorded as "interrupted".
+	stopped?: boolean;
 }
 
 /**

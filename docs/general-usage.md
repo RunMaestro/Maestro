@@ -220,6 +220,19 @@ The Files pane draws each file and folder with one of two icon sets, chosen in
 
 The choice applies to every agent's Files pane and takes effect right away.
 
+### Tree Lines
+
+By default the Files pane draws a plain vertical guide line for each level of
+indentation. **Settings > Display > Files Pane Tree Lines > Show branch
+connectors** switches to a classic tree instead: every row hangs off its
+folder's guide line with an elbow, and a folder's guide stops at its last item
+rather than running the full height of the row.
+
+Connectors help most in deep trees where several levels hold similarly named
+files, because each row visibly points back at the folder that contains it. They
+are off by default because the plain guides read as quieter on a wide, shallow
+project.
+
 ### File Explorer Keyboard Shortcuts
 
 With the Files tab focused, navigate the file list without touching the mouse:
@@ -725,7 +738,7 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 - **Model Selection** - Choose a specific model and (where supported) reasoning/effort level. This sets the default for new tabs in this agent. You can override the model or effort on any individual tab using the model/effort pill in the input bar - per-tab overrides only affect that tab and don't change the agent default or any other tab.
 - **Additional Directories** - Grant the agent access to directories beyond its working directory. Add a row per directory, then toggle **R** (read) and **W** (write) independently: a directory can be read-only reference material, a write-only drop box the agent should never read back, or both. A row with neither toggle lit is inert and is not sent to the agent. Each row also takes an optional **description** - a short hint about what the directory is for or how the agent should use it, which is passed to the agent alongside the access rule. Providers that support directory flags (for example Claude Code's `--add-dir`) also receive these grants natively; the read/write split and the descriptions are always carried in the agent's system prompt.
 
-  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source-max-plan-vs-api) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
 
 ### Editing Agents
 

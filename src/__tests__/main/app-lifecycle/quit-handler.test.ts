@@ -118,8 +118,6 @@ describe('app-lifecycle/quit-handler', () => {
 		getWebServer: ReturnType<typeof vi.fn>;
 		getHistoryManager: ReturnType<typeof vi.fn>;
 		tunnelManager: typeof mockTunnelManager;
-		getActiveGroomingSessionCount: ReturnType<typeof vi.fn>;
-		cleanupAllGroomingSessions: ReturnType<typeof vi.fn>;
 		closeStatsDB: ReturnType<typeof vi.fn>;
 		stopCliWatcher: ReturnType<typeof vi.fn>;
 		powerManager: typeof mockPowerManager;
@@ -162,8 +160,6 @@ describe('app-lifecycle/quit-handler', () => {
 			getWebServer: vi.fn().mockReturnValue(mockWebServer),
 			getHistoryManager: vi.fn().mockReturnValue(mockHistoryManager),
 			tunnelManager: mockTunnelManager,
-			getActiveGroomingSessionCount: vi.fn().mockReturnValue(0),
-			cleanupAllGroomingSessions: vi.fn().mockResolvedValue(undefined),
 			closeStatsDB: vi.fn(),
 			stopCliWatcher: vi.fn(),
 			powerManager: mockPowerManager,
@@ -420,36 +416,6 @@ describe('app-lifecycle/quit-handler', () => {
 
 			expect(() => beforeQuitHandler!({ preventDefault: vi.fn() })).not.toThrow();
 			expect(mockSaveAllWindowStates).not.toHaveBeenCalled();
-		});
-
-		it('should cleanup grooming sessions if any are active', async () => {
-			deps.getActiveGroomingSessionCount.mockReturnValue(3);
-
-			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
-
-			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
-			quitHandler.setup();
-			quitHandler.confirmQuit();
-
-			const mockEvent = { preventDefault: vi.fn() };
-			beforeQuitHandler!(mockEvent);
-
-			expect(deps.cleanupAllGroomingSessions).toHaveBeenCalledWith(mockProcessManager);
-		});
-
-		it('should not cleanup grooming sessions if none are active', async () => {
-			deps.getActiveGroomingSessionCount.mockReturnValue(0);
-
-			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
-
-			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
-			quitHandler.setup();
-			quitHandler.confirmQuit();
-
-			const mockEvent = { preventDefault: vi.fn() };
-			beforeQuitHandler!(mockEvent);
-
-			expect(deps.cleanupAllGroomingSessions).not.toHaveBeenCalled();
 		});
 
 		it('should handle null process manager gracefully', async () => {

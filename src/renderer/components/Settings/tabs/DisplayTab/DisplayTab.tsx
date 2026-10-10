@@ -2,11 +2,13 @@ import { useSettings } from '../../../../hooks';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import {
 	AccessibilitySection,
+	AgentTaskListSection,
 	BionifyInfoModal,
 	ContextWarningsSection,
 	DocumentGraphSection,
 	FileEditPreviewSection,
 	FileIndexingSection,
+	FileTreeLinesSection,
 	FontsSection,
 	FontZoomSection,
 	GroupChatSection,
@@ -111,10 +113,22 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				showProviderModePill={settings.showProviderModePill}
 				setShowProviderModePill={settings.setShowProviderModePill}
 			/>
+			<AgentTaskListSection
+				theme={theme}
+				showAgentTaskListBar={settings.showAgentTaskListBar}
+				setShowAgentTaskListBar={settings.setShowAgentTaskListBar}
+				autoExpandAgentTaskListBar={settings.autoExpandAgentTaskListBar}
+				setAutoExpandAgentTaskListBar={settings.setAutoExpandAgentTaskListBar}
+			/>
 			<IconThemeSection
 				theme={theme}
 				fileExplorerIconTheme={settings.fileExplorerIconTheme}
 				setFileExplorerIconTheme={settings.setFileExplorerIconTheme}
+			/>
+			<FileTreeLinesSection
+				theme={theme}
+				fileTreeBranchConnectors={settings.fileTreeBranchConnectors}
+				setFileTreeBranchConnectors={settings.setFileTreeBranchConnectors}
 			/>
 			<WindowChromeSection
 				theme={theme}

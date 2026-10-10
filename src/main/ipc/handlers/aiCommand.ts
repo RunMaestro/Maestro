@@ -25,6 +25,7 @@ import {
 } from '../../utils/ipcHandler';
 import { getPrompt } from '../../prompt-manager';
 import { groomContext } from '../../utils/context-groomer';
+import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { resolveConfiguredShell } from '../../stores/defaults';
 import {
 	AI_COMMAND_HISTORY_LIMIT,
@@ -170,6 +171,11 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 							disableTools: true,
 							timeoutMs: AI_COMMAND_TIMEOUT_MS,
 							sessionSshRemoteConfig: config.sessionSshRemoteConfig,
+							// Where groomContext looks the remote up. It refuses an SSH agent
+							// that comes without one rather than run the prompt on this
+							// machine, so leaving it out fails every suggestion for an agent
+							// on a remote.
+							sshStore: isRemote ? createSshRemoteStoreAdapter(settingsStore) : undefined,
 							sessionCustomPath: config.customPath,
 							sessionCustomArgs: config.customArgs,
 							sessionCustomEnvVars: config.customEnvVars,

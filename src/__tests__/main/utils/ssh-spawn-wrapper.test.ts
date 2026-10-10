@@ -7,13 +7,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 const mockGetSshRemoteConfig = vi.fn();
-vi.mock('../../../main/utils/ssh-remote-resolver', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-remote-resolver', () => ({
 	getSshRemoteConfig: (...args: unknown[]) => mockGetSshRemoteConfig(...args),
 }));
 
 const mockBuildSshCommand = vi.fn();
 const mockBuildSshCommandWithStdin = vi.fn();
-vi.mock('../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-command-builder', () => ({
 	buildSshCommand: (...args: unknown[]) => mockBuildSshCommand(...args),
 	buildSshCommandWithStdin: (...args: unknown[]) => mockBuildSshCommandWithStdin(...args),
 }));

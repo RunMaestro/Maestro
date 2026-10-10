@@ -14,7 +14,6 @@ import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { isCoarsePointer } from '../../utils/touch';
 import { EmojiPickerOverlay } from '../ui';
 import { LongPressable } from '../shared/LongPressable';
 import { ShortcutHint } from '../ui/ShortcutHint';
@@ -98,10 +97,6 @@ export const GroupTabChip = memo(function GroupTabChip({
 		overlayMouseLeave,
 		isOverOverlayRef,
 	} = useTabHoverOverlay({ registerRef });
-	// Coarse pointer (a finger): the menu opens on a long-press, so native drag
-	// is off - a long-press is also how the OS starts an HTML5 drag.
-	const coarse = isCoarsePointer();
-
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
 	// Inline rename editing (double-click the chip or the overlay item). Seeded
@@ -269,9 +264,9 @@ export const GroupTabChip = memo(function GroupTabChip({
 				handleMouseLeave();
 			}}
 			// Suppressed while the inline rename input is open: a native drag on the
-			// chip would otherwise hijack text selection inside that input. Also off
-			// on coarse pointers, where the long-press owns the gesture.
-			draggable={!isRenaming && !coarse}
+			// chip would otherwise hijack text selection inside that input. A finger
+			// or pen press never drags: LongPressable switches it off per press.
+			draggable={!isRenaming}
 			onDragStart={handleChipDragStart}
 			onDragOver={handleChipDragOver}
 			onDragEnd={onDragEnd}

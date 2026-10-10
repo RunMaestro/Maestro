@@ -6,11 +6,14 @@ import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import {
+	addAiTabToUnifiedHistory,
 	aiTabFocusFields,
 	createTab,
 	closeTab,
 	getActiveTab,
 	getRepairedUnifiedTabOrder,
+	reopenClosedAiTabById,
+	hasActiveWizard,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
@@ -808,14 +811,51 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
-		// Handle remote close tab from web interface
+		// Acknowledge the mutation, not merely delivery of the IPC event.
 		const unsubscribeCloseTab = window.maestro.process.onRemoteCloseTab(
-			(sessionId: string, tabId: string) => {
-				updateSessionWith(sessionId, (s) => {
-					// Use closeTab helper (handles last tab by creating a fresh one)
-					const result = closeTab(s, tabId);
-					return result?.session ?? s;
-				});
+			(sessionId: string, tabId: string, responseChannel: string) => {
+				let closed = false;
+				try {
+					updateSessionWith(sessionId, (s) => {
+						const tab = s.aiTabs.find((t) => t.id === tabId);
+						if (!tab) return s;
+						const isWizardTab = hasActiveWizard(tab);
+						const result = closeTab(s, tabId, undefined, { skipHistory: isWizardTab });
+						if (!result) return s;
+						const unifiedIndex = s.unifiedTabOrder.findIndex(
+							(ref) => ref.type === 'ai' && ref.id === tabId
+						);
+						const updated = isWizardTab
+							? result.session
+							: addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
+						closed = true;
+						return updated;
+					});
+				} finally {
+					window.maestro.process.sendRemoteCloseTabResponse(responseChannel, closed);
+				}
+			}
+		);
+
+		const unsubscribeReopenTab = window.maestro.process.onRemoteReopenTab(
+			(sessionId: string, tabId: string, responseChannel: string) => {
+				let reopened: { tabId: string } | null = null;
+				try {
+					updateSessionWith(sessionId, (session) => {
+						const result = reopenClosedAiTabById(session, tabId);
+						if (!result) return session;
+						reopened = { tabId: result.tabId };
+						return {
+							...result.session,
+							...aiTabFocusFields(result.tabId),
+							closedTabHistory: result.session.closedTabHistory.filter(
+								(entry) => entry.tab.id !== tabId
+							),
+						};
+					});
+				} finally {
+					window.maestro.process.sendRemoteReopenTabResponse(responseChannel, reopened);
+				}
 			}
 		);
 
@@ -1214,6 +1254,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeCrossAgentAsk();
 			unsubscribeAgentDelegation();
 			unsubscribeCloseTab();
+			unsubscribeReopenTab();
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
@@ -1578,7 +1619,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribe = window.maestro.process.onRemoteOpenTerminalTab(
 			(
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					inputRequired?: boolean;
+				},
 				responseChannel: string,
 				options: { background?: boolean }
 			) => {

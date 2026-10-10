@@ -17,6 +17,7 @@ import {
 	DEFAULT_MAX_LOGS,
 } from '../../shared/logger-types';
 import { isWindows, isMacOS } from '../../shared/platformDetection';
+import { setMaestroLibLogger } from '../../shared/maestro-lib/host';
 
 // Re-export types for backwards compatibility
 export type { MainLogLevel as LogLevel, SystemLogEntry as LogEntry };
@@ -68,6 +69,7 @@ class Logger extends EventEmitter {
 	private logFilePath: string;
 	private logFileStream: fs.WriteStream | null = null;
 	private currentLogDate: string = '';
+	private consoleToStderr = false;
 
 	private levelPriority = LOG_LEVEL_PRIORITY;
 
@@ -306,6 +308,18 @@ class Logger extends EventEmitter {
 		return this.maxLogs;
 	}
 
+	/**
+	 * Send every console echo to stderr, whatever its level.
+	 *
+	 * For processes whose stdout is a data channel rather than a diagnostics
+	 * stream: `maestro-cli` reuses main-process modules (the WakaTime manager,
+	 * agent spawning) and prints JSON on stdout, so an `info` line echoed there
+	 * by `console.info` corrupts output that scripts parse.
+	 */
+	routeConsoleToStderr(): void {
+		this.consoleToStderr = true;
+	}
+
 	private shouldLog(level: MainLogLevel): boolean {
 		return this.levelPriority[level] >= this.levelPriority[this.minLevel];
 	}
@@ -346,6 +360,10 @@ class Logger extends EventEmitter {
 		// (e.g., when a parent process consuming output dies unexpectedly)
 		// Fixes MAESTRO-5C
 		try {
+			if (this.consoleToStderr) {
+				console.error(message, entry.data || '');
+				return;
+			}
 			switch (entry.level) {
 				case 'error':
 					console.error(message, entry.data || '');
@@ -481,3 +499,9 @@ class Logger extends EventEmitter {
 
 // Export singleton instance
 export const logger = new Logger();
+
+// maestro-lib logs through whatever its host registers (see
+// src/shared/maestro-lib/host.ts). Registering here, where the logger is
+// created, means every process that loads the desktop logger - the Electron
+// main process and the CLI - routes the library's lines to it.
+setMaestroLibLogger(logger);

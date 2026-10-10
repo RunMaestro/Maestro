@@ -111,6 +111,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerGitHandlers({
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
+		getProcessManager: deps.getProcessManager,
+		getAgentName: (agentId) => {
+			const sessions = deps.sessionsStore.get('sessions', []) as Array<{
+				id?: string;
+				name?: string;
+			}>;
+			return sessions.find((s) => s.id === agentId)?.name;
+		},
 	});
 
 	// Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
@@ -487,7 +495,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
+	registerNotificationsHandlers({
+		getMainWindow: deps.getMainWindow,
+		ensureMainWindow: deps.ensureMainWindow,
+		getWindowRegistry: () => deps.windowRegistry,
+	});
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app: deps.app });

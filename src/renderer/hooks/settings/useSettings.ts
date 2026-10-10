@@ -165,6 +165,8 @@ export interface UseSettingsReturn {
 	setShowHiddenFiles: (value: boolean) => void;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
+	fileTreeBranchConnectors: boolean;
+	setFileTreeBranchConnectors: (value: boolean) => void;
 	toastWidth: ToastWidth;
 	setToastWidth: (value: ToastWidth) => void;
 	toastPosition: ToastPosition;
@@ -525,6 +527,14 @@ export interface UseSettingsReturn {
 	setShowGroupLabelInBookmarks: (value: boolean) => void;
 	showFullGroupLabelInBookmarks: boolean;
 	setShowFullGroupLabelInBookmarks: (value: boolean) => void;
+
+	/** Show the agent's current checklist docked above the composer. */
+	showAgentTaskListBar: boolean;
+	setShowAgentTaskListBar: (value: boolean) => void;
+
+	/** Open that docked checklist in full whenever the agent writes a new one. */
+	autoExpandAgentTaskListBar: boolean;
+	setAutoExpandAgentTaskListBar: (value: boolean) => void;
 
 	// File Edit & Preview
 	fileEditWordWrap: boolean;

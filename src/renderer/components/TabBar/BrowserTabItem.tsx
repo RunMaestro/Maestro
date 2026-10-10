@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import type { BrowserTab, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
-import { isCoarsePointer } from '../../utils/touch';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { LongPressable } from '../shared/LongPressable';
 import { TabOverlayPortal } from './TabOverlayPortal';
@@ -168,8 +167,6 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	const handleTabSelect = useCallback(() => {
 		onSelect(tab.id);
 	}, [onSelect, tab.id]);
-	// Coarse pointer: long-press owns the gesture, so native drag is off.
-	const coarse = isCoarsePointer();
 	const handleDoubleClick = useCallback(() => onRename?.(tab.id), [onRename, tab.id]);
 	const handleRenameClick = useCallback(
 		(e: React.MouseEvent) => {
@@ -329,7 +326,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 			onMouseDown={handleMouseDown}
 			onMouseEnter={handleMouseEnter}
 			onMouseLeave={handleMouseLeave}
-			draggable={!coarse}
+			draggable
 			onDragStart={handleTabDragStart}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}

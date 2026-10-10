@@ -305,7 +305,7 @@ subscriptions:
     event: agent.completed
     source_session: 'builder'
     filter:
-      exitCode: 0 # Only deploy if build succeeded
+      status: completed # Only deploy if build succeeded
     prompt: |
       The build agent completed successfully.
       Output: {{CUE_SOURCE_OUTPUT}}
@@ -328,16 +328,16 @@ subscriptions:
 
 **Payload fields:**
 
-| Variable                      | Description                                            | Example           |
-| ----------------------------- | ------------------------------------------------------ | ----------------- |
-| `{{CUE_SOURCE_SESSION}}`      | Name of the completing agent(s)                        | `builder`         |
-| `{{CUE_SOURCE_OUTPUT}}`       | Truncated stdout from the source (max 5K chars)        | `Build succeeded` |
-| `{{CUE_SOURCE_STATUS}}`       | Run status (`completed`, `failed`, `timeout`)          | `completed`       |
-| `{{CUE_SOURCE_EXIT_CODE}}`    | Process exit code                                      | `0`               |
-| `{{CUE_SOURCE_DURATION}}`     | Run duration in milliseconds                           | `15000`           |
-| `{{CUE_SOURCE_TRIGGERED_BY}}` | Name of the subscription that triggered the source run | `lint-on-save`    |
+| Variable                      | Description                                              | Example           |
+| ----------------------------- | -------------------------------------------------------- | ----------------- |
+| `{{CUE_SOURCE_SESSION}}`      | Name of the completing agent(s)                          | `builder`         |
+| `{{CUE_SOURCE_OUTPUT}}`       | Truncated stdout from the source (max 5K chars)          | `Build succeeded` |
+| `{{CUE_SOURCE_STATUS}}`       | Run status (`completed`, `failed`, `stopped`, `timeout`) | `completed`       |
+| `{{CUE_SOURCE_EXIT_CODE}}`    | Process exit code                                        | `0`               |
+| `{{CUE_SOURCE_DURATION}}`     | Run duration in milliseconds                             | `15000`           |
+| `{{CUE_SOURCE_TRIGGERED_BY}}` | Name of the subscription that triggered the source run   | `lint-on-save`    |
 
-These fields are also available in [filters](./maestro-cue-advanced#filtering).
+These fields are also available in [filters](./maestro-cue-advanced#filtering). The `status` field follows the shared turn-completion contract (`completed` when an answer was captured despite a non-zero exit code), while `exitCode` reports the raw process exit code.
 
 The `triggeredBy` field is particularly useful when a source agent has multiple Cue subscriptions but you only want to chain from a specific one. See [Selective Chaining](./maestro-cue-examples#selective-chaining-with-triggeredby) for a complete example.
 

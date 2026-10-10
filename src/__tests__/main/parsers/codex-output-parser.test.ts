@@ -703,6 +703,59 @@ describe('CodexOutputParser', () => {
 			expect(error?.recoverable).toBe(true);
 		});
 
+		// #1694: `codex exec --json` forwards each retry it is about to make as a
+		// bare `error` event. Raising it put a live, retrying turn into the error
+		// state and burned the once-only latch the real terminal error needs.
+		describe('retry notices', () => {
+			const disconnect =
+				'stream disconnected before completion: websocket closed by server before response.completed';
+			const notices = [
+				`Reconnecting... 2/5 (${disconnect})`,
+				`Reconnecting... 2/2 (${disconnect})`,
+				'Reconnecting... waiting for network',
+			];
+
+			it.each(notices)('is not an error: %s', (message) => {
+				const line = JSON.stringify({ type: 'error', message });
+				expect(parser.detectErrorFromLine(line)).toBeNull();
+			});
+
+			it('surfaces as progress text kept out of the final answer', () => {
+				const event = parser.parseJsonLine(JSON.stringify({ type: 'error', message: notices[0] }));
+				expect(event?.type).toBe('text');
+				expect(event?.text).toBe(notices[0]);
+				expect(event?.isPartial).toBe(true);
+				expect(event?.isReasoning).toBe(true);
+			});
+
+			it('still raises a non-retry error event', () => {
+				const line = JSON.stringify({ type: 'error', message: disconnect });
+				expect(parser.detectErrorFromLine(line)).not.toBeNull();
+			});
+
+			it('classifies the terminal disconnect as a transient network error that auto-retries', () => {
+				for (const line of [
+					JSON.stringify({ type: 'error', message: disconnect }),
+					JSON.stringify({ type: 'turn.failed', error: { message: disconnect } }),
+				]) {
+					const error = parser.detectErrorFromLine(line);
+					expect(error?.type).toBe('network_error');
+					expect(error?.recoverable).toBe(true);
+					expect(classifyRetryableError(error!)).toBe('availability');
+				}
+			});
+
+			it('does not retry a permanent failure behind the same prefix', () => {
+				const line = JSON.stringify({
+					type: 'error',
+					message: 'stream disconnected before completion: The model gpt-x does not exist',
+				});
+				const error = parser.detectErrorFromLine(line);
+				expect(error?.type).not.toBe('network_error');
+				expect(error ? classifyRetryableError(error) : null).toBeNull();
+			});
+		});
+
 		it('should detect rate limit errors from JSON', () => {
 			const line = JSON.stringify({ error: 'rate limit exceeded' });
 			const error = parser.detectErrorFromLine(line);
@@ -2028,5 +2081,104 @@ describe('Codex quota outages reach the retry scheduler intact', () => {
 			'Your workspace is out of credits. Add credits to continue.'
 		);
 		expect(classifyRetryableError(error!)).toBe('token-exhaustion');
+	});
+});
+
+// `total_token_usage` is the running SESSION total, and a resumed run is a new
+// process whose first token_count already carries every earlier turn. Every
+// consumer delta-normalizes per process, so without the baseline a resumed turn
+// reported the whole conversation again as its own usage.
+describe('Codex token_count totals are measured from the start of the process', () => {
+	function tokenCount(total: Record<string, number>, last?: Record<string, number>): string {
+		return JSON.stringify({
+			type: 'event_msg',
+			payload: {
+				type: 'token_count',
+				info: { total_token_usage: total, ...(last ? { last_token_usage: last } : {}) },
+			},
+		});
+	}
+
+	// Turn 1 of the session spent these; a resumed process starts after them.
+	const PRIOR = {
+		input_tokens: 12000,
+		cached_input_tokens: 9000,
+		output_tokens: 400,
+		reasoning_output_tokens: 150,
+	};
+	const CALL_1 = {
+		input_tokens: 13000,
+		cached_input_tokens: 12000,
+		output_tokens: 90,
+		reasoning_output_tokens: 30,
+	};
+	const CALL_2 = {
+		input_tokens: 13500,
+		cached_input_tokens: 13000,
+		output_tokens: 60,
+		reasoning_output_tokens: 0,
+	};
+
+	function sum(...records: Array<Record<string, number>>): Record<string, number> {
+		const out: Record<string, number> = {};
+		for (const record of records) {
+			for (const [key, value] of Object.entries(record)) out[key] = (out[key] ?? 0) + value;
+		}
+		return out;
+	}
+
+	it('reports a resumed first event as this call alone, not the session so far', () => {
+		const parser = new CodexOutputParser();
+
+		const event = parser.parseJsonLine(tokenCount(sum(PRIOR, CALL_1), CALL_1));
+
+		expect(event?.usage).toMatchObject({
+			inputTokens: 13000,
+			cacheReadTokens: 12000,
+			outputTokens: 120,
+			reasoningTokens: 30,
+		});
+	});
+
+	it('keeps later events cumulative from the start of the process', () => {
+		const parser = new CodexOutputParser();
+
+		parser.parseJsonLine(tokenCount(sum(PRIOR, CALL_1), CALL_1));
+		const second = parser.parseJsonLine(tokenCount(sum(PRIOR, CALL_1, CALL_2), CALL_2));
+
+		expect(second?.usage).toMatchObject({
+			inputTokens: 26500,
+			cacheReadTokens: 25000,
+			outputTokens: 180,
+			reasoningTokens: 30,
+		});
+	});
+
+	it('leaves a fresh session unchanged, since its first total is its first call', () => {
+		const parser = new CodexOutputParser();
+
+		const first = parser.parseJsonLine(tokenCount(CALL_1, CALL_1));
+		const second = parser.parseJsonLine(tokenCount(sum(CALL_1, CALL_2), CALL_2));
+
+		expect(first?.usage).toMatchObject({ inputTokens: 13000, outputTokens: 120 });
+		expect(second?.usage).toMatchObject({ inputTokens: 26500, outputTokens: 180 });
+	});
+
+	it('falls back to the raw total when the event carries no last_token_usage', () => {
+		const parser = new CodexOutputParser();
+
+		const event = parser.parseJsonLine(tokenCount(sum(PRIOR, CALL_1)));
+
+		expect(event?.usage).toMatchObject({ inputTokens: 25000, outputTokens: 670 });
+	});
+
+	it('scopes the baseline to one parser instance, so a new process starts clean', () => {
+		const resumed = new CodexOutputParser();
+		resumed.parseJsonLine(tokenCount(sum(PRIOR, CALL_1), CALL_1));
+
+		const fresh = new CodexOutputParser();
+		const event = fresh.parseJsonLine(tokenCount(CALL_2, CALL_2));
+
+		expect(event?.usage).toMatchObject({ inputTokens: 13500, outputTokens: 60 });
 	});
 });

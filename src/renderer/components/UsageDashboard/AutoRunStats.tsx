@@ -13,7 +13,7 @@
  */
 
 import React, { memo, useState, useEffect, useMemo, useCallback } from 'react';
-import { Play, CheckSquare, ListChecks, Target, Clock, Timer } from 'lucide-react';
+import { Play, CheckSquare, ListChecks, Target, Clock, Timer, Hourglass } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
@@ -254,6 +254,14 @@ export const AutoRunStats = memo(function AutoRunStats({
 					icon={<Timer className="w-4 h-4" />}
 					label="Avg Task"
 					value={formatDuration(metrics.avgTaskDuration)}
+					theme={theme}
+				/>
+				<MetricCard
+					testId="autorun-metric-card"
+					icon={<Hourglass className="w-4 h-4" />}
+					label="Total Auto Run Time"
+					value={formatDuration(metrics.totalDuration)}
+					subValue={`${formatDuration(metrics.goalDrivenDuration)} goal / ${formatDuration(metrics.specDrivenDuration)} spec`}
 					theme={theme}
 				/>
 			</div>

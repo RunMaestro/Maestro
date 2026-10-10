@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
 	extractAgentTaskList,
+	findLatestAgentTaskList,
 	summarizeAgentTaskList,
 } from '../../../renderer/utils/agentTaskList';
+import type { LogEntry } from '../../../renderer/types';
 
 describe('extractAgentTaskList', () => {
 	it('extracts a Claude Code / OpenCode TodoWrite todos array', () => {
@@ -126,5 +128,61 @@ describe('summarizeAgentTaskList', () => {
 		})!;
 
 		expect(summarizeAgentTaskList(list)).toBe('Patch the parser (0/1)');
+	});
+});
+
+describe('findLatestAgentTaskList', () => {
+	const toolEntry = (id: string, input: unknown) =>
+		({
+			id,
+			timestamp: 0,
+			source: 'tool',
+			text: 'TodoWrite',
+			metadata: { toolState: { status: 'completed', input } },
+		}) as unknown as LogEntry;
+
+	const todos = (...statuses: string[]) => ({
+		todos: statuses.map((status, i) => ({ content: `task ${i}`, status })),
+	});
+
+	it('returns the newest checklist in the log', () => {
+		const latest = findLatestAgentTaskList([
+			toolEntry('a', todos('in_progress', 'pending')),
+			toolEntry('b', { file_path: '/tmp/x.ts' }),
+			toolEntry('c', todos('completed', 'in_progress')),
+		]);
+
+		expect(latest?.entryId).toBe('c');
+		expect(latest?.list.completed).toBe(1);
+	});
+
+	it('returns null when no tool call carried a checklist', () => {
+		expect(findLatestAgentTaskList([toolEntry('a', { command: 'ls' })])).toBeNull();
+		expect(findLatestAgentTaskList([])).toBeNull();
+		expect(findLatestAgentTaskList(undefined)).toBeNull();
+	});
+
+	it('ignores non-tool entries', () => {
+		const chat = { id: 'msg', timestamp: 0, source: 'ai', text: 'todos: 1. do it' } as LogEntry;
+		expect(findLatestAgentTaskList([chat])).toBeNull();
+	});
+
+	it("skips a subagent's private checklist", () => {
+		const nested = toolEntry('b', todos('pending', 'pending'));
+		nested.metadata = { ...nested.metadata, parentToolUseId: 'task_1' };
+
+		const latest = findLatestAgentTaskList([
+			toolEntry('a', todos('in_progress', 'pending')),
+			nested,
+		]);
+
+		expect(latest?.entryId).toBe('a');
+	});
+
+	it('returns null when the only checklist came from a subagent', () => {
+		const nested = toolEntry('a', todos('pending'));
+		nested.metadata = { ...nested.metadata, parentToolUseId: 'task_1' };
+
+		expect(findLatestAgentTaskList([nested])).toBeNull();
 	});
 });

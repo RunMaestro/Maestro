@@ -9,7 +9,11 @@
 
 import { describe, it, expect } from 'vitest';
 
-import { formatScreenTailReport, idleTimeoutMessage } from '../../maestro-p/timeout-report';
+import {
+	formatScreenTailReport,
+	idleTimeoutMessage,
+	readyTimeoutMessage,
+} from '../../maestro-p/timeout-report';
 
 describe('formatScreenTailReport', () => {
 	it('writes the message, then the screen tail under the shared header', () => {
@@ -35,5 +39,14 @@ describe('idleTimeoutMessage', () => {
 		expect(message).toContain('no transcript output for 961s');
 		expect(message).toContain('--max-wait 900s');
 		expect(message).toContain('Failing with timeout.');
+	});
+});
+
+describe('readyTimeoutMessage', () => {
+	it('names the boot budget, says nothing reached the model, and the error code', () => {
+		const message = readyTimeoutMessage(30);
+		expect(message).toContain('within 30s (--ready-timeout)');
+		expect(message).toContain('Nothing was sent to the model.');
+		expect(message).toContain('Failing with ready_timeout.');
 	});
 });

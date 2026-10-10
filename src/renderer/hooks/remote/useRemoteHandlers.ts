@@ -35,6 +35,8 @@ import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
 import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
+	previewMentionDispatch,
+	withMentionTurnNotes,
 } from '../../services/crossAgentMentions';
 import { noteDirectDispatch } from '../../stores/retryStore';
 import { logger } from '../../utils/logger';
@@ -386,7 +388,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					reportDelivery(false, 'no-target-tab-for-mention');
 					return;
 				}
-				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
+				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
 				const mentionOnlyEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
@@ -680,7 +682,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						prompt: promptToSend,
+						// A trailing mention is answered by the consulted agent in parallel,
+						// or handed this turn's answer when it ends (dispatched below); tell
+						// this turn which, so it waits for the reply or writes an answer
+						// that stands alone. Agent-only: the user bubble above keeps the
+						// plain `promptToSend`.
+						prompt:
+							mentionPlan && writeTabId
+								? withMentionTurnNotes(promptToSend, previewMentionDispatch(mentionPlan))
+								: promptToSend,
 						images: remoteImages,
 						appendSystemPrompt,
 						agentSessionId: tabAgentSessionId ?? undefined,
@@ -702,9 +712,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// A no-op if the grace timer already acked.
 				reportDelivery(true);
 				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
-				// Trailing mention: this agent answers AND the mentioned agent is consulted.
+				// Trailing mention: this agent answers AND the mentioned agent is
+				// consulted alongside it, or handed the answer when it ends.
 				if (mentionPlan && writeTabId) {
-					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
+					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
 				}
 			} catch (error: unknown) {
 				// A remote command that lands while the agent is mid-turn is refused

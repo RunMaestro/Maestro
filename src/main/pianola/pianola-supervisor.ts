@@ -18,11 +18,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, execFile, execFileSync, type ChildProcess, type SpawnOptions } from 'child_process';
+import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
 import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
-import { isWindows } from '../../shared/platformDetection';
+import {
+	stopProcess,
+	BACKGROUND_STOP_GRACE_MS,
+} from '../../shared/maestro-lib/control/termination';
 import { readSupervisorTargets, supervisorFilePath } from './pianola-store-main';
 import type { PianolaSupervisedTarget, PianolaSupervisedKind } from '../../shared/pianola/storage';
 
@@ -42,8 +45,6 @@ const BACKOFF_CAP_MS = 30_000;
 const WATCH_DEBOUNCE_MS = 250;
 /** A child that ran at least this long is treated as recovered (restart count resets). */
 const STABLE_RUN_MS = 60_000;
-/** Grace period before escalating SIGTERM to SIGKILL on POSIX (non-shutdown path). */
-const SIGKILL_DELAY_MS = 5000;
 
 /** Health state of one supervised target. */
 export type PianolaSupervisedState = 'running' | 'backing-off' | 'stopped' | 'failed';
@@ -495,42 +496,21 @@ export class PianolaSupervisor {
 	}
 
 	/**
-	 * Kill a child process and its tree. On Windows uses taskkill /t so the node
-	 * process and any descendants are reaped. On POSIX sends SIGTERM then escalates
-	 * to SIGKILL - immediately on the shutdown path (the event loop may drain before
-	 * a deferred timer fires), or after a grace period otherwise.
+	 * Stop a child and its tree through the shared stop ladder: SIGTERM, then
+	 * SIGKILL for the tree after a grace period, or `taskkill /t /f` on Windows.
+	 * `sync` is the shutdown path: every stage runs at once, since the event loop
+	 * may drain before a deferred timer fires.
 	 */
 	private killProcess(child: ChildProcess, sync: boolean): void {
-		if (isWindows() && child.pid) {
-			if (sync) {
-				try {
-					execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { timeout: 5000 });
-				} catch {
-					// taskkill exits non-zero when the process is already gone - fine.
-				}
-			} else {
-				execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
-					if (!error) return;
-					if (child.exitCode !== null || child.signalCode !== null) return;
-					void captureException(error, {
-						operation: 'pianola:supervisor:taskkill',
-						pid: child.pid,
-					});
-				});
+		stopProcess(
+			{ child },
+			{
+				from: 'terminate',
+				graceMs: BACKGROUND_STOP_GRACE_MS,
+				immediate: sync,
+				blocking: sync,
+				label: 'pianola',
 			}
-			return;
-		}
-		child.kill('SIGTERM');
-		if (sync) {
-			if (child.exitCode === null && child.signalCode === null) {
-				child.kill('SIGKILL');
-			}
-			return;
-		}
-		setTimeout(() => {
-			if (child.exitCode === null && child.signalCode === null) {
-				child.kill('SIGKILL');
-			}
-		}, SIGKILL_DELAY_MS);
+		);
 	}
 }

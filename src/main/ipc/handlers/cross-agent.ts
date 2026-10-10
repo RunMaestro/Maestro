@@ -132,6 +132,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					transcript: payload.transcript,
 					strategy: payload.strategy,
 					sourceCwd: payload.sourceCwd,
+					handoffAnswer: payload.handoffAnswer,
 					createdAt: Date.now(),
 				};
 

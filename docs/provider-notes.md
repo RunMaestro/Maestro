@@ -55,24 +55,37 @@ The `MAESTRO_SESSION_RESUMED` variable is automatically set to `1` when resuming
 - Maestro sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` by default for every Claude Code spawn (desktop UI, CLI batch, `--live`, SSH). This disables Claude Code's `Bash run_in_background` + `Monitor` feature, which is incompatible with Maestro for two reasons: (1) short-lived CLI batch sessions exit before background tasks finish, silently losing results; and (2) the polling wrapper Claude Code generates around each background task can deadlock on a self-matching `pgrep -f` predicate when the watched command regex appears verbatim in the wrapper's own argv, leaving long-running desktop tabs stuck on a zsh `until` loop that can never satisfy its exit condition. Maestro's multi-tab terminals cover the same use cases (watch a dev server, tail a log) more reliably. To re-enable, export `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=0` from your shell, or set it per-agent under **Settings → Providers → Claude Code → Environment Variables**.
 - Ask-back questions require Standard permission mode. In Standard mode Maestro injects a permission relay into Claude Code (API mode) that surfaces tool approvals and `AskUserQuestion` ask-backs as in-app prompts you answer inline. Full Access passes `--dangerously-skip-permissions` and skips the relay, so an `AskUserQuestion` call there has nowhere to go: the question never appears and the turn stalls until you stop the agent. A follow-up message won't recover it either: it only queues behind the stalled turn, which never completes to dispatch it. Read-Only mode also runs without the relay. SSH remote agents can't use Standard mode at all: a Standard-mode Claude Code spawn over SSH fails loudly (the relay socket is local-only and can't mediate a remote spawn) rather than downgrading, so SSH agents always run in Full Access or Read-Only, which is why ask-backs never surface there. This is the expected trade-off of bypassing permissions, not a defect; switch the tab to Standard mode when you want ask-back questions to work.
 
-### Token Source: Max plan vs. API
+### Token Source
 
-Claude Code agents can bill against either your Anthropic API credit or your Claude Max plan quota. Pick the source per-agent under **Settings → Providers → Claude Code** (or in the New Agent / Edit Agent dialog), and Maestro can show a matching pill on each captured turn.
+A Claude Code agent can run each turn in one of two ways. Pick one per agent under **Settings → Providers → Claude Code** (or in the New Agent / Edit Agent dialog), and Maestro can show a matching pill on each captured turn.
 
-| Mode                   | Pill          | Behavior                                                                                 |
-| ---------------------- | ------------- | ---------------------------------------------------------------------------------------- |
-| API (`claude -p`)      | `claude -p`   | Always uses `claude --print` and bills per-token API credit.                             |
-| TUI Wrapper (Max plan) | `TUI Wrapper` | Always drives the Claude interactive TUI against your Max plan quota.                    |
-| Dynamic                | `Dynamic ...` | Starts on the Max plan TUI, then auto-switches to API when the quota is near exhaustion. |
+| Mode        | Pill          | Behavior                                                                                                                   |
+| ----------- | ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `claude -p` | `claude -p`   | Runs every turn through `claude --print`.                                                                                  |
+| TUI Wrapper | `TUI Wrapper` | Runs every turn through Claude Code's interactive TUI, driven by maestro-p.                                                |
+| Dynamic     | `Dynamic ...` | Starts on the TUI Wrapper, switches to `claude -p` when a plan window is near its limit, and switches back once it resets. |
+
+**The mode does not decide what you are billed.** The agent's credentials do:
+
+- **Signed in with a Claude plan** (Pro, Max, Team): both modes draw from that plan's 5-hour and weekly limits. Anthropic confirms this for `claude -p` in [Monthly API credits for Max and Team plans](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-and-team-plans).
+- **An API key, gateway, or cloud provider** (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, Bedrock, Vertex) in the agent's environment: both modes bill that credential instead. A Max or Team plan's monthly API credits are spent this way, through a key from the linked Claude Console organization.
+
+<Note>
+Dynamic's switch only buys time when the agent also has an API key. Signed in with a plan alone, `claude -p` hits the same limit the TUI just hit, and [Agent Resilience](/agent-resilience) is what carries the turn to the reset.
+</Note>
+
+<Warning>
+Anthropic plans to make `--bare` the default for `claude -p` in a future Claude Code release. Bare mode never reads your plan login, so a `claude -p` agent with no API key would start failing with "Failed to authenticate". If that happens, switch the agent to TUI Wrapper.
+</Warning>
 
 The pill is off by default. Turn it on under **Settings → Display → Provider Mode Pill** to show it under chat responses and on History entries.
 
 When a window does run dry, [Agent Resilience](/agent-resilience) takes the turn over: it reads the reset moment out of Claude's own banner (`resets 11:40am (America/Chicago)`) and resends your prompt then, instead of leaving you to notice and retype it.
 
-The TUI Wrapper and Dynamic modes are powered by **maestro-p**, a small standalone helper that drives Claude Code's interactive TUI (the mode that draws on your Max plan quota rather than per-token API credit). It ships bundled with the desktop app, so local agents work out of the box.
+The TUI Wrapper and Dynamic modes are powered by **maestro-p**, a small standalone helper that drives Claude Code's interactive TUI and hands Maestro the same output `claude -p` would. It ships bundled with the desktop app, so local agents work out of the box.
 
 <Note>
-For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on the **remote host's** PATH, since the TUI runs there rather than on your machine. If it is missing, Maestro disables the Max plan options and falls back to API. Install it from the [maestro-p install page](https://runmaestro.ai/maestro-p/), then click **Re-check** in the agent's Claude Token Source panel.
+For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on the **remote host's** PATH, since the TUI runs there rather than on your machine. If it is missing, Maestro disables the TUI Wrapper and Dynamic options and falls back to `claude -p`. Install it from the [maestro-p install page](https://runmaestro.ai/maestro-p/), then click **Re-check** in the agent's Claude Token Source panel.
 </Note>
 
 ## Codex (OpenAI)

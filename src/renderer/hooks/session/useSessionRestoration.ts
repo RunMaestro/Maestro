@@ -42,6 +42,7 @@ import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { interruptConsultHolds } from '../../services/crossAgentConsultHold';
 import {
 	MAX_PERSISTED_AI_COMMAND_HISTORY,
 	mergeDeferredItems,
@@ -783,7 +784,13 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				aiLogs: [],
 				aiTabs: resetAiTabs,
 				shellLogs: correctedSession.shellLogs,
-				executionQueue: correctedSession.executionQueue || [],
+				// A cold desktop start kills every consult process, so a turn still
+				// waiting on one would hold its tab forever: release it with an
+				// "interrupted" reply. A web-desktop reload is different - main kept
+				// running and the consult with it, so the hold settles normally.
+				executionQueue: isWebDesktop()
+					? correctedSession.executionQueue || []
+					: interruptConsultHolds(correctedSession.executionQueue || []),
 				activeTimeMs: correctedSession.activeTimeMs || 0,
 				// Keep a limit pause live so auto-resume re-attaches; clear anything else.
 				// `agentErrorTabId` rides through the spread above (persistence only keeps

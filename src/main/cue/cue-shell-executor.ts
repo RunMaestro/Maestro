@@ -20,6 +20,7 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getShellPath } from '../runtime/getShellPath';
 import { buildSpawnPath } from '../utils/spawnPath';
 import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
+import type { StopHandle } from '../../shared/maestro-lib/control/termination';
 
 export interface CueShellExecutionConfig {
 	runId: string;
@@ -192,7 +193,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		let settled = false;
 		let timedOut = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-		let sigkillTimer: ReturnType<typeof setTimeout> | undefined;
+		let stopHandle: StopHandle | undefined;
 
 		const finish = (status: CueRunStatus, exitCode: number | null) => {
 			if (settled) return;
@@ -200,7 +201,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 
 			untrack();
 			if (timeoutTimer) clearTimeout(timeoutTimer);
-			if (sigkillTimer) clearTimeout(sigkillTimer);
+			stopHandle?.dispose();
 
 			resolve({
 				runId,
@@ -257,7 +258,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 				if (settled) return;
 				onLog('cue', `[CUE] Shell run ${runId} timed out after ${timeoutMs}ms, killing process`);
 				timedOut = true;
-				sigkillTimer = killCueProcess(child);
+				stopHandle = killCueProcess(child);
 			}, timeoutMs);
 		}
 	});

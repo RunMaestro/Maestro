@@ -95,6 +95,22 @@ describe('checkPromptEcho', () => {
 		expect(checkPromptEcho(prompt, logged)).toBeNull();
 	});
 
+	it('passes when the editor composed decomposed Unicode (NFD in, NFC logged)', () => {
+		// The Pedsidian command-bus failure: iMessage context carried "Lagardère"
+		// and claude logged "Lagardère", so a whole prompt read as truncated.
+		const prompt = `${longPrompt()}\n\nParadies Lagardère (Hut's) and more.`;
+		expect(checkPromptEcho(prompt, prompt.normalize('NFC'))).toBeNull();
+	});
+
+	it('points the snippet at the hole even after a decomposed character', () => {
+		const prompt = `Café first. ${longPrompt()}`;
+		const holeStart = prompt.indexOf('Rule 5:');
+		const logged = (prompt.slice(0, holeStart) + prompt.slice(holeStart + 1022)).normalize('NFC');
+		const mismatch = checkPromptEcho(prompt, logged);
+		expect(mismatch).not.toBeNull();
+		expect(mismatch!.missingFrom.startsWith('Rule 5:')).toBe(true);
+	});
+
 	it('fails on the Cue failure: a 1,022-byte hole in the middle of the prompt', () => {
 		const prompt = longPrompt();
 		const holeStart = 900;

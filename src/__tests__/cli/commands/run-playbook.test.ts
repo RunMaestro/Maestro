@@ -48,7 +48,7 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 }));
 
 // Mock agent definitions
-vi.mock('../../../main/agents/definitions', () => ({
+vi.mock('../../../shared/maestro-lib/providers/definitions', () => ({
 	getAgentDefinition: vi.fn((agentId: string) => {
 		const defs: Record<string, { name: string; binaryName: string }> = {
 			'claude-code': { name: 'Claude Code', binaryName: 'claude' },
@@ -181,6 +181,7 @@ describe('run-playbook command', () => {
 			expect(findPlaybookById).toHaveBeenCalledWith('pb-123');
 			expect(getSessionById).toHaveBeenCalledWith('agent-1');
 			expect(executePlaybook).toHaveBeenCalledWith(agent, playbook, '/path/to/playbooks', {
+				signal: expect.any(AbortSignal),
 				dryRun: undefined,
 				writeHistory: true,
 				debug: undefined,
@@ -259,6 +260,7 @@ describe('run-playbook command', () => {
 			await runPlaybook('pb-123', { dryRun: true });
 
 			expect(executePlaybook).toHaveBeenCalledWith(agent, playbook, '/path/to/playbooks', {
+				signal: expect.any(AbortSignal),
 				dryRun: true,
 				writeHistory: true,
 				debug: undefined,

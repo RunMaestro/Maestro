@@ -4,6 +4,8 @@
  * Keep these types runtime-agnostic and free of Node/Electron dependencies.
  */
 
+import type { UsageStats } from '../types';
+
 /** Days of the week for scheduled triggers */
 export type CueScheduleDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
@@ -435,6 +437,22 @@ export interface CueRunResult {
 	 * AI session) and for runs whose stdout carried no parseable session id.
 	 */
 	providerSessionId?: string | null;
+	/**
+	 * Token usage delta-normalized from the agent's own stdout stream as it
+	 * ran (maestro-lib's `BufferedLineReader` + `UsageAccumulator`, the same
+	 * primitives desktop chat and the CLI use), NOT read back from the
+	 * provider's on-disk session file. `cue-token-accessor.ts`'s post-hoc
+	 * lookup is the dashboard's primary source and covers more fields
+	 * (cost, precise windows) for local runs, but it cannot resolve token
+	 * totals for an SSH-remote Cue run at all - the session file lives on
+	 * the remote host - and returns `coverage: 'partial'` with zeros for
+	 * every such run. This field is populated from the stream regardless of
+	 * where the process ran, so it is the only usage figure available for a
+	 * remote pipeline. Undefined for shell/CLI command runs (no AI stream to
+	 * parse), for agents with no usage events in-stream, and for runs whose
+	 * output never produced one.
+	 */
+	usage?: UsageStats | null;
 }
 
 /** Status summary for a Cue-enabled session */

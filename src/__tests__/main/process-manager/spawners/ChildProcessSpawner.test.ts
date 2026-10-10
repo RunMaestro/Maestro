@@ -695,7 +695,12 @@ describe('ChildProcessSpawner', () => {
 			// handleExit is async (post-exit reconciliation) - let it settle.
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 
-			expect(onExit).toHaveBeenCalledWith(baseConfig.sessionId, 0);
+			expect(onExit).toHaveBeenCalledWith(
+				baseConfig.sessionId,
+				0,
+				undefined,
+				expect.objectContaining({ outcome: 'completed' })
+			);
 			expect(processes.has(baseConfig.sessionId)).toBe(false);
 		});
 	});
@@ -941,7 +946,10 @@ describe('ChildProcessSpawner', () => {
 			);
 			const args = mockSpawn.mock.calls[0][1] as string[];
 			expect(args).toEqual(['chat', '-Q', '--yolo', '--query-file', '-']);
-			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(prompt);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(
+				prompt,
+				expect.any(Function)
+			);
 			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
 		});
 

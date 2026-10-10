@@ -32,6 +32,8 @@ vi.mock('../../../renderer/utils/sentry', () => ({
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	planCrossAgentMentions: vi.fn(() => null),
 	dispatchCrossAgentMentions: vi.fn(),
+	previewMentionDispatch: vi.fn(() => ({ consultTargets: [], handoffTargets: [] })),
+	withMentionTurnNotes: vi.fn((prompt: string) => prompt),
 }));
 
 vi.mock('../../../renderer/utils/ids', () => ({
@@ -528,7 +530,8 @@ describe('useRemoteHandlers', () => {
 				plan,
 				'@Reviewer look at this',
 				expect.objectContaining({ id: 'session-1' }),
-				'tab-1'
+				'tab-1',
+				undefined
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			// Delivery is acked: the consult IS the dispatch.
@@ -611,7 +614,8 @@ describe('useRemoteHandlers', () => {
 				plan,
 				'fix it, then ask @Reviewer',
 				expect.objectContaining({ id: 'session-1' }),
-				'tab-1'
+				'tab-1',
+				undefined
 			);
 		});
 

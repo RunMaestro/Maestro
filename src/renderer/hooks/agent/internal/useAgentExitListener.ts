@@ -48,6 +48,7 @@ import {
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { drainTurnUsage, turnUsageStatsFields } from '../../../../shared/turnUsageLedger';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
+import { releaseMentionHandoff } from '../../../services/crossAgentHandoff';
 import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
@@ -812,6 +813,17 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					.catch((err) => {
 						logger.warn('[onProcessExit] Failed to record query stats:', undefined, err);
 					});
+			}
+
+			// A message that asked for this turn's result to go to other agents
+			// ("then send what you find to @Backend") armed a hand-off on the tab;
+			// the turn is over, so forward its answer now. Flush first so the
+			// answer's trailing chunks are in the store. A retry still counting
+			// down means the turn will run again, so the hand-off waits for that
+			// run instead of forwarding the failed one.
+			if (isFromAi && ownsSideEffects && tabIdFromSession && !isRetryPending(tabIdFromSession)) {
+				deps.batchedUpdater.flushNow();
+				releaseMentionHandoff(actualSessionId, tabIdFromSession, { failed: code !== 0 });
 			}
 
 			if (queuedItemToProcess && ownsSideEffects) {

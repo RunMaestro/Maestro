@@ -301,6 +301,8 @@ const mockMaestro = {
 			delete: vi.fn().mockResolvedValue({}),
 			refreshStates: vi.fn().mockResolvedValue({ issues: [] }),
 		},
+		listAccounts: vi.fn().mockResolvedValue({ accounts: [], lastWorkingKey: null }),
+		rememberAccount: vi.fn().mockResolvedValue(undefined),
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),

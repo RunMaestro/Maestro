@@ -10,6 +10,7 @@ import {
 	type IpcMainInvokeEvent,
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
+import { DURATION_MS } from '../shared/duration';
 import { installApplicationMenu } from './app-menu';
 import path from 'path';
 import os from 'os';
@@ -130,8 +131,6 @@ import {
 	ensureCliServer,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
-	cleanupAllGroomingSessions,
-	getActiveGroomingSessionCount,
 } from './ipc/handlers';
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
@@ -1216,6 +1215,7 @@ app
 		});
 
 		// Initialize Cue Engine for event-driven automation
+		const cueHealthToastAt = new Map<string, number>();
 		cueEngine = new CueEngine({
 			getSessions: () => {
 				const stored = sessionsStore.get('sessions', []);
@@ -1462,6 +1462,25 @@ app
 			onStopCueRun: (runId) => stopCueRun(runId),
 			onLog: (_level, message, data) => {
 				logger.cue(message, 'Cue', data);
+				const payload = data as import('../shared/cue-log-types').CueLogPayload | undefined;
+				if (payload?.type === 'triggerHealthWarning') {
+					const now = Date.now();
+					for (const [id, at] of cueHealthToastAt) {
+						if (now - at >= 5 * DURATION_MS.minute) cueHealthToastAt.delete(id);
+					}
+					// Reach the always-mounted toast channel, even with Cue closed.
+					// Log every warning, but coalesce sticky notices per agent for 5m.
+					if (!cueHealthToastAt.has(payload.sessionId)) {
+						const delivered = emitCueNotifyToast(mainWindow, {
+							agentId: payload.sessionId,
+							title: 'Cue trigger health',
+							message: payload.message,
+							sticky: true,
+							color: 'orange',
+						});
+						if (delivered) cueHealthToastAt.set(payload.sessionId, now);
+					}
+				}
 				// Push activity updates to renderer (and web-desktop bridge clients)
 				if (data) {
 					safeSend('cue:activityUpdate', data);
@@ -2847,6 +2866,9 @@ app
 		setupIpcHandlers({
 			debugPackageDeps,
 			getMainWindow: () => mainWindow,
+			ensureMainWindow: () => {
+				if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+			},
 			getProcessManager: () => processManager,
 			getWebServer: () => webServer,
 			setWebServer: (server) => {
@@ -3137,8 +3159,6 @@ quitHandler = createQuitHandler({
 	getWebServer: () => webServer,
 	getHistoryManager,
 	tunnelManager,
-	getActiveGroomingSessionCount,
-	cleanupAllGroomingSessions,
 	closeStatsDB,
 	stopCliWatcher: () => {
 		cliWatcher.stop();

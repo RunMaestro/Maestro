@@ -52,6 +52,31 @@ describe('reconcileMissedTimeEvents', () => {
 		};
 	}
 
+	it('skips heartbeats but still catches up scheduled slots when skipHeartbeats is set', () => {
+		// At engine start each heartbeat already fires once; a catch-up on top
+		// of it ran the same subscription twice within a second.
+		const sessions = new Map<string, ReconcileSessionInfo>();
+		const hour = new Date(Date.now() - 30 * 60 * 1000);
+		const hhmm = `${String(hour.getHours()).padStart(2, '0')}:${String(hour.getMinutes()).padStart(2, '0')}`;
+		sessions.set('session-1', {
+			config: createConfig([
+				{ name: 'hb', event: 'time.heartbeat', enabled: true, prompt: 'x', interval_minutes: 15 },
+				{
+					name: 'daily',
+					event: 'time.scheduled',
+					enabled: true,
+					prompt: 'x',
+					schedule_times: [hhmm],
+				},
+			]),
+			sessionName: 'Test Session',
+		});
+
+		reconcileMissedTimeEvents(makeConfig({ sessions, skipHeartbeats: true }));
+
+		expect(dispatched.map((d) => d.sub.name)).toEqual(['daily']);
+	});
+
 	it('should fire one catch-up event for a missed interval', () => {
 		const sessions = new Map<string, ReconcileSessionInfo>();
 		sessions.set('session-1', {

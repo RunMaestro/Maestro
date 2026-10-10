@@ -176,7 +176,7 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
-import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
+import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
@@ -225,7 +225,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			sessionId: string
 		) => Promise<SessionMessagesResult | null>;
-		// NEW: Single-call grooming (recommended) - spawns batch process and returns response
+		// Single-call grooming: spawns a batch process and returns its response
 		groomContext: (
 			projectRoot: string,
 			agentType: string,
@@ -250,10 +250,6 @@ interface MaestroAPI {
 		) => Promise<string>;
 		// Cancel all active grooming sessions
 		cancelGrooming: () => Promise<void>;
-		// DEPRECATED: Use groomContext instead
-		createGroomingSession: (projectRoot: string, agentType: string) => Promise<string>;
-		sendGroomingPrompt: (sessionId: string, prompt: string) => Promise<string>;
-		cleanupGroomingSession: (sessionId: string) => Promise<void>;
 	};
 	settings: {
 		get: (key: string) => Promise<unknown>;
@@ -477,7 +473,17 @@ interface MaestroAPI {
 			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
-		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
+		onRemoteCloseTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCloseTabResponse: (responseChannel: string, closed: boolean) => void;
+		onRemoteReopenTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteReopenTabResponse: (
+			responseChannel: string,
+			result: { tabId: string } | null
+		) => void;
 		onRemoteRenameTab: (
 			callback: (sessionId: string, tabId: string, newName: string, responseChannel: string) => void
 		) => () => void;
@@ -644,7 +650,13 @@ interface MaestroAPI {
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					inputRequired?: boolean;
+				},
 				responseChannel: string,
 				options: { background?: boolean }
 			) => void
@@ -1067,7 +1079,10 @@ interface MaestroAPI {
 		) => () => void;
 	};
 	feedback: {
-		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
+		checkGhAuth: (options?: {
+			fresh?: boolean;
+		}) => Promise<import('../shared/feedback').FeedbackAuthResponse>;
+		getGhLoginCommand: () => Promise<import('../shared/feedback').FeedbackGhLoginCommand>;
 		submit: (payload: {
 			sessionId: string;
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
@@ -1097,7 +1112,7 @@ interface MaestroAPI {
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
-		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
+		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
 				number: number;
@@ -1113,7 +1128,9 @@ interface MaestroAPI {
 		subscribeIssue: (
 			issueNumber: number,
 			comment?: string
-		) => Promise<{ success: boolean; error?: string }>;
+		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
+		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
+		rememberAccount: (key: string | null) => Promise<void>;
 		drafts: {
 			list: () => Promise<{
 				drafts: Array<{
@@ -1262,6 +1279,8 @@ interface MaestroAPI {
 		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
 		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
+		requestCloseTab: (sessionId: string, tabId: string) => Promise<boolean>;
+		requestReopenTab: (sessionId: string, tabId: string) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
 			command: string,
@@ -2579,8 +2598,12 @@ interface MaestroAPI {
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: import('../shared/toastClickAction').ToastClickAction
 		) => Promise<{ success: boolean; error?: string }>;
+		onClickAction: (
+			handler: (action: import('../shared/toastClickAction').ToastClickAction) => void
+		) => () => void;
 		speak: (
 			text: string,
 			command?: string,
@@ -3364,6 +3387,7 @@ interface MaestroAPI {
 			longestRunMs?: number;
 			longestRunDate?: string;
 			currentRunMs?: number;
+			currentRunKind?: AutoRunKind;
 			theme?: string;
 			clientToken?: string;
 			authToken?: string;
@@ -3660,6 +3684,7 @@ interface MaestroAPI {
 			startTime: number;
 			tasksTotal?: number;
 			projectPath?: string;
+			kind?: AutoRunKind;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
 		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;

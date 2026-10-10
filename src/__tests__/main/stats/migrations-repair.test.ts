@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 13;
+const RC_TARGET_VERSION = 14;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');

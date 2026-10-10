@@ -2,11 +2,13 @@
 //
 // Walks argv once and partitions tokens into three buckets:
 //   (a) consumed   - maestro-p's own flags (-p/--print/--prompt, --status,
-//                    --stream-thinking, --max-wait, --help, --version) and
-//                    their values.
+//                    --stream-thinking, --max-wait, --first-byte-timeout,
+//                    --ready-timeout, --help, --version) and their values.
 //   (b) stripped   - headless-mode flags that would corrupt the TUI spawn
 //                    (--output-format, --input-format, --verbose). Dropped
-//                    silently with a one-line stderr warning.
+//                    without a word when maestro-p honors them anyway
+//                    (`--verbose`, `--output-format stream-json`), with a
+//                    one-line stderr warning when it cannot.
 //   (c) passthrough - everything else, forwarded verbatim to the spawned
 //                    `claude` TUI.
 //
@@ -61,6 +63,13 @@ export interface ParsedArgs {
 	 * instead of burning the full idle budget. Always <= maxWaitSeconds.
 	 */
 	firstByteTimeoutSeconds: number;
+	/**
+	 * Budget for the claude TUI to boot and paint its input prompt (the ready
+	 * handshake), before maestro-p fails with `ready_timeout` (exit 4). Nothing
+	 * has been sent to the model at that point. Always <= firstByteTimeoutSeconds,
+	 * whose timer also spans the handshake.
+	 */
+	readyTimeoutSeconds: number;
 	resumeSessionId: string | null;
 	/**
 	 * True when invoked with `--input-format stream-json`. Maestro sets this
@@ -95,6 +104,15 @@ export const DEFAULT_MAX_WAIT_SECONDS = 300;
 // still fails before the whole `--max-wait` window. Overridable via
 // `--first-byte-timeout`.
 export const DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS = 240;
+
+// How long the claude TUI gets to boot and paint its input prompt before
+// `ready_timeout` (exit 4). This was a fixed 8s, which a loaded host blows
+// through: at a 1-minute load average of ~15 on 18 cores, up to 7 of 16 runs
+// failed at 8.0-9.9s while the same runs passed alone (issue #1765). A boot
+// that slow is still healthy, and a TUI genuinely stuck on a startup modal
+// only costs the caller the extra wait, so the default leaves 3x headroom
+// over the slowest boot observed. Overridable via `--ready-timeout`.
+export const DEFAULT_READY_TIMEOUT_SECONDS = 30;
 
 const PROMPT_VALUE_FLAGS = new Set(['-p', '--print', '--prompt']);
 const CONSUMED_BOOLEAN_FLAGS = new Set(['-h', '--help', '-v', '--version']);
@@ -182,6 +200,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 	let streamThinking = false;
 	let maxWaitSeconds = DEFAULT_MAX_WAIT_SECONDS;
 	let firstByteTimeoutSeconds = DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS;
+	let readyTimeoutSeconds = DEFAULT_READY_TIMEOUT_SECONDS;
 	let resumeSessionId: string | null = null;
 	let streamJsonInput = false;
 	const passThroughArgs: string[] = [];
@@ -241,7 +260,10 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		if (PROMPT_VALUE_FLAGS.has(flag)) {
 			const value = consumeValue();
 			if (value === undefined) {
-				warn(`maestro-p: ${flag} requires a value; ignoring.`);
+				// A bare `-p` / `--print` is claude's print-mode switch, which is
+				// the only mode maestro-p has, so it is not an error. Maestro passes
+				// it on every spawn; only `--prompt` genuinely needs its value.
+				if (flag === '--prompt') warn(`maestro-p: ${flag} requires a value; ignoring.`);
 			} else {
 				promptFromFlag = value;
 			}
@@ -293,6 +315,26 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 			continue;
 		}
 
+		if (flag === '--ready-timeout') {
+			const value = consumeValue();
+			if (value === undefined) {
+				warn(
+					`maestro-p: --ready-timeout requires a value; using default ${DEFAULT_READY_TIMEOUT_SECONDS}s.`
+				);
+			} else {
+				const parsed = Number.parseInt(value, 10);
+				if (Number.isFinite(parsed) && parsed > 0) {
+					readyTimeoutSeconds = parsed;
+				} else {
+					warn(
+						`maestro-p: --ready-timeout "${value}" is not a positive integer; using default ${DEFAULT_READY_TIMEOUT_SECONDS}s.`
+					);
+				}
+			}
+			i += 1;
+			continue;
+		}
+
 		if (CONSUMED_BOOLEAN_FLAGS.has(flag)) {
 			// commander in index.ts prints the actual --help/--version output
 			// before parseArgs runs in production; consume here so bare
@@ -302,7 +344,13 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		}
 
 		if (STRIPPED_VALUE_FLAGS.has(flag)) {
-			warn(`maestro-p: ignoring ${flag} - headless-mode flag, not forwarded to the TUI.`);
+			const value = inlineValue ?? (i + 1 < argv.length ? argv[i + 1] : undefined);
+			// maestro-p always writes stream-json, so `--output-format stream-json`
+			// (what Maestro passes every time) is honored, not ignored.
+			if (value !== 'stream-json') {
+				const shown = value === undefined ? flag : `${flag} ${value}`;
+				warn(`maestro-p: ignoring ${shown} - maestro-p always writes stream-json.`);
+			}
 			if (inlineValue === undefined && i + 1 < argv.length) {
 				i += 1;
 			}
@@ -329,7 +377,8 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 			continue;
 		}
 		if (STRIPPED_BOOLEAN_FLAGS.has(flag)) {
-			warn(`maestro-p: ignoring ${flag} - headless-mode flag, not forwarded to the TUI.`);
+			// `--verbose` only shapes `claude -p`'s stream-json, which maestro-p
+			// writes in that same shape anyway: nothing is lost, so stay quiet.
 			i += 1;
 			continue;
 		}
@@ -411,6 +460,11 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 	if (firstByteTimeoutSeconds > maxWaitSeconds) {
 		firstByteTimeoutSeconds = maxWaitSeconds;
 	}
+	// Same rule one level down: the first-byte timer is armed at spawn and spans
+	// the ready handshake, so a longer ready budget could never be reached.
+	if (readyTimeoutSeconds > firstByteTimeoutSeconds) {
+		readyTimeoutSeconds = firstByteTimeoutSeconds;
+	}
 
 	return {
 		prompt,
@@ -419,6 +473,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		streamThinking,
 		maxWaitSeconds,
 		firstByteTimeoutSeconds,
+		readyTimeoutSeconds,
 		resumeSessionId,
 		streamJsonInput,
 	};

@@ -9,8 +9,8 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
-import { resolveUserDataDir } from '../../shared/userDataDir';
 import { captureException } from '../utils/sentry';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 
 const LOG_CONTEXT = '[CueDB]';
 
@@ -50,7 +50,9 @@ export interface CueEventRecord {
 	/**
 	 * Process exit code the run terminated with. For agent runs through
 	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
-	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 1 =
+	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 7 =
+	 * workspace_untrusted, 8 = terminal API error such as an unknown model, 9 =
+	 * resumed session has no transcript on this host, 1 =
 	 * tui_exited, 2 = limit, 0 = success). NULL when the run never produced an exit code (spawn error,
 	 * still running) or for status flips that aren't run completions.
 	 */
@@ -64,6 +66,15 @@ export interface CueEventRecord {
 	outputExcerpt?: string | null;
 	/** Head-truncated stdout behind the excerpt. NULL for a silent run. */
 	fullOutput?: string | null;
+	/**
+	 * Serialized `UsageStats` delta-normalized from the agent's stdout stream
+	 * as the run executed (see `CueRunResult.usage`). NULL for command/shell
+	 * runs, agents that emit no usage events in-stream, and rows written
+	 * before this column existed. This is the ONLY token figure available for
+	 * an SSH-remote Cue run - `cue-token-accessor.ts`'s on-disk lookup cannot
+	 * reach a session file that lives on the remote host.
+	 */
+	streamUsageJson?: string | null;
 }
 
 // ============================================================================
@@ -88,7 +99,8 @@ const CREATE_CUE_EVENTS_SQL = `
     error_message TEXT,
     exit_code INTEGER,
     output_excerpt TEXT,
-    full_output TEXT
+    full_output TEXT,
+    stream_usage_json TEXT
   )
 `;
 
@@ -115,6 +127,7 @@ const CUE_EVENTS_ADDITIVE_COLUMNS = [
 	{ name: 'exit_code', type: 'INTEGER' },
 	{ name: 'output_excerpt', type: 'TEXT' },
 	{ name: 'full_output', type: 'TEXT' },
+	{ name: 'stream_usage_json', type: 'TEXT' },
 ] as const;
 
 const CREATE_CUE_EVENTS_INDEXES_SQL = `
@@ -461,6 +474,8 @@ export interface CueEventCompletionInfo {
 	outputExcerpt?: string | null;
 	/** Head-truncated stdout; null when the run printed nothing. */
 	fullOutput?: string | null;
+	/** Serialized `UsageStats` from the stdout stream; null when the run produced no usage events. See {@link CueEventRecord.streamUsageJson}. */
+	streamUsageJson?: string | null;
 }
 
 /**
@@ -504,6 +519,8 @@ export function updateCueEventStatus(
 		values.push(completion.outputExcerpt ?? null);
 		columns.push('full_output = ?');
 		values.push(completion.fullOutput ?? null);
+		columns.push('stream_usage_json = ?');
+		values.push(completion.streamUsageJson ?? null);
 	}
 
 	values.push(id);
@@ -608,6 +625,7 @@ interface CueEventRow {
 	exit_code: number | null;
 	output_excerpt: string | null;
 	full_output: string | null;
+	stream_usage_json: string | null;
 }
 
 /** Single mapping from the on-disk row to {@link CueEventRecord}. */
@@ -630,6 +648,7 @@ function rowToCueEventRecord(row: CueEventRow): CueEventRecord {
 		exitCode: row.exit_code,
 		outputExcerpt: row.output_excerpt,
 		fullOutput: row.full_output,
+		streamUsageJson: row.stream_usage_json,
 	};
 }
 
@@ -1051,6 +1070,24 @@ export function pruneCueEvents(olderThanMs: number): void {
 	if (result.changes > 0) {
 		log('info', `Pruned ${result.changes} old Cue event(s)`);
 	}
+}
+
+/**
+ * Settle every run a previous engine left `running`. Only called at engine
+ * start, while this process holds the cross-process lock, so no live engine
+ * can own one of these rows: its engine was killed (SIGKILL, crash, power
+ * loss) before the run finished. Left alone, the row reads as in progress
+ * forever. The run's own process may have outlived the engine and finished,
+ * but nothing recorded how, so `failed` with an explanation is the honest
+ * status. Returns how many rows were settled.
+ */
+export function failOrphanedRunningEvents(message: string): number {
+	const result = getDb()
+		.prepare(
+			`UPDATE cue_events SET status = 'failed', completed_at = ?, error_message = COALESCE(error_message, ?) WHERE status = 'running'`
+		)
+		.run(Date.now(), message);
+	return result.changes;
 }
 
 // ============================================================================

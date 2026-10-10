@@ -190,6 +190,18 @@ Channels (all gated on `encoreFeatures.plugins`):
 
 Integrity ("files match what was signed") and trust ("key is recognized") are layered; a plugin can be integral-but-untrusted and still run once the user has enabled = consented.
 
+### Bundled-plugin signing (release vs. dev)
+
+Bundled plugins (e.g. `agent-flow`) ship trusted via a build-time signature, not a committed one. The private key is a CI secret (`MAESTRO_PLUGIN_SIGNING_KEY`); release CI writes it to a temp file, runs `maestro-cli plugin sign` over every dir in `examples/plugins/*/`, and packages the resulting `signature.json` into `<resources>/plugins/` via `extraResources`. The matching base64 SPKI public key is baked into `MAESTRO_PUBLISHER_KEYS` in `src/shared/plugins/publisher-keys.ts`, so those signatures resolve `trusted` and `seedBundledPlugins()` keeps the seeded copy. A drift guard in `.github/workflows/release.yml` re-validates the signed plugin against the baked anchor and fails the release if the CI secret and `publisher-keys.ts` ever diverge. The `signature.json` is a release artifact only - it is gitignored (`examples/plugins/*/signature.json`) and must never be committed.
+
+**Testing Agent Flow (or any bundled code plugin) locally.** Dev builds have no CI secret and fall back to the unsigned repo `examples/plugins`, so `seedBundledPlugins()` finds the plugin `unsigned` and `continue`s before copying it into `pluginsDir()`. The plugin is never installed, so there is no panel and no `main.js` to run. (The distinct "panel renders but `main.js` never runs" symptom belongs to a plugin manually installed unsigned into `pluginsDir()` and then enabled - a different path from bundled seeding.) To exercise the real (signed, trusted) path in a dev build:
+
+1. Generate a throwaway keypair and sign the dir: `maestro-cli plugin sign examples/plugins/agent-flow --gen-key --key-out ~/maestro-dev-publisher.pem`. This writes `signature.json` (gitignored) and prints the base64 SPKI public key.
+2. Add that public key to `pluginTrustedKeys` in Settings. `resolveTrustedKeys()` merges your key with the baked anchor, so the local signature resolves `trusted` and the seeder keeps it.
+3. Enable the plugin and grant consent; the panel now populates with live events.
+
+**Trust model (v1): single key, no revocation.** `MAESTRO_PUBLISHER_KEYS` is an allow-list of accepted keys with no CRL. Rotation is additive-then-prune: add the new public key alongside the old, resign, ship a release, then drop the old entry in a later release once no shipped build still relies on it. A leaked private key can only be revoked by shipping a new release that rotates the anchor - there is no runtime revocation.
+
 ## Host-API semver contract
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
