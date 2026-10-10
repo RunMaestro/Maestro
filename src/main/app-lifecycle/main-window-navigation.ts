@@ -1,4 +1,4 @@
-import { shell, type BrowserWindow } from 'electron';
+import { BrowserWindow, shell } from 'electron';
 import { logger } from '../utils/logger';
 import { dispatchDeepLink, parseDeepLink } from '../deep-links';
 import { blocksSubframeNavigation } from '../../shared/plugins/panel-navigation';
@@ -60,6 +60,31 @@ export function blocksMainWindowSubframeNavigation(
 	return blocksSubframeNavigation(isMainFrame, targetUrl);
 }
 
+// Keyed by window so one window's links never throttle another's.
+const lastSubframeLinkAt = new WeakMap<BrowserWindow, number>();
+
+/** Hand an allowed subframe link off on behalf of the window that holds the frame. */
+function routeSubframeLink(
+	browserWindow: BrowserWindow,
+	url: string,
+	route: SubframeLinkRoute
+): void {
+	const now = Date.now();
+	if (now - (lastSubframeLinkAt.get(browserWindow) ?? 0) < SUBFRAME_LINK_MIN_INTERVAL_MS) {
+		logger.warn(`Throttled subframe link: ${url}`, 'Window');
+		return;
+	}
+	lastSubframeLinkAt.set(browserWindow, now);
+	if (route === 'deep-link') {
+		const parsed = parseDeepLink(url);
+		if (parsed) dispatchDeepLink(parsed, () => browserWindow);
+		return;
+	}
+	shell.openExternal(url).catch((err: unknown) => {
+		logger.warn(`Could not open subframe link: ${url}`, 'Window', { error: String(err) });
+	});
+}
+
 /**
  * Deny popups, restrict top-level navigation to the app entry document, and
  * gate browser permission requests to the main app window only.
@@ -69,24 +94,6 @@ export function attachMainWindowNavigationGuards(
 	options: MainWindowNavigationOptions
 ): void {
 	const { isDevelopment, devServerUrl, rendererProductionUrl, entryUrl } = options;
-
-	let lastSubframeLinkAt = 0;
-	const routeSubframeLink = (url: string, route: SubframeLinkRoute): void => {
-		const now = Date.now();
-		if (now - lastSubframeLinkAt < SUBFRAME_LINK_MIN_INTERVAL_MS) {
-			logger.warn(`Throttled subframe link: ${url}`, 'Window');
-			return;
-		}
-		lastSubframeLinkAt = now;
-		if (route === 'deep-link') {
-			const parsed = parseDeepLink(url);
-			if (parsed) dispatchDeepLink(parsed, () => browserWindow);
-			return;
-		}
-		shell.openExternal(url).catch((err: unknown) => {
-			logger.warn(`Could not open subframe link: ${url}`, 'Window', { error: String(err) });
-		});
-	};
 
 	// Subframe egress guard (backstop). File-preview srcDoc frames have no
 	// business navigating anywhere. Concerto mockups are the one explicit
@@ -101,7 +108,7 @@ export function attachMainWindowNavigationGuards(
 		const linkRoute = event.isMainFrame ? null : subframeLinkRoute(event.url);
 		if (linkRoute) {
 			event.preventDefault();
-			routeSubframeLink(event.url, linkRoute);
+			routeSubframeLink(browserWindow, event.url, linkRoute);
 			return;
 		}
 		if (!blocksMainWindowSubframeNavigation(event.isMainFrame, event.url)) return;
@@ -114,7 +121,7 @@ export function attachMainWindowNavigationGuards(
 	browserWindow.webContents.setWindowOpenHandler(({ url }) => {
 		const linkRoute = subframeLinkRoute(url);
 		if (linkRoute) {
-			routeSubframeLink(url, linkRoute);
+			routeSubframeLink(browserWindow, url, linkRoute);
 			return { action: 'deny' };
 		}
 		logger.warn(`Blocked window.open request: ${url}`, 'Window');
@@ -159,6 +166,8 @@ export function attachMainWindowNavigationGuards(
 
 	// Deny most browser permission requests (camera, mic, geolocation, etc.)
 	// Allow clipboard access for the app window only, never embedded browser tabs.
+	// Every window shares this session, so each new window replaces this handler.
+	// It must resolve the window from the request, never close over `browserWindow`.
 	browserWindow.webContents.session.setPermissionRequestHandler(
 		(webContents, permission, callback, details) => {
 			const contentsType = webContents?.getType?.();
@@ -173,8 +182,10 @@ export function attachMainWindowNavigationGuards(
 				const externalURL = details && 'externalURL' in details ? details.externalURL : undefined;
 				const linkRoute =
 					isAppWindow && details?.isMainFrame === false ? subframeLinkRoute(externalURL) : null;
-				if (linkRoute && externalURL) {
-					routeSubframeLink(externalURL, linkRoute);
+				const requestingWindow =
+					linkRoute && webContents ? BrowserWindow.fromWebContents(webContents) : null;
+				if (linkRoute && externalURL && requestingWindow && !requestingWindow.isDestroyed()) {
+					routeSubframeLink(requestingWindow, externalURL, linkRoute);
 				} else {
 					logger.warn(`Blocked openExternal request: ${externalURL ?? ''}`, 'Window', {
 						type: contentsType,
