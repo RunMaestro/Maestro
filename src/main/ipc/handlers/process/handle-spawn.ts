@@ -51,6 +51,7 @@ import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
 import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
+import type { ClaudeSpawnEnvLayers } from '../../../agents/claudeSpawnCore';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
@@ -169,9 +170,26 @@ export async function handleProcessSpawn(
 		throw new Error(sshUnresolvedRemoteMessage(config.sessionSshRemoteConfig));
 	}
 
+	// Env layers the spawned process receives beyond its own custom vars:
+	// the provider-level config (`agentConfigValues.customEnvVars`) and the
+	// global Shell Configuration vars. Read once here because the Claude
+	// config-dir lookups in resolveClaudeSpawnContext (spawn-mode resolution
+	// and the API-resume sanitizer) must see the same env the child will, and
+	// both layers are applied again at spawn further down.
+	const allConfigs = agentConfigsStore.get('configs', {});
+	const agentConfigValues = allConfigs[config.toolType] || {};
+	const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+	const claudeEnvLayers: ClaudeSpawnEnvLayers = {
+		agentDefaultEnvVars: agent?.defaultEnvVars,
+		globalShellEnvVars,
+		agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+		sessionCustomEnvVars: config.sessionCustomEnvVars,
+	};
+
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
+		envLayers: claudeEnvLayers,
 	});
 	const {
 		baseSessionId,
@@ -198,8 +216,6 @@ export async function handleProcessSpawn(
 	// Apply agent config options and session overrides
 	// Session-level overrides take precedence over agent-level config
 	// ========================================================================
-	const allConfigs = agentConfigsStore.get('configs', {});
-	const agentConfigValues = allConfigs[config.toolType] || {};
 	const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 		agentConfigValues,
 		sessionCustomModel: config.sessionCustomModel,
@@ -617,7 +633,7 @@ export async function handleProcessSpawn(
 	// 3. Process defaults (with Electron/IDE vars stripped for agents)
 	//
 	// The actual merging happens in buildChildProcessEnv() or buildPtyTerminalEnv().
-	const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+	// (`globalShellEnvVars` itself is read before resolveClaudeSpawnContext above.)
 
 	// Debug logging when global env vars are configured
 	if (Object.keys(globalShellEnvVars).length > 0) {
@@ -753,9 +769,22 @@ export async function handleProcessSpawn(
 	if (isWindows() && !config.sessionSshRemoteConfig?.enabled) {
 		// Use expanded environment with custom env vars to ensure PATH includes all binary locations
 		const expandedEnv = buildExpandedEnv(customEnvVarsToPass);
-		// Filter out undefined values to match Record<string, string> type
+		// The expanded env carries every INHERITED variable, and custom vars are
+		// applied after the global shell layer. An inherited copy of a key the
+		// global layer sets would therefore beat it, which no other platform
+		// does (and which sent the API-resume sanitizer, keyed off the global
+		// CLAUDE_CONFIG_DIR, to a different transcript than claude used). Drop
+		// those inherited copies so the global value wins. PATH stays expanded.
+		const explicitKeys = new Set(
+			Object.keys(customEnvVarsToPass ?? {}).map((k) => k.toUpperCase())
+		);
+		const globalKeys = new Set(Object.keys(globalShellEnvVars).map((k) => k.toUpperCase()));
 		customEnvVarsToPass = Object.fromEntries(
-			Object.entries(expandedEnv).filter(([_, value]) => value !== undefined)
+			Object.entries(expandedEnv).filter(([key, value]) => {
+				if (value === undefined) return false;
+				const upper = key.toUpperCase();
+				return upper === 'PATH' || explicitKeys.has(upper) || !globalKeys.has(upper);
+			})
 		) as Record<string, string>;
 
 		// Get the preferred shell for Windows (custom -> current -> PowerShell)
@@ -1011,6 +1040,10 @@ export async function handleProcessSpawn(
 		const originalEffectivePrompt = effectivePrompt;
 		const originalCustomEnvVars = effectiveCustomEnvVars;
 		const originalContextWindow = contextWindow;
+		// Snapshot the global shell vars at registration time so the replay
+		// spawn uses the same environment as the original turn even if settings
+		// change before the quota retry fires.
+		const originalGlobalShellEnvVars = globalShellEnvVars;
 
 		deps.interactiveReplayController.registerInteractiveReplay(config.sessionId, {
 			configDirKey: resolvedConfigDirKey,
@@ -1087,6 +1120,7 @@ export async function handleProcessSpawn(
 					noPromptSeparator: originalAgent.noPromptSeparator,
 					projectPath: originalConfig.cwd,
 					querySource: originalConfig.querySource,
+					shellEnvVars: originalGlobalShellEnvVars,
 					tabId: originalConfig.tabId,
 				};
 			},
