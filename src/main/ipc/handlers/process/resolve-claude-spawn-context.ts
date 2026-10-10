@@ -1,6 +1,10 @@
 import Store from 'electron-store';
 import type { AgentConfig } from '../../../agents/definitions';
 import { resolveClaudeSpawnMode } from '../../../agents/resolveClaudeSpawnMode';
+import {
+	mergeClaudeSpawnEnvLayers,
+	type ClaudeSpawnEnvLayers,
+} from '../../../agents/claudeSpawnCore';
 import { ensureRemoteMaestroPProbed } from '../../../agents/probeRemoteMaestroP';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
 import { resolveConfigDirKey } from '../../../stores/claudeUsageStore';
@@ -47,6 +51,13 @@ export async function resolveClaudeSpawnContext(
 	deps: {
 		sessionsStore: Store<{ sessions: unknown[] }>;
 		settingsStore: Store<MaestroSettings>;
+		/**
+		 * Every user-editable env layer the spawned process receives. The
+		 * Claude config-dir lookups here (spawn-mode resolution and the
+		 * API-resume sanitizer) must see the same env the child will, or the
+		 * key names a directory claude never writes to.
+		 */
+		envLayers: ClaudeSpawnEnvLayers;
 	}
 ): Promise<ClaudeSpawnContext> {
 	const isClaudeCode =
@@ -129,6 +140,8 @@ export async function resolveClaudeSpawnContext(
 			command: config.command,
 			sessionCustomPath: config.sessionCustomPath,
 			sessionCustomEnvVars: config.sessionCustomEnvVars,
+			globalShellEnvVars: deps.envLayers.globalShellEnvVars,
+			agentCustomEnvVars: deps.envLayers.agentCustomEnvVars,
 			maestroPPath: persistedSession?.maestroPPath ?? config.maestroPPath,
 			persisted: persistedSession?.claudeInteractive,
 			now: new Date(),
@@ -153,12 +166,7 @@ export async function resolveClaudeSpawnContext(
 	// state), compute it now so we can locate the transcript on disk.
 	if (claudeResolvedMode === 'api' && config.agentSessionId && isClaudeCode && !isSshEnabled) {
 		const configDirKey =
-			resolvedConfigDirKey ??
-			resolveConfigDirKey({
-				...(process.env as NodeJS.ProcessEnv),
-				...(agent?.defaultEnvVars ?? {}),
-				...(config.sessionCustomEnvVars ?? {}),
-			});
+			resolvedConfigDirKey ?? resolveConfigDirKey(mergeClaudeSpawnEnvLayers(deps.envLayers));
 		sanitizeClaudeTranscriptBeforeApiResume({
 			configDirKey,
 			cwd: config.cwd,
