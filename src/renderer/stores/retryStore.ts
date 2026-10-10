@@ -791,6 +791,32 @@ function reportUndeliverableRetry(entry: RetryEntry, item: QueuedItem): void {
 	});
 }
 
+/**
+ * A resend `applyReplayDispatch` refused to start. Each refusal means the turn
+ * is accounted for somewhere else, so the entry must not stay `'in-flight'`:
+ *  - the tab is gone: say what was not sent, as when the dispatch finds no tab;
+ *  - the tab is mid-turn: our own collision, so put the prompt back and try
+ *    again shortly, without counting an attempt;
+ *  - the user re-sent the same prompt: their queued copy replaces this one, and
+ *    ending the outage releases the queue so it drains.
+ */
+function endBlockedResend(entry: RetryEntry, item: QueuedItem, reason: ReplayBlockedReason): void {
+	if (reason === 'no-target-tab') {
+		reportUndeliverableRetry(entry, item);
+		return;
+	}
+	if (reason === 'target-tab-busy') {
+		holdFailedItemInQueue(entry.sessionId, entry.tabId, item);
+		rescheduleAfterFailedDispatch(entry.key, 'target tab is mid-turn');
+		return;
+	}
+	logger.info('[retry] The same prompt is already queued; ending outage', undefined, {
+		key: entry.key,
+	});
+	resolveOutage(entry.outageId, 'stopped');
+	removeEntry(entry.key);
+}
+
 /** Fire a scheduled retry now: mark in-flight and re-run the failed work. */
 async function fireRetry(key: string): Promise<void> {
 	const entry = useRetryStore.getState().retries[key];
@@ -830,14 +856,46 @@ async function fireRetry(key: string): Promise<void> {
 			return;
 		}
 		// Take the held copy out of the queue in the same beat as the resend, so
-		// the prompt exists in exactly one place at a time. Done BEFORE the await:
-		// the dispatch marks the tab busy, and a queue drain that read the item
-		// while it was in flight would send it twice.
+		// the prompt exists in exactly one place at a time.
 		releaseHeldItemFromQueue(entry.sessionId, snapshot.item.id);
+
+		// Mark the tab running BEFORE the spawn, and before the await: a queue
+		// drain that read this tab as free while the resend was in flight would
+		// send behind it. `processQueuedItem` leaves the busy transition to its
+		// callers, and the failed attempt's exit already idled the tab, so without
+		// this the resend was a GHOST TURN - a live process under a green "Ready"
+		// dot, no Thinking pill, and no Stop button reaching it, for as long as the
+		// turn ran. Same transition the re-auth replay takes (`dispatchReplay`).
+		const item = replayItem(entry, snapshot.item);
+		// Cast so TS does not narrow to `undefined`: the updater runs synchronously
+		// inside the store's `set`, which control-flow analysis cannot see.
+		let blocked = undefined as ReplayBlockedReason | undefined;
+		updateSessionWith(entry.sessionId, (session) => {
+			const result = applyReplayDispatch(session, item);
+			blocked = result.blocked;
+			return result.session;
+		});
+		if (blocked) {
+			endBlockedResend(entry, snapshot.item, blocked);
+			return;
+		}
+
+		// Stop (`stopRetriesForAgent`) removes this entry. It can land while the
+		// resend loads the agent and system prompt, before any process exists to
+		// interrupt, so the spawn checks for it last.
+		const stopped = () => useRetryStore.getState().retries[key]?.outageId !== entry.outageId;
 		const dispatched = await useAgentStore
 			.getState()
-			.processQueuedItem(entry.sessionId, replayItem(entry, snapshot.item), snapshot.deps);
-		if (!dispatched) reportUndeliverableRetry(entry, snapshot.item);
+			.processQueuedItem(entry.sessionId, item, { ...snapshot.deps, isCancelled: stopped });
+		if (dispatched) return;
+		if (!stopped()) {
+			reportUndeliverableRetry(entry, snapshot.item);
+		} else if (useRetryStore.getState().outages[entry.outageId]?.status === 'stopped') {
+			// Stop found nothing to hold: the prompt left the queue when this resend
+			// began. Park it the way Stop parks a queued one, paused and one click
+			// from Force Send. Another resolution (a re-auth replay) is sending it.
+			holdFailedItemInQueue(entry.sessionId, entry.tabId, { ...snapshot.item, paused: true });
+		}
 	} catch (error) {
 		// The resend never reached the provider (a spawn refusal, a bad config, a
 		// thrown dep). That is not an outcome the agent-error path will ever
@@ -1088,6 +1146,45 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 
 	resolveOutage(entry.outageId, 'stopped');
 	removeEntry(key);
+}
+
+/**
+ * The agent's Stop button was pressed: end every outage it has open.
+ *
+ * Stop is agent-level and meant to leave nothing running, but a pending retry
+ * is work the agent WILL do - a countdown resent the stopped prompt half a
+ * minute later, which read as Stop not working. Unlike `cancelRetry` (the
+ * card's own Stop), this raises no error state: the user stopped the agent,
+ * not the outage's recovery, and there is nothing left for them to act on.
+ *
+ * A failed prompt the outage parked at the head of the queue is HELD rather
+ * than released, so Stop's own queue drain does not send it straight back out;
+ * it stays visible and one click from Force Send. An in-flight resend is a
+ * live process, which Stop is signalling separately.
+ */
+export function stopRetriesForAgent(sessionId: string): void {
+	const entries = Object.values(useRetryStore.getState().retries).filter(
+		(entry) => entry.sessionId === sessionId
+	);
+	if (entries.length === 0) return;
+
+	const heldIds = new Set(entries.map((entry) => entry.heldItemId).filter(Boolean));
+	updateSessionWith(sessionId, (s) =>
+		s.executionQueue?.some((item) => heldIds.has(item.id))
+			? {
+					...s,
+					executionQueue: s.executionQueue.map((item) =>
+						heldIds.has(item.id) ? { ...item, paused: true } : item
+					),
+				}
+			: s
+	);
+
+	for (const entry of entries) {
+		logger.info('[retry] Stop ended the auto-retry', undefined, { key: entry.key });
+		resolveOutage(entry.outageId, 'stopped');
+		removeEntry(entry.key);
+	}
 }
 
 /**

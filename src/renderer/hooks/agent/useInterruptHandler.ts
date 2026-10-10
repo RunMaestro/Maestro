@@ -19,7 +19,13 @@
 
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
-import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	selectSessionById,
+	updateSessionWith,
+} from '../../stores/sessionStore';
+import { stopRetriesForAgent } from '../../stores/retryStore';
 import { generateId } from '../../utils/ids';
 import {
 	getActiveTab,
@@ -134,6 +140,11 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				? `${activeSession.id}-ai-${activeTab?.id || 'default'}`
 				: `${activeSession.id}-terminal`;
 
+		// A pending Agent Resilience retry is work this agent WILL do: left alone it
+		// resent the stopped prompt when its countdown ran out. Ended first and
+		// synchronously, so no timer can fire it during the awaits below.
+		if (currentMode === 'ai') stopRetriesForAgent(activeSession.id);
+
 		// Cancel any pending synopsis processes (non-critical, shouldn't block interrupt)
 		try {
 			await cancelPendingSynopsis(activeSession.id);
@@ -187,8 +198,11 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				throw results[0].reason;
 			}
 
-			// Check if there are queued items to process after interrupt
-			const currentSession = sessionsRef.current?.find((s) => s.id === activeSession.id);
+			// Check if there are queued items to process after interrupt. Read the
+			// store, not the render-time ref: the updater below dequeues from the
+			// store, and an item paused a moment ago (a retry Stop just ended) must
+			// not be dispatched off a stale copy.
+			const currentSession = selectSessionById(activeSession.id)(useSessionStore.getState());
 			let queuedItemToProcess: {
 				sessionId: string;
 				item: QueuedItem;

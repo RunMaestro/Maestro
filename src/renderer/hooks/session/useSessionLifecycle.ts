@@ -41,6 +41,7 @@ import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
+import { killAgentAiProcesses } from '../../services/process';
 import {
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
@@ -455,7 +456,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 			// Kill all processes for this session (AI + legacy terminal + terminal tabs)
 			try {
-				await window.maestro.process.kill(`${id}-ai`);
+				await killAgentAiProcesses(id);
 			} catch (error) {
 				captureException(error, {
 					extra: { sessionId: id, operation: 'kill-ai' },

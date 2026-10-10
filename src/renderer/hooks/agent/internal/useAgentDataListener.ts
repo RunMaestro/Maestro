@@ -19,7 +19,7 @@
 import { useEffect } from 'react';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
-import { getActiveTab, getWriteModeTab } from '../../../utils/tabHelpers';
+import { getActiveTab, getWriteModeTab, markTabBusyFromOutput } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { removeMatchingAgentErrorLog } from './helpers/agentErrorLogMatch';
@@ -95,6 +95,13 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 			deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${targetTabId}`);
 
 			const targetTab = session?.aiTabs?.find((t) => t.id === targetTabId);
+
+			// Output on this tab's own process key proves its turn is running, even
+			// when this client never saw it start (see markTabBusyFromOutput). Gated
+			// on the tab read above, so a busy tab - nearly every chunk - writes nothing.
+			if (tabIdFromSession && targetTab && targetTab.state !== 'busy') {
+				updateSessionWith(actualSessionId, (s) => markTabBusyFromOutput(s, tabIdFromSession));
+			}
 
 			// Only rewrite the sessions array when the target tab still carries a
 			// hidden-progress placeholder to strip. That holds on the first visible

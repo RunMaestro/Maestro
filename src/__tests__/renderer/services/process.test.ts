@@ -10,6 +10,7 @@ import {
 	probeSessionAiProcesses,
 	AI_PROCESS_PROBE_TIMEOUT_MS,
 	fetchLiveAiTurns,
+	killAgentAiProcesses,
 	ProcessConfig,
 	ProcessDataHandler,
 	ProcessExitHandler,
@@ -671,5 +672,39 @@ describe('fetchLiveAiTurns', () => {
 		mockProcess.getActiveProcesses.mockResolvedValue([]);
 
 		await expect(fetchLiveAiTurns()).resolves.toEqual([]);
+	});
+});
+
+// Agent delete, group delete and provider switch used to kill only the bare
+// `{id}-ai`, which no per-tab turn runs under, so every running turn survived
+// the agent it belonged to.
+describe('killAgentAiProcesses', () => {
+	function proc(sessionId: string, isTerminal = false) {
+		return { sessionId, toolType: 'codex', pid: 1, cwd: '/x', isTerminal };
+	}
+
+	test("kills every AI turn the agent owns, and nobody else's", async () => {
+		mockProcess.kill.mockResolvedValue(true);
+		mockProcess.getActiveProcesses.mockResolvedValue([
+			proc('agent-1-ai-tab-a'),
+			proc('agent-1-ai-tab-b-fp-1700000000000'),
+			proc('agent-1-terminal', true),
+			proc('agent-10-ai-tab-c'),
+		]);
+
+		await killAgentAiProcesses('agent-1');
+
+		const killed = mockProcess.kill.mock.calls.map(([id]) => id).sort();
+		expect(killed).toEqual(['agent-1-ai', 'agent-1-ai-tab-a', 'agent-1-ai-tab-b-fp-1700000000000']);
+	});
+
+	test('still kills the legacy id when the process table cannot be read', async () => {
+		vi.spyOn(logger, 'warn').mockImplementation(() => {});
+		mockProcess.kill.mockResolvedValue(true);
+		mockProcess.getActiveProcesses.mockRejectedValue(new Error('bridge down'));
+
+		await killAgentAiProcesses('agent-1');
+
+		expect(mockProcess.kill).toHaveBeenCalledWith('agent-1-ai');
 	});
 });

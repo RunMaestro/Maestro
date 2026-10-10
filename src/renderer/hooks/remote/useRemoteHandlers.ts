@@ -21,7 +21,11 @@ import {
 import { useSessionStore, updateAiTab } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getActiveTab } from '../../utils/tabHelpers';
+import {
+	getActiveTab,
+	settleAgentStateFromTabs,
+	settleTabThinkingState,
+} from '../../utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -279,10 +283,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						prev.map((s) => {
 							if (s.id !== sessionId) return s;
 							return {
-								...s,
-								state: 'idle' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
+								...settleAgentStateFromTabs(s),
 								// TODO: Remove shellLogs once terminal tabs migration is complete
 								...(!s.terminalTabs?.length && {
 									shellLogs: [
@@ -741,7 +742,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// honest `accepted: false` receipt below and the tab gets the error
 				// log, so the user is told either way. Reporting it paged Sentry for
 				// nothing (MAESTRO-ZS). Every other spawn failure still reports.
-				if (!isAgentAlreadyRunningError(error)) {
+				const isSpawnCollision = isAgentAlreadyRunningError(error);
+				if (!isSpawnCollision) {
 					captureException(error, {
 						extra: {
 							sessionId,
@@ -770,20 +772,6 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						// Mirror the success path: route the error log to the same tab
 						// we tried to write into, falling back to active when unset.
 						const resolvedWriteTabId = writeTabId ?? s.activeTabId;
-						const updatedAiTabs =
-							s.aiTabs?.length > 0
-								? s.aiTabs.map((tab) =>
-										tab.id === resolvedWriteTabId
-											? {
-													...tab,
-													state: 'idle' as const,
-													thinkingStartTime: undefined,
-													logs: [...tab.logs, errorLogEntry],
-												}
-											: tab
-									)
-								: s.aiTabs;
-
 						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
 							logger.error(
 								'[runAICommand error] Target tab not found in session - dropping error log'
@@ -791,13 +779,18 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 							return s;
 						}
 
-						return {
+						const withLog = {
 							...s,
-							state: 'idle' as SessionState,
-							busySource: undefined,
-							thinkingStartTime: undefined,
-							aiTabs: updatedAiTabs,
+							aiTabs: s.aiTabs.map((tab) =>
+								tab.id === resolvedWriteTabId ? { ...tab, logs: [...tab.logs, errorLogEntry] } : tab
+							),
 						};
+						// A collision means another turn is live on this tab: leave its
+						// busy state exactly as it is, the same rule the composer and the
+						// queue follow - its exit settles it. Any other failure started
+						// nothing, so settle only this tab; another tab mid-turn keeps the
+						// agent busy.
+						return isSpawnCollision ? withLog : settleTabThinkingState(withLog, resolvedWriteTabId);
 					})
 				);
 			}

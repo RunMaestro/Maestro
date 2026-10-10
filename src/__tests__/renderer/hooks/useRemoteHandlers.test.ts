@@ -60,12 +60,18 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
-vi.mock('../../../renderer/utils/tabHelpers', () => ({
-	getActiveTab: vi.fn((session: Session) => {
-		if (!session?.aiTabs?.length) return null;
-		return session.aiTabs.find((t: any) => t.id === session.activeTabId) || session.aiTabs[0];
-	}),
-}));
+vi.mock('../../../renderer/utils/tabHelpers', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/utils/tabHelpers')>();
+	return {
+		// The real state transitions: failure paths settle through them.
+		settleTabThinkingState: actual.settleTabThinkingState,
+		settleAgentStateFromTabs: actual.settleAgentStateFromTabs,
+		getActiveTab: vi.fn((session: Session) => {
+			if (!session?.aiTabs?.length) return null;
+			return session.aiTabs.find((t: any) => t.id === session.activeTabId) || session.aiTabs[0];
+		}),
+	};
+});
 
 // Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts;
 // here we only assert which entry points hand the message to it (issue #1531).
@@ -1494,6 +1500,33 @@ describe('useRemoteHandlers', () => {
 				(l) => l.source === 'system' && l.text.includes('Spawn failed')
 			);
 			expect(errorLog).toBeTruthy();
+		});
+
+		// "Agent process already running": another turn is live on this tab, so it
+		// stays busy - the composer and the queue follow the same rule. Idling it
+		// painted a live process "Ready" and told the queue the tab was free.
+		it('leaves a tab busy when the spawn collides with a turn already running on it', async () => {
+			(window.maestro.process.spawn as any).mockRejectedValue(
+				new Error(agentAlreadyRunningMessage('session-1-ai-tab-1'))
+			);
+			const session = createMockSession({ inputMode: 'ai' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'do something', inputMode: 'ai' },
+					})
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			const tab = updated?.aiTabs.find((t) => t.id === updated.activeTabId);
+			expect(tab?.state).toBe('busy');
+			expect(updated?.state).toBe('busy');
 		});
 
 		it('filters --dangerously-skip-permissions from args in readOnly mode', async () => {

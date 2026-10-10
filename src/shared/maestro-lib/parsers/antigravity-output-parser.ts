@@ -94,6 +94,13 @@ interface AntigravityStreamMessage {
 const STREAM_EVENTS = ['init', 'step_update', 'result'];
 
 /**
+ * agy's stderr line for an expired `--print-timeout`:
+ * `[agy] print timeout after 30m0s with turn in progress; returning partial output`.
+ * Multiline because stderr arrives in chunks that can hold several lines.
+ */
+const PRINT_TIMEOUT_WARNING = /^\[agy\] print timeout after \S+ with turn in progress/m;
+
+/**
  * Map a step's lifecycle word onto the status vocabulary the tool badge reads.
  *
  * The raw `state` string used to be handed to `toolState` directly, which meant
@@ -365,6 +372,18 @@ export class AntigravityOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		// agy's own stderr warning when `--print-timeout` expires mid-turn. Since
+		// agy 1.2.x the run then returns the PARTIAL answer and exits 0, so neither
+		// the result event nor the exit code says the turn was cut off, and the
+		// bank's `print timeout` pattern - reachable only through a non-zero exit -
+		// never fired: a truncated answer read as a finished one. Anchored to agy's
+		// prefix so text that merely mentions the flag is never classified. Typed
+		// `unknown`, not `network_error`, because resending the same prompt under
+		// the same timeout repeats the partial work and is cut off again.
+		if (PRINT_TIMEOUT_WARNING.test(line)) {
+			return this.printTimeoutError({ errorLine: line });
+		}
+
 		try {
 			const error = this.detectErrorFromParsed(JSON.parse(line));
 			if (error) {
@@ -375,6 +394,19 @@ export class AntigravityOutputParser implements AgentOutputParser {
 			// Not JSON - nothing structured to classify.
 			return null;
 		}
+	}
+
+	/** agy's --print-timeout expired mid-turn; see detectErrorFromLine. */
+	private printTimeoutError(raw: AgentError['raw']): AgentError {
+		return {
+			type: 'unknown',
+			message:
+				'The headless run hit its timeout and returned a partial answer. Raise the "Headless Timeout" option in the agent settings.',
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			raw,
+		};
 	}
 
 	detectErrorFromParsed(parsed: unknown): AgentError | null {
@@ -406,7 +438,12 @@ export class AntigravityOutputParser implements AgentOutputParser {
 
 	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null {
 		if (exitCode === 0) {
-			return null;
+			// The stderr handler checks each chunk as it arrives, so a warning split
+			// across two chunks matches neither. The exit sees all of stderr, and
+			// only runs when nothing was raised mid-stream, so this cannot double up.
+			return PRINT_TIMEOUT_WARNING.test(stderr)
+				? this.printTimeoutError({ exitCode, stderr })
+				: null;
 		}
 
 		const combined = `${stderr}\n${stdout}`;

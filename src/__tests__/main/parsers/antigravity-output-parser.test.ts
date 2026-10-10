@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { AntigravityOutputParser } from '../../../main/parsers/antigravity-output-parser';
 import { MAX_PERSISTED_TOOL_OUTPUT_CHARS } from '../../../shared/toolOutput';
 import { initializeOutputParsers } from '../../../main/parsers';
+import { classifyRetryableError } from '../../../shared/retryClassification';
 
 beforeAll(() => {
 	// detectErrorFromParsed / detectErrorFromExit consult the error-pattern registry.
@@ -341,6 +342,53 @@ describe('AntigravityOutputParser', () => {
 		expect(error).toEqual(
 			expect.objectContaining({ type: 'network_error', recoverable: true, agentId: 'antigravity' })
 		);
+	});
+
+	// agy 1.2.x+ returns the partial answer and exits 0 when --print-timeout
+	// expires mid-turn; this stderr line (verbatim from agy 1.3.1) is the only
+	// signal, and the exit-code path above can never see it.
+	it('reports the stderr warning for a turn cut off by the headless timeout', () => {
+		const parser = new AntigravityOutputParser();
+		const warning =
+			'[agy] print timeout after 30m0s with turn in progress; returning partial output';
+
+		const error = parser.detectErrorFromLine(warning);
+
+		expect(error).toEqual(
+			expect.objectContaining({ type: 'unknown', recoverable: true, agentId: 'antigravity' })
+		);
+		expect(error?.message).toContain('Headless Timeout');
+		// Not auto-retried: the same prompt under the same timeout repeats the
+		// partial work and is cut off again.
+		expect(classifyRetryableError(error!)).toBeNull();
+		// stderr arrives in chunks that can carry other lines first.
+		expect(parser.detectErrorFromLine(`loading tools\n${warning}\n`)).not.toBeNull();
+	});
+
+	// stderr is checked chunk by chunk, so a warning split across two chunks
+	// matches neither; the exit sees all of stderr.
+	it('reports a timeout warning split across stderr chunks at exit', () => {
+		const parser = new AntigravityOutputParser();
+		const warning =
+			'[agy] print timeout after 30m0s with turn in progress; returning partial output\n';
+		const [first, second] = [warning.slice(0, 20), warning.slice(20)];
+
+		expect(parser.detectErrorFromLine(first)).toBeNull();
+		expect(parser.detectErrorFromLine(second)).toBeNull();
+		expect(parser.detectErrorFromExit(0, first + second, '')).toEqual(
+			expect.objectContaining({ type: 'unknown', agentId: 'antigravity' })
+		);
+		expect(parser.detectErrorFromExit(0, 'loading tools\n', '')).toBeNull();
+	});
+
+	it('does not classify text that merely mentions the print timeout', () => {
+		const parser = new AntigravityOutputParser();
+
+		expect(
+			parser.detectErrorFromLine(
+				'Pass --print-timeout 30m so a print timeout does not cut the turn'
+			)
+		).toBeNull();
 	});
 
 	it('reports an unrecognized non-zero exit as a crash and stays silent on success', () => {

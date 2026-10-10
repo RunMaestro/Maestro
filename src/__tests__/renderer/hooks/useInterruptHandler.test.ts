@@ -36,6 +36,7 @@ vi.mock('../../../renderer/utils/tabHelpers', async () => {
 import { useInterruptHandler } from '../../../renderer/hooks/agent/useInterruptHandler';
 import type { UseInterruptHandlerDeps } from '../../../renderer/hooks/agent/useInterruptHandler';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retryStore';
 import type { Session, AITab } from '../../../renderer/types';
 
 // ============================================================================
@@ -651,6 +652,56 @@ describe('useInterruptHandler', () => {
 	// ========================================================================
 	// Execution queue processing
 	// ========================================================================
+	// A pending auto-retry resent the stopped prompt when its countdown ran out,
+	// which read as Stop not working.
+	describe('a pending Agent Resilience retry', () => {
+		it('is ended by Stop, and its parked prompt is held instead of sent', async () => {
+			vi.useFakeTimers();
+			const parked = { id: 'q-held', type: 'message' as const, text: 'retry me', tabId: 'tab-1' };
+			const session = createSession({
+				id: 'sess-retry',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [createTab({ id: 'tab-1', state: 'busy' })],
+				executionQueue: [parked],
+			} as Partial<Session>);
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-retry' });
+			useRetryStore.setState({
+				retries: {
+					'sess-retry:tab-1': {
+						sessionId: 'sess-retry',
+						tabId: 'tab-1',
+						key: 'sess-retry:tab-1',
+						outageId: 'outage-1',
+						status: 'scheduled',
+						heldItemId: 'q-held',
+					} as RetryEntry,
+				},
+				outages: {
+					'outage-1': { outageId: 'outage-1', sessionId: 'sess-retry', status: 'active' },
+				} as never,
+			});
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+			act(() => {
+				vi.advanceTimersByTime(10);
+			});
+
+			expect(useRetryStore.getState().retries).toEqual({});
+			expect(useRetryStore.getState().outages['outage-1'].status).toBe('stopped');
+			const after = useSessionStore.getState().sessions[0];
+			expect(after.executionQueue).toEqual([{ ...parked, paused: true }]);
+			expect(deps.processQueuedItem).not.toHaveBeenCalled();
+			// No error hand-off: the user stopped the agent, not the recovery.
+			expect(after.state).toBe('idle');
+			vi.useRealTimers();
+		});
+	});
+
 	describe('execution queue processing', () => {
 		it('processes next queued item after interrupt', async () => {
 			vi.useFakeTimers();

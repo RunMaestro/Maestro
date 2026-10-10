@@ -14,6 +14,7 @@ import {
 	getRepairedUnifiedTabOrder,
 	reopenClosedAiTabById,
 	hasActiveWizard,
+	syncAgentStateToTabs,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
@@ -598,6 +599,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							...updatedSession,
 							unifiedTabOrder: getRepairedUnifiedTabOrder(updatedSession),
 						};
+						// The snapshot carries tab states only; derive the agent's from them
+						// so its Left Bar dot and Thinking pill agree with the tabs it draws.
+						updatedSession = syncAgentStateToTabs(updatedSession);
 					}
 
 					const targetExists = updatedSession.aiTabs.some((tab) => tab.id === tabId);

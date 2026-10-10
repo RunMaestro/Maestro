@@ -4,6 +4,7 @@
  * applies `maestro-cli update-agent` patches to a session. Scoped to the
  * context-window provenance rules from finding AD1: the allowlist has to carry
  * `contextWindowSource`, and clearing the window has to clear its provenance.
+ * Also covers the provider switch, which must stop the old turns first.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -114,5 +115,61 @@ describe('remoteUpdateSessionConfig - context window provenance (finding AD1)', 
 
 		expect(updated.customModel).toBe('opus');
 		expect(updated.contextWindowSource).toBe('user-edited');
+	});
+});
+
+// A provider switch replaces every tab, so the old provider's turns must be
+// gone first: a turn left running writes into nothing, and one started on a new
+// tab during the kill would be caught in its sweep.
+describe('remoteUpdateSessionConfig - provider switch', () => {
+	async function switchProvider(session: Session) {
+		const deps = makeDeps(session);
+		renderHook(() => useAppRemoteEventListeners(deps));
+		await act(async () => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:remoteUpdateSessionConfig', {
+					detail: {
+						sessionId: session.id,
+						configPatch: { toolType: 'codex' },
+						responseChannel: RESPONSE_CHANNEL,
+					},
+				})
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		return {
+			setSessions: (deps as unknown as { setSessions: ReturnType<typeof vi.fn> }).setSessions,
+			respond: vi.mocked(
+				(window.maestro.process as unknown as Record<string, ReturnType<typeof vi.fn>>)
+					.sendRemoteUpdateSessionConfigResponse
+			),
+		};
+	}
+
+	it('kills every running turn before replacing the tabs', async () => {
+		vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([
+			{ sessionId: 'session-1-ai-tab-a', pid: 9, isTerminal: false },
+		] as never);
+		const kill = vi.mocked(window.maestro.process.kill);
+		kill.mockClear();
+
+		const { setSessions, respond } = await switchProvider(makeSession());
+
+		expect(kill).toHaveBeenCalledWith('session-1-ai-tab-a');
+		expect(kill.mock.invocationCallOrder[0]).toBeLessThan(setSessions.mock.invocationCallOrder[0]);
+		expect(respond).toHaveBeenCalledWith(RESPONSE_CHANNEL, { success: true });
+	});
+
+	it('reports a failed kill instead of a completed switch', async () => {
+		vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([]);
+		vi.mocked(window.maestro.process.kill).mockRejectedValueOnce(new Error('kill failed'));
+
+		const { setSessions, respond } = await switchProvider(makeSession());
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(respond).toHaveBeenCalledWith(
+			RESPONSE_CHANNEL,
+			expect.objectContaining({ success: false })
+		);
 	});
 });

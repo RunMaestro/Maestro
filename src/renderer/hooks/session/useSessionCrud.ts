@@ -28,6 +28,7 @@ import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { killAgentAiProcesses } from '../../services/process';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 
 // ============================================================================
@@ -375,7 +376,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				async () => {
 					for (const session of groupSessions) {
 						try {
-							await (window as any).maestro.process.kill(`${session.id}-ai`);
+							await killAgentAiProcesses(session.id);
 						} catch (error) {
 							logger.error('Failed to kill AI process:', undefined, error);
 						}

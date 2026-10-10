@@ -26,7 +26,7 @@ import { notifyToast, showOsNotification } from '../../stores/notificationStore'
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
-import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { aiTabFocusFields, settleTabThinkingState } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { captureQueuedTurnSettings } from '../../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -605,25 +605,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 						source: 'system',
 						text: `Error: Failed to spawn agent - ${(error as Error).message}`,
 					};
+					// Settle only the transfer's tab: another tab mid-turn keeps the
+					// agent busy.
 					setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== targetSessionId) return s;
-							return {
-								...s,
-								state: 'idle',
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: s.aiTabs.map((tab) =>
-									tab.id === newTabId
-										? {
-												...tab,
-												state: 'idle' as const,
-												thinkingStartTime: undefined,
-												logs: [...tab.logs, errorLog],
-											}
-										: tab
-								),
-							};
+							return settleTabThinkingState(
+								{
+									...s,
+									aiTabs: s.aiTabs.map((tab) =>
+										tab.id === newTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
+									),
+								},
+								newTabId
+							);
 						})
 					);
 				}

@@ -352,6 +352,46 @@ describe('useAgentListeners', () => {
 			expect(deps.batchedUpdater.markDelivered).toHaveBeenCalledWith('sess-1', 'tab-1');
 		});
 
+		// Output on the tab's own process key proves its turn is running. This
+		// client may never have seen it start: an auto-retry resend, or a turn
+		// another client dispatched, painted a live process green "Ready".
+		it('marks an idle tab and its agent busy when its process produces output', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'idle',
+				aiTabs: [createMockTab({ id: 'tab-1', state: 'idle' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			renderHook(() => useAgentListeners(deps));
+			onDataHandler?.('sess-1-ai-tab-1', 'still working');
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].state).toBe('busy');
+			expect(updated.state).toBe('busy');
+			expect(updated.busySource).toBe('ai');
+		});
+
+		it('writes nothing to the store for output on a tab already marked busy', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+			const before = useSessionStore.getState().sessions;
+
+			renderHook(() => useAgentListeners(deps));
+			onDataHandler?.('sess-1-ai-tab-1', 'chunk');
+
+			expect(useSessionStore.getState().sessions).toBe(before);
+		});
+
 		it('skips empty stdout for non-AI data', () => {
 			const deps = createMockDeps();
 			renderHook(() => useAgentListeners(deps));

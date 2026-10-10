@@ -425,9 +425,7 @@ describe('applyQueuedItemDispatchFailure', () => {
 		const next = applyQueuedItemDispatchFailure(
 			sessionWithCard({ executionQueue: [later] }),
 			failed,
-			{
-				hold: false,
-			}
+			{ collision: false }
 		);
 
 		expect(next.aiTabs[0].state).toBe('idle');
@@ -438,11 +436,10 @@ describe('applyQueuedItemDispatchFailure', () => {
 		expect(next.aiTabs[0].logs.map((l) => l.id)).toEqual(['log-old']);
 		// Head of the queue, so it keeps its place ahead of everything behind it.
 		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1', 'q2']);
-		expect(next.executionQueue[0].paused).toBeFalsy();
 	});
 
 	it('holds the item when the failure is not a transient collision', () => {
-		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { hold: true });
+		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { collision: false });
 
 		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
 		// Preserved and visible, but it cannot spin the queue against a wall that
@@ -450,12 +447,26 @@ describe('applyQueuedItemDispatchFailure', () => {
 		expect(next.executionQueue[0].paused).toBe(true);
 	});
 
+	// "Agent process already running": a process still owns the tab's key, and
+	// only the exit handler removes it, so that exit will come and settle the tab.
+	it('leaves a colliding tab and the agent busy, with the item runnable', () => {
+		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { collision: true });
+
+		expect(next.aiTabs[0].state).toBe('busy');
+		expect(next.state).toBe('busy');
+		expect(next.busySource).toBe('ai');
+		// The card still goes: this prompt was never delivered.
+		expect(next.aiTabs[0].logs.map((l) => l.id)).toEqual(['log-old']);
+		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
+		expect(next.executionQueue[0].paused).toBeFalsy();
+	});
+
 	it('is idempotent when the item is already back in the queue', () => {
 		// `retryStore.holdFailedItemInQueue` parks the failed turn in the queue for
 		// the life of an outage. A second copy would double-send the prompt.
 		const held = sessionWithCard({ executionQueue: [failed] });
 
-		const next = applyQueuedItemDispatchFailure(held, failed, { hold: false });
+		const next = applyQueuedItemDispatchFailure(held, failed, { collision: true });
 
 		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
 	});
@@ -467,7 +478,7 @@ describe('applyQueuedItemDispatchFailure', () => {
 			aiTabs: [...base.aiTabs, createMockAITab({ id: 'tab-2', state: 'busy' })],
 		} as Session;
 
-		const next = applyQueuedItemDispatchFailure(withOther, failed, { hold: false });
+		const next = applyQueuedItemDispatchFailure(withOther, failed, { collision: false });
 
 		expect(next.aiTabs.find((t) => t.id === 'tab-1')!.state).toBe('idle');
 		expect(next.aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
@@ -492,9 +503,7 @@ describe('applyQueuedItemDispatchFailure', () => {
 		const next = applyQueuedItemDispatchFailure(
 			base,
 			{ ...failed, tabId: 'tab-9' },
-			{
-				hold: false,
-			}
+			{ collision: false }
 		);
 
 		expect(next.orphanedThinkingTabs![0].logs).toHaveLength(0);
@@ -631,7 +640,9 @@ describe('consult hold', () => {
 			executionQueue: [held('tab-1')],
 		} as Partial<Session>);
 
-		const recovered = applyQueuedItemDispatchFailure(session, failedMention, { hold: false });
+		const recovered = applyQueuedItemDispatchFailure(session, failedMention, {
+			collision: true,
+		});
 
 		expect(recovered.executionQueue.map((i) => i.id)).toEqual(['q1']);
 	});
