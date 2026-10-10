@@ -4,6 +4,8 @@
  * This module handles IPC calls for web interface and live session operations:
  * - web:broadcastUserInput: Broadcast user input to web clients
  * - web:broadcastAutoRunState: Broadcast AutoRun state to web clients
+ * - web:claimAutoRunStart / web:releaseAutoRunStartClaim: Serialize Auto Run starts across clients
+ * - web:takeOrphanedAutoRuns / web:abandonAutoRunReclaim: Hand a reloaded client back its runs
  * - web:broadcastTabsChange: Broadcast tab changes to web clients
  * - web:broadcastSessionState: Broadcast session state changes to web clients
  * - live:toggle: Toggle live mode for a session
@@ -28,7 +30,7 @@ import { isWebContentsAvailable } from '../../utils/safe-send';
 import { WebServer } from '../../web-server';
 import type { WebServerOptions } from '../../web-server/WebServer';
 import type { AITabData } from '../../web-server/services/broadcastService';
-import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
+import { getAutoRunStateTracker, type AutoRunOwner } from '../../autorun/autorun-state-tracker';
 import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
 import type { SettingsStoreInterface } from '../../stores/types';
 import {
@@ -306,6 +308,19 @@ function forwardAutoRunStateToDesktopWindows(
 }
 
 /**
+ * Accept a run owner only when it has the shape a reload needs to hand the run
+ * back. A malformed one is dropped rather than refused: the run still starts,
+ * it just cannot be resumed after a reload, which is today's behaviour.
+ */
+function asAutoRunOwner(owner: unknown): AutoRunOwner | undefined {
+	if (!owner || typeof owner !== 'object') return undefined;
+	const { instanceId, config, folderPath } = owner as Partial<AutoRunOwner>;
+	if (typeof instanceId !== 'string' || instanceId === '') return undefined;
+	if (typeof folderPath !== 'string' || !config || typeof config !== 'object') return undefined;
+	return { instanceId, config, folderPath };
+}
+
+/**
  * Register all web/live-related IPC handlers.
  */
 export function registerWebHandlers(deps: WebHandlerDependencies): void {
@@ -331,11 +346,20 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 	// Broadcast AutoRun state to web clients (called when batch processing state changes)
 	// Always store state even if no clients are connected, so new clients get initial state
-	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string) => {
-		return getAutoRunStateTracker().tryClaimStart(sessionId);
+	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string, owner?: AutoRunOwner) => {
+		return getAutoRunStateTracker().tryClaimStart(sessionId, asAutoRunOwner(owner));
 	});
 	ipcMain.handle('web:releaseAutoRunStartClaim', async (_, sessionId: string) => {
 		return getAutoRunStateTracker().releaseStartClaim(sessionId);
+	});
+	// A reloaded client asking for the runs its previous page left running
+	// (#1470). Main answers only with runs that same client started.
+	ipcMain.handle('web:takeOrphanedAutoRuns', async (_, instanceId: string) => {
+		if (typeof instanceId !== 'string' || instanceId === '') return [];
+		return getAutoRunStateTracker().takeOrphanedRuns(instanceId);
+	});
+	ipcMain.handle('web:abandonAutoRunReclaim', async (_, sessionId: string, instanceId: string) => {
+		return getAutoRunStateTracker().abandonReclaim(sessionId, instanceId);
 	});
 
 	ipcMain.handle(

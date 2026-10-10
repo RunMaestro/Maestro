@@ -1259,8 +1259,20 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
-		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
+		claimAutoRunStart: (
+			sessionId: string,
+			owner?: import('../shared/autoRunBroadcast').AutoRunOwner<import('./types').BatchRunConfig>
+		) => Promise<boolean>;
 		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
+		takeOrphanedAutoRuns: (
+			instanceId: string
+		) => Promise<
+			import('../shared/autoRunBroadcast').OrphanedAutoRun<
+				Partial<import('../shared/autoRunBroadcast').AutoRunBroadcastState>,
+				import('./types').BatchRunConfig
+			>[]
+		>;
+		abandonAutoRunReclaim: (sessionId: string, instanceId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,

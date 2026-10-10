@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { AutoRunOwner, OrphanedAutoRun } from '../../shared/autoRunBroadcast';
 
 /**
  * Auto Run state for broadcasting
@@ -57,10 +58,16 @@ export function createWebApi() {
 	return {
 		// Atomically reserve one agent before a renderer starts an Auto Run. Main
 		// owns the claim so simultaneous desktop/browser starts cannot both win.
-		claimAutoRunStart: (sessionId: string) =>
-			ipcRenderer.invoke('web:claimAutoRunStart', sessionId) as Promise<boolean>,
+		// `owner` records who started the run so a reload can hand it back (#1470).
+		claimAutoRunStart: (sessionId: string, owner?: AutoRunOwner) =>
+			ipcRenderer.invoke('web:claimAutoRunStart', sessionId, owner) as Promise<boolean>,
 		releaseAutoRunStartClaim: (sessionId: string) =>
 			ipcRenderer.invoke('web:releaseAutoRunStartClaim', sessionId) as Promise<boolean>,
+		// The runs this client's previous page left running when it reloaded.
+		takeOrphanedAutoRuns: (instanceId: string) =>
+			ipcRenderer.invoke('web:takeOrphanedAutoRuns', instanceId) as Promise<OrphanedAutoRun[]>,
+		abandonAutoRunReclaim: (sessionId: string, instanceId: string) =>
+			ipcRenderer.invoke('web:abandonAutoRunReclaim', sessionId, instanceId) as Promise<boolean>,
 
 		// Create a tab in the Electron renderer, which owns canonical tab state.
 		requestNewTab: (sessionId: string, background = false) =>

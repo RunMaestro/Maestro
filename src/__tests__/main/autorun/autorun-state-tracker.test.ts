@@ -160,3 +160,121 @@ describe('getAutoRunStateTracker', () => {
 		expect(getAutoRunStateTracker()).not.toBe(first);
 	});
 });
+
+describe('AutoRunStateTracker - reclaiming a run after its owner reloads (#1470)', () => {
+	let tracker: AutoRunStateTracker;
+	const owner = { instanceId: 'tab-1', config: { documents: [] }, folderPath: '/docs' };
+	const running = { isRunning: true, completedTasks: 2, totalTasks: 5, loopIteration: 1 };
+
+	beforeEach(() => {
+		tracker = new AutoRunStateTracker();
+	});
+
+	function startOwnedRun(agentId = 'a'): void {
+		expect(tracker.tryClaimStart(agentId, owner)).toBe(true);
+		tracker.update(agentId, running);
+	}
+
+	it('returns a running run only to the client that started it', () => {
+		startOwnedRun();
+		expect(tracker.takeOrphanedRuns('tab-2')).toEqual([]);
+		expect(tracker.takeOrphanedRuns('tab-1')).toEqual([
+			{ agentId: 'a', config: owner.config, folderPath: '/docs', state: running },
+		]);
+	});
+
+	it('does not return a claim that never published a run', () => {
+		expect(tracker.tryClaimStart('a', owner)).toBe(true);
+		expect(tracker.takeOrphanedRuns('tab-1')).toEqual([]);
+	});
+
+	it('does not return a finished run', () => {
+		startOwnedRun();
+		tracker.update('a', null);
+		expect(tracker.takeOrphanedRuns('tab-1')).toEqual([]);
+	});
+
+	it('holds a reclaimed run against other clients until its owner restarts it', () => {
+		startOwnedRun();
+		tracker.takeOrphanedRuns('tab-1');
+
+		expect(tracker.tryClaimStart('a')).toBe(false);
+		expect(tracker.tryClaimStart('a', { ...owner, instanceId: 'tab-2' })).toBe(false);
+		expect(tracker.isRunning('a')).toBe(true);
+
+		expect(tracker.tryClaimStart('a', owner)).toBe(true);
+	});
+
+	it('keeps the original start time across the restart', () => {
+		startOwnedRun();
+		const since = tracker.getRunningSince('a');
+		tracker.takeOrphanedRuns('tab-1');
+		tracker.tryClaimStart('a', owner);
+		expect(tracker.getRunningSince('a')).toBe(since);
+	});
+
+	it('restarting does not emit a finality edge; the restarted run ending does', () => {
+		const listener = vi.fn();
+		tracker.onFinal(listener);
+		startOwnedRun();
+		tracker.takeOrphanedRuns('tab-1');
+		tracker.tryClaimStart('a', owner);
+		tracker.update('a', { isRunning: true, completedTasks: 3, totalTasks: 5 });
+		expect(listener).not.toHaveBeenCalled();
+
+		tracker.update('a', null);
+		expect(listener).toHaveBeenCalledTimes(1);
+	});
+
+	it('releasing a restarted run that found no work left still ends the run', () => {
+		const listener = vi.fn();
+		tracker.onFinal(listener);
+		startOwnedRun();
+		tracker.takeOrphanedRuns('tab-1');
+		tracker.tryClaimStart('a', owner);
+
+		expect(tracker.releaseStartClaim('a')).toBe(true);
+		expect(listener).toHaveBeenCalledWith('a', { tasksCompleted: 2, tasksTotal: 5 });
+		expect(tracker.isRunning('a')).toBe(false);
+	});
+
+	it('hands the run back again if the owner reloads before restarting it', () => {
+		startOwnedRun();
+		tracker.takeOrphanedRuns('tab-1');
+		expect(tracker.takeOrphanedRuns('tab-1')).toHaveLength(1);
+
+		// ...and again after a restart that had not published yet, with the
+		// state the original loop last published rather than the placeholder.
+		tracker.tryClaimStart('a', owner);
+		expect(tracker.takeOrphanedRuns('tab-1')).toEqual([
+			expect.objectContaining({ agentId: 'a', state: running }),
+		]);
+	});
+
+	it('cancels the reclaim when the original loop turns out to be alive', () => {
+		startOwnedRun();
+		tracker.takeOrphanedRuns('tab-1');
+		tracker.update('a', { ...running, completedTasks: 3 });
+		expect(tracker.tryClaimStart('a', owner)).toBe(false);
+	});
+
+	it('abandoning a reclaim ends the run and frees the agent', () => {
+		const listener = vi.fn();
+		tracker.onFinal(listener);
+		startOwnedRun();
+		tracker.takeOrphanedRuns('tab-1');
+
+		expect(tracker.abandonReclaim('a', 'tab-2')).toBe(false);
+		expect(tracker.abandonReclaim('a', 'tab-1')).toBe(true);
+		expect(listener).toHaveBeenCalledWith('a', { tasksCompleted: 2, tasksTotal: 5 });
+		expect(tracker.isRunning('a')).toBe(false);
+		expect(tracker.takeOrphanedRuns('tab-1')).toEqual([]);
+		expect(tracker.tryClaimStart('a')).toBe(true);
+	});
+
+	it('cannot abandon a run that was not handed back', () => {
+		startOwnedRun();
+		expect(tracker.abandonReclaim('a', 'tab-1')).toBe(false);
+		expect(tracker.isRunning('a')).toBe(true);
+	});
+});
