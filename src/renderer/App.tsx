@@ -2450,7 +2450,7 @@ function MaestroConsoleInner() {
 		}
 	});
 
-	// Plugin `sessions.focus` (e.g. Agent Flow node-jump) writes main's store,
+	// Plugin `sessions.focus` writes main's store,
 	// which is invisible to the live renderer store - apply it via canonical helpers.
 	usePluginFocusRequestListener();
 

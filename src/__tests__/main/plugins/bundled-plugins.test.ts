@@ -77,21 +77,21 @@ afterEach(() => {
 
 describe('seedBundledPlugins', () => {
 	it('does not seed an untrusted bundled plugin (empty anchor stays safe)', () => {
-		bundle('agent-flow', '0.1.0', 'untrusted');
+		bundle('example-plugin', '0.1.0', 'untrusted');
 		seedBundledPlugins({ trustedKeys });
-		expect(fs.existsSync(path.join(h.target.dir, 'agent-flow'))).toBe(false);
+		expect(fs.existsSync(path.join(h.target.dir, 'example-plugin'))).toBe(false);
 	});
 
 	it('seeds a trusted bundled plugin when none is installed', () => {
-		bundle('agent-flow', '0.1.0', 'trusted');
+		bundle('example-plugin', '0.1.0', 'trusted');
 		seedBundledPlugins({ trustedKeys });
-		expect(fs.existsSync(path.join(h.target.dir, 'agent-flow', 'plugin.json'))).toBe(true);
+		expect(fs.existsSync(path.join(h.target.dir, 'example-plugin', 'plugin.json'))).toBe(true);
 	});
 
 	it('replaces a same-version install that is not itself trusted', () => {
-		bundle('agent-flow', '0.1.0', 'trusted');
-		const dest = path.join(h.target.dir, 'agent-flow');
-		writePlugin(dest, 'agent-flow', '0.1.0');
+		bundle('example-plugin', '0.1.0', 'trusted');
+		const dest = path.join(h.target.dir, 'example-plugin');
+		writePlugin(dest, 'example-plugin', '0.1.0');
 		fs.writeFileSync(path.join(dest, 'manual.txt'), 'user copy');
 		h.sigStatus[dest] = 'unsigned';
 		seedBundledPlugins({ trustedKeys });
@@ -99,9 +99,9 @@ describe('seedBundledPlugins', () => {
 	});
 
 	it('leaves an already-trusted install at the same version untouched', () => {
-		bundle('agent-flow', '0.1.0', 'trusted');
-		const dest = path.join(h.target.dir, 'agent-flow');
-		writePlugin(dest, 'agent-flow', '0.1.0');
+		bundle('example-plugin', '0.1.0', 'trusted');
+		const dest = path.join(h.target.dir, 'example-plugin');
+		writePlugin(dest, 'example-plugin', '0.1.0');
 		fs.writeFileSync(path.join(dest, 'keep.txt'), 'unchanged');
 		h.sigStatus[dest] = 'trusted';
 		seedBundledPlugins({ trustedKeys });
@@ -109,9 +109,9 @@ describe('seedBundledPlugins', () => {
 	});
 
 	it('refreshes a trusted install when the bundled version is newer', () => {
-		bundle('agent-flow', '0.2.0', 'trusted');
-		const dest = path.join(h.target.dir, 'agent-flow');
-		writePlugin(dest, 'agent-flow', '0.1.0');
+		bundle('example-plugin', '0.2.0', 'trusted');
+		const dest = path.join(h.target.dir, 'example-plugin');
+		writePlugin(dest, 'example-plugin', '0.1.0');
 		fs.writeFileSync(path.join(dest, 'stale.txt'), 'old');
 		h.sigStatus[dest] = 'trusted';
 		seedBundledPlugins({ trustedKeys });
@@ -128,9 +128,9 @@ describe('seedBundledPlugins', () => {
 	});
 
 	it('preserves the existing install when the copy fails (atomic replace)', () => {
-		bundle('agent-flow', '0.2.0', 'trusted'); // newer -> a replace is attempted
-		const dest = path.join(h.target.dir, 'agent-flow');
-		writePlugin(dest, 'agent-flow', '0.1.0');
+		bundle('example-plugin', '0.2.0', 'trusted'); // newer -> a replace is attempted
+		const dest = path.join(h.target.dir, 'example-plugin');
+		writePlugin(dest, 'example-plugin', '0.1.0');
 		fs.writeFileSync(path.join(dest, 'live.txt'), 'in use');
 		h.sigStatus[dest] = 'trusted';
 		const errors: unknown[] = [];

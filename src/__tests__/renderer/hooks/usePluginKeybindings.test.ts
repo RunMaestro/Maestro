@@ -1,7 +1,7 @@
 /**
  * @file usePluginKeybindings.test.ts
  * @description The keyboard half of the summon path: a contributed chord must
- * reach the plugin command that calls `ui.togglePanel`. Uses the agent-flow
+ * reach the plugin command that calls `ui.togglePanel`. Uses a contributed
  * overlay chord (Alt+Shift+F) as the fixture, and pins the conflict policy the
  * hook's module doc promises - app shortcuts win, typing is never hijacked.
  */
@@ -30,9 +30,9 @@ const EMPTY: AggregatedContributions = {
 };
 
 const OVERLAY_CHORD = {
-	id: 'acme.flow/toggle-overlay',
+	id: 'acme.panel/toggle-overlay',
 	localId: 'toggle-overlay',
-	pluginId: 'acme.flow',
+	pluginId: 'acme.panel',
 	key: 'Alt+Shift+F',
 	command: 'overlay',
 };
@@ -80,7 +80,7 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		const event = press({ key: 'F', altKey: true, shiftKey: true });
 
 		expect(pluginBridge.invokeCommand).toHaveBeenCalledTimes(1);
-		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.flow/overlay');
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.panel/overlay');
 		// Claimed, so the browser default (and any later listener) is suppressed.
 		expect(event.defaultPrevented).toBe(true);
 	});
@@ -91,7 +91,7 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		// macOS turns Alt+f into "ƒ"; the physical key still names the chord.
 		press({ key: 'ƒ', code: 'KeyF', altKey: true, shiftKey: true });
 
-		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.flow/overlay');
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.panel/overlay');
 	});
 
 	it('ignores a near-miss chord (wrong modifiers)', async () => {

@@ -1,10 +1,10 @@
 /**
  * usePluginFocusRequestListener.ts
  *
- * Applies main-side focus requests emitted by the plugin `sessions.focus` verb
- * (Agent Flow's node-jump, for one). The main process writes activeSessionId to
- * its own sessions store, but the renderer's Zustand `useSessionStore` is
- * canonical: it reads main's store only at startup and then flushes its own tree
+ * Applies main-side focus requests emitted by the plugin `sessions.focus` verb.
+ * The main process writes activeSessionId to its own sessions store, but the
+ * renderer's Zustand `useSessionStore` is canonical: it reads main's store only
+ * at startup and then flushes its own tree
  * back down, so a main-side write is both invisible to the live UI and clobbered
  * on the next persistence flush. This listener re-applies the jump through the
  * same canonical renderer helpers the rest of the app uses, so the visible
