@@ -1,4 +1,5 @@
 export { AutoRunInactivitySection } from './AutoRunInactivitySection';
+export { AutoRunCheckpointsSection } from './AutoRunCheckpointsSection';
 export { AutoResumeSection } from './AutoResumeSection';
 export { BrowserSection } from './BrowserSection';
 export { ConductorProfileSection } from './ConductorProfileSection';

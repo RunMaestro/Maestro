@@ -15,6 +15,13 @@ import type {
 	GitRunCommandResult,
 	GitStreamingOperation,
 } from '../../shared/gitUtils';
+import type {
+	CheckpointListResult,
+	CheckpointResult,
+	CreateCheckpointOptions,
+	DeleteCheckpointResult,
+	RestoreCheckpointResult,
+} from '../../shared/gitCheckpoints';
 
 /**
  * Git worktree information
@@ -445,6 +452,57 @@ export function createGitApi() {
 				createIfMissing,
 				sshRemoteId
 			),
+
+		// Worktree checkpoints - snapshot and roll back a working tree.
+		// See src/shared/gitCheckpoints.ts for the model; every call is
+		// SSH-aware via the optional sshRemoteId / remoteCwd pair.
+
+		/**
+		 * Snapshot the working tree (staged, unstaged, and untracked; ignored
+		 * files too when `includeIgnored` is set) into a ref-backed checkpoint.
+		 */
+		checkpointCreate: (
+			cwd: string,
+			options?: CreateCheckpointOptions,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<CheckpointResult> =>
+			ipcRenderer.invoke('git:checkpointCreate', cwd, options, sshRemoteId, remoteCwd),
+
+		/**
+		 * List this working tree's checkpoints, newest first. Pass
+		 * `allWorktrees` to see every worktree's - refs are shared repo-wide.
+		 */
+		checkpointList: (
+			cwd: string,
+			options?: { allWorktrees?: boolean },
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<CheckpointListResult> =>
+			ipcRenderer.invoke('git:checkpointList', cwd, options, sshRemoteId, remoteCwd),
+
+		/**
+		 * Roll the working tree back to a checkpoint. Always takes a safety
+		 * checkpoint first and returns it, so the restore is itself undoable.
+		 * Leaves HEAD and the branch pointer alone - this restores a tree, it
+		 * does not rewrite history.
+		 */
+		checkpointRestore: (
+			cwd: string,
+			checkpointId: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<RestoreCheckpointResult> =>
+			ipcRenderer.invoke('git:checkpointRestore', cwd, checkpointId, sshRemoteId, remoteCwd),
+
+		/** Delete a checkpoint's ref. Its objects are left to `git gc`. */
+		checkpointDelete: (
+			cwd: string,
+			checkpointId: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<DeleteCheckpointResult> =>
+			ipcRenderer.invoke('git:checkpointDelete', cwd, checkpointId, sshRemoteId, remoteCwd),
 
 		/**
 		 * Create a GitHub PR

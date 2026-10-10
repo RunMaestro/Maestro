@@ -24,6 +24,14 @@ export interface RemoteGitOptions {
 	sshRemote: SshRemoteConfig;
 	/** Working directory on the remote host */
 	remoteCwd?: string;
+	/**
+	 * Extra environment for this one command, layered over the remote's own
+	 * `remoteEnv`. Checkpointing is the caller that needs it: building a tree
+	 * from the working directory means pointing git at a scratch index via
+	 * `GIT_INDEX_FILE`, and doing that without an env override would mean
+	 * corrupting the index the user (or a running agent) is actively staging into.
+	 */
+	env?: Record<string, string>;
 }
 
 /**
@@ -50,7 +58,7 @@ export async function execGitRemote(
 	args: string[],
 	options: RemoteGitOptions
 ): Promise<ExecResult> {
-	const { sshRemote, remoteCwd } = options;
+	const { sshRemote, remoteCwd, env } = options;
 
 	if (!remoteCwd) {
 		logger.warn('No remote working directory specified for git command', LOG_CONTEXT);
@@ -61,8 +69,10 @@ export async function execGitRemote(
 		command: 'git',
 		args,
 		cwd: remoteCwd,
-		// Pass any remote environment variables from the SSH config
-		env: sshRemote.remoteEnv,
+		// Pass any remote environment variables from the SSH config, with the
+		// per-command overrides winning - they are what this specific invocation
+		// needs, not ambient configuration.
+		env: env ? { ...(sshRemote.remoteEnv || {}), ...env } : sshRemote.remoteEnv,
 	};
 
 	// Build the SSH command
@@ -95,19 +105,28 @@ export async function execGitRemote(
  * @param localCwd Local working directory (used for local execution)
  * @param sshRemote Optional SSH remote configuration (triggers remote execution if provided)
  * @param remoteCwd Remote working directory (required for remote execution)
+ * @param env Extra environment for this one command. Locally it is layered over
+ *   `process.env` rather than replacing it, since `execFileNoThrow`'s `env`
+ *   REPLACES the parent environment and git needs PATH and HOME to function.
  * @returns Execution result
  */
 export async function execGit(
 	args: string[],
 	localCwd: string,
 	sshRemote?: SshRemoteConfig | null,
-	remoteCwd?: string
+	remoteCwd?: string,
+	env?: Record<string, string>
 ): Promise<ExecResult> {
 	if (sshRemote) {
 		return execGitRemote(args, {
 			sshRemote,
 			remoteCwd,
+			env,
 		});
+	}
+
+	if (env) {
+		return execFileNoThrow('git', args, localCwd, { env: { ...process.env, ...env } });
 	}
 
 	// Local execution
