@@ -36,6 +36,7 @@ import {
 	execGitRemote,
 	execGit,
 	listWorktreesRemote,
+	resolveWorktreePathsRemote,
 	worktreeInfoRemote,
 	worktreeCheckoutRemote,
 	worktreeSetupRemote,
@@ -78,7 +79,7 @@ function failResult(stderr: string, exitCode = 1, stdout = ''): ExecResult {
 
 describe('remote-git.ts', () => {
 	beforeEach(() => {
-		vi.clearAllMocks();
+		vi.resetAllMocks();
 		// Default: buildSshCommand returns a mock SSH command
 		mockBuildSshCommand.mockResolvedValue({
 			command: 'ssh',
@@ -238,8 +239,440 @@ describe('remote-git.ts', () => {
 	});
 
 	// =========================================================================
-	// listWorktreesRemote (MOST IMPORTANT - porcelain parsing)
+	// Resolving paths before registry reconciliation
 	// =========================================================================
+	describe('resolveWorktreePathsRemote', () => {
+		const sshRemote = createSshRemote();
+
+		it('resolves home aliases independently on the remote host', async () => {
+			mockExecFileNoThrow.mockResolvedValue(successResult('/data/repo\n/data/worktrees\n'));
+
+			const result = await resolveWorktreePathsRemote('~/repo', '$HOME/worktrees', sshRemote);
+
+			expect(result).toEqual({
+				success: true,
+				data: { resolvedCwd: '/data/repo', resolvedBasePath: '/data/worktrees' },
+			});
+			expect(mockBuildSshCommand).toHaveBeenCalledWith(
+				sshRemote,
+				expect.objectContaining({
+					command: 'sh',
+					args: [
+						'-c',
+						'(cd -P -- "$HOME/repo" && pwd -P) && (cd -P -- "$HOME/worktrees" && pwd -P)',
+					],
+					cwd: undefined,
+				})
+			);
+		});
+
+		it('uses physical paths for symlink and dot-segment aliases', async () => {
+			mockExecFileNoThrow.mockResolvedValue(successResult('/data/repo\n/data/worktrees\n'));
+
+			const result = await resolveWorktreePathsRemote(
+				'/alias/repo',
+				'/alias/worktrees/../worktrees',
+				sshRemote
+			);
+
+			expect(result.data).toEqual({
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/worktrees',
+			});
+			expect(mockBuildSshCommand).toHaveBeenCalledWith(
+				sshRemote,
+				expect.objectContaining({
+					args: [
+						'-c',
+						"(cd -P -- '/alias/repo' && pwd -P) && (cd -P -- '/alias/worktrees/../worktrees' && pwd -P)",
+					],
+				})
+			);
+		});
+
+		it('keeps shell metacharacters literal in home-relative paths', async () => {
+			mockExecFileNoThrow.mockResolvedValue(successResult('/data/repo\n/data/worktrees\n'));
+
+			await resolveWorktreePathsRemote('~/repo', '~/trees$(touch marker)', sshRemote);
+
+			const options = mockBuildSshCommand.mock.calls[0][1];
+			expect(options.args[1]).toContain('"$HOME/trees\\$(touch marker)"');
+		});
+
+		it.each([
+			{ kind: 'leaf', child: '/trees/review' },
+			{ kind: 'leaf', child: '/data/worktrees/review' },
+			{ kind: 'group', child: '/trees/group/review' },
+			{ kind: 'group', child: '/data/worktrees/group/review' },
+		])(
+			'resolves a current-prefix $kind alias outside the canonical base: $child',
+			async ({ child }) => {
+				mockExecFileNoThrow
+					.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+					.mockResolvedValueOnce(successResult('resolved\0/elsewhere/review\0'));
+
+				const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [child]);
+
+				expect(result).toEqual({
+					success: true,
+					data: {
+						resolvedCwd: '/data/repo',
+						resolvedBasePath: '/data/worktrees',
+						resolvedSessionPaths: { [child]: '/elsewhere/review' },
+					},
+				});
+				expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
+				expect(mockBuildSshCommand.mock.calls[1][1].args[1]).toContain(`'${child}'`);
+			}
+		);
+
+		it('records a physical missing candidate for a current-prefix child without aborting resolution', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(successResult('missing\0/data/worktrees/removed\0'));
+
+			const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+				'/trees/removed',
+			]);
+
+			expect(result).toEqual({
+				success: true,
+				data: {
+					resolvedCwd: '/data/repo',
+					resolvedBasePath: '/data/worktrees',
+					resolvedSessionPaths: { '/trees/removed': '/data/worktrees/removed' },
+					missingSessionPaths: ['/trees/removed'],
+				},
+			});
+		});
+
+		it('isolates an unreachable current-prefix group while resolving its healthy siblings', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(
+					successResult(
+						'resolved\0/data/worktrees/before\0unresolved\0-\0resolved\0/data/worktrees/after\0'
+					)
+				);
+
+			const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+				'/trees/before',
+				'/trees/unreachable/review',
+				'/trees/after',
+			]);
+
+			expect(result).toEqual({
+				success: true,
+				data: {
+					resolvedCwd: '/data/repo',
+					resolvedBasePath: '/data/worktrees',
+					resolvedSessionPaths: {
+						'/trees/before': '/data/worktrees/before',
+						'/trees/after': '/data/worktrees/after',
+					},
+					unresolvedSessionPaths: ['/trees/unreachable/review'],
+				},
+			});
+		});
+
+		it('resolves deduplicated old and current-prefix children including a deleted home-relative alias', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(
+					successResult(
+						'resolved\0/data/worktrees/review\0resolved\0/data/worktrees/feature\0missing\0/data/worktrees/deleted\0'
+					)
+				);
+
+			const result = await resolveWorktreePathsRemote('~/repo', '~/worktrees', sshRemote, [
+				'/old-alias/worktrees/review',
+				'/old-alias/worktrees/review',
+				'/data/worktrees/feature',
+				'~/worktrees/deleted',
+			]);
+
+			expect(result.data).toEqual({
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/worktrees',
+				resolvedSessionPaths: {
+					'/old-alias/worktrees/review': '/data/worktrees/review',
+					'/data/worktrees/feature': '/data/worktrees/feature',
+					'~/worktrees/deleted': '/data/worktrees/deleted',
+				},
+				missingSessionPaths: ['~/worktrees/deleted'],
+			});
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
+			const probe = mockBuildSshCommand.mock.calls[1][1].args[1];
+			expect(probe).toContain(
+				"for p in '/old-alias/worktrees/review' '/data/worktrees/feature' \"$HOME/worktrees/deleted\"; do"
+			);
+		});
+
+		it('resolves home-relative child aliases with different case independently', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/Worktrees\n'))
+				.mockResolvedValueOnce(successResult('resolved\0/data/worktrees/review\0'));
+
+			const result = await resolveWorktreePathsRemote('~/repo', '~/Worktrees', sshRemote, [
+				'~/worktrees/review',
+			]);
+
+			expect(result.data?.resolvedSessionPaths).toEqual({
+				'~/worktrees/review': '/data/worktrees/review',
+			});
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
+		});
+
+		it('preserves an unresolvable alias without failing the whole resolution', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(successResult('unresolved\0-\0'));
+
+			expect(
+				await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, ['/old-alias/review'])
+			).toEqual({
+				success: true,
+				data: {
+					resolvedCwd: '/data/repo',
+					resolvedBasePath: '/data/worktrees',
+					unresolvedSessionPaths: ['/old-alias/review'],
+				},
+			});
+		});
+
+		it.each([
+			['/alias//worktrees/', '/alias/worktrees/deleted'],
+			['/alias/worktrees/', '/alias//worktrees/deleted/'],
+			['~/worktrees//', '~/worktrees/deleted'],
+			['$HOME//worktrees/', '$HOME/worktrees/deleted'],
+		])('resolves a deleted child under a normalized current prefix: %s', async (base, child) => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees/\n'))
+				.mockResolvedValueOnce(successResult('missing\0/data/worktrees/deleted\0'));
+
+			const result = await resolveWorktreePathsRemote('/repo', base, sshRemote, [child]);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/worktrees/',
+				resolvedSessionPaths: { [child]: '/data/worktrees/deleted' },
+				missingSessionPaths: [child],
+			});
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
+		});
+
+		it('resolves aliases after a missing child and records physical candidates for registry comparison', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(
+					successResult(
+						'resolved\0/data/worktrees/live\0missing\0/data/worktrees/gone\0resolved\0/data/worktrees/after\0'
+					)
+				);
+
+			const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+				'/old/live',
+				'/old/gone',
+				'/old/after',
+				'/old/gone',
+			]);
+
+			expect(result).toEqual({
+				success: true,
+				data: {
+					resolvedCwd: '/data/repo',
+					resolvedBasePath: '/data/worktrees',
+					resolvedSessionPaths: {
+						'/old/live': '/data/worktrees/live',
+						'/old/gone': '/data/worktrees/gone',
+						'/old/after': '/data/worktrees/after',
+					},
+					missingSessionPaths: ['/old/gone'],
+				},
+			});
+		});
+
+		it('preserves whitespace and literal backslashes in missing physical candidates', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(successResult('missing\0/data/worktrees/name\\literal \0'));
+
+			const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+				'/old/name\\literal ',
+			]);
+
+			expect(result.data?.resolvedSessionPaths).toEqual({
+				'/old/name\\literal ': '/data/worktrees/name\\literal ',
+			});
+			expect(result.data).toHaveProperty('missingSessionPaths', ['/old/name\\literal ']);
+		});
+
+		it.each([
+			'',
+			'missing\n',
+			'missing\nrelative/path\n',
+			'missing\n/data/path\nnoise\n',
+			'missing\r\n/data/path\n',
+			'unknown\n/data/path\n',
+			'resolved\n/data/path\nmissing\n/data/extra\n',
+		])(
+			'rejects malformed alias status output without publishing removal metadata: %j',
+			async (stdout) => {
+				mockExecFileNoThrow
+					.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+					.mockResolvedValueOnce(successResult(stdout));
+
+				const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+					'/old/path',
+				]);
+
+				expect(result.success).toBe(false);
+				expect(result.data).toBeUndefined();
+			}
+		);
+
+		it('rejects an interrupted SSH probe even when it emitted a missing status', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(failResult('Connection lost', 255, 'missing\0/data/path\0'));
+
+			const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, ['/old/path']);
+
+			expect(result).toEqual({ success: false, error: 'Connection lost' });
+		});
+
+		it('physically resolves dot segments in children even when they share the current prefix', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(successResult('resolved\0/elsewhere/review\0'));
+
+			const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+				'/trees/nested/../review',
+			]);
+
+			expect(result.data?.resolvedSessionPaths).toEqual({
+				'/trees/nested/../review': '/elsewhere/review',
+			});
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
+		});
+
+		it.each([
+			{ cwd: '/repo\n', base: '/trees', children: [] },
+			{ cwd: '/repo', base: '/trees\r', children: [] },
+		])(
+			'rejects control characters before path resolution can lose their identity: %j',
+			async ({ cwd, base, children }) => {
+				mockExecFileNoThrow
+					.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+					.mockResolvedValueOnce(successResult('resolved\0/data/review\0'));
+
+				const result = await resolveWorktreePathsRemote(cwd, base, sshRemote, children);
+
+				expect(result.success).toBe(false);
+				expect(result.data).toBeUndefined();
+				expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['/old/review\n', '/old/review\r', '/old/review\0', ''])(
+			'isolates an unsafe child path while resolving healthy aliases: %j',
+			async (bad) => {
+				mockExecFileNoThrow
+					.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+					.mockResolvedValueOnce(successResult('resolved\0/data/worktrees/live\0'));
+
+				const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+					bad,
+					'/old/live',
+				]);
+
+				expect(result).toEqual({
+					success: true,
+					data: {
+						resolvedCwd: '/data/repo',
+						resolvedBasePath: '/data/worktrees',
+						resolvedSessionPaths: { '/old/live': '/data/worktrees/live' },
+						unresolvedSessionPaths: [bad],
+					},
+				});
+			}
+		);
+
+		it.each(['', 'relative/path', '/bad\npath', '/bad\rpath'])(
+			'isolates malformed physical output for an individual alias: %j',
+			async (bad) => {
+				mockExecFileNoThrow
+					.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+					.mockResolvedValueOnce(
+						successResult(`resolved\0${bad}\0resolved\0/data/worktrees/live\0unresolved\0-\0`)
+					);
+
+				const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+					'/old/bad',
+					'/old/live',
+					'/old/inaccessible',
+				]);
+
+				expect(result).toEqual({
+					success: true,
+					data: {
+						resolvedCwd: '/data/repo',
+						resolvedBasePath: '/data/worktrees',
+						resolvedSessionPaths: { '/old/live': '/data/worktrees/live' },
+						unresolvedSessionPaths: ['/old/bad', '/old/inaccessible'],
+					},
+				});
+			}
+		);
+
+		it('contains an unknown per-alias status without losing healthy sibling results', async () => {
+			mockExecFileNoThrow
+				.mockResolvedValueOnce(successResult('/data/repo\n/data/worktrees\n'))
+				.mockResolvedValueOnce(successResult('unexpected\0-\0resolved\0/data/worktrees/live\0'));
+
+			const result = await resolveWorktreePathsRemote('/repo', '/trees', sshRemote, [
+				'/old/error',
+				'/old/live',
+			]);
+
+			expect(result.data).toEqual({
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/worktrees',
+				resolvedSessionPaths: { '/old/live': '/data/worktrees/live' },
+				unresolvedSessionPaths: ['/old/error'],
+			});
+		});
+
+		it('preserves whitespace in resolved directory names', async () => {
+			mockExecFileNoThrow.mockResolvedValue(successResult('/data/repo \n/data/worktrees \n'));
+			expect((await resolveWorktreePathsRemote('/repo', '/trees', sshRemote)).data).toEqual({
+				resolvedCwd: '/data/repo ',
+				resolvedBasePath: '/data/worktrees ',
+			});
+		});
+
+		it('fails when either remote directory cannot be resolved', async () => {
+			mockExecFileNoThrow.mockResolvedValue(failResult('cd: Permission denied', 1, '/data/repo\n'));
+			expect(await resolveWorktreePathsRemote('/repo', '/trees', sshRemote)).toEqual({
+				success: false,
+				error: 'cd: Permission denied',
+			});
+		});
+
+		it.each([
+			'',
+			'/repo\n',
+			'repo\n/trees\n',
+			'/repo\ntrees\n',
+			'/repo\n/trees\nnoise\n',
+			'/repo\r\n/trees\r\n',
+		])('rejects ambiguous or nonabsolute resolution output %j', async (stdout) => {
+			mockExecFileNoThrow.mockResolvedValue(successResult(stdout));
+			expect((await resolveWorktreePathsRemote('/repo', '/trees', sshRemote)).success).toBe(false);
+		});
+	});
+
 	describe('listWorktreesRemote', () => {
 		const sshRemote = createSshRemote();
 
@@ -361,22 +794,61 @@ describe('remote-git.ts', () => {
 			});
 		});
 
-		it('should handle empty output (no worktrees)', async () => {
+		it.each([
+			{
+				termination: 'blank-delimited',
+				marker: 'prunable gitdir file points to non-existent location',
+				ending: '\n\n',
+			},
+			{ termination: 'EOF', marker: 'prunable', ending: '' },
+		])(
+			'retains $termination prunable registry entries for session retention',
+			async ({ marker, ending }) => {
+				const porcelainOutput =
+					[
+						'worktree /repo',
+						'HEAD abc123',
+						'branch refs/heads/main',
+						'',
+						'worktree /worktrees/deleted',
+						'HEAD def456',
+						'branch refs/heads/deleted',
+						marker,
+					].join('\n') + ending;
+				mockExecFileNoThrow.mockResolvedValue(successResult(porcelainOutput));
+
+				const result = await listWorktreesRemote('/repo', sshRemote);
+
+				expect(result.success).toBe(true);
+				expect(result.data).toEqual([
+					{ path: '/repo', head: 'abc123', branch: 'main', isBare: false },
+					{
+						path: '/worktrees/deleted',
+						head: 'def456',
+						branch: 'deleted',
+						isBare: false,
+						isPrunable: true,
+					},
+				]);
+			}
+		);
+
+		it('should reject empty output instead of treating it as a complete listing', async () => {
 			mockExecFileNoThrow.mockResolvedValue(successResult(''));
 
 			const result = await listWorktreesRemote('/repo', sshRemote);
 
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual([]);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('worktree list');
 		});
 
-		it('should return empty array on command failure', async () => {
+		it('should report command failure instead of treating it as a complete listing', async () => {
 			mockExecFileNoThrow.mockResolvedValue(failResult('fatal: not a git repository', 128));
 
 			const result = await listWorktreesRemote('/not-a-repo', sshRemote);
 
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual([]);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('fatal: not a git repository');
 		});
 
 		it('should handle single worktree entry with trailing blank line', async () => {

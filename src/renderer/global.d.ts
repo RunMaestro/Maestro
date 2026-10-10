@@ -1515,10 +1515,23 @@ interface MaestroAPI {
 		// Supports SSH remote execution via optional sshRemoteId parameter
 		listWorktrees: (
 			cwd: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			basePath?: string,
+			sessionPaths?: string[]
 		) => Promise<{
+			resolvedCwd?: string;
+			resolvedBasePath?: string;
+			resolvedSessionPaths?: Record<string, string>;
+			// Missing candidates are safe to reconcile only after a successful registry read.
+			missingSessionPaths?: string[];
+			/** Individual aliases that could not be resolved; keep their existing sessions. */
+			unresolvedSessionPaths?: string[];
 			worktrees: Array<{
 				path: string;
+				resolvedPath?: string;
+				pathUnresolved?: boolean;
+				pathMissing?: boolean;
+				isPrunable?: boolean;
 				head: string;
 				branch: string | null;
 				isBare: boolean;
@@ -1536,6 +1549,8 @@ interface MaestroAPI {
 				repoRoot: string | null;
 			}>;
 			scanFailed?: boolean;
+			/** Uncertain candidate or group roots whose existing sessions must be preserved. */
+			unresolvedPaths?: string[];
 		}>;
 		// File watching is not available for SSH remote sessions.
 		// For remote sessions, returns isRemote: true indicating polling should be used instead.

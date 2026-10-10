@@ -15,6 +15,8 @@ import {
 	worktreeSetupRemote,
 	worktreeCheckoutRemote,
 	listWorktreesRemote,
+	resolveWorktreePathsRemote,
+	resolveWorktreeAliasesRemote,
 } from '../../../utils/remote-git';
 import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktree-stale';
 import { runWorktreeSetupScript } from '../../../utils/worktree-setup-script';
@@ -549,81 +551,145 @@ export function registerWorktreeHandlers(deps: GitHandlerDependencies): void {
 	// Supports SSH remote execution via optional sshRemoteId parameter
 	ipcMain.handle(
 		'git:listWorktrees',
-		createIpcHandler(handlerOpts('listWorktrees'), async (cwd: string, sshRemoteId?: string) => {
-			// SSH remote: dispatch to remote git operations
-			if (sshRemoteId) {
-				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+		createIpcHandler(
+			handlerOpts('listWorktrees'),
+			async (cwd: string, sshRemoteId?: string, basePath?: string, sessionPaths?: string[]) => {
+				// SSH remote: dispatch to remote git operations
+				if (sshRemoteId) {
+					const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+					logger.debug(`${LOG_CONTEXT} listWorktrees via SSH: ${cwd}`, LOG_CONTEXT);
+					let resolvedPaths:
+						| {
+								resolvedCwd: string;
+								resolvedBasePath: string;
+						  }
+						| undefined;
+					if (basePath !== undefined) {
+						const resolved = await resolveWorktreePathsRemote(cwd, basePath, sshConfig, []);
+						if (!resolved.success || !resolved.data) {
+							throw new Error(resolved.error || 'Could not resolve remote worktree paths');
+						}
+						resolvedPaths = {
+							resolvedCwd: resolved.data.resolvedCwd,
+							resolvedBasePath: resolved.data.resolvedBasePath,
+						};
+					}
+					const result = await listWorktreesRemote(resolvedPaths?.resolvedCwd || cwd, sshConfig);
+					if (!result.success) {
+						if (!resolvedPaths) return { worktrees: [] };
+						throw new Error(result.error || 'Remote listWorktrees failed');
+					}
+					if (!resolvedPaths) return { worktrees: result.data };
+					// Resolve the registry's raw aliases through the same filesystem probe
+					// as saved children, so a migrated group has one physical identity.
+					const requestedPaths = new Set(sessionPaths ?? []);
+					const aliases = await resolveWorktreeAliasesRemote(
+						[
+							...new Set([
+								...requestedPaths,
+								...(result.data ?? []).filter((entry) => !entry.isBare).map((entry) => entry.path),
+							]),
+						],
+						sshConfig
+					);
+					if (!aliases.success || !aliases.data) {
+						throw new Error(aliases.error || 'Could not resolve remote worktree aliases');
+					}
+					const physicalPaths = aliases.data.resolvedSessionPaths ?? {};
+					const missingPaths = new Set(aliases.data.missingSessionPaths ?? []);
+					const unresolvedPaths = new Set(aliases.data.unresolvedSessionPaths ?? []);
+					const resolvedSessionPaths = Object.fromEntries(
+						Object.entries(physicalPaths).filter(([alias]) => requestedPaths.has(alias))
+					);
+					const missingSessionPaths = [...missingPaths].filter((alias) =>
+						requestedPaths.has(alias)
+					);
+					const unresolvedSessionPaths = [...unresolvedPaths].filter((alias) =>
+						requestedPaths.has(alias)
+					);
+					const worktrees = (result.data ?? []).map((entry) => {
+						if (entry.isBare) return entry;
+						return {
+							...entry,
+							...(physicalPaths[entry.path] ? { resolvedPath: physicalPaths[entry.path] } : {}),
+							...(missingPaths.has(entry.path) ? { pathMissing: true } : {}),
+							...(unresolvedPaths.has(entry.path) ? { pathUnresolved: true } : {}),
+						};
+					});
+					return {
+						worktrees,
+						...resolvedPaths,
+						...(Object.keys(resolvedSessionPaths).length > 0 ? { resolvedSessionPaths } : {}),
+						...(missingSessionPaths.length > 0 ? { missingSessionPaths } : {}),
+						...(unresolvedSessionPaths.length > 0 ? { unresolvedSessionPaths } : {}),
+					};
 				}
-				logger.debug(`${LOG_CONTEXT} listWorktrees via SSH: ${cwd}`, LOG_CONTEXT);
-				const result = await listWorktreesRemote(cwd, sshConfig);
-				if (!result.success) {
-					throw new Error(result.error || 'Remote listWorktrees failed');
+
+				// Local execution (existing code)
+				// Run git worktree list --porcelain for machine-readable output
+				const result = await execFileNoThrow('git', ['worktree', 'list', '--porcelain'], cwd);
+				if (result.exitCode !== 0) {
+					// Not a git repo or no worktree support
+					return { worktrees: [] };
 				}
-				return { worktrees: result.data };
-			}
 
-			// Local execution (existing code)
-			// Run git worktree list --porcelain for machine-readable output
-			const result = await execFileNoThrow('git', ['worktree', 'list', '--porcelain'], cwd);
-			if (result.exitCode !== 0) {
-				// Not a git repo or no worktree support
-				return { worktrees: [] };
-			}
+				// Parse porcelain output:
+				// worktree /path/to/worktree
+				// HEAD abc123
+				// branch refs/heads/branch-name
+				// (blank line separates entries)
+				const worktrees: Array<{
+					path: string;
+					head: string;
+					branch: string | null;
+					isBare: boolean;
+				}> = [];
 
-			// Parse porcelain output:
-			// worktree /path/to/worktree
-			// HEAD abc123
-			// branch refs/heads/branch-name
-			// (blank line separates entries)
-			const worktrees: Array<{
-				path: string;
-				head: string;
-				branch: string | null;
-				isBare: boolean;
-			}> = [];
+				const lines = result.stdout.split('\n');
+				let current: { path?: string; head?: string; branch?: string | null; isBare?: boolean } =
+					{};
 
-			const lines = result.stdout.split('\n');
-			let current: { path?: string; head?: string; branch?: string | null; isBare?: boolean } = {};
+				for (const line of lines) {
+					if (line.startsWith('worktree ')) {
+						current.path = line.substring(9);
+					} else if (line.startsWith('HEAD ')) {
+						current.head = line.substring(5);
+					} else if (line.startsWith('branch ')) {
+						// Extract branch name from refs/heads/branch-name
+						const branchRef = line.substring(7);
+						current.branch = branchRef.replace('refs/heads/', '');
+					} else if (line === 'bare') {
+						current.isBare = true;
+					} else if (line === 'detached') {
+						current.branch = null; // Detached HEAD
+					} else if (line === '' && current.path) {
+						// End of entry
+						worktrees.push({
+							path: current.path,
+							head: current.head || '',
+							branch: current.branch ?? null,
+							isBare: current.isBare || false,
+						});
+						current = {};
+					}
+				}
 
-			for (const line of lines) {
-				if (line.startsWith('worktree ')) {
-					current.path = line.substring(9);
-				} else if (line.startsWith('HEAD ')) {
-					current.head = line.substring(5);
-				} else if (line.startsWith('branch ')) {
-					// Extract branch name from refs/heads/branch-name
-					const branchRef = line.substring(7);
-					current.branch = branchRef.replace('refs/heads/', '');
-				} else if (line === 'bare') {
-					current.isBare = true;
-				} else if (line === 'detached') {
-					current.branch = null; // Detached HEAD
-				} else if (line === '' && current.path) {
-					// End of entry
+				// Handle last entry if no trailing newline
+				if (current.path) {
 					worktrees.push({
 						path: current.path,
 						head: current.head || '',
 						branch: current.branch ?? null,
 						isBare: current.isBare || false,
 					});
-					current = {};
 				}
-			}
 
-			// Handle last entry if no trailing newline
-			if (current.path) {
-				worktrees.push({
-					path: current.path,
-					head: current.head || '',
-					branch: current.branch ?? null,
-					isBare: current.isBare || false,
-				});
+				return { worktrees };
 			}
-
-			return { worktrees };
-		})
+		)
 	);
 
 	// Remove a worktree directory from disk

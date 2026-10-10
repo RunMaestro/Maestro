@@ -4,6 +4,7 @@ import path from 'path';
 import chokidar, { FSWatcher } from 'chokidar';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { execGit } from '../../../utils/remote-git';
+import { isNotAGitRepositoryError } from '../../../../shared/gitUtils';
 import { logger } from '../../../utils/logger';
 import { getSshRemoteById } from '../../../stores';
 import { createSafeSend } from '../../../utils/safe-send';
@@ -63,6 +64,7 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 				// Going deeper would multiply git invocations without a real-world need
 				// (git itself rejects nested worktrees inside the main repo).
 				const MAX_DEPTH = 1;
+				const unresolvedPaths = new Set<string>();
 
 				type SubdirEntry = { name: string; isDirectory: boolean };
 				type ScanEntry = {
@@ -80,12 +82,44 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 							: `${parent}/${child}`
 						: path.join(parent, child);
 
+				// Preserve saved sessions using either the configured alias or its
+				// physical path. Only errored entries need these extra filesystem probes.
+				const markUnresolvedPath = async (target: string): Promise<void> => {
+					unresolvedPaths.add(target);
+					if (sshRemote) return;
+					const base = path.resolve(parentPath);
+					let ancestor = target;
+					while (true) {
+						try {
+							const physicalAncestor = await fs.realpath(ancestor);
+							unresolvedPaths.add(path.join(physicalAncestor, path.relative(ancestor, target)));
+							return;
+						} catch {
+							// A missing leaf can still be mapped through its closest
+							// reachable parent, including a separately symlinked group.
+							if (path.resolve(ancestor) === base) return;
+							const next = path.dirname(ancestor);
+							const relative = path.relative(base, path.resolve(next));
+							if (
+								next === ancestor ||
+								relative === '..' ||
+								relative.startsWith(`..${path.sep}`) ||
+								path.isAbsolute(relative)
+							) {
+								return;
+							}
+							ancestor = next;
+						}
+					}
+				};
+
 				// Throws on read failure (matching local `fs.readdir` behavior) so the
 				// outer try/catch can surface scanFailed: true at the top level. Nested
-				// recursion wraps this in its own try/catch and swallows the throw.
+				// recursion records its root as unresolved to protect existing children.
 				// Without this, an SSH `readDirRemote` failure would silently return []
 				// and the renderer would bulk-remove every child session.
 				const readSubdirs = async (dir: string): Promise<SubdirEntry[]> => {
+					let entries: Array<{ name: string; isDirectory: boolean | (() => boolean) }>;
 					if (sshRemote) {
 						const result = await readDirRemote(dir, sshRemote);
 						if (!result.success || !result.data) {
@@ -98,12 +132,32 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 							err.code = 'ENOENT';
 							throw err;
 						}
-						return result.data.filter((e) => e.isDirectory && !e.name.startsWith('.'));
+						entries = result.data;
+					} else {
+						entries = await fs.readdir(dir, { withFileTypes: true });
 					}
-					const entries = await fs.readdir(dir, { withFileTypes: true });
-					return entries
-						.filter((e) => e.isDirectory() && !e.name.startsWith('.'))
-						.map((e) => ({ name: e.name, isDirectory: true }));
+					const subdirs: SubdirEntry[] = [];
+					for (const entry of entries) {
+						let name: string | undefined;
+						try {
+							if (typeof entry?.name !== 'string' || !entry.name) {
+								throw new Error('Invalid directory entry name');
+							}
+							name = entry.name;
+							const isDirectory =
+								typeof entry.isDirectory === 'function' ? entry.isDirectory() : entry.isDirectory;
+							if (typeof isDirectory !== 'boolean') {
+								throw new Error('Invalid directory entry type');
+							}
+							if (isDirectory && !name.startsWith('.')) subdirs.push({ name, isDirectory: true });
+						} catch (err) {
+							// An unidentifiable record protects this listing's root while
+							// healthy records can still be inspected and discovered.
+							await markUnresolvedPath(name ? joinPath(dir, name) : dir);
+							logger.warn(`${LOG_CONTEXT} Could not read directory entry in ${dir}: ${err}`);
+						}
+					}
+					return subdirs;
 				};
 
 				// Inspect a single directory: returns the worktree entry if it IS a
@@ -113,112 +167,134 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 					subdirPath: string,
 					name: string
 				): Promise<ScanEntry | null> => {
-					const isInsideWorkTree = await execGit(
-						['rev-parse', '--is-inside-work-tree'],
-						subdirPath,
-						sshRemote
-					);
-					if (isInsideWorkTree.exitCode !== 0) {
-						return null; // Not a git repo
-					}
-
-					// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
-					// Without this check, subdirectories like "build/" or "src/" inside a worktree
-					// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
-					const toplevelResult = await execGit(
-						['rev-parse', '--show-toplevel'],
-						subdirPath,
-						sshRemote
-					);
-					if (toplevelResult.exitCode !== 0) {
-						return null; // Git command failed - treat as invalid
-					}
-					const toplevel = toplevelResult.stdout.trim();
-					// For local paths, canonicalize via realpath so that symlinked base
-					// paths (common on Linux: /home → /data/home; Windows junctions) match
-					// what git rev-parse --show-toplevel returns. path.resolve alone does
-					// NOT follow symlinks, which previously caused every subdir to be
-					// rejected and the entire worktree set to be marked stale.
-					const normalizedSubdir = sshRemote
-						? subdirPath
-						: await fs.realpath(subdirPath).catch(() => path.resolve(subdirPath));
-					const normalizedToplevel = sshRemote
-						? toplevel
-						: await fs.realpath(toplevel).catch(() => path.resolve(toplevel));
-					if (normalizedSubdir !== normalizedToplevel) {
-						return null; // Subdirectory inside a repo, not a repo/worktree root
-					}
-
-					// Run remaining git commands in parallel for each subdirectory (SSH-aware via execGit)
-					const [gitDirResult, gitCommonDirResult, branchResult] = await Promise.all([
-						execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote),
-						execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote),
-						execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote),
-					]);
-
-					const gitDir = gitDirResult.exitCode === 0 ? gitDirResult.stdout.trim() : '';
-					const gitCommonDir =
-						gitCommonDirResult.exitCode === 0 ? gitCommonDirResult.stdout.trim() : gitDir;
-					const isWorktree = gitDir !== gitCommonDir;
-					const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
-
-					// Get repo root
-					let repoRoot: string | null = null;
-					if (isWorktree && gitCommonDir) {
-						// For SSH, use POSIX path operations
-						if (sshRemote) {
-							const commonDirAbs = gitCommonDir.startsWith('/')
-								? gitCommonDir
-								: `${subdirPath}/${gitCommonDir}`.replace(/\/+/g, '/');
-							// Get parent directory (remove last path component)
-							repoRoot = commonDirAbs.split('/').slice(0, -1).join('/') || '/';
-						} else {
-							const commonDirAbs = path.isAbsolute(gitCommonDir)
-								? gitCommonDir
-								: path.resolve(subdirPath, gitCommonDir);
-							repoRoot = path.dirname(commonDirAbs);
+					try {
+						const isInsideWorkTree = await execGit(
+							['rev-parse', '--is-inside-work-tree'],
+							subdirPath,
+							sshRemote,
+							subdirPath
+						);
+						if (isInsideWorkTree.exitCode !== 0) {
+							if (isNotAGitRepositoryError(isInsideWorkTree.stderr)) return null;
+							throw new Error(
+								isInsideWorkTree.stderr || 'Could not inspect candidate Git repository'
+							);
 						}
-					} else {
-						// For non-worktree git repos, the toplevel IS the repo root -
-						// reuse the value we already fetched above instead of re-running
-						// `git rev-parse --show-toplevel`.
-						repoRoot = toplevel;
-					}
+						if (isInsideWorkTree.stdout.trim() === 'false') return null;
+						if (isInsideWorkTree.stdout.trim() !== 'true') {
+							throw new Error('Invalid candidate Git repository response');
+						}
 
-					return {
-						path: subdirPath,
-						name,
-						isWorktree,
-						branch,
-						repoRoot,
-					};
+						// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
+						// Without this check, subdirectories like "build/" or "src/" inside a worktree
+						// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
+						const toplevelResult = await execGit(
+							['rev-parse', '--show-toplevel'],
+							subdirPath,
+							sshRemote,
+							subdirPath
+						);
+						if (toplevelResult.exitCode !== 0 || !toplevelResult.stdout.trim()) {
+							throw new Error(toplevelResult.stderr || 'Could not resolve candidate Git root');
+						}
+						const toplevel = toplevelResult.stdout.trim();
+						// For local paths, canonicalize via realpath so that symlinked base
+						// paths (common on Linux: /home → /data/home; Windows junctions) match
+						// what git rev-parse --show-toplevel returns. path.resolve alone does
+						// NOT follow symlinks, which previously caused every subdir to be
+						// rejected and the entire worktree set to be marked stale.
+						const normalizedSubdir = sshRemote ? subdirPath : await fs.realpath(subdirPath);
+						const normalizedToplevel = sshRemote ? toplevel : await fs.realpath(toplevel);
+						if (normalizedSubdir !== normalizedToplevel) {
+							return null; // Subdirectory inside a repo, not a repo/worktree root
+						}
+
+						// Run remaining git commands in parallel for each subdirectory (SSH-aware via execGit)
+						const [gitDirResult, gitCommonDirResult, branchResult] = await Promise.all([
+							execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote, subdirPath),
+							execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote, subdirPath),
+							execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote, subdirPath),
+						]);
+
+						if (
+							gitDirResult.exitCode !== 0 ||
+							gitCommonDirResult.exitCode !== 0 ||
+							!gitDirResult.stdout.trim() ||
+							!gitCommonDirResult.stdout.trim()
+						) {
+							throw new Error(
+								gitDirResult.stderr ||
+									gitCommonDirResult.stderr ||
+									'Could not read candidate Git identity'
+							);
+						}
+						const gitDir = gitDirResult.stdout.trim();
+						const gitCommonDir = gitCommonDirResult.stdout.trim();
+						const isWorktree = gitDir !== gitCommonDir;
+						const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+
+						// Get repo root
+						let repoRoot: string | null = null;
+						if (isWorktree && gitCommonDir) {
+							// For SSH, use POSIX path operations
+							if (sshRemote) {
+								const commonDirAbs = gitCommonDir.startsWith('/')
+									? gitCommonDir
+									: `${subdirPath}/${gitCommonDir}`.replace(/\/+/g, '/');
+								// Get parent directory (remove last path component)
+								repoRoot = commonDirAbs.split('/').slice(0, -1).join('/') || '/';
+							} else {
+								const commonDirAbs = path.isAbsolute(gitCommonDir)
+									? gitCommonDir
+									: path.resolve(subdirPath, gitCommonDir);
+								repoRoot = path.dirname(commonDirAbs);
+							}
+						} else {
+							// For non-worktree git repos, the toplevel IS the repo root -
+							// reuse the value we already fetched above instead of re-running
+							// `git rev-parse --show-toplevel`.
+							repoRoot = toplevel;
+						}
+
+						return {
+							path: subdirPath,
+							name,
+							isWorktree,
+							branch,
+							repoRoot,
+						};
+					} catch (err) {
+						await markUnresolvedPath(subdirPath);
+						logger.warn(`${LOG_CONTEXT} Could not inspect ${subdirPath}: ${err}`);
+						return null;
+					}
 				};
 
 				// Walk a directory level: inspect each subdir, then recurse into any
 				// non-git subdirs (up to MAX_DEPTH below the original parentPath).
-				// Failures while reading a nested directory are swallowed by the
-				// inner try/catch - a missing or unreadable group dir shouldn't fail
-				// the entire scan. Top-level failure propagates up to the outer
+				// Failures while reading a nested directory protect that group's
+				// existing children without failing the entire scan. Top-level
+				// failure propagates up to the outer
 				// try/catch so scanFailed is surfaced and the renderer skips removal.
 				const scanLevel = async (dir: string, depthRemaining: number): Promise<ScanEntry[]> => {
 					const subdirs = await readSubdirs(dir);
 
 					const results = await Promise.all(
 						subdirs.map(async (subdir) => {
-							const subdirPath = joinPath(dir, subdir.name);
-							const entry = await inspectSubdir(subdirPath, subdir.name);
-							if (entry) {
-								return [entry];
-							}
-							if (depthRemaining > 0) {
-								try {
+							let subdirPath = dir;
+							try {
+								subdirPath = joinPath(dir, subdir.name);
+								const entry = await inspectSubdir(subdirPath, subdir.name);
+								if (entry) return [entry];
+								if (unresolvedPaths.has(subdirPath)) return [];
+								if (depthRemaining > 0) {
 									return await scanLevel(subdirPath, depthRemaining - 1);
-								} catch (err) {
-									const code = (err as NodeJS.ErrnoException | undefined)?.code;
-									if (!isExpectedScanError(code)) {
-										logger.warn(`${LOG_CONTEXT} Failed to recurse into ${subdirPath}: ${err}`);
-									}
-									return [];
+								}
+							} catch (err) {
+								await markUnresolvedPath(subdirPath);
+								const code = (err as NodeJS.ErrnoException | undefined)?.code;
+								if (!isExpectedScanError(code)) {
+									logger.warn(`${LOG_CONTEXT} Failed to inspect directory ${subdirPath}: ${err}`);
 								}
 							}
 							return [];
@@ -230,7 +306,10 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 
 				try {
 					const gitSubdirs = await scanLevel(parentPath, MAX_DEPTH);
-					return { gitSubdirs };
+					return {
+						gitSubdirs,
+						...(unresolvedPaths.size > 0 ? { unresolvedPaths: [...unresolvedPaths] } : {}),
+					};
 				} catch (err) {
 					// The configured parent path is user-supplied, so failing to read it is
 					// an environment condition rather than a bug: ENOENT when it's been moved
@@ -330,97 +409,105 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 						}
 
 						const timer = setTimeout(async () => {
-							worktreeWatchDebounceTimers.delete(debounceKey);
+							try {
+								worktreeWatchDebounceTimers.delete(debounceKey);
 
-							// Maestro just created this worktree itself (`git:worktreeSetup`),
-							// and the renderer that asked for it is already building the child
-							// session. This event is broadcast to every renderer - each
-							// Electron window and every web-desktop bridge client - so letting
-							// it through has each of the others mint a rival child at the same
-							// path under the same parent (issue #1506). Suppress it here, at
-							// the one place all of them share.
-							if (isWorktreeCreatedByMaestro(dirPath)) {
-								logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro`);
-								return;
-							}
+								// Maestro just created this worktree itself (`git:worktreeSetup`),
+								// and the renderer that asked for it is already building the child
+								// session. This event is broadcast to every renderer - each
+								// Electron window and every web-desktop bridge client - so letting
+								// it through has each of the others mint a rival child at the same
+								// path under the same parent (issue #1506). Suppress it here, at
+								// the one place all of them share.
+								if (isWorktreeCreatedByMaestro(dirPath)) {
+									logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro`);
+									return;
+								}
 
-							// Check if this new directory is a git worktree
-							const isInsideWorkTree = await execFileNoThrow(
-								'git',
-								['rev-parse', '--is-inside-work-tree'],
-								dirPath
-							);
-							if (isInsideWorkTree.exitCode !== 0) {
-								logger.warn(
-									`[WT-DEBUG] REJECTED ${dirPath}: not inside work tree (exit=${isInsideWorkTree.exitCode} stderr=${isInsideWorkTree.stderr})`
+								// Check if this new directory is a git worktree
+								const isInsideWorkTree = await execFileNoThrow(
+									'git',
+									['rev-parse', '--is-inside-work-tree'],
+									dirPath
 								);
-								return;
-							}
+								if (isInsideWorkTree.exitCode !== 0) {
+									logger.warn(
+										`[WT-DEBUG] REJECTED ${dirPath}: not inside work tree (exit=${isInsideWorkTree.exitCode} stderr=${isInsideWorkTree.stderr})`
+									);
+									return;
+								}
 
-							// Verify this IS a worktree/repo root, not a subdirectory inside one
-							const toplevelResult = await execFileNoThrow(
-								'git',
-								['rev-parse', '--show-toplevel'],
-								dirPath
-							);
-							if (toplevelResult.exitCode !== 0) {
-								logger.warn(
-									`[WT-DEBUG] REJECTED ${dirPath}: show-toplevel failed (exit=${toplevelResult.exitCode})`
+								// Verify this IS a worktree/repo root, not a subdirectory inside one
+								const toplevelResult = await execFileNoThrow(
+									'git',
+									['rev-parse', '--show-toplevel'],
+									dirPath
 								);
-								return;
-							}
-							// Use realpath so symlinked base paths (e.g. /home/user/work →
-							// /data/work on Linux, NTFS junctions on Windows) match git's
-							// canonical toplevel output.
-							const resolvedDir = await fs.realpath(dirPath).catch(() => path.resolve(dirPath));
-							const resolvedToplevel = await fs
-								.realpath(toplevelResult.stdout.trim())
-								.catch(() => path.resolve(toplevelResult.stdout.trim()));
-							if (resolvedDir !== resolvedToplevel) {
-								logger.warn(
-									`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${resolvedDir} toplevel=${resolvedToplevel})`
+								if (toplevelResult.exitCode !== 0) {
+									logger.warn(
+										`[WT-DEBUG] REJECTED ${dirPath}: show-toplevel failed (exit=${toplevelResult.exitCode})`
+									);
+									return;
+								}
+								// Use realpath so symlinked base paths (e.g. /home/user/work →
+								// /data/work on Linux, NTFS junctions on Windows) match git's
+								// canonical toplevel output.
+								const resolvedDir = await fs.realpath(dirPath).catch(() => path.resolve(dirPath));
+								const resolvedToplevel = await fs
+									.realpath(toplevelResult.stdout.trim())
+									.catch(() => path.resolve(toplevelResult.stdout.trim()));
+								if (resolvedDir !== resolvedToplevel) {
+									logger.warn(
+										`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${resolvedDir} toplevel=${resolvedToplevel})`
+									);
+									return;
+								}
+
+								// Re-check against the realpath: a symlinked basePath (or an
+								// NTFS junction) means the watcher's `dirPath` and the path the
+								// renderer asked `worktreeSetup` for can be spellings of the same
+								// directory, and only one of them is marked.
+								if (isWorktreeCreatedByMaestro(resolvedDir)) {
+									logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro (realpath)`);
+									return;
+								}
+
+								// Get branch name
+								const branchResult = await execFileNoThrow(
+									'git',
+									['rev-parse', '--abbrev-ref', 'HEAD'],
+									dirPath
 								);
-								return;
+								const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+
+								// Skip main/master/HEAD branches
+								if (branch === 'main' || branch === 'master' || branch === 'HEAD') {
+									logger.warn(`[WT-DEBUG] REJECTED ${dirPath}: skippable branch ${branch}`);
+									return;
+								}
+
+								logger.warn(
+									`[WT-DEBUG] ACCEPTED ${dirPath}: branch=${branch}, emitting worktree:discovered`
+								);
+
+								// Emit event to the renderer and web-desktop bridge clients
+								safeSend('worktree:discovered', {
+									sessionId,
+									worktree: {
+										path: dirPath,
+										name: path.basename(dirPath),
+										branch,
+									},
+								});
+
+								logger.info(
+									`${LOG_CONTEXT} New worktree discovered: ${dirPath} (branch: ${branch})`
+								);
+							} catch (err) {
+								logger.warn(
+									`${LOG_CONTEXT} Failed to inspect discovered worktree ${dirPath}: ${err}`
+								);
 							}
-
-							// Re-check against the realpath: a symlinked basePath (or an
-							// NTFS junction) means the watcher's `dirPath` and the path the
-							// renderer asked `worktreeSetup` for can be spellings of the same
-							// directory, and only one of them is marked.
-							if (isWorktreeCreatedByMaestro(resolvedDir)) {
-								logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro (realpath)`);
-								return;
-							}
-
-							// Get branch name
-							const branchResult = await execFileNoThrow(
-								'git',
-								['rev-parse', '--abbrev-ref', 'HEAD'],
-								dirPath
-							);
-							const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
-
-							// Skip main/master/HEAD branches
-							if (branch === 'main' || branch === 'master' || branch === 'HEAD') {
-								logger.warn(`[WT-DEBUG] REJECTED ${dirPath}: skippable branch ${branch}`);
-								return;
-							}
-
-							logger.warn(
-								`[WT-DEBUG] ACCEPTED ${dirPath}: branch=${branch}, emitting worktree:discovered`
-							);
-
-							// Emit event to the renderer and web-desktop bridge clients
-							safeSend('worktree:discovered', {
-								sessionId,
-								worktree: {
-									path: dirPath,
-									name: path.basename(dirPath),
-									branch,
-								},
-							});
-
-							logger.info(`${LOG_CONTEXT} New worktree discovered: ${dirPath} (branch: ${branch})`);
 						}, 500); // 500ms debounce
 
 						worktreeWatchDebounceTimers.set(debounceKey, timer);

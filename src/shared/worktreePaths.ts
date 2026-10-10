@@ -3,13 +3,20 @@
  * boundaries. This does not resolve relative paths; callers that operate on a
  * local filesystem must resolve them against the same cwd used by Git first.
  */
-export function normalizeWorktreePath(path: string): string {
-	// A UNC path's leading double separator is semantic: `\\server\share`
-	// must remain distinct from the drive-rooted `\server\share`. Collapse
-	// redundant separators everywhere else, then restore that UNC prefix.
-	const hasUncPrefix = /^[\\/]{2}[^\\/]/.test(path);
-	const collapsed = path.replace(/\\/g, '/').replace(/\/+/g, '/');
+export function normalizeWorktreePath(path: string, posix = false): string {
+	// SSH paths preserve literal backslashes. Local UNC paths retain their
+	// semantic double separator; ordinary redundant separators collapse.
+	const hasUncPrefix = !posix && /^[\\/]{2}[^\\/]/.test(path);
+	const separated = posix ? path : path.replace(/\\/g, '/');
+	const collapsed = separated.replace(/\/+/g, '/');
 	const normalized = hasUncPrefix ? `/${collapsed}` : collapsed;
-	if (normalized === '/' || /^[A-Za-z]:\/$/.test(normalized)) return normalized;
+	if (normalized === '/' || (!posix && /^[A-Za-z]:\/$/.test(normalized))) return normalized;
 	return normalized.replace(/\/+$/, '');
+}
+
+/** Compare POSIX worktree prefixes without matching similarly named siblings. */
+export function isPathAtOrUnderRoot(path: string, root: string): boolean {
+	const candidate = normalizeWorktreePath(path, true);
+	const base = normalizeWorktreePath(root, true);
+	return candidate === base || candidate.startsWith(base === '/' ? '/' : `${base}/`);
 }

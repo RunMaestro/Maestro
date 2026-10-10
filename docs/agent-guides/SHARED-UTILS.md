@@ -4,6 +4,10 @@
 
 All utilities in Maestro organized by category. Each entry lists the file path, function name, signature, purpose, and which process it runs in (Main, Renderer, or Both via `src/shared/`).
 
+Worktree paths: `normalizeWorktreePath(path, posix?)` and `isPathAtOrUnderRoot(path, root)` in `src/shared/worktreePaths.ts` provide shared comparison rules. The renderer's `worktreeDedup.ts` re-exports the normalizer. SSH callers use POSIX normalization, preserving case, literal backslashes, and the root directory while collapsing duplicate and trailing slashes for comparison.
+
+Remote worktree aliases: `resolveWorktreeAliasesRemote(paths, sshRemote)` in `src/main/utils/remote-git.ts` provides the shared main-process probe for saved children and Git registry paths. It reports physical paths, missing candidates, and unresolved aliases independently; `resolveWorktreePathsRemote()` also uses it for configured scans.
+
 ---
 
 ## IDs & UUIDs
