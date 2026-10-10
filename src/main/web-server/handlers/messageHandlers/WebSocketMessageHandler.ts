@@ -69,6 +69,7 @@ import {
 	handleInteractMovementDesigner,
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
+import { handleQuickChat } from './quickChat';
 import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
@@ -647,6 +648,10 @@ export class WebSocketMessageHandler {
 
 			case 'profiling_status':
 				handleProfilingStatus(this.ctx, client, message);
+				break;
+
+			case 'quick_chat':
+				handleQuickChat(this.ctx, client, message);
 				break;
 
 			case 'support_package_create':

@@ -1513,7 +1513,7 @@ List Encore features and whether each is enabled
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)
+Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, quickChat)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1803,6 +1803,90 @@ Stop the capture and write the compressed .zip bundle to --output
 ## `maestro-cli profiling status`
 
 Report whether a capture is currently recording
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat`
+
+Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey
+
+## `maestro-cli quick-chat show`
+
+Open the Quick Chat window (same as the hotkey when it is closed)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat hide`
+
+Close the Quick Chat window; the conversation is kept
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat toggle`
+
+Open the window, focus it, or close it (exactly what the hotkey does)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat status`
+
+Show the window state, the agent, the mode, and the current conversation
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat send <message>`
+
+Send a message in the current Quick Chat (starts a chat if none is open)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat new`
+
+Start a new chat (an ephemeral previous chat is deleted)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat keep [state]`
+
+Keep the current chat as a visible tab on its agent ("off" makes it ephemeral)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat agent <agent-id>`
+
+Switch Quick Chat to another agent and start a new chat there
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat reveal`
+
+Open the current chat as a tab in the main Maestro window
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat stop`
+
+Stop the reply the agent is writing
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

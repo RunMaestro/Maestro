@@ -1,8 +1,9 @@
 /**
  * Global Hotkey Manager
  *
- * Owns the single system-wide "show Maestro" hotkey registered via Electron's
- * globalShortcut API. The setting is stored as a key array (same format as the
+ * Owns Maestro's system-wide hotkeys, registered via Electron's globalShortcut
+ * API: the "show Maestro" summon key plus any feature that adds its own (Quick
+ * Chat). Each owner registers under an id with `setNamedGlobalHotkey`. The setting is stored as a key array (same format as the
  * in-app shortcuts) and translated to an Electron Accelerator at registration
  * time so users can record the hotkey using the same capture UI they already
  * know.
@@ -49,6 +50,13 @@ export function keysToAccelerator(keys: string[]): string | null {
 			case 'Shift':
 				modifiers.push('Shift');
 				break;
+			case ' ':
+			case ' ':
+				// The shortcut recorder stores the space bar as its literal key
+				// value (a non-breaking space with Option held on macOS); Electron
+				// only accepts the name.
+				mainKey = 'Space';
+				break;
 			default:
 				mainKey = raw.length === 1 ? raw.toUpperCase() : raw;
 		}
@@ -69,41 +77,70 @@ function summonMainWindow(window: BrowserWindow): void {
 	window.focus();
 }
 
-let currentAccelerator: string | null = null;
-let getWindowFn: (() => BrowserWindow | null) | null = null;
+/** A registered system-wide binding: the accelerator and what it does. */
+interface NamedBinding {
+	accelerator: string;
+	onPress: () => void;
+}
 
 /**
- * Register (or re-register) the global "show Maestro" hotkey.
- * Pass an empty array to clear the binding.
+ * Every live binding, keyed by owner (`show` for the summon hotkey, one id per
+ * feature that adds its own). Each owner holds at most one accelerator, so
+ * re-binding never leaks the previous combo.
+ */
+const bindings = new Map<string, NamedBinding>();
+let getWindowFn: (() => BrowserWindow | null) | null = null;
+
+/** The binding id the "show Maestro" hotkey registers under. */
+const SHOW_BINDING_ID = 'show';
+
+function unregisterBinding(id: string): void {
+	const existing = bindings.get(id);
+	if (!existing) return;
+	try {
+		globalShortcut.unregister(existing.accelerator);
+	} catch (err) {
+		logger.warn(
+			`Failed to unregister previous global hotkey '${existing.accelerator}': ${err}`,
+			'GlobalHotkey'
+		);
+	}
+	bindings.delete(id);
+}
+
+/**
+ * Register (or re-register) one owner's system-wide hotkey. Pass an empty
+ * array to clear it.
+ *
+ * Fails when the combo is invalid, the OS or another app already holds it, or
+ * another Maestro binding uses it (two owners on one combo would make the key
+ * do whichever registered last).
  *
  * @returns `true` on success, `false` if registration failed.
  */
-export function setGlobalShowHotkey(keys: string[]): boolean {
+export function setNamedGlobalHotkey(id: string, keys: string[], onPress: () => void): boolean {
 	// Always clear the previous binding first so a typo doesn't leave a stale
 	// shortcut registered.
-	if (currentAccelerator) {
-		try {
-			globalShortcut.unregister(currentAccelerator);
-		} catch (err) {
-			logger.warn(
-				`Failed to unregister previous global hotkey '${currentAccelerator}': ${err}`,
-				'GlobalHotkey'
-			);
-		}
-		currentAccelerator = null;
-	}
+	unregisterBinding(id);
 
 	const accelerator = keysToAccelerator(keys);
 	if (!accelerator) {
-		logger.info('Global show hotkey cleared', 'GlobalHotkey');
+		logger.info(`Global hotkey '${id}' cleared`, 'GlobalHotkey');
 		return true;
 	}
 
+	for (const [otherId, other] of bindings) {
+		if (other.accelerator === accelerator) {
+			logger.warn(
+				`Global hotkey '${accelerator}' for '${id}' is already bound to '${otherId}'`,
+				'GlobalHotkey'
+			);
+			return false;
+		}
+	}
+
 	try {
-		const ok = globalShortcut.register(accelerator, () => {
-			const win = getWindowFn?.();
-			if (win) summonMainWindow(win);
-		});
+		const ok = globalShortcut.register(accelerator, onPress);
 		if (!ok) {
 			logger.warn(
 				`Failed to register global hotkey '${accelerator}' - likely already in use by another app`,
@@ -111,8 +148,8 @@ export function setGlobalShowHotkey(keys: string[]): boolean {
 			);
 			return false;
 		}
-		currentAccelerator = accelerator;
-		logger.info(`Registered global show hotkey: ${accelerator}`, 'GlobalHotkey');
+		bindings.set(id, { accelerator, onPress });
+		logger.info(`Registered global hotkey '${id}': ${accelerator}`, 'GlobalHotkey');
 		return true;
 	} catch (err) {
 		logger.warn(
@@ -123,15 +160,28 @@ export function setGlobalShowHotkey(keys: string[]): boolean {
 	}
 }
 
-/** Tear down any registered shortcut. Safe to call multiple times. */
+/**
+ * Register (or re-register) the global "show Maestro" hotkey.
+ * Pass an empty array to clear the binding.
+ *
+ * @returns `true` on success, `false` if registration failed.
+ */
+export function setGlobalShowHotkey(keys: string[]): boolean {
+	return setNamedGlobalHotkey(SHOW_BINDING_ID, keys, () => {
+		const win = getWindowFn?.();
+		if (win) summonMainWindow(win);
+	});
+}
+
+/** Tear down every registered shortcut. Safe to call multiple times. */
 export function disposeGlobalHotkey(): void {
-	if (currentAccelerator) {
+	for (const id of [...bindings.keys()]) {
 		try {
-			globalShortcut.unregister(currentAccelerator);
+			globalShortcut.unregister(bindings.get(id)!.accelerator);
 		} catch {
 			// Ignore - app is shutting down or shortcut wasn't registered.
 		}
-		currentAccelerator = null;
+		bindings.delete(id);
 	}
 }
 

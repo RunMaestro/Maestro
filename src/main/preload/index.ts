@@ -70,6 +70,7 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { createQuickChatApi } from './quickChat';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -280,6 +281,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
+
+	// Quick Chat API (hotkey-summoned floating chat window + its engine)
+	quickChat: createQuickChatApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -387,6 +391,8 @@ export {
 	createWindowsApi,
 	// Session Images
 	createImagesApi,
+	// Quick Chat
+	createQuickChatApi,
 };
 
 // Re-export types for TypeScript consumers

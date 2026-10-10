@@ -33,6 +33,7 @@ import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared
 import type { ToastWidth } from '../../../shared/toastWidth';
 import type { ToastPosition } from '../../../shared/toastPosition';
 import type { GlossLevel } from '../../../shared/themeGloss';
+import type { QuickChatSettings } from '../../../shared/quickChat';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -464,6 +465,10 @@ export interface UseSettingsReturn {
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+
+	// Quick Chat settings (hotkey, agent, ephemeral/persistent defaults)
+	quickChatSettings: QuickChatSettings;
+	setQuickChatSettings: (value: QuickChatSettings) => void;
 
 	// Maestro Cue history retention (days kept in cue.db)
 	cueHistoryRetentionDays: number;

@@ -8,8 +8,8 @@
  *
  * This suite mocks ExtensionsView to render whatever `settingsBodies` it
  * receives, so it verifies:
- * - EncoreTab builds a settingsBodies map with exactly the four configurable
- *   first-party keys (usageStats/symphony/maestroCue/directorNotes), each wired
+ * - EncoreTab builds a settingsBodies map with the configurable first-party
+ *   keys (usageStats/symphony/maestroCue/directorNotes/quickChat), each wired
  *   to its real config body (asserted via the body's data-setting-id anchor).
  * - Pianola has no inline config body (it uses its own modal).
  * - The real Director's Notes hook chain: agent detection is gated on
@@ -166,6 +166,14 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		// Symphony
 		symphonyRegistryUrls: [],
 		setSymphonyRegistryUrls: vi.fn(),
+		// Quick Chat
+		quickChatSettings: {
+			hotkey: ['Alt', 'Space'],
+			agentId: '',
+			persistent: false,
+			ephemeralHistory: true,
+		},
+		setQuickChatSettings: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -267,7 +275,7 @@ describe('EncoreTab', () => {
 			expect(screen.queryByTestId('encore-feature-manage')).not.toBeInTheDocument();
 		});
 
-		it('passes a settingsBodies map with exactly the four configurable feature keys', async () => {
+		it('passes a settingsBodies map with the configurable feature keys', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -277,6 +285,7 @@ describe('EncoreTab', () => {
 			expect(screen.getByTestId('settings-body-symphony')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-maestroCue')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-directorNotes')).toBeInTheDocument();
+			expect(screen.getByTestId('settings-body-quickChat')).toBeInTheDocument();
 			// Pianola configures via its own modal - no inline body in the map.
 			expect(screen.queryByTestId('settings-body-pianola')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('settings-body-plugins')).not.toBeInTheDocument();
@@ -297,6 +306,7 @@ describe('EncoreTab', () => {
 			expect(
 				document.querySelector('[data-setting-id="encore-director-notes"]')
 			).toBeInTheDocument();
+			expect(document.querySelector('[data-setting-id="encore-quick-chat"]')).toBeInTheDocument();
 		});
 	});
 

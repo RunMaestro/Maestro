@@ -48,6 +48,8 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
+import { buildQuickChatCommands } from './commands/quickChatCommands';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
@@ -76,6 +78,9 @@ import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
 import { buildWindowMoveTargets } from '../../utils/windowTargets';
+
+/** Stable fallback so the selector never hands React a fresh array. */
+const NO_QUICK_CHAT_HOTKEY: string[] = [];
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
 	const {
@@ -250,6 +255,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	// Quick Chat is on by default, and only the Electron app has its window.
+	const quickChatAvailable =
+		useSettingsStore((s) => s.encoreFeatures.quickChat !== false) && !isWebDesktop();
+	const quickChatHotkey =
+		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
@@ -522,6 +532,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			canOpenMediaPlayer,
 			openMediaPlayer,
 			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
+			setQuickActionOpen,
+		}),
+		...buildQuickChatCommands({
+			quickChatAvailable,
+			hotkey: quickChatHotkey,
+			openQuickChat: () => void window.maestro.quickChat.window('show'),
 			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({

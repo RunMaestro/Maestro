@@ -6,6 +6,7 @@ import { CoworkingSetup } from '../../CoworkingSetup';
 import {
 	CueSettingsSection,
 	DirectorNotesSection,
+	QuickChatSection,
 	SymphonyRegistrySection,
 	UsageStatsSection,
 } from './components';
@@ -88,6 +89,13 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			<div data-setting-id="encore-coworking">
 				<CoworkingSetup theme={theme} />
 			</div>
+		),
+		quickChat: (
+			<QuickChatSection
+				theme={theme}
+				quickChatSettings={settings.quickChatSettings}
+				setQuickChatSettings={settings.setQuickChatSettings}
+			/>
 		),
 	};
 

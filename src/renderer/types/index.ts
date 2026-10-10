@@ -874,6 +874,14 @@ export interface AITab {
 	 */
 	hidden?: boolean;
 	/**
+	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
+	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
+	 * and is deleted when the next chat starts; a kept one is an ordinary tab.
+	 * Replies on these tabs never raise a completion toast: the user is reading
+	 * them in the Quick Chat window.
+	 */
+	quickChat?: boolean;
+	/**
 	 * A hand-off armed by a message that asked for this turn's result to go to
 	 * other agents ("then send what you find to @Backend"). When the turn ends
 	 * cleanly, its final answer is forwarded to `targets` and this is cleared;
@@ -1828,6 +1836,9 @@ export interface EncoreFeatureFlags {
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.
 	webLogin?: boolean;
+	// Quick Chat - a floating chat window summoned by a system-wide hotkey. ON by
+	// default. Optional so older fixtures and persisted settings remain valid.
+	quickChat?: boolean;
 }
 
 // Director's Notes settings for synopsis generation
