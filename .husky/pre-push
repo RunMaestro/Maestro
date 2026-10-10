@@ -145,4 +145,14 @@ for bin in prettier tsc eslint vitest; do
 	fi
 done
 
+# Git exports its repository-location variables to a hook, and from a LINKED
+# WORKTREE that includes GIT_DIR (a push from the main checkout does not set it,
+# which is why this hid for so long). Every child of the hook inherits it, so a
+# test that runs `git init` / `git commit` in a temp directory operates on THIS
+# repository instead: on 2026-10-10 a push from a worktree committed "delete every
+# file" onto the branch being pushed, and wrote core.bare=true plus a test identity
+# into the shared config, which broke the main checkout for every other agent.
+# Drop them before anything else runs; git rediscovers the repository from the cwd.
+unset $(git rev-parse --local-env-vars)
+
 npm run validate:push

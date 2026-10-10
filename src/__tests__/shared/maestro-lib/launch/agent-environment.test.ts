@@ -34,6 +34,9 @@ beforeEach(() => {
 	process.env.INHERITED_ONLY = 'kept';
 	delete process.env.UNSET_KEY;
 	delete process.env.MAESTRO_SESSION_RESUMED;
+	// An agent shell exports its own config dir, and the inherited environment is
+	// the bottom layer here, so it would read as a provider var that survived.
+	delete process.env.CLAUDE_CONFIG_DIR;
 });
 
 afterEach(() => {
