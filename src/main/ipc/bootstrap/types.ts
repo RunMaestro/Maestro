@@ -32,6 +32,7 @@ import type {
 export interface IpcBootstrapDependencies {
 	// getters - mutable `let` singletons that stay declared in index.ts
 	getMainWindow: () => BrowserWindow | null;
+	ensureMainWindow?: () => void;
 	getProcessManager: () => ProcessManager | null;
 	getWebServer: () => WebServer | null;
 	getAgentDetector: () => AgentDetector | null;

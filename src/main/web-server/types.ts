@@ -594,6 +594,8 @@ export type OpenBrowserTabCallback = (
  */
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
+	/** Explicit signal that the agent is waiting for a person at this terminal. */
+	inputRequired?: boolean;
 	cwd?: string;
 	shell?: string;
 	name?: string | null;

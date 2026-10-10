@@ -377,6 +377,7 @@ export function notifyToast(toast: NotifyToastInput): string {
 		// if a web-desktop notification can't be delivered.
 		showOsNotification(notifTitle, notifBody, toast.sessionId, toast.tabId, {
 			fallbackToast: false,
+			clickAction: toast.onClick ? undefined : toast.clickAction,
 		});
 	}
 
@@ -437,6 +438,7 @@ export interface ShowOsNotificationOptions {
 	 * shown a toast (e.g. notifyToast itself) to avoid a duplicate.
 	 */
 	fallbackToast?: boolean;
+	clickAction?: ToastClickAction;
 }
 
 /**
@@ -463,7 +465,10 @@ export function showOsNotification(
 	if (!isWebDesktop()) {
 		// Desktop: unchanged host-notification bridge.
 		if (typeof window !== 'undefined' && window.maestro?.notification?.show) {
-			window.maestro.notification.show(title, body, sessionId, tabId).catch((err) => {
+			const result = options.clickAction
+				? window.maestro.notification.show(title, body, sessionId, tabId, options.clickAction)
+				: window.maestro.notification.show(title, body, sessionId, tabId);
+			result.catch((err) => {
 				logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
 			});
 		}
