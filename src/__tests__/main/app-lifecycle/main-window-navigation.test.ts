@@ -7,12 +7,13 @@ import {
 } from '../../../main/app-lifecycle/main-window-navigation';
 import { buildConcertoHtmlUrl } from '../../../shared/concerto-html';
 
-const { openExternal, dispatchDeepLink } = vi.hoisted(() => ({
+const { openExternal, dispatchDeepLink, fromWebContents } = vi.hoisted(() => ({
 	openExternal: vi.fn(() => Promise.resolve()),
 	dispatchDeepLink: vi.fn(),
+	fromWebContents: vi.fn(),
 }));
 
-vi.mock('electron', () => ({ shell: { openExternal } }));
+vi.mock('electron', () => ({ shell: { openExternal }, BrowserWindow: { fromWebContents } }));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
@@ -83,13 +84,20 @@ describe('attachMainWindowNavigationGuards subframe links', () => {
 	let frameNav: FrameNavHandler;
 	let windowOpen: OpenHandler;
 	let permission: PermissionHandler;
+	let installingWindow: BrowserWindow;
 	const appContents = { getType: () => 'window' };
+	let ownerWindow: BrowserWindow;
 
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-10-09T12:00:00Z'));
 		openExternal.mockClear();
 		dispatchDeepLink.mockClear();
+		fromWebContents.mockReset();
+		ownerWindow = { isDestroyed: () => false } as unknown as BrowserWindow;
+		fromWebContents.mockImplementation((contents: unknown) =>
+			contents === appContents ? ownerWindow : null
+		);
 		const webContents = {
 			on: vi.fn((event: string, handler: FrameNavHandler) => {
 				if (event === 'will-frame-navigate') frameNav = handler;
@@ -103,7 +111,8 @@ describe('attachMainWindowNavigationGuards subframe links', () => {
 				}),
 			},
 		};
-		attachMainWindowNavigationGuards({ webContents } as unknown as BrowserWindow, {
+		installingWindow = { webContents } as unknown as BrowserWindow;
+		attachMainWindowNavigationGuards(installingWindow, {
 			isDevelopment: false,
 			devServerUrl: 'http://localhost:5173',
 			rendererProductionUrl: 'app://app/index.html',
@@ -174,5 +183,45 @@ describe('attachMainWindowNavigationGuards subframe links', () => {
 		expect(cb).toHaveBeenNthCalledWith(1, false);
 		expect(cb).toHaveBeenNthCalledWith(2, false);
 		expect(openExternal).not.toHaveBeenCalled();
+	});
+
+	it('routes a backstop deep link to the window that owns the frame, not the installer', () => {
+		const cb = vi.fn();
+		permission(appContents, 'openExternal', cb, {
+			isMainFrame: false,
+			externalURL: 'maestro://focus',
+		});
+		expect(cb).toHaveBeenCalledWith(false);
+		expect(dispatchDeepLink).toHaveBeenCalledTimes(1);
+		const getWindow = dispatchDeepLink.mock.calls[0][1] as () => BrowserWindow;
+		expect(getWindow()).toBe(ownerWindow);
+		expect(getWindow()).not.toBe(installingWindow);
+	});
+
+	it('drops a backstop link whose window is gone or destroyed', () => {
+		const cb = vi.fn();
+		fromWebContents.mockReturnValueOnce(null);
+		permission(appContents, 'openExternal', cb, {
+			isMainFrame: false,
+			externalURL: 'mailto:a@example.com',
+		});
+		fromWebContents.mockReturnValueOnce({ isDestroyed: () => true });
+		permission(appContents, 'openExternal', cb, {
+			isMainFrame: false,
+			externalURL: 'mailto:b@example.com',
+		});
+		expect(cb).toHaveBeenNthCalledWith(1, false);
+		expect(cb).toHaveBeenNthCalledWith(2, false);
+		expect(openExternal).not.toHaveBeenCalled();
+	});
+
+	it('throttles per window, so one window does not block another', () => {
+		navigate('mailto:a@example.com');
+		const cb = vi.fn();
+		permission(appContents, 'openExternal', cb, {
+			isMainFrame: false,
+			externalURL: 'mailto:b@example.com',
+		});
+		expect(openExternal).toHaveBeenCalledTimes(2);
 	});
 });
