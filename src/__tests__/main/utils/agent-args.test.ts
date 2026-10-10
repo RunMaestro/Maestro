@@ -10,9 +10,8 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../../../main/utils/agent-args';
-import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
+import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
-import { getAgentDefinition } from '../../../main/agents/definitions';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -920,12 +919,8 @@ describe('applyAgentConfigOverrides', () => {
 		const baseArgs = ['exec', '--json'];
 		const codex = () => getAgentDefinition('codex');
 
-		it('requests an auto reasoning summary by default so Thinking has content', () => {
-			expect(applyAgentConfigOverrides(codex(), baseArgs, {}).args).toEqual([
-				...baseArgs,
-				'-c',
-				'model_reasoning_summary="auto"',
-			]);
+		it('inherits the Codex reasoning summary default until explicitly configured', () => {
+			expect(applyAgentConfigOverrides(codex(), baseArgs, {}).args).toEqual(baseArgs);
 		});
 
 		it.each(['auto', 'concise', 'detailed', 'none'])(
@@ -951,6 +946,18 @@ describe('applyAgentConfigOverrides', () => {
 				).toEqual(baseArgs);
 			}
 		);
+
+		it('keeps the summary override when Codex runs in read-only mode', () => {
+			const agent = codex();
+			const readOnlyArgs = buildAgentArgs(agent, { baseArgs, readOnlyMode: true });
+			const { args } = applyAgentConfigOverrides(agent, readOnlyArgs, {
+				readOnlyMode: true,
+				agentConfigValues: { reasoningSummary: 'auto' },
+			});
+			expect(args).toEqual([...readOnlyArgs, '-c', 'model_reasoning_summary="auto"']);
+			expect(args).toContain('--sandbox');
+			expect(args).toContain('read-only');
+		});
 
 		it('sends effort as model_reasoning_effort, the key Codex reads', () => {
 			const { args } = applyAgentConfigOverrides(codex(), baseArgs, {

@@ -47,7 +47,7 @@ const AGENT_CONFIG_METADATA: Record<string, { description: string; type: string 
 	},
 	reasoningSummary: {
 		description:
-			'Codex reasoning summary shown in Thinking (auto, concise, detailed, none). Defaults to auto.',
+			'Codex reasoning summary mode (auto, concise, detailed, none); empty inherits the provider default.',
 		type: 'string',
 	},
 };

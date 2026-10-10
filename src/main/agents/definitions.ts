@@ -327,11 +327,11 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				type: 'select',
 				label: 'Reasoning Summary',
 				description:
-					'How much of the model reasoning Codex reports for the Thinking display. None turns it off, for providers that reject summaries.',
-				options: CODEX_REASONING_SUMMARIES,
-				// Every model in the Codex catalog defaults to `none`, which emits zero
-				// reasoning items, so Thinking stayed empty unless we ask (#1744).
-				default: 'auto',
+					'Request readable Codex reasoning summaries for the Thinking display. Default follows the Codex CLI and model; some providers do not support summaries.',
+				options: ['', ...CODEX_REASONING_SUMMARIES],
+				// Empty inherits Codex's config instead of forcing summaries on providers
+				// that may not support them. Choose auto to request Thinking content.
+				default: '',
 				// Stored values reach here unvalidated (CLI `settings agent set`, hand
 				// edits), and anything outside the enum makes Codex refuse the config.
 				argBuilder: (value: string) =>
