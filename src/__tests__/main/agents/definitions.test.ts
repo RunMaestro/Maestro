@@ -332,6 +332,16 @@ describe('agent-definitions', () => {
 			expect(reasoningOption).toBeDefined();
 			expect(reasoningOption?.type).toBe('select');
 			expect((reasoningOption as any)?.dynamic).toBe(true);
+			expect(reasoningOption?.argBuilder?.('xhigh')).toEqual([
+				'-c',
+				'model_reasoning_effort="xhigh"',
+			]);
+			expect(reasoningOption?.argBuilder?.('')).toEqual([]);
+
+			const summaryOption = codex?.configOptions?.find((opt) => opt.key === 'reasoningSummary');
+			expect(summaryOption?.type).toBe('select');
+			expect(summaryOption?.default).toBe('auto');
+			expect((summaryOption as any)?.options).toEqual(['auto', 'concise', 'detailed', 'none']);
 		});
 
 		it('should have configOptions for opencode', () => {
