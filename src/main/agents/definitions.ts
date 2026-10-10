@@ -167,6 +167,9 @@ export interface AgentConfig extends BaseAgentConfig {
  */
 export type AgentDefinition = Omit<AgentConfig, 'available' | 'path' | 'capabilities'>;
 
+/** Values Codex accepts for `model_reasoning_summary`. */
+const CODEX_REASONING_SUMMARIES = ['auto', 'concise', 'detailed', 'none'];
+
 // ============ Agent Definitions ============
 
 /**
@@ -311,10 +314,30 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				dynamic: true,
 				// Static fallback used when ~/.codex/models_cache.json hasn't been
 				// written yet (e.g. fresh install) so the dropdown still renders.
-				options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+				options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
 				default: '',
+				// The config key is `model_reasoning_effort`. Codex 0.162 answers the
+				// old `reasoning.effort` with "`reasoning` is ignored" and runs at the
+				// config.toml default, so the picker silently did nothing (#1744).
 				argBuilder: (value: string) =>
-					value && value.trim() ? ['-c', `reasoning.effort="${value.trim()}"`] : [],
+					value && value.trim() ? ['-c', `model_reasoning_effort="${value.trim()}"`] : [],
+			},
+			{
+				key: 'reasoningSummary',
+				type: 'select',
+				label: 'Reasoning Summary',
+				description:
+					'How much of the model reasoning Codex reports for the Thinking display. None turns it off, for providers that reject summaries.',
+				options: CODEX_REASONING_SUMMARIES,
+				// Every model in the Codex catalog defaults to `none`, which emits zero
+				// reasoning items, so Thinking stayed empty unless we ask (#1744).
+				default: 'auto',
+				// Stored values reach here unvalidated (CLI `settings agent set`, hand
+				// edits), and anything outside the enum makes Codex refuse the config.
+				argBuilder: (value: string) =>
+					CODEX_REASONING_SUMMARIES.includes(value)
+						? ['-c', `model_reasoning_summary="${value}"`]
+						: [],
 			},
 		],
 	},

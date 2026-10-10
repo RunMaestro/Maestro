@@ -2388,7 +2388,7 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 
 			const options = await detector.discoverConfigOptions('codex', 'reasoningEffort');
-			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 			expect(logger.debug).toHaveBeenCalledWith(
 				'Could not read Codex models_cache.json for config option discovery',
 				'AgentDetector'
