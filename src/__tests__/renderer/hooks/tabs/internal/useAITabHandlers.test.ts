@@ -1,6 +1,7 @@
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAITabHandlers } from '../../../../../renderer/hooks/tabs/internal/useAITabHandlers';
+import { useNotificationStore } from '../../../../../renderer/stores/notificationStore';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { getLiveDraft, setLiveDraft } from '../../../../../renderer/utils/liveDraftStore';
@@ -171,6 +172,79 @@ describe('useAITabHandlers', () => {
 		});
 		expect(document.activeElement).toBe(textarea);
 		textarea.remove();
+	});
+
+	it('routes browser closes to the desktop without minting a local replacement', async () => {
+		setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		window.maestro.web.requestCloseTab = vi.fn().mockResolvedValue(true);
+		const { result } = renderHook(() => useAITabHandlers());
+
+		await act(async () => result.current.handleTabClose('ai-1'));
+
+		expect(window.maestro.web.requestCloseTab).toHaveBeenCalledWith('session-1', 'ai-1');
+		// Inventory sync supplies the replacement id minted by the desktop.
+		expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['ai-1']);
+	});
+
+	it('only sends a browser close after draft confirmation', async () => {
+		setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		window.maestro.web.requestCloseTab = vi.fn().mockResolvedValue(true);
+		setLiveDraft('ai-1', 'keep until confirmed');
+		const { result } = renderHook(() => useAITabHandlers());
+
+		act(() => result.current.handleTabClose('ai-1'));
+		expect(window.maestro.web.requestCloseTab).not.toHaveBeenCalled();
+		expect(getLiveDraft('ai-1')).toBe('keep until confirmed');
+		await act(async () => useModalStore.getState().modals.get('confirm')?.data?.onConfirm());
+
+		expect(window.maestro.web.requestCloseTab).toHaveBeenCalledWith('session-1', 'ai-1');
+		expect(getLiveDraft('ai-1')).toBeUndefined();
+	});
+
+	it.each(['unavailable', 'disconnected'])(
+		'keeps the browser tab and draft when %s',
+		async (failure) => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			window.maestro.web.requestCloseTab =
+				failure === 'unavailable'
+					? vi.fn().mockResolvedValue(false)
+					: vi.fn().mockRejectedValue(new Error('disconnected'));
+			setLiveDraft('ai-1', 'keep me');
+			const { result } = renderHook(() => useAITabHandlers());
+
+			await act(async () => result.current.performTabClose('ai-1'));
+
+			expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['ai-1']);
+			expect(getLiveDraft('ai-1')).toBe('keep me');
+			expect(useNotificationStore.getState().toasts).toEqual(
+				expect.arrayContaining([expect.objectContaining({ title: 'Could not close session' })])
+			);
+		}
+	);
+
+	it('routes close-all to the desktop for every visible conversation', async () => {
+		setupSession({
+			id: 'session-1',
+			aiTabs: [
+				createMockAITab({ id: 'ai-1' }),
+				createMockAITab({ id: 'ai-2' }),
+				createMockAITab({ id: 'consult', hidden: true }),
+			],
+		});
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		window.maestro.web.requestCloseTab = vi.fn().mockResolvedValue(true);
+		const { result } = renderHook(() => useAITabHandlers());
+
+		await act(async () => result.current.handleCloseAllTabs());
+
+		expect(vi.mocked(window.maestro.web.requestCloseTab).mock.calls).toEqual([
+			['session-1', 'ai-1'],
+			['session-1', 'ai-2'],
+		]);
+		expect(getSession().aiTabs).toHaveLength(3);
 	});
 
 	it('restores an orphaned thinking tab when selected', () => {

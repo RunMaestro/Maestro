@@ -88,7 +88,10 @@ describe('useRemoteIntegration', () => {
 	let onRemoteNewTabHandler:
 		| ((sessionId: string, responseChannel: string, background?: boolean) => void)
 		| undefined;
-	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
+	let onRemoteCloseTabHandler:
+		| ((sessionId: string, tabId: string, responseChannel: string) => void)
+		| undefined;
+	let onRemoteReopenTabHandler: typeof onRemoteCloseTabHandler;
 	let onRemoteRenameTabHandler:
 		| ((
 				sessionId: string,
@@ -190,6 +193,12 @@ describe('useRemoteIntegration', () => {
 		}),
 		onRemoteCloseTab: vi.fn().mockImplementation((handler) => {
 			onRemoteCloseTabHandler = handler;
+			return () => {};
+		}),
+		sendRemoteCloseTabResponse: vi.fn(),
+		sendRemoteReopenTabResponse: vi.fn(),
+		onRemoteReopenTab: vi.fn().mockImplementation((handler) => {
+			onRemoteReopenTabHandler = handler;
 			return () => {};
 		}),
 		onRemoteRenameTab: vi.fn().mockImplementation((handler) => {
@@ -475,6 +484,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteSelectTabHandler = undefined;
 		onRemoteNewTabHandler = undefined;
 		onRemoteCloseTabHandler = undefined;
+		onRemoteReopenTabHandler = undefined;
 		onRemoteRenameTabHandler = undefined;
 		onRemoteStarTabHandler = undefined;
 		onRemoteReorderTabHandler = undefined;
@@ -1750,6 +1760,96 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote close tab', () => {
+		it('keeps the last-tab replacement stable across duplicate closes and browser inventory sync', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+			});
+			const deps = createDeps({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCloseTabHandler?.('session-1', 'tab-1', 'close-response');
+				onRemoteCloseTabHandler?.('session-1', 'tab-1', 'close-response');
+			});
+			const desktop = useSessionStore.getState().sessions[0];
+			expect(desktop.aiTabs).toHaveLength(1);
+			expect(desktop.aiTabs[0].id).not.toBe('tab-1');
+			expect(desktop.unifiedClosedTabHistory).toEqual([
+				expect.objectContaining({ type: 'ai', tab: expect.objectContaining({ id: 'tab-1' }) }),
+			]);
+
+			// Apply the authoritative inventory to a browser still holding the old
+			// tab. Its next save and bootstrap must contain the desktop's one id.
+			act(() => {
+				useSessionStore.setState({ sessions: [session] });
+				onRemoteSelectTabHandler?.('session-1', '', desktop.aiTabs);
+			});
+			const browser = useSessionStore.getState().sessions[0];
+			expect(browser.aiTabs.map((tab) => tab.id)).toEqual(desktop.aiTabs.map((tab) => tab.id));
+			expect(browser.activeTabId).toBe(desktop.activeTabId);
+		});
+
+		it('does not put closed wizard progress in reopen history', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'wizard', wizardState: { isActive: true } as any })],
+				activeTabId: 'wizard',
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			act(() => onRemoteCloseTabHandler?.('session-1', 'wizard', 'close-response'));
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.closedTabHistory ?? []).toEqual([]);
+			expect(updated.unifiedClosedTabHistory ?? []).toEqual([]);
+		});
+
+		it('answers false for a missing tab or session', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			act(() => {
+				onRemoteCloseTabHandler?.('missing-agent', 'missing-tab', 'missing-agent-response');
+				onRemoteCloseTabHandler?.('session-1', 'missing-tab', 'missing-tab-response');
+			});
+			expect(mockProcess.sendRemoteCloseTabResponse).toHaveBeenCalledWith(
+				'missing-agent-response',
+				false
+			);
+			expect(mockProcess.sendRemoteCloseTabResponse).toHaveBeenCalledWith(
+				'missing-tab-response',
+				false
+			);
+		});
+
+		it('acknowledges a close and restores that exact history item on the desktop', () => {
+			const original = createMockTab({ id: 'tab-1', name: 'Conversation' });
+			renderHook(() =>
+				useRemoteIntegration(
+					createDeps({
+						sessions: [
+							createMockSession({ id: 'session-1', aiTabs: [original], activeTabId: original.id }),
+						],
+					})
+				)
+			);
+			mockProcess.sendRemoteCloseTabResponse.mockImplementationOnce(() => {
+				expect(
+					useSessionStore.getState().sessions[0].aiTabs.some((t) => t.id === original.id)
+				).toBe(false);
+			});
+			act(() => onRemoteCloseTabHandler?.('session-1', original.id, 'closed'));
+			expect(mockProcess.sendRemoteCloseTabResponse).toHaveBeenCalledWith('closed', true);
+			act(() => onRemoteReopenTabHandler?.('session-1', original.id, 'reopened'));
+			const restored = useSessionStore
+				.getState()
+				.sessions[0].aiTabs.find((t) => t.name === 'Conversation');
+			expect(restored).toBeDefined();
+			expect(mockProcess.sendRemoteReopenTabResponse).toHaveBeenCalledWith('reopened', {
+				tabId: restored!.id,
+			});
+			act(() => onRemoteReopenTabHandler?.('session-1', original.id, 'duplicate'));
+			expect(mockProcess.sendRemoteReopenTabResponse).toHaveBeenCalledWith('duplicate', null);
+		});
+
 		it('closes tab in session', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });
@@ -1763,7 +1863,7 @@ describe('useRemoteIntegration', () => {
 			renderHook(() => useRemoteIntegration(deps));
 
 			act(() => {
-				onRemoteCloseTabHandler?.('session-1', 'tab-1');
+				onRemoteCloseTabHandler?.('session-1', 'tab-1', 'close-response');
 			});
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
