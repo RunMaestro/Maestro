@@ -271,6 +271,10 @@ describe('AutoRunStats', () => {
 
 			expect(screen.getByTestId('autorun-stats-loading')).toBeInTheDocument();
 			expect(screen.getByText('Loading Auto Run stats...')).toBeInTheDocument();
+			// Settle the delayed request before jsdom tears down window.
+			await waitFor(() => expect(screen.getByTestId('autorun-stats')).toBeInTheDocument(), {
+				timeout: 2000,
+			});
 		});
 	});
 
