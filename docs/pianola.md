@@ -36,7 +36,7 @@ Each watch is supervised by the desktop app. It restarts on crash and comes back
 
 The audit trail, and the most important tab in the feature. For every decision it records what was asked, how it was classified, which rule matched, what Pianola sent, and how it turned out.
 
-**Every decision is recorded before anything is dispatched.** That ordering is deliberate. It means a rule that turns out to be wrong is always visible after the fact, rather than being a thing that happened invisibly at 3am.
+**Every watcher decision is recorded before anything is dispatched.** That ordering is deliberate. It means a rule that turns out to be wrong is always visible after the fact, rather than being a thing that happened invisibly at 3am. (Program-loop wakes persist their reservation before dispatch and append their Recent decisions entry afterward.)
 
 ### Suggestions
 
@@ -84,6 +84,46 @@ These are not configurable, and that is the point.
 - **A low-confidence read escalates.** It does not guess.
 - **Only the agents you added a watch for are touched.** Everything else is left alone.
 
+## Product programs and the founder brief
+
+Pianola can keep a standing charter for each product. Apply a YAML or JSON manifest containing a programs: array with each program's id, title, root, charter, and named roles. Missing role agents are created once in the background; repeat applies retain their agent ids and preserve unrelated environment settings. A role may specify an agent provider and model. Concurrent apply and pause operations preserve the latest pause state. Pause or resume a program without deleting its charter:
+
+```bash
+maestro-cli pianola program apply --file maestro-programs.yaml --json
+maestro-cli pianola program list --json
+maestro-cli pianola program show <id> --json
+maestro-cli pianola program pause <id> --json
+maestro-cli pianola program resume <id> --json
+```
+
+An optional programId on a task plan ties it to a product. A program accepts only one unfinished plan at a time. Plans without a program retain their existing behavior.
+
+The founder brief combines programs, plans, open founder asks, recent watcher escalations, and the AgentRun ledger. It reports tasks as verified only when a completed task has a passed independent-validation check; ordinary completion does not count.
+
+```bash
+maestro-cli pianola escalate --title "Need a decision" --detail "Choose the launch date" --program <id> --severity high --json
+maestro-cli pianola needs-me --json
+maestro-cli pianola brief --json
+maestro-cli pianola resolve <ask-id> --option "Next Tuesday" --json
+maestro-cli pianola dismiss <ask-id> --json
+```
+
+An open ask from the same agent and program is updated, preserving the higher severity; pass --distinct to record a separate ask. Founder asks can be resolved or dismissed in the dashboard too. Pianola still asks before creating agents or dispatching plans on the founder's behalf.
+
+## Program loop
+
+Supervise a product program to wake its lead only for a new bounded outcome, a newly blocked or failed task, resolved founder decisions (including notes and originating agent/tab), or the completion of the last plan. A busy lead is never interrupted. The loop supervises the active plan's orchestrator and watches the lead's tab after a successful wake; the lead writes plans with `pianola plan set --file` but does not dispatch tasks. Pending wakes recover from interruption by reconciling their receipt in the lead's transcript, and per-program locking prevents overlapping ticks from dispatching twice. Idle handoffs are at least 60 minutes apart. Pausing a program suspends its loop, its plans' supervised orchestrators, and its lead watch without deleting its charter or touching each target's own enabled flag, so resuming never revives a target you disabled by hand. A paused tick cannot register new targets.
+
+```bash
+maestro-cli pianola supervise program <program-id> --interval 120
+maestro-cli pianola program-loop <program-id> --once --json
+maestro-cli pianola program pause <program-id>
+```
+
+Loop memo state is stored in maestro-pianola-program-loop.json in the Maestro data directory. Program-loop actions appear in Recent decisions without creating a Needs you escalation; no-op ticks are not recorded. The brief reports whether each program is supervised and its last wake reason and time.
+
+Applying a program also writes Cue routines into a local Windows root's `.maestro/cue.yaml`. Product programs get a weekday 08:30 standup and a weekday 17:00 marketing draft sweep over verified work from the last day. The portfolio program gets Monday CTO and CMO reviews and a Wednesday social draft sweep. These write drafts and reviews only, never publish. Re-apply replaces only that program's marked generated block, preserving other programs and hand-written subscriptions; existing legacy Cue configuration migrates without losing its subscriptions or settings. For a remote root, the CLI writes through `remoteRootOnHost` and skips the Cue file when that value is unset. Mounted remote Cue files use host-visible roots for storage and remote POSIX roots for execution and prompt path variables.
+
 ## Task plans
 
 Beyond watching, Pianola can run a saved task plan, dispatching each task as its dependencies finish:
@@ -92,9 +132,32 @@ Beyond watching, Pianola can run a saved task plan, dispatching each task as its
 maestro-cli pianola plan list
 maestro-cli pianola plan show <plan-id>
 maestro-cli pianola orchestrate <plan-id>
+maestro-cli pianola plan revise <plan-id> <task-id> --prompt "<founder-approved correction>" --json
 ```
 
 Orchestrations are recorded in the agent run ledger alongside everything else, so a plan that ran overnight has the same audit trail as a prompt that was answered by a rule.
+
+After a founder resolves blocked work, the lead uses `plan revise` to correct a task in `needs_review` or `failed`. It requeues only that task and unblocks eligible descendants, preserving the plan ID, completed tasks, dependencies, role agent, and validation oracle. Prior execution bindings and corrective-attempt counters are cleared; the supervised orchestrator dispatches the revised instructions. Revision and complete orchestrator ticks share per-plan ownership, and each tick reloads the saved plan so a running supervisor cannot overwrite the correction. Active or completed tasks cannot be revised; a terminal plan cannot reopen while another unfinished plan belongs to the same program. `plan set` still refuses to replace any started plan.
+
+Founder revision yields while an in-flight orchestration/validation tick holds the plan lock. Plan owners renew their lock every ten seconds; a revision can wait through a long validation while those heartbeats continue, but returns a timeout after thirty seconds without lock progress. A live PID alone does not permit indefinite waiting, and a timed-out revision neither changes the plan nor steals the lock. Other mutation waits retain their five-second deadline; dead-owner recovery remains enabled. If revision reopens a completed plan with an enabled supervised target, reconciliation automatically starts its stopped orchestrator again, including when revision races with the prior child's clean exit. Completed plans without new work, disabled targets, and paused programs remain stopped.
+
+On Windows, long local `omp` task prompts use temporary file transport instead of exceeding the command-line limit. The CLI removes the prompt file when the turn settles, including launch failures. SSH turns retain remote prompt delivery and do not create a local prompt file.
+
+## Validation
+
+An engineer task can include a validation oracle with command (argv), target (workspace), optional artifacts, and timeoutSeconds. After the agent settles, Pianola runs the command inside a Linux sandbox, with the target mounted read-only and temporary tool output redirected to /tmp. Artifacts must be inside the target. A passing oracle appends an independent-validation Agent Run check and lets the task finish; a failed oracle routes it to review and the bounded fix cycle. Sandbox startup, timeout, and read-only write errors are unknown, not candidate failures; two unknown observations request review.
+
+Validation failures stop at `needs_review` unless the separate Autopilot feature is enabled. With Autopilot enabled, the orchestrator dispatches bounded corrective attempts and independently validates again; the current program charter caps concurrency and corrective attempts. Plan updates are serialized across processes so concurrent products cannot overwrite each other's progress.
+
+The artifact manifest is limited to 256 unique regular files and 64 MiB total; traversal and file or parent-directory symlinks are rejected. A symlink to the workspace itself is supported, without relaxing artifact checks. Missing claimed files, including missing parent directories, are candidate failures. Artifact contents are sealed, and project/toolchain bind sources are pinned before launch so replacing their pathnames cannot redirect those mounts. Captured output is limited to 100,000 bytes per stream; both streams are still drained and the exit receipt is required. Truncation is reported in outputTruncated. The runner scans all stderr chunks, including discarded output and markers spanning chunks, for Read-only file system or EROFS and reports readOnlyWriteDetected. A nonzero exit with this flag is unknown; truncation alone does not change a successful or failed verdict.
+
+Virtualenv toolchain discovery reads only regular pyvenv.cfg files, with an 8 KiB configuration limit, before the sandbox starts; malformed or oversized configuration produces an unknown observation.
+
+The runner requires --trusted-root, supplied by the CLI from the operator-declared program root or a standalone task's cwd. Both root and target are canonicalized inside the runner's Linux filesystem; a target outside that root, including a symlink escape, is refused before launch with policyViolation and a failed verdict. Do not put credentials or host Unix-domain sockets in an approved workspace/toolchain: a read-only directory mount exposes its contents, and network namespace isolation does not prevent connections to filesystem Unix sockets visible in that mount.
+
+Run an oracle manually with maestro-cli pianola validate <planId> <taskId> --json.
+
+The optional pianola.sandboxRunner setting overrides the validator with a non-empty argv prefix, for example ["python3", "/opt/maestro/sandbox_runner.py"]. By default, Pianola resolves scripts/pianola-sandbox/sandbox_runner.py relative to the installed CLI: beside its bundle first (the CLI build copies it to dist/cli/scripts/pianola-sandbox/), then from the repository root above dist/cli. Linux/macOS invoke python3 <path>; Windows invokes wsl.exe --exec python3 /mnt/<drive>/... using the default WSL distro and user, with target and artifact paths translated to /mnt paths. Direct WSL modes retain literal arguments; configured default/login-shell modes apply POSIX quoting with verbatim Windows transport so quote characters do not leak into the oracle. The runner requires a Linux host with bubblewrap and resource-controlling user-manager support; macOS therefore requires a configured Linux launcher. A missing default script or invalid override is a configuration error naming pianola.sandboxRunner, not an unknown oracle verdict. A program charter with validationRequired: false disables automatic validation; true requires each task to declare a validation spec. Manual validation remains available. Output is drained to EOF with a bounded head per stream and truncation flags, without losing the exit verdict. The launcher is killed if it exceeds timeoutSeconds (default 120) plus 60 seconds of launch grace. The verb exits 0 when verified, 2 when failed, 3 when unknown, and 1 for configuration errors.
 
 ## Learning from how you already work
 

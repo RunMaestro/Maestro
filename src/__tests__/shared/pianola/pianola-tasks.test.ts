@@ -11,6 +11,7 @@ import {
 	validatePlan,
 	computeReadyTasks,
 	markTaskStatus,
+	revisePlanTask,
 	propagateBlocked,
 	planProgress,
 	type PianolaPlan,
@@ -72,6 +73,11 @@ describe('isTerminalStatus', () => {
 });
 
 describe('validatePlan', () => {
+	it('rejects negative fix attempts that would extend the charter retry budget', () => {
+		const result = validatePlan(rawPlan([rawTask({ fixAttempts: -1 })]));
+		expect(result.plan).toBeNull();
+		expect(result.errors.some((error) => error.includes('fixAttempts'))).toBe(true);
+	});
 	it('accepts a good linear plan', () => {
 		const { plan: result, errors } = validatePlan(
 			rawPlan([
@@ -339,6 +345,95 @@ describe('propagateBlocked', () => {
 	});
 });
 
+describe('revisePlanTask', () => {
+	it.each(['needs_review', 'failed'] as const)(
+		'requeues %s work without changing completed tasks or its oracle',
+		(status) => {
+			const done = task({ id: 'done', status: 'done', runId: 'verified-run' });
+			const reviewed = task({
+				id: 'reviewed',
+				status,
+				dependsOn: ['done'],
+				agentId: 'engineer',
+				agentType: 'codex',
+				cwd: '/product',
+				tabId: 'old-tab',
+				runId: 'old-run',
+				error: 'wrong answer',
+				fixAttempts: 2,
+				validationUnknownAttempts: 2,
+				dispatchedMessageCount: 5,
+				dispatchedMessageId: 'old-message',
+				validation: {
+					command: ['python3', 'oracle.py'],
+					target: '/product',
+					artifacts: ['answer.txt'],
+				},
+			});
+			const original = plan([done, reviewed], { programId: 'product' });
+			const revised = revisePlanTask(original, 'reviewed', 'Use the founder-approved answer.');
+			expect(revised).toEqual({
+				...original,
+				tasks: [
+					done,
+					{
+						id: 'reviewed',
+						title: reviewed.title,
+						status: 'pending',
+						dependsOn: ['done'],
+						prompt: 'Use the founder-approved answer.',
+						agentId: 'engineer',
+						agentType: 'codex',
+						cwd: '/product',
+						validation: reviewed.validation,
+					},
+				],
+			});
+			expect(computeReadyTasks(revised).map((entry) => entry.id)).toEqual(['reviewed']);
+			expect(original.tasks[1]).toEqual(reviewed);
+		}
+	);
+	it('reopens only descendants whose remaining prerequisites are no longer blocked', () => {
+		const original = plan([
+			task({ id: 'tail', status: 'blocked', dependsOn: ['child'], error: 'upstream failed' }),
+			task({ id: 'child', status: 'blocked', dependsOn: ['reviewed'] }),
+			task({ id: 'reviewed', status: 'failed' }),
+			task({ id: 'other', status: 'failed' }),
+			task({
+				id: 'shared',
+				status: 'blocked',
+				dependsOn: ['reviewed', 'other'],
+				error: 'other failed',
+			}),
+			task({ id: 'unrelated', status: 'blocked', dependsOn: ['other'] }),
+		]);
+		const revised = revisePlanTask(original, 'reviewed', 'Correct the work.');
+		expect(revised.tasks.map((entry) => [entry.id, entry.status])).toEqual([
+			['tail', 'pending'],
+			['child', 'pending'],
+			['reviewed', 'pending'],
+			['other', 'failed'],
+			['shared', 'blocked'],
+			['unrelated', 'blocked'],
+		]);
+		expect(revised.tasks[0].error).toBeUndefined();
+		expect(revised.tasks[4]).toEqual(original.tasks[4]);
+	});
+	it.each(['pending', 'running', 'fixing', 'done', 'skipped', 'blocked'] as const)(
+		'refuses to revise %s work',
+		(status) => {
+			const original = plan([task({ status })]);
+			expect(() => revisePlanTask(original, 't1', 'Correction')).toThrow();
+			expect(original.tasks[0].status).toBe(status);
+		}
+	);
+	it('rejects missing tasks and empty corrections', () => {
+		const original = plan([task({ status: 'needs_review' })]);
+		expect(() => revisePlanTask(original, 'absent', 'Correction')).toThrow();
+		expect(() => revisePlanTask(original, 't1', '  ')).toThrow();
+	});
+});
+
 describe('planProgress', () => {
 	it('counts tasks by status', () => {
 		const p = plan([
@@ -383,5 +478,24 @@ describe('planProgress', () => {
 
 	it('treats an empty plan as complete', () => {
 		expect(planProgress(plan([])).complete).toBe(true);
+	});
+});
+
+describe('task validation specs', () => {
+	it('preserves a valid oracle through plan validation and rejects missing commands', () => {
+		const validation = {
+			command: ['pytest', '-q'],
+			target: '/workspace',
+			artifacts: ['result.txt'],
+		};
+		expect(validatePlan(rawPlan([rawTask({ validation })])).plan?.tasks[0].validation).toEqual(
+			validation
+		);
+		const absent = validatePlan(rawPlan([rawTask()]));
+		expect(absent.errors).toEqual([]);
+		expect(absent.plan?.tasks[0].validation).toBeUndefined();
+		const invalid = validatePlan(rawPlan([rawTask({ validation: { target: '/workspace' } })]));
+		expect(invalid.plan).toBeNull();
+		expect(invalid.errors.some((error) => error.includes('validation'))).toBe(true);
 	});
 });

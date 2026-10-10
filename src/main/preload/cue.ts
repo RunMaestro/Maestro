@@ -145,20 +145,21 @@ export function createCueApi() {
 			ipcRenderer.invoke('cue:cancelScheduledTask', { projectRoot, name }),
 
 		// Read raw YAML content from a session's maestro-cue.yaml
-		readYaml: (projectRoot: string): Promise<string | null> =>
-			ipcRenderer.invoke('cue:readYaml', { projectRoot }),
+		readYaml: (projectRoot: string, sessionId?: string): Promise<string | null> =>
+			ipcRenderer.invoke('cue:readYaml', { projectRoot, sessionId }),
 
 		// Write YAML content to a session's maestro-cue.yaml (with optional external prompt files)
 		writeYaml: (
 			projectRoot: string,
 			content: string,
-			promptFiles?: Record<string, string>
+			promptFiles?: Record<string, string>,
+			sessionId?: string
 		): Promise<{ changed: boolean }> =>
-			ipcRenderer.invoke('cue:writeYaml', { projectRoot, content, promptFiles }),
+			ipcRenderer.invoke('cue:writeYaml', { projectRoot, content, promptFiles, sessionId }),
 
 		// Delete a session's cue.yaml config file
-		deleteYaml: (projectRoot: string): Promise<boolean> =>
-			ipcRenderer.invoke('cue:deleteYaml', { projectRoot }),
+		deleteYaml: (projectRoot: string, sessionId?: string): Promise<boolean> =>
+			ipcRenderer.invoke('cue:deleteYaml', { projectRoot, sessionId }),
 
 		// Rename a pipeline across every cue.yaml it spans
 		renamePipeline: (

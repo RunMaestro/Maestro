@@ -49,12 +49,8 @@ export interface HoverTooltipProps {
 	/** Inline style for the trigger wrapper span (e.g. dynamic text color). */
 	triggerStyle?: CSSProperties;
 	/**
-	 * Cap the tooltip's width in pixels and let the label wrap onto several
-	 * lines. Without this a tooltip is a single `nowrap` line, which is right for
-	 * a short button label but turns a sentence into a ribbon the width of the
-	 * window. The existing viewport clamping keeps the wrapped box on-screen, so
-	 * this only decides where the text breaks. The cap is also bounded by the
-	 * viewport, so it stays honest on a narrow window.
+	 * Cap the tooltip's width in pixels. Labels always wrap when they would exceed
+	 * the available viewport; this prop can impose a narrower wrapping boundary.
 	 */
 	maxWidth?: number;
 }
@@ -157,16 +153,20 @@ export function HoverTooltip({
 						ref={tooltipRef}
 						role="tooltip"
 						className={`fixed px-2 py-1 rounded text-xs-plus pointer-events-none shadow-lg flex gap-2 ${
-							maxWidth ? 'items-start leading-snug' : 'items-center whitespace-nowrap'
+							maxWidth ? 'items-start leading-snug' : 'items-center'
 						}`}
 						style={{
 							left: pos?.left ?? -9999,
 							top: pos?.top ?? -9999,
-							// Never wider than the window minus both margins, or the clamp
-							// above would just push the overflow to the other edge.
-							maxWidth: maxWidth
-								? Math.min(maxWidth, window.innerWidth - VIEWPORT_MARGIN * 2)
-								: undefined,
+							// Every tooltip must fit between the viewport margins. maxWidth
+							// can request a narrower cap, but never a wider one.
+							maxWidth:
+								typeof window === 'undefined'
+									? maxWidth
+									: Math.min(
+											maxWidth ?? Number.POSITIVE_INFINITY,
+											Math.max(0, window.innerWidth - VIEWPORT_MARGIN * 2)
+										),
 							zIndex: 10000,
 							backgroundColor: theme.colors.bgActivity,
 							color: theme.colors.textMain,
@@ -175,9 +175,9 @@ export function HoverTooltip({
 							transition: 'opacity 80ms ease-out',
 						}}
 					>
-						<span>{label}</span>
+						<span className="min-w-0 break-words">{label}</span>
 						{shortcut && (
-							<span className="opacity-60" style={{ color: theme.colors.textDim }}>
+							<span className="shrink-0 opacity-60" style={{ color: theme.colors.textDim }}>
 								{shortcut}
 							</span>
 						)}

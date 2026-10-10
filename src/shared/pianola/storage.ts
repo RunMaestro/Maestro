@@ -17,6 +17,12 @@ import type {
 // Runtime enum arrays are single-sourced from types.ts; the union types derive from them.
 import { RULE_SCOPES, ACTION_KINDS, RISKS, SIGNAL_KINDS } from './types';
 import { validatePlan, type PianolaPlan, type PianolaTask } from './pianola-tasks';
+import {
+	validatePianolaProgram,
+	validatePianolaAsk,
+	type PianolaProgram,
+	type PianolaAsk,
+} from './pianola-programs';
 import { matchHasNarrowingPredicate } from './pianola-policy';
 
 /** Editable rules file (JSON array of PianolaRule), in the Maestro config dir. */
@@ -24,6 +30,9 @@ export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
 
 /** Persisted orchestrator plans (JSON), in the Maestro config dir. */
 export const PIANOLA_PLANS_FILENAME = 'maestro-pianola-plans.json';
+export const PIANOLA_PROGRAMS_FILENAME = 'maestro-pianola-programs.json';
+export const PIANOLA_ASKS_FILENAME = 'maestro-pianola-asks.json';
+export const PIANOLA_PROGRAM_LOOP_FILENAME = 'maestro-pianola-program-loop.json';
 
 /** Append-only decision audit log (JSON Lines), in the Maestro config dir. */
 export const PIANOLA_DECISIONS_FILENAME = 'pianola-decisions.jsonl';
@@ -337,6 +346,28 @@ export function resolveProfile(
 export interface PianolaPlansFile {
 	plans: PianolaPlan[];
 }
+export interface PianolaProgramsFile {
+	programs: PianolaProgram[];
+}
+export interface PianolaAsksFile {
+	asks: PianolaAsk[];
+}
+export function validatePianolaProgramsFile(raw: unknown): PianolaProgramsFile {
+	const entries = raw && typeof raw === 'object' && 'programs' in raw ? raw.programs : undefined;
+	return {
+		programs: Array.isArray(entries)
+			? entries.map(validatePianolaProgram).filter((p): p is PianolaProgram => p !== null)
+			: [],
+	};
+}
+export function validatePianolaAsksFile(raw: unknown): PianolaAsksFile {
+	const entries = raw && typeof raw === 'object' && 'asks' in raw ? raw.asks : undefined;
+	return {
+		asks: Array.isArray(entries)
+			? entries.map(validatePianolaAsk).filter((a): a is PianolaAsk => a !== null)
+			: [],
+	};
+}
 
 /**
  * Validate an untrusted plans payload, dropping any malformed plans (reusing
@@ -358,14 +389,15 @@ export function validatePianolaPlansFile(raw: unknown): PianolaPlansFile {
 /** Filename for the persisted supervised-target registry, in the Maestro config dir. */
 export const PIANOLA_SUPERVISOR_FILENAME = 'maestro-pianola-supervisor.json';
 
-/** The two kinds of background process the desktop supervisor keeps alive. */
-export type PianolaSupervisedKind = 'watch' | 'orchestrate';
+/** Background process kinds kept alive by the desktop supervisor. */
+export type PianolaSupervisedKind = 'watch' | 'orchestrate' | 'program';
 
 /**
  * One persisted background target the desktop supervisor manages. A 'watch'
  * target babysits a tab and needs both tabId and agentId; an 'orchestrate'
- * target drives a saved plan to completion and needs planId. The optional
- * intervalSeconds / concurrency tune the spawned CLI command.
+ * target drives a saved plan to completion and needs planId; a 'program'
+ * target drives a program lead loop and needs programId. Optional intervalSeconds
+ * and concurrency tune the spawned CLI command.
  */
 export interface PianolaSupervisedTarget {
 	id: string;
@@ -375,6 +407,7 @@ export interface PianolaSupervisedTarget {
 	tabId?: string;
 	agentId?: string;
 	planId?: string;
+	programId?: string;
 	intervalSeconds?: number;
 	concurrency?: number;
 }
@@ -387,13 +420,13 @@ export interface PianolaSupervisorFile {
 /**
  * Validate one untrusted supervised-target object, or null when the shape is
  * invalid. Kind-specific required fields are enforced (watch needs tabId +
- * agentId, orchestrate needs planId) so a target that could never spawn a valid
- * CLI command is dropped rather than persisted.
+ * agentId, orchestrate needs planId, program needs programId) so a target
+ * that cannot spawn a valid CLI command is dropped rather than persisted.
  */
 export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervisedTarget | null {
 	if (!isRecord(raw)) return null;
 	if (typeof raw.id !== 'string' || raw.id.length === 0) return null;
-	if (raw.kind !== 'watch' && raw.kind !== 'orchestrate') return null;
+	if (raw.kind !== 'watch' && raw.kind !== 'orchestrate' && raw.kind !== 'program') return null;
 	if (typeof raw.enabled !== 'boolean') return null;
 	if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) return null;
 
@@ -416,6 +449,10 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 		if (typeof raw.planId !== 'string') return null;
 		target.planId = raw.planId;
 	}
+	if (raw.programId !== undefined) {
+		if (typeof raw.programId !== 'string') return null;
+		target.programId = raw.programId;
+	}
 	if (raw.intervalSeconds !== undefined) {
 		if (typeof raw.intervalSeconds !== 'number' || !Number.isFinite(raw.intervalSeconds)) {
 			return null;
@@ -431,6 +468,7 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 	if (target.kind === 'watch' && (!target.tabId || !target.agentId)) return null;
 	if (target.kind === 'orchestrate' && !target.planId) return null;
 
+	if (target.kind === 'program' && !target.programId) return null;
 	return target;
 }
 

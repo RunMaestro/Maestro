@@ -28,6 +28,7 @@ import { detectTaskOutcome } from './pianola-completion-detector';
 import type { PianolaPlan, PianolaPlanProgress, PianolaTask } from './pianola-tasks';
 import { computeReadyTasks, markTaskStatus, planProgress, propagateBlocked } from './pianola-tasks';
 import type { PianolaMessage } from './types';
+import type { PianolaProgramCharter } from './pianola-programs';
 
 export type { AgentRunState } from './pianola-completion-detector';
 
@@ -69,11 +70,21 @@ export interface OrchestratorDeps {
 	/** Observe an agent's current run state for a dispatched (running) task. */
 	getRunState: (task: PianolaTask) => Promise<AgentRunState>;
 	/** Read the tail of a running task's transcript, chronological (oldest first). */
-	getRecentMessages: (task: PianolaTask) => Promise<readonly PianolaMessage[]>;
+	getRecentMessages: (
+		task: PianolaTask,
+		options?: { fresh?: boolean }
+	) => Promise<readonly PianolaMessage[]>;
+	/** Program-specific validation and fix policy; absent programs preserve existing defaults. */
+	getProgramCharter?: (
+		programId: string
+	) =>
+		| (Pick<PianolaProgramCharter, 'validationRequired' | 'maxAttempts'> &
+				Partial<Pick<PianolaProgramCharter, 'maxConcurrent'>>)
+		| undefined;
 	/** Reuse task.agentId or create an agent for the task. Returns the bound id/type or an error. */
 	ensureAgent: (
 		task: PianolaTask
-	) => Promise<{ agentId: string; agentType?: string } | { error: string }>;
+	) => Promise<{ agentId: string; agentType?: string; tabId?: string } | { error: string }>;
 	/** Send the task's prompt to the bound agent, returning success and the tab it landed in. */
 	dispatch: (
 		task: PianolaTask,
@@ -96,6 +107,10 @@ export interface OrchestratorDeps {
 	 * Optional: when absent the engine falls back to busy-to-idle detection.
 	 */
 	getRunLedger?: (task: PianolaTask) => Promise<PianolaTaskLedger | undefined>;
+	/** Run the independent oracle and append its Agent Run check before ledger settlement. */
+	validate?: (
+		task: PianolaTask
+	) => Promise<{ verdict: 'verified' | 'failed' | 'unknown'; reason: string }>;
 	/**
 	 * F8 reactive loop (optional, gated by the CLI on encore/autopilot): dispatch
 	 * a bounded fix agent for a task whose run needs review. Returns success.
@@ -150,9 +165,26 @@ export async function runOrchestratorIteration(
 	options: { concurrencyLimit: number }
 ): Promise<OrchestratorIterationResult> {
 	let plan = state.plan;
+	const charter = plan.programId ? deps.getProgramCharter?.(plan.programId) : undefined;
+	const dispatchLimit = (): number =>
+		Math.min(
+			options.concurrencyLimit,
+			(plan.programId ? deps.getProgramCharter?.(plan.programId)?.maxConcurrent : undefined) ??
+				options.concurrencyLimit
+		);
+	const activeCount = (): number => {
+		let count = 0;
+		for (const task of plan.tasks)
+			if (task.status === 'running' || task.status === 'fixing') count++;
+		return count;
+	};
+	const maxFixAttempts = charter?.maxAttempts ?? MAX_FIX_ATTEMPTS;
+	const missingRequiredValidation = (task: PianolaTask): boolean =>
+		charter?.validationRequired === true && (!task.validation || !deps.validate);
 	const completedTaskIds: string[] = [];
 	const failedTaskIds: string[] = [];
 	const dispatchedTaskIds: string[] = [];
+	const failedValidationTaskIds = new Set<string>();
 
 	// 1. Poll running tasks. Carry forward only the run states we actually observe
 	//    this tick, keyed by task id, so prevStates reflects reality next iteration.
@@ -165,18 +197,73 @@ export async function runOrchestratorIteration(
 	);
 	for (const task of running) {
 		const currentState = await deps.getRunState(task);
-		const recentMessages = await deps.getRecentMessages(task);
+		const transcript = await deps.getRecentMessages(task);
+		// An agent's tab accumulates every mission it ever ran; only the messages since
+		// this task's dispatch may decide its outcome, or an old failure marker fails
+		// every later task on the same agent.
+		const recentMessages =
+			task.dispatchedMessageId !== undefined
+				? transcript.slice(
+						task.dispatchedMessageId === null
+							? 0
+							: transcript.findIndex((message) => message.id === task.dispatchedMessageId) + 1
+					)
+				: task.dispatchedMessageCount !== undefined
+					? transcript.slice(task.dispatchedMessageCount)
+					: transcript;
 		prevStates[task.id] = currentState;
-		const { outcome, reason } = detectTaskOutcome({
+		const detected = detectTaskOutcome({
 			previousState: state.prevStates[task.id],
 			currentState,
 			recentMessages,
 		});
+		// An 'unknown' validation leaves the task running so the next tick re-validates
+		// the same finished run; a 'fixing' task must still wait for its fix run.
+		const revalidating =
+			task.status === 'running' && !!task.validationUnknownAttempts && currentState === 'idle';
+		// A run short enough to start and finish between two polls never shows a
+		// busy state; the reply that arrived after the dispatch is its completion.
+		const repliedSinceDispatch =
+			currentState === 'idle' &&
+			detected.outcome === 'working' &&
+			(task.dispatchedMessageId !== undefined || task.dispatchedMessageCount !== undefined) &&
+			recentMessages.some((message) => message.role === 'assistant');
+		const outcome = revalidating || repliedSinceDispatch ? 'done' : detected.outcome;
+		const reason =
+			repliedSinceDispatch && !revalidating
+				? 'agent replied after dispatch and is idle'
+				: detected.reason;
 		if (outcome === 'done') {
+			if (missingRequiredValidation(task)) {
+				plan = markTaskStatus(plan, task.id, 'needs_review', {
+					error: task.validation
+						? 'required validation runner is unavailable'
+						: 'validation required by program charter but task declares none',
+				});
+				continue;
+			}
+			if (task.validation && deps.validate) {
+				const validation = await deps.validate(task);
+				if (validation.verdict === 'unknown') {
+					const attempts = (task.validationUnknownAttempts ?? 0) + 1;
+					plan = markTaskStatus(plan, task.id, attempts >= 2 ? 'needs_review' : 'running', {
+						validationUnknownAttempts: attempts,
+						...(attempts >= 2 ? { error: validation.reason } : {}),
+					});
+					continue;
+				}
+				plan = markTaskStatus(plan, task.id, task.status, { validationUnknownAttempts: 0 });
+				if (validation.verdict === 'failed') {
+					failedValidationTaskIds.add(task.id);
+					plan = markTaskStatus(plan, task.id, 'needs_review', { error: validation.reason });
+				}
+			}
 			// F8 (ISC-8.4): settle on the ledger, not busy-to-idle alone. Open
 			// critical/high findings route the task to needs_review instead of done.
 			const ledger = deps.getRunLedger ? await deps.getRunLedger(task) : undefined;
-			if (ledger && (ledger.openCriticalOrHighFindings ?? 0) > 0) {
+			if (failedValidationTaskIds.has(task.id)) {
+				plan = markTaskStatus(plan, task.id, 'needs_review', { runId: ledger?.runId });
+			} else if (ledger && (ledger.openCriticalOrHighFindings ?? 0) > 0) {
 				plan = markTaskStatus(plan, task.id, 'needs_review', { runId: ledger.runId });
 				deps.log(
 					`[orchestrator] task "${task.id}" needs_review (${ledger.openCriticalOrHighFindings} open findings)`
@@ -211,13 +298,28 @@ export async function runOrchestratorIteration(
 	//     in the dep implementations (ISC-8.9/8.10).
 	if (deps.reactiveEnabled?.() === true) {
 		for (const task of plan.tasks.filter((t) => t.status === 'needs_review')) {
+			if (missingRequiredValidation(task)) {
+				plan = markTaskStatus(plan, task.id, 'needs_review', {
+					error: task.validation
+						? 'required validation runner is unavailable'
+						: 'validation required by program charter but task declares none',
+				});
+				continue;
+			}
+			// Infrastructure failures are not candidate failures and must not trigger a fix or merge.
+			if (task.validation && (task.validationUnknownAttempts ?? 0) >= 2) continue;
 			const ledger = deps.getRunLedger ? await deps.getRunLedger(task) : undefined;
 			// Fully green (zero open findings of ANY severity AND checks passed): the
 			// review work succeeded. Attempt a merge ONCE, then settle to done
 			// regardless of the merge outcome (recorded on the run) so the task
 			// leaves needs_review and does not re-attempt every tick. Anything less
 			// than fully green falls through to the fix cycle below.
-			if (ledger && (ledger.openFindings ?? 0) === 0 && ledger.checksPassed === true) {
+			if (
+				!failedValidationTaskIds.has(task.id) &&
+				ledger &&
+				(ledger.openFindings ?? 0) === 0 &&
+				ledger.checksPassed === true
+			) {
 				if (deps.requestMerge) {
 					const merge = await deps.requestMerge(task, ledger);
 					deps.log(
@@ -234,7 +336,7 @@ export async function runOrchestratorIteration(
 			}
 			// Still needs work: dispatch a bounded fix, or escalate when capped.
 			const attempts = task.fixAttempts ?? 0;
-			if (attempts >= MAX_FIX_ATTEMPTS) {
+			if (attempts >= maxFixAttempts) {
 				plan = markTaskStatus(plan, task.id, 'failed', {
 					error: `fix loop exhausted after ${attempts} attempts; escalated to user`,
 				});
@@ -244,12 +346,19 @@ export async function runOrchestratorIteration(
 				continue;
 			}
 			if (deps.dispatchFix && ledger) {
+				if (activeCount() >= dispatchLimit()) continue;
+				const beforeDispatch = await deps.getRecentMessages(task, { fresh: true });
+				const previousId = beforeDispatch[beforeDispatch.length - 1]?.id ?? null;
+				if (activeCount() >= dispatchLimit()) continue;
 				const fix = await deps.dispatchFix(task, ledger);
 				if (fix.success) {
 					plan = markTaskStatus(plan, task.id, 'fixing', {
 						runId: ledger.runId,
 						fixAttempts: attempts + 1,
+						validationUnknownAttempts: 0,
+						dispatchedMessageId: previousId,
 					});
+					prevStates[task.id] = 'idle';
 					deps.log(`[orchestrator] task "${task.id}" fixing (attempt ${attempts + 1})`);
 				} else {
 					deps.log(
@@ -268,7 +377,7 @@ export async function runOrchestratorIteration(
 	).length;
 	const ready = computeReadyTasks(plan);
 	for (const task of ready) {
-		if (runningCount >= options.concurrencyLimit) break;
+		if (runningCount >= dispatchLimit()) break;
 
 		const agentResult = await deps.ensureAgent(task);
 		if ('error' in agentResult) {
@@ -277,7 +386,33 @@ export async function runOrchestratorIteration(
 			continue;
 		}
 
-		const res = await deps.dispatch(task, agentResult.agentId);
+		const dispatchedTask = {
+			...task,
+			agentId: agentResult.agentId,
+			tabId: agentResult.tabId ?? task.tabId,
+		};
+		let beforeDispatch: readonly PianolaMessage[];
+		try {
+			beforeDispatch = await deps.getRecentMessages(dispatchedTask, { fresh: true });
+		} catch (error) {
+			plan = markTaskStatus(plan, task.id, 'pending', {
+				agentId: agentResult.agentId,
+				agentType: agentResult.agentType,
+				tabId: dispatchedTask.tabId,
+			});
+			deps.log(`[orchestrator] task "${task.id}" pending (history unavailable: ${String(error)})`);
+			continue;
+		}
+		// Charter edits during agent/history awaits must take effect before this send.
+		if (runningCount >= dispatchLimit()) {
+			plan = markTaskStatus(plan, task.id, 'pending', {
+				agentId: agentResult.agentId,
+				agentType: agentResult.agentType,
+				tabId: dispatchedTask.tabId,
+			});
+			break;
+		}
+		const res = await deps.dispatch(dispatchedTask, agentResult.agentId);
 		if (!res.success) {
 			// Expected failure: dispatch did not land. Persist the agent we just
 			// bound onto the still-pending task so the retry next tick REUSES it via
@@ -287,6 +422,7 @@ export async function runOrchestratorIteration(
 			plan = markTaskStatus(plan, task.id, 'pending', {
 				agentId: agentResult.agentId,
 				agentType: agentResult.agentType,
+				tabId: dispatchedTask.tabId,
 			});
 			deps.log(
 				`[orchestrator] task "${task.id}" pending (dispatch failed: ${res.error ?? 'unknown error'})`
@@ -297,14 +433,13 @@ export async function runOrchestratorIteration(
 		plan = markTaskStatus(plan, task.id, 'running', {
 			agentId: agentResult.agentId,
 			agentType: agentResult.agentType,
-			tabId: res.tabId,
+			dispatchedMessageId: beforeDispatch[beforeDispatch.length - 1]?.id ?? null,
+			validationUnknownAttempts: 0,
+			tabId: dispatchedTask.tabId ?? res.tabId,
 		});
-		// Seed the just-dispatched task as 'connecting' (its honest just-spun-up
-		// state) so the next iteration's poll can detect the working-to-idle
-		// transition. Without this seed, a task that shows idle on its very first
-		// post-dispatch poll has no prior working state to compare against and would
-		// never be detected as done.
-		prevStates[task.id] = 'connecting';
+		// Dispatch acknowledgement is not evidence that a turn started. Wait for an
+		// observed busy state or a new assistant reply before accepting idle as done.
+		prevStates[task.id] = 'idle';
 		dispatchedTaskIds.push(task.id);
 		runningCount += 1;
 		deps.log(`[orchestrator] task "${task.id}" dispatched to agent "${agentResult.agentId}"`);

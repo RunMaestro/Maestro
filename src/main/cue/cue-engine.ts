@@ -164,6 +164,7 @@ function deriveCueTaskKind(
 
 export class CueEngine {
 	private enabled = false;
+	private startGeneration = 0;
 	/** Set to 'system-boot' while the engine is running after a system-boot or
 	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
 	 * sessions that arrive after start() (the common case at boot). */
@@ -439,7 +440,10 @@ export class CueEngine {
 			enabled: () => this.enabled,
 			getSessions: deps.getSessions,
 			onRefreshRequested: (sessionId, projectRoot) => {
-				this.refreshSession(sessionId, projectRoot);
+				void this.refreshSession(sessionId, projectRoot).catch((error) => {
+					void captureException(error, { operation: 'cue:refreshSession', sessionId });
+					meteredOnLog('error', `[CUE] Failed to refresh session ${sessionId}: ${String(error)}`);
+				});
 			},
 			onLog: meteredOnLog,
 			onPreventSleep: deps.onPreventSleep,
@@ -583,7 +587,7 @@ export class CueEngine {
 	 *     reason (e.g. in tests or internal paths). app.startup does NOT fire -
 	 *     only IPC-driven enables and Electron launch use 'system-boot'.
 	 */
-	start(reason: SessionInitReason = 'user-toggle'): void {
+	async start(reason: SessionInitReason = 'user-toggle'): Promise<void> {
 		if (this.enabled) return;
 
 		// Cross-process guard (cue-engine-lock.ts): refuse to start a second
@@ -629,16 +633,20 @@ export class CueEngine {
 			type: 'engineStarted',
 		} satisfies CueLogPayload);
 
-		// Snapshot what a PREVIOUS run left in the queue before any session
-		// initializes: initSession can enqueue this boot's own app.startup or
-		// initial heartbeat behind a busy slot, and that enqueue persists a row
-		// the restore below would otherwise run a second time.
+		// Restore only rows left by a previous boot, not work queued by this initialization.
 		const persistedBeforeBoot = this.queuePersistence.persistedIds();
-
-		const sessions = this.deps.getSessions();
-		for (const session of sessions) {
-			this.sessionRuntimeService.initSession(session, { reason });
+		const generation = this.startGeneration;
+		try {
+			const sessions = this.deps.getSessions();
+			await Promise.all(
+				sessions.map((session) => this.sessionRuntimeService.initSession(session, { reason }))
+			);
+		} catch (error) {
+			// A failed old start must not stop a newer engine cycle.
+			if (generation === this.startGeneration) this.stop();
+			throw error;
 		}
+		if (!this.enabled || generation !== this.startGeneration) return;
 
 		// Phase 12A - restore persisted queue entries AFTER sessions are
 		// initialized (so registry.get(...) has their configs / timeout). Each
@@ -695,6 +703,7 @@ export class CueEngine {
 	stop(): void {
 		if (!this.enabled) return;
 
+		this.startGeneration++;
 		this.enabled = false;
 		this.startReason = null;
 		if (this.lockHeartbeat) {
@@ -749,13 +758,20 @@ export class CueEngine {
 	}
 
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */
-	refreshSession(sessionId: string, projectRoot: string): void {
+	async refreshSession(sessionId: string, requestedRoot: string): Promise<void> {
+		// The root Cue reads is the one `getSessions()` resolves (for an SSH agent that
+		// is the remote's host mount, not the remote path the renderer knows). A caller
+		// passing the raw session root would otherwise read "missing" and tear the
+		// config down. Unknown sessions keep the caller's root.
+		const projectRoot =
+			this.deps.getSessions().find((session) => session.id === sessionId)?.projectRoot ??
+			requestedRoot;
 		// When the engine started with 'system-boot', sessions that arrive via
 		// refreshSession (the typical path at boot, since getSessions() is empty
 		// when start() fires) should still get their app.startup triggers.
 		const reason = this.startReason ?? 'refresh';
 		cueDebugLog('engine:refreshSession:start', { sessionId, projectRoot, reason });
-		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
+		const result = await this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
 		cueDebugLog('engine:refreshSession:result', {
 			sessionId,
 			projectRoot,
@@ -893,13 +909,13 @@ export class CueEngine {
 		);
 	}
 
-	private runSubscriptionEnabledWrite(
+	private async runSubscriptionEnabledWrite(
 		sessionId: string,
 		projectRoot: string,
 		targetPipeline: string,
 		subName: string,
 		enabled: boolean
-	): boolean {
+	): Promise<boolean> {
 		const file = readCueConfigFile(projectRoot);
 		if (!file) return false;
 
@@ -943,7 +959,7 @@ export class CueEngine {
 			return false;
 		}
 
-		this.refreshSession(sessionId, projectRoot);
+		await this.refreshSession(sessionId, projectRoot);
 		return true;
 	}
 

@@ -80,7 +80,7 @@ import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/err
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import { waitForCopilotShutdown } from '../../../../main/process-manager/CopilotShutdownWaiter';
-
+import { cleanupTempFiles } from '../../../../main/process-manager/utils/imageUtils';
 const { waitForCopilotShutdown: actualWaitForCopilotShutdown } = await vi.importActual<
 	typeof import('../../../../main/process-manager/CopilotShutdownWaiter')
 >('../../../../main/process-manager/CopilotShutdownWaiter');
@@ -144,6 +144,7 @@ describe('ExitHandler', () => {
 	let exitHandler: ExitHandler;
 
 	beforeEach(() => {
+		vi.mocked(cleanupTempFiles).mockClear();
 		processes = new Map();
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
@@ -823,6 +824,26 @@ describe('ExitHandler', () => {
 				return { shutdown: false } as never;
 			});
 		};
+
+		it('cleans only predecessor files after replacement during shutdown reconciliation, once', async () => {
+			const predecessor = registerPredecessor({ tempImageFiles: ['/tmp/old-prompt.md'] });
+			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
+				// kill() releases the key before the replacement registers its generation.
+				processes.delete('test-session');
+				successor = createMockProcess({ pid: 4321, tempImageFiles: ['/tmp/new-prompt.md'] });
+				successor.spawnGeneration = nextSpawnGeneration('test-session');
+				processes.set('test-session', successor);
+				return 'timeout';
+			});
+
+			await exitHandler.handleExit('test-session', 143, predecessor);
+			await exitHandler.handleExit('test-session', 143, predecessor);
+
+			expect(cleanupTempFiles).toHaveBeenCalledExactlyOnceWith(['/tmp/old-prompt.md']);
+			expect(predecessor.tempImageFiles).toBeUndefined();
+			expect(successor!.tempImageFiles).toEqual(['/tmp/new-prompt.md']);
+			expect(processes.get('test-session')).toBe(successor);
+		});
 
 		it('suppresses the exit event and leaves the successor tracked', async () => {
 			registerPredecessor();

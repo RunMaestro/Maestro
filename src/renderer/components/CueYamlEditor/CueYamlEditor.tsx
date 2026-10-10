@@ -63,7 +63,7 @@ export function CueYamlEditor({
 		async function loadYaml() {
 			setLoading(true);
 			try {
-				const content = await cueService.readYaml(projectRoot);
+				const content = await cueService.readYaml(projectRoot, sessionId);
 				if (cancelled) return;
 				const initial = content ?? CUE_YAML_TEMPLATE;
 				setYamlContent(initial);
@@ -105,7 +105,7 @@ export function CueYamlEditor({
 		return () => {
 			cancelled = true;
 		};
-	}, [isOpen, projectRoot]);
+	}, [isOpen, projectRoot, sessionId]);
 
 	// Debounced validation
 	const validateYaml = useCallback((content: string) => {
@@ -143,7 +143,7 @@ export function CueYamlEditor({
 
 	const handleSave = useCallback(async () => {
 		if (!isValid) return;
-		await cueService.writeYaml(projectRoot, yamlContent);
+		await cueService.writeYaml(projectRoot, yamlContent, undefined, sessionId);
 		// Write succeeded, so the YAML IS on disk - but if refreshSession
 		// fails the engine keeps serving the stale config until the next app
 		// start. Surface that as a toast so the user knows to retry rather
@@ -171,7 +171,7 @@ export function CueYamlEditor({
 
 	const refreshYamlFromDisk = useCallback(async () => {
 		try {
-			const content = await cueService.readYaml(projectRoot);
+			const content = await cueService.readYaml(projectRoot, sessionId);
 			// `if (content)` would skip an intentionally empty YAML - an empty
 			// string is a legitimate result (e.g. user cleared the file) and
 			// should still trigger state updates and revalidation. Only skip
@@ -199,7 +199,7 @@ export function CueYamlEditor({
 		} catch (err: unknown) {
 			captureException(err, { extra: { operation: 'cueYamlEditor.refreshRead', projectRoot } });
 		}
-	}, [projectRoot]);
+	}, [projectRoot, sessionId]);
 
 	// AI chat hook
 	const {

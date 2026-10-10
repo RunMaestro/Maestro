@@ -70,7 +70,7 @@ Constructor dependencies (`CueEngineDeps`):
 Key public methods:
 
 - `start(reason?)` / `stop()` - Enable/disable the engine; `reason` (`'system-boot'` vs `'user-toggle'`) gates whether `app.startup` fires
-- `refreshSession(sessionId, projectRoot)` - Hot-reloads YAML via `sessionRuntimeService` (tears down old, re-initializes)
+- `refreshSession(sessionId, projectRoot)` - Asynchronously hot-reloads YAML via `sessionRuntimeService`; callers must await or handle its rejected promise
 - `removeSession(sessionId)` - Delegates to `sessionRuntimeService` to tear down all subscriptions and clear queue
 - `notifyAgentCompleted(sessionId, completionData?)` - Handles `agent.completed` triggers; routes to `completionService`
 - `getStatus()` / `getActiveRuns()` / `getActivityLog()` / `getQueueStatus()` / `getSettings()` / `getGraphData()` - Read-only projections via `queryService`
@@ -78,6 +78,8 @@ Key public methods:
 - `triggerSubscription(subscriptionName)` - Manual "Run Now" by subscription name
 
 Note: per-session `initSession` and central `dispatchSubscription` are not exposed as public `CueEngine` methods - they live on `CueSessionRuntimeService` and `CueDispatchService` respectively, invoked internally by `start()` and by trigger-source callbacks.
+
+The runtime installs its YAML watcher before loading the configuration. A filesystem read failure preserves the existing subscriptions and trigger sources but invalidates the loaded-file snapshot, so watcher reconciliation retries even when the file bytes are unchanged. Confirmed removal still tears down the configuration; a transient missing read is rechecked before removing a live registration.
 
 Composed submodules (created in constructor):
 

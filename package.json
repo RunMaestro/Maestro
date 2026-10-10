@@ -60,9 +60,9 @@
 		"format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
 		"format:check:all": "prettier --check .",
 		"validate:push": "bun run format:check:all && bun run lint && bun run lint:eslint && bun run test",
-		"test": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest run",
-		"test:watch": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest",
-		"test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest run --coverage",
+		"test": "cross-env NODE_OPTIONS=\"--max-old-space-size=8192 --no-experimental-webstorage\" vitest run",
+		"test:watch": "cross-env NODE_OPTIONS=\"--max-old-space-size=8192 --no-experimental-webstorage\" vitest",
+		"test:coverage": "cross-env NODE_OPTIONS=\"--max-old-space-size=8192 --no-experimental-webstorage\" vitest run --coverage",
 		"test:e2e": "bun run build:main && bun run build:renderer && playwright test",
 		"test:e2e:ui": "bun run build:main && bun run build:renderer && playwright test --ui",
 		"test:e2e:headed": "bun run build:main && bun run build:renderer && playwright test --headed",
@@ -160,6 +160,17 @@
 					"to": "permission-relay-bridge.js"
 				},
 				{
+					"from": "scripts/pianola-sandbox/sandbox_runner.py",
+					"to": "scripts/pianola-sandbox/sandbox_runner.py"
+				},
+				{
+					"from": "src/prompts/pianola-program-loop",
+					"to": "prompts/core/pianola-program-loop",
+					"filter": [
+						"*.md"
+					]
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -219,6 +230,17 @@
 					"to": "permission-relay-bridge.js"
 				},
 				{
+					"from": "scripts/pianola-sandbox/sandbox_runner.py",
+					"to": "scripts/pianola-sandbox/sandbox_runner.py"
+				},
+				{
+					"from": "src/prompts/pianola-program-loop",
+					"to": "prompts/core/pianola-program-loop",
+					"filter": [
+						"*.md"
+					]
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -268,6 +290,17 @@
 				{
 					"from": "dist/cli/permission-relay-bridge.js",
 					"to": "permission-relay-bridge.js"
+				},
+				{
+					"from": "scripts/pianola-sandbox/sandbox_runner.py",
+					"to": "scripts/pianola-sandbox/sandbox_runner.py"
+				},
+				{
+					"from": "src/prompts/pianola-program-loop",
+					"to": "prompts/core/pianola-program-loop",
+					"filter": [
+						"*.md"
+					]
 				},
 				{
 					"from": "src/prompts",
@@ -488,7 +521,7 @@
 		"tar": "^7.5.17"
 	},
 	"engines": {
-		"node": ">=22.0.0"
+		"node": ">=22.4.0"
 	},
 	"lint-staged": {
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts,md,json,yml,yaml,css,scss,less,html,svg}": [

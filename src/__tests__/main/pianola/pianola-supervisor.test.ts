@@ -20,6 +20,8 @@ import type { ChildProcess } from 'child_process';
 vi.mock('../../../main/pianola/pianola-store-main', () => ({
 	readSupervisorTargets: vi.fn(() => []),
 	supervisorFilePath: vi.fn(() => '/fake/maestro-pianola-supervisor.json'),
+	readPrograms: vi.fn(() => []),
+	readPlans: vi.fn(() => []),
 }));
 vi.mock('../../../main/cue/cue-cli-executor', () => ({
 	resolveMaestroCliScriptPath: () => '/fake/maestro-cli.js',
@@ -37,7 +39,11 @@ vi.mock('../../../shared/platformDetection', () => ({
 }));
 
 import { PianolaSupervisor } from '../../../main/pianola/pianola-supervisor';
-import { readSupervisorTargets } from '../../../main/pianola/pianola-store-main';
+import {
+	readSupervisorTargets,
+	readPrograms,
+	readPlans,
+} from '../../../main/pianola/pianola-store-main';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 
 // Mirror the (unexported) source constants so timing assertions stay in sync.
@@ -126,6 +132,8 @@ beforeEach(() => {
 	pidSeq = 0;
 	enabled = true;
 	vi.mocked(readSupervisorTargets).mockReturnValue([]);
+	vi.mocked(readPrograms).mockReturnValue([]);
+	vi.mocked(readPlans).mockReturnValue([]);
 	sup = makeSupervisor();
 });
 
@@ -210,6 +218,152 @@ describe('PianolaSupervisor spawn + exit lifecycle', () => {
 });
 
 describe('PianolaSupervisor reconcile', () => {
+	it('suppresses paused program targets through reconcile, restart, and stale relaunch', () => {
+		vi.mocked(readPrograms).mockReturnValue([
+			{ id: 'product', status: 'paused', leadAgentId: 'a1' } as never,
+		]);
+		vi.mocked(readPlans).mockReturnValue([
+			{
+				id: 'p1',
+				programId: 'product',
+				title: 'Plan',
+				createdAt: 1,
+				tasks: [{ id: 't', title: 'Task', prompt: 'Work', dependsOn: [], status: 'pending' }],
+			},
+		]);
+		setTargets([
+			watchTarget(),
+			orchestrateTarget(),
+			{ id: 'program', kind: 'program', programId: 'product', enabled: true, createdAt: 1 },
+		]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(0);
+		expect(sup.relaunchStale()).toBe(0);
+		vi.mocked(readPrograms).mockReturnValue([
+			{ id: 'product', status: 'active', leadAgentId: 'a1' } as never,
+		]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(3);
+		spawned[1].exit(1);
+		vi.mocked(readPrograms).mockReturnValue([
+			{ id: 'product', status: 'paused', leadAgentId: 'a1' } as never,
+		]);
+		vi.advanceTimersByTime(1000);
+		expect(spawned).toHaveLength(3);
+		sup.reconcile();
+		expect(spawned[0].killed).toBe(true);
+		expect(spawned[2].killed).toBe(true);
+	});
+	it.each(['revision before exit', 'revision after exit', 'stale relaunch'] as const)(
+		'resumes a completed plan after %s without a manual target restart',
+		(timing) => {
+			const task = {
+				id: 't',
+				title: 'Task',
+				prompt: 'Work',
+				dependsOn: [],
+				status: 'running' as const,
+			};
+			const plan = { id: 'p1', title: 'Plan', createdAt: 1, tasks: [task] };
+			vi.mocked(readPlans).mockReturnValue([plan]);
+			setTargets([orchestrateTarget()]);
+			sup.reconcile();
+			const originalPid = spawned[0].pid;
+			vi.mocked(readPlans).mockReturnValue([{ ...plan, tasks: [{ ...task, status: 'failed' }] }]);
+			if (timing === 'revision before exit') {
+				vi.mocked(readPlans).mockReturnValue([
+					{ ...plan, tasks: [{ ...task, status: 'pending' }] },
+				]);
+				sup.reconcile();
+				spawned[0].exit(0);
+				vi.advanceTimersByTime(300);
+			} else {
+				spawned[0].exit(0);
+				vi.mocked(readPlans).mockReturnValue([
+					{ ...plan, tasks: [{ ...task, status: 'pending' }] },
+				]);
+				if (timing === 'stale relaunch') expect(sup.relaunchStale()).toBe(1);
+				else sup.reconcile();
+			}
+			expect(sup.getHealth()[0]).toMatchObject({ id: 'o1', state: 'running', restarts: 0 });
+			expect(sup.getHealth()[0].pid).not.toBe(originalPid);
+		}
+	);
+	it('leaves a completed plan stopped when no revised work exists', () => {
+		const plan = {
+			id: 'p1',
+			title: 'Plan',
+			createdAt: 1,
+			tasks: [
+				{ id: 't', title: 'Task', prompt: 'Work', dependsOn: [], status: 'running' as const },
+			],
+		};
+		vi.mocked(readPlans).mockReturnValue([plan]);
+		setTargets([orchestrateTarget()]);
+		sup.reconcile();
+		vi.mocked(readPlans).mockReturnValue([
+			{ ...plan, tasks: [{ ...plan.tasks[0], status: 'failed' }] },
+		]);
+		spawned[0].exit(0);
+		vi.advanceTimersByTime(300);
+		expect(sup.relaunchStale()).toBe(0);
+		expect(spawned[0].exitCode).toBe(0);
+		expect(spawned.every((child) => child.exitCode !== null)).toBe(true);
+	});
+
+	it('does not launch orchestration for a completed plan', () => {
+		vi.mocked(readPlans).mockReturnValue([{ id: 'p1', title: 'Plan', createdAt: 1, tasks: [] }]);
+		setTargets([orchestrateTarget()]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(0);
+		expect(sup.relaunchStale()).toBe(0);
+	});
+	it('restarts a watch bound to a new tab without restarting unchanged targets', () => {
+		const spawnChild = vi.fn((_command: string, _args: readonly string[]) => {
+			const child = new FakeChild(++pidSeq);
+			spawned.push(child);
+			return child as unknown as ChildProcess;
+		});
+		sup = new PianolaSupervisor({
+			isEnabled: () => enabled,
+			getPianolaAgentId: () => 'pianola-agent',
+			spawnChild,
+		});
+		setTargets([watchTarget()]);
+		sup.reconcile();
+		setTargets([{ ...watchTarget(), createdAt: 5 }]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(1);
+		setTargets([{ ...watchTarget(), tabId: 'next-tab' }]);
+		sup.reconcile();
+		expect(spawned[0].killed).toBe(true);
+		expect(spawnChild.mock.calls[1][1]).toEqual([
+			'/fake/maestro-cli.js',
+			'pianola',
+			'watch',
+			'next-tab',
+			'--agent',
+			'a1',
+			'--interval',
+			'5',
+		]);
+		spawned[0].exit(1);
+		vi.advanceTimersByTime(BACKOFF_CAP_MS);
+		expect(spawned).toHaveLength(2);
+		expect(sup.getHealth()[0]).toMatchObject({ id: 'w1', state: 'running' });
+	});
+	it('stops and restores program orchestrators and watches when targets are disabled then resumed', () => {
+		setTargets([watchTarget(), orchestrateTarget()]);
+		sup.reconcile();
+		setTargets([watchTarget('w1', false), orchestrateTarget('o1', false)]);
+		sup.reconcile();
+		expect(spawned.every((child) => child.killed)).toBe(true);
+		expect(sup.getHealth()).toEqual([]);
+		setTargets([watchTarget(), orchestrateTarget()]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(4);
+		expect(sup.getHealth().map((entry) => entry.state)).toEqual(['running', 'running']);
+	});
 	it('spawns an enabled target with no child and stops a removed one', () => {
 		setTargets([watchTarget('w1'), orchestrateTarget('o1')]);
 		sup.reconcile();
@@ -313,5 +467,33 @@ describe('PianolaSupervisor health log buffer', () => {
 		expect(logs).toHaveLength(50);
 		expect(logs[0]).toBe('line 70');
 		expect(logs[49]).toBe('line 119');
+	});
+});
+describe('program target', () => {
+	it('spawns the program-loop command and relaunches a cleanly stopped loop', () => {
+		const spawnChild = vi.fn((_command: string, _args: readonly string[]) => {
+			const child = new FakeChild(++pidSeq);
+			spawned.push(child);
+			return child as unknown as ChildProcess;
+		});
+		sup = new PianolaSupervisor({
+			isEnabled: () => enabled,
+			getPianolaAgentId: () => 'pianola-agent',
+			spawnChild,
+		});
+		setTargets([
+			{ id: 'program', kind: 'program', enabled: true, createdAt: 0, programId: 'product' },
+		]);
+		sup.reconcile();
+		expect(spawnChild.mock.calls[0][1]).toEqual([
+			'/fake/maestro-cli.js',
+			'pianola',
+			'program-loop',
+			'product',
+			'--interval',
+			'120',
+		]);
+		spawned[0].exit(0);
+		expect(sup.relaunchStale()).toBe(1);
 	});
 });

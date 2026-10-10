@@ -167,13 +167,28 @@ import { pianolaLearn } from './commands/pianola-learn';
 import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
 import {
 	pianolaPlanSet,
+	pianolaPlanRevise,
 	pianolaPlanList,
 	pianolaPlanShow,
 	pianolaOrchestrate,
+	pianolaValidate,
 } from './commands/pianola-orchestrate';
+import { pianolaProgramLoop } from './commands/pianola-program-loop';
+import {
+	pianolaProgramApply,
+	pianolaProgramList,
+	pianolaProgramShow,
+	pianolaProgramStatus,
+	pianolaEscalate,
+	pianolaNeedsMe,
+	pianolaResolve,
+	pianolaDismiss,
+	pianolaBrief,
+} from './commands/pianola-portfolio';
 import {
 	pianolaSuperviseWatch,
 	pianolaSuperviseOrchestrate,
+	pianolaSuperviseProgram,
 	pianolaSuperviseList,
 	pianolaSuperviseRemove,
 	pianolaSuperviseSetEnabled,
@@ -1929,6 +1944,59 @@ pianola
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaLog(options));
 
+const pianolaProgram = pianola.command('program').description('Manage product programs');
+pianolaProgram
+	.command('apply')
+	.requiredOption('--file <path>', 'YAML or JSON program manifest')
+	.option('--json', 'Output as JSON')
+	.action((options) => pianolaProgramApply(options));
+pianolaProgram
+	.command('list')
+	.option('--json', 'Output as JSON')
+	.action((options) => pianolaProgramList(options));
+pianolaProgram
+	.command('show <id>')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => pianolaProgramShow(id, options));
+pianolaProgram
+	.command('pause <id>')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => pianolaProgramStatus(id, 'paused', options));
+pianolaProgram
+	.command('resume <id>')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => pianolaProgramStatus(id, 'active', options));
+
+pianola
+	.command('escalate')
+	.requiredOption('--title <text>')
+	.requiredOption('--detail <text>')
+	.option('--program <id>')
+	.option('--agent <id>')
+	.option('--tab <id>')
+	.option('--severity <level>')
+	.option('--requested-action <text>')
+	.option('--distinct')
+	.option('--json')
+	.action((options) => pianolaEscalate(options));
+pianola
+	.command('needs-me')
+	.option('--json')
+	.action((options) => pianolaNeedsMe(options));
+pianola
+	.command('resolve <askId>')
+	.requiredOption('--option <text>')
+	.option('--note <text>')
+	.option('--json')
+	.action((askId, options) => pianolaResolve(askId, options));
+pianola
+	.command('dismiss <askId>')
+	.option('--json')
+	.action((askId, options) => pianolaDismiss(askId, options));
+pianola
+	.command('brief')
+	.option('--json')
+	.action((options) => pianolaBrief(options));
 // Pianola plan - author and inspect task DAGs the orchestrator runs.
 const pianolaPlan = pianola
 	.command('plan')
@@ -1940,6 +2008,16 @@ pianolaPlan
 	.option('--file <path>', 'Read the plan JSON from this file (else reads stdin)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaPlanSet(options));
+
+pianolaPlan
+	.command('revise <planId> <taskId>')
+	.description('Revise a reviewed or failed task and queue it again without replacing its plan')
+	.requiredOption(
+		'--prompt <text>',
+		'Corrected implementation instructions; validation stays unchanged'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, taskId, options) => pianolaPlanRevise(planId, taskId, options));
 
 pianolaPlan
 	.command('list')
@@ -1962,6 +2040,18 @@ pianola
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((planId, options) => pianolaOrchestrate(planId, options));
 
+pianola
+	.command('validate <planId> <taskId>')
+	.description('Run the task validation oracle in the sandbox and append its Agent Run check')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, taskId, options) => pianolaValidate(planId, taskId, options));
+
+pianola
+	.command('program-loop <programId>')
+	.option('--interval <seconds>', 'Polling interval (default 120)')
+	.option('--once', 'Perform one tick and exit')
+	.option('--json', 'Output as JSON')
+	.action((programId, options) => pianolaProgramLoop(programId, options));
 // Pianola supervise - register background targets the desktop keeps alive
 // (restart on crash, relaunch on app start, visible health). These write the
 // shared supervisor store; the running app reconciles within ~1s.
@@ -1987,6 +2077,11 @@ pianolaSupervise
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((planId, options) => pianolaSuperviseOrchestrate(planId, options));
 
+pianolaSupervise
+	.command('program <programId>')
+	.option('--interval <seconds>', 'Polling interval (default 120)')
+	.option('--json', 'Output as JSON')
+	.action((programId, options) => pianolaSuperviseProgram(programId, options));
 pianolaSupervise
 	.command('list')
 	.description('List registered supervised targets')

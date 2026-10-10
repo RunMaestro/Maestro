@@ -122,6 +122,9 @@ export interface AgentConfig extends BaseAgentConfig {
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
 	imagePromptBuilder?: (imagePaths: string[]) => string; // Function to embed image references into the prompt (e.g., Copilot @mentions)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
+	// Args that deliver a prompt stored in a file (for example, omp's @path message).
+	// Keeps embedded system prompts below Windows command-line limits.
+	promptFileArgs?: (promptFilePath: string) => string[];
 	stdinPromptArgs?: string[]; // Args required to read a raw query from stdin instead of argv
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
@@ -567,6 +570,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		modelArgs: (modelId: string) => ['--model', modelId],
 		workingDirArgs: (dir: string) => ['--cwd', dir],
 		imageArgs: (imagePath: string) => [`@${imagePath}`],
+		promptFileArgs: (promptFilePath: string) => ['--', `@${promptFilePath}`],
 		configOptions: [
 			{
 				key: 'model',

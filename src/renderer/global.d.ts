@@ -4533,13 +4533,14 @@ interface MaestroAPI {
 			projectRoot: string,
 			name: string
 		) => Promise<{ removed: boolean; reason?: string }>;
-		readYaml: (projectRoot: string) => Promise<string | null>;
+		readYaml: (projectRoot: string, sessionId?: string) => Promise<string | null>;
 		writeYaml: (
 			projectRoot: string,
 			content: string,
-			promptFiles?: Record<string, string>
+			promptFiles?: Record<string, string>,
+			sessionId?: string
 		) => Promise<{ changed: boolean }>;
-		deleteYaml: (projectRoot: string) => Promise<boolean>;
+		deleteYaml: (projectRoot: string, sessionId?: string) => Promise<boolean>;
 		renamePipeline: (
 			oldName: string,
 			newName: string
@@ -4583,6 +4584,22 @@ interface MaestroAPI {
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		getPrograms: () => Promise<import('../shared/pianola/pianola-programs').PianolaProgram[]>;
+		superviseProgram: (programId: string) => Promise<void>;
+		setProgramStatus: (
+			programId: string,
+			status: import('../shared/pianola/pianola-programs').PianolaProgramStatus
+		) => Promise<void>;
+		getAsks: (
+			status?: import('../shared/pianola/pianola-programs').PianolaAskStatus
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk[]>;
+		resolveAsk: (
+			id: string,
+			option: string,
+			note?: string
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		dismissAsk: (id: string) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		getBrief: () => Promise<import('../shared/pianola/pianola-programs').PianolaBrief>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
 		applySuggestion: (payload: {
 			rule?: PianolaRule;

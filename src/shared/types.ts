@@ -942,6 +942,13 @@ export interface SshRemoteConfig {
 	 */
 	sshOptionsDisabled?: Record<string, string>;
 
+	/**
+	 * Host path at which this remote's filesystem root is also visible locally
+	 * (`\\wsl.localhost\Ubuntu` for a WSL distro, an SMB or sshfs mount). Lets
+	 * host-side readers such as Cue open an agent's remote project root.
+	 */
+	hostMountRoot?: string;
+
 	/** Enable this remote configuration */
 	enabled: boolean;
 

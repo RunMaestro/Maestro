@@ -1,16 +1,18 @@
 /**
  * Pianola dashboard data.
  *
- * Combines the two live signals Pianola has about the other agents - the desktop
- * session states (busy / waiting_input / idle) and Pianola's own decision audit
- * log (escalations, handoffs, auto-answers) - into the four buckets the dashboard
- * renders: agents that need the user, agents working now, agents recently done,
- * and a feed of Pianola's recent decisions.
+ * Combines the live signals Pianola has about the other agents - the desktop
+ * session states (busy / waiting_input / idle), Pianola's own decision audit
+ * log (escalations, handoffs, auto-answers), and the portfolio brief (programs,
+ * founder asks, in-flight and verified plan tasks) - into what the dashboard
+ * renders: what needs the user, what is working, what recently finished, what
+ * is verified, and a feed of Pianola's recent decisions.
  *
- * Pure derivation lives in `deriveDashboard`; the hook adds the store
- * subscription and the polled decision fetch. The decision channel rejects with
- * 'PianolaDisabled' when the Encore flag is off, which we treat as "no
- * decisions" so the dashboard still shows live session state.
+ * Pure derivation lives in `deriveDashboard` (sessions + decisions) and
+ * `derivePortfolio` / `deriveResults` (brief + asks + programs); the hook adds
+ * the store subscription and the polled fetches. Every Pianola channel rejects
+ * with 'PianolaDisabled' when the Encore flag is off, which we treat as "no
+ * data" so the dashboard still shows live session state.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -18,6 +20,17 @@ import { useSessionStore } from '../../stores/sessionStore';
 import type { Session } from '../../types';
 import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import type {
+	PianolaAsk,
+	PianolaAskSeverity,
+	PianolaBrief,
+	PianolaBriefItem,
+	PianolaBriefProgram,
+	PianolaBriefVerified,
+	PianolaProgram,
+} from '../../../shared/pianola/pianola-programs';
+import { detectAwaitingInput } from '../../../shared/pianola/pianola-awaiting-detector';
+import { classifyMessages } from '../../../shared/pianola/pianola-classifier';
 
 /** A row in one of the agent-status sections. */
 export interface DashboardAgentRow {
@@ -44,6 +57,14 @@ export interface DashboardActivityRow {
 	topic: string;
 	timestamp: number;
 	dispatched: boolean;
+	/** Set when the record is a program-loop tick, rendered as a compact loop line. */
+	loop?: DashboardLoopActivity;
+}
+
+/** A program-loop tick: which program, and what the loop did. */
+export interface DashboardLoopActivity {
+	programTitle: string;
+	action: string;
 }
 
 export interface DashboardData {
@@ -76,13 +97,45 @@ function isHandoff(record: PianolaDecisionRecord): boolean {
 	return record.decision.action === 'escalate' && /handed off/i.test(record.decision.reason);
 }
 
+/** Reason prefix of the program loop's per-tick decision records. */
+const PROGRAM_LOOP_PREFIX = 'program-loop:';
+
+/**
+ * The program and action of a program-loop record. Its reason reads
+ * `program-loop: <programId> <action>`; the program is matched by the record's
+ * `projectPath` (the program root) first, then by that id token, and falls back
+ * to the token itself when no program record is loaded.
+ */
+function describeProgramLoop(
+	record: PianolaDecisionRecord,
+	programs: readonly PianolaProgram[]
+): DashboardLoopActivity {
+	const text = record.decision.reason.slice(PROGRAM_LOOP_PREFIX.length).trim();
+	const token = text.split(/\s/, 1)[0] ?? '';
+	const afterToken = text.slice(token.length).trim();
+	const program =
+		(record.projectPath ? programs.find((p) => p.root === record.projectPath) : undefined) ??
+		programs.find((p) => p.id === token);
+	if (program) {
+		return {
+			programTitle: program.title,
+			action: token === program.id && afterToken ? afterToken : text,
+		};
+	}
+	return afterToken
+		? { programTitle: token, action: afterToken }
+		: { programTitle: 'Program loop', action: text };
+}
+
 /**
  * Pure derivation of the four dashboard buckets from sessions + decisions. Kept
- * separate from the hook so it is trivially testable.
+ * separate from the hook so it is trivially testable. `programs` names the
+ * program of each program-loop record in the activity feed.
  */
 export function deriveDashboard(
 	sessions: readonly Session[],
-	decisions: readonly PianolaDecisionRecord[]
+	decisions: readonly PianolaDecisionRecord[],
+	programs: readonly PianolaProgram[] = []
 ): DashboardData {
 	// Top-level agents only (never the Pianola agent itself). Worktree children get
 	// no row of their own here; busy ones are nested under their parent in the
@@ -94,9 +147,11 @@ export function deriveDashboard(
 	// Newest first. The audit log is stored oldest-last, so reverse a shallow copy.
 	const newestFirst = [...decisions].sort((a, b) => ms(b.timestamp) - ms(a.timestamp));
 
-	// Latest decision topic per agent, for enriching the agent rows.
+	// Latest decision topic per agent, for enriching the agent rows. Program-loop
+	// ticks are not about the agent's own work, so they never set its topic.
 	const latestTopicByAgent = new Map<string, { topic: string; timestamp: number }>();
 	for (const d of newestFirst) {
+		if (d.decision.reason.startsWith(PROGRAM_LOOP_PREFIX)) continue;
 		if (!latestTopicByAgent.has(d.agentId)) {
 			latestTopicByAgent.set(d.agentId, {
 				topic: d.classification.topic,
@@ -186,9 +241,20 @@ export function deriveDashboard(
 		})
 		.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 
-	const activity: DashboardActivityRow[] = newestFirst
-		.filter((d) => !pianolaIds.has(d.agentId))
-		.map((d) => ({
+	// Program-loop ticks become compact loop lines. The loop logs every tick, so a
+	// run of the same action for one program collapses to its newest line.
+	const lastLoopAction = new Map<string, string>();
+	const activity: DashboardActivityRow[] = [];
+	for (const d of newestFirst) {
+		if (pianolaIds.has(d.agentId)) continue;
+		const loop = d.decision.reason.startsWith(PROGRAM_LOOP_PREFIX)
+			? describeProgramLoop(d, programs)
+			: undefined;
+		if (loop) {
+			if (lastLoopAction.get(loop.programTitle) === loop.action) continue;
+			lastLoopAction.set(loop.programTitle, loop.action);
+		}
+		activity.push({
 			id: d.id + (d.dispatched ? ':done' : ':intent'),
 			sessionId: nameById.has(d.agentId) ? d.agentId : undefined,
 			agentName: agentNameFor(d.agentId, nameById),
@@ -196,34 +262,333 @@ export function deriveDashboard(
 			topic: d.classification.topic,
 			timestamp: ms(d.timestamp),
 			dispatched: d.dispatched,
-		}));
+			...(loop ? { loop } : {}),
+		});
+	}
 
 	return { needsInput, working, recentlyDone, activity };
 }
 
+/** An open founder ask, with what Pianola needs the user to decide. */
+export interface DashboardAskRow {
+	id: string;
+	title: string;
+	detail: string;
+	severity: PianolaAskSeverity;
+	requestedAction?: string;
+	programTitle?: string;
+	/** Agent that raised it, for click-to-jump. */
+	agentId?: string;
+	/** Epoch ms the ask was opened. */
+	since: number;
+}
+
+/** A non-ask item from the brief's needsMe list (escalation, review, failure). */
+export interface DashboardNeedsRow {
+	key: string;
+	kind: Exclude<PianolaBriefItem['kind'], 'ask'>;
+	title: string;
+	detail?: string;
+	programTitle?: string;
+	/** The original live conversation, for escalation click-to-jump. */
+	sessionId?: string;
+	tabId?: string;
+	since: number;
+}
+
+/** A verified plan task: done, with a passed independent-validation check. */
+export interface DashboardResultRow {
+	key: string;
+	taskTitle: string;
+	planTitle: string;
+	checkName: string;
+	/** Epoch ms the proving check completed. */
+	completedAt: number;
+}
+
+/** Rows of one program. `programTitle` is absent for rows outside any program. */
+export interface DashboardProgramGroup<T> {
+	key: string;
+	programTitle?: string;
+	rows: T[];
+}
+
+export interface PortfolioData {
+	/** The program strip, straight from the brief. */
+	programs: PianolaBriefProgram[];
+	/** Open founder asks, most severe first, then oldest first. */
+	asks: DashboardAskRow[];
+	escalations: DashboardNeedsRow[];
+	needsReview: DashboardNeedsRow[];
+	failed: DashboardNeedsRow[];
+	working: DashboardProgramGroup<DashboardAgentRow>[];
+	finished: DashboardProgramGroup<DashboardAgentRow>[];
+	results: DashboardProgramGroup<DashboardResultRow>[];
+}
+
+export interface PortfolioSnapshot {
+	brief: PianolaBrief | null;
+	asks: readonly PianolaAsk[];
+	programs: readonly PianolaProgram[];
+}
+
+const SEVERITY_RANK: Record<PianolaAskSeverity, number> = {
+	critical: 0,
+	high: 1,
+	medium: 2,
+	low: 3,
+};
+
+/** A row tagged with the program it belongs to, ready for `groupByProgram`. */
+interface ProgramTagged<T> {
+	row: T;
+	programId?: string;
+	/** Title carried by the source item, used when no program record names it. */
+	programTitle?: string;
+}
+
+/**
+ * Bucket rows by program: one group per program (ordered by title, ignoring
+ * leading emojis), then rows outside any program last, untitled. Input order is
+ * kept within each group.
+ */
+function groupByProgram<T>(
+	items: readonly ProgramTagged<T>[],
+	titleById: ReadonlyMap<string, string>
+): DashboardProgramGroup<T>[] {
+	const byProgram = new Map<string, DashboardProgramGroup<T>>();
+	const loose: T[] = [];
+	for (const { row, programId, programTitle } of items) {
+		if (programId === undefined) {
+			loose.push(row);
+			continue;
+		}
+		const group = byProgram.get(programId);
+		if (group) group.rows.push(row);
+		else
+			byProgram.set(programId, {
+				key: programId,
+				programTitle: titleById.get(programId) ?? programTitle ?? programId,
+				rows: [row],
+			});
+	}
+	const groups = [...byProgram.values()].sort((a, b) =>
+		compareNamesIgnoringEmojis(a.programTitle ?? '', b.programTitle ?? '')
+	);
+	if (loose.length > 0) groups.push({ key: 'no-program', rows: loose });
+	return groups;
+}
+
+/** Program titles by id, from the program records (brief strip, then full list). */
+function programTitles(snapshot: PortfolioSnapshot): Map<string, string> {
+	const titles = new Map<string, string>();
+	for (const p of snapshot.brief?.programs ?? []) titles.set(p.id, p.title);
+	for (const p of snapshot.programs) titles.set(p.id, p.title);
+	return titles;
+}
+
+/**
+ * Verified tasks grouped by program, newest first within each program. Reads
+ * only the brief's `verified` list: a task counts as verified when the backend
+ * says so (done + passed independent-validation check), never from plan status.
+ */
+export function deriveResults(
+	verified: readonly PianolaBriefVerified[],
+	titleById: ReadonlyMap<string, string> = new Map()
+): DashboardProgramGroup<DashboardResultRow>[] {
+	const rows = verified.map((v) => ({
+		row: {
+			key: `${v.planId}:${v.taskId}`,
+			taskTitle: v.taskTitle,
+			planTitle: v.planTitle,
+			checkName: v.checkName,
+			completedAt: ms(v.completedAt),
+		},
+		programId: v.programId,
+		programTitle: v.programTitle,
+	}));
+	rows.sort((a, b) => b.row.completedAt - a.row.completedAt);
+	return groupByProgram(rows, titleById);
+}
+
+/** An audit escalation is actionable only while its original tab still asks. */
+function isOutstandingEscalation(
+	item: PianolaBriefItem,
+	sessionById: ReadonlyMap<string, Session>
+): boolean {
+	if (!item.agentId || !item.tabId) return false;
+	const tab = sessionById.get(item.agentId)?.aiTabs?.find((t) => t.id === item.tabId);
+	if (!tab || tab.state !== 'idle') return false;
+	const since = ms(item.since);
+	// An old decision must not reappear when the agent later asks a new question.
+	if (tab.logs.some((log) => log.source === 'user' && log.timestamp >= since)) return false;
+	for (let i = tab.logs.length - 1; i >= 0; i -= 1) {
+		const log = tab.logs[i];
+		if (log.source === 'user') return false;
+		if (log.source !== 'ai') continue;
+		if (log.timestamp > since) return false;
+		return (
+			classifyMessages([
+				{
+					id: log.id,
+					role: 'assistant',
+					source: log.source,
+					content: log.text,
+					timestamp: item.since,
+					awaitingInput: detectAwaitingInput(log.text) ?? undefined,
+				},
+			]).kind !== 'none'
+		);
+	}
+	return false;
+}
+
+/**
+ * Pure derivation of the portfolio view from the brief, the open asks, and the
+ * programs, layered over the session-based buckets from `deriveDashboard`.
+ * Plan tasks in flight replace their agent's plain session row in Working, and
+ * session rows join the program their agent is the lead or a role of.
+ */
+export function derivePortfolio(
+	dashboard: DashboardData,
+	snapshot: PortfolioSnapshot,
+	sessions: readonly Session[]
+): PortfolioData {
+	const brief = snapshot.brief;
+	const titleById = programTitles(snapshot);
+	const nameById = new Map(sessions.map((s) => [s.id, s.name] as const));
+	const sessionById = new Map(sessions.map((s) => [s.id, s] as const));
+
+	// Which program each agent works for, from the lead and the role assignments.
+	const programByAgent = new Map<string, string>();
+	for (const p of snapshot.programs) {
+		if (p.leadAgentId) programByAgent.set(p.leadAgentId, p.id);
+		for (const role of Object.values(p.roles)) {
+			if (role.agentId) programByAgent.set(role.agentId, p.id);
+		}
+	}
+
+	const asks: DashboardAskRow[] = snapshot.asks
+		.filter((a) => a.status === 'open')
+		.map((a) => ({
+			id: a.id,
+			title: a.title,
+			detail: a.detail,
+			severity: a.severity,
+			requestedAction: a.requestedAction,
+			programTitle: a.programId ? (titleById.get(a.programId) ?? a.programId) : undefined,
+			agentId: a.agentId,
+			since: ms(a.createdAt),
+		}))
+		.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.since - b.since);
+
+	const needsOf = (kind: DashboardNeedsRow['kind']): DashboardNeedsRow[] =>
+		(brief?.needsMe ?? [])
+			.filter(
+				(item) =>
+					item.kind === kind &&
+					(kind !== 'escalation' || isOutstandingEscalation(item, sessionById))
+			)
+			.map((item) => ({
+				key: `${item.kind}:${item.id}`,
+				kind,
+				title: item.title,
+				detail: item.detail,
+				sessionId: item.agentId,
+				tabId: item.tabId,
+				programTitle: item.programId
+					? (titleById.get(item.programId) ?? (item.programTitle || item.programId))
+					: undefined,
+				since: ms(item.since),
+			}))
+			.sort((a, b) => a.since - b.since);
+
+	// Working: each in-flight plan task becomes a row on its agent (carrying the
+	// agent's busy worktree children), replacing that agent's plain session row.
+	const inFlight = brief?.inFlight ?? [];
+	const sessionRowById = new Map(dashboard.working.map((r) => [r.sessionId, r] as const));
+	const taskAgents = new Set(inFlight.flatMap((t) => (t.agentId ? [t.agentId] : [])));
+	const taskRows: ProgramTagged<DashboardAgentRow>[] = inFlight.map((t) => {
+		const agentName = t.agentId ? nameById.get(t.agentId) : undefined;
+		const fixing = t.status === 'fixing' ? ' · fixing' : '';
+		const worktreeChildren = t.agentId
+			? sessionRowById.get(t.agentId)?.worktreeChildren
+			: undefined;
+		return {
+			row: {
+				key: `task:${t.planId}:${t.taskId}`,
+				sessionId: agentName ? t.agentId : undefined,
+				agentName: agentName ?? t.taskTitle,
+				description: `${agentName ? `${t.taskTitle} · ` : ''}${t.planTitle}${fixing}`,
+				timestamp: t.since ? ms(t.since) : undefined,
+				...(worktreeChildren ? { worktreeChildren } : {}),
+			},
+			programId: t.programId ?? (t.agentId ? programByAgent.get(t.agentId) : undefined),
+			programTitle: t.programTitle,
+		};
+	});
+	const sessionRows = (rows: readonly DashboardAgentRow[]): ProgramTagged<DashboardAgentRow>[] =>
+		rows.map((row) => ({
+			row,
+			programId: row.sessionId ? programByAgent.get(row.sessionId) : undefined,
+		}));
+
+	const looseWorking = dashboard.working.filter(
+		(r) => !(r.sessionId && taskAgents.has(r.sessionId))
+	);
+	const working = groupByProgram([...taskRows, ...sessionRows(looseWorking)], titleById);
+	const finished = groupByProgram(sessionRows(dashboard.recentlyDone), titleById);
+
+	return {
+		programs: brief?.programs ?? [],
+		asks,
+		escalations: needsOf('escalation'),
+		needsReview: needsOf('needs_review'),
+		failed: needsOf('failed'),
+		working,
+		finished,
+		results: deriveResults(brief?.verified ?? [], titleById),
+	};
+}
+
 const POLL_MS = 4000;
 const DECISION_LIMIT = 50;
+const EMPTY_SNAPSHOT: PortfolioSnapshot = { brief: null, asks: [], programs: [] };
 
 /**
  * Live dashboard data. Subscribes to the session store and polls the Pianola
- * decision log. `refresh` forces an immediate refetch.
+ * decision log plus the portfolio (brief, open asks, programs). `refresh`
+ * forces an immediate refetch.
  */
-export function usePianolaDashboardData(): { data: DashboardData; refresh: () => void } {
+export function usePianolaDashboardData(): {
+	data: DashboardData;
+	portfolio: PortfolioData;
+	refresh: () => void;
+} {
 	const sessions = useSessionStore((s) => s.sessions);
 	const [decisions, setDecisions] = useState<PianolaDecisionRecord[]>([]);
+	const [snapshot, setSnapshot] = useState<PortfolioSnapshot>(EMPTY_SNAPSHOT);
 	const [nonce, setNonce] = useState(0);
 
 	useEffect(() => {
 		let cancelled = false;
+		const { pianola } = window.maestro;
 		const load = async (): Promise<void> => {
-			try {
-				const records = await window.maestro.pianola.getDecisions(DECISION_LIMIT);
-				if (!cancelled) setDecisions(records);
-			} catch {
-				// 'PianolaDisabled' or transient IPC error: keep showing live session
-				// state with no decision history rather than surfacing an error.
-				if (!cancelled) setDecisions([]);
-			}
+			// Settled independently: 'PianolaDisabled' or a transient IPC error on one
+			// channel empties only that slice, so live session state always shows.
+			const [records, brief, asks, programs] = await Promise.allSettled([
+				pianola.getDecisions(DECISION_LIMIT),
+				pianola.getBrief(),
+				pianola.getAsks('open'),
+				pianola.getPrograms(),
+			]);
+			if (cancelled) return;
+			setDecisions(records.status === 'fulfilled' ? records.value : []);
+			setSnapshot({
+				brief: brief.status === 'fulfilled' ? brief.value : null,
+				asks: asks.status === 'fulfilled' ? asks.value : [],
+				programs: programs.status === 'fulfilled' ? programs.value : [],
+			});
 		};
 		void load();
 		const timer = setInterval(load, POLL_MS);
@@ -233,6 +598,13 @@ export function usePianolaDashboardData(): { data: DashboardData; refresh: () =>
 		};
 	}, [nonce]);
 
-	const data = useMemo(() => deriveDashboard(sessions, decisions), [sessions, decisions]);
-	return { data, refresh: () => setNonce((n) => n + 1) };
+	const data = useMemo(
+		() => deriveDashboard(sessions, decisions, snapshot.programs),
+		[sessions, decisions, snapshot.programs]
+	);
+	const portfolio = useMemo(
+		() => derivePortfolio(data, snapshot, sessions),
+		[data, snapshot, sessions]
+	);
+	return { data, portfolio, refresh: () => setNonce((n) => n + 1) };
 }

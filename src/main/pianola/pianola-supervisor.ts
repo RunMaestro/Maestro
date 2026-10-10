@@ -26,7 +26,14 @@ import {
 	stopProcess,
 	BACKGROUND_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
-import { readSupervisorTargets, supervisorFilePath } from './pianola-store-main';
+import {
+	readSupervisorTargets,
+	readPrograms,
+	readPlans,
+	supervisorFilePath,
+} from './pianola-store-main';
+import { planProgress } from '../../shared/pianola/pianola-tasks';
+import { PIANOLA_PROGRAMS_FILENAME, PIANOLA_PLANS_FILENAME } from '../../shared/pianola/storage';
 import type { PianolaSupervisedTarget, PianolaSupervisedKind } from '../../shared/pianola/storage';
 
 const LOG_CONTEXT = '[PianolaSupervisor]';
@@ -126,6 +133,29 @@ export class PianolaSupervisor {
 		this.deps = deps;
 		this.spawnChild = deps.spawnChild ?? ((command, args, opts) => spawn(command, args, opts));
 	}
+	private runnableTargets(): PianolaSupervisedTarget[] {
+		const programs = readPrograms();
+		const plans = readPlans();
+		const paused = new Set(
+			programs.filter((program) => program.status === 'paused').map((program) => program.id)
+		);
+		const pausedLeads = new Set(
+			programs.filter((program) => paused.has(program.id)).map((program) => program.leadAgentId)
+		);
+		return readSupervisorTargets().filter((target) => {
+			if (target.kind === 'program') return !paused.has(target.programId ?? '');
+			if (target.kind === 'watch') return !pausedLeads.has(target.agentId);
+			const plan = plans.find((plan) => plan.id === target.planId);
+			return !plan || (!planProgress(plan).complete && !paused.has(plan.programId ?? ''));
+		});
+	}
+
+	private hasUnfinishedPlan(target: PianolaSupervisedTarget): boolean {
+		return (
+			target.kind === 'orchestrate' &&
+			readPlans().some((plan) => plan.id === target.planId && !planProgress(plan).complete)
+		);
+	}
 
 	/** Begin watching the store file and reconcile immediately. Idempotent. */
 	start(): void {
@@ -147,7 +177,7 @@ export class PianolaSupervisor {
 			return;
 		}
 
-		const targets = readSupervisorTargets();
+		const targets = this.runnableTargets();
 		const byId = new Map(targets.map((t) => [t.id, t] as const));
 
 		// Stop and forget children whose target was removed or disabled.
@@ -158,17 +188,25 @@ export class PianolaSupervisor {
 				this.children.delete(id);
 			}
 		}
-
-		// Spawn enabled targets with no live child; refresh config on the rest so a
-		// later restart uses the latest args. A target already in backing-off keeps
-		// its scheduled restart; a stopped/failed target is not auto-restarted here.
+		// Rebind running children when their command changes (not on metadata-only writes).
 		for (const target of targets) {
 			if (!target.enabled) continue;
 			const existing = this.children.get(target.id);
-			if (!existing) {
+			if (!existing || (existing.state === 'stopped' && this.hasUnfinishedPlan(target))) {
 				this.spawn(target);
 			} else {
-				existing.target = target;
+				const previousArgs = this.buildArgs(existing.target);
+				const nextArgs = this.buildArgs(target);
+				if (
+					previousArgs?.length !== nextArgs?.length ||
+					previousArgs?.some((arg, index) => arg !== nextArgs?.[index])
+				) {
+					this.stopChild(target.id);
+					this.children.delete(target.id);
+					this.spawn(target);
+				} else {
+					existing.target = target;
+				}
 			}
 		}
 	}
@@ -178,14 +216,14 @@ export class PianolaSupervisor {
 	 * be running but whose supervised child is not alive - one that crashed and
 	 * gave up after the restart cap, or was never spawned. Returns the count
 	 * relaunched. No-op when the Encore flag is off. The rapid-flap protection is
-	 * preserved: a target mid-backoff (a restart already scheduled) and a target
-	 * that finished cleanly are both treated as alive and left alone. Because a
+	 * preserved: mid-backoff targets retain their scheduled restart. Cleanly
+	 * finished plans are left alone unless revision reopens their work. Because a
 	 * cadenced relaunch is not rapid flapping, a relaunched target's failure
 	 * streak is reset so it gets a full restart budget again.
 	 */
 	relaunchStale(): number {
 		if (!this.deps.isEnabled()) return 0;
-		const targets = readSupervisorTargets();
+		const targets = this.runnableTargets();
 		const stale = staleTargets(targets, (id) => this.isAlive(id));
 		for (const target of stale) {
 			const existing = this.children.get(target.id);
@@ -209,9 +247,9 @@ export class PianolaSupervisor {
 	 * that must not be disturbed. A live process is alive; a target mid-backoff
 	 * (restart pending) is alive regardless of kind. A cleanly/intentionally
 	 * stopped target is kind-aware: a 'watch' should keep running, so a stopped
-	 * watch is NOT alive (stale -> relaunch); an 'orchestrate' clean exit is
-	 * terminal, so a stopped orchestrate stays alive. A failed or never-spawned
-	 * target is not alive and therefore stale.
+	 * watch is NOT alive (stale -> relaunch). A stopped orchestrate is stale when
+	 * its saved plan has unfinished work; completed or legacy absent plans stay
+	 * stopped. A failed or never-spawned target is not alive and therefore stale.
 	 */
 	private isAlive(id: string): boolean {
 		const entry = this.children.get(id);
@@ -220,7 +258,8 @@ export class PianolaSupervisor {
 		const hasLiveChild = !!child && child.exitCode === null && child.signalCode === null;
 		if (hasLiveChild) return true;
 		if (entry.state === 'backing-off') return true;
-		if (entry.state === 'stopped') return entry.target.kind === 'orchestrate';
+		if (entry.state === 'stopped')
+			return entry.target.kind === 'orchestrate' && !this.hasUnfinishedPlan(entry.target);
 		return false;
 	}
 
@@ -282,7 +321,13 @@ export class PianolaSupervisor {
 			// file throws, and atomic temp+rename writes replace the inode anyway.
 			this.watcher = fs.watch(dir, (_event, changed) => {
 				// Some platforms report a null filename; reconcile to be safe.
-				if (changed && changed !== filename) return;
+				if (
+					changed &&
+					changed !== filename &&
+					changed !== PIANOLA_PROGRAMS_FILENAME &&
+					changed !== PIANOLA_PLANS_FILENAME
+				)
+					return;
 				this.scheduleReconcile();
 			});
 			this.watcher.on('error', (error) => {
@@ -315,6 +360,16 @@ export class PianolaSupervisor {
 				target.agentId,
 				'--interval',
 				String(target.intervalSeconds ?? 5),
+			];
+		}
+		if (target.kind === 'program') {
+			if (!target.programId) return null;
+			return [
+				'pianola',
+				'program-loop',
+				target.programId,
+				'--interval',
+				String(target.intervalSeconds ?? 120),
 			];
 		}
 		if (!target.planId) return null;
@@ -415,10 +470,10 @@ export class PianolaSupervisor {
 			if (entry.startedAt && Date.now() - entry.startedAt >= STABLE_RUN_MS) {
 				entry.restarts = 0;
 			}
-			// Clean exit (code 0): success. An orchestrate run finishing its plan is
-			// expected; do not restart.
+			// A clean exit stops completed work; a revision can already have reopened the plan.
 			if (code === 0) {
 				entry.state = 'stopped';
+				if (this.hasUnfinishedPlan(entry.target)) this.scheduleReconcile();
 				return;
 			}
 			// Unexpected exit: back off and retry, capped at MAX_RESTARTS.
@@ -450,7 +505,7 @@ export class PianolaSupervisor {
 				entry.state = 'stopped';
 				return;
 			}
-			const target = readSupervisorTargets().find((t) => t.id === entry.target.id);
+			const target = this.runnableTargets().find((t) => t.id === entry.target.id);
 			if (!target || !target.enabled) {
 				entry.state = 'stopped';
 				this.children.delete(entry.target.id);

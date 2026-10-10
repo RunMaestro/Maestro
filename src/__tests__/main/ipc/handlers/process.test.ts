@@ -665,7 +665,12 @@ describe('process IPC handlers', () => {
 		 * username into the agent's environment.
 		 */
 		describe('Web Login turn attribution', () => {
+			beforeEach(() => {
+				vi.stubEnv('MAESTRO_QUERY_USER', undefined);
+			});
+
 			afterEach(() => {
+				vi.unstubAllEnvs();
 				resetTurnActors();
 			});
 
