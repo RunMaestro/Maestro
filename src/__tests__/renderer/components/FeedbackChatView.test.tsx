@@ -137,6 +137,54 @@ describe('FeedbackChatView', () => {
 		expect(picker.value).toBe(WORK.key);
 	});
 
+	it('attaches a pasted clipboard image as a screenshot, and leaves text pastes alone', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+
+		// A plain text paste is not intercepted.
+		const textPaste = fireEvent.paste(input, {
+			clipboardData: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }] },
+		});
+		expect(textPaste).toBe(true);
+
+		// Chromium hands clipboard bitmap data over as a File named "image.png".
+		const bitmap = new File([new Uint8Array([137, 80, 78, 71])], 'image.png', {
+			type: 'image/png',
+		});
+		const imagePaste = fireEvent.paste(input, {
+			clipboardData: {
+				items: [
+					{ kind: 'string', type: 'text/plain', getAsFile: () => null },
+					{ kind: 'file', type: 'image/png', getAsFile: () => bitmap },
+				],
+			},
+		});
+		// The image is the paste, so the default text insertion is suppressed.
+		expect(imagePaste).toBe(false);
+
+		const thumbnail = await screen.findByRole('img');
+		expect(thumbnail.getAttribute('alt')).toMatch(/^screenshot-\d{8}-\d{6}\.png$/);
+		expect(thumbnail.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
+	});
+
 	it('falls through to the next account when the first turn fails, and remembers the one that worked', async () => {
 		const OTHER = account({
 			key: 'claude-code::/home/me/.claude-home',

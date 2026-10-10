@@ -352,6 +352,8 @@ An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Toget
 
 [Requesty](https://docs.requesty.ai/integrations/claude-code) is one router that publishes such a route: it serves the Anthropic Messages API on `https://router.requesty.ai`, so a Claude Code agent can set `ANTHROPIC_BASE_URL=https://router.requesty.ai` (no `/v1` suffix, the CLI appends `/v1/messages`) and `ANTHROPIC_AUTH_TOKEN` to a Requesty key with nothing in between, while Codex and OpenCode point at `https://router.requesty.ai/v1` as usual.
 
+[API Route](https://www.api-route.com/docs/quickstart) also serves the Anthropic Messages API. For a Claude Code agent, set `ANTHROPIC_BASE_URL=https://global.api-route.com` (no `/v1` suffix) and `ANTHROPIC_AUTH_TOKEN` to your API Route key. Set `ANTHROPIC_MODEL` to a Claude model ID available to that key, such as `claude-haiku-4-5`; the authenticated `GET https://global.api-route.com/v1/models` endpoint lists the available IDs. These variables use the same per-agent environment settings above and do not require a translating proxy.
+
 Two more things that surprise people:
 
 - **A per-agent variable replaces the provider-level set, it does not merge with it.** An agent that sets only `ANTHROPIC_BASE_URL` stops receiving a provider-level `CLAUDE_CONFIG_DIR`. Set both on the agent if it needs both.

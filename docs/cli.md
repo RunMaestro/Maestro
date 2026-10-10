@@ -1204,14 +1204,15 @@ maestro-cli settings agent reset codex model
 
 **Common agent config keys:**
 
-| Key               | Type   | Description                                      |
-| ----------------- | ------ | ------------------------------------------------ |
-| `customPath`      | string | Custom path to the agent CLI binary              |
-| `customArgs`      | string | Additional CLI arguments                         |
-| `customEnvVars`   | object | Extra environment variables                      |
-| `model`           | string | Model override (e.g., `gpt-5.3-codex`, `o3`)     |
-| `contextWindow`   | number | Context window size in tokens                    |
-| `reasoningEffort` | string | Reasoning effort level (`low`, `medium`, `high`) |
+| Key                | Type   | Description                                                                     |
+| ------------------ | ------ | ------------------------------------------------------------------------------- |
+| `customPath`       | string | Custom path to the agent CLI binary                                             |
+| `customArgs`       | string | Additional CLI arguments                                                        |
+| `customEnvVars`    | object | Extra environment variables                                                     |
+| `model`            | string | Model override (e.g., `gpt-5.3-codex`, `o3`)                                    |
+| `contextWindow`    | number | Context window size in tokens                                                   |
+| `reasoningEffort`  | string | Reasoning effort level (`low`, `medium`, `high`)                                |
+| `reasoningSummary` | string | Codex only: reasoning shown in Thinking (`auto`, `concise`, `detailed`, `none`) |
 
 <Info>
 Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately - it's as if you toggled the setting in the Settings modal yourself.

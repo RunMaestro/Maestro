@@ -18,6 +18,7 @@ import { makeAccountKeyHelpers, resolveLatestSampledAt } from './quota/quotaForm
 import {
 	QuotaAccountEmail,
 	QuotaAccountPill,
+	QuotaAuthNotice,
 	QuotaAgentCountBadge,
 	QuotaAccountTabs,
 	QuotaBarRow,
@@ -31,6 +32,7 @@ import {
 import { CodexResetCredits } from './quota/CodexResetCredits';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
+import { quotaAuthStateNeedsLogin, useQuotaAccountLogin } from './quota/useQuotaAccountLogin';
 import { buildQuotaSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
 
@@ -103,6 +105,8 @@ interface AccountRowProps {
 	theme: Theme;
 	/** Show this account's agents in the Agents tab. Omit to keep the chip inert. */
 	onShowAgents?: () => void;
+	/** Run the provider login for this account. Offered only when a login fixes the row. */
+	onLogin?: () => void;
 }
 
 const AccountRow = memo(function AccountRow({
@@ -112,6 +116,7 @@ const AccountRow = memo(function AccountRow({
 	latestSampledAtMs,
 	theme,
 	onShowAgents,
+	onLogin,
 }: AccountRowProps) {
 	const shortName = deriveShortName(codexHomeKey);
 	const hasBars =
@@ -159,18 +164,13 @@ const AccountRow = memo(function AccountRow({
 			</div>
 
 			{snapshot.authState !== 'authenticated' ? (
-				<div
-					className="flex items-center gap-2 px-3 py-2 rounded text-xs"
-					style={{
-						backgroundColor: `${theme.colors.warning ?? theme.colors.accent}15`,
-						color: theme.colors.textMain,
-						border: `1px solid ${theme.colors.warning ?? theme.colors.accent}40`,
-					}}
-					data-testid={`${TEST_ID_PREFIX}-row-${shortName}-${snapshot.authState}`}
-				>
-					<span style={{ color: theme.colors.warning ?? theme.colors.accent }}>●</span>
-					<span>{snapshot.error ?? 'Codex quota is unavailable for this account.'}</span>
-				</div>
+				<QuotaAuthNotice
+					theme={theme}
+					message={snapshot.error ?? 'Codex quota is unavailable for this account.'}
+					testId={`${TEST_ID_PREFIX}-row-${shortName}-${snapshot.authState}`}
+					// A network or server error is not fixed by logging in.
+					onLogin={quotaAuthStateNeedsLogin(snapshot.authState) ? onLogin : undefined}
+				/>
 			) : hasBars ? (
 				<>
 					{snapshot.session && (
@@ -328,6 +328,8 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 		refreshHotkey,
 	});
 
+	const startLogin = useQuotaAccountLogin('codex', () => void handleRefresh());
+
 	const renderAccount = useCallback(
 		(codexHomeKey: string) => {
 			const shortName = deriveShortName(codexHomeKey);
@@ -342,6 +344,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					latestSampledAtMs={lastSampledAtMs}
 					theme={theme}
 					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
+					onLogin={() => startLogin(codexHomeKey)}
 				/>
 			) : (
 				<QuotaPendingRow
@@ -388,6 +391,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 			agentCountsByAccount,
 			lastSampledAtMs,
 			onShowAccountAgents,
+			startLogin,
 		]
 	);
 
@@ -483,6 +487,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
 					latestSampledAtMs={lastSampledAtMs}
 					theme={theme}
+					onLogin={() => startLogin(effectiveSelectedKey)}
 				/>
 			) : effectiveSelectedKey ? (
 				<QuotaPendingRow

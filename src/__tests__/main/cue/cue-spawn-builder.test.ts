@@ -56,9 +56,15 @@ vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
 }));
 
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
-	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
-}));
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../shared/maestro-lib/launch/ssh-spawn-wrapper')
+	>('../../../shared/maestro-lib/launch/ssh-spawn-wrapper');
+	return {
+		...actual,
+		wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	};
+});
 
 // Mock the Claude token-source resolver's leaf dependencies so the maestro-p
 // binary reads as present and config-dir resolution is deterministic. The
@@ -451,6 +457,32 @@ describe('cue-spawn-builder', () => {
 				if (result.ok) {
 					expect(result.spec.stdinPrompt).toBe('large prompt content');
 				}
+			});
+
+			it('fails instead of spawning locally when the wrapper loses the planned remote', async () => {
+				// The plan resolved the remote, but the wrapper handed back the local
+				// config (remote deleted or disabled in between). That must fail.
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'claude',
+					args: ['--print', '--verbose'],
+					cwd: '/projects/test',
+					customEnvVars: undefined,
+					prompt: 'Hello world',
+					sshRemoteUsed: null,
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						sshStore: sshStoreWithRemotes(),
+					}),
+					'Hello world'
+				);
+
+				expect(result).toEqual({
+					ok: false,
+					message: expect.stringContaining('configured remote "r1" could not be resolved'),
+				});
 			});
 
 			it('fails instead of running locally when SSH is enabled but there is no remote list', async () => {

@@ -923,6 +923,51 @@ describe('buildAgentArgs', () => {
 // applyAgentConfigOverrides
 // ---------------------------------------------------------------------------
 describe('applyAgentConfigOverrides', () => {
+	describe('Codex reasoning config (#1744)', () => {
+		const baseArgs = ['exec', '--json'];
+		const codex = () => getAgentDefinition('codex');
+
+		it('requests an auto reasoning summary by default so Thinking has content', () => {
+			expect(applyAgentConfigOverrides(codex(), baseArgs, {}).args).toEqual([
+				...baseArgs,
+				'-c',
+				'model_reasoning_summary="auto"',
+			]);
+		});
+
+		it.each(['auto', 'concise', 'detailed', 'none'])(
+			'forwards supported reasoning summary %s',
+			(reasoningSummary) => {
+				expect(
+					applyAgentConfigOverrides(codex(), baseArgs, {
+						agentConfigValues: { reasoningSummary },
+					}).args
+				).toEqual([...baseArgs, '-c', `model_reasoning_summary="${reasoningSummary}"`]);
+			}
+		);
+
+		// Codex refuses to load its config on an unknown variant, so a bad stored
+		// value must drop the flag rather than break every spawn.
+		it.each(['', 'invalid', ' auto ', null, 42])(
+			'drops unsupported stored reasoning summary %s',
+			(reasoningSummary) => {
+				expect(
+					applyAgentConfigOverrides(codex(), baseArgs, {
+						agentConfigValues: { reasoningSummary },
+					}).args
+				).toEqual(baseArgs);
+			}
+		);
+
+		it('sends effort as model_reasoning_effort, the key Codex reads', () => {
+			const { args } = applyAgentConfigOverrides(codex(), baseArgs, {
+				agentConfigValues: { reasoningEffort: 'high', reasoningSummary: 'none' },
+			});
+			expect(args).toContain('model_reasoning_effort="high"');
+			expect(args.some((arg) => arg.startsWith('reasoning.effort'))).toBe(false);
+		});
+	});
+
 	it('processes configOptions with argBuilder', () => {
 		const agent = makeAgent({
 			configOptions: [
