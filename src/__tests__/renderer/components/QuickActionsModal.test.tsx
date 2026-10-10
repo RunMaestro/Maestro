@@ -3,6 +3,8 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { buildTipOrder } from '../../../shared/didYouKnow';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -13,6 +15,7 @@ import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import { Z_LAYERS } from '../../../renderer/constants/zLayers';
+import { DEFAULT_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 
 /**
  * The action rows, in render order. Scoped to `[data-action-label]` rather than
@@ -714,6 +717,62 @@ describe('QuickActionsModal', () => {
 
 			expect(props.setAboutModalOpen).toHaveBeenCalledWith(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('Did You Know command', () => {
+		afterEach(() => {
+			useModalStore.getState().closeModal('didYouKnow');
+			useSettingsStore.setState({
+				didYouKnowEnabled: true,
+				didYouKnowSeed: 0,
+				didYouKnowSeenTipIds: [],
+			});
+		});
+
+		it.each(['unseen', 'all seen'] as const)(
+			'opens a random tip with current settings when %s, even with launch tips disabled',
+			(seenState) => {
+				useSettingsStore.setState({ didYouKnowSeed: 1, didYouKnowSeenTipIds: [] });
+				const props = createDefaultProps();
+				render(
+					<QuickActionsModal {...(props as React.ComponentProps<typeof QuickActionsModal>)} />
+				);
+
+				// Update after rendering so a captured settings snapshot would pick the wrong tip.
+				const order = buildTipOrder(456);
+				const expectedTip = seenState === 'unseen' ? order[1] : order[order.length - 1];
+				const seenIds = order
+					.filter((tip) => seenState === 'all seen' || tip.id !== expectedTip.id)
+					.map((tip) => tip.id);
+				useSettingsStore.setState({
+					didYouKnowEnabled: false,
+					didYouKnowSeed: 456,
+					didYouKnowSeenTipIds: seenIds,
+				});
+				vi.spyOn(Math, 'random').mockReturnValue(0.999);
+
+				expect(screen.getByText('Show a Maestro feature tip')).toBeInTheDocument();
+				fireEvent.click(screen.getByText('Did You Know?'));
+
+				expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+				expect(useModalStore.getState().getData('didYouKnow')).toEqual({
+					startTipId: expectedTip.id,
+				});
+				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+				expect(useSettingsStore.getState().didYouKnowSeenTipIds).toEqual(seenIds);
+			}
+		);
+
+		it('shows the configured shortcut beside the command', () => {
+			const shortcut = { id: 'didYouKnow', label: 'Did You Know?', keys: ['Meta', 'F12'] };
+			const props = createDefaultProps({
+				shortcuts: { ...DEFAULT_SHORTCUTS, didYouKnow: shortcut },
+			});
+			render(<QuickActionsModal {...(props as React.ComponentProps<typeof QuickActionsModal>)} />);
+
+			const row = screen.getByText('Did You Know?').closest('button');
+			expect(row).toHaveTextContent(formatShortcutKeys(shortcut.keys));
 		});
 	});
 

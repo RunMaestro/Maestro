@@ -475,6 +475,20 @@ export const BrowserTabView = React.memo(
 			}
 		}, [tab.id, tab.url]);
 
+		// Explicit requests are separate from observed URLs: redirects must never
+		// feed back into webview.src and start a reload loop.
+		useEffect(() => {
+			const webview = webviewRef.current;
+			if (!webview || !tab.requestedUrl) return;
+			const target = resolveBrowserTabNavigationTarget(tab.requestedUrl);
+			if (target.kind === 'error') throw new Error(target.message);
+			if (webview.src !== target.url) {
+				isDomReadyRef.current = false;
+				webview.src = target.url;
+			}
+			onUpdateTabRef.current(tab.id, { requestedUrl: undefined });
+		}, [tab.id, tab.requestedUrl]);
+
 		// The component instance is reused across tab switches (see the addressValue
 		// reset above), so reset the two-step clear-session confirm too: arming Clear
 		// on tab A then switching to tab B must not leave B pre-armed, where one click

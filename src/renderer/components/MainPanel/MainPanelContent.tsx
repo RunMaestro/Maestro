@@ -685,11 +685,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			{ intervalMs: PANE_FOCUS_DELAY_MS }
 		);
 	}, [focusRequest, activeGroup, activeSession.id, terminalViewRefs, inputRef]);
-	// Number of open modal/overlay layers. When any layer is open over a browser
-	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
-	// focus so keyboard navigation lands in the modal instead of the page. Driving
-	// isActive off this re-blurs the webview the moment a layer opens.
-	const { layerCount } = useLayerStack();
+	// Passive layers (such as docked tips) leave the browser interactive. Check
+	// every layer so a passive top layer cannot hide a blocking modal beneath it.
+	// Read on each context render: layer options can change without a count change.
+	const { getLayers } = useLayerStack();
+	const isBrowserFocusBlocked = getLayers().some((layer) => layer.blocksLowerLayers !== false);
 	// Toasts lift above the composer instead of covering it (Right Bar closed).
 	const inputAreaAvoidRef = useToastAvoidZone();
 	// Per-tab BrowserTabView handles. The single browserViewRef passed from MainPanel must
@@ -1252,14 +1252,14 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 				const isBrowserVisible = isBrowserTiled
 					? activeSession.inputMode === 'ai'
 					: activeSession.inputMode === 'ai' && activeSession.activeBrowserTabId === tabId;
-				// Hold keyboard focus only when no modal/overlay is layered above the
+				// Hold keyboard focus only when no blocking layer is above the
 				// page. The tab stays visually rendered (visibility/zIndex below are
 				// driven by isBrowserVisible), but the webview yields input focus to an
 				// open layer so its keyboard navigation works (e.g. the Tab Switcher).
 				// When tiled, only the group's focused browser pane holds webview input.
 				const isBrowserFocusActive = isBrowserTiled
-					? groupFocusedBrowserTabId === tabId && layerCount === 0
-					: isBrowserVisible && layerCount === 0;
+					? groupFocusedBrowserTabId === tabId && !isBrowserFocusBlocked
+					: isBrowserVisible && !isBrowserFocusBlocked;
 				return (
 					<div
 						key={tabId}

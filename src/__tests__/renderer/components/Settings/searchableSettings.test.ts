@@ -132,6 +132,18 @@ describe('searchableSettings', () => {
 		// they remain findable - keyword drift from UI text is silent otherwise.
 		it.each([
 			// General tab
+			['Discovery', 'general-did-you-know'],
+			["Show 'Did You Know?' on launch", 'general-did-you-know'],
+			['command palette', 'general-did-you-know'],
+			['startup tips', 'general-did-you-know'],
+			['onboarding', 'general-did-you-know'],
+			['feature tour', 'general-did-you-know'],
+			['Show all tips again', 'general-did-you-know-reset'],
+			['reset tips', 'general-did-you-know-reset'],
+			['seen tips', 'general-did-you-know-reset'],
+			['did you know', 'general-did-you-know-reset'],
+			['clear tips', 'general-did-you-know-reset'],
+			['rotation starts over', 'general-did-you-know-reset'],
 			['Auto Run Inactivity Timeout', 'general-autorun-inactivity-timeout'],
 			['refactor', 'general-autorun-inactivity-timeout'],
 			['resume paused', 'general-auto-resume'],

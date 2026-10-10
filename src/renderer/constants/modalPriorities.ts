@@ -245,6 +245,10 @@ export const MODAL_PRIORITIES = {
 	/** Keyboard shortcuts help modal */
 	SHORTCUTS_HELP: 650,
 
+	/** Startup discovery notice: below group chat at 630, above registration at 620,
+	 * so it yields to deliberately opened higher-priority surfaces. */
+	DID_YOU_KNOW: 625,
+
 	/** Leaderboard registration modal */
 	LEADERBOARD_REGISTRATION: 620,
 

@@ -56,6 +56,8 @@ This guide has been split into focused sub-documents for progressive disclosure:
 Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is the INDEX: name, canonical symbols, home file. The full entry for each - the failure it replaced, its invariants, and the traps that made the duplicates wrong - lives in [CANONICAL-UTILITIES.md](docs/agent-guides/CANONICAL-UTILITIES.md). If a name below matches what you are about to write, import the canonical one; read its full entry before extending or working around it.
 
 - **ID generation:** `generateId()`, `generateUUID()` in `src/renderer/utils/ids.ts`
+- **Shuffling a list:** `shuffle()`, `shuffleWithSeed(array, seed)` in `src/shared/shuffle.ts`
+- **Cutting a spotlight hole in an overlay:** `getElementRect()`, `getSpotlightClipPath()` in `src/renderer/utils/spotlight.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()`, `formatCount()` in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()` in `src/shared/formatters.ts`

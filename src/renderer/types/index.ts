@@ -1003,6 +1003,7 @@ export interface TerminalTab {
 export interface BrowserTab {
 	id: string; // Unique tab ID (UUID)
 	url: string; // Current URL shown in the address bar
+	requestedUrl?: string; // Runtime-only navigation request, consumed by BrowserTabView
 	title: string; // Last known document title (falls back to URL)
 	// User-assigned tab name. When set, it locks the displayed label and overrides
 	// page-set titles (the website can no longer rename the tab) until the user clears it.

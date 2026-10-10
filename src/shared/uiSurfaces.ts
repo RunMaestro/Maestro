@@ -137,7 +137,7 @@ export const UI_SURFACES: UiSurface[] = [
 		id: 'symphony',
 		label: 'Maestro Symphony',
 		modal: 'symphony',
-		description: 'Group chat across multiple agents with a moderator.',
+		description: 'Contribute to open-source projects by donating AI tokens.',
 		shortcutId: 'openSymphony',
 		commandPalette: 'Symphony',
 		encore: 'symphony',

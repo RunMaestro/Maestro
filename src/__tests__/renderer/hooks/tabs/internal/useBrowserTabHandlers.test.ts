@@ -1,6 +1,8 @@
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useBrowserTabHandlers } from '../../../../../renderer/hooks/tabs/internal/useBrowserTabHandlers';
+import { openBrowserTabAt } from '../../../../../renderer/services/browserTabs';
+import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import {
 	createMockAITab,
@@ -77,6 +79,41 @@ describe('useBrowserTabHandlers', () => {
 			title: 'Report',
 			isLoading: true,
 		});
+	});
+
+	it('opens a browser tab directly from the service without mounting a hook', () => {
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeGroupId: 'group-1',
+		});
+
+		openBrowserTabAt('https://example.com/docs', { title: 'Docs' });
+
+		const session = getSession();
+		const browserTab = session.browserTabs[0];
+		expect(browserTab).toMatchObject({
+			url: 'https://example.com/docs',
+			title: 'Docs',
+			isLoading: true,
+		});
+		expect(session).toMatchObject({
+			activeBrowserTabId: browserTab.id,
+			activeFileTabId: null,
+			activeTerminalTabId: null,
+			activeGroupId: null,
+			inputMode: 'ai',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'browser', id: browserTab.id },
+				{ type: 'ai', id: 'ai-2' },
+			],
+		});
+	});
+
+	it('does not create a session when the service is called without an active session', () => {
+		openBrowserTabAt('https://example.com/docs');
+
+		expect(useSessionStore.getState().sessions).toEqual([]);
 	});
 
 	it('selects an existing browser tab and repairs missing unified order', () => {

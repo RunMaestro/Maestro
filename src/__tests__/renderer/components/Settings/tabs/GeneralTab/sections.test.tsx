@@ -10,6 +10,7 @@ import {
 	RenderingSection,
 	StorageLocationSection,
 	TabBehaviorSection,
+	DiscoverySection,
 	UpdatesSection,
 } from '../../../../../../renderer/components/Settings/tabs/GeneralTab/components';
 import { DEFAULT_BROWSER_HOME_URL } from '../../../../../../renderer/components/Settings/tabs/GeneralTab/utils';
@@ -19,6 +20,11 @@ import type {
 } from '../../../../../../renderer/components/Settings/tabs/GeneralTab/types';
 import type { MaestroCliStatus } from '../../../../../../shared/maestro-cli';
 import { mockTheme } from '../../../../../helpers/mockTheme';
+
+vi.mock('../../../../../../renderer/stores/notificationStore', () => ({
+	notifyToast: vi.fn(),
+}));
+import { notifyToast } from '../../../../../../renderer/stores/notificationStore';
 
 const cliStatus: MaestroCliStatus = {
 	expectedVersion: '0.18.2',
@@ -59,6 +65,72 @@ function syncStorageState(overrides: Partial<SyncStorageState> = {}): SyncStorag
 }
 
 describe('GeneralTab section components', () => {
+	it.each([true, false])(
+		'toggles discovery from rows, keys, and switch when enabled=%s',
+		(enabled) => {
+			const setEnabled = vi.fn();
+			render(
+				<DiscoverySection
+					theme={mockTheme}
+					didYouKnowEnabled={enabled}
+					setDidYouKnowEnabled={setEnabled}
+					didYouKnowSeenTipIds={[]}
+					setDidYouKnowSeenTipIds={vi.fn()}
+				/>
+			);
+			const toggle = screen.getByRole('switch', { name: "Show 'Did You Know?' on launch" });
+			const row = toggle.closest('[data-setting-id="general-did-you-know"]')!;
+			expect(toggle).toHaveAttribute('aria-checked', String(enabled));
+			fireEvent.click(row);
+			fireEvent.keyDown(row, { key: 'Enter' });
+			fireEvent.keyDown(row, { key: ' ' });
+			fireEvent.click(toggle);
+			fireEvent.keyDown(row, { key: 'Escape' });
+			expect(setEnabled).toHaveBeenCalledTimes(4);
+			for (const call of setEnabled.mock.calls) expect(call).toEqual([!enabled]);
+		}
+	);
+
+	it('clears seen tips before confirming and disables reset once the list is empty', () => {
+		vi.mocked(notifyToast).mockClear();
+		const setSeen = vi.fn();
+		const setEnabled = vi.fn();
+		const { rerender } = render(
+			<DiscoverySection
+				theme={mockTheme}
+				didYouKnowEnabled={false}
+				setDidYouKnowEnabled={setEnabled}
+				didYouKnowSeenTipIds={['maestro-cue']}
+				setDidYouKnowSeenTipIds={setSeen}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Show all tips again' }));
+		expect(setSeen).toHaveBeenCalledExactlyOnceWith([]);
+		expect(notifyToast).toHaveBeenCalledExactlyOnceWith({
+			color: 'green',
+			title: 'Tip rotation reset',
+			message: 'All Did You Know? tips are ready to show again.',
+		});
+		expect(setSeen.mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(notifyToast).mock.invocationCallOrder[0]
+		);
+		expect(setEnabled).not.toHaveBeenCalled();
+		rerender(
+			<DiscoverySection
+				theme={mockTheme}
+				didYouKnowEnabled={false}
+				setDidYouKnowEnabled={setEnabled}
+				didYouKnowSeenTipIds={[]}
+				setDidYouKnowSeenTipIds={setSeen}
+			/>
+		);
+		const reset = screen.getByRole('button', { name: 'Show all tips again' });
+		expect(reset).toBeDisabled();
+		fireEvent.click(reset);
+		expect(setSeen).toHaveBeenCalledTimes(1);
+		expect(notifyToast).toHaveBeenCalledTimes(1);
+	});
+
 	it('wires input behavior toggles and forced parallel switch', () => {
 		const setEnterToSendAI = vi.fn();
 		const setEnterToSendAIExpanded = vi.fn();
@@ -164,6 +236,8 @@ describe('GeneralTab section components', () => {
 		const setSynopsisDebounceSeconds = vi.fn();
 		const { rerender } = render(
 			<HistorySection
+				groupCueEntries={false}
+				setGroupCueEntries={vi.fn()}
 				theme={mockTheme}
 				defaultSaveToHistory={false}
 				setDefaultSaveToHistory={setDefaultSaveToHistory}
@@ -180,6 +254,8 @@ describe('GeneralTab section components', () => {
 
 		rerender(
 			<HistorySection
+				groupCueEntries={false}
+				setGroupCueEntries={vi.fn()}
 				theme={mockTheme}
 				defaultSaveToHistory={true}
 				setDefaultSaveToHistory={setDefaultSaveToHistory}
@@ -283,6 +359,8 @@ describe('GeneralTab section components', () => {
 		render(
 			<>
 				<PowerSection
+					preventDisplaySleepEnabled={false}
+					setPreventDisplaySleepEnabled={vi.fn()}
 					theme={mockTheme}
 					preventSleepEnabled={false}
 					setPreventSleepEnabled={setPreventSleepEnabled}

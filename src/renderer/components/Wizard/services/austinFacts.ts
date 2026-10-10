@@ -8,7 +8,7 @@
  * that open in the system browser.
  */
 
-import { shuffle } from './shuffle';
+import { shuffle } from '../../../../shared/shuffle';
 
 const AUSTIN_FACTS = [
 	// Pedram's Picks - Weekly Specials

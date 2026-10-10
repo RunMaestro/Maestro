@@ -471,6 +471,32 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-did-you-know',
+		tab: 'general',
+		tabLabel: 'General',
+		label: "Show 'Did You Know?' on launch",
+		description:
+			'Learn one Maestro feature each time you start the app. Open one any time from the command palette.',
+		keywords: [
+			'did you know',
+			'tip',
+			'tips',
+			'discovery',
+			'startup',
+			'launch',
+			'onboarding',
+			'feature tour',
+		],
+	},
+	{
+		id: 'general-did-you-know-reset',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Show all tips again',
+		description: 'Clears the list of tips you have already seen, so the rotation starts over.',
+		keywords: ['reset tips', 'seen tips', 'did you know', 'clear tips', 'rotation'],
+	},
+	{
 		id: 'general-updates',
 		tab: 'general',
 		tabLabel: 'General',

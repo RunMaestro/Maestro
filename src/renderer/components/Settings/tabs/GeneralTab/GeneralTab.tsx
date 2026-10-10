@@ -19,6 +19,7 @@ import {
 	StorageLocationSection,
 	TabBehaviorSection,
 	ThinkingModeSection,
+	DiscoverySection,
 	UpdatesSection,
 	UtilityAgentSection,
 	WebInterfaceSection,
@@ -170,6 +171,13 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setDisableGpuAcceleration={settings.setDisableGpuAcceleration}
 				disableConfetti={settings.disableConfetti}
 				setDisableConfetti={settings.setDisableConfetti}
+			/>
+			<DiscoverySection
+				theme={theme}
+				didYouKnowEnabled={settings.didYouKnowEnabled}
+				setDidYouKnowEnabled={settings.setDidYouKnowEnabled}
+				didYouKnowSeenTipIds={settings.didYouKnowSeenTipIds}
+				setDidYouKnowSeenTipIds={settings.setDidYouKnowSeenTipIds}
 			/>
 			<UpdatesSection
 				theme={theme}

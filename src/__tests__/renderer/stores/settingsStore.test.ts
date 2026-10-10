@@ -137,6 +137,9 @@ function resetStore() {
 		ungroupedCollapsed: false,
 		groupChatsExpanded: true,
 		tourCompleted: false,
+		didYouKnowEnabled: true,
+		didYouKnowSeenTipIds: [],
+		didYouKnowSeed: 0,
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
@@ -761,6 +764,40 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setTourCompleted(true);
 				expect(useSettingsStore.getState().tourCompleted).toBe(true);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('tourCompleted', true);
+			});
+
+			it('initializes Did You Know with enabled, unseen, unassigned defaults', () => {
+				const initial = useSettingsStore.getInitialState();
+				expect(initial.didYouKnowEnabled).toBe(true);
+				expect(initial.didYouKnowSeenTipIds).toEqual([]);
+				expect(initial.didYouKnowSeed).toBe(0);
+			});
+
+			it('setDidYouKnowEnabled updates state and persists changes and resets', () => {
+				for (const value of [false, true]) {
+					useSettingsStore.getState().setDidYouKnowEnabled(value);
+					expect(useSettingsStore.getState().didYouKnowEnabled).toEqual(value);
+					expect(window.maestro.settings.set).toHaveBeenLastCalledWith('didYouKnowEnabled', value);
+				}
+			});
+
+			it('setDidYouKnowSeenTipIds updates state and persists changes and resets', () => {
+				for (const value of [['maestro-cue', 'auto-run'], []]) {
+					useSettingsStore.getState().setDidYouKnowSeenTipIds(value);
+					expect(useSettingsStore.getState().didYouKnowSeenTipIds).toEqual(value);
+					expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+						'didYouKnowSeenTipIds',
+						value
+					);
+				}
+			});
+
+			it('setDidYouKnowSeed updates state and persists changes and resets', () => {
+				for (const value of [4294967295, 0]) {
+					useSettingsStore.getState().setDidYouKnowSeed(value);
+					expect(useSettingsStore.getState().didYouKnowSeed).toEqual(value);
+					expect(window.maestro.settings.set).toHaveBeenLastCalledWith('didYouKnowSeed', value);
+				}
 			});
 
 			it('setFirstAutoRunCompleted updates state and persists', () => {
@@ -1900,6 +1937,83 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('loadAllSettings', () => {
+		describe('Did You Know settings', () => {
+			it.each([true, false])(
+				'restores saved discovery settings with enabled=%s',
+				async (enabled) => {
+					useSettingsStore.setState({ didYouKnowEnabled: !enabled });
+					vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+						didYouKnowEnabled: enabled,
+						didYouKnowSeenTipIds: ['maestro-cue', 'auto-run'],
+						didYouKnowSeed: 12345,
+					});
+
+					await loadAllSettings();
+
+					const state = useSettingsStore.getState();
+					expect(state.didYouKnowEnabled).toBe(enabled);
+					expect(state.didYouKnowSeenTipIds).toEqual(['maestro-cue', 'auto-run']);
+					expect(state.didYouKnowSeed).toBe(12345);
+				}
+			);
+
+			it('keeps discovery enabled with an empty rotation when settings are absent', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+
+				await loadAllSettings();
+
+				const state = useSettingsStore.getState();
+				expect(state.didYouKnowEnabled).toBe(true);
+				expect(state.didYouKnowSeenTipIds).toEqual([]);
+				expect(state.didYouKnowSeed).toBe(0);
+			});
+
+			it.each([null, 'maestro-cue', 42, false, { id: 'maestro-cue' }])(
+				'ignores a non-array seen list: %j',
+				async (seenIds) => {
+					vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+						didYouKnowSeenTipIds: seenIds,
+					});
+
+					await loadAllSettings();
+
+					expect(useSettingsStore.getState().didYouKnowSeenTipIds).toEqual([]);
+				}
+			);
+
+			it('restores an empty seen list and an unassigned seed', async () => {
+				useSettingsStore.setState({ didYouKnowSeenTipIds: ['maestro-cue'], didYouKnowSeed: 42 });
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					didYouKnowSeenTipIds: [],
+					didYouKnowSeed: 0,
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().didYouKnowSeenTipIds).toEqual([]);
+				expect(useSettingsStore.getState().didYouKnowSeed).toBe(0);
+			});
+
+			it.each([
+				['12345', 12345],
+				['0', 0],
+				['invalid', 0],
+				['1e309', 0],
+				[NaN, 0],
+				[Infinity, 0],
+				[-Infinity, 0],
+				[{}, 0],
+				[null, 0],
+			])('coerces seed %j to %s', async (seed, expected) => {
+				useSettingsStore.setState({ didYouKnowSeed: 42 });
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ didYouKnowSeed: seed });
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().didYouKnowSeed).toBe(expected);
+			});
+		});
+
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',

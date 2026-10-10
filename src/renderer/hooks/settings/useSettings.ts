@@ -261,6 +261,12 @@ export interface UseSettingsReturn {
 	// Onboarding settings
 	tourCompleted: boolean;
 	setTourCompleted: (value: boolean) => void;
+	didYouKnowEnabled: boolean;
+	setDidYouKnowEnabled: (value: boolean) => void;
+	didYouKnowSeenTipIds: string[];
+	setDidYouKnowSeenTipIds: (value: string[]) => void;
+	didYouKnowSeed: number;
+	setDidYouKnowSeed: (value: number) => void;
 	firstAutoRunCompleted: boolean;
 	setFirstAutoRunCompleted: (value: boolean) => void;
 

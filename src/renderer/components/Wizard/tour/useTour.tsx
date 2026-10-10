@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { tourSteps } from './tourSteps';
-import { logger } from '../../../utils/logger';
+import { getElementRect } from '../../../utils/spotlight';
 
 /**
  * UI action to perform before showing a tour step
@@ -113,54 +113,6 @@ interface UseTourReturn {
 	skipTour: () => void;
 	/** Whether on the last step */
 	isLastStep: boolean;
-}
-
-/**
- * Calculate element position for spotlight
- * Supports multiple selectors separated by commas - combines their bounding boxes
- */
-function getElementRect(selector: string | null): DOMRect | null {
-	if (!selector) return null;
-
-	// Support multiple selectors separated by commas
-	const selectors = selector.split(',').map((s) => s.trim());
-	const rects: DOMRect[] = [];
-
-	for (const sel of selectors) {
-		const element = document.querySelector(sel);
-		if (element) {
-			rects.push(element.getBoundingClientRect());
-		}
-	}
-
-	if (rects.length === 0) {
-		logger.warn(`[Tour] No elements found for selector(s): ${selector}`);
-		return null;
-	}
-
-	// If single element, return its rect directly
-	if (rects.length === 1) {
-		return rects[0];
-	}
-
-	// Combine multiple rects into one bounding box
-	const minX = Math.min(...rects.map((r) => r.x));
-	const minY = Math.min(...rects.map((r) => r.y));
-	const maxX = Math.max(...rects.map((r) => r.x + r.width));
-	const maxY = Math.max(...rects.map((r) => r.y + r.height));
-
-	// Create a synthetic DOMRect-like object
-	return {
-		x: minX,
-		y: minY,
-		width: maxX - minX,
-		height: maxY - minY,
-		top: minY,
-		left: minX,
-		bottom: maxY,
-		right: maxX,
-		toJSON: () => ({ x: minX, y: minY, width: maxX - minX, height: maxY - minY }),
-	} as DOMRect;
 }
 
 /**

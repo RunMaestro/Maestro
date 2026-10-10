@@ -1,5 +1,10 @@
 import { lazy, memo, Suspense, useMemo } from 'react';
-import { useModalActions, useModalStore } from '../stores/modalStore';
+import {
+	useModalActions,
+	useModalStore,
+	selectModalOpen,
+	selectModalData,
+} from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
@@ -47,6 +52,9 @@ import { resolveFileReference } from '../utils/fileLinks/resolve';
 import { getBasename } from '../../shared/formatters';
 
 // Lazy-loaded components (rarely-used heavy modals)
+const DidYouKnowModal = lazy(() =>
+	import('./DidYouKnow').then((m) => ({ default: m.DidYouKnowModal }))
+);
 const SettingsModal = lazy(() =>
 	import('./Settings/SettingsModal').then((m) => ({ default: m.SettingsModal }))
 );
@@ -279,6 +287,8 @@ function AppStandaloneModalsInner({
 		setTourOpen,
 		tourFromWizard,
 	} = useModalActions();
+	const didYouKnowOpen = useModalStore(selectModalOpen('didYouKnow'));
+	const didYouKnowData = useModalStore(selectModalData('didYouKnow'));
 
 	// Self-source file explorer state
 	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
@@ -327,6 +337,18 @@ function AppStandaloneModalsInner({
 				useBetaChannel={enableBetaUpdates}
 				onSetUseBetaChannel={setEnableBetaUpdates}
 			/>
+
+			{/* --- DID YOU KNOW --- */}
+			{didYouKnowOpen && (
+				<Suspense fallback={null}>
+					<DidYouKnowModal
+						theme={theme}
+						isOpen={didYouKnowOpen}
+						startTipId={didYouKnowData?.startTipId}
+						onClose={() => useModalStore.getState().closeModal('didYouKnow')}
+					/>
+				</Suspense>
+			)}
 
 			{/* --- FIRST-RUN SERIES: typography -> theme -> updates -> agent powers ---
 			    One step on screen at a time; see OnboardingSeriesHost. */}

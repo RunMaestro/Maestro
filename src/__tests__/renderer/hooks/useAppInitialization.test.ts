@@ -6,6 +6,8 @@
  * SSH configs, stats DB check, notification sync, playground debug, saveFileGistUrl
  */
 
+import { createElement, StrictMode } from 'react';
+import { useModalStore, type ModalId } from '../../../renderer/stores/modalStore';
 import { renderHook, act } from '@testing-library/react';
 import { useAppInitialization } from '../../../renderer/hooks/ui/useAppInitialization';
 
@@ -74,11 +76,17 @@ vi.mock('../../../renderer/stores/sessionStore', () => ({
 	),
 }));
 
+const mockWizardState = { isOpen: false };
+vi.mock('../../../renderer/components/Wizard/WizardContext', () => ({
+	useWizard: () => ({ state: mockWizardState }),
+}));
+
 const mockSetWindowsWarningModalOpen = vi.fn();
 const mockSetUpdateCheckModalOpen = vi.fn();
 const mockSetPlaygroundOpen = vi.fn();
 
-vi.mock('../../../renderer/stores/modalStore', () => ({
+vi.mock('../../../renderer/stores/modalStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/modalStore')>()),
 	getModalActions: () => ({
 		setWindowsWarningModalOpen: mockSetWindowsWarningModalOpen,
 		setUpdateCheckModalOpen: mockSetUpdateCheckModalOpen,
@@ -215,6 +223,9 @@ beforeAll(() => {
 // ============================================================================
 
 function resetStores() {
+	useModalStore.setState({ modals: new Map() });
+	mockWizardState.isOpen = false;
+	mockSettingsState.didYouKnowEnabled = true;
 	mockSettingsState.settingsLoaded = false;
 	mockSettingsState.suppressWindowsWarning = false;
 	mockSettingsState.enableBetaUpdates = false;
@@ -393,6 +404,93 @@ describe('useAppInitialization', () => {
 			await act(flushPromises);
 
 			expect(result.current.ghCliAvailable).toBe(false);
+		});
+	});
+
+	describe('Did You Know launch tip', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSessionState.sessionsLoaded = true;
+			mockSessionState.initialFileTreeReady = true;
+		});
+
+		it('opens after 1200ms and only once, including StrictMode effect replay', async () => {
+			renderHook(() => useAppInitialization(), {
+				wrapper: ({ children }) => createElement(StrictMode, null, children),
+			});
+			await act(() => vi.advanceTimersByTimeAsync(1199));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+			await act(() => vi.advanceTimersByTimeAsync(1));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+			// Launch leaves startTipId unset so the card uses the normal tip rotation.
+			expect(useModalStore.getState().getData('didYouKnow')).toBeUndefined();
+			act(() => {
+				useModalStore.getState().closeModal('didYouKnow');
+				useModalStore.getState().openModal('tour');
+			});
+			act(() => useModalStore.getState().closeModal('tour'));
+			await act(() => vi.advanceTimersByTimeAsync(2000));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+		});
+
+		it.each([
+			[mockSettingsState, 'settingsLoaded'],
+			[mockSessionState, 'sessionsLoaded'],
+			[mockSessionState, 'initialFileTreeReady'],
+			[mockSettingsState, 'didYouKnowEnabled'],
+		] as const)('waits for %s.%s', async (store, key) => {
+			store[key] = false;
+			const { rerender } = renderHook(() => useAppInitialization());
+			await act(() => vi.advanceTimersByTimeAsync(2000));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+			store[key] = true;
+			rerender();
+			await act(() => vi.advanceTimersByTimeAsync(1200));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+		});
+
+		it.each<ModalId>([
+			'wizardResume',
+			'tour',
+			'quitConfirm',
+			'agentError',
+			'reauth',
+			'updateCheck',
+		])('defers while %s is open, including interruptions during the delay', async (id) => {
+			useModalStore.getState().openModal(id);
+			renderHook(() => useAppInitialization());
+			await act(() => vi.advanceTimersByTimeAsync(2000));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+			act(() => useModalStore.getState().closeModal(id));
+			await act(() => vi.advanceTimersByTimeAsync(600));
+			act(() => useModalStore.getState().openModal(id));
+			await act(() => vi.advanceTimersByTimeAsync(2000));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+			act(() => useModalStore.getState().closeModal(id));
+			await act(() => vi.advanceTimersByTimeAsync(1200));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+		});
+
+		it('waits for the wizard to close', async () => {
+			mockWizardState.isOpen = true;
+			const { rerender } = renderHook(() => useAppInitialization());
+			await act(() => vi.advanceTimersByTimeAsync(2000));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+			mockWizardState.isOpen = false;
+			rerender();
+			await act(() => vi.advanceTimersByTimeAsync(1200));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+		});
+
+		it('cancels on unmount and allows a fresh window instance to show a tip', async () => {
+			const { unmount } = renderHook(() => useAppInitialization());
+			unmount();
+			await act(() => vi.advanceTimersByTimeAsync(2000));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+			renderHook(() => useAppInitialization());
+			await act(() => vi.advanceTimersByTimeAsync(1200));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
 		});
 	});
 

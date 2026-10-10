@@ -557,6 +557,7 @@ describe('QuickActions command builders', () => {
 			setSettingsTab: vi.fn(),
 			setShortcutsHelpOpen: vi.fn(),
 			setAboutModalOpen: vi.fn(),
+			onOpenDidYouKnow: vi.fn(),
 			onOpenLeaderboardRegistration: vi.fn(),
 			isLeaderboardRegistered: false,
 			setFeedbackModalOpen: vi.fn(),
@@ -573,6 +574,7 @@ describe('QuickActions command builders', () => {
 		}).map((a) => a.id);
 		expect(supportIds).toContain('createDebugPackage');
 		expect(supportIds).toContain('leaderboard');
+		expect(supportIds[supportIds.indexOf('about') + 1]).toBe('didYouKnow');
 
 		const debugCommandIds = buildDebugCommands({
 			activeSession: createMockSession({

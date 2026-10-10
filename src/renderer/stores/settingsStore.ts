@@ -416,6 +416,9 @@ export interface SettingsStoreState
 	groupChatSortAlphabetical: boolean;
 	starredSessionsCollapsed: boolean;
 	tourCompleted: boolean;
+	didYouKnowEnabled: boolean;
+	didYouKnowSeenTipIds: string[];
+	didYouKnowSeed: number;
 	firstAutoRunCompleted: boolean;
 	onboardingStats: OnboardingStats;
 	leaderboardRegistration: LeaderboardRegistration | null;
@@ -533,6 +536,9 @@ export interface SettingsStoreActions
 	setGroupChatSortAlphabetical: (value: boolean) => void;
 	setStarredSessionsCollapsed: (value: boolean) => void;
 	setTourCompleted: (value: boolean) => void;
+	setDidYouKnowEnabled: (value: boolean) => void;
+	setDidYouKnowSeenTipIds: (value: string[]) => void;
+	setDidYouKnowSeed: (value: number) => void;
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
 	setPersistentWebLink: (value: boolean) => Promise<void>;
@@ -774,6 +780,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		groupChatSortAlphabetical: false,
 		starredSessionsCollapsed: false,
 		tourCompleted: false,
+		didYouKnowEnabled: true,
+		didYouKnowSeenTipIds: [],
+		didYouKnowSeed: 0,
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
@@ -1114,6 +1123,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setTourCompleted: (value) => {
 			set({ tourCompleted: value });
 			window.maestro.settings.set('tourCompleted', value);
+		},
+
+		setDidYouKnowEnabled: (value) => {
+			set({ didYouKnowEnabled: value });
+			window.maestro.settings.set('didYouKnowEnabled', value);
+		},
+
+		setDidYouKnowSeenTipIds: (value) => {
+			set({ didYouKnowSeenTipIds: value });
+			window.maestro.settings.set('didYouKnowSeenTipIds', value);
+		},
+
+		setDidYouKnowSeed: (value) => {
+			set({ didYouKnowSeed: value });
+			window.maestro.settings.set('didYouKnowSeed', value);
 		},
 
 		setFirstAutoRunCompleted: (value) => {
@@ -2348,6 +2372,17 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['tourCompleted'] !== undefined)
 			patch.tourCompleted = allSettings['tourCompleted'] as boolean;
+
+		if (allSettings['didYouKnowEnabled'] !== undefined)
+			patch.didYouKnowEnabled = allSettings['didYouKnowEnabled'] as boolean;
+
+		if (Array.isArray(allSettings['didYouKnowSeenTipIds']))
+			patch.didYouKnowSeenTipIds = allSettings['didYouKnowSeenTipIds'] as string[];
+
+		if (allSettings['didYouKnowSeed'] !== undefined) {
+			const seed = Number(allSettings['didYouKnowSeed']);
+			patch.didYouKnowSeed = Number.isFinite(seed) ? seed : 0;
+		}
 
 		if (allSettings['firstAutoRunCompleted'] !== undefined)
 			patch.firstAutoRunCompleted = allSettings['firstAutoRunCompleted'] as boolean;

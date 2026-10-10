@@ -24,7 +24,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SpecKitCommand, OpenSpecCommand, BmadCommand } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { getModalActions } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { useWizard } from '../../components/Wizard/WizardContext';
 import { useTabStore } from '../../stores/tabStore';
 import { useNotificationStore, notifyToast } from '../../stores/notificationStore';
 import { getSpeckitCommands } from '../../services/speckit';
@@ -172,6 +173,47 @@ export function useAppInitialization(): AppInitializationReturn {
 				logger.error('[App] Failed to detect platform for Windows warning:', undefined, error);
 			});
 	}, [settingsLoaded, suppressWindowsWarning]);
+
+	// --- Did You Know launch tip ---
+	const didYouKnowEnabled = useSettingsStore((s) => s.didYouKnowEnabled);
+	// The wizard owns its visibility in context; the other surfaces use modalStore.
+	const { state: wizardState } = useWizard();
+	const didYouKnowBlocked = useModalStore(
+		(s) =>
+			s.isOpen('wizardResume') ||
+			s.isOpen('tour') ||
+			s.isOpen('quitConfirm') ||
+			s.isOpen('agentError') ||
+			s.isOpen('reauth') ||
+			s.isOpen('updateCheck')
+	);
+	// This ref is per window instance, hence per launch: the intended frequency.
+	const didYouKnowShownRef = useRef(false);
+	useEffect(() => {
+		if (!settingsLoaded || !sessionsLoaded || !initialFileTreeReady) return;
+		if (!didYouKnowEnabled || didYouKnowShownRef.current) return;
+		if (wizardState.isOpen || didYouKnowBlocked) return;
+
+		didYouKnowShownRef.current = true;
+		let opened = false;
+		const timeout = setTimeout(() => {
+			opened = true;
+			useModalStore.getState().openModal('didYouKnow');
+		}, 1200);
+
+		return () => {
+			clearTimeout(timeout);
+			// Defer if interrupted during the delay, including StrictMode's effect replay.
+			if (!opened) didYouKnowShownRef.current = false;
+		};
+	}, [
+		settingsLoaded,
+		sessionsLoaded,
+		initialFileTreeReady,
+		didYouKnowEnabled,
+		wizardState.isOpen,
+		didYouKnowBlocked,
+	]);
 
 	// --- First-run modal series (typography -> theme -> updates -> agent powers) ---
 	// Each step carries its own seen flag, so this fires whenever ANY of them is

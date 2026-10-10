@@ -59,6 +59,11 @@ export interface FirstRunCelebrationData {
 	totalTasks: number;
 }
 
+/** Did You Know modal data */
+export interface DidYouKnowData {
+	startTipId?: string;
+}
+
 /** Lightbox modal data */
 export interface LightboxData {
 	image: string | null;
@@ -390,6 +395,8 @@ export type ModalId =
 	// Wizard & Tour
 	| 'wizardResume'
 	| 'tour'
+	// Did You Know
+	| 'didYouKnow'
 	// Debug & Dev
 	| 'debugPackage'
 	| 'debugApplicationStats'
@@ -568,6 +575,7 @@ export interface ModalDataMap {
 	gitCommandRunner: GitCommandRunnerData;
 	branchSwitcher: BranchSwitcherModalData;
 	tour: TourModalData;
+	didYouKnow: DidYouKnowData;
 	standingOvation: StandingOvationData;
 	firstRunCelebration: FirstRunCelebrationData;
 	keyboardMastery: KeyboardMasteryData;

@@ -13,9 +13,10 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import type { Theme, Shortcut } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
+import { getSpotlightClipPath } from '../../../utils/spotlight';
 import { TourStep } from './TourStep';
 import { TourWelcome } from './TourWelcome';
-import { useTour, type TourStepConfig, type TourUIAction } from './useTour';
+import { useTour, type TourUIAction } from './useTour';
 
 interface TourOverlayProps {
 	theme: Theme;
@@ -35,47 +36,6 @@ interface TourOverlayProps {
 	onTourComplete?: (stepsViewed: number) => void;
 	/** Analytics callback: Called when tour is skipped before completion */
 	onTourSkip?: (stepsViewed: number) => void;
-}
-
-/**
- * Calculate the clip-path for the spotlight effect
- * Creates a "cutout" in the dark overlay where the spotlight element is
- */
-function getSpotlightClipPath(spotlight: TourStepConfig['spotlight'] | null): string {
-	if (!spotlight || !spotlight.rect) {
-		// No spotlight - full dark overlay
-		return 'none';
-	}
-
-	const { x, y, width, height } = spotlight.rect;
-	const padding = spotlight.padding || 8;
-
-	// Calculate spotlight bounds with padding
-	const spotX = x - padding;
-	const spotY = y - padding;
-	const spotW = width + padding * 2;
-	const spotH = height + padding * 2;
-	const borderRadius = spotlight.borderRadius || 8;
-
-	// Use an inset path that covers everything except the spotlight area
-	// We use a polygon with a "hole" created by going around the viewport,
-	// then around the spotlight area in reverse
-	return `polygon(
-    0% 0%,
-    0% 100%,
-    ${spotX}px 100%,
-    ${spotX}px ${spotY + borderRadius}px,
-    ${spotX + borderRadius}px ${spotY}px,
-    ${spotX + spotW - borderRadius}px ${spotY}px,
-    ${spotX + spotW}px ${spotY + borderRadius}px,
-    ${spotX + spotW}px ${spotY + spotH - borderRadius}px,
-    ${spotX + spotW - borderRadius}px ${spotY + spotH}px,
-    ${spotX + borderRadius}px ${spotY + spotH}px,
-    ${spotX}px ${spotY + spotH - borderRadius}px,
-    ${spotX}px 100%,
-    100% 100%,
-    100% 0%
-  )`;
 }
 
 /**
@@ -256,7 +216,9 @@ export function TourOverlay({
 		return null;
 	}
 
-	const clipPath = showWelcome ? 'none' : getSpotlightClipPath(spotlight);
+	const clipPath = showWelcome
+		? 'none'
+		: getSpotlightClipPath(spotlight?.rect, spotlight ?? undefined);
 
 	return (
 		<div

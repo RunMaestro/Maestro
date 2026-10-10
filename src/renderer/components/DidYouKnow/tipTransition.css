@@ -1,0 +1,219 @@
+/* The frame never participates: only its absolute artwork and the placard move. */
+.dyk-art {
+	position: absolute;
+	inset: 0;
+}
+
+.dyk-copy-stack {
+	display: grid;
+	min-height: min-content;
+}
+
+.dyk-copy {
+	grid-area: 1 / 1;
+	min-width: 0;
+	min-height: 100%;
+}
+
+.dyk-enter,
+.dyk-exit {
+	--dyk-offset: 8px;
+	animation: dyk-enter 180ms ease-out both;
+}
+
+[data-direction='back'] {
+	--dyk-offset: -8px;
+}
+
+.dyk-exit {
+	pointer-events: none;
+	animation-name: dyk-exit;
+}
+
+@keyframes dyk-enter {
+	from {
+		opacity: 0;
+		transform: translateX(var(--dyk-offset));
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+@keyframes dyk-exit {
+	from {
+		opacity: 1;
+		transform: translateX(0);
+	}
+	to {
+		opacity: 0;
+		transform: translateX(calc(-1 * var(--dyk-offset)));
+		visibility: hidden;
+	}
+}
+
+/* Also handles an OS preference change while the modal is already open. */
+@media (prefers-reduced-motion: reduce) {
+	.dyk-enter,
+	.dyk-exit {
+		animation: none;
+	}
+	.dyk-exit {
+		visibility: hidden;
+	}
+}
+
+/* Reserve action slots even for tips without docs or a primary action. Otherwise
+   footer wrapping moves the centered shell, despite the stable placard height. */
+.dyk-dialog {
+	container-type: inline-size;
+	container-name: dyk-card;
+}
+
+.dyk-footer {
+	grid-template-columns: minmax(0, 1fr) 96px 36px 36px 230px;
+	grid-template-rows: 40px;
+}
+
+.dyk-docs {
+	grid-column: 2;
+	grid-row: 1;
+}
+
+.dyk-back {
+	grid-column: 3;
+	grid-row: 1;
+}
+
+.dyk-next {
+	grid-column: 4;
+	grid-row: 1;
+}
+
+.dyk-action {
+	grid-column: 5;
+	grid-row: 1;
+	justify-self: end;
+}
+
+@container dyk-card (max-width: 620px) {
+	.dyk-footer {
+		grid-template-columns: minmax(0, 1fr) 96px 36px 36px;
+		grid-template-rows: 40px 40px;
+	}
+	.dyk-action {
+		grid-column: 1 / -1;
+		grid-row: 2;
+	}
+}
+
+/* One positioned shell interpolates between the gallery and its reading controller. */
+.dyk-overlay {
+	background-color: rgb(0 0 0 / 60%);
+	transition: background-color 220ms ease;
+}
+
+.dyk-dialog {
+	position: absolute;
+	right: 50%;
+	bottom: 50%;
+	transform: translate(50%, 50%);
+	width: min(760px, calc(100vw - 32px));
+	max-height: calc(100vh - 32px);
+	overflow-y: auto;
+	pointer-events: auto;
+	transition:
+		right 220ms ease,
+		bottom 220ms ease,
+		transform 220ms ease,
+		width 220ms ease;
+}
+
+.dyk-overlay[data-reading='true'] {
+	background-color: transparent;
+	pointer-events: none;
+}
+
+.dyk-overlay[data-reading='true'] .dyk-dialog {
+	right: 16px;
+	bottom: 16px;
+	transform: translate(0, 0);
+	width: min(380px, calc(100vw - 32px));
+}
+
+.dyk-overlay[data-reading='true'] .dyk-footer {
+	margin-top: 0;
+	grid-template-columns: minmax(0, 1fr) 36px 36px;
+	grid-template-rows: 40px;
+}
+
+.dyk-overlay[data-reading='true'] .dyk-docs {
+	grid-column: 1;
+	justify-self: start;
+}
+
+.dyk-overlay[data-reading='true'] .dyk-back {
+	grid-column: 2;
+}
+
+.dyk-overlay[data-reading='true'] .dyk-next {
+	grid-column: 3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dyk-overlay,
+	.dyk-dialog {
+		transition: none;
+	}
+}
+
+.dyk-overlay[data-spotlight='true'] {
+	background-color: transparent;
+	pointer-events: none;
+}
+
+.dyk-spotlight {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 220ms ease;
+}
+
+.dyk-spotlight[data-active='true'] {
+	opacity: 1;
+}
+
+.dyk-spotlight-ring {
+	position: absolute;
+	border: 2px solid currentColor;
+	border-radius: 8px;
+	box-shadow: 0 0 16px currentColor;
+}
+
+.dyk-spotlight[data-active='true'] .dyk-spotlight-ring {
+	animation: dyk-spotlight-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes dyk-spotlight-pulse {
+	to {
+		box-shadow: 0 0 28px currentColor;
+		opacity: 0.6;
+	}
+}
+
+.dyk-show-me {
+	grid-column: 1 / -1;
+	grid-row: 3;
+	justify-self: end;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dyk-spotlight {
+		transition: none;
+	}
+	.dyk-spotlight[data-active='true'] .dyk-spotlight-ring {
+		animation: none;
+	}
+}

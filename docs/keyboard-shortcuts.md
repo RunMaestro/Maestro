@@ -185,6 +185,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
 | Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
 | Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
+| Did You Know?             | unassigned by default   | unassigned by default     |
 | Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
 | Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
