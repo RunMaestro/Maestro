@@ -121,6 +121,14 @@ export interface CrossAgentRequest {
 	 * older payloads (and tests) stay valid.
 	 */
 	sourceCwd?: string;
+	/**
+	 * Set when this is a HAND-OFF rather than a consult: the source agent did the
+	 * work the user asked for and this is its final answer, forwarded because
+	 * the message said to pass the result on ("then send what you find to @X").
+	 * The router tells the target it is receiving a result to act on, not a
+	 * question to answer. Absent for a consult.
+	 */
+	handoffAnswer?: string;
 	/** When the request was created (epoch ms). */
 	createdAt: number;
 }

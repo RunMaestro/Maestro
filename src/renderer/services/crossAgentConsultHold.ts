@@ -25,6 +25,13 @@
  *    in `cross-agent-consult-reply`), and the queue drain delivers it as the
  *    continuation in which the agent writes its final answer.
  *
+ * A consult the user asked to run FIRST ("check with @Backend first") rides the
+ * same hold with `deferred` set: no local turn starts at all, the hold carries
+ * the unanswered message, and its release IS the turn that answers it (prompt
+ * `cross-agent-consult-first`). The hand-off note for the opposite order lives
+ * here too (`withHandoffPendingNote`); the hand-off itself is
+ * `crossAgentHandoff`.
+ *
  * Settlement is keyed on (source agent, source tab, target agent) - fields every
  * response chunk carries - rather than a request id, so a hold still settles
  * after a web-desktop reload drops the renderer's request bookkeeping. A
@@ -51,23 +58,32 @@ import { generateId } from '../utils/ids';
 
 let pendingNoteTemplate = '';
 let replyTemplate = '';
+let consultFirstTemplate = '';
+let handoffNoteTemplate = '';
 let consultPromptsLoaded = false;
 
-/** Load both consult prompts (editable in Settings -> Maestro Prompts). */
+/**
+ * Load every cross-agent turn prompt (editable in Settings -> Maestro Prompts):
+ * the parallel consult's pending note and reply, the consult-first turn, and
+ * the hand-off note.
+ */
 export async function loadCrossAgentConsultPrompts(force = false): Promise<void> {
 	if (consultPromptsLoaded && !force) return;
-	const [pending, reply] = await Promise.all([
-		window.maestro.prompts.get('cross-agent-consult-pending'),
-		window.maestro.prompts.get('cross-agent-consult-reply'),
-	]);
-	if (!pending.success) {
-		throw new Error(`Failed to load cross-agent-consult-pending prompt: ${pending.error}`);
-	}
-	if (!reply.success) {
-		throw new Error(`Failed to load cross-agent-consult-reply prompt: ${reply.error}`);
-	}
-	pendingNoteTemplate = pending.content!;
-	replyTemplate = reply.content!;
+	const ids = [
+		'cross-agent-consult-pending',
+		'cross-agent-consult-reply',
+		'cross-agent-consult-first',
+		'cross-agent-handoff-pending',
+	] as const;
+	const results = await Promise.all(ids.map((id) => window.maestro.prompts.get(id)));
+	results.forEach((result, i) => {
+		if (!result.success) {
+			throw new Error(`Failed to load ${ids[i]} prompt: ${result.error}`);
+		}
+	});
+	[pendingNoteTemplate, replyTemplate, consultFirstTemplate, handoffNoteTemplate] = results.map(
+		(result) => result.content!
+	);
 	consultPromptsLoaded = true;
 }
 
@@ -100,6 +116,25 @@ export function withConsultPendingNote(prompt: string, targets: ConsultHoldTarge
 	return `${prompt}\n\n---\n\n${note}`;
 }
 
+/** The agent-only note appended to a turn whose answer is handed off. */
+export function buildHandoffPendingNote(template: string, names: string[]): string {
+	return template.split('{{HANDOFF_AGENTS}}').join(formatConsultedAgentNames(names));
+}
+
+/**
+ * Append the hand-off note to a prompt about to be spawned, so the agent knows
+ * its final answer is forwarded and writes it to stand alone. A no-op when
+ * nothing is handed off or the prompt has not loaded.
+ */
+export function withHandoffPendingNote(prompt: string, targets: ConsultHoldTarget[]): string {
+	if (targets.length === 0 || !handoffNoteTemplate) return prompt;
+	const note = buildHandoffPendingNote(
+		handoffNoteTemplate,
+		targets.map((t) => t.targetAgentName)
+	);
+	return `${prompt}\n\n---\n\n${note}`;
+}
+
 /** Every reply, verbatim, under a heading naming who said it. */
 export function formatConsultReplies(replies: ConsultHoldReply[]): string {
 	return replies
@@ -118,10 +153,34 @@ export function buildConsultReplyContext(template: string, replies: ConsultHoldR
 	return template.split('{{CONSULT_REPLIES}}').join(body);
 }
 
+/**
+ * The agent-only context a released CONSULT-FIRST hold carries: the replies,
+ * then the user's message the agent has not seen yet. Without a template (not
+ * loaded) the message still rides along, so the turn can answer it.
+ */
+export function buildConsultFirstContext(
+	template: string,
+	replies: ConsultHoldReply[],
+	message: string
+): string {
+	const body = formatConsultReplies(replies);
+	if (!template) return `${body}\n\n${message}`;
+	const names = formatConsultedAgentNames(replies.map((r) => r.targetAgentName));
+	return template
+		.split('{{CONSULTED_AGENTS}}')
+		.join(names)
+		.split('{{CONSULT_REPLIES}}')
+		.join(body)
+		.split('{{USER_MESSAGE}}')
+		.join(message);
+}
+
 /** What the hold reads as in the queue while it waits. */
-export function consultHoldWaitingText(targets: ConsultHoldTarget[]): string {
+export function consultHoldWaitingText(targets: ConsultHoldTarget[], deferred = false): string {
 	const names = formatConsultedAgentNames(targets.map((t) => t.targetAgentName));
-	return `Waiting for ${names} to reply before finishing this answer.`;
+	return deferred
+		? `Waiting for ${names} to reply before answering.`
+		: `Waiting for ${names} to reply before finishing this answer.`;
 }
 
 /**
@@ -129,7 +188,7 @@ export function consultHoldWaitingText(targets: ConsultHoldTarget[]): string {
  * runs. The replies themselves are NOT repeated here: they already sit in the
  * transcript as the consult's own bubble, and ride to the agent in `agentContext`.
  */
-export function consultHoldReleasedText(replies: ConsultHoldReply[]): string {
+export function consultHoldReleasedText(replies: ConsultHoldReply[], deferred = false): string {
 	const answered = replies.filter((r) => !r.error).map((r) => r.targetAgentName);
 	const failed = replies.filter((r) => r.error).map((r) => r.targetAgentName);
 	const parts: string[] = [];
@@ -139,7 +198,9 @@ export function consultHoldReleasedText(replies: ConsultHoldReply[]): string {
 	if (failed.length > 0) {
 		parts.push(`${formatConsultedAgentNames(failed)} could not respond.`);
 	}
-	parts.push('Finish your answer with what came back.');
+	parts.push(
+		deferred ? 'Answer the message with what came back.' : 'Finish your answer with what came back.'
+	);
 	return parts.join(' ');
 }
 
@@ -148,18 +209,20 @@ export function buildConsultHoldItem(opts: {
 	session: Session;
 	tab: AITab;
 	targets: ConsultHoldTarget[];
+	/** The unanswered message, for a consult that runs FIRST. */
+	deferred?: ConsultHold['deferred'];
 }): QueuedItem {
-	const { session, tab, targets } = opts;
+	const { session, tab, targets, deferred } = opts;
 	return {
 		id: generateId(),
 		timestamp: Date.now(),
 		tabId: tab.id,
 		type: 'message',
-		text: consultHoldWaitingText(targets),
+		text: consultHoldWaitingText(targets, !!deferred),
 		tabName: getTabDisplayName(tab, session.agentSessionId),
 		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
 		turnSettings: captureQueuedTurnSettings(tab, session),
-		awaitingConsult: { pending: [...targets], replies: [] },
+		awaitingConsult: { pending: [...targets], replies: [], ...(deferred && { deferred }) },
 	};
 }
 
@@ -182,12 +245,14 @@ export interface ConsultSettlement {
  *
  * - canceled: the hold is removed. The user pressed Stop.
  * - otherwise: the reply moves from `pending` to `replies`; once nothing is
- *   pending the hold is released into a runnable continuation.
+ *   pending the hold is released into a runnable continuation. A consult-first
+ *   hold releases into the turn that answers the deferred message instead.
  */
 export function settleConsultInQueue(
 	queue: QueuedItem[],
 	settlement: ConsultSettlement,
-	template: string
+	template: string,
+	firstTemplate: string = consultFirstTemplate
 ): QueuedItem[] {
 	const index = queue.findIndex(
 		(item) =>
@@ -214,7 +279,16 @@ export function settleConsultInQueue(
 
 	let next: QueuedItem;
 	if (pending.length > 0) {
-		next = { ...item, awaitingConsult: { pending, replies } };
+		next = { ...item, awaitingConsult: { ...hold, pending, replies } };
+	} else if (hold.deferred) {
+		const { awaitingConsult: _released, ...rest } = item;
+		const images = hold.deferred.images ?? [];
+		next = {
+			...rest,
+			text: consultHoldReleasedText(replies, true),
+			agentContext: buildConsultFirstContext(firstTemplate, replies, hold.deferred.message),
+			...(images.length > 0 && { images }),
+		};
 	} else {
 		const { awaitingConsult: _released, ...rest } = item;
 		next = {
@@ -286,13 +360,14 @@ export function resolveConsultTargets(targetSessionIds: string[]): ConsultHoldTa
 export function holdTurnForConsults(
 	sessionId: string,
 	tabId: string,
-	targets: ConsultHoldTarget[]
+	targets: ConsultHoldTarget[],
+	deferred?: ConsultHold['deferred']
 ): void {
 	if (targets.length === 0) return;
 	updateSessionWith(sessionId, (session) => {
 		const tab = session.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return session;
-		const hold = buildConsultHoldItem({ session, tab, targets });
+		const hold = buildConsultHoldItem({ session, tab, targets, deferred });
 		return { ...session, executionQueue: [hold, ...(session.executionQueue ?? [])] };
 	});
 }

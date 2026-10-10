@@ -7,7 +7,6 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 	AITab,
-	ConsultHoldTarget,
 } from '../../types';
 import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -28,14 +27,17 @@ import {
 } from '../../services/tabAutoNaming';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
-import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
+import {
+	withMentionTurnNotes,
+	type CrossAgentMentionDispatch,
+	type CrossAgentMentionPlan,
+} from '../../services/crossAgentMentions';
 import {
 	dropConsultHold,
 	hasConsultHoldForTab,
 	hasRunnableQueueItem,
 	hasWorkAheadOfNewMessage,
 } from '../../utils/executionQueue';
-import { withConsultPendingNote } from '../../services/crossAgentConsultHold';
 import { probeSessionAiProcesses } from '../../services/process';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
 import { hasPendingRetry, noteDirectDispatch } from '../../stores/retryStore';
@@ -179,9 +181,10 @@ export interface UseInputProcessingDeps {
 	 * invoked for direct input-box submits (not queued replays / force-sends).
 	 *
 	 * `suppressLocal` on the returned plan means the source agent's own send must
-	 * be SUPPRESSED: the message leads with an `@agent` mention, so it is
-	 * addressed only at the consulted agent(s), and the caller records the user's
-	 * bubble without dispatching locally.
+	 * be SUPPRESSED: the message leads with an `@agent` mention (addressed only at
+	 * the consulted agents), or asks for the consult to run FIRST (the source
+	 * agent answers when the consult hold releases). Either way the caller
+	 * records the user's bubble without dispatching locally.
 	 */
 	onPlanCrossAgentMentions?: (
 		message: string,
@@ -199,8 +202,9 @@ export interface UseInputProcessingDeps {
 		plan: CrossAgentMentionPlan,
 		message: string,
 		sourceSession: Session,
-		sourceTabId: string
-	) => ConsultHoldTarget[] | void;
+		sourceTabId: string,
+		images?: string[]
+	) => CrossAgentMentionDispatch | void;
 }
 
 /**
@@ -789,7 +793,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const sourceTab = resolveTargetTab(activeSession);
 
 				// The message leads with an `@agent` mention, so it is addressed only at
-				// the consulted agent(s): this agent does not answer it.
+				// the consulted agent(s) and this agent does not answer it - or it asks
+				// for the consult FIRST, so this agent answers only once the consult
+				// hold releases with the replies. Either way nothing spawns here.
 				if (crossAgentMentionPlan.suppressLocal) {
 					// ...but "this agent doesn't answer it" is NOT the same as "it has
 					// nothing to wait for". When the user has already put work in front
@@ -865,7 +871,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						crossAgentMentionPlan,
 						effectiveInputValue,
 						activeSession,
-						mentionSourceTabId
+						mentionSourceTabId,
+						effectiveImages
 					);
 					const mentionOnlyEntry = {
 						id: generateId(),
@@ -1131,17 +1138,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			}
 
 			// This message dispatches now, so its consults fire now too - just before
-			// the source agent's own turn, matching the order the user sees. The
-			// returned targets are what this turn's consult hold is waiting on.
-			const consultTargets =
+			// the source agent's own turn, matching the order the user sees (or a
+			// hand-off is armed for when that turn ends). The result is what this
+			// turn's prompt has to be told about.
+			const mentionDispatch =
 				(crossAgentMentionPlan &&
 					onDispatchCrossAgentMentions?.(
 						crossAgentMentionPlan,
 						effectiveInputValue,
 						activeSession,
-						mentionSourceTabId
+						mentionSourceTabId,
+						effectiveImages
 					)) ||
-				[];
+				undefined;
 
 			// Check if we're in read-only mode for the log entry (tab setting OR Auto Run without worktree).
 			// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an explicit user
@@ -1550,9 +1559,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						}
 
 						// A mid-message @mention is being answered by the consulted agent
-						// in parallel: tell this turn so it works without finishing, and
-						// waits for the reply its consult hold will deliver.
-						effectivePrompt = withConsultPendingNote(effectivePrompt, consultTargets);
+						// in parallel (work without finishing, wait for the reply its
+						// consult hold will deliver), or is handed this turn's answer when
+						// it ends (write an answer that stands alone). Tell this turn which.
+						effectivePrompt = withMentionTurnNotes(effectivePrompt, mentionDispatch);
 
 						// Prepare Maestro system prompt. Always send it; the main-process handler
 						// decides how to deliver it based on agent capabilities:

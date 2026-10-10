@@ -18,6 +18,10 @@ import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
 	dispatchCrossAgentMentionsForMessage,
+	previewMentionDispatch,
+	withMentionTurnNotes,
+	NO_MENTION_DISPATCH,
+	type CrossAgentMentionPlan,
 } from '../../../renderer/services/crossAgentMentions';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
@@ -87,6 +91,30 @@ describe('planCrossAgentMentions', () => {
 		expect(
 			planCrossAgentMentions('does this look right to @Backend?', SOURCE_ID)?.suppressLocal
 		).toBe(false);
+	});
+
+	it('routes by the wording around a mid-message mention', () => {
+		seed([sourceSession(), targetSession('session-backend', 'Backend')]);
+		const route = (message: string) => planCrossAgentMentions(message, SOURCE_ID);
+
+		expect(route('@Backend does this look right?')).toMatchObject({
+			routing: 'only',
+			suppressLocal: true,
+		});
+		expect(route('does this look right to @Backend?')).toMatchObject({
+			routing: 'parallel',
+			suppressLocal: false,
+		});
+		// The source agent answers only once the consult is in, so nothing spawns
+		// at dispatch: the deferred consult hold is what starts its turn.
+		expect(route('check with @Backend first, then fix it')).toMatchObject({
+			routing: 'consult-first',
+			suppressLocal: true,
+		});
+		expect(route('fix it, then send the results to @Backend')).toMatchObject({
+			routing: 'handoff',
+			suppressLocal: false,
+		});
 	});
 
 	it('never resolves the mentioning agent itself', () => {
@@ -163,7 +191,7 @@ describe('dispatchCrossAgentMentions consult hold', () => {
 		seed([source, targetSession('session-backend', 'Backend')]);
 		const plan = planCrossAgentMentions('work with @Backend on this', SOURCE_ID)!;
 
-		const targets = dispatchCrossAgentMentions(
+		const { consultTargets: targets, handoffTargets } = dispatchCrossAgentMentions(
 			plan,
 			'work with @Backend on this',
 			source,
@@ -171,9 +199,11 @@ describe('dispatchCrossAgentMentions consult hold', () => {
 		);
 
 		expect(targets).toEqual([{ targetSessionId: 'session-backend', targetAgentName: 'Backend' }]);
+		expect(handoffTargets).toEqual([]);
 		const [hold] = queueOf();
 		expect(hold.tabId).toBe(SOURCE_TAB);
 		expect(hold.awaitingConsult?.pending).toEqual(targets);
+		expect(hold.awaitingConsult?.deferred).toBeUndefined();
 	});
 
 	it('holds nothing for a leading mention, where the source agent does not answer', () => {
@@ -182,9 +212,91 @@ describe('dispatchCrossAgentMentions consult hold', () => {
 		const plan = planCrossAgentMentions('@Backend look at this', SOURCE_ID)!;
 
 		expect(dispatchCrossAgentMentions(plan, '@Backend look at this', source, SOURCE_TAB)).toEqual(
-			[]
+			NO_MENTION_DISPATCH
 		);
 		expect(queueOf()).toEqual([]);
+	});
+
+	it('parks the message itself on a deferred hold when the consult runs FIRST', () => {
+		// "check with @Backend first": the source agent must not start until the
+		// reply is in, so nothing is returned for the local turn (there is none)
+		// and the hold carries the unanswered message and its images.
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-backend', 'Backend')]);
+		const message = 'check with @Backend first, then write the migration';
+		const plan = planCrossAgentMentions(message, SOURCE_ID)!;
+
+		expect(
+			dispatchCrossAgentMentions(plan, message, source, SOURCE_TAB, ['data:image/png;base64,AA'])
+		).toEqual(NO_MENTION_DISPATCH);
+
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		const [hold] = queueOf();
+		expect(hold.awaitingConsult?.pending).toEqual([
+			{ targetSessionId: 'session-backend', targetAgentName: 'Backend' },
+		]);
+		expect(hold.awaitingConsult?.deferred).toEqual({
+			message,
+			images: ['data:image/png;base64,AA'],
+		});
+	});
+});
+
+describe('dispatchCrossAgentMentions hand-off', () => {
+	const tabOf = () =>
+		useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === SOURCE_ID)
+			?.aiTabs.find((t) => t.id === SOURCE_TAB);
+
+	it('consults nobody yet and arms the hand-off on the source tab', () => {
+		// "feed whatever we learn over to @Kensho": the target gets this turn's
+		// answer when it ends, so pinging it now would hand it an empty question.
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-kensho', 'Kensho')]);
+		const message = 'research MNQ trading and feed whatever we learn over to @Kensho';
+		const plan = planCrossAgentMentions(message, SOURCE_ID)!;
+
+		const result = dispatchCrossAgentMentions(plan, message, source, SOURCE_TAB);
+
+		const kensho = { targetSessionId: 'session-kensho', targetAgentName: 'Kensho' };
+		expect(result).toEqual({ consultTargets: [], handoffTargets: [kensho] });
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		expect(tabOf()?.pendingMentionHandoff).toEqual({ targets: [kensho], message });
+		// No hold: the source turn runs freely and nothing waits on a reply.
+		expect(
+			useSessionStore.getState().sessions.find((s) => s.id === SOURCE_ID)?.executionQueue
+		).toEqual([]);
+	});
+});
+
+describe('previewMentionDispatch / withMentionTurnNotes', () => {
+	it('previews what each routing tells the local turn, without side effects', () => {
+		seed([sourceSession({ executionQueue: [] }), targetSession('session-backend', 'Backend')]);
+		const backend = { targetSessionId: 'session-backend', targetAgentName: 'Backend' };
+		const plan = (routing: CrossAgentMentionPlan['routing']): CrossAgentMentionPlan => ({
+			targetSessionIds: ['session-backend'],
+			routing,
+			suppressLocal: routing === 'only' || routing === 'consult-first',
+		});
+
+		expect(previewMentionDispatch(plan('parallel'))).toEqual({
+			consultTargets: [backend],
+			handoffTargets: [],
+		});
+		expect(previewMentionDispatch(plan('handoff'))).toEqual({
+			consultTargets: [],
+			handoffTargets: [backend],
+		});
+		expect(previewMentionDispatch(plan('consult-first'))).toEqual(NO_MENTION_DISPATCH);
+		expect(previewMentionDispatch(plan('only'))).toEqual(NO_MENTION_DISPATCH);
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+	});
+
+	it('leaves the prompt alone when there is nothing to tell the turn', () => {
+		expect(withMentionTurnNotes('do it', undefined)).toBe('do it');
+		expect(withMentionTurnNotes('do it', NO_MENTION_DISPATCH)).toBe('do it');
 	});
 });
 

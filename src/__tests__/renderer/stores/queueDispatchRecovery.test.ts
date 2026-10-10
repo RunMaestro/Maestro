@@ -64,6 +64,7 @@ vi.mock('../../../renderer/utils/templateVariables', () => ({
 }));
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	dispatchCrossAgentMentionsForMessage: vi.fn(),
+	withMentionTurnNotes: (prompt: string) => prompt,
 	planCrossAgentMentions: vi.fn(() => null),
 }));
 vi.mock('../../../renderer/utils/logger', () => ({

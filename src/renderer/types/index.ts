@@ -457,6 +457,21 @@ export interface ConsultHoldReply extends ConsultHoldTarget {
 export interface ConsultHold {
 	pending: ConsultHoldTarget[];
 	replies: ConsultHoldReply[];
+	/**
+	 * Set when the message asked for the consult to run FIRST ("check with
+	 * @Backend first"): the source agent has not seen the message at all, so the
+	 * released hold carries it (and its images) into the turn that answers it.
+	 * Absent for a parallel consult, whose local turn is already running.
+	 */
+	deferred?: { message: string; images?: string[] };
+}
+
+/** A hand-off waiting for its turn to end (see `AITab.pendingMentionHandoff`). */
+export interface MentionHandoff {
+	/** The agents the turn's final answer goes to. */
+	targets: ConsultHoldTarget[];
+	/** The user's message, verbatim, relayed alongside the answer. */
+	message: string;
 }
 
 export interface QueuedItem {
@@ -858,6 +873,15 @@ export interface AITab {
 	 * to its original position rather than appending it to the end of the strip.
 	 */
 	hidden?: boolean;
+	/**
+	 * A hand-off armed by a message that asked for this turn's result to go to
+	 * other agents ("then send what you find to @Backend"). When the turn ends
+	 * cleanly, its final answer is forwarded to `targets` and this is cleared;
+	 * Stop or a failed turn clears it without sending. Persisted with the tab so
+	 * a renderer reload mid-turn does not lose it. See
+	 * services/crossAgentHandoff.ts.
+	 */
+	pendingMentionHandoff?: MentionHandoff;
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
 	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
