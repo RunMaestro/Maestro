@@ -8,6 +8,7 @@ import {
 	createSshRemoteStoreAdapter,
 } from '../../../utils/ssh-remote-resolver';
 import { buildSshCommandWithStdin } from '../../../utils/ssh-command-builder';
+import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR } from '../../../../shared/querySource';
 import { buildStreamJsonMessage } from '../../../process-manager/utils/streamJsonBuilder';
 import type { SshRemoteConfig } from '../../../../shared/types';
@@ -261,6 +262,12 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 				hasImages,
 				imageCount: config.images?.length,
 			});
+		} else {
+			// The early guard in handleProcessSpawn saw this remote, but several
+			// awaits have run since (the remote maestro-p probe can be a real SSH
+			// round trip). A remote deleted or disabled in that window must not
+			// fall through to a local spawn with the remote's cwd.
+			throw new Error(sshUnresolvedRemoteMessage(config.sessionSshRemoteConfig));
 		}
 	}
 

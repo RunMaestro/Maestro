@@ -41,6 +41,11 @@ import { getPrompt } from '../../../prompt-manager';
 import { getWindowsShellForAgentExecution } from '../../../process-manager/utils/shellEscape';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import {
+	getSshRemoteConfig,
+	createSshRemoteStoreAdapter,
+} from '../../../utils/ssh-remote-resolver';
+import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
 import { powerManager } from '../../../power-manager';
 import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
@@ -148,6 +153,21 @@ export async function handleProcessSpawn(
 				}
 			: null,
 	});
+
+	// The user opted this agent into a remote host. If that remote was
+	// deleted or disabled, refuse the spawn up front: the local fallback
+	// would run the agent on this machine against the REMOTE's cwd, and
+	// nothing (session mode, token resolution) should be persisted for a
+	// turn that never starts. Terminal tabs are always local here.
+	if (
+		config.toolType !== 'terminal' &&
+		config.sessionSshRemoteConfig?.enabled &&
+		!getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
+			sessionSshConfig: config.sessionSshRemoteConfig,
+		}).config
+	) {
+		throw new Error(sshUnresolvedRemoteMessage(config.sessionSshRemoteConfig));
+	}
 
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
