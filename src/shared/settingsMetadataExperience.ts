@@ -92,6 +92,13 @@ export const EXPERIENCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'onboarding',
 	},
+	showHiddenGroups: {
+		description:
+			'Whether hidden agent groups are revealed (faded) in the left bar instead of suppressed.',
+		type: 'boolean',
+		default: false,
+		category: 'onboarding',
+	},
 	groupChatsExpanded: {
 		description: 'Whether the "Group Chats" section in the left bar is expanded.',
 		type: 'boolean',

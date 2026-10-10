@@ -3,7 +3,7 @@
  *
  * "Visible" here is Pedram's definition: drawn ANYWHERE in the scrollable list,
  * scroll position irrelevant. Expand/collapse, archive state, the text filter,
- * and the unread filter decide membership.
+ * the unread filter, and hidden groups decide membership.
  *
  * These two predicates existed inline in `useSessionCategories` (which decides
  * what renders) and, in a subtly different form, in `useSortedSessions`. Cmd+[ /
@@ -18,7 +18,7 @@
  * there, not here.
  */
 
-import type { Session } from '../types';
+import type { Group, Session } from '../types';
 import { sessionOrChildrenNeedAttention, type AttentionContext } from './sessionAttention';
 // Imported from the leaf module rather than `tabHelpers` so a Left Bar predicate
 // doesn't drag the whole tab-management surface (and its import cycle) with it.
@@ -85,4 +85,78 @@ export function passesUnreadFilter(session: Session, ctx: UnreadFilterContext): 
 		stuckOutageIds: ctx.stuckOutageIds ?? NO_IDS,
 	};
 	return sessionOrChildrenNeedAttention(session, children, attentionCtx);
+}
+
+/**
+ * Which groups are parked out of the Left Bar right now.
+ *
+ * `hidden` is authored on ONE group, but suppression is inherited: the
+ * hierarchy allows a single parent -> child edge and a child renders as its own
+ * row indented under its parent, so hiding a parent without its children leaves
+ * the children indented under nothing.
+ *
+ * Deliberately a set of group ids rather than a per-group predicate, because
+ * both consumers - the render path and the Cmd+[ / Cmd+] cycle - ask the
+ * question once per SESSION, and re-walking the parent chain for each agent
+ * turns a one-off O(groups) pass into O(sessions x depth) on every keystroke.
+ */
+export function collectHiddenGroupIds(groups: Group[]): ReadonlySet<string> {
+	const hidden = new Set<string>();
+	for (const group of groups) {
+		if (group.hidden) hidden.add(group.id);
+	}
+	if (hidden.size === 0) return hidden;
+	for (const group of groups) {
+		if (group.parentGroupId && hidden.has(group.parentGroupId)) hidden.add(group.id);
+	}
+	return hidden;
+}
+
+export interface HiddenGroupContext {
+	/** The "Show Hidden" toggle at the foot of the Left Bar. */
+	showHiddenGroups: boolean;
+	/** The group the ACTIVE agent sits in, which never hides out from under the user. */
+	activeGroupId?: string | null;
+}
+
+/**
+ * The hidden groups the Left Bar is actually suppressing.
+ *
+ * Two rules sit on top of {@link collectHiddenGroupIds}. "Show Hidden"
+ * un-suppresses everything at once - the groups still render, just faded, which
+ * is the whole point of the toggle. And the group holding the ACTIVE agent is
+ * always drawn, the same escape hatch {@link passesUnreadFilter} keeps for the
+ * same reason: a list that hides the row you are working in loses your place,
+ * and the arrow-key cycle is then positioned on an agent that is not on screen.
+ * Its PARENT is exempted too, or the surviving child would draw indented under a
+ * header that is not there.
+ */
+export function resolveHiddenGroupIds(
+	groups: Group[],
+	ctx: HiddenGroupContext
+): ReadonlySet<string> {
+	if (ctx.showHiddenGroups) return NO_IDS;
+	const hidden = collectHiddenGroupIds(groups);
+	if (!ctx.activeGroupId || !hidden.has(ctx.activeGroupId)) return hidden;
+
+	const exempt = new Set(hidden);
+	exempt.delete(ctx.activeGroupId);
+	const activeGroup = groups.find((group) => group.id === ctx.activeGroupId);
+	if (activeGroup?.parentGroupId) exempt.delete(activeGroup.parentGroupId);
+	return exempt;
+}
+
+/**
+ * Is this agent's group being suppressed?
+ *
+ * Ungrouped agents always pass - hiding is a property of a GROUP, so there is no
+ * such thing as a hidden agent outside one.
+ */
+export function passesHiddenGroupFilter(
+	session: Session,
+	hiddenGroupIds: ReadonlySet<string>
+): boolean {
+	if (hiddenGroupIds.size === 0) return true;
+	if (!session.groupId) return true;
+	return !hiddenGroupIds.has(session.groupId);
 }
