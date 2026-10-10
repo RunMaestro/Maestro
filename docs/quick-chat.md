@@ -10,13 +10,14 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 
 ## Opening and closing it
 
-| Action                           | How                                                                               |
-| -------------------------------- | --------------------------------------------------------------------------------- |
-| Open, focus, or close the window | `Opt+Space` (macOS) / `Alt+Space` (Windows, Linux), from any app                  |
-| Close it                         | `Esc`, or the **X** in the window                                                 |
-| Start a new chat                 | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                   |
-| Send                             | `Enter` (`Shift+Enter` for a new line)                                            |
-| Open the chat in Maestro         | The arrow in the window. The chat becomes a visible tab and Maestro comes forward |
+| Action                           | How                                                                                                                         |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Open, focus, or close the window | `Opt+Space` (macOS) / `Alt+Space` (Windows, Linux), from any app                                                            |
+| Open it from inside Maestro      | **Open Quick Chat** in the command palette, **Quick Chat** in the Left Bar hamburger menu, or `maestro-cli open quick-chat` |
+| Close it                         | `Esc`, or the **X** in the window                                                                                           |
+| Start a new chat                 | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                             |
+| Send                             | `Enter` (`Shift+Enter` for a new line)                                                                                      |
+| Open the chat in Maestro         | The arrow in the window. The chat becomes a visible tab and Maestro comes forward                                           |
 
 The hotkey toggles: when the window is closed it opens; when it is open but behind another window it comes to the front; when it is in front it closes. Closing the window keeps the conversation, so the next press brings you back where you were.
 

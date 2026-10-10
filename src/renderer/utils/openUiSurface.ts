@@ -15,6 +15,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { notifyToast } from '../stores/notificationStore';
 import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
+import { isWebDesktop } from './runtimeContext';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
 export interface OpenUiSurfaceResult {
@@ -64,6 +65,15 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			}
 			actions.setUsageDashboardOpen(true);
 			return { ok: true };
+		case 'quick-chat': {
+			// A separate window owned by the main process, and only the Electron
+			// app has one: the web-desktop bridge exposes no Quick Chat window.
+			const quickChat = isWebDesktop() ? undefined : window.maestro?.quickChat;
+			if (!quickChat)
+				return { ok: false, error: 'Quick Chat is only available in the desktop app' };
+			void quickChat.window('show');
+			return { ok: true };
+		}
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');
 			return { ok: true };
