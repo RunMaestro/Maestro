@@ -11,11 +11,22 @@ import { clearLiveDraft, getLiveDraft, setLiveDraft } from '../../../renderer/ut
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import {
 	createMockAITab,
+	createMockBrowserTab,
 	createMockFileTab,
+	createMockTerminalTab,
 	getSession,
 	resetTabHandlerStores,
 	setupSession,
 } from '../hooks/tabs/internal/testUtils';
+
+import {
+	collectLeafTabRefs,
+	createLeaf,
+	findLeafByTabRef,
+	normalizeTabGroups,
+} from '../../../renderer/utils/panelLayout';
+import { closeBrowserTab, closeFileTab } from '../../../renderer/utils/tabHelpers';
+import { closeTerminalTab } from '../../../renderer/utils/terminalTabHelpers';
 
 vi.mock('../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: () => true }));
 vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
@@ -37,6 +48,94 @@ describe('desktop conversation lifecycle', () => {
 			],
 		});
 	});
+
+	it.each([
+		['file', false],
+		['browser', false],
+		['terminal', false],
+		['file', true],
+		['browser', true],
+		['terminal', true],
+	] as const)(
+		'reopens a tiled %s pane in its original group (group survives close: %s)',
+		async (type, survives) => {
+			const ref = { type, id: 'pane' };
+			const anchorRef = { type: 'ai', id: 'original' } as const;
+			const anchor = createLeaf(anchorRef);
+			const pane = createLeaf(ref);
+			const other = createLeaf({ type: 'ai', id: 'other' });
+			setupSession({
+				id: 'session-1',
+				aiTabs: [createMockAITab({ id: 'original' }), createMockAITab({ id: 'other' })],
+				filePreviewTabs: type === 'file' ? [createMockFileTab({ id: ref.id })] : [],
+				browserTabs: type === 'browser' ? [createMockBrowserTab({ id: ref.id })] : [],
+				terminalTabs: type === 'terminal' ? [createMockTerminalTab({ id: ref.id })] : [],
+				unifiedTabOrder: [
+					{ type: 'group', id: 'group' },
+					...(survives ? [] : [{ type: 'ai' as const, id: 'other' }]),
+				],
+				tabGroups: [
+					{
+						id: 'group',
+						name: 'Original layout',
+						emoji: '🧪',
+						createdAt: 1,
+						focusedPaneId: pane.id,
+						layout: {
+							kind: 'split',
+							id: 'split',
+							direction: 'column',
+							children: survives ? [anchor, pane, other] : [anchor, pane],
+							sizes: survives ? [0.3, 0.4, 0.3] : [0.5, 0.5],
+						},
+					},
+				],
+				activeGroupId: 'group',
+			});
+			const before = getSession();
+			const closed =
+				type === 'file'
+					? closeFileTab(before, ref.id)!.session
+					: type === 'browser'
+						? closeBrowserTab(before, ref.id)!.session
+						: closeTerminalTab(before, ref.id);
+			const healed = normalizeTabGroups(closed);
+			expect(healed.tabGroups).toHaveLength(survives ? 1 : 0);
+			expect(healed.unifiedClosedTabHistory[0].tilePlacement).toMatchObject({
+				groupId: 'group',
+				anchorRef,
+				direction: 'column',
+				before: false,
+			});
+			useSessionStore.setState({ sessions: [healed] });
+
+			useTabStore.getState().reopenClosedTab();
+			await vi.waitFor(() => expect(getSession().unifiedClosedTabHistory).toEqual([]));
+			const reopened = getSession();
+			// Reopen mints a fresh local ID; focus and layout must use that ID.
+			const tabId =
+				type === 'file'
+					? reopened.activeFileTabId!
+					: type === 'browser'
+						? reopened.activeBrowserTabId!
+						: reopened.activeTerminalTabId!;
+			const restoredRef = { type, id: tabId };
+			expect(reopened.activeGroupId).toBe('group');
+			expect(reopened.tabGroups).toHaveLength(1);
+			const group = reopened.tabGroups[0];
+			expect(group).toMatchObject({ id: 'group', name: 'Original layout', emoji: '🧪' });
+			expect(group.layout).toMatchObject({ kind: 'split', direction: 'column' });
+			expect(collectLeafTabRefs(group.layout)).toEqual(
+				survives ? [anchorRef, restoredRef, other.tab] : [anchorRef, restoredRef]
+			);
+			expect(group.focusedPaneId).toBe(findLeafByTabRef(group.layout, restoredRef)?.id);
+			expect(reopened.unifiedTabOrder).toHaveLength(survives ? 1 : 2);
+			expect(reopened.unifiedTabOrder).toEqual(
+				expect.arrayContaining([{ type: 'group', id: 'group' }, ...(survives ? [] : [other.tab])])
+			);
+			expect(window.maestro.web.requestReopenTab).not.toHaveBeenCalled();
+		}
+	);
 
 	it('preserves drafts, wizard progress and transcripts until the owner confirms closure', async () => {
 		const tab = createMockAITab({

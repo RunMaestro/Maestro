@@ -6,6 +6,7 @@ import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import type { AITab, Session } from '../types';
 import { clearLiveDraft, getLiveDraft } from '../utils/liveDraftStore';
 import { logger } from '../utils/logger';
+import { reopenClosedTabWithTiling } from '../utils/panelLayout';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { snapshotClosedTabTranscript } from '../utils/starredSessions';
 import {
@@ -13,7 +14,6 @@ import {
 	aiTabFocusFields,
 	hasActiveWizard,
 	reopenClosedAiTabById,
-	reopenUnifiedClosedTab,
 } from '../utils/tabHelpers';
 
 // Keep close/reopen operations ordered across hook instances and rapid key presses.
@@ -94,7 +94,7 @@ export function reopenDesktopTabIfNeeded(session: Session): boolean {
 			if (!current) return;
 			const entry = current.unifiedClosedTabHistory?.[0];
 			if (entry?.type !== 'ai') {
-				updateSessionWith(session.id, (s) => reopenUnifiedClosedTab(s)?.session ?? s);
+				updateSessionWith(session.id, (s) => reopenClosedTabWithTiling(s)?.session ?? s);
 				return;
 			}
 
