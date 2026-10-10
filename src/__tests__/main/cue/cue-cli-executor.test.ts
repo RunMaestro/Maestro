@@ -39,14 +39,23 @@ const mockSpawn = vi.fn((..._args: unknown[]) => {
 	return mockChild as unknown as ChildProcess;
 });
 
+const { mockIsWindows, mockExecFile } = vi.hoisted(() => ({
+	mockIsWindows: vi.fn(() => false),
+	mockExecFile: vi.fn((_cmd: unknown, _args: unknown, cb?: unknown) => {
+		if (typeof cb === 'function') (cb as (e: Error | null) => void)(null);
+	}),
+}));
+
 vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
 	return {
 		...actual,
 		spawn: (...args: unknown[]) => mockSpawn(...args),
+		execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
 		default: {
 			...actual,
 			spawn: (...args: unknown[]) => mockSpawn(...args),
+			execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
 		},
 	};
 });
@@ -56,7 +65,21 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
-import { executeCueCli, stopCueCliRun } from '../../../main/cue/cue-cli-executor';
+// Platform is mockable per-test; default is the POSIX kill path
+// (child.kill('SIGTERM')) so signal-based assertions hold regardless of host
+// OS - mirroring what CI exercises on Unix. The Windows test flips it to true
+// to exercise the taskkill branch. (Note: the module-level output-size cap is
+// evaluated at import time under the default, i.e. the POSIX cap.)
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => mockIsWindows(),
+	};
+});
+
+import { executeCueCli } from '../../../main/cue/cue-cli-executor';
+import { getProcessList, stopProcess } from '../../../main/cue/cue-process-lifecycle';
 
 function createSession(): SessionInfo {
 	return {
@@ -120,6 +143,8 @@ function createConfig(overrides: Record<string, unknown> = {}) {
 describe('cue-cli-executor', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Default to the POSIX branch; the Windows test opts in via mockReturnValue(true).
+		mockIsWindows.mockReturnValue(false);
 	});
 
 	it('substitutes {{CUE_FROM_AGENT}} in target before invoking maestro-cli dispatch', async () => {
@@ -284,12 +309,26 @@ describe('cue-cli-executor', () => {
 		);
 	});
 
-	it('stopCueCliRun signals an active CLI process and returns true', async () => {
+	it('lists a running maestro-cli call in the shared Cue registry until it settles', async () => {
 		const config = createConfig();
 		const promise = executeCueCli(config as any);
 		await Promise.resolve();
 
-		const stopped = stopCueCliRun('run-1');
+		expect(getProcessList()).toContainEqual(
+			expect.objectContaining({ runId: 'run-1', toolType: 'terminal' })
+		);
+
+		mockChild.emit('close', 0);
+		await promise;
+		expect(getProcessList()).not.toContainEqual(expect.objectContaining({ runId: 'run-1' }));
+	});
+
+	it('stopProcess signals an active CLI process and returns true', async () => {
+		const config = createConfig();
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+
+		const stopped = stopProcess('run-1');
 		expect(stopped).toBe(true);
 		expect(mockChild.killed).toBe(true);
 
@@ -297,7 +336,27 @@ describe('cue-cli-executor', () => {
 		await promise;
 	});
 
-	it('stopCueCliRun returns false for unknown runId', () => {
-		expect(stopCueCliRun('does-not-exist')).toBe(false);
+	it('stopProcess uses taskkill /t /f on Windows instead of POSIX signals', async () => {
+		mockIsWindows.mockReturnValue(true);
+		const config = createConfig();
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+
+		const stopped = stopProcess('run-1');
+		expect(stopped).toBe(true);
+		expect(mockExecFile).toHaveBeenCalledWith(
+			'taskkill',
+			['/pid', String(mockChild.pid), '/t', '/f'],
+			expect.any(Function)
+		);
+		// POSIX signals are a no-op for shell-spawned trees on Windows.
+		expect(mockChild.killed).toBe(false);
+
+		mockChild.emit('close', null);
+		await promise;
+	});
+
+	it('stopProcess returns false for unknown runId', () => {
+		expect(stopProcess('does-not-exist')).toBe(false);
 	});
 });

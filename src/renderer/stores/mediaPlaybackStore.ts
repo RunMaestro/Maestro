@@ -51,7 +51,11 @@
 import { create } from 'zustand';
 
 import { mediaItemId, pushMediaHistory, trimMediaQueue, type MediaItem } from '../utils/mediaItems';
-import { normalizeMediaAspect, type PersistedMediaFloat } from '../utils/mediaFloatGeometry';
+import {
+	normalizeMediaAspect,
+	type MediaFloatFootprint,
+	type PersistedMediaFloat,
+} from '../utils/mediaFloatGeometry';
 import type { MediaKind } from '../../shared/mediaTypes';
 
 /** Everything needed to queue a file, minus the derived ID. */
@@ -99,8 +103,8 @@ interface MediaPlaybackStoreState {
 	playing: boolean;
 	/**
 	 * Player minimized to the Left Bar header. Playback continues - minimizing is
-	 * not stopping. Cleared by opening a media file, by the now-playing pill's
-	 * restore button, or by the "Show Floating Media Player" command.
+	 * not stopping. Cleared by opening a media file, by queueing one, by the
+	 * now-playing pill's restore button, or by the palette's "Open Media Player".
 	 */
 	dismissed: boolean;
 	/**
@@ -126,6 +130,23 @@ interface MediaPlaybackStoreState {
 	 * without anyone holding a ref across the frame boundary.
 	 */
 	toggleRequest: number;
+	/**
+	 * Incremented to ask the widget to take keyboard focus.
+	 *
+	 * Bringing the player up is a request to USE it, so it must land focused -
+	 * Escape minimizes it and the transport has its own keys, and none of that
+	 * works until something claims the caret. Requiring a click first makes a
+	 * keyboard-opened surface keyboard-dead, which in a keyboard-first app reads
+	 * as the shortcut half-working.
+	 *
+	 * A nonce rather than a boolean flag, for the same reason `toggleRequest` is:
+	 * the widget is never unmounted, so there is no mount to hang focus off, and
+	 * reopening it twice in a row has to fire twice. Raised only by the deliberate
+	 * "show me the player" gestures (`openPlayer`, `restore`) - never by opening
+	 * or queueing a file, which would pull the caret out of whatever the user was
+	 * typing in.
+	 */
+	focusRequest: number;
 	/** Item ID -> last playback position, so coming back resumes. Persisted. */
 	resumeTimes: Record<string, number>;
 	/**
@@ -141,6 +162,18 @@ interface MediaPlaybackStoreState {
 	 * media, so it is never stored. Persisted.
 	 */
 	floatWidths: Partial<Record<MediaKind, number>>;
+	/**
+	 * Where the visible widget actually sits, in the bottom-right lane's own
+	 * coordinates. Null whenever nothing is on screen (no loaded item, or
+	 * minimized).
+	 *
+	 * Separate from `floatPosition`, which is the PERSISTED position and only
+	 * moves when the user lets go of a drag. This is the live rect, republished
+	 * mid-gesture and on every window resize, and it exists so the toast stack
+	 * can get out of the widget's way - a toast landing on the player at
+	 * z-index 100000 made it look like the widget had closed itself.
+	 */
+	floatFootprint: MediaFloatFootprint | null;
 	/**
 	 * Item ID -> picture aspect ratio, learned from the file when it loads.
 	 *
@@ -159,9 +192,21 @@ interface MediaPlaybackStoreState {
 	/**
 	 * Add files to the end of the queue without interrupting what is playing.
 	 *
+	 * Queueing always brings the widget back, whether it was minimized or is a
+	 * queue restored from disk: adding files is a request to see the queue, and
+	 * doing it into a hidden player produces no visible response anywhere in the
+	 * app. It does not disturb the loaded track - what is playing keeps playing.
+	 *
 	 * The one exception is an idle player: with nothing loaded there is no
-	 * widget on screen, so the first queued file becomes the active one (paused,
-	 * not autoplaying) rather than landing in a queue the user cannot see.
+	 * widget on screen, so the first file the user asked for becomes the active
+	 * one (paused, not autoplaying) rather than landing in a queue nobody can
+	 * see.
+	 *
+	 * All of that happens whether or not anything was actually ADDED. Queueing
+	 * files that are already queued adds nothing, and a version of this that
+	 * bailed on `added === 0` turned "Add to Play Queue" into a silent no-op the
+	 * second time it was used on the same files - which is exactly when a user
+	 * retries a command that looked like it did nothing.
 	 *
 	 * @returns How many files were newly queued. Already-queued files are left
 	 *   where they are, so "add to queue" twice does not reorder anything.
@@ -201,10 +246,34 @@ interface MediaPlaybackStoreState {
 	/** Bring the player back. */
 	restore: () => void;
 	/**
+	 * Put the player on screen, loaded on whatever it should be showing.
+	 *
+	 * What the command palette's "Open Media Player" and its shortcut both call,
+	 * so there is one answer to "open the player" instead of copies that drift.
+	 * It lands on the loaded item, else the most recently played one, else the
+	 * head of the queue, and it loads PAUSED at the remembered position: opening
+	 * the player is a request to see it, not a request to start listening.
+	 *
+	 * Re-queues a target that only survives in history. History outlives the
+	 * queue, so the most recent thing played is routinely something the user
+	 * closed, and only queue entries are ever drawn - without the re-queue the
+	 * command resolved a target, activated nothing, and rendered nothing, which
+	 * is indistinguishable from the feature being broken.
+	 */
+	openPlayer: () => void;
+	/**
 	 * Remember where the user put the player, and how wide they made it for this
 	 * kind of media.
 	 */
 	setFloatGeometry: (kind: MediaKind, rect: { top: number; left: number; width: number }) => void;
+	/**
+	 * Publish (or clear) the widget's live on-screen footprint.
+	 *
+	 * Called by the widget itself, which is the only thing that knows where it
+	 * ended up - it clamps itself to the viewport, so its rect is not derivable
+	 * from the persisted position.
+	 */
+	setFloatFootprint: (footprint: MediaFloatFootprint | null) => void;
 	/** Remember where an item was paused, so returning to it resumes. */
 	rememberTime: (itemId: string, seconds: number) => void;
 	/** Record how long a file is, for the queue and history lists. */
@@ -312,10 +381,12 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 	dormant: false,
 	pendingAutoplay: false,
 	toggleRequest: 0,
+	focusRequest: 0,
 	resumeTimes: {},
 	durations: {},
 	floatPosition: null,
 	floatWidths: {},
+	floatFootprint: null,
 	aspects: {},
 
 	openMedia: (request) => {
@@ -353,16 +424,19 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 		set((state) => {
 			const items = [...state.items];
 			const known = new Set(items.map((item) => item.id));
-			let firstAddedId: string | null = null;
+			// The first file the user POINTED AT, whether or not it was already in
+			// the queue. That difference is the whole bug this replaced a
+			// `firstAddedId` with: queueing files that are all already queued adds
+			// nothing, and keying the response off what was added made the command
+			// a silent no-op the second time it was used on the same files.
+			const firstRequestedId = mediaItemId(requests[0].sessionId, requests[0].path);
 			for (const request of requests) {
 				const id = mediaItemId(request.sessionId, request.path);
 				if (known.has(id)) continue;
 				known.add(id);
 				items.push({ ...request, id });
-				if (!firstAddedId) firstAddedId = id;
 				added++;
 			}
-			if (added === 0) return state;
 
 			// Queueing NEVER interrupts: whatever is loaded stays loaded and keeps
 			// playing, which is the entire difference between this and `openMedia`.
@@ -370,22 +444,33 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			// one the user is on, so queueing behind it must not yank the player
 			// away from it.
 			if (state.activeItemId) {
-				// Queueing counts as engaging the player, so a restored queue stops
-				// being dormant here: otherwise adding to a queue whose widget is
-				// hidden would produce no visible response anywhere in the app.
+				// Queueing counts as engaging the player, so the widget comes back
+				// here - a restored queue stops being dormant AND a minimized player
+				// un-hides. Otherwise queueing ten files while the widget is hidden
+				// produces no visible response anywhere in the app, which reads as
+				// the command having done nothing. Un-hiding is not interrupting:
+				// the loaded track is untouched and keeps playing.
+				//
+				// This runs even when nothing was added: "put these in the player"
+				// is answered by showing the player, and the files ARE in it.
+				if (added === 0 && !state.dismissed && !state.dormant) return state;
 				return {
-					items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId),
+					...(added > 0
+						? { items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId) }
+						: {}),
+					dismissed: false,
 					dormant: false,
 				};
 			}
 
 			// Idle player: there is no widget on screen, so a pure append would
-			// queue into the void. Load the track that was just queued - NOT
-			// `items[0]`, which after a close is some leftover the user never asked
-			// for. It loads paused, because queueing is not a request to listen.
+			// queue into the void. Load the file the user asked for - NOT
+			// `items[0]`, which after a close is some leftover they never named.
+			// It loads paused, because queueing is not a request to listen.
 			return {
-				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, firstAddedId),
-				activeItemId: firstAddedId,
+				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, firstRequestedId),
+				activeItemId: firstRequestedId,
+				...historyForActiveChange(state, firstRequestedId),
 				dismissed: false,
 				dormant: false,
 			};
@@ -446,8 +531,15 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			if (!state.items.some((item) => item.id === itemId)) return state;
 			changed = true;
 			const items = state.items.filter((item) => item.id !== itemId);
+			const wasActive = state.activeItemId === itemId;
+			const historyPatch = wasActive ? historyForActiveChange(state, null) : undefined;
+			const history = historyPatch?.history ?? state.history;
+			// Keep the position of anything that survives in "recently played":
+			// reopening it from the history menu or from "Open Media Player" has to
+			// land where the user stopped, not back at zero. Only a track leaving
+			// BOTH lists loses its bookmark.
 			const resumeTimes = { ...state.resumeTimes };
-			delete resumeTimes[itemId];
+			if (!history.some((entry) => entry.id === itemId)) delete resumeTimes[itemId];
 
 			return {
 				items,
@@ -457,12 +549,12 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 				// the player, so it lands in history the same as if the next one had
 				// started - otherwise playing something and then closing it would
 				// lose it from "recently played" entirely.
-				...(state.activeItemId === itemId
+				...(wasActive
 					? {
 							activeItemId: null,
 							playing: false,
 							pendingAutoplay: false,
-							...historyForActiveChange(state, null),
+							...historyPatch,
 						}
 					: {}),
 			};
@@ -497,9 +589,52 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 	dismiss: () => set((state) => (state.dismissed ? state : { dismissed: true })),
 
 	restore: () =>
-		set((state) =>
-			state.dismissed || state.dormant ? { dismissed: false, dormant: false } : state
-		),
+		// Always bumps the focus nonce, even when the widget was already on
+		// screen: this is only ever called by the header pill's restore button and
+		// the palette, and both are the user saying "put me in the player".
+		set((state) => ({
+			...(state.dismissed || state.dormant ? { dismissed: false, dormant: false } : {}),
+			focusRequest: state.focusRequest + 1,
+		})),
+
+	openPlayer: () => {
+		set((state) => {
+			const targetId = selectMediaPlayerTargetId(state);
+			if (!targetId) return state;
+
+			// A target that is not in the queue was closed out of it and lives only
+			// in history. Only queue entries are rendered, so put it back rather
+			// than activating an id nothing will draw.
+			const queued = state.items.some((item) => item.id === targetId);
+			const fromHistory = queued ? null : state.history.find((item) => item.id === targetId);
+			if (!queued && !fromHistory) return state;
+
+			const items = fromHistory
+				? trimMediaQueue([...state.items, fromHistory], MEDIA_QUEUE_LIMIT, targetId)
+				: state.items;
+
+			return {
+				items,
+				// Never autoplay: this opens the widget, and the transport is right
+				// there. It resumes from `resumeTimes`, so the file comes back where
+				// the user left it.
+				pendingAutoplay: false,
+				dismissed: false,
+				dormant: false,
+				// Opened from the palette or its shortcut, so the user's hands are on
+				// the keyboard. Land focused or none of the player's keys work.
+				focusRequest: state.focusRequest + 1,
+				...(state.activeItemId === targetId
+					? {}
+					: {
+							activeItemId: targetId,
+							...historyForActiveChange(state, targetId),
+							playing: false,
+						}),
+			};
+		});
+		persistQueue();
+	},
 
 	setFloatGeometry: (kind, rect) => {
 		set((state) => {
@@ -512,6 +647,25 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			return { floatPosition: { top: float.top, left: float.left }, floatWidths: float.widths };
 		});
 	},
+
+	setFloatFootprint: (footprint) =>
+		set((state) => {
+			const current = state.floatFootprint;
+			if (current === footprint) return state;
+			if (
+				current &&
+				footprint &&
+				current.fromBottom === footprint.fromBottom &&
+				current.fromRight === footprint.fromRight &&
+				current.width === footprint.width &&
+				current.viewportHeight === footprint.viewportHeight
+			) {
+				// A drag fires this on every mousemove; only real movement should
+				// re-render the toast stack subscribed to it.
+				return state;
+			}
+			return { floatFootprint: footprint };
+		}),
 
 	rememberTime: (itemId, seconds) => {
 		set((state) => ({ resumeTimes: { ...state.resumeTimes, [itemId]: seconds } }));
@@ -545,6 +699,7 @@ export function getMediaPlaybackActions() {
 		setPlaying: state.setPlaying,
 		dismiss: state.dismiss,
 		restore: state.restore,
+		openPlayer: state.openPlayer,
 		closeItem: state.closeItem,
 	};
 }
@@ -552,8 +707,9 @@ export function getMediaPlaybackActions() {
 /**
  * Whether a hidden player could be brought back right now.
  *
- * True for a dormant restored queue as well, so the command palette can always
- * reopen one. The header pill uses the stricter check below.
+ * True for a dormant restored queue as well. The header pill uses the stricter
+ * check below; the palette asks the looser `selectCanOpenMediaPlayer`, since
+ * "open the player" covers more than un-hiding a loaded one.
  */
 export function selectCanRestoreFloatingPlayer(state: MediaPlaybackStoreState): boolean {
 	return state.dismissed && state.activeItemId !== null;

@@ -104,6 +104,20 @@ export interface StopProfilingResponse {
 }
 
 /**
+ * Result of stopping a recording and writing the bundle to a temp file without
+ * a save dialog (debug:stopProfilingToFile). The path is a temp .zip the caller
+ * must either submit with feedback or drop via debug:discardTrace.
+ */
+export interface StopProfilingToFileResponse {
+	success: boolean;
+	path: string;
+	bundleSizeBytes: number;
+	traceSizeBytes: number;
+	durationMs: number;
+	error?: string;
+}
+
+/**
  * Live phase updates emitted while a capture is being stopped and bundled
  * (debug:profilingProgress). Drives the progress modal so a slow zip compression
  * doesn't look like a frozen UI.
@@ -143,6 +157,14 @@ export function createDebugApi() {
 
 		stopProfiling: (): Promise<StopProfilingResponse> => ipcRenderer.invoke('debug:stopProfiling'),
 
+		// Stop the recording and bundle it to a temp .zip without a save dialog,
+		// for attaching a trace to in-app feedback.
+		stopProfilingToFile: (): Promise<StopProfilingToFileResponse> =>
+			ipcRenderer.invoke('debug:stopProfilingToFile'),
+
+		// Delete an abandoned temp trace zip produced by stopProfilingToFile.
+		discardTrace: (filePath: string): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('debug:discardTrace', filePath),
 		/**
 		 * Fire a synthetic provider credential failure through the real event
 		 * channel, so the whole re-authentication flow can be exercised without

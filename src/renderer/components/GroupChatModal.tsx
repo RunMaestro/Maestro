@@ -2,7 +2,7 @@
  * GroupChatModal.tsx
  *
  * Unified modal for creating and editing Group Chats. Supports two modes:
- * - 'create': Empty initial state, "Create" button, Beta badge, description text
+ * - 'create': Empty initial state, "Create" button, description text
  * - 'edit': Pre-populated from existing group chat, "Save" button, moderator change warning
  *
  * Allows user to:
@@ -12,9 +12,8 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Settings, ChevronDown, Check, AlertTriangle } from 'lucide-react';
-import { GhostIconButton } from './ui/GhostIconButton';
-import { isBetaAgent } from '../../shared/agentMetadata';
+import { Settings, ChevronDown, Check, AlertTriangle } from 'lucide-react';
+import { AGENT_AUTOSELECT_ORDER, isBetaAgent } from '../../shared/agentMetadata';
 import { requiresIdleParticipants } from '../../shared/group-chat-types';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -117,8 +116,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		}
 	}, [ac.isDetecting, isOpen]);
 
-	// Auto-select first supported agent (create mode only) after detection,
-	// and revalidate if current selection is no longer available
+	// Auto-select the most preferred installed agent (create mode only) after
+	// detection, and revalidate if current selection is no longer available.
+	// The dropdown itself is alphabetical, so the default comes from
+	// AGENT_AUTOSELECT_ORDER rather than from whatever sorts first.
 	useEffect(() => {
 		if (mode !== 'create' || ac.isDetecting) return;
 
@@ -130,12 +131,16 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		// If current selection is still valid, keep it
 		if (ac.selectedAgent && ac.detectedAgents.some((a) => a.id === ac.selectedAgent)) return;
 
-		const firstSupported = AGENT_TILES.find((tile) => {
-			if (!tile.supported) return false;
-			return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id);
-		});
-		if (firstSupported) {
-			ac.setSelectedAgent(firstSupported.id);
+		const isSupportedAndDetected = (agentId: string) =>
+			AGENT_TILES.some((tile) => tile.id === agentId && tile.supported) &&
+			ac.detectedAgents.some((a: AgentConfig) => a.id === agentId);
+
+		const preferred =
+			AGENT_AUTOSELECT_ORDER.find(isSupportedAndDetected) ??
+			AGENT_TILES.find((tile) => tile.supported && isSupportedAndDetected(tile.id))?.id;
+
+		if (preferred) {
+			ac.setSelectedAgent(preferred);
 		} else {
 			ac.setSelectedAgent(ac.detectedAgents[0].id);
 		}
@@ -354,33 +359,6 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			onClose={onClose}
 			initialFocusRef={nameInputRef}
 			width={600}
-			customHeader={
-				isCreate ? (
-					<div
-						className="p-4 border-b flex items-center justify-between shrink-0"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<div className="flex items-center gap-3">
-							<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-								New Group Chat
-							</h2>
-							<span
-								className="text-2xs font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
-								style={{
-									backgroundColor: `${theme.colors.accent}20`,
-									color: theme.colors.accent,
-									border: `1px solid ${theme.colors.accent}40`,
-								}}
-							>
-								Beta
-							</span>
-						</div>
-						<GhostIconButton onClick={onClose} ariaLabel="Close modal" color={theme.colors.textDim}>
-							<X className="w-4 h-4" />
-						</GhostIconButton>
-					</div>
-				) : undefined
-			}
 			footer={
 				<ModalFooter
 					theme={theme}
@@ -399,8 +377,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 						<span style={{ color: theme.colors.textMain }}>moderator</span> manages the conversation
 						flow, deciding when to involve other agents. You can{' '}
 						<span style={{ color: theme.colors.accent }}>@mention</span> any agent defined in
-						Maestro to bring them into the discussion. We're still working on this feature, but
-						right now Claude appears to be the best performing moderator.
+						Maestro to bring them into the discussion. You can @mention agents from any regular AI
+						chat too, but there each mention is a single-turn answer and you are the moderator:
+						every follow-up is yours to write. A Group Chat delegates that job to an agent who acts
+						as your fiduciary, wrangling the others to work together across multiple turns.
 					</div>
 				)}
 

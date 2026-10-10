@@ -14,6 +14,10 @@ import {
 	mediaFloatWidthFor,
 	normalizeMediaAspect,
 	sanitizeMediaFloat,
+	MEDIA_FLOAT_LANE_LIFT_RATIO,
+	mediaFloatFootprint,
+	mediaFloatLaneLift,
+	type MediaFloatBottomLane,
 	type MediaFloatFit,
 } from '../../../renderer/utils/mediaFloatGeometry';
 
@@ -97,6 +101,26 @@ describe('fitMediaFloatRect', () => {
 		const rect = fitMediaFloatRect({ top: -50, left: -80, width: 400 }, audioFit, VIEW);
 		expect(rect.left).toBe(0);
 		expect(rect.top).toBe(0);
+	});
+
+	it('keeps the header below the title strip, healing a position stuck under it', () => {
+		// The title strip is an OS drag region that eats clicks; a stored top of 0
+		// left the player unmovable and unclosable.
+		const rect = fitMediaFloatRect({ top: 0, left: 200, width: 400 }, audioFit, {
+			...VIEW,
+			top: 40,
+		});
+		expect(rect.top).toBe(40);
+	});
+
+	it('shrinks a tall video to the band below the title strip', () => {
+		const rect = fitMediaFloatRect({ top: 0, left: 0, width: 1600 }, videoFit, {
+			width: 1600,
+			height: 500,
+			top: 40,
+		});
+		expect(rect.top).toBe(40);
+		expect(rect.top + rect.height).toBeLessThanOrEqual(500);
 	});
 
 	it('recovers a position persisted on a larger monitor', () => {
@@ -232,5 +256,68 @@ describe('sanitizeMediaFloat', () => {
 		expect(sanitizeMediaFloat(null)).toBeNull();
 		expect(sanitizeMediaFloat({ widths: { audio: 400 } })).toBeNull();
 		expect(sanitizeMediaFloat('nope')).toBeNull();
+	});
+});
+
+describe('mediaFloatFootprint', () => {
+	it("re-expresses a rect in the bottom-right lane's coordinates", () => {
+		expect(mediaFloatFootprint({ top: 700, left: 1100, width: 380, height: 132 }, VIEW)).toEqual({
+			// 900 - 700: how tall a bottom-anchored stack has to be to reach the top
+			// edge of the widget.
+			fromBottom: 200,
+			// 1600 - (1100 + 380)
+			fromRight: 120,
+			width: 380,
+			viewportHeight: 900,
+		});
+	});
+});
+
+describe('mediaFloatLaneLift', () => {
+	const lane: MediaFloatBottomLane = { fromRight: 16, width: 400, gap: 8 };
+
+	it('lifts a toast stack clear of a player parked in the same corner', () => {
+		// The default opening position: this is the case where an arriving toast
+		// painted over the widget and it read as the player closing itself.
+		const rect = initialMediaFloatRect(audioFit, VIEW);
+		const lift = mediaFloatLaneLift(mediaFloatFootprint(rect, VIEW), lane);
+		expect(lift).toBe(MEDIA_FLOAT_EDGE_MARGIN + CHROME + lane.gap);
+		// Clear of the widget's top edge, not merely level with it.
+		expect(lift).toBeGreaterThan(VIEW.height - rect.top);
+	});
+
+	it('does not move for a player in another column', () => {
+		// Dragged to the bottom LEFT: the stack and the widget never touch, so
+		// lifting would displace toasts for nothing.
+		const footprint = mediaFloatFootprint({ top: 750, left: 24, width: 380, height: 132 }, VIEW);
+		expect(mediaFloatLaneLift(footprint, lane)).toBe(0);
+	});
+
+	it('lifts for a player that only clips the edge of the lane', () => {
+		// Widget's right edge lands 400px in from the window edge, one pixel inside
+		// the lane's left boundary.
+		const footprint = mediaFloatFootprint({ top: 750, left: 820, width: 380, height: 132 }, VIEW);
+		expect(footprint.fromRight).toBe(400);
+		expect(mediaFloatLaneLift(footprint, lane)).toBeGreaterThan(0);
+	});
+
+	it('stays put when the player is too high up to clear', () => {
+		// A widget dragged near the top cannot be stepped over - raising the lane
+		// that far would push toasts off the top of the window.
+		const footprint = mediaFloatFootprint({ top: 40, left: 1200, width: 380, height: 132 }, VIEW);
+		expect(footprint.fromBottom).toBeGreaterThan(VIEW.height * MEDIA_FLOAT_LANE_LIFT_RATIO);
+		expect(mediaFloatLaneLift(footprint, lane)).toBe(0);
+	});
+
+	it('treats a viewport-spanning lane as always sharing the column', () => {
+		// The phone stack is pinned to both edges, so no widget position can miss it.
+		const footprint = mediaFloatFootprint({ top: 750, left: 24, width: 380, height: 132 }, VIEW);
+		expect(
+			mediaFloatLaneLift(footprint, { fromRight: 12, width: Number.POSITIVE_INFINITY, gap: 8 })
+		).toBeGreaterThan(0);
+	});
+
+	it('does not move when there is no player on screen', () => {
+		expect(mediaFloatLaneLift(null, lane)).toBe(0);
 	});
 });

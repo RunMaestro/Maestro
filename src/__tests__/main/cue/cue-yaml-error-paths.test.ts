@@ -155,6 +155,7 @@ describe('recovery-service negative-gap guard', () => {
 			getCueEventsBySession: () => [],
 			closeCueDb: () => {},
 			pruneCueEvents: vi.fn(),
+			failOrphanedRunningEvents: vi.fn(() => 0),
 		}));
 
 		const { createCueRecoveryService } = await import('../../../main/cue/cue-recovery-service');

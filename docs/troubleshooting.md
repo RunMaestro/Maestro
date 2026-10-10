@@ -14,6 +14,10 @@ Yes. Maestro is a pass-through - it calls your provider (Claude Code, Codex, Ope
 
 The only difference is execution mode. When you run Claude Code directly, it's interactive - you send a message, watch it work, and respond in real-time. Maestro runs in batch mode: it sends a prompt, the provider processes it fully, and returns the response. This enables unattended automation via Auto Run and parallel agent management. Everything else - your tools, permissions, context - remains identical.
 
+**Claude said it was asking me a question, but no prompt appeared and the agent is stuck.**
+
+Claude Code's `AskUserQuestion` ask-back tool is only wired into Maestro when the tab is in Standard permission mode. In Standard mode, Maestro attaches a permission relay that renders the question as an in-app question picker (the same relay that surfaces tool approvals). In Full Access mode the relay is not attached (permission checks are bypassed with `--dangerously-skip-permissions`), so the question never reaches Maestro and the tool call waits forever, leaving the agent busy (yellow). To unstick it, stop the agent; a follow-up message only queues behind the stalled turn (which never completes), so it won't dispatch and can't recover the turn. If you want ask-back questions to work, switch the tab to Standard mode using the permission pill in the input toolbar. The same limitation applies in Read-Only mode. SSH remote agents can't use Standard mode at all: a Standard-mode Claude Code spawn over SSH fails loudly instead of downgrading, so they always run in Full Access or Read-Only and never surface ask-backs.
+
 ---
 
 ## System Logs
@@ -101,7 +105,7 @@ An expired token is handled differently from the errors above, because it takes 
 
 Two details worth knowing:
 
-- **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on.
+- **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on. Codex switches to `codex login --device-auth` there: its default browser login waits for a callback on the remote's localhost, which your browser cannot reach.
 - **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
 - **You can sign in before anything breaks.** Command K -> **Re-authenticate Provider** opens the same dialog for the current agent's provider, with nothing failed. Useful when you are switching accounts, or when you know a token is about to lapse and would rather not have it expire mid-run.
 
@@ -115,6 +119,8 @@ If you encounter deep-seated issues that are difficult to diagnose, Maestro can 
 2. Search for "Create Debug Package"
 3. Choose a save location for the `.zip` file
 4. Attach the file to your [GitHub issue](https://github.com/RunMaestro/Maestro/issues)
+
+From the command line, `maestro-cli support-package -o <dir>` writes the same zip into `<dir>` with no save dialog. Flags like `--no-logs` leave a section out. See the [CLI reference](./cli-reference#maestro-cli-support-package).
 
 ### What's Included
 

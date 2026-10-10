@@ -16,6 +16,8 @@ import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { isAbsolutePath } from '../../../shared/formatters';
 import type { Theme } from '../../types';
+import { AuthPathValueInput } from '../shared/AuthPathValueInput';
+import { EMPTY_KNOWN_AUTH_DIRS, type KnownAuthDirs } from '../../../shared/authPaths';
 import { EnvVarKeyInput } from '../shared/EnvVarKeyInput';
 import {
 	BLANK_ENV_VAR_KEY,
@@ -31,7 +33,10 @@ import {
  * confusing dashboard tabs. Validating here rejects the bad value at write
  * time so the typo never lands on disk.
  */
-const ABSOLUTE_PATH_KEYS = new Set<string>(['CLAUDE_CONFIG_DIR']);
+const ABSOLUTE_PATH_KEYS: Record<string, true> = {
+	CLAUDE_CONFIG_DIR: true,
+	CODEX_HOME: true,
+};
 
 export interface EnvVarEntry {
 	id: number;
@@ -83,6 +88,8 @@ export interface EnvVarsEditorProps {
 	label?: string | null;
 	/** Optional description displayed below the editor. Pass null to hide. */
 	description?: string | null;
+	/** Local account directories previously configured for Claude and Codex. */
+	knownAuthDirs?: KnownAuthDirs;
 	/**
 	 * Parked variables: same shape as `envVars`, but switched off. Pass this
 	 * together with `setDisabledEnvVars` to get the per-row eye toggle; omit
@@ -104,6 +111,7 @@ export function EnvVarsEditor({
 	theme,
 	label = 'Environment Variables (optional)',
 	description = 'Environment variables passed to all terminal sessions and AI agent processes.',
+	knownAuthDirs = EMPTY_KNOWN_AUTH_DIRS,
 	disabledEnvVars,
 	setDisabledEnvVars,
 	knownEnvVarKeys = EMPTY_KNOWN_ENV_VAR_KEYS,
@@ -143,7 +151,7 @@ export function EnvVarsEditor({
 		// Variables that are consumed as filesystem paths must be absolute -
 		// relative values get resolved against the main-process cwd at runtime
 		// (often `/`) and silently point at a non-existent directory.
-		if (ABSOLUTE_PATH_KEYS.has(entry.key) && entry.value && !isAbsolutePath(entry.value)) {
+		if (ABSOLUTE_PATH_KEYS[entry.key] && entry.value && !isAbsolutePath(entry.value)) {
 			return `${entry.key} must be an absolute path (starting with /).`;
 		}
 		return null;
@@ -283,12 +291,13 @@ export function EnvVarsEditor({
 								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
 									=
 								</span>
-								<input
-									type="text"
+								<AuthPathValueInput
+									envVarKey={entry.key}
 									value={entry.value}
-									onChange={(e) => updateEntry(entry.id, 'value', e.target.value)}
-									placeholder="value"
+									knownAuthDirs={knownAuthDirs}
+									onChange={(value) => updateEntry(entry.id, 'value', value)}
 									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									containerClassName="flex-1 min-w-0"
 									style={{
 										borderColor: theme.colors.border,
 										color: theme.colors.textMain,
@@ -322,7 +331,7 @@ export function EnvVarsEditor({
 					Add Variable
 				</button>
 			</div>
-			{description !== null && <p className="text-xs opacity-50 mt-2">{description}</p>}
+			{description !== null && <p className="text-xs opacity-70 mt-2">{description}</p>}
 		</div>
 	);
 }

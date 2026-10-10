@@ -758,6 +758,16 @@ describe('CallbackRegistry', () => {
 			expect(callback).toHaveBeenCalledWith('my-sub', undefined, undefined);
 		});
 
+		it('getDebugPackageDeps() returns null when no callback set', () => {
+			expect(registry.getDebugPackageDeps()).toBeNull();
+		});
+
+		it('getDebugPackageDeps() returns what the registered callback returns', () => {
+			const deps = { getAgentDetector: () => null } as any;
+			registry.setGetDebugPackageDepsCallback(() => deps);
+			expect(registry.getDebugPackageDeps()).toBe(deps);
+		});
+
 		it('multiple callbacks can be set and work independently', async () => {
 			const sessionsCallback = vi.fn().mockReturnValue([{ id: 's1' }]);
 			const themeCallback = vi.fn().mockReturnValue({ name: 'dark' });

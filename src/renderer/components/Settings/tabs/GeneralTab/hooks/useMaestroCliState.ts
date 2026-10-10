@@ -12,7 +12,7 @@ export function useMaestroCliState({ isOpen }: UseMaestroCliStateArgs): MaestroC
 	const [statusError, setStatusError] = useState<string | null>(null);
 	const [checking, setChecking] = useState(false);
 	const [installing, setInstalling] = useState(false);
-	const [installMessage, setInstallMessage] = useState<string | null>(null);
+	const [installMessage, setInstallMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
 	const checkStatus = useCallback(async () => {
 		setChecking(true);
@@ -45,11 +45,20 @@ export function useMaestroCliState({ isOpen }: UseMaestroCliStateArgs): MaestroC
 				setStatusError(result.pathUpdateError);
 			}
 			if (result.restartRequired) {
-				setInstallMessage('CLI installed. Open a new terminal for PATH changes to apply.');
+				setInstallMessage({
+					text: 'CLI installed. Open a new terminal for PATH changes to apply.',
+					ok: true,
+				});
 			} else if (result.success && result.status.versionMatch) {
-				setInstallMessage('CLI is installed and matches this Maestro version.');
+				setInstallMessage({
+					text: 'CLI is installed and matches this Maestro version.',
+					ok: true,
+				});
 			} else {
-				setInstallMessage('CLI was installed but version/path check still needs attention.');
+				setInstallMessage({
+					text: 'CLI was installed but version/path check still needs attention.',
+					ok: false,
+				});
 			}
 		} catch (err) {
 			setStatusError('Failed to install/update Maestro CLI');

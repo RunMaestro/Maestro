@@ -20,6 +20,9 @@ export {
 	compareNamesIgnoringEmojis,
 } from './useSortedSessions';
 export type { UseSortedSessionsDeps, UseSortedSessionsReturn } from './useSortedSessions';
+export { computeSortedSessions } from './computeSortedSessions';
+export type { ComputeSortedSessionsInput, SortedSessionsProjection } from './computeSortedSessions';
+export { SidebarNavSync } from './SidebarNavSync';
 
 // Group management
 export { useGroupManagement } from './useGroupManagement';
@@ -53,12 +56,15 @@ export { useSessionCrud } from './useSessionCrud';
 export type { UseSessionCrudDeps, UseSessionCrudReturn } from './useSessionCrud';
 
 // Session cycling (Cmd+Shift+[/])
-export { useCycleSession } from './useCycleSession';
-export type { UseCycleSessionDeps, UseCycleSessionReturn } from './useCycleSession';
+export { useCycleSession, cycleSession } from './useCycleSession';
+export type { CycleSessionDeps, UseCycleSessionReturn } from './useCycleSession';
 
 // Starred Sessions list + activation (Left Bar section, shared with cycling)
 export { useStarredItems } from './useStarredItems';
 export type { StarredItem, UseStarredItemsDeps, UseStarredItemsReturn } from './useStarredItems';
+
+// Multi-window: keep a window's active agent to one it owns (no false empty state)
+export { useWindowScopedActiveSession } from './useWindowScopedActiveSession';
 
 // Session switching callbacks (navigate to session/tab from various UI surfaces)
 export { useSessionSwitchCallbacks } from './useSessionSwitchCallbacks';
@@ -66,3 +72,6 @@ export type {
 	UseSessionSwitchCallbacksDeps,
 	UseSessionSwitchCallbacksReturn,
 } from './useSessionSwitchCallbacks';
+
+// Thinking status pill items (narrow store subscription)
+export { useThinkingItems } from './useThinkingItems';

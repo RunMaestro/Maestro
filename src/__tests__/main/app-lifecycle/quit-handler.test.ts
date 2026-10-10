@@ -73,6 +73,14 @@ vi.mock('../../../main/cue/cue-executor', () => ({
 	stopAllCueRuns: (...args: unknown[]) => mockStopAllCueRuns(...args),
 }));
 
+// Mock the multi-window persistence helper so we can assert the quit handler
+// snapshots the layout during cleanup without exercising the helper internals
+// (those are covered by window-state-persistence.test.ts).
+const mockSaveAllWindowStates = vi.fn();
+vi.mock('../../../main/window-state-persistence', () => ({
+	saveAllWindowStates: (...args: unknown[]) => mockSaveAllWindowStates(...args),
+}));
+
 // Platform is controllable per-test: the update-install hard-exit only applies
 // on macOS (Squirrel.Mac/ShipIt), while Windows/Linux keep the graceful path.
 let mockIsMacOS = true;
@@ -110,8 +118,6 @@ describe('app-lifecycle/quit-handler', () => {
 		getWebServer: ReturnType<typeof vi.fn>;
 		getHistoryManager: ReturnType<typeof vi.fn>;
 		tunnelManager: typeof mockTunnelManager;
-		getActiveGroomingSessionCount: ReturnType<typeof vi.fn>;
-		cleanupAllGroomingSessions: ReturnType<typeof vi.fn>;
 		closeStatsDB: ReturnType<typeof vi.fn>;
 		stopCliWatcher: ReturnType<typeof vi.fn>;
 		powerManager: typeof mockPowerManager;
@@ -154,8 +160,6 @@ describe('app-lifecycle/quit-handler', () => {
 			getWebServer: vi.fn().mockReturnValue(mockWebServer),
 			getHistoryManager: vi.fn().mockReturnValue(mockHistoryManager),
 			tunnelManager: mockTunnelManager,
-			getActiveGroomingSessionCount: vi.fn().mockReturnValue(0),
-			cleanupAllGroomingSessions: vi.fn().mockResolvedValue(undefined),
 			closeStatsDB: vi.fn(),
 			stopCliWatcher: vi.fn(),
 			powerManager: mockPowerManager,
@@ -378,34 +382,40 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(deps.closeStatsDB).toHaveBeenCalled();
 		});
 
-		it('should cleanup grooming sessions if any are active', async () => {
-			deps.getActiveGroomingSessionCount.mockReturnValue(3);
-
+		it('saves the multi-window layout during cleanup, before processes are torn down', async () => {
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
-			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			const fakeStore = { set: vi.fn() };
+			const fakeRegistry = { getAll: vi.fn(() => []) };
+			const quitHandler = createQuitHandler({
+				...deps,
+				windowStateStore: fakeStore,
+				getWindowRegistry: () => fakeRegistry,
+			} as unknown as Parameters<typeof createQuitHandler>[0]);
 			quitHandler.setup();
 			quitHandler.confirmQuit();
 
-			const mockEvent = { preventDefault: vi.fn() };
-			beforeQuitHandler!(mockEvent);
+			beforeQuitHandler!({ preventDefault: vi.fn() });
 
-			expect(deps.cleanupAllGroomingSessions).toHaveBeenCalledWith(mockProcessManager);
+			// The layout is snapshotted with the injected store + registry...
+			expect(mockSaveAllWindowStates).toHaveBeenCalledWith(fakeStore, fakeRegistry);
+			// ...and it happens before ProcessManager.killAll() destroys the windows
+			// (whose bounds the snapshot needs to still be valid).
+			const saveOrder = mockSaveAllWindowStates.mock.invocationCallOrder[0];
+			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
+			expect(saveOrder).toBeLessThan(killOrder);
 		});
 
-		it('should not cleanup grooming sessions if none are active', async () => {
-			deps.getActiveGroomingSessionCount.mockReturnValue(0);
-
+		it('skips the window-state save when the store/registry are not injected', async () => {
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
+			// deps omits windowStateStore / getWindowRegistry (phased rollout).
 			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
 			quitHandler.setup();
 			quitHandler.confirmQuit();
 
-			const mockEvent = { preventDefault: vi.fn() };
-			beforeQuitHandler!(mockEvent);
-
-			expect(deps.cleanupAllGroomingSessions).not.toHaveBeenCalled();
+			expect(() => beforeQuitHandler!({ preventDefault: vi.fn() })).not.toThrow();
+			expect(mockSaveAllWindowStates).not.toHaveBeenCalled();
 		});
 
 		it('should handle null process manager gracefully', async () => {

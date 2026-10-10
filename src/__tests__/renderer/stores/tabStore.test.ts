@@ -405,10 +405,12 @@ describe('tabStore', () => {
 			useTabStore.getState().toggleReadOnly('tab-1');
 			let session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].readOnlyMode).toBe(true);
+			expect(session.aiTabs[0].permissionMode).toBe('readonly');
 
 			useTabStore.getState().toggleReadOnly('tab-1');
 			session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].readOnlyMode).toBe(false);
+			expect(session.aiTabs[0].permissionMode).toBe('full');
 		});
 
 		it('should toggle save to history', () => {
@@ -516,7 +518,7 @@ describe('tabStore', () => {
 
 			const entry = useTabStore
 				.getState()
-				.snoozeTab('tab-2', Date.now() + HOUR, 'come back to this');
+				.snoozeTab('tab-2', Date.now() + HOUR, { note: 'come back to this' });
 
 			expect(entry).not.toBeNull();
 			expect(entry!.note).toBe('come back to this');
@@ -554,12 +556,77 @@ describe('tabStore', () => {
 			expect(session.aiTabs.map((t) => t.id)).toEqual(['tab-1']);
 		});
 
+		it('should snooze a FILE tab, which the tab strip can now reach', () => {
+			// Non-AI chips offer Snooze Tab too. The store already handled every
+			// kind; the opener was the half that only knew about aiTabs.
+			setupSessionWithTabs(
+				[createMockAITab({ id: 'tab-1' })],
+				[createMockFileTab({ id: 'file-1' })]
+			);
+
+			const entry = useTabStore.getState().snoozeTab('file-1', Date.now() + HOUR);
+
+			expect(entry).not.toBeNull();
+			expect(entry!.type).toBe('file');
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs).toHaveLength(0);
+			expect(session.snoozedTabs).toHaveLength(1);
+		});
+
+		it('should not run a wake prompt for a non-AI tab', () => {
+			// The dialog hides the field for these kinds, so an entry should never
+			// carry one - but if one arrives from an older build or the CLI, there
+			// is no conversation to send it to and it must not be rerouted.
+			setupSessionWithTabs(
+				[createMockAITab({ id: 'tab-1' })],
+				[createMockFileTab({ id: 'file-1' })]
+			);
+			const entry = useTabStore
+				.getState()
+				.snoozeTab('file-1', Date.now() + HOUR, { wakePrompt: 'should never run' })!;
+
+			useTabStore.getState().unsnoozeTab('test-session', entry.id);
+
+			expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(0);
+		});
+
+		it('should run the wake prompt when a tab is unsnoozed early', () => {
+			// The prompt is written against the tab COMING BACK, not against the
+			// clock, so pulling it back by hand counts.
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })]);
+			const entry = useTabStore
+				.getState()
+				.snoozeTab('tab-2', Date.now() + HOUR, { wakePrompt: 'where did we leave off?' })!;
+
+			useTabStore.getState().unsnoozeTab('test-session', entry.id);
+
+			const queue = useSessionStore.getState().sessions[0].executionQueue;
+			expect(queue).toHaveLength(1);
+			expect(queue[0]).toMatchObject({ tabId: 'tab-2', text: 'where did we leave off?' });
+		});
+
+		it('should not queue anything when a dismissed snooze carried a prompt', () => {
+			// Dismiss restores nothing, so there is no tab for a prompt to run in.
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })]);
+			const entry = useTabStore
+				.getState()
+				.snoozeTab('tab-2', Date.now() + HOUR, { wakePrompt: 'never runs' })!;
+
+			useTabStore.getState().dismissSnoozedTab('test-session', entry.id);
+
+			expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(0);
+		});
+
 		it('should reschedule a snooze and update its note', () => {
 			setupSessionWithTabs([createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })]);
-			const entry = useTabStore.getState().snoozeTab('tab-2', Date.now() + HOUR, 'old note')!;
+			const entry = useTabStore
+				.getState()
+				.snoozeTab('tab-2', Date.now() + HOUR, { note: 'old note' })!;
 			const newWake = Date.now() + 5 * HOUR;
 
-			useTabStore.getState().rescheduleSnoozedTab('test-session', entry.id, newWake, 'new note');
+			useTabStore
+				.getState()
+				.rescheduleSnoozedTab('test-session', entry.id, newWake, { note: 'new note' });
 
 			const snoozed = useSessionStore.getState().sessions[0].snoozedTabs![0];
 			expect(snoozed.wakeAt).toBe(newWake);
@@ -725,6 +792,37 @@ describe('tabStore', () => {
 
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.filePreviewTabs[0].htmlRenderMode).toBeUndefined();
+		});
+
+		it('should set file tab edit mode to an explicit value', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1', editMode: false });
+			setupSessionWithTabs([tab1], [fileTab1]);
+
+			// Unlike toggleFileTabEditMode, this sets the value directly - repeated
+			// calls with the same value are idempotent (tiled panes rely on this).
+			useTabStore.getState().setFileTabEditMode('file-1', true);
+			let session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].editMode).toBe(true);
+
+			useTabStore.getState().setFileTabEditMode('file-1', true);
+			session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].editMode).toBe(true);
+
+			useTabStore.getState().setFileTabEditMode('file-1', false);
+			session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].editMode).toBe(false);
+		});
+
+		it('setFileTabEditMode is a no-op for non-existent file tab', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1', editMode: false });
+			setupSessionWithTabs([tab1], [fileTab1]);
+
+			useTabStore.getState().setFileTabEditMode('non-existent', true);
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].editMode).toBe(false);
 		});
 	});
 

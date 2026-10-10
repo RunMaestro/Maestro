@@ -11,18 +11,10 @@
  */
 
 import { useCallback, useState } from 'react';
-
-/** `localStorage`, or null where there isn't one. */
-function storage(): Storage | null {
-	try {
-		return typeof localStorage === 'undefined' ? null : localStorage;
-	} catch {
-		return null;
-	}
-}
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 
 function load(storageKey: string, fallback: boolean): boolean {
-	const raw = storage()?.getItem(storageKey) ?? null;
+	const raw = safeStorageGet(storageKey);
 	if (raw === null) return fallback;
 	return raw === 'true';
 }
@@ -45,7 +37,7 @@ export function usePersistedToggle(
 
 	const setValue = useCallback(
 		(next: boolean) => {
-			storage()?.setItem(storageKey, String(next));
+			safeStorageSet(storageKey, String(next));
 			setStateValue(next);
 		},
 		[storageKey]
@@ -53,7 +45,7 @@ export function usePersistedToggle(
 
 	const toggle = useCallback(() => {
 		setStateValue((prev) => {
-			storage()?.setItem(storageKey, String(!prev));
+			safeStorageSet(storageKey, String(!prev));
 			return !prev;
 		});
 	}, [storageKey]);

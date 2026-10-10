@@ -663,7 +663,7 @@ describe('useAutoRunUndo', () => {
 	// ==========================================================================
 
 	describe('scheduleUndoSnapshot', () => {
-		it('should push undo state after 1000ms debounce delay', () => {
+		it('snapshots the state before the first keystroke of a burst immediately', () => {
 			const mockDeps = createMockDeps({ localContent: 'Current content' });
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -671,63 +671,41 @@ describe('useAutoRunUndo', () => {
 				result.current.scheduleUndoSnapshot('Previous content', 5);
 			});
 
-			// Before delay - should not have pushed yet
-			act(() => {
-				vi.advanceTimersByTime(500);
-			});
-
-			// Try undo - should fail (nothing pushed yet)
-			act(() => {
-				result.current.handleUndo();
-			});
-			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-
-			// After full delay
-			act(() => {
-				vi.advanceTimersByTime(600); // Total 1100ms
-			});
-
-			// Now undo should work
+			// No waiting: Cmd+Z mid-burst already reaches the pre-burst text
 			act(() => {
 				result.current.handleUndo();
 			});
 			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Previous content');
 		});
 
-		it('should cancel pending snapshot when new one is scheduled', () => {
+		it('groups keystrokes inside the window into one undo step', () => {
 			const mockDeps = createMockDeps({ localContent: 'Version 3' });
 			const { result, rerender } = renderHook(({ deps }) => useAutoRunUndo(deps), {
 				initialProps: { deps: mockDeps },
 			});
 
-			// Schedule first snapshot
 			act(() => {
 				result.current.scheduleUndoSnapshot('Version 1', 0);
 			});
-
-			// Wait 500ms
 			act(() => {
 				vi.advanceTimersByTime(500);
 			});
-
-			// Schedule second snapshot (should cancel first)
+			// Same burst: must NOT replace the burst-start snapshot
 			act(() => {
 				result.current.scheduleUndoSnapshot('Version 2', 5);
 			});
-
-			// Wait another 1000ms
 			act(() => {
 				vi.advanceTimersByTime(1100);
 			});
 
-			// Undo - should get Version 2, not Version 1
+			// One Cmd+Z undoes the whole burst
 			act(() => {
 				result.current.handleUndo();
 			});
-			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Version 2');
+			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Version 1');
 
-			// Second undo should not work (only Version 2 was pushed)
-			mockDeps.localContent = 'Version 2';
+			// Nothing older was recorded
+			mockDeps.localContent = 'Version 1';
 			mockDeps.setLocalContent.mockClear();
 			rerender({ deps: mockDeps });
 
@@ -735,6 +713,94 @@ describe('useAutoRunUndo', () => {
 				result.current.handleUndo();
 			});
 			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
+		});
+
+		it('opens a new undo step after the typing pause', () => {
+			const mockDeps = createMockDeps({ localContent: 'One. Two.' });
+			const { result, rerender } = renderHook(({ deps }) => useAutoRunUndo(deps), {
+				initialProps: { deps: mockDeps },
+			});
+
+			act(() => {
+				result.current.scheduleUndoSnapshot('', 0);
+			});
+			act(() => {
+				vi.advanceTimersByTime(1100);
+			});
+			act(() => {
+				result.current.scheduleUndoSnapshot('One.', 4);
+			});
+
+			// First Cmd+Z removes only the second sentence
+			act(() => {
+				result.current.handleUndo();
+			});
+			expect(mockDeps.setLocalContent).toHaveBeenLastCalledWith('One.');
+
+			// Second Cmd+Z reaches the empty document
+			mockDeps.localContent = 'One.';
+			rerender({ deps: mockDeps });
+			act(() => {
+				result.current.handleUndo();
+			});
+			expect(mockDeps.setLocalContent).toHaveBeenLastCalledWith('');
+		});
+
+		it('starts a fresh burst after an explicit edit', () => {
+			const mockDeps = createMockDeps({ localContent: 'abc\tdef' });
+			const { result, rerender } = renderHook(({ deps }) => useAutoRunUndo(deps), {
+				initialProps: { deps: mockDeps },
+			});
+
+			act(() => {
+				result.current.scheduleUndoSnapshot('', 0);
+			});
+			// Tab insert pushes its own step mid-burst
+			act(() => {
+				result.current.pushUndoState('abc', 3);
+			});
+			// Typing right after the tab, still inside the old burst window
+			act(() => {
+				result.current.scheduleUndoSnapshot('abc\t', 4);
+			});
+
+			act(() => {
+				result.current.handleUndo();
+			});
+			expect(mockDeps.setLocalContent).toHaveBeenLastCalledWith('abc\t');
+
+			mockDeps.localContent = 'abc\t';
+			rerender({ deps: mockDeps });
+			act(() => {
+				result.current.handleUndo();
+			});
+			expect(mockDeps.setLocalContent).toHaveBeenLastCalledWith('abc');
+		});
+
+		it('starts a fresh burst after an undo', () => {
+			const mockDeps = createMockDeps({ localContent: 'Typed' });
+			const { result, rerender } = renderHook(({ deps }) => useAutoRunUndo(deps), {
+				initialProps: { deps: mockDeps },
+			});
+
+			act(() => {
+				result.current.scheduleUndoSnapshot('', 0);
+			});
+			act(() => {
+				result.current.handleUndo();
+			});
+
+			// Typing again right away must record a new step
+			mockDeps.localContent = 'X';
+			rerender({ deps: mockDeps });
+			act(() => {
+				result.current.scheduleUndoSnapshot('', 0);
+			});
+			mockDeps.setLocalContent.mockClear();
+			act(() => {
+				result.current.handleUndo();
+			});
+			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('');
 		});
 
 		it('should use correct cursor position from scheduled snapshot', async () => {

@@ -14,6 +14,8 @@ interface BuildAgentPanelCommandsArgs {
 	setRenameGroupId: (id: string) => void;
 	setRenameGroupValue: (value: string) => void;
 	setRenameGroupEmoji: (emoji: string) => void;
+	setRenameGroupIcon: (icon: string | undefined) => void;
+	setRenameGroupColor: (color: string | undefined) => void;
 	setCreateGroupModalOpen: (open: boolean) => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
@@ -39,6 +41,8 @@ export function buildAgentPanelCommands({
 	setRenameGroupId,
 	setRenameGroupValue,
 	setRenameGroupEmoji,
+	setRenameGroupIcon,
+	setRenameGroupColor,
 	setCreateGroupModalOpen,
 	setRightPanelOpen,
 	setActiveRightTab,
@@ -64,6 +68,8 @@ export function buildAgentPanelCommands({
 					setRenameGroupId(group.id);
 					setRenameGroupValue(group.name);
 					setRenameGroupEmoji(group.emoji);
+					setRenameGroupIcon(group.icon);
+					setRenameGroupColor(group.color);
 					setRenameGroupModalOpen(true);
 					setQuickActionOpen(false);
 				}

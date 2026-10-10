@@ -1,13 +1,27 @@
-import React, { memo, useEffect, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
 import { dispatchToastClickAction } from '../services/toastClickActions';
-import { formatDurationParts as formatDuration } from '../../shared/formatters';
-import { getToastWidthDimensions } from '../../shared/toastWidth';
+import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
+import { getToastWidthDimensions, TOAST_VIEWPORT_GUTTER } from '../../shared/toastWidth';
+import { useMediaPlaybackStore } from '../stores/mediaPlaybackStore';
+import { mediaFloatLaneLift } from '../utils/mediaFloatGeometry';
+import { withMonoFallback } from '../../shared/fontStack';
+import {
+	isLeftToastPosition,
+	isTopToastPosition,
+	TOAST_BOTTOM_OFFSET,
+	TOAST_STACK_GAP,
+	TOAST_TOP_OFFSET,
+	toastSidePanel,
+} from '../../shared/toastPosition';
+import { useElementWidth } from '../hooks/ui/useElementWidth';
+import { toastBottomInset, useToastAvoidZoneStore } from '../hooks/ui/useToastAvoidZone';
 import { Z_LAYERS } from '../constants/zLayers';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { CopyIconButton } from './ui';
 
 interface ToastContainerProps {
@@ -34,12 +48,16 @@ const ToastItem = memo(function ToastItem({
 	onRemove,
 	onSessionClick,
 	widthDimensions,
+	fromLeft,
 }: {
 	toast: ToastType;
 	theme: Theme;
 	onRemove: (toastId: string) => void;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
-	widthDimensions: { minWidth: number; maxWidth: number };
+	/** Pixel bounds from the toast-width setting, or null to fill the stack (phone). */
+	widthDimensions: { minWidth: number; maxWidth: number } | null;
+	/** Slide in from (and out to) the left edge instead of the right. */
+	fromLeft: boolean;
 }) {
 	const [isExiting, setIsExiting] = useState(false);
 	const [isEntering, setIsEntering] = useState(true);
@@ -153,6 +171,8 @@ const ToastItem = memo(function ToastItem({
 		}
 	};
 
+	const offscreen = fromLeft ? 'translateX(-100%)' : 'translateX(100%)';
+
 	/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
 	const ORANGE_HEX = '#f97316';
 
@@ -177,12 +197,7 @@ const ToastItem = memo(function ToastItem({
 			className="relative overflow-hidden transition-all duration-300 ease-out"
 			style={{
 				opacity: isEntering ? 0 : isExiting ? 0 : 1,
-				transform: isEntering
-					? 'translateX(100%)'
-					: isExiting
-						? 'translateX(100%)'
-						: 'translateX(0)',
-				marginBottom: '8px',
+				transform: isEntering || isExiting ? offscreen : 'translateX(0)',
 			}}
 		>
 			<div
@@ -190,8 +205,12 @@ const ToastItem = memo(function ToastItem({
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					border: `1px solid ${theme.colors.border}`,
-					minWidth: `${widthDimensions.minWidth}px`,
-					maxWidth: `${widthDimensions.maxWidth}px`,
+					...(widthDimensions
+						? {
+								minWidth: `${widthDimensions.minWidth}px`,
+								maxWidth: `${widthDimensions.maxWidth}px`,
+							}
+						: { width: '100%' }),
 				}}
 				onClick={isClickable ? handleToastClick : undefined}
 			>
@@ -208,7 +227,9 @@ const ToastItem = memo(function ToastItem({
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if needed) */}
+					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if
+					    needed). The arrival time rides the title row below instead, so a
+					    toast with no agent context does not spend a line on a lone clock. */}
 					{(toast.group || toast.project || toast.tabName) && (
 						<div
 							className="flex flex-wrap items-center gap-2 text-xs mb-1"
@@ -248,9 +269,25 @@ const ToastItem = memo(function ToastItem({
 						</div>
 					)}
 
-					{/* Title */}
-					<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-						{toast.title}
+					{/* Title, with the arrival time pinned right on the same line. Every
+					    toast is stamped, not just the ones that carry agent context. */}
+					<div className="flex items-baseline gap-2">
+						<div
+							className="font-medium text-sm min-w-0 flex-1"
+							style={{ color: theme.colors.textMain }}
+						>
+							{toast.title}
+						</div>
+						{toast.timestamp > 0 && (
+							<time
+								className="flex-shrink-0 text-xs tabular-nums"
+								style={{ color: theme.colors.textDim }}
+								dateTime={new Date(toast.timestamp).toISOString()}
+								title={formatTimestamp(toast.timestamp, 'full')}
+							>
+								{formatTimestamp(toast.timestamp, 'smart')}
+							</time>
+						)}
 					</div>
 
 					{/* Message */}
@@ -282,7 +319,7 @@ const ToastItem = memo(function ToastItem({
 					)}
 
 					{/* Duration badge */}
-					{toast.taskDuration && toast.taskDuration > 0 && (
+					{typeof toast.taskDuration === 'number' && toast.taskDuration > 0 && (
 						<div
 							className="flex items-center gap-1 text-xs mt-2"
 							style={{ color: theme.colors.textDim }}
@@ -340,7 +377,7 @@ const ToastItem = memo(function ToastItem({
 			</div>
 
 			{/* Progress bar - hidden for dismissible (sticky) toasts */}
-			{!toast.dismissible && toast.duration && toast.duration > 0 && (
+			{!toast.dismissible && typeof toast.duration === 'number' && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"
 					style={{
@@ -361,6 +398,12 @@ const ToastItem = memo(function ToastItem({
 	);
 });
 
+/** Breathing room left between a lifted toast stack and the media player. */
+const TOAST_MEDIA_PLAYER_GAP = 8;
+
+/** The phone stack is pinned `left-3 right-3`, so its gutter is 0.75rem. */
+const TOAST_PHONE_GUTTER = 12;
+
 export const ToastContainer = memo(function ToastContainer({
 	theme,
 	onSessionClick,
@@ -368,19 +411,113 @@ export const ToastContainer = memo(function ToastContainer({
 	const toasts = useNotificationStore((s) => s.toasts);
 	const removeToast = useNotificationStore((s) => s.removeToast);
 	const toastWidth = useSettingsStore((s) => s.toastWidth);
+	const toastPosition = useSettingsStore((s) => s.toastPosition);
+	const isTop = isTopToastPosition(toastPosition);
+	const isLeft = isLeftToastPosition(toastPosition);
 	// Subscribed so 'dynamic' toasts re-render (and re-resize) live as the user
-	// drags the Right Bar; ignored by the fixed presets.
+	// drags the side bar on the toast's side; ignored by the fixed presets.
+	const leftSidebarWidth = useSettingsStore((s) => s.leftSidebarWidth);
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
-	const widthDimensions = getToastWidthDimensions(toastWidth, rightPanelWidth);
+	// Phone: every width preset is wider than the screen (small starts at 320px
+	// plus the gutter, on a 390px viewport), so the stack spans the width
+	// instead and each toast fills it. A phone stack stays pinned to the bottom
+	// regardless of the corner setting: the top band belongs to the iOS status
+	// bar, and a stack spanning the screen has no left or right to pick.
+	const phone = usePhoneLayout();
+	const stackAtTop = isTop && !phone;
+	const stackAtLeft = isLeft && !phone;
+	const widthDimensions = phone
+		? null
+		: getToastWidthDimensions(
+				toastWidth,
+				toastSidePanel(toastPosition, { leftSidebarWidth, rightPanelWidth }).width
+			);
+
+	// In a bottom corner, lift the stack above the composer when it would cover
+	// it (side bar closed or narrower than the toast). Width falls back to the
+	// preset max until the stack is measured, which errs toward lifting rather
+	// than covering. A top corner never meets the composer.
+	const avoidZones = useToastAvoidZoneStore((s) => s.zones);
+	const stackRef = useRef<HTMLDivElement>(null);
+	const stackWidth =
+		useElementWidth(stackRef, toasts.length > 0) ||
+		(widthDimensions ? widthDimensions.maxWidth : window.innerWidth - 2 * TOAST_PHONE_GUTTER);
+	const stackGutter = phone ? TOAST_PHONE_GUTTER : TOAST_VIEWPORT_GUTTER;
+	const stackLeft = stackAtLeft ? stackGutter : window.innerWidth - stackGutter - stackWidth;
+	const bottomInset = stackAtTop
+		? 0
+		: toastBottomInset(
+				avoidZones,
+				{ left: stackLeft, right: stackLeft + stackWidth },
+				window.innerHeight
+			);
+
+	// The floating media player opens in the bottom-right corner and sits far
+	// below toasts in z-order (toasts have to stay readable over modals), so an
+	// arriving notification used to paint straight over the widget - it looked
+	// like the player had closed itself. The stack steps over it instead: toasts
+	// are transient, and the widget is where the user deliberately put it.
+	//
+	// The lane is measured at the preset's FULL width rather than at the width
+	// this toast happens to render at, so the worst case is lifting when a short
+	// toast would have cleared the widget anyway - which costs nothing, while
+	// the other way round is the bug being fixed. The player's footprint is in
+	// right-edge coordinates, so a left-corner lane is translated into them.
+	const floatFootprint = useMediaPlaybackStore((s) => s.floatFootprint);
+	const laneWidth = widthDimensions ? widthDimensions.maxWidth : Number.POSITIVE_INFINITY;
+	const playerLift = stackAtTop
+		? 0
+		: mediaFloatLaneLift(floatFootprint, {
+				fromRight: stackAtLeft
+					? Math.max(0, window.innerWidth - stackGutter - laneWidth)
+					: stackGutter,
+				// A phone stack spans the screen, so it always shares the widget's column.
+				width: laneWidth,
+				gap: TOAST_MEDIA_PLAYER_GAP,
+			});
+
+	// Toasts portal to document.body, which puts them OUTSIDE the app shell -
+	// the element that carries the interface font. Without restating it here
+	// they inherit the body's default face, so a user who switched the UI font
+	// kept getting toasts in the old one. Same monospace safety net the shell
+	// applies, so a bare picker name can't fall through to serif.
+	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
 
 	if (toasts.length === 0) return null;
 
+	// The stack grows away from its corner with the newest toast nearest the
+	// corner: toasts are appended, so a bottom stack renders in order and a top
+	// stack renders reversed.
 	return createPortal(
 		<div
-			className="fixed bottom-0 right-4 flex flex-col-reverse"
-			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST }}
+			className="fixed"
+			style={{
+				...(stackAtTop
+					? { top: TOAST_TOP_OFFSET }
+					: {
+							// Whichever obstacle reaches higher wins: the composer or the
+							// floating media player. Both are measured from the window bottom.
+							bottom: TOAST_BOTTOM_OFFSET + Math.max(bottomInset, playerLift),
+							transition: 'bottom 200ms ease-out',
+						}),
+				...(phone
+					? { left: TOAST_PHONE_GUTTER, right: TOAST_PHONE_GUTTER }
+					: stackAtLeft
+						? { left: TOAST_VIEWPORT_GUTTER }
+						: { right: TOAST_VIEWPORT_GUTTER }),
+				pointerEvents: 'none',
+				zIndex: Z_LAYERS.TOAST,
+				fontFamily,
+				paddingBottom: phone ? 'env(safe-area-inset-bottom, 0px)' : undefined,
+			}}
+			data-testid="toast-stack"
+			data-position={toastPosition}
 		>
-			<div style={{ pointerEvents: 'auto' }}>
+			<div
+				ref={stackRef}
+				className={`flex ${stackAtTop ? 'flex-col-reverse' : 'flex-col'}`}
+				style={{ pointerEvents: 'auto', gap: TOAST_STACK_GAP }}
+			>
 				{toasts.map((toast) => (
 					<ToastItem
 						key={toast.id}
@@ -389,6 +526,7 @@ export const ToastContainer = memo(function ToastContainer({
 						onRemove={removeToast}
 						onSessionClick={onSessionClick}
 						widthDimensions={widthDimensions}
+						fromLeft={stackAtLeft}
 					/>
 				))}
 			</div>

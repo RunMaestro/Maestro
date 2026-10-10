@@ -36,6 +36,7 @@ import { COLORBLIND_DIFF_COLORS } from '../constants/colorblindPalettes';
 import { createMarkdownLink } from '../components/Markdown/components/MarkdownLink';
 import { createPrismCodeBlock } from '../components/Markdown/components/PrismCodeBlock';
 import { InlineCode } from '../components/Markdown/components/InlineCode';
+import { CopyablePre } from '../components/CodeFence/CodeCopyButton';
 
 // ============================================================================
 // Types
@@ -700,8 +701,9 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 		},
 		pre: ({ children }: any) =>
 			React.createElement(
-				'pre',
+				CopyablePre,
 				{
+					theme,
 					className: 'p-2 rounded text-xs font-mono overflow-x-auto mb-2',
 					style: { backgroundColor: theme.colors.bgMain },
 				},
@@ -746,6 +748,7 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
  */
 export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Components> {
 	return {
+		pre: ({ children }: any) => React.createElement(CopyablePre, { theme }, children),
 		h1: ({ children }: any) =>
 			React.createElement(
 				'h1',

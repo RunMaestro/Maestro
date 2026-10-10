@@ -12,13 +12,26 @@ import type {
 import { gitService } from '../../../services/git';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
-import { useBatchStore } from '../../../stores/batchStore';
+import { useBatchStore, isMirroredBatchRun } from '../../../stores/batchStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
+import {
+	acknowledgeHitlGate,
+	describeUnresolvedHaltMarker,
+	detectHaltMarker,
+	findHaltMarker,
+	type HaltMarker,
+} from '../../../../shared/autorunMarkers';
+import { resolveAutoResumePolicy } from '../../../../shared/autorunAutoResume';
+import { clearAutoResume } from '../../../stores/autoRunResumeStore';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
-import { buildFinalSummary } from './batchFinalSummary';
+import {
+	aggregateAutoRunHistoryTotals,
+	buildFinalSummary,
+	mergeFinalSummaryTotals,
+} from './batchFinalSummary';
 import {
 	MAX_CONSECUTIVE_NO_CHANGES,
 	describeStall,
@@ -35,7 +48,11 @@ import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 import type { UseWorktreeManagerReturn } from '../useWorktreeManager';
-import type { AutoRunSpawnAgentFn, UseDocumentProcessorReturn } from '../useDocumentProcessor';
+import type {
+	AutoRunSpawnAgentFn,
+	DocumentRunOverrides,
+	UseDocumentProcessorReturn,
+} from '../useDocumentProcessor';
 
 const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
@@ -49,7 +66,7 @@ type SpawnAgentFn = AutoRunSpawnAgentFn;
 
 export interface UseBatchRunnerDeps {
 	// Refs
-	sessionsRef: MutableRefObject<Session[]>;
+	getSessions: () => Session[];
 	audioFeedbackEnabledRef: MutableRefObject<boolean | undefined>;
 	audioFeedbackCommandRef: MutableRefObject<string | undefined>;
 	autoRunFlushStateRefs: AutoRunFlushStateRefs;
@@ -97,7 +114,7 @@ export interface UseBatchRunnerReturn {
  * remains a ref so the long-running async loop survives HMR re-renders.
  */
 export function useBatchRunner({
-	sessionsRef,
+	getSessions,
 	audioFeedbackEnabledRef,
 	audioFeedbackCommandRef,
 	autoRunFlushStateRefs,
@@ -131,6 +148,21 @@ export function useBatchRunner({
 	 */
 	const startBatchRun = useCallback(
 		async (sessionId: string, config: BatchRunConfig, folderPath: string) => {
+			// This agent already has an Auto Run going in ANOTHER Maestro client
+			// (see useAutoRunStateMirror). Launching a second loop here would put two
+			// clients spawning tasks into the same working tree. The launch controls
+			// are already disabled while a mirror is on screen; this is the backstop
+			// for the CLI/remote entry points that reach this without a button.
+			if (isMirroredBatchRun(sessionId)) {
+				window.maestro.logger.log(
+					'warn',
+					'Auto Run is already running for this agent in another Maestro window',
+					'BatchProcessor',
+					{ sessionId }
+				);
+				return;
+			}
+
 			// Check global Auto Run kill switch
 			if (useSettingsStore.getState().autoRunDisabled) {
 				window.maestro.logger.log(
@@ -154,10 +186,9 @@ export function useBatchRunner({
 				worktreeEnabled: config.worktree?.enabled,
 			});
 
-			// Use sessionsRef first, then fall back to Zustand store for sessions just created
-			// (sessionsRef updates on React re-render, but Zustand store updates synchronously)
+			// Prefer getSessions(), then the store for just-created sessions.
 			const session =
-				sessionsRef.current.find((s) => s.id === sessionId) ||
+				getSessions().find((s) => s.id === sessionId) ||
 				selectSessionById(sessionId)(useSessionStore.getState());
 			if (!session) {
 				const worktreeInfo = config.worktreeTarget
@@ -176,13 +207,26 @@ export function useBatchRunner({
 					{
 						sessionId,
 						worktreeTargetMode: config.worktreeTarget?.mode,
-						availableSessionIds: sessionsRef.current.map((s) => s.id),
+						availableSessionIds: getSessions().map((s) => s.id),
 					}
 				);
 				return;
 			}
 
 			const { documents, prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
+
+			// Run-scoped model/effort override, built only when the run picked one so
+			// default runs pass no spawn options at all. An absent override means the
+			// spawn uses the session's configured model, then the agent default.
+			// Nothing here is written back to the session.
+			const runOverrides: DocumentRunOverrides | undefined =
+				config.model || config.effort || config.ignoreModelHints
+					? {
+							...(config.model && { modelOverride: config.model }),
+							...(config.effort && { effortOverride: config.effort }),
+							...(config.ignoreModelHints && { ignoreModelHints: true }),
+						}
+					: undefined;
 
 			if (documents.length === 0) {
 				window.maestro.logger.log(
@@ -194,162 +238,244 @@ export function useBatchRunner({
 				return;
 			}
 
-			// Track batch start time for completion notification
-			const batchStartTime = Date.now();
-
-			// Initialize visibility-based time tracking for this session using the extracted hook
-			timeTracking.startTracking(sessionId);
-
-			// Reset stop flag for this session
-			stopRequestedRefs.current[sessionId] = false;
-			delete errorResolutionRefs.current[sessionId];
-
-			// Set up worktree if enabled using extracted hook.
-			// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-			// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
-			const sshRemoteId =
-				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-
-			let effectiveCwd: string;
-			let worktreeActive: boolean;
-			let worktreePath: string | undefined;
-			let worktreeBranch: string | undefined;
-
-			if (config.worktreeTarget) {
-				// Worktree dispatch was already handled by useAutoRunHandlers
-				// (spawnWorktreeAgentAndDispatch created the worktree and session).
-				// Skip setupWorktree - calling it again would fail because the session's
-				// CWD is already a worktree, not the main repo, causing a
-				// "belongs to a different repository" false positive.
-				effectiveCwd = session.cwd;
-				worktreeActive = true;
-				worktreePath = session.cwd;
-				worktreeBranch = session.worktreeBranch || config.worktree?.branchName;
-			} else {
-				// Normal path: set up worktree from scratch if config.worktree is enabled
-				const worktreeWithSsh = worktree ? { ...worktree, sshRemoteId } : undefined;
-				const worktreeResult = await worktreeManager.setupWorktree(session.cwd, worktreeWithSsh);
-				if (!worktreeResult.success) {
-					window.maestro.logger.log('error', 'Worktree setup failed', 'BatchProcessor', {
-						sessionId,
-						error: worktreeResult.error,
-					});
-					// Stop the tracker we initialised above so it doesn't leak into the
-					// next run's elapsed time.
-					timeTracking.stopTracking(sessionId);
-					return;
-				}
-				effectiveCwd = worktreeResult.effectiveCwd;
-				worktreeActive = worktreeResult.worktreeActive;
-				worktreePath = worktreeResult.worktreePath;
-				worktreeBranch = worktreeResult.worktreeBranch;
+			// Reserve the agent before worktree setup or any other preparation with
+			// side effects. Renderer stores cannot serialize starts across desktop
+			// and browser clients, but every renderer shares this main-process claim.
+			let claimedStart = false;
+			try {
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+			} catch (error) {
+				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'BatchProcessor', {
+					sessionId,
+					error: String(error),
+				});
 			}
-
-			// Get git branch for template variable substitution
-			let gitBranch: string | undefined;
-			if (session.isGitRepo) {
-				try {
-					const status = await gitService.getStatus(effectiveCwd);
-					gitBranch = status.branch;
-				} catch {
-					// Ignore git errors - branch will be empty string
-				}
-			}
-
-			// Find group name for this session (sessions have groupId, groups have id)
-			const sessionGroup = session.groupId ? groups.find((g) => g.id === session.groupId) : null;
-			const groupName = sessionGroup?.name;
-
-			// Calculate initial total tasks across all documents (checked + unchecked)
-			let initialTotalTasks = 0;
-			let initialCheckedTasks = 0;
-			for (const doc of documents) {
-				const { taskCount, checkedCount } = await readDocAndCountTasks(
-					folderPath,
-					doc.filename,
-					sshRemoteId
-				);
-				initialTotalTasks += taskCount + checkedCount;
-				initialCheckedTasks += checkedCount;
-			}
-			// Track unchecked count for the "no tasks" early exit check
-			const initialUncheckedTasks = initialTotalTasks - initialCheckedTasks;
-
-			if (initialUncheckedTasks === 0) {
-				window.maestro.logger.log(
-					'warn',
-					'No unchecked tasks found across all documents',
-					'BatchProcessor',
-					{ sessionId }
-				);
-				// Stop the tracker we initialised above so it doesn't leak into the
-				// next run's elapsed time.
-				timeTracking.stopTracking(sessionId);
+			if (!claimedStart) {
+				notifyToast({
+					type: 'warning',
+					title: 'Auto Run Already Active',
+					message: 'Another Maestro window already started Auto Run for this agent.',
+					project: session.name,
+					sessionId,
+				});
 				return;
 			}
 
-			// A steering note belongs to the run it was typed during. Anything left
-			// over from a previous run (killed mid-task, or paused and abandoned)
-			// must not open the first task of this one.
-			clearSteeringNotes(sessionId);
+			// Track batch start time for completion notification
+			const batchStartTime = Date.now();
+			const sshRemoteId =
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+			let effectiveCwd = session.cwd;
+			let worktreeActive = false;
+			let worktreePath: string | undefined;
+			let worktreeBranch: string | undefined;
+			let gitBranch: string | undefined;
+			const sessionGroup = session.groupId ? groups.find((g) => g.id === session.groupId) : null;
+			const groupName = sessionGroup?.name;
+			let initialTotalTasks = 0;
+			let initialCheckedTasks = 0;
+			let startPublished = false;
 
-			// Initialize batch run state using START_BATCH action directly
-			// (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
-			const lockedDocuments = documents.map((d) => d.filename);
-			dispatch({
-				type: 'START_BATCH',
-				sessionId,
-				payload: {
+			try {
+				// Initialize visibility-based time tracking for this session using the extracted hook
+				timeTracking.startTracking(sessionId);
+
+				// Reset stop flag for this session
+				stopRequestedRefs.current[sessionId] = false;
+				delete errorResolutionRefs.current[sessionId];
+
+				// Set up worktree if enabled using extracted hook.
+				// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
+				// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
+				if (config.worktreeTarget) {
+					// Worktree dispatch was already handled by useAutoRunHandlers
+					// (spawnWorktreeAgentAndDispatch created the worktree and session).
+					// Skip setupWorktree - calling it again would fail because the session's
+					// CWD is already a worktree, not the main repo, causing a
+					// "belongs to a different repository" false positive.
+					effectiveCwd = session.cwd;
+					worktreeActive = true;
+					worktreePath = session.cwd;
+					worktreeBranch = session.worktreeBranch || config.worktree?.branchName;
+				} else {
+					// Normal path: set up worktree from scratch if config.worktree is enabled
+					const worktreeWithSsh = worktree ? { ...worktree, sshRemoteId } : undefined;
+					const worktreeResult = await worktreeManager.setupWorktree(session.cwd, worktreeWithSsh);
+					if (!worktreeResult.success) {
+						window.maestro.logger.log('error', 'Worktree setup failed', 'BatchProcessor', {
+							sessionId,
+							error: worktreeResult.error,
+						});
+						return;
+					}
+					effectiveCwd = worktreeResult.effectiveCwd;
+					worktreeActive = worktreeResult.worktreeActive;
+					worktreePath = worktreeResult.worktreePath;
+					worktreeBranch = worktreeResult.worktreeBranch;
+				}
+
+				// Get git branch for template variable substitution
+				if (session.isGitRepo) {
+					try {
+						const status = await gitService.getStatus(effectiveCwd);
+						gitBranch = status.branch;
+					} catch {
+						// Ignore git errors - branch will be empty string
+					}
+				}
+
+				// Calculate initial total tasks across all documents (checked + unchecked),
+				// and find any halt marker an earlier run left behind in the same pass.
+				let staleHalt: { document: string; halt: HaltMarker } | null = null;
+				for (const doc of documents) {
+					const { taskCount, checkedCount, content } = await readDocAndCountTasks(
+						folderPath,
+						doc.filename,
+						sshRemoteId
+					);
+					initialTotalTasks += taskCount + checkedCount;
+					initialCheckedTasks += checkedCount;
+					if (!staleHalt) {
+						const halt = findHaltMarker(content);
+						if (halt) {
+							staleHalt = { document: doc.filename, halt };
+						}
+					}
+				}
+				// Track unchecked count for the "no tasks" early exit check
+				const initialUncheckedTasks = initialTotalTasks - initialCheckedTasks;
+
+				if (initialUncheckedTasks === 0) {
+					window.maestro.logger.log(
+						'warn',
+						'No unchecked tasks found across all documents',
+						'BatchProcessor',
+						{ sessionId }
+					);
+					return;
+				}
+
+				// A halt marker that is already in a document before any task runs was
+				// left there by an earlier run. The loop below only looks for one after a
+				// task finishes, and it scans the whole document, so launching over a
+				// leftover marker ran the playbook up to that document and then "halted"
+				// with the previous run's reason (#1588). Refuse to start instead, the
+				// same rule the CLI engine enforces with HALT_MARKER_PRESENT.
+				if (staleHalt) {
+					window.maestro.logger.log(
+						'warn',
+						'Auto Run refused to start: unresolved halt marker',
+						'BatchProcessor',
+						{
+							sessionId,
+							document: staleHalt.document,
+							line: staleHalt.halt.line + 1,
+							reason: staleHalt.halt.reason,
+						}
+					);
+					notifyToast({
+						type: 'warning',
+						title: 'Auto Run Not Started',
+						message: describeUnresolvedHaltMarker(staleHalt.document, staleHalt.halt),
+						project: session.name,
+						sessionId,
+						dismissible: true,
+					});
+					return;
+				}
+
+				// A previous run on this session may have exhausted its auto-resume
+				// attempts. Starting fresh must not inherit that, or the new run gets
+				// no automatic resume at all.
+				clearAutoResume(sessionId);
+
+				// A steering note belongs to the run it was typed during. Anything left
+				// over from a previous run (killed mid-task, or paused and abandoned)
+				// must not open the first task of this one.
+				clearSteeringNotes(sessionId);
+
+				// Initialize batch run state using START_BATCH action directly
+				// (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
+				const lockedDocuments = documents.map((d) => d.filename);
+				dispatch({
+					type: 'START_BATCH',
+					sessionId,
+					payload: {
+						documents: documents.map((d) => d.filename),
+						lockedDocuments,
+						totalTasksAcrossAllDocs: initialTotalTasks,
+						completedTasksAcrossAllDocs: initialCheckedTasks,
+						loopEnabled,
+						maxLoops,
+						folderPath,
+						worktreeActive,
+						worktreePath,
+						worktreeBranch,
+						customPrompt: prompt !== '' ? prompt : undefined,
+						// Persist the run-scoped model override so useAgentExitListener can read
+						// it back (via getBatchStateRef) and build each per-task exit-path
+						// synopsis under the run's model instead of the session default, for
+						// parity with the CLI batch processor. Only the model is stored:
+						// SynopsisData.sessionConfig has no effort field.
+						runModelOverride: config.model || undefined,
+						// Resolved once, here, so the run keeps the auto-resume terms it was
+						// launched under even if the user edits the defaults mid-run.
+						autoResumePolicy: resolveAutoResumePolicy(config),
+						startTime: batchStartTime,
+						// Time tracking
+						cumulativeTaskTimeMs: 0, // Sum of actual task durations (most accurate)
+						accumulatedElapsedMs: 0, // Visibility-based time (excludes sleep/suspend)
+						lastActiveTimestamp: batchStartTime,
+					},
+				});
+				// Broadcast state change. Mirrors the START_BATCH payload above so mobile
+				// /web clients see the same pre-checked count the reducer just stored
+				// (avoids a brief "0/N" flicker before the next progress update arrives).
+				// `completedTasks` is intentionally 0 - the reducer also hardcodes the
+				// legacy field to 0 in START_BATCH.
+				broadcastAutoRunState(sessionId, {
+					isRunning: true,
+					isStopping: false,
 					documents: documents.map((d) => d.filename),
 					lockedDocuments,
+					currentDocumentIndex: 0,
+					currentDocTasksTotal: 0,
+					currentDocTasksCompleted: 0,
 					totalTasksAcrossAllDocs: initialTotalTasks,
 					completedTasksAcrossAllDocs: initialCheckedTasks,
 					loopEnabled,
+					loopIteration: 0,
 					maxLoops,
 					folderPath,
 					worktreeActive,
 					worktreePath,
 					worktreeBranch,
+					totalTasks: initialTotalTasks,
+					completedTasks: 0,
+					currentTaskIndex: 0,
+					originalContent: '',
 					customPrompt: prompt !== '' ? prompt : undefined,
+					sessionIds: [],
 					startTime: batchStartTime,
-					// Time tracking
-					cumulativeTaskTimeMs: 0, // Sum of actual task durations (most accurate)
-					accumulatedElapsedMs: 0, // Visibility-based time (excludes sleep/suspend)
+					accumulatedElapsedMs: 0,
 					lastActiveTimestamp: batchStartTime,
-				},
-			});
-			// Broadcast state change. Mirrors the START_BATCH payload above so mobile
-			// /web clients see the same pre-checked count the reducer just stored
-			// (avoids a brief "0/N" flicker before the next progress update arrives).
-			// `completedTasks` is intentionally 0 - the reducer also hardcodes the
-			// legacy field to 0 in START_BATCH.
-			broadcastAutoRunState(sessionId, {
-				isRunning: true,
-				isStopping: false,
-				documents: documents.map((d) => d.filename),
-				lockedDocuments,
-				currentDocumentIndex: 0,
-				currentDocTasksTotal: 0,
-				currentDocTasksCompleted: 0,
-				totalTasksAcrossAllDocs: initialTotalTasks,
-				completedTasksAcrossAllDocs: initialCheckedTasks,
-				loopEnabled,
-				loopIteration: 0,
-				maxLoops,
-				folderPath,
-				worktreeActive,
-				worktreePath,
-				worktreeBranch,
-				totalTasks: initialTotalTasks,
-				completedTasks: 0,
-				currentTaskIndex: 0,
-				originalContent: '',
-				customPrompt: prompt !== '' ? prompt : undefined,
-				sessionIds: [],
-				startTime: batchStartTime,
-				accumulatedElapsedMs: 0,
-				lastActiveTimestamp: batchStartTime,
-			});
+				});
+				startPublished = true;
+			} finally {
+				if (!startPublished) {
+					try {
+						await window.maestro.web.releaseAutoRunStartClaim(sessionId);
+					} catch (error) {
+						window.maestro.logger.log(
+							'error',
+							'Failed to release Auto Run start claim',
+							'BatchProcessor',
+							{ sessionId, error: String(error) }
+						);
+					}
+					timeTracking.stopTracking(sessionId);
+				}
+			}
 
 			// AUTORUN LOG: Start
 			window.maestro.logger.autorun(`Auto Run started`, session.name, {
@@ -403,6 +529,38 @@ export function useBatchRunner({
 
 			// Prevent system sleep while Auto Run is active
 			window.maestro.power.addReason(`autorun:${sessionId}`);
+
+			// Watch .maestro/STATUS.json so playbook-reported progress (feature,
+			// phase, tests, summary) surfaces live in the Auto Run panel. Watching is
+			// optional: a failure here must never abort the run. Detached below next
+			// to power.removeReason (and on app quit as a backstop).
+			const statusProjectPath = effectiveCwd;
+			let statusCleanup: (() => void) | null = null;
+			try {
+				// sessionId is the subscription identity: two agents can run Auto Run
+				// on one project, and the watcher is released only when the last of
+				// them finishes. Remote agents write STATUS.json on the far host, so
+				// the watch is declined rather than pointed at the local filesystem.
+				const { status: initialStatus } = await window.maestro.autorun.watchStatus(
+					statusProjectPath,
+					sessionId,
+					Boolean(sshRemoteId)
+				);
+				if (initialStatus) {
+					dispatch({ type: 'UPDATE_PLAYBOOK_STATUS', sessionId, status: initialStatus });
+				}
+				statusCleanup = window.maestro.autorun.onStatusChanged((data) => {
+					if (data.projectPath === statusProjectPath) {
+						dispatch({
+							type: 'UPDATE_PLAYBOOK_STATUS',
+							sessionId,
+							status: data.status ?? undefined,
+						});
+					}
+				});
+			} catch {
+				// STATUS.json watching is optional - don't fail the batch.
+			}
 
 			// Start stats tracking for this Auto Run session
 			let statsAutoRunId: string | null = null;
@@ -461,6 +619,13 @@ export function useBatchRunner({
 
 			// Track stalled documents (document filename -> stall reason)
 			const stalledDocuments: Map<string, string> = new Map();
+
+			// Set when an agent writes a `<!-- maestro:halt: reason -->` marker into a
+			// document mid-run. A halt aborts the whole playbook immediately: no more
+			// tasks in the current document, no remaining documents, no further loop
+			// iterations. Mirrors the CLI batch processor so desktop Auto Run honors
+			// the same agent-driven early-exit contract. (#231)
+			let haltRequest: { document: string; reason: string } | null = null;
 
 			// Track the line of the currently-active HITL gate (null when none).
 			// Used to (a) dedupe the sticky toast on Resume-without-tick -
@@ -656,14 +821,31 @@ export function useBatchRunner({
 							// dropped) is logged but doesn't crash the run.
 							if (activeHitlGateLine !== null) {
 								try {
-									const {
-										taskCount: resumedRemaining,
-										checkedCount: resumedChecked,
-										content: resumedContent,
-									} = await readDocAndCountTasks(folderPath, effectiveFilename, sshRemoteId);
-									remainingTasks = resumedRemaining;
-									docCheckedCount = resumedChecked;
-									docContent = resumedContent;
+									let resumed = await readDocAndCountTasks(
+										folderPath,
+										effectiveFilename,
+										sshRemoteId
+									);
+									// Resume on a gate means the person did the step. If they did
+									// not tick a box themselves, write one, or the gate check below
+									// finds the same gate and pauses again.
+									const acknowledged = acknowledgeHitlGate(resumed.content);
+									if (acknowledged !== null) {
+										await window.maestro.autorun.writeDoc(
+											folderPath,
+											effectiveFilename + '.md',
+											acknowledged,
+											sshRemoteId
+										);
+										resumed = await readDocAndCountTasks(
+											folderPath,
+											effectiveFilename,
+											sshRemoteId
+										);
+									}
+									remainingTasks = resumed.taskCount;
+									docCheckedCount = resumed.checkedCount;
+									docContent = resumed.content;
 								} catch (rereadErr) {
 									logger.warn(
 										`[BatchProcessor] HITL resume re-read failed for ${effectiveFilename}; continuing with in-memory content:`,
@@ -756,7 +938,7 @@ export function useBatchRunner({
 							readDocAndCountTasks,
 							updateBatchState: (sid, updater, immediate) =>
 								updateBatchStateAndBroadcastRef.current!(sid, updater, immediate),
-							getSessions: () => sessionsRef.current,
+							getSessions,
 							onUpdateSession,
 							updateTaskCount: (filename, completed, total) =>
 								useBatchStore.getState().updateTaskCount(filename, completed, total),
@@ -775,6 +957,7 @@ export function useBatchRunner({
 									customPrompt: prompt,
 									taskSelectionMode,
 									sshRemoteId,
+									runOverrides,
 									// Consumed here rather than inside processTask so the take
 									// happens exactly once per dispatch: a note the operator
 									// sends after this line belongs to the NEXT task, not to a
@@ -992,21 +1175,29 @@ export function useBatchRunner({
 								};
 							});
 
-							// Add history entry
-							// Use effectiveCwd for projectPath so clicking the session link looks in the right place
-							onAddHistoryEntry({
-								type: 'AUTO',
-								timestamp: Date.now(),
-								summary: shortSummary,
-								fullResponse: fullSynopsis,
-								agentSessionId,
-								projectPath: effectiveCwd,
-								sessionId: sessionId,
-								success,
-								usageStats,
-								contextUsage,
-								elapsedTimeMs,
-							});
+							// Add history entry. Await the write so the final cumulative
+							// aggregation sees the latest task before writing the summary.
+							try {
+								await onAddHistoryEntry({
+									type: 'AUTO',
+									timestamp: Date.now(),
+									summary: shortSummary,
+									fullResponse: fullSynopsis,
+									agentSessionId,
+									projectPath: effectiveCwd,
+									sessionId: sessionId,
+									success,
+									usageStats,
+									contextUsage,
+									elapsedTimeMs,
+									completedTaskCount: tasksCompletedThisRun,
+								});
+							} catch (historyError) {
+								logger.warn('[BatchProcessor] Failed to add task history entry:', undefined, {
+									sessionId,
+									error: historyError,
+								});
+							}
 
 							// Speak the synopsis via TTS if audio feedback is enabled
 							// Use refs to get latest setting values (user may toggle mid-run)
@@ -1102,6 +1293,26 @@ export function useBatchRunner({
 							docCheckedCount = newCheckedCount;
 							remainingTasks = newRemainingTasks;
 							docContent = taskResult.contentAfterTask;
+
+							// Halt marker: the agent can write `<!-- maestro:halt: reason -->`
+							// into the document to stop the whole run now. Checked on the
+							// post-task content (after the synopsis/history for this task was
+							// already recorded above) so the work that led to the halt is still
+							// captured. Breaks the task loop; the document and outer loops below
+							// pick up `haltRequest` and finalize. (#231)
+							const haltMarker = detectHaltMarker(taskResult.contentAfterTask);
+							if (haltMarker.halted) {
+								haltRequest = {
+									document: docEntry.filename,
+									reason: haltMarker.reason || 'Halted by agent',
+								};
+								window.maestro.logger.autorun('Auto Run halted by agent', session.name, {
+									document: docEntry.filename,
+									reason: haltRequest.reason,
+									loopNumber: loopIteration + 1,
+								});
+								break;
+							}
 						} catch (error) {
 							progressPoll.stop();
 							logger.error(
@@ -1147,6 +1358,12 @@ export function useBatchRunner({
 
 					// Check for stop request before moving to next document
 					if (stopRequestedRefs.current[sessionId]) {
+						break;
+					}
+
+					// An agent halted the run from inside this document - skip any remaining
+					// documents and let the outer loop finalize. (#231)
+					if (haltRequest) {
 						break;
 					}
 
@@ -1207,6 +1424,21 @@ export function useBatchRunner({
 						// Working copy still serves as record of the attempt
 						workingCopies.delete(docEntry.filename);
 					}
+				}
+
+				// An agent halted the run from inside a document - stop looping entirely,
+				// record the terminal reason in run history, and surface a toast so the
+				// user sees why Auto Run ended without opening the History panel. (#231)
+				if (haltRequest) {
+					addFinalLoopSummary(`Halted by agent: ${haltRequest.reason}`);
+					notifyToast({
+						color: 'theme',
+						title: 'Auto Run halted by agent',
+						message: haltRequest.reason,
+						project: session.name,
+						sessionId,
+					});
+					break;
 				}
 
 				// Note: We no longer break immediately when a document stalls.
@@ -1341,7 +1573,7 @@ export function useBatchRunner({
 			) {
 				// For worktree-dispatched runs, the main repo is the parent session's cwd
 				const mainRepoCwd = config.worktreeTarget
-					? sessionsRef.current.find((s) => s.id === session.parentSessionId)?.cwd || session.cwd
+					? getSessions().find((s) => s.id === session.parentSessionId)?.cwd || session.cwd
 					: session.cwd;
 
 				const prResult = await worktreeManager.createPR({
@@ -1378,10 +1610,35 @@ export function useBatchRunner({
 				});
 			}
 
+			// The run is over however it got here (finished, stopped, halted). Any
+			// pending auto-resume must not fire into a loop that no longer exists,
+			// and the attempt count is spent - the ERR badge clears with it.
+			clearAutoResume(sessionId);
+
 			// Add final Auto Run summary entry
 			// Calculate visibility-aware elapsed time using the extracted time tracking hook
 			// (excludes time when laptop was sleeping/suspended)
 			const totalElapsedMs = timeTracking.getElapsedTime(sessionId);
+			let finalTotals = {
+				totalCompletedTasks,
+				totalElapsedMs,
+				totalInputTokens,
+				totalOutputTokens,
+				totalCost,
+			};
+
+			try {
+				const historyEntries = await window.maestro.history.getAll(undefined, sessionId);
+				finalTotals = mergeFinalSummaryTotals(
+					finalTotals,
+					aggregateAutoRunHistoryTotals(historyEntries)
+				);
+			} catch (historyError) {
+				logger.warn('[BatchProcessor] Failed to aggregate Auto Run history totals:', undefined, {
+					sessionId,
+					error: historyError,
+				});
+			}
 
 			const {
 				summary: finalSummary,
@@ -1389,15 +1646,15 @@ export function useBatchRunner({
 				isSuccess,
 			} = buildFinalSummary({
 				wasStopped,
-				totalCompletedTasks,
-				totalElapsedMs,
+				totalCompletedTasks: finalTotals.totalCompletedTasks,
+				totalElapsedMs: finalTotals.totalElapsedMs,
 				stalledDocuments,
 				documents,
 				loopEnabled,
 				loopIteration,
-				totalInputTokens,
-				totalOutputTokens,
-				totalCost,
+				totalInputTokens: finalTotals.totalInputTokens,
+				totalOutputTokens: finalTotals.totalOutputTokens,
+				totalCost: finalTotals.totalCost,
 				autoRunStats,
 			});
 
@@ -1415,15 +1672,15 @@ export function useBatchRunner({
 						projectPath: session.cwd,
 						sessionId, // Include sessionId so the summary appears in session's history
 						success: isSuccess,
-						elapsedTimeMs: totalElapsedMs,
+						elapsedTimeMs: finalTotals.totalElapsedMs,
 						usageStats:
-							totalInputTokens > 0 || totalOutputTokens > 0
+							finalTotals.totalInputTokens > 0 || finalTotals.totalOutputTokens > 0
 								? {
-										inputTokens: totalInputTokens,
-										outputTokens: totalOutputTokens,
+										inputTokens: finalTotals.totalInputTokens,
+										outputTokens: finalTotals.totalOutputTokens,
 										cacheReadInputTokens: 0,
 										cacheCreationInputTokens: 0,
-										totalCostUsd: totalCost,
+										totalCostUsd: finalTotals.totalCost,
 										contextWindow: 0,
 									}
 								: undefined,
@@ -1438,8 +1695,8 @@ export function useBatchRunner({
 					try {
 						await window.maestro.stats.endAutoRun(
 							statsAutoRunId,
-							totalElapsedMs,
-							totalCompletedTasks
+							finalTotals.totalElapsedMs,
+							finalTotals.totalCompletedTasks
 						);
 					} catch (statsError) {
 						// Don't fail cleanup if stats tracking fails
@@ -1475,13 +1732,13 @@ export function useBatchRunner({
 				onComplete({
 					sessionId,
 					sessionName: session.name || session.cwd.split('/').pop() || 'Unknown',
-					completedTasks: totalCompletedTasks,
-					totalTasks: initialTotalTasks,
+					completedTasks: finalTotals.totalCompletedTasks,
+					totalTasks: Math.max(initialTotalTasks, finalTotals.totalCompletedTasks),
 					wasStopped,
-					elapsedTimeMs: totalElapsedMs,
-					inputTokens: totalInputTokens,
-					outputTokens: totalOutputTokens,
-					totalCostUsd: totalCost,
+					elapsedTimeMs: finalTotals.totalElapsedMs,
+					inputTokens: finalTotals.totalInputTokens,
+					outputTokens: finalTotals.totalOutputTokens,
+					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
 				});
 			}
@@ -1505,6 +1762,19 @@ export function useBatchRunner({
 
 			// Allow system to sleep now that Auto Run is complete
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
+
+			// Release this run's claim on the STATUS.json watcher. The main-process
+			// watcher only closes once every subscriber has released it, so a sibling
+			// agent still running Auto Run on this project keeps its live panel.
+			// Also torn down on app quit, so this is best-effort cleanup.
+			if (statusCleanup) {
+				statusCleanup();
+			}
+			try {
+				await window.maestro.autorun.unwatchStatus(statusProjectPath, sessionId);
+			} catch {
+				// Ignore cleanup errors.
+			}
 			// Note: updateBatchStateAndBroadcast is accessed via ref to avoid stale closure in long-running async
 			// flushDebouncedUpdate is stable (empty deps in useSessionDebounce) so adding it doesn't cause re-renders
 		},
@@ -1530,7 +1800,7 @@ export function useBatchRunner({
 			onUpdateSession,
 			pauseBatchOnError,
 			readDocAndCountTasks,
-			sessionsRef,
+			getSessions,
 			stopRequestedRefs,
 			timeTracking,
 			updateBatchStateAndBroadcastRef,

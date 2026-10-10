@@ -177,6 +177,8 @@ const createDefaultProps = (
 	setRenameGroupId: vi.fn(),
 	setRenameGroupValue: vi.fn(),
 	setRenameGroupEmoji: vi.fn(),
+	setRenameGroupIcon: vi.fn(),
+	setRenameGroupColor: vi.fn(),
 	setCreateGroupModalOpen: vi.fn(),
 	setLeftSidebarOpen: vi.fn(),
 	setRightPanelOpen: vi.fn(),
@@ -501,6 +503,58 @@ describe('QuickActionsModal', () => {
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
 				// The group stays collapsed - the bookmark row is the lighter reveal.
 				expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
+			});
+		});
+
+		describe('Opt+Cmd+# jump chord', () => {
+			const chord = (digit: string) => formatShortcutKeys(['Alt', 'Meta', digit]);
+			const rowFor = (label: string) => screen.getByText(label).closest('button')!;
+
+			it('shows the chord on jump rows for agents in the first ten Left Bar slots', () => {
+				const first = createMockSession({ id: 'session-1', name: 'First' });
+				const second = createMockSession({ id: 'session-2', name: 'Second' });
+				const props = createDefaultProps({
+					sessions: [first, second],
+					visibleSessions: [second, first],
+				});
+				render(<QuickActionsModal {...props} />);
+
+				// Slot order follows the Left Bar, not the sessions array.
+				expect(rowFor('Jump to: Second').textContent).toContain(chord('1'));
+				expect(rowFor('Jump to: First').textContent).toContain(chord('2'));
+			});
+
+			it('binds the tenth slot to 0 and gives the eleventh no chord', () => {
+				const sessions = Array.from({ length: 11 }, (_, i) =>
+					createMockSession({ id: `session-${i + 1}`, name: `Agent ${i + 1}` })
+				);
+				const props = createDefaultProps({ sessions, visibleSessions: sessions });
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Jump to: Agent 10').textContent).toContain(chord('0'));
+				expect(rowFor('Jump to: Agent 11').textContent).not.toContain(
+					formatShortcutKeys(['Alt', 'Meta'])
+				);
+			});
+
+			it('shows the chord in the agent switcher', () => {
+				const session = createMockSession({ id: 'session-1', name: 'Solo' });
+				const props = createDefaultProps({
+					sessions: [session],
+					visibleSessions: [session],
+					initialMode: 'agents',
+				});
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Solo').textContent).toContain(chord('1'));
+			});
+
+			it('shows no chord for an agent the Left Bar is not drawing', () => {
+				const session = createMockSession({ id: 'session-1', name: 'Hidden' });
+				const props = createDefaultProps({ sessions: [session], visibleSessions: [] });
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Jump to: Hidden').textContent).not.toContain(chord('1'));
 			});
 		});
 
@@ -1398,6 +1452,8 @@ describe('QuickActionsModal', () => {
 			expect(props.setRenameGroupId).toHaveBeenCalledWith('group-1');
 			expect(props.setRenameGroupValue).toHaveBeenCalledWith('Test Group');
 			expect(props.setRenameGroupEmoji).toHaveBeenCalledWith('📁');
+			expect(props.setRenameGroupIcon).toHaveBeenCalledWith(undefined);
+			expect(props.setRenameGroupColor).toHaveBeenCalledWith(undefined);
 			expect(props.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
@@ -2041,6 +2097,38 @@ describe('QuickActionsModal', () => {
 		});
 	});
 
+	describe('Maestro Cue action', () => {
+		it('displays the openCue shortcut keys on the Maestro Cue command', () => {
+			const props = createDefaultProps({
+				onOpenMaestroCue: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					openCue: { id: 'openCue', keys: ['Alt', 'q'], enabled: true },
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+			expect(screen.getByText(formatShortcutKeys(['Alt', 'q']))).toBeInTheDocument();
+		});
+	});
+
+	describe('Execution Queue action', () => {
+		it('displays the executionQueue shortcut keys on the View Execution Queue command', () => {
+			const props = createDefaultProps({
+				onOpenQueueBrowser: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					executionQueue: { id: 'executionQueue', keys: ['Cmd', 'Shift', 'X'], enabled: true },
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('View Execution Queue')).toBeInTheDocument();
+			expect(screen.getByText(formatShortcutKeys(['Cmd', 'Shift', 'X']))).toBeInTheDocument();
+		});
+	});
+
 	describe('Agent switcher mode (Cmd+O)', () => {
 		it('shows agent-specific placeholder when initialMode is agents', () => {
 			const props = createDefaultProps({ initialMode: 'agents' });
@@ -2076,6 +2164,48 @@ describe('QuickActionsModal', () => {
 			expect(screen.queryByText('Create New Agent')).not.toBeInTheDocument();
 			expect(screen.queryByText('Toggle Left Panel')).not.toBeInTheDocument();
 			expect(screen.queryByText('Open Settings')).not.toBeInTheDocument();
+		});
+
+		it('hides the Pianola agent while its Encore flag is off', async () => {
+			// Pianola persists in the session store after the flag is switched off, so
+			// the palette has to apply the same visibility predicate the Left Bar does -
+			// otherwise it hands the user an agent with no row to come back to.
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+			} as never);
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					{ ...createMockSession({ id: 'pianola-1', name: 'Pianola' }), isPianola: true },
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Pianola')).not.toBeInTheDocument();
+		});
+
+		it('lists the Pianola agent once its Encore flag is on', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
+			} as never);
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					{ ...createMockSession({ id: 'pianola-1', name: 'Pianola' }), isPianola: true },
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Pianola')).toBeInTheDocument();
+
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+			} as never);
 		});
 
 		it('filters agents by search text in agents mode', () => {

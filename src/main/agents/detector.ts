@@ -18,6 +18,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
 import {
@@ -27,10 +28,18 @@ import {
 	getExpandedEnv,
 } from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
+import { resolveConfigDirKeyFromEnv } from './claudeSpawnCore';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
 import { capabilitySnapshots } from './capability-snapshot';
+import {
+	setOmpModelCatalog,
+	computeOmpCatalogKey,
+	primeOmpModelCatalog,
+	buildOmpPrimeEnv,
+} from './omp-model-catalog';
+import { isBlankEnvValue } from '../../shared/agentEnvironment';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -58,10 +67,8 @@ function readCopilotConfiguredModel(): string | null {
  * should fall back to the user-configured model in that case.
  */
 async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), MODELS_DEV_FETCH_TIMEOUT_MS);
 	try {
-		const response = await fetch(MODELS_DEV_API_URL, { signal: controller.signal });
+		const response = await fetchWithTimeout(MODELS_DEV_API_URL, {}, MODELS_DEV_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			return null;
 		}
@@ -79,11 +86,238 @@ async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
 			error: String(err),
 		});
 		return null;
-	} finally {
-		clearTimeout(timeout);
 	}
 }
 
+// ============ Claude Code model discovery ============
+
+/**
+ * Tier aliases Claude Code always accepts, each resolving to the current model
+ * in that tier. `[1m]` variants select the 1M extended context window and need
+ * extra usage enabled at claude.ai/settings/usage; the CLI offers them for opus
+ * and sonnet only.
+ *
+ * Not every model has an alias - limited-access models are reachable only by
+ * their full ID - so this list is a floor, never the whole picture. The sources
+ * below fill in the rest.
+ */
+const CLAUDE_MODEL_ALIASES = ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
+
+/**
+ * Model catalog the Claude Code CLI caches to render its own `/model` picker,
+ * relative to the Claude config directory.
+ */
+const CLAUDE_CATALOG_SUBDIR = ['cache', 'model-catalog'];
+
+/**
+ * Surface key for Claude Code inside the catalog. The catalog also carries
+ * `chat`, `cowork` and others, whose model lists differ.
+ */
+const CLAUDE_CATALOG_SURFACE = 'cc';
+
+/** One entry of a surface's model selector, in either catalog shape. */
+interface ClaudeCatalogSelectorConfig {
+	models?: Array<{ id?: string }>;
+}
+
+/**
+ * The CLI's cached catalog, in both shapes seen in the wild.
+ *
+ * Shape A (observed on CLI 2.1.257): one `published-<hash>.json` holding every
+ * surface, keyed by name under `document.surfaces`, each with an array of
+ * selector configs.
+ *
+ * Shape B (observed on CLI 2.1.294): one `<uuid>-<hash>-<surface>.json` per
+ * surface, the surface named in a field rather than a key, and a single
+ * selector config object instead of an array.
+ *
+ * This is an undocumented cache that has already been reshaped once between two
+ * patch releases, so both shapes are read and neither is required.
+ */
+interface ClaudeCatalogFile {
+	document?: {
+		surfaces?: Record<
+			string,
+			{ model_selector_config?: ClaudeCatalogSelectorConfig | ClaudeCatalogSelectorConfig[] }
+		>;
+	};
+	catalog?: {
+		surface?: string;
+		config?: ClaudeCatalogSelectorConfig | ClaudeCatalogSelectorConfig[];
+	};
+}
+
+interface ClaudeConfigFile {
+	projects?: Record<string, { lastModelUsage?: Record<string, unknown> }>;
+}
+
+interface ClaudeStatsCacheFile {
+	modelUsage?: Record<string, unknown>;
+}
+
+/** Tolerate a field that is a single object in one CLI build and an array in another. */
+function asConfigList(
+	value: ClaudeCatalogSelectorConfig | ClaudeCatalogSelectorConfig[] | undefined
+): ClaudeCatalogSelectorConfig[] {
+	if (!value) return [];
+	return Array.isArray(value) ? value : [value];
+}
+
+/**
+ * The Claude Code state directory this machine's CLI actually writes to:
+ * `$CLAUDE_CONFIG_DIR` when set, `~/.claude` otherwise.
+ *
+ * Maestro supports several Claude accounts at once by pointing agents at
+ * different config dirs, so discovery that hardcoded `~/.claude` would offer
+ * one account's models while the agent runs as another.
+ *
+ * `resolveConfigDirKeyFromEnv` is the canonical resolver - the spawner, the
+ * usage sampler and the CLI all key off it - but a blank `CLAUDE_CONFIG_DIR`
+ * survives its `??` and resolves to the process cwd, which is nobody's account.
+ * `isBlankEnvValue` is the codebase's existing answer to set-but-empty, so a
+ * blank value is folded back to unset before the resolver sees it.
+ */
+function resolveClaudeConfigDir(): string {
+	return resolveConfigDirKeyFromEnv(hasExplicitClaudeConfigDir() ? process.env : {});
+}
+
+/** Whether `CLAUDE_CONFIG_DIR` is set to something that actually names a directory. */
+function hasExplicitClaudeConfigDir(): boolean {
+	const value = process.env.CLAUDE_CONFIG_DIR;
+	return typeof value === 'string' && !isBlankEnvValue(value);
+}
+
+/**
+ * Where the CLI keeps `.claude.json`.
+ *
+ * By default it sits *beside* `~/.claude`, not inside it. With
+ * `CLAUDE_CONFIG_DIR` set, the CLI writes it inside that directory instead.
+ */
+function resolveClaudeConfigJsonPath(): string {
+	return hasExplicitClaudeConfigDir()
+		? path.join(resolveClaudeConfigDir(), '.claude.json')
+		: path.join(os.homedir(), '.claude.json');
+}
+
+/** Model IDs the `cc` surface offers, from whichever catalog shape this file is in. */
+function readCatalogSurfaceModelIds(file: ClaudeCatalogFile): string[] {
+	const configs = [
+		...asConfigList(file.document?.surfaces?.[CLAUDE_CATALOG_SURFACE]?.model_selector_config),
+		...(file.catalog?.surface === CLAUDE_CATALOG_SURFACE ? asConfigList(file.catalog.config) : []),
+	];
+
+	const ids: string[] = [];
+	for (const config of configs) {
+		for (const model of config?.models ?? []) {
+			if (typeof model?.id === 'string' && model.id && !ids.includes(model.id)) {
+				ids.push(model.id);
+			}
+		}
+	}
+	return ids;
+}
+
+/**
+ * Model IDs from the CLI's cached model catalog.
+ *
+ * This is the list Claude Code's own `/model` picker renders. Anthropic
+ * publishes the catalog and the CLI refreshes it on its own schedule, so new
+ * models reach the dropdown without a Maestro release.
+ *
+ * Every `.json` in the directory is a candidate: the file naming has already
+ * changed once (`published-<hash>.json` -> `<uuid>-<hash>-cc.json`) between two
+ * patch releases, so the name is not a contract. Only `published-floor.json` is
+ * reliably an index rather than a catalog. Files belonging to another surface
+ * are discarded by the surface check, not by their name.
+ *
+ * Returns an empty list when the cache is missing or unreadable - it is written
+ * lazily, so a fresh install legitimately has none.
+ */
+function readClaudeCatalogModelIds(): string[] {
+	const dir = path.join(resolveClaudeConfigDir(), ...CLAUDE_CATALOG_SUBDIR);
+	let entries: string[];
+	try {
+		entries = fs
+			.readdirSync(dir)
+			.filter((name) => name.endsWith('.json') && name !== 'published-floor.json');
+	} catch {
+		logger.debug('No Claude model catalog cache for model discovery', LOG_CONTEXT);
+		return [];
+	}
+
+	const ids: string[] = [];
+	for (const entry of entries) {
+		try {
+			const catalog = parseJsonWithBom<ClaudeCatalogFile>(
+				fs.readFileSync(path.join(dir, entry), 'utf8')
+			);
+			for (const id of readCatalogSurfaceModelIds(catalog)) {
+				if (!ids.includes(id)) {
+					ids.push(id);
+				}
+			}
+		} catch {
+			// A half-written or superseded catalog file should not cost us the others.
+			logger.debug(`Could not read Claude model catalog ${entry}`, LOG_CONTEXT);
+		}
+	}
+	return ids;
+}
+
+/**
+ * Model IDs this user has actually run, across every project.
+ *
+ * Read from `.claude.json`, where the CLI records per-project usage as
+ * `projects.<cwd>.lastModelUsage`. This is what surfaces a model the published
+ * catalog does not list - preview and limited-access models - once it has been
+ * used at least once.
+ */
+function readClaudeUsedModelIds(): string[] {
+	const ids: string[] = [];
+	try {
+		const config = parseJsonWithBom<ClaudeConfigFile>(
+			fs.readFileSync(resolveClaudeConfigJsonPath(), 'utf8')
+		);
+		for (const project of Object.values(config.projects ?? {})) {
+			for (const modelId of Object.keys(project?.lastModelUsage ?? {})) {
+				if (modelId && !ids.includes(modelId)) {
+					ids.push(modelId);
+				}
+			}
+		}
+	} catch {
+		// Absent on a fresh install, and unreadable is not worth failing over.
+		logger.debug('Could not read .claude.json for model discovery', LOG_CONTEXT);
+	}
+	return ids;
+}
+
+/**
+ * Model IDs from the legacy `stats-cache.json`.
+ *
+ * Current Claude Code does not write this file here any more - the path moved
+ * under the CLI's XDG state directory - which is why it had stopped
+ * contributing anything. Machines that ran an older build still have it, and on
+ * those it is the only record of what they used, so it stays as a third
+ * fail-soft source. Absent is the ordinary case and costs one failed read.
+ */
+function readClaudeStatsCacheModelIds(): string[] {
+	const ids: string[] = [];
+	try {
+		const stats = parseJsonWithBom<ClaudeStatsCacheFile>(
+			fs.readFileSync(path.join(resolveClaudeConfigDir(), 'stats-cache.json'), 'utf8')
+		);
+		for (const modelId of Object.keys(stats.modelUsage ?? {})) {
+			if (modelId && !ids.includes(modelId)) {
+				ids.push(modelId);
+			}
+		}
+	} catch {
+		// Expected on any machine that never ran a CLI build that wrote it here.
+		logger.debug('Could not read Claude stats-cache.json for model discovery', LOG_CONTEXT);
+	}
+	return ids;
+}
 // ============ Agent Detector Class ============
 
 /** Default cache TTL: 5 minutes (model lists don't change frequently) */
@@ -159,11 +393,13 @@ export class AgentDetector {
 		for (const agentDef of AGENT_DEFINITIONS) {
 			const customPath = this.customPaths[agentDef.id];
 			let detection: { exists: boolean; path?: string };
+			let resolvedCustomPath: string | undefined;
 
 			// If user has specified a custom path, check that first
 			if (customPath) {
 				detection = await checkCustomPath(customPath);
 				if (detection.exists) {
+					resolvedCustomPath = detection.path || customPath;
 					logger.info(
 						`Agent "${agentDef.name}" found at custom path: ${detection.path}`,
 						LOG_CONTEXT
@@ -235,7 +471,7 @@ export class AgentDetector {
 				...agentDef,
 				available: detection.exists,
 				path: detection.path,
-				customPath: customPath || undefined,
+				customPath: resolvedCustomPath,
 				allPaths,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
@@ -262,6 +498,25 @@ export class AgentDetector {
 				} else if (existing?.status !== 'not_installed') {
 					capabilitySnapshots.markNotInstalled(agentDef.id);
 				}
+			}
+
+			// Warm the default-identity omp context-window catalog the moment omp
+			// is detected, so a user's first prompt already has the real per-turn
+			// window resolved instead of losing a cold-start race against the
+			// spawn-time prime cap. Non-blocking: the catalog's own TTL/dedupe
+			// guards against repeated primes, and custom-path/env sessions still
+			// prime their own identity at spawn time.
+			if (agentDef.id === 'omp' && detection.exists && detection.path) {
+				// Prime with the same env-construction the spawn path uses
+				// (expanded PATH + the binary's own dir first) so a bun-based
+				// `omp` at ~/.bun/bin resolves its co-located runtime here too.
+				// getExpandedEnv() alone omits ~/.bun/bin, so the eager warm-up
+				// would lose the very cold-start race it exists to win.
+				primeOmpModelCatalog(
+					detection.path,
+					buildOmpPrimeEnv(detection.path),
+					computeOmpCatalogKey(detection.path, undefined)
+				);
 			}
 		}
 
@@ -362,6 +617,13 @@ export class AgentDetector {
 		// Run agent-specific model discovery command
 		const models = await this.runModelDiscovery(agentId, agent);
 
+		// A transient `omp models --json` failure returns an empty list. Don't cache
+		// that, or the picker stays empty for the whole TTL even after the CLI
+		// recovers; let the next call retry. (omp always has a non-empty catalog.)
+		if (agentId === 'omp' && models.length === 0) {
+			return models;
+		}
+
 		// Cache the results
 		this.modelCache.set(agentId, { models, timestamp: Date.now() });
 
@@ -383,30 +645,44 @@ export class AgentDetector {
 			// Agent-specific model discovery commands
 			switch (agentId) {
 				case 'claude-code': {
-					// Claude Code: no CLI listing command.
-					// Discover models dynamically from two sources:
-					// 1. Well-known aliases (always valid, resolve to latest in each tier)
-					//    Includes [1m] variants for 1M extended context window
-					//    (requires extra usage enabled at claude.ai/settings/usage).
-					//    fable has no [1m] variant (Claude Code exposes 1M only for opus/sonnet).
-					// 2. Historical model usage from ~/.claude/stats-cache.json
-					const models: string[] = ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
-					try {
-						const statsPath = path.join(os.homedir(), '.claude', 'stats-cache.json');
-						const statsContent = fs.readFileSync(statsPath, 'utf8');
-						const stats = JSON.parse(statsContent);
-						// modelUsage keys are full model IDs the user has used
-						if (stats.modelUsage && typeof stats.modelUsage === 'object') {
-							for (const modelId of Object.keys(stats.modelUsage)) {
-								if (!models.includes(modelId)) {
-									models.push(modelId);
-								}
-							}
+					// Claude Code: no CLI listing command, so the list is assembled from
+					// whatever the CLI itself leaves on disk. Every source is optional and
+					// fails soft; the aliases alone are always a usable list.
+					//
+					// All three on-disk sources are read from the config dir this machine's
+					// CLI actually writes to (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), so a
+					// multi-account setup is offered its own account's models.
+					//
+					// Ordering is deliberate: aliases first (short and the common case),
+					// then full IDs, so the top of the dropdown stays stable.
+					const models: string[] = [...CLAUDE_MODEL_ALIASES];
+					const add = (modelId: unknown): void => {
+						if (typeof modelId === 'string' && modelId && !models.includes(modelId)) {
+							models.push(modelId);
 						}
-					} catch {
-						// stats-cache.json may not exist yet (fresh install)
-						logger.debug('Could not read Claude stats-cache.json for model discovery', LOG_CONTEXT);
+					};
+
+					// 1. The CLI's own model catalog - the same list its `/model` picker
+					//    renders. Anthropic publishes it, the CLI caches it, so new models
+					//    appear here without a Maestro release.
+					for (const modelId of readClaudeCatalogModelIds()) {
+						add(modelId);
 					}
+
+					// 2. Models this user has actually run. Covers anything the published
+					//    catalog does not carry (limited-access and preview models), which
+					//    the catalog alone would never surface.
+					for (const modelId of readClaudeUsedModelIds()) {
+						add(modelId);
+					}
+
+					// 3. The legacy stats cache. Current CLI builds no longer write it
+					//    here, so it contributes nothing on an up-to-date machine - but
+					//    one that ran an older build keeps its history this way.
+					for (const modelId of readClaudeStatsCacheModelIds()) {
+						add(modelId);
+					}
+
 					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, { models });
 					return models;
 				}
@@ -509,6 +785,124 @@ export class AgentDetector {
 					}
 
 					return userModel ? [userModel] : [];
+				}
+
+				case 'omp': {
+					// Oh My Pi: `omp models --json` returns { models: [{ id, selector, ... }] }
+					// across every configured provider. Prefer the provider-qualified `selector`
+					// (e.g. anthropic/claude-opus-4-8), which is unambiguous for --model.
+					// Use the same env as the two prime sites (detection warm-up and spawn):
+					// `buildOmpPrimeEnv` expands the PATH with `~/.bun/bin` and prepends the
+					// binary's own directory so a co-located runtime resolves. Running this
+					// discovery with the shared `getExpandedEnv()` result instead would let
+					// it fail (or resolve differently) where the primes succeed, and it feeds
+					// `setOmpModelCatalog` below, so the catalogs must stay in lockstep.
+					const result = await execFileNoThrow(
+						command,
+						['models', '--json'],
+						undefined,
+						buildOmpPrimeEnv(command)
+					);
+					if (result.exitCode !== 0) {
+						logger.warn(
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+						return [];
+					}
+					let parsed: {
+						models?: Array<{ id?: string; selector?: string; contextWindow?: number }>;
+					};
+					try {
+						parsed = parseJsonWithBom<{
+							models?: Array<{ id?: string; selector?: string; contextWindow?: number }>;
+						}>(result.stdout);
+					} catch (parseError) {
+						captureException(parseError, {
+							operation: 'agent:modelDiscovery',
+							agentId,
+						});
+						logger.warn('Failed to parse omp models --json output', LOG_CONTEXT, {
+							error: parseError,
+						});
+						return [];
+					}
+					// Feed the context-window catalog off the same call, so the usage path
+					// can resolve a model's real window without a second fetch. Key it to
+					// the default identity (this binary, no env overrides) so it warms
+					// only same-config sessions; custom-path/env sessions prime their own.
+					setOmpModelCatalog(parsed.models ?? [], computeOmpCatalogKey(command, undefined));
+					const seen = new Set<string>();
+					const models: string[] = [];
+					for (const entry of parsed.models ?? []) {
+						const modelId = entry.selector || entry.id;
+						if (modelId && !seen.has(modelId)) {
+							seen.add(modelId);
+							models.push(modelId);
+						}
+					}
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT);
+					return models;
+				}
+
+				case 'grok': {
+					// Grok: read models_cache.json under GROK_HOME (default ~/.grok).
+					// Unlike Codex's `models` array, Grok's `models` is an object map
+					// keyed by model ID, each entry wrapping an `info` object that
+					// carries a `hidden` flag.
+					try {
+						const grokHome = process.env.GROK_HOME?.trim() || path.join(os.homedir(), '.grok');
+						const cachePath = path.join(grokHome, 'models_cache.json');
+						const cacheContent = fs.readFileSync(cachePath, 'utf8');
+						const cache = parseJsonWithBom<{
+							models?: Record<string, { info?: { id?: string; hidden?: boolean } }>;
+						}>(cacheContent);
+						if (cache.models && typeof cache.models === 'object') {
+							const models = Object.entries(cache.models)
+								.filter(([, entry]) => entry?.info?.hidden !== true)
+								.map(([id, entry]) => entry?.info?.id || id);
+							if (models.length > 0) {
+								logger.info(
+									`Discovered ${models.length} models for ${agentId} from models_cache.json`,
+									LOG_CONTEXT,
+									{ models }
+								);
+								return models;
+							}
+						}
+					} catch {
+						logger.debug('Could not read Grok models_cache.json for model discovery', LOG_CONTEXT);
+					}
+
+					// Fallback: parse `grok models` output. Model lines are bulleted, e.g.
+					//   * grok-4.5 (default)
+					//   - grok-composer-2.5-fast
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					if (result.exitCode === 0) {
+						const models: string[] = [];
+						for (const line of result.stdout.split('\n')) {
+							const match = line.match(/^\s*[*-]\s+(\S+)/);
+							if (match && !models.includes(match[1])) {
+								models.push(match[1]);
+							}
+						}
+						if (models.length > 0) {
+							logger.info(
+								`Discovered ${models.length} models for ${agentId} from \`grok models\``,
+								LOG_CONTEXT,
+								{ models }
+							);
+							return models;
+						}
+					} else {
+						logger.warn(
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+					}
+					return [];
 				}
 
 				default:
@@ -676,6 +1070,20 @@ export class AgentDetector {
 								'Could not read Codex models_cache.json for config option discovery',
 								LOG_CONTEXT
 							);
+						}
+					}
+					break;
+				}
+
+				case 'grok': {
+					if (optionKey === 'model') {
+						// Reuse model discovery (~/.grok/models_cache.json with a
+						// `grok models` CLI fallback). Empty string = use grok's default
+						// model. When discovery returns nothing (fresh install, CLI
+						// unavailable), fall through to the static options below.
+						const models = await this.discoverModels(agentId);
+						if (models.length > 0) {
+							return ['', ...models];
 						}
 					}
 					break;

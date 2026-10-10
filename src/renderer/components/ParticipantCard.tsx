@@ -11,7 +11,6 @@ import {
 	Check,
 	DollarSign,
 	RotateCcw,
-	Server,
 	UserMinus,
 	Eye,
 	EyeOff,
@@ -22,7 +21,11 @@ import { getStatusColor } from '../utils/theme';
 import { formatCost } from '../utils/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { parsePeekOutput, formatPeekLines } from '../utils/peekOutputParser';
-import { formatTimestamp } from '../../shared/formatters';
+import { formatTimestamp, formatRelativeTime } from '../../shared/formatters';
+import { DURATION_MS } from '../../shared/duration';
+import { notifyToast } from '../stores/notificationStore';
+import { logger } from '../utils/logger';
+import { SshRemotePill } from './ui/SshRemotePill';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -31,18 +34,19 @@ interface ParticipantCardProps {
 	color?: string;
 	groupChatId?: string;
 	onContextReset?: (participantName: string) => void;
-	onRemove?: (participantName: string) => void;
+	onRemove?: (participantName: string) => boolean | Promise<boolean>;
 	liveOutput?: string;
 }
 
 /**
- * Format time as relative or absolute.
+ * Recent activity uses the shared relative formatter (`just now` / `Xm ago`).
+ * Older than an hour stays a clock time so a day-old participant does not
+ * read as `23h ago` / `2d ago` (that would change the card's existing display).
  */
-function formatTime(timestamp: number): string {
-	const now = Date.now();
-	const diff = now - timestamp;
-	if (diff < 60000) return 'just now';
-	if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+function formatParticipantActivity(timestamp: number): string {
+	if (Date.now() - timestamp < DURATION_MS.hour) {
+		return formatRelativeTime(timestamp);
+	}
 	return formatTimestamp(timestamp, 'time');
 }
 
@@ -126,10 +130,20 @@ export function ParticipantCard({
 		if (!onRemove || !groupChatId) return;
 		setIsRemoving(true);
 		try {
-			await onRemove(participant.name);
+			const removed = await onRemove(participant.name);
+			if (!removed) {
+				throw new Error(`Participant ${participant.name} was not removed`);
+			}
+			setConfirmRemove(false);
+		} catch (error) {
+			logger.error(`Failed to remove participant ${participant.name}:`, undefined, error);
+			notifyToast({
+				type: 'error',
+				title: 'Group Chat',
+				message: `Failed to remove ${participant.name}`,
+			});
 		} finally {
 			setIsRemoving(false);
-			setConfirmRemove(false);
 		}
 	}, [onRemove, groupChatId, participant.name]);
 
@@ -161,13 +175,7 @@ export function ParticipantCard({
 			<div className="flex items-center gap-2 mt-1.5 flex-wrap">
 				{/* SSH Remote pill - shown when running on SSH remote */}
 				{participant.sshRemoteName && (
-					<span
-						className="flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full shrink-0 border border-purple-500/30 text-purple-500 bg-purple-500/10"
-						title={`SSH Remote: ${participant.sshRemoteName}`}
-					>
-						<Server className="w-2.5 h-2.5 shrink-0" />
-						<span className="uppercase">{participant.sshRemoteName}</span>
-					</span>
+					<SshRemotePill remoteName={participant.sshRemoteName} size="sm" />
 				)}
 				{/* Session ID pill */}
 				{isPending ? (
@@ -211,7 +219,7 @@ export function ParticipantCard({
 						</span>
 					)}
 					{participant.lastActivity && (
-						<span title="Last activity">{formatTime(participant.lastActivity)}</span>
+						<span title="Last activity">{formatParticipantActivity(participant.lastActivity)}</span>
 					)}
 				</div>
 				<span>{participant.agentId}</span>

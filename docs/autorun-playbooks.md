@@ -4,7 +4,12 @@ description: Process markdown checklists with AI agents using Auto Run documents
 icon: play
 ---
 
-Auto Run is a file-system-based document runner that lets you process tasks using AI agents. Select a folder containing markdown documents with task checkboxes, and Maestro will work through them one by one, spawning a fresh AI session for each task.
+Auto Run automates AI-driven work in one of two modes, chosen with the **Spec-Driven** / **Goal-Driven** toggle at the top of the Run dialog:
+
+- **Spec-Driven** runs markdown checklist documents to completion. You write the work as checkbox tasks in a folder of `.md` files, and Maestro works through them one by one, spawning a fresh AI session for each task (or each document). A reusable collection of these documents is a **Playbook**. Reach for this when you already know the steps.
+- **Goal-Driven** pursues a single free-text objective with no checklist. Each iteration spawns a fresh agent that makes one increment of progress, reports how far along it is, and exits, repeating until the goal is reached or the run stops. Reach for this for open-ended work where you can't list the steps up front.
+
+Most of this guide covers Spec-Driven documents and Playbooks. Jump to [Goal-Driven Mode](#goal-driven-mode) for that workflow.
 
 ![Auto Run](./screenshots/autorun-1.png)
 
@@ -72,6 +77,14 @@ Auto Run supports running multiple documents in sequence:
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
 
+## Model Override
+
+The run configuration modal has **Model** and **Effort** pickers, both defaulting to **Use agent default**. Picking a value runs _this Auto Run only_ on that model: every task spawn in the run uses it, the agent's own configured model is left alone (its interactive tabs keep using the default), and the override is forgotten when the run ends. The pickers reset to the default each time the modal opens, and are hidden for providers that expose no model or effort options. Worktree runs honor the override too, without changing the child worktree agent's own configured model.
+
+Below the pickers, **Ignore model hints in documents** (off by default) runs every task at the picked model and effort and skips the documents' `MAESTRO:MODEL` markers entirely, both the document-wide ones and the ones on single tasks. With the pickers left on **Use agent default**, that means the agent's own settings. Reach for it when one model should run the whole playbook regardless of what its author chose: rerunning an expensive playbook cheaply, or forcing the top model onto a playbook that marked its phases `low`. Like the pickers, it resets each time the modal opens. Goal-Driven runs do not show it, because they have no documents.
+
+The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`, and the switch as `--ignore-model-hints` on `auto-run`, `playbook`, and `run-doc`. See [CLI](cli.md#per-run-model-override).
+
 ### Staging Documents from the Files Tab
 
 The Auto Run folder shows up in the **Files** tab like any other directory, so a
@@ -122,6 +135,8 @@ Save your Auto Run configurations as Playbooks for reuse:
 3. Load saved playbooks from the **Load Playbook** dropdown
 4. Update or discard changes to loaded playbooks
 
+**Save & Exit** saves and closes in one click. With a playbook loaded, it saves your changes to that playbook. Otherwise it creates a new playbook named `YYYY-MM-DD-CODENAME`, with the codename taken from the first document (its folder, or its file name minus the phase number). A `-2`, `-3`, ... suffix keeps the name unique.
+
 ![Playbooks](./screenshots/autorun-2.png)
 
 ### Inline Wizard
@@ -143,6 +158,45 @@ The Inline Wizard creates documents in a unique subfolder under your Auto Run fo
 
 Looking for pre-built playbooks? The [Playbook Exchange](./playbook-exchange) offers community-contributed playbooks for common workflows like security audits, code reviews, and documentation generation. Open it via Quick Actions (`Cmd+K`) or click the Exchange button in the Auto Run panel.
 
+## Goal-Driven Mode
+
+Everything above describes **Spec-Driven** runs - documents of checkboxes worked to completion. **Goal-Driven** mode is the alternative: switch to the **Goal-Driven** tab in the Run dialog to chase a free-text objective instead of a document of checkboxes.
+
+Each iteration spawns a fresh agent that makes one increment of real progress toward the goal, reports how far along it is, and exits. The next iteration picks up where it left off, until the goal is reached or the run stops. Because there are no checklist documents, the playbook controls and the "Follow active task" option don't appear in this mode.
+
+![Goal-Driven Auto Run](./screenshots/autorun-goal.png)
+
+### Configuring a Goal Run
+
+Three inputs configure a run:
+
+- **Goal** - what you want accomplished, in plain language (e.g., "Migrate the settings store from Redux to Zustand and keep all tests green").
+- **Exit Criteria** - what "done" looks like and when the agent should declare a deadlock instead of spinning. This guides the agent; it is **not** matched automatically.
+- **Iteration Limit** - a cap on how many iterations may run, or **Infinite** to run until the goal is reached or a deadlock is detected.
+
+Like Spec-Driven runs, a goal run can be [dispatched into an isolated git worktree](#run-in-worktree) so your main working tree stays clean.
+
+### Progress Markers
+
+At the end of every iteration the agent reports an honest 0-100 self-assessment on its own line. The engine reads this to drive the progress bar and decide whether to run again:
+
+```html
+<!-- maestro:progress 45 | refactored auth, tests still pending -->
+```
+
+The `| rationale` note after the number is optional but shows up in the progress UI. A response with no progress marker is treated as zero progress and counts toward a stall.
+
+### How a Goal Run Stops
+
+A goal run ends on any of four conditions:
+
+- **Completed** - the agent reports `progress 100`, or emits the explicit marker `<!-- maestro:goal-complete -->`.
+- **Deadlock** - the agent hits a true blocker it cannot work around and declares it with `<!-- maestro:deadlock: brief reason you cannot proceed -->`.
+- **Max iterations** - a finite iteration limit is reached before the goal completes.
+- **Stalled** - progress doesn't move upward for three iterations in a row, so the run stops instead of spinning.
+
+The stop reason and final progress are recorded in the **History** panel.
+
 ## Progress Tracking
 
 The runner will:
@@ -153,9 +207,55 @@ The runner will:
 - Mark tasks as complete (`- [x]`) when done
 - Log each completion to the **History** panel
 
+## Thought Stream
+
+While a run is active, you can watch what the agent is doing without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's reasoning _and_ its tool calls as it works.
+
+Every tool call is reduced to one short line in plain language, interleaved with the reasoning that produced it:
+
+```text
+3:42:07 PM  ⟳ Ran npm test
+3:42:04 PM  ✓ Read src/renderer/components/ThoughtStreamPanel.tsx
+3:42:01 PM  ✓ Searched for THOUGHT_BLOCK_GAP_MS
+3:41:58 PM  ! Edited src/renderer/constants/themes.ts
+```
+
+A spinner marks a call still in flight; a check or a warning marks how it ended. A shell command that exits non-zero gets the warning even when the provider calls it "completed". The full inputs and outputs stay in the chat transcript - this feed is built to be _scanned_, so that an agent stuck in a loop or grinding on an unproductive task is obvious at a glance and you can stop it before it burns more tokens.
+
+Tool names are normalized across providers (Claude Code, Codex, OpenCode, Copilot, and MCP servers), so the lines read the same no matter which agent is running.
+
+The **wrench** button in the panel header turns the tool-call lines off and on, and the panel remembers your choice. It is a display filter, not a capture switch: actions keep buffering while they are hidden, the header keeps counting them (`14 actions hidden`), and turning them back on shows everything that happened in the meantime. Turn them off when you only want to follow the agent's reasoning; leave them on when you are watching for a loop.
+
+Thoughts and tool calls are buffered from the moment the agent starts working, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
+
+It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw streams directly, so it shows thinking and tool calls even when an AI tab's "show thinking" and tool-call display are turned off. For an Auto Run this is the only place the tool calls appear at all: a run has no chat tab of its own for a transcript to live in.
+
+- **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
+- **Timestamped blocks** - a continuous burst of thinking is grouped into one block with a time stamp; a pause (or a switch between parallel tabs) starts a new block.
+- **Formatted** - thoughts render as formatted markdown (headings, lists, bold, inline code, code fences), so structured reasoning stays readable.
+- **In order** - a tool call renders between the reasoning that led to it and the reasoning that followed, so the feed reads as the sequence the agent actually performed.
+- **Search** - filter the feed with the search box; matches are highlighted. Searching a tool name ("Bash") finds calls the feed renders under a plain-language verb ("Ran ...").
+- **Counts** - the header tracks thoughts and actions separately. A climbing action count against flat reasoning is what a loop looks like.
+
+The button highlights once there is anything buffered to read, and its tooltip gives the count.
+
+**Open, close, clear:**
+
+- **Open** shows the panel, already backfilled with everything the agent has thought so far.
+- **Close** (the X, or Escape) hides the panel and keeps recording, so reopening it later still has the run's history.
+- **Clear** (the trash icon) is the only thing that discards a buffer.
+
+There is no minimize. It used to mean "hide the panel but keep capturing," which is what closing does now. The panel takes no keyboard focus, so your shortcuts keep working while it is open.
+
+Once a run finishes, the Right Panel's run card goes away and takes its **View Thoughts** button with it. The buffer outlives the run, so a **Thoughts** button appears at the bottom of the Auto Run panel for as long as there is something buffered to read.
+
+Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: timeline entries per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
+
 ## Steering a Run in Flight
 
-You do not have to stop a run to change its direction. Type into the composer while the run is going and press Enter: the message becomes a **steering note** and is delivered at the start of the next task.
+You do not have to stop a run to change its direction. Open the **Thought Stream** for the running agent, click the **compass** button in its header, type what you want changed, and press Enter: the message becomes a **steering note** and is delivered at the start of the next task.
+
+Steering lives in the Thought Stream and nowhere else. The agent's chat composer keeps its ordinary meaning during a run: a message you type there is a message to the agent, queued for when the run finishes.
 
 A steering note is not a conversation turn. It spawns no agent of its own and costs no extra run time - it rides in front of a task prompt that was going to be sent anyway, in a block the agent is told to treat as newer than the document and newer than its instructions. The agent is asked to begin its synopsis with `[steered]` when it acts on one.
 
@@ -165,21 +265,13 @@ Use it for the things you notice while watching:
 - `The API changed. Use the v3 endpoint for the rest of these tasks.`
 - `Do not commit anything else until I say so.`
 
-**Where to see it.** A steering note appears in the transcript as your message with a compass badge: amber while it is waiting, green once a task has picked it up. The Auto Run pill above the composer shows how many notes are still waiting. Click the amber badge to take a note back before any task sees it.
+**Where to see it.** Notes are listed in the Thought Stream just under the search box: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back. The Auto Run pill above the composer also shows how many notes are still waiting, so you can see one is pending without opening the panel.
 
 **What it applies to.** The note goes to the next task and stays in force for the rest of the run wherever it still makes sense. It is delivered once - a later task does not get a repeat - so if the change is permanent, also edit the document.
 
-**When Enter does something else instead.** Steering is what a plain write-mode message does during a run. These keep their own meaning:
+**When the compass is not there.** The button only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so no button.
 
-| You do this                                | What happens                                                                                         |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| Read-only mode is on                       | The message runs right now as a parallel read-only turn. Asking a question does not steer.           |
-| Force Send (`Cmd+Shift+Enter`)             | Bypasses the run entirely and sends now.                                                             |
-| The message has staged images              | Queued instead. A task prompt is text, so an image has nowhere to ride along, and queueing keeps it. |
-| The agent's provider is in an outage retry | Queued behind the retry. A note cannot talk past a quota wall.                                       |
-| A slash command                            | Queued for after the run, as before.                                                                 |
-
-Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run.
+Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run, and the delivered list is cleared with it.
 
 ## Session Isolation
 
@@ -292,6 +384,8 @@ Click **Collapse** or press `Esc` to return to the sidebar panel view.
 
 Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the **Save** button in the editor footer. The editor shows "Unsaved changes" and a **Revert** button when you have pending edits. Revert discards everything since the last save, including pasted text, inserted images, and checkboxes ticked in preview. Full undo/redo support with `Cmd+Z` / `Cmd+Shift+Z`.
 
+If the file changes on disk while you have unsaved edits (an agent, a sync tool, or another editor wrote to it), your edits are kept and a toast tells you. **Save** overwrites the file with your version; **Revert** loads the version now on disk. With no unsaved edits, the editor simply shows the new version. The one exception is a document an Auto Run is actively driving: the editor is read-only then and always follows the disk.
+
 **Note**: Switching documents discards unsaved changes. Save before switching if you want to preserve your edits.
 
 ## Image Support
@@ -395,6 +489,8 @@ Two things to know when writing one by hand:
 - The value cannot contain a double quote, because `"` delimits it. An inner quote truncates the reason. Levels are matched separately, so the task still runs on the model it asked for.
 - A reason with no `tier` or `effort` beside it does nothing. The marker draws a spent pill, because it sets nothing.
 
+A run can opt out of every marker in the document: switch on **Ignore model hints in documents** in the run configuration, or pass `--ignore-model-hints` to the CLI. See [Model Override](#model-override).
+
 ### When to reach for it
 
 Use a hint when a task's cost and its difficulty are genuinely mismatched. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs **less** than running the whole playbook at the default.
@@ -421,11 +517,44 @@ Click the **Stop** button at any time. The runner will:
 - Preserve all completed work
 - Allow you to resume later by clicking Run again
 
+## Auto-Resume on Limit
+
+If an agent pauses mid-run because it hit a provider limit (a rate, token, or credit limit), Maestro can pick the run back up on its own once the window reopens - so you can queue a batch of work, walk away, and come back to it finished. Enable it in **Settings → General → Auto-Resume on Limit**. Three settings drive it:
+
+- **Auto-Resume on Limit** (on by default) - the master toggle.
+- **Check interval** (default 2 hours) - how often Maestro re-checks each paused agent.
+- **Give up after** (default 7 days) - if an agent is still stuck this long after the first pause, Maestro stops retrying it, leaves it paused, and posts a one-time notice so you can resume manually.
+
+How it decides to resume: for Claude it reads your actual plan usage and only resumes when credits are genuinely available again; for every other provider (and Claude on an SSH remote) it simply retries on the interval - if the limit is still in force the agent re-pauses and the next check tries again. Probing is cheap, so it keeps trying the whole window.
+
+This survives a full app restart. If you reboot while an agent is limit-paused, Maestro restores the pause and resumes the **agent's conversation** (it continues from its own transcript) and drains any work you had queued. One caveat: the Auto Run / Goal-Driven **loop controller** does not survive a restart - the agent session and its queued messages resume, but the orchestration loop that was stepping through your document does not pick back up automatically. Manually resolving the error, or manually resuming or stopping the agent, always takes precedence and cancels auto-resume for that agent.
+
+## Auto-Resume After an Error
+
+A provider limit is not the only thing that stops a run. An ordinary mid-run failure also parks the run and waits for someone to click **Resume**, which on an unattended overnight run means the run is dead until you notice. Auto-resume is the fallback for that case, and it is configured **per run** in the launch modal, under **If this run hits an error**:
+
+- **Auto-resume after** (on by default) - whether Maestro clicks Resume for you.
+- **Wait** (default 5 minutes) - how long it waits before each attempt.
+- **Max auto-resumes** (default 5) - how many automatic attempts the run gets before it stops trying.
+
+The count is per run, not per error: five failures spread across a long run exhaust it even if each one failed differently. Resolving an error yourself does not buy the run a fresh set of attempts, but it does cancel any resume that was already scheduled.
+
+Quota pauses are deliberately excluded - those belong to [Auto-Resume on Limit](#auto-resume-on-limit), which waits for the window to genuinely reopen instead of spending all five attempts hitting the same wall. Failures that [Agent Resilience](agent-resilience) already recognizes keep their own backoff too; this only picks up what neither of those handles.
+
+### The ERR badge
+
+While a run is stopped on an error, the agent carries an **ERR** badge in the Left Bar:
+
+- **Amber** - another automatic resume is still scheduled. The tooltip says when, and which attempt it is. Leave it alone.
+- **Red, pulsing** - the run is waiting on you, either because the attempts are spent or because this run turned auto-resume off.
+
+The badge disappears when the run continues, so a run that rescued itself leaves nothing behind to chase.
+
 ## Marker Pills
 
 Every Maestro marker is an HTML comment, which means it renders as nothing. That is right for the file - other markdown tools ignore it, and an agent editing the document leaves it alone - but it is wrong for you. Two of the three markers do not merely change how a run behaves, they stop it:
 
-- A leftover **HITL gate** pauses every re-run until the box below it is ticked.
+- A leftover **HITL gate** pauses every re-run until someone passes it.
 - A leftover **halt marker** makes Auto Run refuse to start at all.
 
 Both present the same way: you press **Run** and nothing happens, with the cause sitting in text the panel does not draw.
@@ -434,7 +563,7 @@ So Maestro renders each marker as a small pill wherever the document is previewe
 
 | Pill                          | Meaning                                                                                                |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.                                           |
+| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you click **Done, Resume**.                                 |
 | ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                                                        |
 | ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it.                                      |
 | ◆ **high model, high effort** | A model hint. Full strength when it governs the next task, slightly muted when it governs a later one. |
@@ -462,7 +591,7 @@ When a task needs a person - manual testing, visual judgment, sign-off, or a cre
 <!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" artifact="https://staging.example.com/checkout" -->
 ```
 
-In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. You resume by ticking the box above the marker or clicking Resume. That is a deliberate, visible pause, the opposite of a stall.
+In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. When you have done the step, click **Done, Resume**: Maestro writes a ticked `Human step done` box under the marker, so the gate shows as Approved and a re-run does not stop there again. That is a deliberate, visible pause, the opposite of a stall.
 
 A headless CLI run has no human to wait for, so `maestro run-playbook` reports the gate as a `document_gated` event naming the reason and the line, then moves to the next document. The marker means the same thing on both surfaces; only the response differs.
 
@@ -501,7 +630,7 @@ Halting should be **rare**. Agents are told to reserve it for the case where con
 
 | Situation                                                              | Right mechanism                                        |
 | ---------------------------------------------------------------------- | ------------------------------------------------------ |
-| A task needs a person                                                  | HITL gate - pauses, then resumes on a tick             |
+| A task needs a person                                                  | HITL gate - pauses until you click Done, Resume        |
 | A task the agent cannot do                                             | Leave it unchecked; the stall guard skips the document |
 | One task failed, others are independent                                | Nothing; the run continues                             |
 | Everything downstream is now invalid, or continuing would cause damage | Halt                                                   |

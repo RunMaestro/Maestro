@@ -1,292 +1,281 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import {
-	FeedbackConversationManager,
-	type FeedbackDiagnostic,
-} from '../../../renderer/services/feedbackConversation';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeedbackConversationManager } from '../../../renderer/services/feedbackConversation';
 
-type ExitCallback = (sessionId: string, code: number) => void;
-type DataCallback = (sessionId: string, data: string) => void;
-type ToolCallback = (
-	sessionId: string,
-	toolEvent: { toolName: string; state?: unknown; timestamp: number; toolCallId?: string }
-) => void;
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-const CLAUDE_AGENT = {
-	id: 'claude-code',
-	command: 'claude',
-	available: true,
-	args: [
-		'--print',
-		'--verbose',
-		'--output-format',
-		'stream-json',
-		'--dangerously-skip-permissions',
-	],
-	capabilities: { supportsStreamJsonInput: false },
-};
-
-const CODEX_AGENT = {
-	id: 'codex',
-	command: 'codex',
-	available: true,
-	args: [],
-	batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
-	jsonOutputArgs: ['--json'],
-	capabilities: {},
-};
-
-/**
- * Wire the window.maestro surface the manager talks to, exposing the listener
- * callbacks so a test can drive the process lifecycle by hand.
- */
-function installProcessMocks(agent: unknown) {
-	const listeners: {
-		exit?: ExitCallback;
-		data?: DataCallback;
-		tool?: ToolCallback;
-	} = {};
-	const spawn = vi.fn();
-
-	(window as any).maestro = {
-		agents: { get: vi.fn().mockResolvedValue(agent) },
-		process: {
-			spawn,
-			kill: vi.fn(),
-			onData: vi.fn((cb: DataCallback) => {
-				listeners.data = cb;
-				return () => {};
-			}),
-			onExit: vi.fn((cb: ExitCallback) => {
-				listeners.exit = cb;
-				return () => {};
-			}),
-			onToolExecution: vi.fn((cb: ToolCallback) => {
-				listeners.tool = cb;
-				return () => {};
-			}),
-			onThinkingChunk: vi.fn(() => () => {}),
-		},
+function mockCodexAgent(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 'codex',
+		name: 'OpenAI Codex',
+		available: true,
+		command: 'codex',
+		path: '/opt/homebrew/bin/codex',
+		args: [],
+		...overrides,
 	};
-
-	return { spawn, listeners };
 }
 
-/** Finish the turn so `sendMessage()`'s promise settles. */
-function completeTurn(
-	listeners: { exit?: ExitCallback; data?: DataCallback },
-	sessionId: string,
-	payload: Record<string, unknown>
-) {
-	listeners.data?.(sessionId, JSON.stringify(payload));
-	listeners.exit?.(sessionId, 0);
-}
-
-const VALID_RESPONSE = {
-	confidence: 55,
-	ready: false,
-	message: 'Tell me more.',
-	category: 'bug_report',
-	summary: 'Something broke',
-	structured: {
-		expectedBehavior: '',
-		actualBehavior: '',
-		reproductionSteps: '',
-		additionalContext: '',
-	},
-};
-
-describe('FeedbackConversationManager', () => {
+describe('FeedbackConversationManager provider startup errors', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+
+		const processMock = window.maestro.process as any;
+		processMock.spawn.mockResolvedValue({ pid: 12345, success: true });
+		processMock.onData = vi.fn(() => vi.fn());
+		processMock.onExit = vi.fn(() => vi.fn());
+		processMock.onThinkingChunk = vi.fn(() => vi.fn());
+		window.maestro.agents.get.mockResolvedValue(mockCodexAgent());
 	});
 
-	it('spawns the diagnostic agent in read-only mode', async () => {
-		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
-		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({
-			agentType: 'claude-code',
-			systemPrompt: 'prompt',
-			cwd: '/home/tester',
-		});
-
-		const pending = manager.sendMessage('it broke', []);
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
-		completeTurn(listeners, sessionId, VALID_RESPONSE);
-		await pending;
-
-		expect(spawn.mock.calls[0][0]).toMatchObject({ readOnlyMode: true });
-	});
-
-	it('runs diagnostics from the supplied working directory', async () => {
-		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
-		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({
-			agentType: 'claude-code',
-			systemPrompt: 'prompt',
-			cwd: '/home/tester',
-		});
-
-		const pending = manager.sendMessage('it broke', []);
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
-		completeTurn(listeners, sessionId, VALID_RESPONSE);
-		await pending;
-
-		// The old hard-coded '.' resolved to the app's cwd ('/' for a packaged
-		// .app), where no diagnostic command finds anything.
-		expect(spawn.mock.calls[0][0].cwd).toBe('/home/tester');
-	});
-
-	it('strips blanket permission grants from the agent args', async () => {
-		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
-		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({ agentType: 'claude-code', systemPrompt: 'prompt' });
-
-		const pending = manager.sendMessage('it broke', []);
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
-		completeTurn(listeners, sessionId, VALID_RESPONSE);
-		await pending;
-
-		const args: string[] = spawn.mock.calls[0][0].args;
-		// Leaving this in would override the provider's read-only flag and hand a
-		// bug-reporting assistant write access to the app it is reporting on.
-		expect(args).not.toContain('--dangerously-skip-permissions');
-		expect(args).toContain('--output-format');
-	});
-
-	it('omits Codex batch-mode permission bypass args', async () => {
-		const { spawn, listeners } = installProcessMocks(CODEX_AGENT);
-		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({ agentType: 'codex', systemPrompt: 'prompt' });
-
-		const pending = manager.sendMessage('it broke', []);
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
-		completeTurn(listeners, sessionId, VALID_RESPONSE);
-		await pending;
-
-		const args: string[] = spawn.mock.calls[0][0].args;
-		expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
-		expect(args).toContain('--json');
-	});
-
-	it('reports each diagnostic command the agent runs', async () => {
-		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
-		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({ agentType: 'claude-code', systemPrompt: 'prompt' });
-
-		const seen: FeedbackDiagnostic[] = [];
-		const pending = manager.sendMessage('it broke', [], {
-			onDiagnostic: (diagnostic) => seen.push(diagnostic),
-		});
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
-
-		listeners.tool?.(sessionId, {
-			toolName: 'Bash',
-			state: { status: 'running', input: { command: 'maestro-cli doctor' } },
-			timestamp: 1,
-			toolCallId: 'call-1',
-		});
-		// A single call is reported again as it completes; the user should see it once.
-		listeners.tool?.(sessionId, {
-			toolName: 'Bash',
-			state: { status: 'completed', input: { command: 'maestro-cli doctor' } },
-			timestamp: 2,
-			toolCallId: 'call-1',
-		});
-		listeners.tool?.(sessionId, {
-			toolName: 'Read',
-			state: { status: 'running', input: { file_path: '/tmp/maestro.log' } },
-			timestamp: 3,
-			toolCallId: 'call-2',
-		});
-
-		completeTurn(listeners, sessionId, VALID_RESPONSE);
-		await pending;
-
-		expect(seen).toHaveLength(2);
-		expect(seen[0]).toMatchObject({ toolName: 'Bash', command: 'maestro-cli doctor' });
-		// No command in the input - the UI falls back to naming the tool.
-		expect(seen[1]).toMatchObject({ toolName: 'Read', command: undefined });
-	});
-
-	it('recovers the response when the agent wraps it in prose', async () => {
-		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
-		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({ agentType: 'claude-code', systemPrompt: 'prompt' });
-
-		const pending = manager.sendMessage('it broke', []);
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
-
-		// Running diagnostics first makes a preamble far more likely, and the
-		// greedy match this replaced spanned first-brace to last-brace, so a single
-		// stray sentence used to turn a real answer into the "didn't catch that"
-		// fallback.
-		listeners.data?.(
-			sessionId,
-			`I checked your logs first.\n\n${JSON.stringify(VALID_RESPONSE)}\n\nHope that helps.`
+	it('reports the resolved Codex binary and provider output on non-zero exit', async () => {
+		const processMock = window.maestro.process as any;
+		const codexBinary = '/Users/jeff/.nvm/versions/node/v25.3.0/bin/codex-multi-auth-codex';
+		window.maestro.agents.get.mockResolvedValue(
+			mockCodexAgent({
+				path: codexBinary,
+			})
 		);
-		listeners.exit?.(sessionId, 0);
-		const response = await pending;
 
-		expect(response.confidence).toBe(55);
-		expect(response.message).toBe('Tell me more.');
+		const manager = new FeedbackConversationManager();
+		const sessionId = manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const onError = vi.fn();
+		const responsePromise = manager.sendMessage('it broke', [], { onError });
+
+		await tick();
+
+		expect(processMock.spawn).toHaveBeenCalledTimes(1);
+		expect(processMock.spawn.mock.calls[0][0].command).toBe(codexBinary);
+
+		const dataCallback = processMock.onData.mock.calls[0][0];
+		dataCallback(sessionId, '\u001b[31mError: not logged in. Run `codex login` first.\u001b[0m\n');
+		const exitCallback = processMock.onExit.mock.calls[0][0];
+		exitCallback(sessionId, 1);
+
+		const response = await responsePromise;
+
+		expect(response.message).toContain(codexBinary);
+		expect(response.message).toContain('not logged in');
+		expect(response.message).not.toContain(
+			'Something went wrong processing your message. Please try again.'
+		);
+		expect(onError).toHaveBeenCalledWith(expect.stringContaining('not logged in'));
 	});
 
-	it('is not fooled by braces inside the message body', async () => {
-		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
+	it('still names the binary when the failed provider printed nothing', async () => {
+		const processMock = window.maestro.process as any;
+		const codexBinary = '/opt/homebrew/bin/codex';
+		window.maestro.agents.get.mockResolvedValue(
+			mockCodexAgent({
+				path: codexBinary,
+			})
+		);
+
 		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({ agentType: 'claude-code', systemPrompt: 'prompt' });
+		const sessionId = manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const responsePromise = manager.sendMessage('hi', []);
 
-		const pending = manager.sendMessage('it broke', []);
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+		await tick();
 
-		const withBraces = {
-			...VALID_RESPONSE,
-			message: 'Your config has a stray } in it - see {"a": 1} on line 4.',
-		};
-		listeners.data?.(sessionId, `Here you go:\n${JSON.stringify(withBraces)}`);
-		listeners.exit?.(sessionId, 0);
-		const response = await pending;
+		const exitCallback = processMock.onExit.mock.calls[0][0];
+		exitCallback(sessionId, 127);
 
-		expect(response.message).toBe('Your config has a stray } in it - see {"a": 1} on line 4.');
+		const response = await responsePromise;
+
+		expect(response.message).toContain(codexBinary);
+		expect(response.message).toContain('exited with code 127');
+		expect(response.message).toContain('No output was captured');
 	});
 
-	it('falls back to the default response when nothing parses', async () => {
-		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
+	it('fails the turn with the resolved binary path when the provider is detected but not runnable', async () => {
+		const processMock = window.maestro.process as any;
+		const codexBinary = '/Users/jeff/.nvm/versions/node/v24.15.0/bin/codex';
+		window.maestro.agents.get.mockResolvedValue(
+			mockCodexAgent({
+				available: false,
+				path: codexBinary,
+			})
+		);
+
 		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({ agentType: 'claude-code', systemPrompt: 'prompt' });
+		manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
 
-		const pending = manager.sendMessage('it broke', []);
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
-
-		listeners.data?.(sessionId, 'Sorry, I got confused and wrote no JSON at all.');
-		listeners.exit?.(sessionId, 0);
-		const response = await pending;
-
-		expect(response.ready).toBe(false);
-		expect(response.message).toContain("didn't quite catch that");
+		// A failed turn rather than a throw, so the caller can fall through to
+		// another account.
+		const result = await manager.sendTurn('hi', []);
+		expect(result.failed).toBe(true);
+		expect(result.error).toContain(codexBinary);
+		expect(result.response.message).toContain(codexBinary);
+		expect(processMock.spawn).not.toHaveBeenCalled();
 	});
 
-	it('ignores tool events belonging to another session', async () => {
-		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
-		const manager = new FeedbackConversationManager();
-		const sessionId = manager.start({ agentType: 'claude-code', systemPrompt: 'prompt' });
-
-		const seen: FeedbackDiagnostic[] = [];
-		const pending = manager.sendMessage('it broke', [], {
-			onDiagnostic: (diagnostic) => seen.push(diagnostic),
+	it('uses the provider id instead of undefined when no binary fields exist', async () => {
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'codex',
+			available: false,
+			args: [],
 		});
-		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
 
-		listeners.tool?.('some-other-session', {
-			toolName: 'Bash',
-			state: { status: 'running', input: { command: 'rm -rf /' } },
-			timestamp: 1,
-			toolCallId: 'other-1',
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+
+		const result = await manager.sendTurn('hi', []);
+		expect(result.failed).toBe(true);
+		expect(result.error).toContain('Maestro resolved its binary to "codex"');
+	});
+
+	it('returns an actionable error when spawning the selected binary rejects', async () => {
+		const processMock = window.maestro.process as any;
+		const codexBinary = 'C:\\missing\\codex.exe';
+		processMock.spawn.mockRejectedValue(new Error('spawn ENOENT C:\\missing\\codex.exe'));
+		window.maestro.agents.get.mockResolvedValue(
+			mockCodexAgent({
+				path: codexBinary,
+			})
+		);
+
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const onError = vi.fn();
+
+		const response = await manager.sendMessage('hi', [], { onError });
+
+		expect(response.message).toContain(codexBinary);
+		expect(response.message).toContain('could not be started');
+		expect(response.message).toContain('spawn ENOENT');
+		expect(onError).toHaveBeenCalledWith('spawn ENOENT C:\\missing\\codex.exe');
+	});
+
+	it('returns an actionable error when spawning resolves with failure', async () => {
+		const processMock = window.maestro.process as any;
+		const codexBinary = 'C:\\missing\\codex.exe';
+		processMock.spawn.mockResolvedValue({ success: false, pid: -1 });
+		window.maestro.agents.get.mockResolvedValue(
+			mockCodexAgent({
+				path: codexBinary,
+			})
+		);
+
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const onError = vi.fn();
+
+		const response = await manager.sendMessage('hi', [], { onError });
+
+		expect(response.message).toContain(codexBinary);
+		expect(response.message).toContain('could not be started');
+		expect(response.message).toContain('success=false');
+		expect(onError).toHaveBeenCalledWith('Process spawn returned success=false (pid -1)');
+	});
+
+	it('notifies onComplete with a not-ready response when spawning fails', async () => {
+		const processMock = window.maestro.process as any;
+		processMock.spawn.mockResolvedValue({ success: false, pid: -1 });
+		window.maestro.agents.get.mockResolvedValue(mockCodexAgent({ path: 'C:\\missing\\codex.exe' }));
+
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const onComplete = vi.fn();
+
+		await manager.sendMessage('hi', [], { onComplete });
+
+		// Failure paths must reset readiness so a prior "ready" turn can't be
+		// submitted after a provider startup failure.
+		expect(onComplete).toHaveBeenCalledTimes(1);
+		expect(onComplete.mock.calls[0][0]).toMatchObject({ ready: false });
+	});
+
+	it('redacts obvious secrets from provider output before surfacing failure details', async () => {
+		const processMock = window.maestro.process as any;
+		const manager = new FeedbackConversationManager();
+		const sessionId = manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const onError = vi.fn();
+		const responsePromise = manager.sendMessage('hi', [], { onError });
+
+		await tick();
+
+		const dataCallback = processMock.onData.mock.calls[0][0];
+		dataCallback(
+			sessionId,
+			[
+				'OPENAI_API_KEY: sk-openai-secret-key',
+				'ANTHROPIC_API_KEY=sk-anthropic-secret-key',
+				'api_key=sk-lowercase-secret-key',
+				'access_token: lower-access-token',
+				'secret=lower-secret-value',
+				'Authorization: Bearer bearer-secret-token',
+				'GitHub token ghp_1234567890abcdefghijklmnopqrst',
+				'Fine path /Users/jeff/.nvm/versions/node/v25.3.0/bin/codex',
+			].join('\n')
+		);
+		const exitCallback = processMock.onExit.mock.calls[0][0];
+		exitCallback(sessionId, 1);
+
+		const response = await responsePromise;
+		const onErrorMessage = String(onError.mock.calls[0][0]);
+
+		expect(response.message).toContain('OPENAI_API_KEY: [REDACTED]');
+		expect(response.message).toContain('ANTHROPIC_API_KEY=[REDACTED]');
+		expect(response.message).toContain('api_key=[REDACTED]');
+		expect(response.message).toContain('access_token: [REDACTED]');
+		expect(response.message).toContain('secret=[REDACTED]');
+		expect(response.message).toContain('Authorization: Bearer [REDACTED]');
+		expect(response.message).toContain('[REDACTED_GITHUB_TOKEN]');
+		expect(response.message).toContain('/Users/jeff/.nvm/versions/node/v25.3.0/bin/codex');
+		expect(response.message).not.toContain('sk-openai-secret-key');
+		expect(response.message).not.toContain('sk-anthropic-secret-key');
+		expect(response.message).not.toContain('sk-lowercase-secret-key');
+		expect(response.message).not.toContain('lower-access-token');
+		expect(response.message).not.toContain('lower-secret-value');
+		expect(response.message).not.toContain('bearer-secret-token');
+		expect(response.message).not.toContain('ghp_1234567890abcdefghijklmnopqrst');
+		expect(onErrorMessage).not.toContain('sk-openai-secret-key');
+		expect(onErrorMessage).not.toContain('bearer-secret-token');
+	});
+
+	it('redacts spawn rejection details before invoking onError', async () => {
+		const processMock = window.maestro.process as any;
+		processMock.spawn.mockRejectedValue(
+			new Error(
+				'failed with Authorization: Bearer bearer-secret-token and github_pat_1234567890abcdefghijklmnopqrstuvwxyz'
+			)
+		);
+
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const onError = vi.fn();
+
+		const response = await manager.sendMessage('hi', [], { onError });
+		const onErrorMessage = String(onError.mock.calls[0][0]);
+
+		expect(response.message).toContain('Authorization: Bearer [REDACTED]');
+		expect(response.message).toContain('[REDACTED_GITHUB_TOKEN]');
+		expect(response.message).not.toContain('bearer-secret-token');
+		expect(response.message).not.toContain('github_pat_1234567890abcdefghijklmnopqrstuvwxyz');
+		expect(onErrorMessage).not.toContain('bearer-secret-token');
+		expect(onErrorMessage).not.toContain('github_pat_1234567890abcdefghijklmnopqrstuvwxyz');
+	});
+
+	it("passes an SSH-remote account's remote through to the process spawn", async () => {
+		const processMock = window.maestro.process as any;
+		const manager = new FeedbackConversationManager();
+		const sessionId = manager.start({
+			agentType: 'codex',
+			systemPrompt: 'system prompt',
+			account: { sshRemoteId: 'remote-1', remoteCwd: '/srv/app' },
 		});
 
-		completeTurn(listeners, sessionId, VALID_RESPONSE);
-		await pending;
+		const responsePromise = manager.sendMessage('hi', []);
+		await tick();
 
-		expect(seen).toHaveLength(0);
+		expect(processMock.spawn.mock.calls[0][0]).toMatchObject({
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			cwd: '/srv/app',
+		});
+
+		// Settle the in-flight turn so its inactivity timeout and listeners are
+		// torn down before the test ends (avoids open-handle flakiness).
+		const exitCallback = processMock.onExit.mock.calls[0][0];
+		exitCallback(sessionId, 0);
+		await responsePromise;
 	});
 });

@@ -27,10 +27,16 @@ import {
 	formatEnterToSend,
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
-import { normalizeMentionName } from '../utils/participantColors';
+import {
+	normalizeMentionName,
+	getMentionNameForContext,
+	formatGroupMentionExpansion,
+} from '../utils/participantColors';
+import { formatFileMention } from '../../shared/mentionPatterns';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
 import { useModalStore } from '../stores/modalStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -42,7 +48,8 @@ type MentionItem =
 			group: Group;
 			mentionName: string;
 			memberCount: number;
-			memberMentions: string[];
+			/** Insert-ready expansion: every member's `@name` token (see `formatGroupMentionExpansion`). */
+			memberMentions: string;
 	  }
 	| {
 			type: 'file';
@@ -176,6 +183,9 @@ export function PromptComposerModal({
 	const agentMentionItems = useMemo(() => {
 		if (!sessions) return [];
 		const items: MentionItem[] = [];
+		const sessionNamesForMentions = sessions
+			.filter((s) => s.toolType !== 'terminal')
+			.map((s) => s.name);
 		if (groups) {
 			for (const group of groups) {
 				const members = sessions.filter((s) => s.groupId === group.id && s.toolType !== 'terminal');
@@ -185,7 +195,10 @@ export function PromptComposerModal({
 						group,
 						mentionName: normalizeMentionName(group.name),
 						memberCount: members.length,
-						memberMentions: members.map((m) => `@${normalizeMentionName(m.name)}`),
+						memberMentions: formatGroupMentionExpansion(
+							members.map((m) => m.name),
+							sessionNamesForMentions
+						),
 					});
 				}
 			}
@@ -195,7 +208,7 @@ export function PromptComposerModal({
 				items.push({
 					type: 'agent',
 					name: s.name,
-					mentionName: normalizeMentionName(s.name),
+					mentionName: getMentionNameForContext(s.name, sessionNamesForMentions),
 					agentId: s.toolType,
 					sessionId: s.id,
 				});
@@ -260,9 +273,9 @@ export function PromptComposerModal({
 			const prefix = value.slice(0, lastAtIndex);
 			let insertion: string;
 			if (item.type === 'group') {
-				insertion = item.memberMentions.join(' ') + ' ';
+				insertion = item.memberMentions;
 			} else if (item.type === 'file') {
-				insertion = `@${item.fullPath} `;
+				insertion = `${formatFileMention(item.fullPath)} `;
 			} else {
 				insertion = `@${item.mentionName} `;
 			}
@@ -559,7 +572,7 @@ export function PromptComposerModal({
 						{stagedImages.map((img, idx) => (
 							<div key={img} className="relative group shrink-0">
 								<img
-									src={img}
+									src={displayImageSrc(img)}
 									alt={`Prompt composer staged image ${idx + 1}`}
 									className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity"
 									style={{

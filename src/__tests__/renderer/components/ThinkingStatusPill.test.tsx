@@ -15,6 +15,8 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThinkingStatusPill } from '../../../renderer/components/ThinkingStatusPill';
+import { useThoughtStreamStore } from '../../../renderer/stores/thoughtStreamStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, BatchRunState, AITab, ThinkingItem } from '../../../renderer/types';
 import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
@@ -192,6 +194,50 @@ describe('ThinkingStatusPill', () => {
 		});
 	});
 
+	describe('name slot font', () => {
+		/**
+		 * The slot beside Stop holds a NAME in the two cases that matter, and a
+		 * raw session-id octet only when both name sources are empty. A name is
+		 * prose and belongs in the interface font; the octet is an identifier and
+		 * reads better in the code face. `font-mono` for all three put user-typed
+		 * tab names in a different font from every label around them.
+		 */
+		it('renders a custom name in the interface font', () => {
+			const item = createThinkingItem({ agentSessionId: 'abc12345-def6' });
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					namedSessions={{ 'abc12345-def6': 'Custom Name' }}
+				/>
+			);
+
+			expect(screen.getByText('Custom Name').className).not.toContain('font-mono');
+		});
+
+		it('renders a tab name in the interface font', () => {
+			const item = createThinkingItemWithTab(
+				{ agentSessionId: undefined },
+				{ name: 'My Tab Name', agentSessionId: 'def67890-ghi' }
+			);
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+
+			expect(screen.getByText('My Tab Name').className).not.toContain('font-mono');
+		});
+
+		it('keeps the code face for a bare session-id fallback', () => {
+			// Both name sources empty, so this falls through to the hex octet.
+			const item = createThinkingItemWithTab(
+				{ name: '', agentSessionId: undefined },
+				{ name: '', agentSessionId: 'abc12345-def6' }
+			);
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+
+			const octet = screen.queryByText('ABC12345');
+			if (octet) expect(octet.className).toContain('font-mono');
+		});
+	});
+
 	describe('getItemDisplayName (via UI)', () => {
 		it('uses namedSessions lookup when available', () => {
 			const item = createThinkingItem({ agentSessionId: 'abc12345-def6' });
@@ -326,6 +372,89 @@ describe('ThinkingStatusPill', () => {
 		});
 	});
 
+	// The pill is a navigation affordance: it jumps to the tab that is thinking.
+	// The Thought Stream is a separate Auto Run surface and must NOT be opened here.
+	describe('navigation only (no thought stream side effects)', () => {
+		beforeEach(() => {
+			useThoughtStreamStore.setState({
+				panelSessionId: null,
+				buffers: {},
+			});
+			useUIStore.setState({ rightPanelOpen: false });
+		});
+
+		it('jumps to the primary session without opening the thought stream', () => {
+			const onSessionClick = vi.fn();
+			const item = createThinkingItem({
+				id: 'session-xyz',
+				name: 'Live Agent',
+				agentSessionId: 'claude-789',
+			});
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					onSessionClick={onSessionClick}
+				/>
+			);
+
+			// agentSessionId 'claude-789' -> displayClaudeId 'CLAUDE-7'
+			fireEvent.click(screen.getByText('CLAUDE-7'));
+
+			expect(onSessionClick).toHaveBeenCalledWith('session-xyz', undefined);
+			const streamState = useThoughtStreamStore.getState();
+			expect(streamState.panelSessionId).toBeNull();
+			expect(streamState.buffers['session-xyz']).toBeUndefined();
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('jumps when the agent name is clicked (the segment that survives narrow widths)', () => {
+			const onSessionClick = vi.fn();
+			const item = createThinkingItemWithTab(
+				{ id: 'session-abc', name: 'Named Agent', agentSessionId: undefined },
+				{ id: 'tab-999', name: 'Active Tab', agentSessionId: 'tab-claude-id' }
+			);
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					onSessionClick={onSessionClick}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Named Agent'));
+
+			expect(onSessionClick).toHaveBeenCalledWith('session-abc', 'tab-999');
+			expect(useThoughtStreamStore.getState().panelSessionId).toBeNull();
+		});
+
+		it('jumps to a session picked from the dropdown without opening the thought stream', () => {
+			const onSessionClick = vi.fn();
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', name: 'Secondary' }),
+			];
+			render(
+				<ThinkingStatusPill
+					thinkingItems={items}
+					theme={mockTheme}
+					onSessionClick={onSessionClick}
+				/>
+			);
+
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
+			const secondaryRow = screen
+				.getAllByRole('button')
+				.find((row) => row.textContent?.includes('Secondary'));
+			expect(secondaryRow).toBeDefined();
+			fireEvent.click(secondaryRow!);
+
+			expect(onSessionClick).toHaveBeenCalledWith('sess-2', undefined);
+			expect(useThoughtStreamStore.getState().panelSessionId).toBeNull();
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+	});
+
 	describe('interrupt button', () => {
 		it('renders stop button when onInterrupt is provided', () => {
 			const item = createThinkingItem();
@@ -352,12 +481,18 @@ describe('ThinkingStatusPill', () => {
 			expect(onInterrupt).toHaveBeenCalledTimes(1);
 		});
 
-		it('has correct title attribute', () => {
+		it('names what stops rather than which provider is running', () => {
+			// The pill draws the shared <StopTurnButton>, whose tooltip deliberately
+			// says nothing about a provider: the pill sits above agents of every
+			// provider, and Stop is agent-level - it ends this turn's cross-agent
+			// consults as well as the process that is streaming.
 			const item = createThinkingItem();
 			render(
 				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} onInterrupt={() => {}} />
 			);
-			expect(screen.getByTitle('Interrupt Claude (Ctrl+C)')).toBeInTheDocument();
+			const stop = screen.getByTitle('Stop this turn (Ctrl+C)');
+			expect(stop).toBeInTheDocument();
+			expect(stop).not.toHaveAttribute('title', expect.stringContaining('Claude'));
 		});
 	});
 
@@ -616,6 +751,32 @@ describe('ThinkingStatusPill', () => {
 			);
 			expect(screen.getByText('Elapsed:')).toBeInTheDocument();
 			expect(screen.getByText('0m 45s')).toBeInTheDocument();
+		});
+
+		it('freezes AutoRunPill elapsed time while the run is paused', () => {
+			// Started 40h ago, ran 1m, then parked on a HITL gate: the tracker
+			// cleared lastActiveTimestamp, so the pause adds nothing.
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 0,
+				startTime: Date.now() - 40 * 3_600_000,
+				accumulatedElapsedMs: 60_000,
+				lastActiveTimestamp: undefined,
+				errorPaused: true,
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
+			);
+			expect(screen.getByText('1m 0s')).toBeInTheDocument();
+			act(() => {
+				vi.advanceTimersByTime(5000);
+			});
+			expect(screen.getByText('1m 0s')).toBeInTheDocument();
 		});
 
 		it('shows stop button in AutoRunPill when onStopAutoRun is provided', () => {
@@ -1201,6 +1362,53 @@ describe('ThinkingStatusPill', () => {
 			const claudeButton = screen.getByText('TEST-ID-');
 			expect(claudeButton.tagName).toBe('BUTTON');
 			expect(claudeButton).toHaveStyle({ color: mockTheme.colors.accent });
+		});
+	});
+
+	describe('narrow-width responsive classes (container queries in index.css)', () => {
+		// The pill relies on these class hooks to progressively drop segments on
+		// narrow viewports so the Stop button never bleeds off-screen. Guard them
+		// against accidental removal during refactors.
+		it('thinking pill wrapper is a status-pill container', () => {
+			const item = createThinkingItem();
+			const { container } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(container.querySelector('.status-pill-container')).not.toBeNull();
+		});
+
+		it('tokens segment and Claude ID segment carry their drop classes', () => {
+			const item = createThinkingItem({
+				currentCycleTokens: 100,
+				agentSessionId: 'test-id-1234',
+			});
+			const { container } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(container.querySelector('.pill-seg-tokens')).not.toBeNull();
+			expect(container.querySelector('.pill-seg-claude-id')).not.toBeNull();
+		});
+
+		it('Elapsed label word carries the pill-label drop class', () => {
+			const item = createThinkingItem({ thinkingStartTime: Date.now() - 5000 });
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(screen.getByText('Elapsed:')).toHaveClass('pill-label');
+		});
+
+		it('AutoRun pill wrapper is a status-pill container and its labels carry pill-label', () => {
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 2,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+			};
+			const { container } = render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
+			);
+			expect(container.querySelector('.status-pill-container')).not.toBeNull();
+			expect(screen.getByText('Tasks:')).toHaveClass('pill-label');
+			expect(screen.getByText('Elapsed:')).toHaveClass('pill-label');
 		});
 	});
 

@@ -78,6 +78,20 @@ const MISSING_PALETTE_ENTRY = new Set<string>([
 	'mediaPlayPause',
 	'mediaNext',
 	'mediaPrev',
+	// Tiled panes. The palette can CREATE a tile ("Tile New ... Below"), but the
+	// split/focus/zoom chords that act on an existing group have no entry yet -
+	// each needs the active group's focused pane threaded to the palette.
+	'paneSplitRow',
+	'paneSplitColumn',
+	'paneClose',
+	'paneZoom',
+	'paneRebalance',
+	'paneFocusLeft',
+	'paneFocusRight',
+	'paneFocusUp',
+	'paneFocusDown',
+	'paneCycleNext',
+	'paneCyclePrev',
 	// Tab-scoped.
 	'focusBrowserAddress',
 	'reopenClosedTab',

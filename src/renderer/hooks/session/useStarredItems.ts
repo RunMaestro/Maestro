@@ -7,7 +7,7 @@
  * locally inside SessionList.tsx. Keyboard navigation lives in App.tsx and
  * could not see that list, so Cmd+[ / Cmd+] cycling skipped starred sessions
  * entirely. Lifting it here lets the render (SessionList) and the cycle
- * (useCycleSession) consume one owner.
+ * (cycleSession / useCycleSession) consume one owner.
  *
  * Reads sessions + showStarredSessionsSection directly from the stores; takes
  * the cross-agent jump + confirmation primitives (which originate in App) as
@@ -19,12 +19,13 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { updateSessionWith } from '../../stores/sessionStore';
-import { getTabDisplayName } from '../../utils/tabHelpers';
+import { focusAiTabInSession, getTabDisplayName } from '../../utils/tabHelpers';
 import {
 	notifyStarredSessionsChanged,
 	onStarredSessionsChanged,
 } from '../../utils/starredSessions';
 import { captureException } from '../../utils/sentry';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 
 // ============================================================================
 // Types
@@ -72,6 +73,14 @@ export interface UseStarredItemsDeps {
 	) => Promise<boolean>;
 	/** Confirmation dialog used to offer removing an aged-out star. */
 	showConfirmation?: (message: string, onConfirm: () => void | Promise<void>) => void;
+	/**
+	 * Multi-window: restrict the Starred section to agents THIS window owns, keyed
+	 * on each item's `parentSessionId` (the owning agent). So each window's Starred
+	 * list - and the Cmd+[/] cycling that shares this list - reflects only the
+	 * agents visible in it. Omitted / returns true outside a WindowProvider
+	 * (single-window app, web, isolation tests), leaving the list unscoped.
+	 */
+	ownsSession?: (sessionId: string) => boolean;
 }
 
 export interface UseStarredItemsReturn {
@@ -86,10 +95,28 @@ export interface UseStarredItemsReturn {
 // ============================================================================
 
 export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsReturn {
-	const { onJumpToStarredSession, showConfirmation } = deps;
+	const { onJumpToStarredSession, showConfirmation, ownsSession } = deps;
 
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Star/open-tab signature only - streaming log/token flushes must not wake
+	// App via this hook. List builders read sessions at memo/event time via getState().
+	const starredOpenSignature = useSessionStore((s) =>
+		s.sessions
+			.map((sess) => {
+				const tabs = (sess.aiTabs ?? [])
+					.map(
+						(t) => `${t.id}:${t.starred ? 1 : 0}:${t.agentSessionId ?? ''}:${getTabDisplayName(t)}`
+					)
+					.join(',');
+				return `${sess.id}|${sess.name}|${sess.toolType}|${sess.projectRoot}|${tabs}`;
+			})
+			.join('\n')
+	);
+	const sessionCount = useSessionStore((s) => s.sessions.length);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
+	// Pianola survives in the store while its Encore flag is off; a star inside it
+	// must not resurface the hidden agent in the Starred section (or in the
+	// Cmd+[ / Cmd+] order that shares this list).
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
 
 	// Closed/named starred sessions are loaded lazily from disk (the parent agent
 	// may not even be open). Cached here and refreshed when the agent list changes
@@ -130,7 +157,7 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 	// closed twin behind).
 	useEffect(() => {
 		void loadStarredNamedSessions();
-	}, [loadStarredNamedSessions, sessions.length]);
+	}, [loadStarredNamedSessions, sessionCount]);
 	useEffect(
 		() => onStarredSessionsChanged(() => void loadStarredNamedSessions()),
 		[loadStarredNamedSessions]
@@ -140,6 +167,9 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 	// flat list rendered by the "Starred Sessions" Left Bar section.
 	const starredItems = useMemo<StarredItem[]>(() => {
 		if (!showStarredSessionsSection) return [];
+		const sessions = filterSessionsVisibleInSidebar(useSessionStore.getState().sessions, {
+			pianolaEnabled,
+		});
 		const items: StarredItem[] = [];
 		// Suppress a closed/named row whenever its conversation is already open as a
 		// tab, regardless of that tab's star state. Tracking every open tab's
@@ -181,9 +211,20 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 				sessionName: closed.sessionName,
 			});
 		}
-		items.sort((a, b) => a.displayName.localeCompare(b.displayName));
-		return items;
-	}, [showStarredSessionsSection, sessions, starredNamedSessions]);
+		// Multi-window: keep only starred rows whose owning agent (parentSessionId)
+		// belongs to this window. `ownsSession` is null-safe true outside a
+		// WindowProvider, so the single-window list is unchanged.
+		const scoped = ownsSession ? items.filter((i) => ownsSession(i.parentSessionId)) : items;
+		scoped.sort((a, b) => a.displayName.localeCompare(b.displayName));
+		return scoped;
+		// starredOpenSignature pins star/open-tab fields without a full sessions[] sub.
+	}, [
+		showStarredSessionsSection,
+		starredOpenSignature,
+		starredNamedSessions,
+		ownsSession,
+		pianolaEnabled,
+	]);
 
 	const activateStarredItem = useCallback(
 		async (item: StarredItem) => {
@@ -192,18 +233,17 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 			// setting activeSessionId alone leaves the group chat covering everything
 			// and the click appears to do nothing. Agent-row clicks clear it via a
 			// wrapper (SessionList); mirror that here so both the open (early-return)
-			// and closed paths navigate out of group chat.
+			// and closed paths navigate out of group chat. See issue #1175.
 			useGroupChatStore.getState().setActiveGroupChatId(null);
 			useSessionStore.getState().setActiveSessionId(item.parentSessionId);
 			if (item.kind === 'open') {
-				updateSessionWith(item.parentSessionId, (s) => ({
-					...s,
-					activeTabId: item.tabId,
-					activeFileTabId: null,
-					activeTerminalTabId: null,
-					activeBrowserTabId: null,
-					inputMode: 'ai',
-				}));
+				// focusAiTabInSession, not a hand-rolled patch: a starred tab that has
+				// been folded into a tiled group has no standalone chip, so setting
+				// activeTabId alone left the panel on whatever was showing (or rendered
+				// the tab as a dedicated view outside its group). The shared transform
+				// activates the owning group and focuses that tab's PANE instead, and
+				// reveals a hidden tab on the way.
+				updateSessionWith(item.parentSessionId, (s) => focusAiTabInSession(s, item.tabId));
 				return;
 			}
 			// Closed session: ask the owning agent to resume it. If it can't be

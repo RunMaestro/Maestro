@@ -26,6 +26,9 @@ import type { Theme } from '../../../types';
 import { openUrl } from '../../../utils/openUrl';
 import { fileUrlToPath, openFileUrl } from '../../../utils/openFileUrl';
 import { openMaestroLink } from '../../../utils/openMaestroLink';
+import { RenderedMentionChip } from './RenderedMentionChip';
+import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
+import { notifyToast } from '../../../stores/notificationStore';
 
 export interface MarkdownLinkBehavior {
 	/** Chat: handle http/file/git destinations inline via openUrl/openPath. */
@@ -92,6 +95,59 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 	const hasContextMenu = Boolean(onLinkContextMenu || onFileContextMenu);
 
 	return function MarkdownLink({ node: _node, href, children, ...props }: any) {
+		// Mention chips (remarkMentionChips) ride in as link nodes tagged with
+		// data-mention-kind. Detect them first and hand off to the chip renderer
+		// so they render as chips, not anchors. File chips still carry
+		// data-maestro-file, so this branch MUST run before the file-link check.
+		const mentionKind = props['data-mention-kind'] as 'file' | 'agent' | undefined;
+		if (mentionKind === 'file' || mentionKind === 'agent') {
+			return React.createElement(RenderedMentionChip, {
+				kind: mentionKind,
+				theme,
+				filePath: props['data-maestro-file'] as string | undefined,
+				extension: props['data-mention-ext'] as string | undefined,
+				agentName: props['data-mention-name'] as string | undefined,
+				onFileClick,
+			});
+		}
+
+		// Concerto "point" links: `maestro://concerto/<movement|cadenza>/<id>`.
+		// Render as an inline chip that flashes/focuses the referenced view, so an
+		// agent's chat can point at a Movement/Cadenza instead of re-typing it.
+		const concertoTarget = parseConcertoHref(href);
+		if (concertoTarget) {
+			const notifyUnavailable = () =>
+				notifyToast({
+					color: 'orange',
+					title: 'Concerto unavailable',
+					message: `The ${concertoTarget.surface} "${concertoTarget.id}" is no longer available. Ask the agent to recreate it.`,
+				});
+			return React.createElement(
+				'button',
+				{
+					type: 'button',
+					onClick: (e: React.MouseEvent) => {
+						e.preventDefault();
+						e.stopPropagation();
+						void flashConcertoTarget(href).then((opened) => {
+							if (!opened) notifyUnavailable();
+						}, notifyUnavailable);
+					},
+					title: `Show the ${concertoTarget.surface} "${concertoTarget.id}"`,
+					className:
+						'inline-flex items-center gap-1 px-1.5 py-px rounded align-baseline text-[0.92em] font-medium',
+					style: {
+						color: theme.colors.accentText ?? theme.colors.accent,
+						backgroundColor: `${theme.colors.accent}22`,
+						border: `1px solid ${theme.colors.accent}55`,
+						cursor: 'pointer',
+					},
+				},
+				'◉ ',
+				children
+			);
+		}
+
 		// Check for maestro-file:// protocol OR data-maestro-file attribute
 		// (data attribute is the fallback when rehype strips custom protocols).
 		const dataFilePath = props['data-maestro-file'] as string | undefined;

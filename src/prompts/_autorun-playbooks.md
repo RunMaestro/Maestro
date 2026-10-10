@@ -1,6 +1,8 @@
 ## Auto Run Documents (aka Playbooks)
 
-A **Playbook** is a collection of Auto Run documents - Markdown files with checkbox tasks (`- [ ]`) that Maestro's Auto Run engine executes sequentially via AI agents. The **Playbook Exchange** is an official repository of community and curated playbooks users can browse and import directly into their sessions.
+Auto Run has two modes. **Spec-Driven** (this document) works a checklist of Markdown documents to completion. **Goal-Driven** (see the section near the end) pursues a single free-text objective with no checklist, iterating until the goal is reached. Pick the mode that fits what the user asked for: a list of concrete steps means Spec-Driven; an open-ended "keep working until X" objective means Goal-Driven.
+
+A **Playbook** is a collection of Spec-Driven Auto Run documents - Markdown files with checkbox tasks (`- [ ]`) that Maestro's Auto Run engine executes sequentially via AI agents. The **Playbook Exchange** is an official repository of community and curated playbooks users can browse and import directly into their sessions.
 
 When a user asks for a "playbook", "play book", "playbooks", "auto-run document", "autorun doc", or "auto run doc", follow the rules below exactly.
 
@@ -24,6 +26,8 @@ These are two distinct actions and the user's phrasing tells you which (or both)
   Useful flags: `--save-as "<name>"` to register it as a reusable playbook, `--loop` / `--max-loops <n>` for iterative runs, `--prompt "<extra instructions>"` to prepend per-task guidance, `--reset-on-completion` to uncheck boxes when finished.
 
 **Critical:** When the user asks you to _run_ an auto-run, do NOT execute the tasks yourself by reading the document and doing the work in this chat. That bypasses the Auto Run engine, leaves nothing in the UI, produces no playbook record, and loses the per-task fresh-context isolation that makes auto-runs reliable. Launching via `maestro-cli auto-run --launch` is the only correct path. Always pass `--agent {{AGENT_ID}}` so the run targets you (without it the CLI picks the first available agent).
+
+The same rule applies to a **saved playbook**: read its documents and loop settings with `maestro-cli show playbook <id>`, then launch them with `auto-run --launch`. `maestro-cli playbook <id>` and `maestro-cli run-doc` are headless, in-process runners that the desktop never sees; use them only when the user asks for a headless run or the desktop app is not running. For recurring work, use `--loop` / `--max-loops <n>` or a Cue schedule (`maestro-cli cue schedule`), **never a scheduler of your own** (shell loop, cron, launchd, or a background script that re-runs the CLI on a timer).
 
 ### Playbook Type: Task-Based vs Document-Based
 
@@ -98,7 +102,7 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
    - [ ] Apply the fixes from the staging review, then run the checkout test suite.
    ```
 
-   The engine pauses the run at that marker, surfaces the `reason` (and optional `artifact` to look at) in the Auto Run panel and a toast, and waits. The user resumes by checking the box above the marker or clicking Resume. This is a **deliberate, visible pause** - the opposite of a stall.
+   The engine pauses the run at that marker, surfaces the `reason` (and optional `artifact` to look at) in the Auto Run panel and a toast, and waits. The user does the step and clicks **Done, Resume**, which writes a ticked `Human step done` box under the marker. Do not add an approval checkbox of your own. This is a **deliberate, visible pause** - the opposite of a stall.
 
 2. **The work just isn't the engine's job** - put it as plain `-` bullets under a trailing section. The engine never reads these, so they cannot stall anything:
 
@@ -131,7 +135,7 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
 - Get design sign-off on the new login screen.
 ```
 
-A stale HITL marker left above an unchecked task will pause every re-run until the box above it is checked, so use gates only where a person genuinely must act.
+A stale HITL marker left above an unchecked task will pause every re-run until a person passes it, so use gates only where a person genuinely must act.
 
 ### Token Efficiency
 
@@ -211,5 +215,19 @@ This enables exploration via Maestro's DocGraph viewer and tools like Obsidian.
 
 - [ ] Add rate limiting to `src/routes/auth.ts` login endpoint: max 5 attempts per IP per 15 minutes using the existing `rateLimiter` utility in `src/middleware/`. Add tests for the rate limit behavior.
 ```
+
+### Goal-Driven Auto Run (no checklist)
+
+Everything above describes **Spec-Driven** runs (checklist documents). **Goal-Driven** mode is the alternative: instead of authoring a document, you give the engine a single free-text **goal** and optional **exit criteria**, and it spawns a fresh agent each iteration that makes one increment of real progress, self-reports how far along it is, and exits. The next iteration picks up from there, until the goal is reached, the agent declares a deadlock, an iteration cap is hit, or progress stalls. There are no documents and no `- [ ]` tasks.
+
+Choose Goal-Driven when the user describes an open-ended objective ("keep improving X until Y", "research Z thoroughly", "get test coverage above 90%") rather than a concrete list of steps. There is nothing to author - launch it directly via the CLI:
+
+```bash
+{{MAESTRO_CLI_PATH}} goal-run {{AGENT_ID}} "<the goal in plain language>" [--exit-criteria "<what done looks like; when to declare a deadlock>"] [--max-iterations <n>]
+```
+
+Omit `--max-iterations` to run until the goal is reached or a deadlock is detected (infinite). Useful flags: `--json` for machine-parseable event output, `--verbose` to echo each iteration's prompt, `--no-history` to skip history entries. As with Spec-Driven runs, always pass the agent id so the run targets you, and **never** pursue the goal yourself in chat - launching via `goal-run` is the only correct path so the engine drives it, the UI shows progress, and each iteration gets fresh-context isolation.
+
+The agent reports progress with markers in its output each iteration: `<!-- maestro:progress 45 | short rationale -->` (0-100), `<!-- maestro:goal-complete -->` when done, or `<!-- maestro:deadlock: reason -->` when truly blocked. The engine reads these to drive the progress bar and decide when to stop; you do not need to mention them when launching.
 
 **Note:** Nudge messages configured on an agent do not apply to Auto Run tasks - they are only appended to interactive user messages.

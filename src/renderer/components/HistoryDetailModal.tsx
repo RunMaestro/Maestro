@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
 	X,
 	Copy,
@@ -14,6 +15,7 @@ import {
 	ChevronRight,
 	AlertTriangle,
 	Server,
+	User,
 } from 'lucide-react';
 import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -27,11 +29,12 @@ import { formatTimestamp } from '../../shared/formatters';
 import { humanizeCueEventType } from '../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { stripMaestroMarkers } from '../../shared/goalDriven/goalMarkers';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
-import { DoubleCheck, getEntryIcon, getPillColor } from './History';
+import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './History';
 import { HoverTooltip } from './ui/HoverTooltip';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ResizeHandles } from './ui/ResizeHandles';
@@ -42,7 +45,12 @@ interface HistoryDetailModalProps {
 	entry: HistoryEntry;
 	onClose: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
+	/**
+	 * Restore this entry's provider session as a tab. `sessionName` is the label
+	 * the entry displays; without it the restored tab falls back to the id octet
+	 * even though the modal it was launched from was showing the real name.
+	 */
+	onResumeSession?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 	onDelete?: (entryId: string) => void;
 	onUpdate?: (entryId: string, updates: { validated?: boolean }) => Promise<boolean>;
 	// Navigation props for prev/next
@@ -146,13 +154,16 @@ export function HistoryDetailModal({
 			if (!onResumeSession || !entry.agentSessionId) return;
 			ke.preventDefault();
 			trackShortcutUsage('historyJumpToSession');
-			onResumeSession(entry.agentSessionId);
+			onResumeSession(entry.agentSessionId, entry.projectPath, entry.sessionName);
 			onClose();
 		}
 	});
 
 	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'datetime');
 
+	// Pill color + icon come from the shared History helpers so this modal can
+	// never drift from the list rows behind it (it used to re-declare both,
+	// hardcoding CUE's hex, which is how AGENT would have been missed here).
 	const colors = getPillColor(entry.type, theme);
 	const Icon = getEntryIcon(entry.type);
 
@@ -180,25 +191,41 @@ export function HistoryDetailModal({
 	//   - summary = the synopsis text
 	//   - fullResponse = may contain more context
 	const rawResponse = entry.fullResponse || entry.summary || '';
-	const cleanResponse = stripAnsiCodes(rawResponse);
+	// Strip ANSI, then the internal `<!-- maestro:... -->` control markers the Auto
+	// Run engine reads (progress/goal-complete/deadlock/halt) - users shouldn't see them.
+	const cleanResponse = stripMaestroMarkers(stripAnsiCodes(rawResponse));
 	const resizableModal = useResizableModal({
 		resizeKey: 'history-detail',
 		defaultSize: { width: 960, height: 720 },
 		minSize: { width: 640, height: 420 },
 	});
 
-	return (
-		<div className="fixed inset-0 flex items-center justify-center z-[9999]">
-			{/* Backdrop */}
-			<div className="absolute inset-0 bg-black/60" onClick={onClose} />
+	// Body portal: this modal mounts inside the right-panel drawer, which is
+	// CSS-transformed on narrow viewports. A transformed ancestor becomes the
+	// containing block for position:fixed, so without the portal the overlay
+	// (and the xs full-screen layout from index.css) gets trapped inside the
+	// ~320px drawer instead of covering the screen.
+	return createPortal(
+		// `modal-overlay` is not just the scrim: the phone block in index.css
+		// keys the status-bar / home-indicator padding on that class, and this
+		// overlay was the one full-screen modal missing it. Without the padding
+		// the modal is sized to the VISIBLE viewport but centered in the LAYOUT
+		// viewport, so on an iPhone home-screen web app it floated with a dead
+		// band above and below (measured 47px / 46px on a 390x844 screen) and its
+		// top edge tucked under the iOS status-bar layer, which swallows taps.
+		<div className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999]">
+			{/* Click-anywhere-outside target. The scrim itself now comes from
+			    `modal-overlay` above, the same one every other modal draws. */}
+			<div className="absolute inset-0" onClick={onClose} />
 
-			{/* Modal */}
+			{/* Modal. `history-detail-modal` lets index.css expand it to full-screen at the
+			    xs breakpoint (phones) where the centered dialog is too cramped. */}
 			<div
 				ref={resizableModal.modalRef}
 				role="dialog"
 				aria-modal="true"
 				aria-label="History Detail"
-				className="relative overflow-hidden rounded-lg border shadow-2xl flex flex-col select-text"
+				className="history-detail-modal relative overflow-hidden rounded-lg border shadow-2xl flex flex-col select-text"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
@@ -250,8 +277,8 @@ export function HistoryDetailModal({
 						)}
 
 						<div className="flex items-center gap-3 flex-wrap">
-							{/* Success/Failure Indicator for AUTO and CUE entries */}
-							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success !== undefined && (
+							{/* Success/Failure Indicator for dispatched work (AUTO / CUE / AGENT) */}
+							{hasRunOutcome(entry.type) && entry.success !== undefined && (
 								<span
 									className="flex items-center justify-center w-6 h-6 rounded-full"
 									style={{
@@ -300,6 +327,22 @@ export function HistoryDetailModal({
 								<Icon className="w-2.5 h-2.5" />
 								{entry.type}
 							</span>
+
+							{/* Sender pill - shown for turns a logged-in browser sent */}
+							{entry.userName && (
+								<span
+									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										color: theme.colors.textDim,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+									title={`Sent by ${entry.userName}`}
+								>
+									<User className="w-2.5 h-2.5" />
+									{entry.userDisplayName ?? entry.userName}
+								</span>
+							)}
 
 							{/* Remote hostname pill - shown for entries from other hosts */}
 							{entry.hostname && (
@@ -361,7 +404,11 @@ export function HistoryDetailModal({
 									{onResumeSession && (
 										<button
 											onClick={() => {
-												onResumeSession(entry.agentSessionId!);
+												onResumeSession(
+													entry.agentSessionId!,
+													entry.projectPath,
+													entry.sessionName
+												);
 												onClose();
 											}}
 											className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-80"
@@ -413,8 +460,8 @@ export function HistoryDetailModal({
 								</span>
 							)}
 
-							{/* Validated toggle for AUTO and CUE entries */}
-							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success && onUpdate && (
+							{/* Validated toggle for dispatched work (AUTO / CUE / AGENT) */}
+							{hasRunOutcome(entry.type) && entry.success && onUpdate && (
 								<HoverTooltip
 									theme={theme}
 									maxWidth={260}
@@ -599,9 +646,10 @@ export function HistoryDetailModal({
 					)}
 				</div>
 
-				{/* Footer */}
+				{/* Footer. `hdm-footer` tightens padding at the xs breakpoint and the
+				    `hdm-btn-label` words collapse to icons so all controls stay on-screen. */}
 				<div
-					className="flex items-center justify-between px-6 py-4 border-t shrink-0"
+					className="hdm-footer flex items-center justify-between gap-2 px-6 py-4 border-t shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
 					{/* Delete button - only shown when onDelete handler is provided */}
@@ -617,7 +665,7 @@ export function HistoryDetailModal({
 							title="Delete this history entry"
 						>
 							<Trash2 className="w-4 h-4" />
-							Delete
+							<span className="hdm-btn-label">Delete</span>
 						</button>
 					) : (
 						<div />
@@ -640,7 +688,7 @@ export function HistoryDetailModal({
 								title={hasPrev ? 'Previous entry (←)' : 'No previous entry'}
 							>
 								<ChevronLeft className="w-4 h-4" />
-								Prev
+								<span className="hdm-btn-label">Prev</span>
 							</button>
 							<button
 								onClick={goToNext}
@@ -655,7 +703,7 @@ export function HistoryDetailModal({
 								}}
 								title={hasNext ? 'Next entry (→)' : 'No next entry'}
 							>
-								Next
+								<span className="hdm-btn-label">Next</span>
 								<ChevronRight className="w-4 h-4" />
 							</button>
 						</div>
@@ -715,9 +763,8 @@ export function HistoryDetailModal({
 									<AlertTriangle className="w-5 h-5" style={{ color: theme.colors.error }} />
 								</div>
 								<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
-									Are you sure you want to delete this{' '}
-									{entry.type === 'AUTO' ? 'auto' : entry.type === 'CUE' ? 'cue' : 'user'} history
-									entry? This action cannot be undone.
+									Are you sure you want to delete this {entry.type.toLowerCase()} history entry?
+									This action cannot be undone.
 								</p>
 							</div>
 							<div className="mt-6 flex justify-end gap-2">
@@ -764,6 +811,7 @@ export function HistoryDetailModal({
 					</div>
 				</div>
 			)}
-		</div>
+		</div>,
+		document.body
 	);
 }

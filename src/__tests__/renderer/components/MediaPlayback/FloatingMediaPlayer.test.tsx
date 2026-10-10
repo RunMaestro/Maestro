@@ -1,9 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { FloatingMediaPlayer } from '../../../../renderer/components/MediaPlayback/FloatingMediaPlayer';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	MEDIA_FLOAT_DEFAULT_WIDTH,
+	MEDIA_FLOAT_EDGE_MARGIN,
 	mediaFloatChromeHeight,
 } from '../../../../renderer/utils/mediaFloatGeometry';
 import type { MediaItem } from '../../../../renderer/utils/mediaItems';
@@ -60,10 +62,12 @@ describe('FloatingMediaPlayer', () => {
 			dismissed: false,
 			pendingAutoplay: false,
 			toggleRequest: 0,
+			focusRequest: 0,
 			resumeTimes: {},
 			durations: {},
 			floatPosition: null,
 			floatWidths: {},
+			floatFootprint: null,
 			aspects: {},
 		});
 		(window as unknown as { maestro?: unknown }).maestro = { settings: { set: vi.fn() } };
@@ -73,6 +77,43 @@ describe('FloatingMediaPlayer', () => {
 		renderPlayer();
 		expect(screen.getByText('podcast.mp3')).toBeTruthy();
 		expect(screen.getByText('Agent One')).toBeTruthy();
+	});
+
+	// The title bar is a drag handle over `select-none`, so the name it shows
+	// cannot be selected: the button is the only way to get at it.
+	describe('copy file name', () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+
+		beforeEach(() => {
+			writeText.mockClear();
+			// No shell bridge on `window.maestro` here, so safeClipboardWrite falls
+			// through to the navigator path.
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				writable: true,
+				value: { writeText },
+			});
+		});
+
+		it('copies the loaded file name', async () => {
+			renderPlayer();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('media-copy-name'));
+			});
+
+			expect(writeText).toHaveBeenCalledWith('podcast.mp3');
+		});
+
+		it('does not start a drag when the button is pressed', () => {
+			renderPlayer();
+			const before = frame().style.left;
+
+			fireEvent.mouseDown(screen.getByTestId('media-copy-name'), { button: 0 });
+			fireEvent.mouseMove(window, { clientX: 200, clientY: 200 });
+
+			expect(frame().style.left).toBe(before);
+		});
 	});
 
 	it('minimizes to the Left Bar without stopping playback', () => {
@@ -89,6 +130,168 @@ describe('FloatingMediaPlayer', () => {
 		expect(state.activeItemId).toBe(item().id);
 		// The queue entry survives, so restoring finds the same file loaded.
 		expect(state.items).toHaveLength(1);
+	});
+
+	describe('focus', () => {
+		it('takes the caret when something asks for the player to be shown', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+			expect(document.activeElement).not.toBe(frame());
+
+			// What the palette entry and the header pill's restore button both do.
+			act(() => useMediaPlaybackStore.getState().restore());
+
+			// Landing focused is what makes Escape and the transport keys work
+			// without a click first - a keyboard-opened surface must not be
+			// keyboard-dead.
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('does not grab focus on the first render', () => {
+			// A queue restored from disk renders the widget without anyone asking
+			// for it, so mounting must not pull the caret out of the composer.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+			expect(document.activeElement).not.toBe(frame());
+		});
+
+		it('re-focuses on a second request', () => {
+			// The widget is never unmounted, so the nonce is what lets "show the
+			// player" fire twice; a boolean would latch after the first.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id });
+			renderPlayer();
+			act(() => useMediaPlaybackStore.getState().restore());
+			(document.activeElement as HTMLElement).blur();
+
+			act(() => useMediaPlaybackStore.getState().restore());
+
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('opening then pressing Escape minimizes, with no click in between', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+
+			act(() => useMediaPlaybackStore.getState().restore());
+			fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+		});
+	});
+
+	describe('Escape', () => {
+		it('minimizes rather than closing, so playback survives a reflex', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(true);
+			// The whole reason Escape is wired to minimize and not to close: this is
+			// the one surface whose close button stops something the user is
+			// listening to.
+			expect(state.playing).toBe(true);
+			expect(state.activeItemId).toBe(a.id);
+		});
+
+		it('closes an open list first, leaving the player up', () => {
+			const a = item();
+			const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: b.id });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('answers from inside the list, which is what holds focus', () => {
+			// The list takes the caret on open, so in practice the key lands there
+			// rather than on the frame. It is portaled to the body, so the frame's
+			// own handler cannot be relied on to see it.
+			const a = item();
+			const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: b.id });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+			const menu = screen.getByTestId('media-queue-menu');
+			expect(document.activeElement).toBe(menu);
+
+			fireEvent.keyDown(menu, { key: 'Escape' });
+
+			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
+			// One press does one thing: closing the list must not also minimize the
+			// player the user was heading back to.
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+			// And the caret comes back, so the NEXT Escape is not swallowed.
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('minimizes on the press after the list closes', () => {
+			const a = item();
+			const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: b.id });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+			fireEvent.keyDown(screen.getByTestId('media-queue-menu'), { key: 'Escape' });
+
+			fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+		});
+
+		it('leaves a fullscreen video alone', () => {
+			// Escape is already spoken for: it is how the user gets back OUT of
+			// fullscreen. Minimizing on the way would hide the player they were only
+			// trying to un-maximize.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+			Object.defineProperty(document, 'fullscreenElement', {
+				configurable: true,
+				value: frame(),
+			});
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+			Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+		});
+
+		it('ignores a modified Escape', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id });
+			renderPlayer();
+
+			fireEvent.keyDown(frame(), { key: 'Escape', metaKey: true });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('is reachable after grabbing the title bar', () => {
+			// The drag handler calls preventDefault, which suppresses the click's own
+			// focus. Without the widget claiming focus itself, Escape after a drag
+			// would go to whatever surface is behind the player instead.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+
+			fireEvent.mouseDown(frame().firstElementChild!, { button: 0, clientX: 300, clientY: 300 });
+			fireEvent.mouseUp(window);
+			expect(document.activeElement).toBe(frame());
+
+			fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+			expect(useMediaPlaybackStore.getState().playing).toBe(true);
+		});
 	});
 
 	it('closing stops playback and releases the player', () => {
@@ -334,6 +537,33 @@ describe('FloatingMediaPlayer', () => {
 			expect(screen.queryByLabelText(/Play queue/)).toBeNull();
 		});
 
+		it('offers a close control, since a touch surface has no Escape key', () => {
+			// The list covers the player it came from, so without a control here a
+			// phone or tablet driving the web interface has no way back to the
+			// transport at all.
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+
+			fireEvent.click(screen.getByTestId('media-queue-menu-close'));
+
+			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
+			// Same outcome as Escape, down to where the caret lands.
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('offers the same close control on the history list', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Recently played'));
+
+			fireEvent.click(screen.getByTestId('media-history-menu-close'));
+
+			expect(screen.queryByTestId('media-history-menu')).toBeNull();
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
 		it('leaves the playing track out of the queue list', () => {
 			seedQueue();
 			renderPlayer();
@@ -509,5 +739,174 @@ describe('FloatingMediaPlayer', () => {
 			fireEvent.mouseDown(document.body);
 			expect(screen.queryByTestId('media-history-menu')).toBeNull();
 		});
+	});
+
+	// The custom title strip is an OS drag region that swallows every click over
+	// it. A player whose header slid under it could not be moved, minimized, or
+	// closed, so it has to stay below the strip wherever it was left.
+	describe('clearing the title strip', () => {
+		const TITLE_STRIP = 40;
+		const initialHeight = window.innerHeight;
+		const initialWidth = window.innerWidth;
+
+		const resizeWindowTo = (height: number) => {
+			act(() => {
+				Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+				window.dispatchEvent(new Event('resize'));
+			});
+		};
+
+		beforeEach(() => {
+			// Pinned rather than left to the platform default, which is on for Windows.
+			useSettingsStore.setState({ useNativeTitleBar: false });
+			// A desktop-wide window: AppShell drops the strip at md and below.
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+		});
+
+		afterEach(() => {
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: initialHeight });
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: initialWidth });
+		});
+
+		it('pulls a position stored under the strip down below it', () => {
+			useMediaPlaybackStore.setState({ floatPosition: { top: 0, left: 240 } });
+			renderPlayer();
+			expect(frame().style.top).toBe(`${TITLE_STRIP}px`);
+		});
+
+		it('keeps the header out of the drag region, so its buttons get clicks', () => {
+			renderPlayer();
+			// jsdom's CSS parser drops the property from the serialized style, so read
+			// the value React assigned to the declaration directly.
+			const style = frame().style as CSSStyleDeclaration & { WebkitAppRegion?: string };
+			expect(style.WebkitAppRegion).toBe('no-drag');
+		});
+
+		it('minimizes and closes from a position that was stored under the strip', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({
+				items: [a],
+				activeItemId: a.id,
+				playing: true,
+				floatPosition: { top: 0, left: 240 },
+			});
+			const { unmount } = renderPlayer();
+
+			fireEvent.click(screen.getByLabelText('Minimize player to the Left Bar'));
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+			unmount();
+
+			useMediaPlaybackStore.setState({ dismissed: false });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Close player and stop playback'));
+			expect(useMediaPlaybackStore.getState().activeItemId).toBeNull();
+		});
+
+		it('cannot be dragged up under the strip', () => {
+			useMediaPlaybackStore.setState({ floatPosition: { top: 200, left: 240 } });
+			renderPlayer();
+
+			const handle = screen.getByTitle('Drag to move');
+			fireEvent.mouseDown(handle, { button: 0, clientX: 300, clientY: 220 });
+			fireEvent.mouseMove(window, { clientX: 300, clientY: -400 });
+			fireEvent.mouseUp(window);
+
+			expect(frame().style.top).toBe(`${TITLE_STRIP}px`);
+		});
+
+		it('stays inside the window, below the strip, when the window shrinks', () => {
+			// Parked near the bottom of a tall window...
+			resizeWindowTo(900);
+			useMediaPlaybackStore.setState({ floatPosition: { top: 900 - CHROME - 10, left: 240 } });
+			renderPlayer();
+			expect(parseInt(frame().style.top, 10)).toBe(900 - CHROME - 10);
+
+			// ...then the window gets shorter. Still well above phone-landscape height,
+			// which drops the strip altogether.
+			resizeWindowTo(600);
+			const top = parseInt(frame().style.top, 10);
+			const height = parseInt(frame().style.height, 10);
+			expect(top).toBeGreaterThanOrEqual(TITLE_STRIP);
+			expect(top + height).toBeLessThanOrEqual(600);
+		});
+
+		it('uses the full height when the native title bar replaces the strip', () => {
+			useSettingsStore.setState({ useNativeTitleBar: true });
+			useMediaPlaybackStore.setState({ floatPosition: { top: 0, left: 240 } });
+			renderPlayer();
+			expect(frame().style.top).toBe('0px');
+		});
+
+		it('uses the full height at a md-down width, where AppShell draws no strip', () => {
+			// Same predicate AppShell asks, so the player never clears a strip that
+			// is not on screen.
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 900 });
+			useMediaPlaybackStore.setState({ floatPosition: { top: 0, left: 240 } });
+			renderPlayer();
+			expect(frame().style.top).toBe('0px');
+		});
+
+		it('drops the no-drag opt-out while minimized', () => {
+			render(
+				<FloatingMediaPlayer
+					title="podcast.mp3"
+					subtitle="Agent One"
+					kind="audio"
+					hidden
+					theme={mockTheme}
+				>
+					<div />
+				</FloatingMediaPlayer>
+			);
+			const style = frame().style as CSSStyleDeclaration & { WebkitAppRegion?: string };
+			expect(style.WebkitAppRegion).not.toBe('no-drag');
+		});
+	});
+});
+
+describe('FloatingMediaPlayer footprint', () => {
+	beforeEach(() => {
+		useMediaPlaybackStore.setState({ floatFootprint: null });
+		(window as unknown as { maestro?: unknown }).maestro = { settings: { set: vi.fn() } };
+	});
+
+	it("publishes where it landed, in the toast lane's coordinates", () => {
+		// The toast stack is anchored bottom-right and sits far above the widget in
+		// z-order, so it needs this to step over the player instead of erasing it.
+		renderPlayer();
+		const footprint = useMediaPlaybackStore.getState().floatFootprint;
+		expect(footprint).toEqual({
+			fromBottom: MEDIA_FLOAT_EDGE_MARGIN + CHROME,
+			fromRight: MEDIA_FLOAT_EDGE_MARGIN,
+			width: MEDIA_FLOAT_DEFAULT_WIDTH.audio,
+			viewportHeight: window.innerHeight,
+		});
+	});
+
+	it('reports nothing while minimized', () => {
+		// A parked widget is not on screen, so there is nothing for toasts to
+		// avoid - and lifting them for it would look like a stray gap.
+		render(
+			<FloatingMediaPlayer
+				title="podcast.mp3"
+				subtitle="Agent One"
+				kind="audio"
+				transportHeight={null}
+				hidden
+				theme={mockTheme}
+			>
+				<div data-testid="player-body">player</div>
+			</FloatingMediaPlayer>
+		);
+		expect(useMediaPlaybackStore.getState().floatFootprint).toBeNull();
+	});
+
+	it('reports nothing once it is gone', () => {
+		// Closing the last item unmounts the widget, which no `hidden` change
+		// announces - a stale footprint would leave the toast stack lifted forever.
+		const { unmount } = renderPlayer();
+		expect(useMediaPlaybackStore.getState().floatFootprint).not.toBeNull();
+		unmount();
+		expect(useMediaPlaybackStore.getState().floatFootprint).toBeNull();
 	});
 });

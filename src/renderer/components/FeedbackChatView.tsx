@@ -6,9 +6,10 @@
  * and when understanding reaches 80%, submits a well-structured GitHub issue.
  *
  * Features:
- * - Auto-picks the first available supported provider - no selection step
+ * - Runs as the first working account among the user's own agents (with a
+ *   picker to override), falling through to the next when a first turn fails
  * - Chat interface with progress bar
- * - Screenshot drag-and-drop
+ * - Screenshot drag-and-drop and clipboard paste
  * - Support package opt-in
  * - GH CLI availability check
  */
@@ -25,13 +26,19 @@ import {
 	PlusCircle,
 	Check,
 	Copy,
+	Save,
+	Gauge,
 	Terminal,
 } from 'lucide-react';
+import { formatSize } from '../../shared/formatters';
+import { useUIStore } from '../stores/uiStore';
 import { Spinner } from './ui/Spinner';
+import { AccountPill, ghAccountLabel } from './ui/AccountPill';
+import { GitHubLoginModal } from './GitHubLoginModal';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
-import type { Theme, Session, ToolType } from '../types';
+import type { Theme, Session } from '../types';
 import {
 	FeedbackConversationManager,
 	getConfidenceColor,
@@ -41,16 +48,25 @@ import {
 } from '../services/feedbackConversation';
 import { openUrl } from '../utils/openUrl';
 import { captureException } from '../utils/sentry';
-import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useFeedbackDraftStore, type FeedbackDraft } from '../stores/feedbackDraftStore';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
+import {
+	describeFeedbackAccountStatus,
+	isFeedbackAccountUsable,
+	type FeedbackAccount,
+} from '../../shared/feedbackAccounts';
+import {
+	type FeedbackAuthResponse,
+	MAX_FEEDBACK_ATTACHMENTS as MAX_ATTACHMENTS,
+	MAX_FEEDBACK_ATTACHMENT_BYTES as MAX_ATTACHMENT_BYTES,
+	type FeedbackIssueMatch,
+} from '../../shared/feedback';
+import { fileTimestampSlug } from '../../shared/formatters';
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-const MAX_ATTACHMENTS = 5;
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 interface FeedbackAttachment {
 	id: string;
@@ -78,21 +94,16 @@ function readFileAsDataUrl(file: File): Promise<string> {
 	});
 }
 
-// ============================================================================
-// Agent Tile Data
-// ============================================================================
-
-interface AgentTile {
-	id: ToolType;
-	name: string;
-	supported: boolean;
+/**
+ * The account a new or retried turn should run as: the first usable account
+ * that has not already failed this conversation.
+ */
+function nextUsableAccount(
+	accounts: FeedbackAccount[],
+	failed: ReadonlyMap<string, string>
+): FeedbackAccount | undefined {
+	return accounts.find((account) => isFeedbackAccountUsable(account) && !failed.has(account.key));
 }
-
-const AGENT_TILES: AgentTile[] = [
-	{ id: 'claude-code', name: 'Claude Code', supported: true },
-	{ id: 'codex', name: 'OpenAI Codex', supported: true },
-	{ id: 'opencode', name: 'OpenCode', supported: true },
-];
 
 // ============================================================================
 // Component Props
@@ -105,51 +116,104 @@ interface FeedbackChatViewProps {
 	onSubmitSuccess: (sessionId: string) => void;
 	/** Called when the view's desired modal width changes */
 	onWidthChange?: (width: number) => void;
+	/** When set, hydrate the view from this persisted draft on mount */
+	resumeDraftId?: string | null;
+	/**
+	 * Minimize the modal (keeping the draft) so the user can reproduce an issue.
+	 * Invoked when a performance-trace recording starts.
+	 */
+	onRequestMinimize?: () => void;
 }
 
 // ============================================================================
 // Component
 // ============================================================================
 
-interface ExistingIssue {
-	number: number;
-	title: string;
-	url: string;
-	state: string;
-	labels: string[];
-	createdAt: string;
-	author: string;
-	commentCount: number;
-}
+type ExistingIssue = FeedbackIssueMatch;
 
-export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackChatViewProps) {
+export function FeedbackChatView({
+	theme,
+	onCancel,
+	onWidthChange,
+	resumeDraftId,
+	onRequestMinimize,
+}: FeedbackChatViewProps) {
+	// Resolve the draft to resume exactly once, at mount, so initial state can
+	// be seeded synchronously before the auto-start effect picks an agent.
+	const resumeDraftRef = useRef<FeedbackDraft | null>(
+		resumeDraftId
+			? (useFeedbackDraftStore.getState().drafts.find((d) => d.id === resumeDraftId) ?? null)
+			: null
+	);
+	const resumeDraft = resumeDraftRef.current;
+
 	// --- State ---
 	const [step, setStep] = useState<'gh-check' | 'chat' | 'matching' | 'submitting' | 'done'>(
 		'gh-check'
 	);
-	const [ghAuth, setGhAuth] = useState<{ checking: boolean; ok: boolean; message?: string }>({
+	const [ghAuth, setGhAuth] = useState<{
+		checking: boolean;
+		ok: boolean;
+		message?: string;
+		reason?: FeedbackAuthResponse['reason'];
+		needsGhLogin?: boolean;
+		account?: FeedbackAuthResponse['account'];
+	}>({
 		checking: true,
 		ok: false,
 	});
-	const [selectedAgent, setSelectedAgent] = useState<ToolType>('claude-code');
-	const [detectedAgents, setDetectedAgents] = useState<Set<string>>(new Set());
+	// The embedded GitHub CLI login, when open. `retry` is what to do once gh is
+	// signed in: re-run the submit or +1 that gh refused, so the user does not
+	// have to find the button again.
+	const [ghLogin, setGhLogin] = useState<{ reason?: string; retry?: () => void } | null>(null);
+	// A gh failure on submit or +1 that signing in again can fix.
+	const [ghLoginRetry, setGhLoginRetry] = useState<(() => void) | null>(null);
+	// Accounts the chat can run as, in the order to try them (see
+	// shared/feedbackAccounts). Built from the user's own agents, because the
+	// provider's default login is often not one they have signed into.
+	const [accounts, setAccounts] = useState<FeedbackAccount[]>([]);
+	const [activeAccountKey, setActiveAccountKey] = useState<string | null>(null);
+	// Accounts that failed a turn in this conversation, with why.
+	const [failedAccounts, setFailedAccounts] = useState<ReadonlyMap<string, string>>(
+		() => new Map()
+	);
 	const [agentsLoaded, setAgentsLoaded] = useState(false);
 	const [agentsDetectError, setAgentsDetectError] = useState<string | null>(null);
-	const [messages, setMessages] = useState<FeedbackMessage[]>([]);
-	const [inputValue, setInputValue] = useState('');
+	const [messages, setMessages] = useState<FeedbackMessage[]>(() => resumeDraft?.messages ?? []);
+	const [inputValue, setInputValue] = useState(() => resumeDraft?.inputDraft ?? '');
 	const [isLoading, setIsLoading] = useState(false);
-	const [confidence, setConfidence] = useState(0);
-	const [isReady, setIsReady] = useState(false);
-	const [lastResponse, setLastResponse] = useState<FeedbackParsedResponse | null>(null);
-	const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
+	const [confidence, setConfidence] = useState(() => resumeDraft?.confidence ?? 0);
+	const [isReady, setIsReady] = useState(() => resumeDraft?.lastResponse?.ready ?? false);
+	const [lastResponse, setLastResponse] = useState<FeedbackParsedResponse | null>(
+		() => resumeDraft?.lastResponse ?? null
+	);
+	const [attachments, setAttachments] = useState<FeedbackAttachment[]>(
+		() => resumeDraft?.attachments ?? []
+	);
 	const [isDragging, setIsDragging] = useState(false);
-	const [includeDebugPackage, setIncludeDebugPackage] = useState(false);
+	const [includeDebugPackage, setIncludeDebugPackage] = useState(
+		() => resumeDraft?.includeDebugPackage ?? false
+	);
+	// --- Performance trace capture ---
+	const [isTracing, setIsTracing] = useState(false); // recording in flight
+	const [traceBusy, setTraceBusy] = useState(false); // stopping/bundling
+	const [tracePath, setTracePath] = useState<string | null>(null); // captured temp zip
+	const [traceSizeBytes, setTraceSizeBytes] = useState(0);
+	const [traceError, setTraceError] = useState('');
+	const setProfilingActive = useUIStore((s) => s.setProfilingActive);
 	const [submitError, setSubmitError] = useState('');
 	const [matchingIssues, setMatchingIssues] = useState<ExistingIssue[]>([]);
 	const [searchingIssues, setSearchingIssues] = useState(false);
 	const [subscribingTo, setSubscribingTo] = useState<number | null>(null);
 	const [createdIssueUrl, setCreatedIssueUrl] = useState<string | null>(null);
 	const [copiedUrl, setCopiedUrl] = useState(false);
+	const [isSavingDraft, setIsSavingDraft] = useState(false);
+	const [draftSaved, setDraftSaved] = useState(false);
+	// Subscribe so the live snapshot re-publishes with the freshly minted id
+	// after a save (preventing duplicate drafts) and so the editor can surface
+	// draft-save failures.
+	const activeDraftId = useFeedbackDraftStore((s) => s.activeDraftId);
+	const saveError = useFeedbackDraftStore((s) => s.saveError);
 	// Diagnostics the agent ran on this machine during the current turn. Cleared
 	// at the start of each send so the list always describes the turn in flight.
 	const [diagnostics, setDiagnostics] = useState<FeedbackDiagnostic[]>([]);
@@ -162,6 +226,18 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const startedRef = useRef(false);
+	// Mirror trace state into refs so the unmount cleanup (empty-dep effect) can
+	// stop an in-flight recording / drop an unsubmitted temp trace without
+	// re-subscribing. submittedRef flips true once the report is sent, so we
+	// don't discard a trace the submit handler already consumed.
+	const isTracingRef = useRef(false);
+	const tracePathRef = useRef<string | null>(null);
+	const submittedRef = useRef(false);
+	// Set once any turn has been answered. Until then a failed turn falls through
+	// to the next account; after it, a failure is reported rather than silently
+	// moving the conversation to a different account.
+	const answeredRef = useRef(false);
+	const lastWorkingKeyRef = useRef<string | null>(null);
 
 	// --- Report desired width based on current step ---
 	useEffect(() => {
@@ -169,37 +245,64 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	}, [step, onWidthChange]);
 
 	// --- GH Auth Check ---
+	const mountedRef = useRef(true);
 	useEffect(() => {
-		let mounted = true;
-		(async () => {
-			try {
-				const result = await window.maestro.feedback.checkGhAuth();
-				if (mounted) {
-					setGhAuth({ checking: false, ok: result.authenticated, message: result.message });
-				}
-			} catch {
-				if (mounted) {
-					setGhAuth({ checking: false, ok: false, message: 'Unable to verify GitHub CLI.' });
-				}
-			}
-		})();
+		mountedRef.current = true;
 		return () => {
-			mounted = false;
+			mountedRef.current = false;
 		};
 	}, []);
+	/** Ask gh whether feedback can be filed. `fresh` skips the cached verdict. */
+	const checkGh = useCallback(async (fresh: boolean) => {
+		try {
+			const result = await window.maestro.feedback.checkGhAuth(fresh ? { fresh: true } : undefined);
+			if (mountedRef.current) {
+				setGhAuth({
+					checking: false,
+					ok: result.authenticated,
+					message: result.message,
+					reason: result.reason,
+					needsGhLogin: result.needsGhLogin,
+					account: result.account,
+				});
+			}
+		} catch {
+			if (mountedRef.current) {
+				setGhAuth({ checking: false, ok: false, message: 'Unable to verify GitHub CLI.' });
+			}
+		}
+	}, []);
+	useEffect(() => {
+		void checkGh(false);
+	}, [checkGh]);
 
-	// --- Agent Detection ---
+	/** gh is signed in now: record it and pick up where the flow stopped. */
+	const handleGhSignedIn = useCallback(() => {
+		const retry = ghLogin?.retry;
+		setGhLogin(null);
+		setGhLoginRetry(null);
+		setSubmitError('');
+		// The auto-start effect continues into the chat from here.
+		setGhAuth({ checking: false, ok: true });
+		retry?.();
+	}, [ghLogin]);
+
+	// --- Account discovery: every account the user's agents run as, checked ---
 	useEffect(() => {
 		let mounted = true;
 		(async () => {
 			try {
-				const agents = await window.maestro.agents.detect();
+				const result = await window.maestro.feedback.listAccounts();
 				if (mounted) {
-					const available = new Set<string>(agents.filter((a) => a.available).map((a) => a.id));
-					setDetectedAgents(available);
-					// Auto-select first available
-					const firstAvailable = AGENT_TILES.find((t) => t.supported && available.has(t.id));
-					if (firstAvailable) setSelectedAgent(firstAvailable.id);
+					setAccounts(result.accounts);
+					lastWorkingKeyRef.current = result.lastWorkingKey;
+					// A resumed draft keeps its provider when an account for it can
+					// still run; otherwise (or for a fresh chat) the first usable one.
+					const usable = result.accounts.filter(isFeedbackAccountUsable);
+					const resumed = resumeDraft
+						? usable.find((account) => account.toolType === resumeDraft.agentType)
+						: undefined;
+					setActiveAccountKey((resumed ?? usable[0])?.key ?? null);
 					setAgentsLoaded(true);
 				}
 			} catch (error) {
@@ -236,21 +339,46 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		return () => {
 			managerRef.current.cleanup();
 			useFeedbackDraftStore.getState().reset();
+			// Never leave a recording running or a large temp trace behind when the
+			// modal is torn down. If the report was submitted, the main process
+			// already consumed and deleted the trace zip, so skip that path.
+			if (isTracingRef.current) {
+				setProfilingActive(false);
+				void window.maestro.debug
+					.stopProfilingToFile()
+					.then((r) => {
+						if (r?.path) void window.maestro.debug.discardTrace(r.path);
+					})
+					.catch(() => {});
+			}
+			if (tracePathRef.current && !submittedRef.current) {
+				void window.maestro.debug.discardTrace(tracePathRef.current);
+			}
 		};
-	}, []);
+	}, [setProfilingActive]);
+
+	// --- Resume bookkeeping: bind this editor to the resumed draft's id so
+	//     saves upsert (not duplicate), and consume the one-shot resume flag.
+	useEffect(() => {
+		if (!resumeDraft) return;
+		useFeedbackDraftStore.setState({ activeDraftId: resumeDraft.id });
+		useFeedbackDraftStore.getState().clearResume();
+	}, [resumeDraft]);
 
 	// --- Publish draft state so the sidebar Feedback button + close handler
-	//     know whether the user has work in progress. Closing parks a draft
+	//     know whether the user has work worth keeping. Closing parks a draft
 	//     rather than discarding it, so this counts anything the user would be
 	//     annoyed to retype: a sent message, text still sitting in the composer,
-	//     or staged screenshots. Once the issue is submitted (step === 'done')
-	//     there's nothing left to keep.
+	//     or staged screenshots. An in-flight recording or a captured-but-
+	//     unsubmitted trace counts too. Once the issue is submitted
+	//     (step === 'done') there's nothing left to keep.
 	useEffect(() => {
 		const hasSentMessage = messages.some((m) => m.role === 'user');
 		const hasUnsentWork = inputValue.trim().length > 0 || attachments.length > 0;
-		const hasDraft = (hasSentMessage || hasUnsentWork) && step !== 'done';
+		const hasTraceWork = isTracing || tracePath !== null;
+		const hasDraft = (hasSentMessage || hasUnsentWork || hasTraceWork) && step !== 'done';
 		useFeedbackDraftStore.getState().setHasDraft(hasDraft);
-	}, [messages, step, inputValue, attachments]);
+	}, [messages, attachments, inputValue, step, isTracing, tracePath]);
 
 	// --- Background issue search - fires after every agent response ---
 	const runIssueSearch = useCallback(async (query: string) => {
@@ -284,10 +412,10 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		}
 	}, [lastResponse, runIssueSearch]);
 
-	// Available agent tiles
-	const availableTiles = useMemo(
-		() => AGENT_TILES.filter((t) => t.supported && detectedAgents.has(t.id)),
-		[detectedAgents]
+	const usableAccounts = useMemo(() => accounts.filter(isFeedbackAccountUsable), [accounts]);
+	const activeAccount = useMemo(
+		() => accounts.find((account) => account.key === activeAccountKey),
+		[accounts, activeAccountKey]
 	);
 
 	// Prose styles for markdown rendering in assistant messages
@@ -300,11 +428,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	// --- Start conversation ---
 	const startConversation = useCallback(async () => {
 		try {
+			if (!activeAccount) throw new Error('No account is available to run the feedback chat.');
 			const { prompt, cwd } = await window.maestro.feedback.getConversationPrompt();
 			managerRef.current.start({
-				agentType: selectedAgent,
+				agentType: activeAccount.toolType,
 				systemPrompt: prompt,
 				cwd,
+				account: activeAccount,
 			});
 			setStep('chat');
 			// Focus input immediately - no auto-greeting, user speaks first
@@ -319,19 +449,37 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 			startedRef.current = false;
 			setSubmitError(error instanceof Error ? error.message : 'Failed to start conversation');
 		}
-	}, [selectedAgent]);
+	}, [activeAccount]);
 
-	// --- Auto-start conversation once GH auth + agent detection are ready.
-	//     The previous "pick a provider" screen is gone (#766) - Maestro infers
-	//     the provider from the first detected supported agent.
+	// --- Auto-start conversation once GH auth + account discovery are ready.
+	//     There is no "pick a provider" screen (#766): the first usable account
+	//     runs it, and the picker in the chat header overrides that.
 	useEffect(() => {
 		if (startedRef.current) return;
 		if (ghAuth.checking || !ghAuth.ok) return;
 		if (!agentsLoaded || agentsDetectError) return;
-		if (availableTiles.length === 0) return;
+		if (!activeAccount) return;
 		startedRef.current = true;
 		void startConversation();
-	}, [ghAuth, agentsLoaded, agentsDetectError, availableTiles, startConversation]);
+	}, [ghAuth, agentsLoaded, agentsDetectError, activeAccount, startConversation]);
+
+	// --- Run later turns as another account (picker override) ---
+	const selectAccount = useCallback(
+		(key: string) => {
+			const account = accounts.find((candidate) => candidate.key === key);
+			if (!account) return;
+			setActiveAccountKey(key);
+			// Picking an account by hand is a request to try it, even if it failed.
+			setFailedAccounts((prev) => {
+				if (!prev.has(key)) return prev;
+				const next = new Map(prev);
+				next.delete(key);
+				return next;
+			});
+			if (managerRef.current.isActive) managerRef.current.switchAccount(account.toolType, account);
+		},
+		[accounts]
+	);
 
 	// --- Send message ---
 	const sendMessage = useCallback(async () => {
@@ -346,16 +494,62 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		setDiagnostics([]);
 
 		try {
-			const response = await managerRef.current.sendMessage(text, updatedMessages, {
-				onDiagnostic: (diagnostic) => {
+			const callbacks = {
+				onDiagnostic: (diagnostic: FeedbackDiagnostic) => {
 					setDiagnostics((prev) => [...prev, diagnostic]);
 				},
-				onComplete: (r) => {
+				onComplete: (r: FeedbackParsedResponse) => {
 					setConfidence(r.confidence);
 					setIsReady(r.ready);
 					setLastResponse(r);
 				},
-			});
+			};
+			let accountKey = activeAccountKey;
+			let result = await managerRef.current.sendTurn(text, updatedMessages, callbacks);
+
+			// Until some account has answered, a failed turn (most often a refused
+			// login) moves on to the next account instead of ending the chat.
+			const failed = new Map(failedAccounts);
+			while (result.failed && !answeredRef.current && accountKey) {
+				failed.set(accountKey, result.error ?? 'Failed');
+				const next = nextUsableAccount(accounts, failed);
+				if (!next) break;
+				accountKey = next.key;
+				setActiveAccountKey(next.key);
+				setDiagnostics([]);
+				managerRef.current.switchAccount(next.toolType, next);
+				result = await managerRef.current.sendTurn(text, updatedMessages, callbacks);
+			}
+			if (result.failed && accountKey) failed.set(accountKey, result.error ?? 'Failed');
+			setFailedAccounts(failed);
+
+			if (!result.failed) {
+				answeredRef.current = true;
+				if (accountKey && accountKey !== lastWorkingKeyRef.current) {
+					lastWorkingKeyRef.current = accountKey;
+					void window.maestro.feedback.rememberAccount(accountKey).catch(() => {
+						// Remembering only saves the next chat a fall-through.
+					});
+				}
+			}
+
+			// Every account failed before any answered: say which ones and why,
+			// rather than the generic "something went wrong".
+			const response =
+				result.failed && !answeredRef.current
+					? {
+							...result.response,
+							message: [
+								`No account could answer. Tried: ${[...failed.keys()]
+									.map((key) => accounts.find((a) => a.key === key)?.label ?? key)
+									.join(', ')}.`,
+								result.error ? `Last error: ${result.error}` : '',
+								'Sign one of these accounts in (run the provider login in a terminal), or pick another account above, then send again.',
+							]
+								.filter(Boolean)
+								.join('\n\n'),
+						}
+					: result.response;
 
 			setMessages((prev) => [
 				...prev,
@@ -368,12 +562,17 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					summary: response.summary,
 				},
 			]);
-		} catch {
+		} catch (error) {
+			captureException(error, { extra: { source: 'FeedbackChatView.sendMessage' } });
+			const detail =
+				error instanceof Error && error.message
+					? error.message
+					: 'Something went wrong. Please try again.';
 			setMessages((prev) => [
 				...prev,
 				{
 					role: 'assistant',
-					content: 'Something went wrong. Please try again.',
+					content: detail,
 					timestamp: Date.now(),
 				},
 			]);
@@ -381,13 +580,14 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 			setIsLoading(false);
 			inputRef.current?.focus();
 		}
-	}, [inputValue, isLoading, messages]);
+	}, [inputValue, isLoading, messages, activeAccountKey, failedAccounts, accounts]);
 
 	// --- Create new issue (skipping or after matching) ---
 	const createNewIssue = useCallback(async () => {
 		if (!lastResponse) return;
 		setStep('submitting');
 		setSubmitError('');
+		setGhLoginRetry(null);
 
 		try {
 			const result = await window.maestro.feedback.submitConversation({
@@ -399,20 +599,28 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 				additionalContext: lastResponse.structured.additionalContext || undefined,
 				attachments: attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
 				includeDebugPackage,
+				performanceTracePath: tracePath ?? undefined,
 			});
 
 			if (result.success) {
+				// The main process consumed and deleted the temp trace on success;
+				// mark it so the unmount cleanup doesn't try to discard it again.
+				if (tracePath) submittedRef.current = true;
 				setCreatedIssueUrl(result.issueUrl ?? null);
 				setStep('done');
 			} else {
 				setSubmitError(result.error || 'Failed to submit feedback.');
+				// gh refused in a way a fresh login fixes: offer it, then file again.
+				if (result.needsGhLogin) setGhLoginRetry(() => () => void createNewIssueRef.current?.());
 				setStep('chat');
 			}
 		} catch (error) {
 			setSubmitError(error instanceof Error ? error.message : 'Submission failed.');
 			setStep('chat');
 		}
-	}, [lastResponse, attachments, includeDebugPackage]);
+	}, [lastResponse, attachments, includeDebugPackage, tracePath]);
+	const createNewIssueRef = useRef<typeof createNewIssue | null>(null);
+	createNewIssueRef.current = createNewIssue;
 
 	// --- Submit: always search first, then show matches or create ---
 	const searchAndSubmit = useCallback(async () => {
@@ -458,6 +666,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 			if (!lastResponse) return;
 			setSubscribingTo(issue.number);
 			setSubmitError('');
+			setGhLoginRetry(null);
 
 			try {
 				// Build a comment from the conversation context
@@ -482,6 +691,9 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					setStep('done');
 				} else {
 					setSubmitError(result.error || 'Failed to subscribe to issue.');
+					if (result.needsGhLogin) {
+						setGhLoginRetry(() => () => void subscribeToIssueRef.current?.(issue));
+					}
 				}
 			} catch (error) {
 				setSubmitError(error instanceof Error ? error.message : 'Failed to subscribe.');
@@ -491,6 +703,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		},
 		[lastResponse]
 	);
+	const subscribeToIssueRef = useRef<typeof subscribeToIssue | null>(null);
+	subscribeToIssueRef.current = subscribeToIssue;
+
+	/** Open the embedded gh login for the failure just shown. */
+	const openGhLoginForFailure = useCallback(() => {
+		setGhLogin({ reason: submitError || undefined, retry: ghLoginRetry ?? undefined });
+	}, [submitError, ghLoginRetry]);
 
 	// --- Attachment handling ---
 	const addFiles = useCallback(
@@ -521,9 +740,103 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		[attachments.length]
 	);
 
+	// Chromium names raw clipboard bitmap data "image.png", so every pasted
+	// screenshot would be listed (and titled in the issue) under the same name.
+	// Those get a timestamped name; a real file copied from Finder or Explorer
+	// keeps its own.
+	const handlePaste = useCallback(
+		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+			const images = Array.from(e.clipboardData.items)
+				.filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+				.map((item) => item.getAsFile())
+				.filter((f): f is File => f != null);
+			if (images.length === 0) return;
+			// The image is the paste; don't let a text flavor riding along with it
+			// (a file name, an image URL) land in the message as well.
+			e.preventDefault();
+			const stamp = fileTimestampSlug();
+			const named = images.map((file, i) => {
+				if (file.name && !/^image\.[a-z0-9]+$/i.test(file.name)) return file;
+				const ext = file.type.split('/')[1]?.split('+')[0] || 'png';
+				const suffix = images.length > 1 ? `-${i + 1}` : '';
+				return new File([file], `screenshot-${stamp}${suffix}.${ext}`, { type: file.type });
+			});
+			void addFiles(named);
+		},
+		[addFiles]
+	);
+
 	const removeAttachment = useCallback((id: string) => {
 		setAttachments((prev) => prev.filter((a) => a.id !== id));
 	}, []);
+
+	// --- Performance trace capture ---
+	// Keep refs in sync so the unmount cleanup can act on the latest values.
+	useEffect(() => {
+		isTracingRef.current = isTracing;
+		tracePathRef.current = tracePath;
+	}, [isTracing, tracePath]);
+
+	// Reconcile with the main-process recording singleton on mount: a recording
+	// may already be running (started here before a minimize, or via Cmd+K), in
+	// which case the control should show "Stop" instead of "Start".
+	useEffect(() => {
+		let mounted = true;
+		(async () => {
+			try {
+				const status = await window.maestro.debug.getProfilingStatus();
+				if (mounted && status.active) setIsTracing(true);
+			} catch {
+				// best-effort reconcile
+			}
+		})();
+		return () => {
+			mounted = false;
+		};
+	}, []);
+
+	const startTrace = useCallback(async () => {
+		setTraceError('');
+		try {
+			await window.maestro.debug.startProfiling();
+			setIsTracing(true);
+			setProfilingActive(true);
+			// Minimize so the user can reproduce the slow behavior; the recording
+			// keeps running in the main process. Reopening reconciles the Stop state.
+			onRequestMinimize?.();
+		} catch (e) {
+			setTraceError(e instanceof Error ? e.message : 'Failed to start recording.');
+		}
+	}, [onRequestMinimize, setProfilingActive]);
+
+	const stopTrace = useCallback(async () => {
+		setTraceBusy(true);
+		setTraceError('');
+		try {
+			const result = await window.maestro.debug.stopProfilingToFile();
+			setIsTracing(false);
+			setProfilingActive(false);
+			if (result.success && result.path) {
+				setTracePath(result.path);
+				setTraceSizeBytes(result.bundleSizeBytes);
+			} else {
+				setTraceError(result.error || 'Failed to capture the trace.');
+			}
+		} catch (e) {
+			setIsTracing(false);
+			setProfilingActive(false);
+			setTraceError(e instanceof Error ? e.message : 'Failed to capture the trace.');
+		} finally {
+			setTraceBusy(false);
+		}
+	}, [setProfilingActive]);
+
+	const removeTrace = useCallback(() => {
+		const path = tracePath;
+		setTracePath(null);
+		setTraceSizeBytes(0);
+		if (path) void window.maestro.debug.discardTrace(path);
+	}, [tracePath]);
 
 	// --- Key handler ---
 	const handleKeyDown = useCallback(
@@ -536,280 +849,759 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		[sendMessage]
 	);
 
+	// --- Persisted draft helpers ---
+	const serializeDraft = useCallback((): FeedbackDraft => {
+		const firstUserMessage = messages.find((m) => m.role === 'user');
+		const rawName =
+			lastResponse?.summary || firstUserMessage?.content || inputValue || 'Untitled feedback';
+		const suggestedName = rawName.trim().slice(0, 60) || 'Untitled feedback';
+		const now = Date.now();
+		return {
+			id: activeDraftId ?? '',
+			suggestedName,
+			category: lastResponse?.category ?? 'general_feedback',
+			summary: lastResponse?.summary ?? '',
+			confidence,
+			// The provider the chat is running as, so a resume picks an account
+			// for the same provider.
+			agentType: activeAccount?.toolType ?? resumeDraft?.agentType ?? 'claude-code',
+			messages,
+			attachments,
+			inputDraft: inputValue,
+			includeDebugPackage,
+			createdAt: now,
+			updatedAt: now,
+			lastResponse,
+		};
+	}, [
+		messages,
+		attachments,
+		inputValue,
+		lastResponse,
+		confidence,
+		activeAccount,
+		resumeDraft,
+		includeDebugPackage,
+		activeDraftId,
+	]);
+
+	// Keep a live snapshot in the store so FeedbackModal can persist on
+	// minimize/close without reaching into this component's local state.
+	useEffect(() => {
+		const hasContent =
+			messages.some((m) => m.role === 'user') ||
+			attachments.length > 0 ||
+			inputValue.trim().length > 0;
+		useFeedbackDraftStore.getState().setActiveDraft(hasContent ? serializeDraft() : null);
+	}, [serializeDraft, messages, attachments, inputValue]);
+
+	const handleSaveDraft = useCallback(async () => {
+		setIsSavingDraft(true);
+		try {
+			const savedId = await useFeedbackDraftStore.getState().saveDraft(serializeDraft());
+			if (savedId !== null) {
+				setDraftSaved(true);
+				window.setTimeout(() => setDraftSaved(false), 2000);
+			}
+			// On failure the store sets `saveError`, surfaced as a banner below;
+			// do not flash "Saved" for a write that did not persist.
+		} finally {
+			setIsSavingDraft(false);
+		}
+	}, [serializeDraft]);
+
 	// ========================================================================
 	// Render
 	// ========================================================================
 
-	// --- GH Check Failed ---
-	if (!ghAuth.checking && !ghAuth.ok) {
-		return (
-			<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
-				<AlertCircle className="w-10 h-10" style={{ color: theme.colors.warning }} />
-				<div>
-					<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
-						GitHub CLI Required
-					</p>
-					<p className="text-xs leading-relaxed max-w-sm" style={{ color: theme.colors.textDim }}>
-						{ghAuth.message ||
-							'Inline feedback requires the GitHub CLI (gh) to be installed and authenticated locally.'}
-					</p>
-				</div>
-				<button
-					type="button"
-					onClick={onCancel}
-					className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-				>
-					Close
-				</button>
-			</div>
-		);
-	}
+	// The login dialog portals to the body, so it sits beside whichever screen
+	// is showing: the gh check, or the chat whose submit gh refused.
+	return (
+		<>
+			{renderStep()}
+			{ghLogin && (
+				<GitHubLoginModal
+					theme={theme}
+					reason={ghLogin.reason}
+					account={ghAuth.account}
+					onClose={() => setGhLogin(null)}
+					onSignedIn={handleGhSignedIn}
+				/>
+			)}
+		</>
+	);
 
-	// --- Loading GH Check ---
-	if (ghAuth.checking) {
-		return (
-			<div className="flex flex-col items-center gap-3 py-8 px-6">
-				<Spinner size={24} color={theme.colors.accent} />
-				<p className="text-xs" style={{ color: theme.colors.textDim }}>
-					Checking GitHub CLI...
-				</p>
-			</div>
-		);
-	}
-
-	// --- Agent detection failed (IPC/runtime error, not "zero providers") ---
-	if (agentsDetectError) {
-		return (
-			<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
-				<AlertCircle className="w-10 h-10" style={{ color: theme.colors.error }} />
-				<div>
-					<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
-						Could not detect AI providers
-					</p>
-					<p className="text-xs leading-relaxed max-w-sm" style={{ color: theme.colors.textDim }}>
-						{agentsDetectError}
-					</p>
-				</div>
-				<button
-					type="button"
-					onClick={onCancel}
-					className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-				>
-					Close
-				</button>
-			</div>
-		);
-	}
-
-	// --- No supported AI provider detected ---
-	if (agentsLoaded && availableTiles.length === 0) {
-		return (
-			<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
-				<AlertCircle className="w-10 h-10" style={{ color: theme.colors.warning }} />
-				<div>
-					<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
-						No supported AI providers detected
-					</p>
-					<p className="text-xs leading-relaxed max-w-sm" style={{ color: theme.colors.textDim }}>
-						Inline feedback uses an AI to shape your report into a well-structured GitHub issue.
-						Install Claude Code, Codex, or OpenCode and try again.
-					</p>
-				</div>
-				<button
-					type="button"
-					onClick={onCancel}
-					className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-				>
-					Close
-				</button>
-			</div>
-		);
-	}
-
-	// --- Booting: GH ok, agent detection or conversation start in flight ---
-	if (step === 'gh-check') {
-		return (
-			<div className="flex flex-col items-center gap-3 py-8 px-6">
-				<Spinner size={24} color={theme.colors.accent} />
-				<p className="text-xs" style={{ color: theme.colors.textDim }}>
-					Starting feedback session...
-				</p>
-				{submitError && (
-					<>
-						<p className="text-xs" style={{ color: theme.colors.warning }}>
-							{submitError}
+	function renderStep() {
+		// --- GH Check Failed ---
+		if (!ghAuth.checking && !ghAuth.ok) {
+			const notInstalled = ghAuth.reason === 'not-installed';
+			// A repo refusal that a new login cannot fix (a 403 for this account)
+			// gets no login button: offering one would loop the user through a
+			// sign-in that ends at the same refusal.
+			const offerLogin =
+				!notInstalled && (ghAuth.reason !== 'no-repo-access' || ghAuth.needsGhLogin === true);
+			const title =
+				ghAuth.reason === 'no-repo-access'
+					? 'GitHub Refused This Account'
+					: ghAuth.reason === 'not-authenticated'
+						? 'Sign In to GitHub'
+						: 'GitHub CLI Required';
+			return (
+				<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
+					<AlertCircle className="w-10 h-10" style={{ color: theme.colors.warning }} />
+					<div className="flex flex-col items-center">
+						<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+							{title}
 						</p>
-						<button
-							type="button"
-							onClick={onCancel}
-							className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						{ghAuth.account && (
+							<div className="mb-2 max-w-sm">
+								<AccountPill
+									theme={theme}
+									label={ghAccountLabel(ghAuth.account)}
+									testId="feedback-gh-account"
+								/>
+							</div>
+						)}
+						<p
+							className="text-xs leading-relaxed max-w-sm select-text"
+							style={{ color: theme.colors.textDim }}
 						>
-							Close
-						</button>
-					</>
-				)}
-			</div>
-		);
-	}
-
-	// --- Done ---
-	if (step === 'done') {
-		const issueNumber = createdIssueUrl?.match(/\/issues\/(\d+)/)?.[1];
-
-		return (
-			<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
-				<div
-					className="w-12 h-12 rounded-full flex items-center justify-center"
-					style={{ backgroundColor: `${theme.colors.success}20` }}
-				>
-					<Check className="w-6 h-6" style={{ color: theme.colors.success }} />
-				</div>
-				<div>
-					<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
-						Feedback Submitted
-					</p>
-					<p className="text-xs" style={{ color: theme.colors.textDim }}>
-						{createdIssueUrl
-							? `Issue #${issueNumber ?? ''} has been created. Thank you!`
-							: 'Your feedback has been recorded. Thank you!'}
-					</p>
-				</div>
-
-				{/* Issue link + copy */}
-				{createdIssueUrl && (
-					<div
-						className="flex items-center gap-2 px-3 py-2 rounded-lg border text-xs"
-						style={{
-							borderColor: theme.colors.border,
-							backgroundColor: theme.colors.bgMain,
-							color: theme.colors.textDim,
-							maxWidth: '100%',
-						}}
-					>
-						<span className="truncate flex-1 text-left" title={createdIssueUrl}>
-							{createdIssueUrl}
-						</span>
-						<button
-							type="button"
-							onClick={async () => {
-								const ok = await safeClipboardWrite(createdIssueUrl);
-								if (ok) {
-									setCopiedUrl(true);
-									setTimeout(() => setCopiedUrl(false), 2000);
-								}
-							}}
-							className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
-							style={{ color: copiedUrl ? theme.colors.success : theme.colors.textDim }}
-							title="Copy issue URL"
-						>
-							{copiedUrl ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-						</button>
+							{ghAuth.message ||
+								'Inline feedback requires the GitHub CLI (gh) to be installed and authenticated locally.'}
+						</p>
+					</div>
+					<div className="flex items-center gap-2">
+						{notInstalled && (
+							<button
+								type="button"
+								onClick={() => openUrl('https://cli.github.com')}
+								className="inline-flex items-center gap-1.5 px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground,
+								}}
+								data-testid="feedback-gh-install"
+							>
+								<ExternalLink className="w-3.5 h-3.5" />
+								Install GitHub CLI
+							</button>
+						)}
+						{offerLogin && (
+							<button
+								type="button"
+								onClick={() => setGhLogin({})}
+								className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground,
+								}}
+								data-testid="feedback-gh-login"
+							>
+								Log in to GitHub
+							</button>
+						)}
 						<button
 							type="button"
 							onClick={() => {
-								openUrl(createdIssueUrl);
-								onCancel();
+								setGhAuth({ checking: true, ok: false });
+								void checkGh(true);
 							}}
-							className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
-							style={{ color: theme.colors.textDim }}
-							title="Open in browser"
+							className="px-4 py-2 rounded text-xs border transition-colors hover:bg-white/5"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							data-testid="feedback-gh-recheck"
 						>
-							<ExternalLink className="w-3.5 h-3.5" />
+							Check Again
+						</button>
+						<button
+							type="button"
+							onClick={onCancel}
+							className="px-4 py-2 rounded text-xs border transition-colors hover:bg-white/5"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						>
+							Close
 						</button>
 					</div>
-				)}
+				</div>
+			);
+		}
 
-				<button
-					type="button"
-					onClick={onCancel}
-					className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-				>
-					Close
-				</button>
-			</div>
-		);
-	}
+		// --- Loading GH Check ---
+		if (ghAuth.checking) {
+			return (
+				<div className="flex flex-col items-center gap-3 py-8 px-6">
+					<Spinner size={24} color={theme.colors.accent} />
+					<p className="text-xs" style={{ color: theme.colors.textDim }}>
+						Checking GitHub CLI...
+					</p>
+				</div>
+			);
+		}
 
-	// --- Matching existing issues ---
-	if (step === 'matching') {
-		return (
-			<div className="flex flex-col gap-4 p-6">
-				{searchingIssues ? (
-					<div className="flex flex-col items-center gap-3 py-8">
-						<Spinner size={24} color={theme.colors.accent} />
-						<p className="text-xs" style={{ color: theme.colors.textDim }}>
-							Searching for similar existing issues...
+		// --- Agent detection failed (IPC/runtime error, not "zero providers") ---
+		if (agentsDetectError) {
+			return (
+				<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
+					<AlertCircle className="w-10 h-10" style={{ color: theme.colors.error }} />
+					<div>
+						<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+							Could not detect AI providers
+						</p>
+						<p className="text-xs leading-relaxed max-w-sm" style={{ color: theme.colors.textDim }}>
+							{agentsDetectError}
 						</p>
 					</div>
-				) : (
-					<>
-						<div>
-							<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
-								We found similar issues
+					<button
+						type="button"
+						onClick={onCancel}
+						className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+					>
+						Close
+					</button>
+				</div>
+			);
+		}
+
+		// --- No supported AI provider detected ---
+		if (agentsLoaded && usableAccounts.length === 0) {
+			return (
+				<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
+					<AlertCircle className="w-10 h-10" style={{ color: theme.colors.warning }} />
+					<div>
+						<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+							No supported AI providers detected
+						</p>
+						<p className="text-xs leading-relaxed max-w-sm" style={{ color: theme.colors.textDim }}>
+							Inline feedback uses an AI to shape your report into a well-structured GitHub issue.
+							Install Claude Code, Codex, or OpenCode and try again.
+						</p>
+					</div>
+					<button
+						type="button"
+						onClick={onCancel}
+						className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+					>
+						Close
+					</button>
+				</div>
+			);
+		}
+
+		// --- Booting: GH ok, agent detection or conversation start in flight ---
+		if (step === 'gh-check') {
+			return (
+				<div className="flex flex-col items-center gap-3 py-8 px-6">
+					<Spinner size={24} color={theme.colors.accent} />
+					<p className="text-xs" style={{ color: theme.colors.textDim }}>
+						Starting feedback session...
+					</p>
+					{submitError && (
+						<>
+							<p className="text-xs" style={{ color: theme.colors.warning }}>
+								{submitError}
 							</p>
+							<button
+								type="button"
+								onClick={onCancel}
+								className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground,
+								}}
+							>
+								Close
+							</button>
+						</>
+					)}
+				</div>
+			);
+		}
+
+		// --- Done ---
+		if (step === 'done') {
+			const issueNumber = createdIssueUrl?.match(/\/issues\/(\d+)/)?.[1];
+
+			return (
+				<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
+					<div
+						className="w-12 h-12 rounded-full flex items-center justify-center"
+						style={{ backgroundColor: `${theme.colors.success}20` }}
+					>
+						<Check className="w-6 h-6" style={{ color: theme.colors.success }} />
+					</div>
+					<div>
+						<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+							Feedback Submitted
+						</p>
+						<p className="text-xs" style={{ color: theme.colors.textDim }}>
+							{createdIssueUrl
+								? `Issue #${issueNumber ?? ''} has been created. Thank you!`
+								: 'Your feedback has been recorded. Thank you!'}
+						</p>
+					</div>
+
+					{/* Issue link + copy */}
+					{createdIssueUrl && (
+						<div
+							className="flex items-center gap-2 px-3 py-2 rounded-lg border text-xs"
+							style={{
+								borderColor: theme.colors.border,
+								backgroundColor: theme.colors.bgMain,
+								color: theme.colors.textDim,
+								maxWidth: '100%',
+							}}
+						>
+							<span className="truncate flex-1 text-left" title={createdIssueUrl}>
+								{createdIssueUrl}
+							</span>
+							<button
+								type="button"
+								onClick={async () => {
+									const ok = await safeClipboardWrite(createdIssueUrl);
+									if (ok) {
+										setCopiedUrl(true);
+										setTimeout(() => setCopiedUrl(false), 2000);
+									}
+								}}
+								className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
+								style={{ color: copiedUrl ? theme.colors.success : theme.colors.textDim }}
+								title="Copy issue URL"
+							>
+								{copiedUrl ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									openUrl(createdIssueUrl);
+									onCancel();
+								}}
+								className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
+								style={{ color: theme.colors.textDim }}
+								title="Open in browser"
+							>
+								<ExternalLink className="w-3.5 h-3.5" />
+							</button>
+						</div>
+					)}
+
+					<button
+						type="button"
+						onClick={onCancel}
+						className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+					>
+						Close
+					</button>
+				</div>
+			);
+		}
+
+		// --- Matching existing issues ---
+		if (step === 'matching') {
+			return (
+				<div className="flex flex-col gap-4 p-6">
+					{searchingIssues ? (
+						<div className="flex flex-col items-center gap-3 py-8">
+							<Spinner size={24} color={theme.colors.accent} />
 							<p className="text-xs" style={{ color: theme.colors.textDim }}>
-								Does any of these match what you&apos;re reporting? Subscribing adds your context as
-								a comment and a +1 reaction, helping us prioritize.
+								Searching for similar existing issues...
 							</p>
 						</div>
+					) : (
+						<>
+							<div>
+								<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+									We found similar issues
+								</p>
+								<p className="text-xs" style={{ color: theme.colors.textDim }}>
+									Does any of these match what you&apos;re reporting? Subscribing adds your context
+									as a comment and a +1 reaction, helping us prioritize.
+								</p>
+							</div>
 
-						<div className="flex flex-col gap-2 max-h-[40vh] overflow-y-auto">
-							{matchingIssues.map((issue) => (
-								<div
-									key={issue.number}
-									className="flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors"
+							<div className="flex flex-col gap-2 max-h-[40vh] overflow-y-auto">
+								{matchingIssues.map((issue) => (
+									<div
+										key={issue.number}
+										className="flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgMain,
+										}}
+									>
+										<div className="flex-1 min-w-0">
+											<p
+												className="text-xs font-semibold truncate"
+												style={{ color: theme.colors.textMain }}
+												title={issue.title}
+											>
+												#{issue.number} {issue.title}
+											</p>
+											<div className="flex items-center gap-2 mt-0.5">
+												<span
+													className="text-2xs px-1.5 py-0.5 rounded-full"
+													style={{
+														backgroundColor:
+															issue.state === 'OPEN'
+																? `${theme.colors.success}20`
+																: `${theme.colors.textDim}20`,
+														color:
+															issue.state === 'OPEN' ? theme.colors.success : theme.colors.textDim,
+													}}
+												>
+													{issue.state === 'OPEN' ? 'Open' : 'Closed'}
+												</span>
+												<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+													by {issue.author}
+												</span>
+											</div>
+										</div>
+										<div className="flex items-center gap-1.5 shrink-0">
+											<button
+												type="button"
+												className="p-1.5 rounded transition-colors hover:bg-white/5"
+												style={{ color: theme.colors.textDim }}
+												title="View on GitHub"
+												onClick={() => openUrl(issue.url)}
+											>
+												<ExternalLink className="w-3.5 h-3.5" />
+											</button>
+											<button
+												type="button"
+												onClick={() => subscribeToIssue(issue)}
+												disabled={subscribingTo !== null}
+												className="flex items-center gap-1 px-2 py-1 rounded text-2xs font-bold transition-colors hover:opacity-90 disabled:opacity-40"
+												style={{
+													backgroundColor: theme.colors.accent,
+													color: theme.colors.accentForeground,
+												}}
+												title="Subscribe and add your feedback as a comment"
+											>
+												{subscribingTo === issue.number ? (
+													<Spinner size={12} />
+												) : (
+													<ThumbsUp className="w-3 h-3" />
+												)}
+												+1
+											</button>
+										</div>
+									</div>
+								))}
+							</div>
+
+							{submitError && (
+								<div className="flex items-center gap-2">
+									<p className="text-xs" style={{ color: theme.colors.error }}>
+										{submitError}
+									</p>
+									{ghLoginRetry && (
+										<button
+											type="button"
+											onClick={openGhLoginForFailure}
+											className="shrink-0 px-2 py-1 rounded text-xs font-bold hover:opacity-90"
+											style={{
+												backgroundColor: theme.colors.accent,
+												color: theme.colors.accentForeground,
+											}}
+											data-testid="feedback-gh-login-retry"
+										>
+											Log in to GitHub
+										</button>
+									)}
+								</div>
+							)}
+
+							<div
+								className="flex items-center gap-2 pt-1"
+								style={{ borderTop: `1px solid ${theme.colors.border}` }}
+							>
+								<button
+									type="button"
+									onClick={() => {
+										setStep('chat');
+										setMatchingIssues([]);
+									}}
+									className="px-3 py-2 rounded text-xs transition-colors hover:bg-white/5"
+									style={{ color: theme.colors.textDim }}
+								>
+									Back to chat
+								</button>
+								<div className="flex-1" />
+								<button
+									type="button"
+									onClick={createNewIssue}
+									disabled={subscribingTo !== null}
+									className="flex items-center gap-1.5 px-3 py-2 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40"
 									style={{
-										borderColor: theme.colors.border,
-										backgroundColor: theme.colors.bgMain,
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.accentForeground,
 									}}
 								>
-									<div className="flex-1 min-w-0">
-										<p
-											className="text-xs font-semibold truncate"
+									<PlusCircle className="w-3.5 h-3.5" />
+									Create new issue anyway
+								</button>
+							</div>
+						</>
+					)}
+				</div>
+			);
+		}
+
+		// --- Chat + Submitting ---
+		return (
+			<div className="flex flex-col h-full min-h-0 relative feedback-chat">
+				{/* Prose styles for markdown rendering */}
+				<style>{proseStyles}</style>
+
+				{/* ── TOP: Fixed confidence bar ── */}
+				<div
+					className="shrink-0 px-4 pb-2 pt-3"
+					style={{ borderBottom: `1px solid ${theme.colors.border}` }}
+				>
+					<div className="flex items-center gap-2 mb-1.5">
+						<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
+							Understanding:{' '}
+							<strong style={{ color: getConfidenceColor(confidence) }}>{confidence}%</strong>
+						</span>
+						{/* Search status indicator */}
+						{searchingIssues && (
+							<span
+								className="flex items-center gap-1 text-2xs"
+								style={{ color: theme.colors.textDim }}
+							>
+								<Spinner size={12} />
+								Checking for similar issues...
+							</span>
+						)}
+						{!searchingIssues && matchingIssues.length > 0 && (
+							<span className="text-2xs" style={{ color: theme.colors.warning }}>
+								{matchingIssues.length} similar issue{matchingIssues.length !== 1 ? 's' : ''} found
+							</span>
+						)}
+						<div className="flex-1" />
+						<button
+							type="button"
+							onClick={handleSaveDraft}
+							disabled={isSavingDraft || step === 'submitting'}
+							className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0 border"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								color: theme.colors.textDim,
+								borderColor: theme.colors.border,
+							}}
+							title="Save this feedback as a resumable draft"
+						>
+							{isSavingDraft ? <Spinner size={12} /> : <Save className="w-3 h-3" />}
+							{draftSaved ? 'Saved' : 'Save draft'}
+						</button>
+						{isReady && (
+							<button
+								type="button"
+								onClick={searchAndSubmit}
+								disabled={isLoading || step === 'submitting'}
+								className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
+								style={{ backgroundColor: theme.colors.success, color: '#000' }}
+							>
+								{step === 'submitting' ? <Spinner size={12} /> : <Check className="w-3 h-3" />}
+								Submit Feedback
+							</button>
+						)}
+					</div>
+					{saveError && (
+						<div
+							className="mt-1.5 text-2xs font-medium"
+							style={{ color: theme.colors.error }}
+							role="alert"
+						>
+							{saveError}
+						</div>
+					)}
+					<div
+						className="h-1.5 rounded-full overflow-hidden"
+						style={{ backgroundColor: theme.colors.border }}
+					>
+						<div
+							className="h-full rounded-full transition-all duration-500"
+							style={{
+								width: `${confidence}%`,
+								backgroundColor: getConfidenceColor(confidence),
+							}}
+						/>
+					</div>
+					{/* Which account answers, with an override. Built from the user's own
+				    agents, so someone who switches accounts per agent can see and
+				    change which login this chat uses. */}
+					{accounts.length > 0 && (
+						<div
+							className="flex items-center gap-2 mt-2 text-2xs min-w-0"
+							style={{ color: theme.colors.textDim }}
+						>
+							<span className="shrink-0">Running as</span>
+							<select
+								value={activeAccountKey ?? ''}
+								onChange={(e) => selectAccount(e.target.value)}
+								disabled={isLoading || step === 'submitting'}
+								data-testid="feedback-account-picker"
+								aria-label="Account the feedback chat runs as"
+								className="min-w-0 max-w-[60%] px-1.5 py-0.5 rounded border bg-transparent outline-none cursor-pointer disabled:opacity-60"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								{accounts.map((account) => (
+									<option
+										key={account.key}
+										value={account.key}
+										disabled={!isFeedbackAccountUsable(account)}
+										style={{ backgroundColor: theme.colors.bgSidebar }}
+									>
+										{account.label} -{' '}
+										{failedAccounts.has(account.key)
+											? 'failed'
+											: describeFeedbackAccountStatus(account)}
+										{account.agentNames.length > 0
+											? ` (${account.agentNames.length} agent${account.agentNames.length === 1 ? '' : 's'})`
+											: ''}
+									</option>
+								))}
+							</select>
+							{activeAccount && (
+								<span
+									className="truncate"
+									title={failedAccounts.get(activeAccount.key) ?? activeAccount.statusDetail}
+								>
+									{failedAccounts.has(activeAccount.key)
+										? 'last turn failed'
+										: activeAccount.statusDetail}
+								</span>
+							)}
+						</div>
+					)}
+				</div>
+
+				{/* ── MIDDLE: Scrollable messages ── */}
+				<div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 space-y-3">
+					{messages.map((msg, i) => (
+						<div
+							key={i}
+							className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+						>
+							{msg.role === 'user' ? (
+								<div
+									className="max-w-[85%] px-3 py-2 rounded-lg text-sm leading-relaxed"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.accentForeground,
+									}}
+								>
+									{msg.content}
+								</div>
+							) : (
+								<div
+									className="max-w-[85%] px-3 py-2 rounded-lg text-sm overflow-hidden"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+								>
+									<MarkdownRenderer content={msg.content} theme={theme} onCopy={copyToClipboard} />
+								</div>
+							)}
+						</div>
+					))}
+					{isLoading && (
+						<div className="flex justify-start">
+							<div
+								className="px-3 py-2 rounded-lg max-w-[85%]"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<div className="flex items-center gap-2">
+									<Spinner size={16} color={theme.colors.accent} />
+									{diagnostics.length > 0 && (
+										<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
+											Checking your system...
+										</span>
+									)}
+								</div>
+								{/* Diagnostics run on the user's own machine are shown, never hidden.
+							    Read-only, but they still deserve to see what was inspected. */}
+								{diagnostics.length > 0 && (
+									<ul className="mt-1.5 space-y-1">
+										{diagnostics.map((diagnostic, i) => (
+											<li
+												key={`${diagnostic.timestamp}-${i}`}
+												className="flex items-start gap-1.5 text-xs-plus font-mono"
+												style={{ color: theme.colors.textDim }}
+											>
+												<Terminal className="w-3 h-3 mt-0.5 shrink-0" />
+												<span
+													className="truncate"
+													title={diagnostic.command || diagnostic.toolName}
+												>
+													{diagnostic.command || diagnostic.toolName}
+												</span>
+											</li>
+										))}
+									</ul>
+								)}
+							</div>
+						</div>
+					)}
+
+					{/* Inline similar issues card - appears during chat when matches are found */}
+					{step === 'chat' && !searchingIssues && matchingIssues.length > 0 && (
+						<div
+							className="rounded-lg border px-3 py-3"
+							style={{
+								backgroundColor: `${theme.colors.warning}08`,
+								borderColor: `${theme.colors.warning}40`,
+							}}
+						>
+							<p className="text-xs font-semibold mb-2" style={{ color: theme.colors.textMain }}>
+								Similar existing issues found - does any of these match?
+							</p>
+							<div className="flex flex-col gap-1.5">
+								{matchingIssues.slice(0, 5).map((issue) => (
+									<div
+										key={issue.number}
+										className="flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors hover:bg-white/5"
+										style={{ border: `1px solid ${theme.colors.border}` }}
+									>
+										<span
+											className="text-2xs px-1 py-0.5 rounded-full shrink-0"
+											style={{
+												backgroundColor:
+													issue.state === 'OPEN'
+														? `${theme.colors.success}20`
+														: `${theme.colors.textDim}20`,
+												color: issue.state === 'OPEN' ? theme.colors.success : theme.colors.textDim,
+											}}
+										>
+											{issue.state === 'OPEN' ? 'Open' : 'Closed'}
+										</span>
+										<span
+											className="text-xs flex-1 truncate"
 											style={{ color: theme.colors.textMain }}
 											title={issue.title}
 										>
 											#{issue.number} {issue.title}
-										</p>
-										<div className="flex items-center gap-2 mt-0.5">
-											<span
-												className="text-2xs px-1.5 py-0.5 rounded-full"
-												style={{
-													backgroundColor:
-														issue.state === 'OPEN'
-															? `${theme.colors.success}20`
-															: `${theme.colors.textDim}20`,
-													color:
-														issue.state === 'OPEN' ? theme.colors.success : theme.colors.textDim,
-												}}
-											>
-												{issue.state === 'OPEN' ? 'Open' : 'Closed'}
-											</span>
-											<span className="text-2xs" style={{ color: theme.colors.textDim }}>
-												by {issue.author}
-											</span>
-										</div>
-									</div>
-									<div className="flex items-center gap-1.5 shrink-0">
+										</span>
 										<button
 											type="button"
-											className="p-1.5 rounded transition-colors hover:bg-white/5"
+											onClick={() => openUrl(issue.url)}
+											className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
 											style={{ color: theme.colors.textDim }}
 											title="View on GitHub"
-											onClick={() => openUrl(issue.url)}
 										>
-											<ExternalLink className="w-3.5 h-3.5" />
+											<ExternalLink className="w-3 h-3" />
 										</button>
 										<button
 											type="button"
 											onClick={() => subscribeToIssue(issue)}
 											disabled={subscribingTo !== null}
-											className="flex items-center gap-1 px-2 py-1 rounded text-2xs font-bold transition-colors hover:opacity-90 disabled:opacity-40"
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
 											style={{
 												backgroundColor: theme.colors.accent,
 												color: theme.colors.accentForeground,
@@ -824,417 +1616,268 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 											+1
 										</button>
 									</div>
-								</div>
-							))}
-						</div>
-
-						{submitError && (
-							<p className="text-xs" style={{ color: theme.colors.error }}>
-								{submitError}
-							</p>
-						)}
-
-						<div
-							className="flex items-center gap-2 pt-1"
-							style={{ borderTop: `1px solid ${theme.colors.border}` }}
-						>
+								))}
+							</div>
 							<button
 								type="button"
-								onClick={() => {
-									setStep('chat');
-									setMatchingIssues([]);
-								}}
-								className="px-3 py-2 rounded text-xs transition-colors hover:bg-white/5"
+								onClick={() => setMatchingIssues([])}
+								className="mt-2 text-2xs transition-colors hover:underline"
 								style={{ color: theme.colors.textDim }}
 							>
-								Back to chat
-							</button>
-							<div className="flex-1" />
-							<button
-								type="button"
-								onClick={createNewIssue}
-								disabled={subscribingTo !== null}
-								className="flex items-center gap-1.5 px-3 py-2 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40"
-								style={{
-									backgroundColor: theme.colors.accent,
-									color: theme.colors.accentForeground,
-								}}
-							>
-								<PlusCircle className="w-3.5 h-3.5" />
-								Create new issue anyway
+								None of these match - I have a new issue
 							</button>
 						</div>
-					</>
-				)}
-			</div>
-		);
-	}
+					)}
 
-	// --- Chat + Submitting ---
-	return (
-		<div className="flex flex-col h-full min-h-0 relative feedback-chat">
-			{/* Prose styles for markdown rendering */}
-			<style>{proseStyles}</style>
-
-			{/* ── TOP: Fixed confidence bar ── */}
-			<div
-				className="shrink-0 px-4 pb-2 pt-3"
-				style={{ borderBottom: `1px solid ${theme.colors.border}` }}
-			>
-				<div className="flex items-center gap-2 mb-1.5">
-					<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
-						Understanding:{' '}
-						<strong style={{ color: getConfidenceColor(confidence) }}>{confidence}%</strong>
-					</span>
-					{/* Search status indicator */}
-					{searchingIssues && (
-						<span
-							className="flex items-center gap-1 text-2xs"
-							style={{ color: theme.colors.textDim }}
-						>
-							<Spinner size={12} />
-							Checking for similar issues...
-						</span>
-					)}
-					{!searchingIssues && matchingIssues.length > 0 && (
-						<span className="text-2xs" style={{ color: theme.colors.warning }}>
-							{matchingIssues.length} similar issue{matchingIssues.length !== 1 ? 's' : ''} found
-						</span>
-					)}
-					<div className="flex-1" />
-					{isReady && (
-						<button
-							type="button"
-							onClick={searchAndSubmit}
-							disabled={isLoading || step === 'submitting'}
-							className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
-							style={{ backgroundColor: theme.colors.success, color: '#000' }}
-						>
-							{step === 'submitting' ? <Spinner size={12} /> : <Check className="w-3 h-3" />}
-							Submit Feedback
-						</button>
-					)}
+					<div ref={messagesEndRef} />
 				</div>
+
+				{/* ── BOTTOM: Fixed controls ── */}
 				<div
-					className="h-1.5 rounded-full overflow-hidden"
-					style={{ backgroundColor: theme.colors.border }}
+					className="shrink-0 pt-2 pb-3 px-4 border-t"
+					style={{ borderColor: theme.colors.border }}
 				>
-					<div
-						className="h-full rounded-full transition-all duration-500"
-						style={{
-							width: `${confidence}%`,
-							backgroundColor: getConfidenceColor(confidence),
-						}}
-					/>
-				</div>
-			</div>
+					{/* Screenshots row */}
+					<div className="pb-2">
+						{/* Attachment thumbnails */}
+						{attachments.length > 0 && (
+							<div className="flex gap-2 flex-wrap mb-2">
+								{attachments.map((a) => (
+									<div
+										key={a.id}
+										className="relative group rounded-lg overflow-hidden"
+										style={{ border: `1px solid ${theme.colors.border}` }}
+									>
+										<img src={a.dataUrl} alt={a.name} className="h-12 w-16 object-cover" />
+										<button
+											type="button"
+											onClick={() => removeAttachment(a.id)}
+											className="absolute top-0.5 right-0.5 p-0.5 rounded bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity"
+										>
+											<X className="w-3 h-3 text-white" />
+										</button>
+									</div>
+								))}
+							</div>
+						)}
 
-			{/* ── MIDDLE: Scrollable messages ── */}
-			<div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 space-y-3">
-				{messages.map((msg, i) => (
-					<div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-						{msg.role === 'user' ? (
-							<div
-								className="max-w-[85%] px-3 py-2 rounded-lg text-sm leading-relaxed"
+						{/* Drop zone */}
+						{attachments.length < MAX_ATTACHMENTS && (
+							<button
+								type="button"
+								onClick={() => fileInputRef.current?.click()}
+								disabled={step === 'submitting'}
+								className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+								style={{
+									borderColor: isDragging ? theme.colors.accent : theme.colors.border,
+									backgroundColor: isDragging ? `${theme.colors.accent}10` : 'transparent',
+								}}
+								onDragOver={(e) => {
+									e.preventDefault();
+									e.stopPropagation();
+									setIsDragging(true);
+								}}
+								onDragLeave={(e) => {
+									e.stopPropagation();
+									setIsDragging(false);
+								}}
+								onDrop={(e) => {
+									e.preventDefault();
+									e.stopPropagation();
+									setIsDragging(false);
+									const files = Array.from(e.dataTransfer.files);
+									if (files.length > 0) void addFiles(files);
+								}}
+							>
+								<ImagePlus className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+								<div className="text-left">
+									<p className="text-xs font-semibold" style={{ color: theme.colors.textDim }}>
+										Drag or paste screenshots here, or click to browse
+									</p>
+									<p className="text-2xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+										PNG, JPG, GIF, or WebP. Up to {MAX_ATTACHMENTS} images, 10 MB each.
+									</p>
+								</div>
+							</button>
+						)}
+						<input
+							ref={fileInputRef}
+							type="file"
+							accept="image/*"
+							multiple
+							className="hidden"
+							onChange={(e) => {
+								const files = Array.from(e.target.files || []);
+								if (files.length > 0) void addFiles(files);
+								e.target.value = '';
+							}}
+						/>
+					</div>
+
+					{/* Support package + performance trace + error */}
+					<div className="pb-2 flex items-center gap-3 flex-wrap">
+						<label
+							className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
+							title="Attaches diagnostics to the public issue. No conversations, secrets, file paths, project names, username, or computer name are included."
+						>
+							<input
+								type="checkbox"
+								checked={includeDebugPackage}
+								onChange={(e) => setIncludeDebugPackage(e.target.checked)}
+								className="rounded"
+								style={{ accentColor: theme.colors.accent }}
+							/>
+							<Package className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+							<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+								Include support package
+							</span>
+						</label>
+
+						{/* Performance trace: record -> reproduce -> stop -> attach */}
+						{tracePath ? (
+							<span
+								className="flex items-center gap-1.5 shrink-0 px-2 py-1 rounded"
+								style={{
+									backgroundColor: `${theme.colors.success}18`,
+									color: theme.colors.textMain,
+								}}
+								title="A performance trace is attached to this report"
+							>
+								<Gauge className="w-3 h-3" style={{ color: theme.colors.success }} />
+								<span className="text-2xs">Performance trace ({formatSize(traceSizeBytes)})</span>
+								<button
+									type="button"
+									onClick={removeTrace}
+									className="p-0.5 rounded hover:opacity-70"
+									aria-label="Remove performance trace"
+									title="Remove performance trace"
+								>
+									<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+								</button>
+							</span>
+						) : isTracing ? (
+							<button
+								type="button"
+								onClick={stopTrace}
+								disabled={traceBusy}
+								className="flex items-center gap-1.5 shrink-0 px-2 py-1 rounded border disabled:opacity-50"
+								style={{ borderColor: theme.colors.error, color: theme.colors.error }}
+								title="Stop recording and attach the trace"
+							>
+								{traceBusy ? (
+									<Spinner size={12} />
+								) : (
+									<span
+										className="w-2 h-2 rounded-full animate-pulse"
+										style={{ backgroundColor: theme.colors.error }}
+									/>
+								)}
+								<span className="text-2xs font-semibold">
+									{traceBusy ? 'Saving trace...' : 'Stop recording'}
+								</span>
+							</button>
+						) : (
+							<button
+								type="button"
+								onClick={startTrace}
+								disabled={step === 'submitting'}
+								className="flex items-center gap-1.5 shrink-0 px-2 py-1 rounded border disabled:opacity-40"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+								title="Record a performance trace, then reproduce the slow behavior"
+							>
+								<Gauge className="w-3 h-3" />
+								<span className="text-2xs">Record performance trace</span>
+							</button>
+						)}
+
+						{(traceError || submitError) && (
+							<p
+								className="text-2xs truncate"
+								style={{ color: theme.colors.error }}
+								title={traceError || submitError}
+							>
+								{traceError || submitError}
+							</p>
+						)}
+						{submitError && ghLoginRetry && (
+							<button
+								type="button"
+								onClick={openGhLoginForFailure}
+								className="shrink-0 px-2 py-0.5 rounded text-2xs font-bold hover:opacity-90"
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.accentForeground,
 								}}
+								data-testid="feedback-gh-login-retry"
 							>
-								{msg.content}
-							</div>
-						) : (
-							<div
-								className="max-w-[85%] px-3 py-2 rounded-lg text-sm overflow-hidden"
-								style={{
-									backgroundColor: theme.colors.bgMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
-							>
-								<MarkdownRenderer content={msg.content} theme={theme} onCopy={copyToClipboard} />
-							</div>
+								Log in to GitHub
+							</button>
 						)}
 					</div>
-				))}
-				{isLoading && (
-					<div className="flex justify-start">
+					{isTracing && !traceBusy && (
+						<p className="pb-2 text-2xs" style={{ color: theme.colors.textDim, opacity: 0.8 }}>
+							Recording... reproduce the issue, then reopen this window and click Stop recording.
+						</p>
+					)}
+
+					{/* Text input + send + submit */}
+					<div>
 						<div
-							className="px-3 py-2 rounded-lg max-w-[85%]"
-							style={{
-								backgroundColor: theme.colors.bgMain,
-								border: `1px solid ${theme.colors.border}`,
-							}}
+							className="flex items-end gap-2 rounded-lg border px-3 py-2"
+							style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 						>
-							<div className="flex items-center gap-2">
-								<Spinner size={16} color={theme.colors.accent} />
-								{diagnostics.length > 0 && (
-									<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
-										Checking your system...
-									</span>
-								)}
-							</div>
-							{/* Diagnostics run on the user's own machine are shown, never hidden.
-							    Read-only, but they still deserve to see what was inspected. */}
-							{diagnostics.length > 0 && (
-								<ul className="mt-1.5 space-y-1">
-									{diagnostics.map((diagnostic, i) => (
-										<li
-											key={`${diagnostic.timestamp}-${i}`}
-											className="flex items-start gap-1.5 text-xs-plus font-mono"
-											style={{ color: theme.colors.textDim }}
-										>
-											<Terminal className="w-3 h-3 mt-0.5 shrink-0" />
-											<span className="truncate" title={diagnostic.command || diagnostic.toolName}>
-												{diagnostic.command || diagnostic.toolName}
-											</span>
-										</li>
-									))}
-								</ul>
+							<textarea
+								ref={inputRef}
+								value={inputValue}
+								onChange={(e) => setInputValue(e.target.value)}
+								onKeyDown={handleKeyDown}
+								onPaste={handlePaste}
+								placeholder={
+									isReady
+										? 'Add more details, or click Submit...'
+										: 'Describe your issue or idea...'
+								}
+								disabled={step === 'submitting'}
+								rows={1}
+								className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed overflow-y-auto"
+								style={{ color: theme.colors.textMain }}
+							/>
+							{/* Send message button - always available */}
+							<button
+								type="button"
+								onClick={sendMessage}
+								disabled={!inputValue.trim() || isLoading || step === 'submitting'}
+								className="p-1.5 rounded transition-colors hover:opacity-80 disabled:opacity-30 shrink-0"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground,
+								}}
+								title="Send message"
+							>
+								{isLoading ? <Spinner size={16} /> : <Send className="w-4 h-4" />}
+							</button>
+							{/* Submit button - appears when ready */}
+							{isReady && (
+								<button
+									type="button"
+									onClick={searchAndSubmit}
+									disabled={isLoading || step === 'submitting'}
+									className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
+									style={{ backgroundColor: theme.colors.success, color: '#000' }}
+									title="Submit feedback as GitHub issue"
+								>
+									{step === 'submitting' ? (
+										<Spinner size={14} />
+									) : (
+										<Check className="w-3.5 h-3.5" />
+									)}
+									Submit
+								</button>
 							)}
 						</div>
 					</div>
-				)}
-
-				{/* Inline similar issues card - appears during chat when matches are found */}
-				{step === 'chat' && !searchingIssues && matchingIssues.length > 0 && (
-					<div
-						className="rounded-lg border px-3 py-3"
-						style={{
-							backgroundColor: `${theme.colors.warning}08`,
-							borderColor: `${theme.colors.warning}40`,
-						}}
-					>
-						<p className="text-xs font-semibold mb-2" style={{ color: theme.colors.textMain }}>
-							Similar existing issues found — does any of these match?
-						</p>
-						<div className="flex flex-col gap-1.5">
-							{matchingIssues.slice(0, 5).map((issue) => (
-								<div
-									key={issue.number}
-									className="flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors hover:bg-white/5"
-									style={{ border: `1px solid ${theme.colors.border}` }}
-								>
-									<span
-										className="text-2xs px-1 py-0.5 rounded-full shrink-0"
-										style={{
-											backgroundColor:
-												issue.state === 'OPEN'
-													? `${theme.colors.success}20`
-													: `${theme.colors.textDim}20`,
-											color: issue.state === 'OPEN' ? theme.colors.success : theme.colors.textDim,
-										}}
-									>
-										{issue.state === 'OPEN' ? 'Open' : 'Closed'}
-									</span>
-									<span
-										className="text-xs flex-1 truncate"
-										style={{ color: theme.colors.textMain }}
-										title={issue.title}
-									>
-										#{issue.number} {issue.title}
-									</span>
-									<button
-										type="button"
-										onClick={() => openUrl(issue.url)}
-										className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
-										style={{ color: theme.colors.textDim }}
-										title="View on GitHub"
-									>
-										<ExternalLink className="w-3 h-3" />
-									</button>
-									<button
-										type="button"
-										onClick={() => subscribeToIssue(issue)}
-										disabled={subscribingTo !== null}
-										className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
-										style={{
-											backgroundColor: theme.colors.accent,
-											color: theme.colors.accentForeground,
-										}}
-										title="Subscribe and add your feedback as a comment"
-									>
-										{subscribingTo === issue.number ? (
-											<Spinner size={12} />
-										) : (
-											<ThumbsUp className="w-3 h-3" />
-										)}
-										+1
-									</button>
-								</div>
-							))}
-						</div>
-						<button
-							type="button"
-							onClick={() => setMatchingIssues([])}
-							className="mt-2 text-2xs transition-colors hover:underline"
-							style={{ color: theme.colors.textDim }}
-						>
-							None of these match — I have a new issue
-						</button>
-					</div>
-				)}
-
-				<div ref={messagesEndRef} />
-			</div>
-
-			{/* ── BOTTOM: Fixed controls ── */}
-			<div
-				className="shrink-0 pt-2 pb-3 px-4 border-t"
-				style={{ borderColor: theme.colors.border }}
-			>
-				{/* Screenshots row */}
-				<div className="pb-2">
-					{/* Attachment thumbnails */}
-					{attachments.length > 0 && (
-						<div className="flex gap-2 flex-wrap mb-2">
-							{attachments.map((a) => (
-								<div
-									key={a.id}
-									className="relative group rounded-lg overflow-hidden"
-									style={{ border: `1px solid ${theme.colors.border}` }}
-								>
-									<img src={a.dataUrl} alt={a.name} className="h-12 w-16 object-cover" />
-									<button
-										type="button"
-										onClick={() => removeAttachment(a.id)}
-										className="absolute top-0.5 right-0.5 p-0.5 rounded bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity"
-									>
-										<X className="w-3 h-3 text-white" />
-									</button>
-								</div>
-							))}
-						</div>
-					)}
-
-					{/* Drop zone */}
-					{attachments.length < MAX_ATTACHMENTS && (
-						<button
-							type="button"
-							onClick={() => fileInputRef.current?.click()}
-							disabled={step === 'submitting'}
-							className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-							style={{
-								borderColor: isDragging ? theme.colors.accent : theme.colors.border,
-								backgroundColor: isDragging ? `${theme.colors.accent}10` : 'transparent',
-							}}
-							onDragOver={(e) => {
-								e.preventDefault();
-								e.stopPropagation();
-								setIsDragging(true);
-							}}
-							onDragLeave={(e) => {
-								e.stopPropagation();
-								setIsDragging(false);
-							}}
-							onDrop={(e) => {
-								e.preventDefault();
-								e.stopPropagation();
-								setIsDragging(false);
-								const files = Array.from(e.dataTransfer.files);
-								if (files.length > 0) void addFiles(files);
-							}}
-						>
-							<ImagePlus className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-							<div className="text-left">
-								<p className="text-xs font-semibold" style={{ color: theme.colors.textDim }}>
-									Drag screenshots here or click to browse
-								</p>
-								<p className="text-2xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
-									PNG, JPG, GIF, or WebP. Up to {MAX_ATTACHMENTS} images, 10 MB each.
-								</p>
-							</div>
-						</button>
-					)}
-					<input
-						ref={fileInputRef}
-						type="file"
-						accept="image/*"
-						multiple
-						className="hidden"
-						onChange={(e) => {
-							const files = Array.from(e.target.files || []);
-							if (files.length > 0) void addFiles(files);
-							e.target.value = '';
-						}}
-					/>
-				</div>
-
-				{/* Support package + error */}
-				<div className="pb-2 flex items-center gap-3">
-					<label
-						className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
-						title="Attaches diagnostics to the public issue. No conversations, secrets, file paths, project names, username, or computer name are included."
-					>
-						<input
-							type="checkbox"
-							checked={includeDebugPackage}
-							onChange={(e) => setIncludeDebugPackage(e.target.checked)}
-							className="rounded"
-							style={{ accentColor: theme.colors.accent }}
-						/>
-						<Package className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
-							Include support package
-						</span>
-					</label>
-					{submitError && (
-						<p
-							className="text-2xs truncate"
-							style={{ color: theme.colors.error }}
-							title={submitError}
-						>
-							{submitError}
-						</p>
-					)}
-				</div>
-
-				{/* Text input + send + submit */}
-				<div>
-					<div
-						className="flex items-end gap-2 rounded-lg border px-3 py-2"
-						style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
-					>
-						<textarea
-							ref={inputRef}
-							value={inputValue}
-							onChange={(e) => setInputValue(e.target.value)}
-							onKeyDown={handleKeyDown}
-							placeholder={
-								isReady ? 'Add more details, or click Submit...' : 'Describe your issue or idea...'
-							}
-							disabled={step === 'submitting'}
-							rows={1}
-							className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed overflow-y-auto"
-							style={{ color: theme.colors.textMain }}
-						/>
-						{/* Send message button - always available */}
-						<button
-							type="button"
-							onClick={sendMessage}
-							disabled={!inputValue.trim() || isLoading || step === 'submitting'}
-							className="p-1.5 rounded transition-colors hover:opacity-80 disabled:opacity-30 shrink-0"
-							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-							title="Send message"
-						>
-							{isLoading ? <Spinner size={16} /> : <Send className="w-4 h-4" />}
-						</button>
-						{/* Submit button - appears when ready */}
-						{isReady && (
-							<button
-								type="button"
-								onClick={searchAndSubmit}
-								disabled={isLoading || step === 'submitting'}
-								className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
-								style={{ backgroundColor: theme.colors.success, color: '#000' }}
-								title="Submit feedback as GitHub issue"
-							>
-								{step === 'submitting' ? <Spinner size={14} /> : <Check className="w-3.5 h-3.5" />}
-								Submit
-							</button>
-						)}
-					</div>
 				</div>
 			</div>
-		</div>
-	);
+		);
+	}
 }

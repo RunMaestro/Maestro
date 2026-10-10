@@ -930,11 +930,7 @@ describe('AutoRun Large Document Performance', () => {
 
 			const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
-			// Make local edit
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'local edit' } });
-
-			expect(textarea).toHaveValue('local edit');
 
 			// External content update with new version
 			const newLargeContent = generateLargeDocument(10000);

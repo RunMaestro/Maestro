@@ -199,4 +199,25 @@ describe('CrossTabSearchModal', () => {
 		typeQuery('ping');
 		expect(screen.getByText('3 matches')).toBeInTheDocument();
 	});
+
+	// A hidden cross-agent consult tab has no chip in the strip, so a hit inside one
+	// would jump the user into a conversation they never opened.
+	it('keeps hidden consult tabs out of the search corpus', () => {
+		renderModal({
+			tabs: [
+				...TABS,
+				createMockAITab({
+					id: 'tab-consult',
+					name: 'Consult',
+					hidden: true,
+					logs: [log('c1', 'the login secret lives here')],
+				}),
+			],
+		});
+		typeQuery('login');
+
+		expect(screen.getByText('Auth work')).toBeInTheDocument();
+		expect(screen.queryByText('Consult')).not.toBeInTheDocument();
+		expect(screen.getByText('Searching 2 open tabs')).toBeInTheDocument();
+	});
 });

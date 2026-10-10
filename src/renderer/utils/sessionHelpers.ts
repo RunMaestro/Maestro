@@ -8,9 +8,9 @@
  * - Handling agent-specific initialization
  */
 
-import type { Session, ToolType, ProcessConfig } from '../types';
+import type { AdditionalDirectory, Session, ToolType, ProcessConfig } from '../types';
 import { createMergedSession } from './tabHelpers';
-import { getStdinFlags, prepareMaestroSystemPrompt } from './spawnHelpers';
+import { prepareMaestroSystemPrompt } from './spawnHelpers';
 import { logger } from './logger';
 
 /**
@@ -64,6 +64,8 @@ export interface BuildSpawnConfigOptions {
 	modelId?: string;
 	/** Whether to use YOLO/full-access mode */
 	yoloMode?: boolean;
+	/** 3-way permission mode ('full' | 'standard' | 'readonly') */
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	/** Per-session custom path override */
 	sessionCustomPath?: string;
 	/** Per-session custom args override */
@@ -76,14 +78,18 @@ export interface BuildSpawnConfigOptions {
 	sessionCustomEffort?: string;
 	/** Per-session custom context window */
 	sessionCustomContextWindow?: number;
+	/**
+	 * Session's Additional Directories. Providers that declare
+	 * `supportsAdditionalDirectories` receive these as native grant flags
+	 * (e.g. `--add-dir`); every agent also gets them via the system prompt.
+	 */
+	sessionAdditionalDirectories?: AdditionalDirectory[];
 	/** Per-session SSH remote config (takes precedence over agent-level SSH config) */
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
-	/** Whether the prompt includes images (default: false) */
-	hasImages?: boolean;
 	/** Maestro system prompt to append (injected via --append-system-prompt) */
 	appendSystemPrompt?: string;
 }
@@ -121,14 +127,15 @@ export async function buildSpawnConfigForAgent(
 		readOnlyMode,
 		modelId,
 		yoloMode,
+		permissionMode,
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
 		sessionCustomModel,
 		sessionCustomEffort,
 		sessionCustomContextWindow,
+		sessionAdditionalDirectories,
 		sessionSshRemoteConfig,
-		hasImages = false,
 		appendSystemPrompt,
 	} = options;
 
@@ -151,15 +158,6 @@ export async function buildSpawnConfigForAgent(
 		throw new Error(`${toolType} agent has no command configured`);
 	}
 
-	// Determine whether to send the prompt via stdin on Windows to avoid
-	// exceeding the command line length limit (~8KB cmd.exe).
-	const isSshSession = Boolean(sessionSshRemoteConfig?.enabled);
-	const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-		isSshSession,
-		supportsStreamJsonInput: agentConfig.capabilities?.supportsStreamJsonInput ?? false,
-		hasImages,
-	});
-
 	// Build the spawn config
 	// The main process will use the agent's argument builders (resumeArgs, readOnlyArgs, etc.)
 	// to construct the final command line arguments
@@ -176,6 +174,7 @@ export async function buildSpawnConfigForAgent(
 		readOnlyMode,
 		modelId,
 		yoloMode,
+		permissionMode,
 		// Per-session config overrides
 		sessionCustomPath,
 		sessionCustomArgs,
@@ -183,11 +182,9 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomModel,
 		sessionCustomEffort,
 		sessionCustomContextWindow,
+		sessionAdditionalDirectories,
 		// Per-session SSH remote config (takes precedence over agent-level SSH config)
 		sessionSshRemoteConfig,
-		// Windows stdin handling - send prompt via stdin to avoid command line length limits
-		sendPromptViaStdin,
-		sendPromptViaStdinRaw,
 	};
 
 	return spawnConfig;
@@ -257,7 +254,7 @@ export async function createSessionForAgent(
 	});
 
 	// Prepare Maestro system prompt for new sessions
-	const appendSystemPrompt = await prepareMaestroSystemPrompt({ session });
+	const appendSystemPrompt = await prepareMaestroSystemPrompt({ session, activeTabId: tabId });
 
 	// Build the spawn configuration
 	const spawnConfig = await buildSpawnConfigForAgent({

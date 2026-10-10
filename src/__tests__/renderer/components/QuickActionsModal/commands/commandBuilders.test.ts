@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { buildAgentPanelCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentSwitcherCommands';
@@ -23,7 +23,11 @@ import {
 	buildNewTabCommands,
 	buildTabCommands,
 } from '../../../../../renderer/components/QuickActionsModal/commands/tabCommands';
+import { buildTabGroupCommands } from '../../../../../renderer/components/QuickActionsModal/commands/tabGroupCommands';
 import { buildSupportCommands } from '../../../../../renderer/components/QuickActionsModal/commands/supportCommands';
+import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
+import { createMockAITab } from '../../../../helpers/mockTab';
+import { useModalStore } from '../../../../../renderer/stores/modalStore';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -73,6 +77,8 @@ describe('QuickActions command builders', () => {
 				setRenameGroupId: vi.fn(),
 				setRenameGroupValue: vi.fn(),
 				setRenameGroupEmoji: vi.fn(),
+				setRenameGroupIcon: vi.fn(),
+				setRenameGroupColor: vi.fn(),
 				setCreateGroupModalOpen: vi.fn(),
 				setRightPanelOpen: vi.fn(),
 				setActiveRightTab: vi.fn(),
@@ -588,5 +594,317 @@ describe('QuickActions command builders', () => {
 		}).map((a) => a.id);
 		expect(debugCommandIds).toContain('debugReleaseQueued');
 		expect(debugCommandIds).toContain('debugAgentProbe');
+	});
+
+	describe('buildTabGroupCommands', () => {
+		const groupSession = (activeGroupId: string | null) => {
+			const group = createGroupFromTabRefs(
+				[
+					{ type: 'ai', id: 'tab-a' },
+					{ type: 'ai', id: 'tab-b' },
+				],
+				'My Group'
+			);
+			const session = createMockSession({
+				id: 's1',
+				tabGroups: [group],
+				activeGroupId: activeGroupId === 'match' ? group.id : activeGroupId,
+			});
+			return { session, group };
+		};
+
+		it('emits no commands when not under a tab group', () => {
+			const { session } = groupSession(null);
+			expect(buildTabGroupCommands({ activeSession: session, setQuickActionOpen: close })).toEqual(
+				[]
+			);
+		});
+
+		it('emits no commands when activeGroupId does not resolve to a group', () => {
+			const { session } = groupSession('missing-group');
+			expect(buildTabGroupCommands({ activeSession: session, setQuickActionOpen: close })).toEqual(
+				[]
+			);
+		});
+
+		it('emits rename and break-apart when under a tab group', () => {
+			const { session } = groupSession('match');
+			const ids = buildTabGroupCommands({
+				activeSession: session,
+				setQuickActionOpen: close,
+			}).map((a) => a.id);
+			expect(ids).toEqual(['renameTabGroup', 'breakApartTabGroup']);
+		});
+	});
+});
+
+// Command-K agent-switching must respect window ownership (Phase 5, task 7):
+// picking an agent owned by another window focuses that window instead of
+// yanking the agent into this one. Both the main-mode "Jump to: X" list and the
+// dedicated agents-mode switcher route through the shared makeAgentJumpAction.
+describe('agent-switch window scoping', () => {
+	const focusWindow = vi.mocked(window.maestro.windows.focusWindow);
+
+	beforeEach(() => {
+		focusWindow.mockClear();
+	});
+
+	it('jumps locally when no window context is provided (single-window default)', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildSessionJumpCommands({
+			sessions: [session],
+			setActiveSessionId,
+			revealJumpTarget,
+		})[0].action();
+
+		expect(setActiveSessionId).toHaveBeenCalledWith('s1');
+		expect(revealJumpTarget).toHaveBeenCalledWith(session);
+		expect(focusWindow).not.toHaveBeenCalled();
+	});
+
+	it('jumps locally when this window owns the agent (getSessionWindow returns null)', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildSessionJumpCommands({
+			sessions: [session],
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow: () => null,
+		})[0].action();
+
+		expect(setActiveSessionId).toHaveBeenCalledWith('s1');
+		expect(revealJumpTarget).toHaveBeenCalledWith(session);
+		expect(focusWindow).not.toHaveBeenCalled();
+	});
+
+	it('focuses the owning window (no local switch) when another window owns the agent', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildSessionJumpCommands({
+			sessions: [session],
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow: (id) => (id === 's1' ? { windowId: 'win-2', windowNumber: 2 } : null),
+		})[0].action();
+
+		expect(focusWindow).toHaveBeenCalledWith('win-2');
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(revealJumpTarget).not.toHaveBeenCalled();
+	});
+
+	it('agents-mode switcher: switches locally for an owned agent', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildAgentSwitcherCommands({
+			sessions: [session],
+			activeBatchSessionIds: [],
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow: () => null,
+		})[0].action();
+
+		expect(setActiveSessionId).toHaveBeenCalledWith('s1');
+		expect(revealJumpTarget).toHaveBeenCalledWith(session);
+		expect(focusWindow).not.toHaveBeenCalled();
+	});
+
+	it('agents-mode switcher: focuses the owning window for a remote agent', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildAgentSwitcherCommands({
+			sessions: [session],
+			activeBatchSessionIds: [],
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow: () => ({ windowId: 'win-3', windowNumber: 3 }),
+		})[0].action();
+
+		expect(focusWindow).toHaveBeenCalledWith('win-3');
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(revealJumpTarget).not.toHaveBeenCalled();
+	});
+	it('offers the model/effort picker for an AI tab and targets the focused pane', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })],
+			activeTabId: 'tab-1',
+		});
+		const args = {
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 2,
+				activeTabType: 'ai' as const,
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		};
+
+		const command = buildTabCommands(args).find((a) => a.id === 'changeModelEffort');
+		expect(command?.label).toBe('Change Tabs Model and Effort');
+		command!.action();
+		expect(useModalStore.getState().modals.get('modelEffort')).toMatchObject({
+			open: true,
+			data: { tabId: 'tab-1' },
+		});
+
+		// A tiled group owns the panel: the focused pane wins over the standalone
+		// tab hidden behind it.
+		useModalStore.getState().closeModal('modelEffort');
+		const group = createGroupFromTabRefs([
+			{ type: 'ai', id: 'tab-2' },
+			{ type: 'ai', id: 'tab-1' },
+		]);
+		const grouped = createMockSession({
+			...session,
+			tabGroups: [group],
+			activeGroupId: group.id,
+		});
+		buildTabCommands({ ...args, activeSession: grouped })
+			.find((a) => a.id === 'changeModelEffort')!
+			.action();
+		expect(useModalStore.getState().modals.get('modelEffort')?.data).toMatchObject({
+			tabId: 'tab-2',
+		});
+	});
+
+	// A group chat has no model of its own, and opening one does not clear
+	// `activeSession` - it still points at whichever agent was selected before the
+	// room was opened. So the entry has to be ABSENT, not merely inert: left in
+	// place it resolved a live target and retuned a background agent's tab.
+	it('withholds the model/effort picker while a group chat owns the view', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+		});
+		const args = {
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 1,
+				activeTabType: 'ai' as const,
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		};
+
+		expect(buildTabCommands(args).find((a) => a.id === 'changeModelEffort')).toBeDefined();
+		expect(
+			buildTabCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
+				(a) => a.id === 'changeModelEffort'
+			)
+		).toBeUndefined();
+	});
+
+	// The count in "Close all N tabs" has to match what a close-all actually takes
+	// out, and hidden consult tabs survive it.
+	it('counts only visible tabs in the Close All Tabs subtext', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [
+				createMockAITab({ id: 'tab-1' }),
+				createMockAITab({ id: 'tab-2' }),
+				createMockAITab({ id: 'consult', hidden: true }),
+			],
+			activeTabId: 'tab-1',
+		});
+
+		const command = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 2,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).find((a) => a.id === 'closeAllTabs');
+
+		expect(command?.subtext).toBe('Close all 2 tabs');
+	});
+
+	// An agent whose only other tabs are hidden consults has one closable tab, so
+	// the entry must not offer to close a plural it cannot reach.
+	it('omits Close All Tabs when every tab is a hidden consult', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'consult', hidden: true })],
+			activeTabId: 'consult',
+		});
+
+		const ids = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 0,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).map((a) => a.id);
+
+		expect(ids).not.toContain('closeAllTabs');
+	});
+
+	it('hides the model/effort picker when the active tab is not an AI tab', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			inputMode: 'terminal',
+			activeTerminalTabId: 'term-1',
+		});
+
+		const ids = buildTabCommands({
+			activeSession: session,
+			isAiMode: false,
+			activeTabInfo: {
+				isTerminalMode: true,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 1,
+				activeTabType: 'terminal',
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).map((a) => a.id);
+
+		expect(ids).not.toContain('changeModelEffort');
 	});
 });

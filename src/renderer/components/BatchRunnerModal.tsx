@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
 	X,
 	RotateCcw,
@@ -16,56 +16,55 @@ import {
 	Brain,
 	PlayCircle,
 	HelpCircle,
+	Target,
+	LogOut,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
-import type {
-	Theme,
-	BatchDocumentEntry,
-	BatchRunConfig,
-	TaskSelectionMode,
-	WorktreeRunTarget,
-} from '../types';
+import { ToggleSwitch } from './ui/ToggleSwitch';
+import {
+	AUTO_RESUME_DEFAULT_MINUTES,
+	AUTO_RESUME_DEFAULT_MAX_ATTEMPTS,
+	AUTO_RESUME_MIN_MINUTES,
+	AUTO_RESUME_MAX_MINUTES,
+	AUTO_RESUME_MIN_ATTEMPTS,
+	AUTO_RESUME_MAX_ATTEMPTS,
+	clampAutoResumeMinutes,
+	clampMaxAutoResumes,
+} from '../../shared/autorunAutoResume';
+import type { Theme, BatchDocumentEntry, BatchRunConfig, TaskSelectionMode } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
+import { useBracketTabCycle } from '../hooks/utils/useBracketTabCycle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
 import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
+import { GoalConfigPanel } from './GoalConfigPanel';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { WorktreeRunSection } from './WorktreeRunSection';
 import { AutoRunnerHelpModal } from './AutoRun/AutoRunnerHelpModal';
 import { useSessionStore, selectSessionById } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useUIStore } from '../stores/uiStore';
-import { getModalActions } from '../stores/modalStore';
 import {
 	usePlaybookManagement,
-	DEFAULT_BATCH_PROMPT,
+	useTaskSelectionRecommendation,
+	useGoalDrivenConfig,
+	usePromptComposerState,
+	useSpecDrivenConfig,
+	useWorktreeRunTarget,
+	autoPlaybookName,
 	validateAgentPromptHasTaskReference,
 } from '../hooks';
-import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { logger } from '../utils/logger';
-import { resolveEffectiveContextWindow } from '../utils/contextWindowResolver';
-import { getModelContextWindowOverride } from '../../shared/agentConstants';
-import { formatTokens } from '../../shared/formatters';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { ResizeHandles } from './ui/ResizeHandles';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
-
-// Tasks-per-document threshold that flips the recommendation between
-// Document mode (below the threshold - share context) and Task mode
-// (at/above - fresh context per task). Scales linearly with the agent's
-// resolved context window so wider windows can absorb more tasks before
-// the recommendation tips over. Reference anchors: 256K → 5, 512K → 10,
-// 1M → 20. Floors at 5 so tiny windows still get a sensible default.
-function computeTasksPerDocThreshold(contextWindow: number): number {
-	if (!contextWindow || contextWindow <= 0) return 5;
-	return Math.max(5, Math.round((contextWindow / 256_000) * 5));
-}
 
 interface BatchRunnerModalProps {
 	theme: Theme;
@@ -117,6 +116,10 @@ function formatLastModified(timestamp: number): string {
 	}
 }
 
+// The two top-level Auto Run kinds, in the order shown in the tab toggle.
+// Cmd+Shift+[ / Cmd+Shift+] cycle between them (see useBracketTabCycle below).
+const AUTO_RUN_MODES: readonly ('spec' | 'goal')[] = ['spec', 'goal'];
+
 export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const {
 		theme,
@@ -140,149 +143,152 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const autoFollowEnabled = useUIStore((s) => s.autoFollowEnabled);
 	const setAutoFollowEnabled = useUIStore((s) => s.setAutoFollowEnabled);
 
-	// Worktree run target state
-	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
-	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
 	const activeSession = useSessionStore(selectSessionById(sessionId));
 	const sessions = useSessionStore((state) => state.sessions);
-	// When the current session is a worktree child, worktree config lives on its parent.
-	// Resolve the parent so the WorktreeRunSection can read basePath and list siblings.
-	const worktreeParentSession = useMemo(() => {
-		if (!activeSession) return null;
-		if (activeSession.parentSessionId) {
-			return sessions.find((s) => s.id === activeSession.parentSessionId) ?? activeSession;
+
+	// Which worktree (if any) this run dispatches to.
+	const {
+		worktreeTarget,
+		setWorktreeTarget,
+		isPreparingWorktree,
+		setIsPreparingWorktree,
+		worktreeParentSession,
+		worktreeChildren,
+		handleOpenWorktreeConfig,
+	} = useWorktreeRunTarget({ activeSession, sessions, sessionId });
+
+	// Per-run model / effort override. Empty string means "Use agent default",
+	// which is the state the modal always opens in: the override is scoped to a
+	// single run and is deliberately NOT persisted anywhere (no session field,
+	// no setting). A persisted per-run model would be indistinguishable from
+	// changing the agent's own model, which Session settings already does.
+	const [runModel, setRunModel] = useState('');
+	const [runEffort, setRunEffort] = useState('');
+	// Off on every open, like the pickers. A playbook's hints are its author's
+	// intent, so overriding them is a choice made for one run, never a default.
+	const [ignoreModelHints, setIgnoreModelHints] = useState(false);
+	// Auto-resume: ON by default, unlike the run-scoped overrides above. An
+	// unattended run that stops on a recoverable error and waits for a click is
+	// the failure this exists to prevent, so the safe default is to try again.
+	const [autoResumeOnError, setAutoResumeOnError] = useState(true);
+	const [autoResumeAfterMin, setAutoResumeAfterMin] = useState(AUTO_RESUME_DEFAULT_MINUTES);
+	const [maxAutoResumes, setMaxAutoResumes] = useState(AUTO_RESUME_DEFAULT_MAX_ATTEMPTS);
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
+	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
+
+	// Fetch the model and effort options for the agent behind this run. Uses a
+	// stale flag so a slow response (e.g. `opencode models` shelling out) for a
+	// previously selected agent can't overwrite the current agent's list. Same
+	// pattern as MainPanel's model pill.
+	useEffect(() => {
+		const agentId = activeSession?.toolType;
+		if (!agentId) {
+			setAvailableModels([]);
+			setAvailableEfforts([]);
+			return;
 		}
-		return activeSession;
-	}, [activeSession, sessions]);
-	const worktreeChildren = useMemo(
-		() =>
-			worktreeParentSession
-				? sessions.filter(
-						(s) => s.parentSessionId === worktreeParentSession.id && s.id !== sessionId
-					)
-				: [],
-		[sessions, worktreeParentSession, sessionId]
-	);
+		let stale = false;
+		window.maestro.agents
+			.getModels(agentId)
+			.then((models) => {
+				if (!stale) setAvailableModels(models);
+			})
+			.catch(() => {
+				if (!stale) setAvailableModels([]);
+			});
+		// Agents expose reasoning effort under either `effort` (Claude Code) or
+		// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both and
+		// use whichever the agent defines.
+		Promise.all([
+			window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
+			window.maestro.agents
+				.getConfigOptions(agentId, 'reasoningEffort')
+				.catch(() => [] as string[]),
+		])
+			.then(([effortOpts, reasoningOpts]) => {
+				if (stale) return;
+				setAvailableEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
+			})
+			.catch(() => {
+				if (!stale) setAvailableEfforts([]);
+			});
+		return () => {
+			stale = true;
+		};
+	}, [activeSession?.toolType]);
 
-	const handleOpenWorktreeConfig = useCallback(() => {
-		// Open worktree config on top of the batch runner (WORKTREE_CONFIG priority 752 > BATCH_RUNNER 720).
-		// The batch runner stays open underneath so the user returns to it after configuring.
-		getModalActions().setWorktreeConfigModalOpen(true);
-	}, []);
+	// Drop a picked value that the newly fetched option list no longer offers,
+	// so switching agents can't leave a stale model in the launched config.
+	useEffect(() => {
+		if (runModel && !availableModels.includes(runModel)) setRunModel('');
+	}, [availableModels, runModel]);
+	useEffect(() => {
+		if (runEffort && !availableEfforts.includes(runEffort)) setRunEffort('');
+	}, [availableEfforts, runEffort]);
 
-	// Document list state. Opens empty unless the inline wizard's "Start Auto
-	// Run" pre-seeded it with freshly generated docs via `presetDocuments`.
-	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
-		if (presetDocuments && presetDocuments.length > 0) {
-			return presetDocuments.map((filename) => ({
-				id: generateId(),
-				filename,
-				resetOnCompletion: false,
-				isDuplicate: false,
-			}));
-		}
-		return [];
-	});
-
-	// Track initial document state for dirty checking. Mirrors the run-list
-	// initialization above so dirty detection is correct for preset opens too.
-	const initialDocumentsRef = useRef<string[]>(
-		presetDocuments && presetDocuments.length > 0 ? [...presetDocuments] : []
-	);
-
-	// Task counts per document (keyed by filename, value = unchecked task count).
-	// Seeded synchronously from the batch store, which is already populated by
-	// useAutoRunDocumentLoader. This avoids redundant per-document SSH `cat`
-	// reads in the modal - critical for SSH-remote sessions where the modal
-	// otherwise stays stuck on "..." while sequential SSH reads pile up.
-	const documentTaskCountsFromStore = useBatchStore((s) => s.documentTaskCounts);
-	const isLoadingDocumentsFromStore = useBatchStore((s) => s.isLoadingDocuments);
-	const seededTaskCounts = useMemo(() => {
-		const out: Record<string, number> = {};
-		documentTaskCountsFromStore.forEach((entry, filename) => {
-			out[filename] = Math.max(0, entry.total - entry.completed);
-		});
-		return out;
-	}, [documentTaskCountsFromStore]);
-	const [taskCounts, setTaskCounts] = useState<Record<string, number>>(seededTaskCounts);
-	const [loadingTaskCounts, setLoadingTaskCounts] = useState(
-		// Only show the loading badge if the store hasn't surfaced any counts yet
-		// AND it's still loading - otherwise we have stale-but-usable data to render.
-		() => isLoadingDocumentsFromStore && Object.keys(seededTaskCounts).length === 0
-	);
-
-	// Loop mode state
-	const [loopEnabled, setLoopEnabled] = useState(false);
-	const [maxLoops, setMaxLoops] = useState<number | null>(null); // null = infinite
-
-	// Track initial loop settings for dirty checking
-	const initialLoopEnabledRef = useRef(false);
-	const initialMaxLoopsRef = useRef<number | null>(null);
+	// Spec-Driven Auto Run: documents, task counts, loop mode.
+	const {
+		documents,
+		setDocuments,
+		initialDocumentsRef,
+		taskCounts,
+		loadingTaskCounts,
+		loopEnabled,
+		setLoopEnabled,
+		maxLoops,
+		setMaxLoops,
+		initialLoopEnabledRef,
+		initialMaxLoopsRef,
+		totalTaskCount,
+		hasNoTasks,
+		missingDocCount,
+	} = useSpecDrivenConfig({ presetDocuments, allDocuments, getDocumentTaskCount });
 
 	// Fresh-context-per mode. Default 'task' preserves legacy behavior (one
 	// agent invocation per unchecked task). 'document' makes the agent walk
 	// every task in a single invocation, sharing context across them.
+	//
+	// Declared here (not inside useTaskSelectionRecommendation) because
+	// usePlaybookManagement's config needs the current value before that hook
+	// runs, and useTaskSelectionRecommendation needs usePlaybookManagement's
+	// loadedPlaybook output - neither hook can own this state without a
+	// circular call-order problem. See useTaskSelectionRecommendation.ts.
 	const [taskSelectionMode, setTaskSelectionMode] = useState<TaskSelectionMode>('task');
 	const initialTaskSelectionModeRef = useRef<TaskSelectionMode>('task');
-	// Set true when the user explicitly clicks the toggle. Sticky: once the
-	// user has expressed a preference we stop auto-applying recommendations and
-	// instead surface a warning if the recommendation disagrees.
-	const [userOverrodeMode, setUserOverrodeMode] = useState(false);
-	// Resolved context window for the active agent. Drives the tasks/doc
-	// threshold that recommendedMode uses. Null until the resolver finishes
-	// (or there's no active session) - recommendations wait for it.
-	const [effectiveContextWindow, setEffectiveContextWindow] = useState<number | null>(null);
+
+	// Goal-Driven Auto Run: tab, goal, exit criteria, max iterations, and
+	// debounced persistence back onto the session.
+	const {
+		autoRunMode,
+		setAutoRunMode,
+		goal,
+		setGoal,
+		exitCriteria,
+		setExitCriteria,
+		maxIterations,
+		setMaxIterations,
+		flushGoalConfig,
+	} = useGoalDrivenConfig({ sessionId, activeSession });
 
 	// Auto Run help guide overlay (same content as the Auto Run panel's Help
 	// button). Renders above this modal; closing it returns here.
 	const [showHelp, setShowHelp] = useState(false);
 
-	// Prompt state
-	const [prompt, setPrompt] = useState(initialPrompt || DEFAULT_BATCH_PROMPT);
-	const [variablesExpanded, setVariablesExpanded] = useState(false);
-	const [savedPrompt, setSavedPrompt] = useState(initialPrompt || '');
-	const [promptComposerOpen, setPromptComposerOpen] = useState(false);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-	// Track initial prompt for dirty checking
-	const initialPromptRef = useRef(initialPrompt || DEFAULT_BATCH_PROMPT);
-
-	// Compute if there are unsaved configuration changes
-	// This checks if documents, loop settings, or prompt have changed from initial values
-	const hasUnsavedConfigChanges = useCallback(() => {
-		// Check if documents have changed (compare filenames)
-		const currentDocFilenames = documents.map((d) => d.filename).sort();
-		const initialDocFilenames = [...initialDocumentsRef.current].sort();
-		const documentsChanged =
-			currentDocFilenames.length !== initialDocFilenames.length ||
-			currentDocFilenames.some((f, i) => f !== initialDocFilenames[i]);
-
-		// Check if loop settings have changed
-		const loopChanged =
-			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
-
-		// Check if prompt has changed
-		const promptChanged = prompt !== initialPromptRef.current;
-
-		// Check if task-selection mode has changed
-		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
-
-		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
-	}, [documents, loopEnabled, maxLoops, prompt, taskSelectionMode]);
-
-	// Handler for closing with unsaved changes check
-	const handleCloseWithConfirmation = useCallback(() => {
-		if (hasUnsavedConfigChanges()) {
-			showConfirmation(
-				'You have unsaved changes to your Auto Run configuration. Close without saving?',
-				() => {
-					onClose();
-				}
-			);
-		} else {
-			onClose();
-		}
-	}, [hasUnsavedConfigChanges, showConfirmation, onClose]);
+	// Agent prompt: text, saved/default flags, composer, template variables.
+	const {
+		prompt,
+		setPrompt,
+		variablesExpanded,
+		setVariablesExpanded,
+		promptComposerOpen,
+		setPromptComposerOpen,
+		textareaRef,
+		initialPromptRef,
+		handleReset,
+		handleSave,
+		isModified,
+		hasUnsavedChanges,
+	} = usePromptComposerState({ initialPrompt, showConfirmation, onSave });
 
 	// Playbook management callback to apply loaded playbook configuration
 	const handleApplyPlaybook = useCallback(
@@ -339,219 +345,114 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onApplyPlaybook: handleApplyPlaybook,
 	});
 
-	// Resolve the active agent's context window the first time the modal opens on
-	// a blank config (no loaded playbook). The resolved window drives the
-	// task-count recommendation's scaling threshold; the Task/Document choice
-	// itself is owned by that recommendation (see the auto-apply effect below),
-	// not a raw window-size cutoff.
-	const autoModeAppliedRef = useRef(false);
-	useEffect(() => {
-		if (autoModeAppliedRef.current) return;
-		// A playbook supplies its own mode - don't second-guess it.
-		if (loadedPlaybook) {
-			autoModeAppliedRef.current = true;
-			return;
-		}
-		if (!activeSession) return;
+	// Task/Document fresh-context recommendation engine (context window
+	// resolution, threshold, recommendation, auto-apply, override tracking).
+	const {
+		handleTaskSelectionModeChange,
+		showRecommendationWarning,
+		recommendationExplanation,
+		queueItemNoun,
+	} = useTaskSelectionRecommendation({
+		documents,
+		taskCounts,
+		activeSession,
+		loadedPlaybook,
+		taskSelectionMode,
+		setTaskSelectionMode,
+		initialTaskSelectionModeRef,
+	});
 
-		let active = true;
-		(async () => {
-			const configured = await resolveEffectiveContextWindow(activeSession);
-			// Also honor a window the agent reported at runtime (e.g. Claude's 1M
-			// beta) even when the configured value was left at the default.
-			const reported = activeSession.aiTabs.reduce(
-				(max, tab) => Math.max(max, tab.usageStats?.contextWindow ?? 0),
-				0
-			);
-			// Honor a per-tab `[1m]` model selection before any usage is reported;
-			// the resolver already covers session- and agent-level model overrides.
-			const tabModelWindow = activeSession.aiTabs.reduce(
-				(max, tab) => Math.max(max, getModelContextWindowOverride(tab.customModel) ?? 0),
-				0
-			);
-			const contextWindow = Math.max(configured, reported, tabModelWindow);
-			if (!active) return;
-			// Expose the resolved window so the task-count recommendation can
-			// scale its tasks/doc threshold (5 at 256K → 20 at 1M).
-			setEffectiveContextWindow(contextWindow);
-			autoModeAppliedRef.current = true;
-		})();
-		return () => {
-			active = false;
-		};
-	}, [activeSession, loadedPlaybook]);
+	// Compute if there are unsaved configuration changes
+	// This checks if documents, loop settings, or prompt have changed from initial values
+	// When a playbook is loaded, it is the saved baseline: comparing against the
+	// open-time snapshot flagged a just-saved playbook as unsaved.
+	const hasUnsavedConfigChanges = useCallback(() => {
+		if (loadedPlaybook) return isPlaybookModified;
 
-	// Use ref for getDocumentTaskCount to avoid dependency issues
-	const getDocumentTaskCountRef = useRef(getDocumentTaskCount);
-	getDocumentTaskCountRef.current = getDocumentTaskCount;
+		// Check if documents have changed (compare filenames)
+		const currentDocFilenames = documents.map((d) => d.filename).sort();
+		const initialDocFilenames = [...initialDocumentsRef.current].sort();
+		const documentsChanged =
+			currentDocFilenames.length !== initialDocFilenames.length ||
+			currentDocFilenames.some((f, i) => f !== initialDocFilenames[i]);
 
-	// Reflect updates from the store (e.g., when a doc's tasks get checked
-	// after the modal opened). For docs covered by the store, this is the
-	// fast path - no IPC needed.
-	useEffect(() => {
-		setTaskCounts((prev) => {
-			let changed = false;
-			const next = { ...prev };
-			for (const [filename, count] of Object.entries(seededTaskCounts)) {
-				if (next[filename] !== count) {
-					next[filename] = count;
-					changed = true;
+		// Check if loop settings have changed
+		const loopChanged =
+			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
+
+		// Check if prompt has changed
+		const promptChanged = prompt !== initialPromptRef.current;
+
+		// Check if task-selection mode has changed
+		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
+
+		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
+	}, [
+		loadedPlaybook,
+		isPlaybookModified,
+		documents,
+		loopEnabled,
+		maxLoops,
+		prompt,
+		taskSelectionMode,
+	]);
+
+	// Handler for closing with unsaved changes check
+	const handleCloseWithConfirmation = useCallback(() => {
+		// Persist any pending goal edits before closing so a quick close (before the
+		// debounce fires) doesn't drop the user's last keystrokes. Goal config auto-saves,
+		// so it isn't part of the spec-mode "unsaved changes" prompt below.
+		flushGoalConfig();
+		if (hasUnsavedConfigChanges()) {
+			showConfirmation(
+				'You have unsaved changes to your Auto Run configuration. Close without saving?',
+				() => {
+					onClose();
 				}
-			}
-			return changed ? next : prev;
-		});
-	}, [seededTaskCounts]);
-
-	// IPC fallback: read counts only for documents NOT already covered by the
-	// store. On SSH-remote sessions the store is normally pre-populated by
-	// useAutoRunDocumentLoader, so this loop runs zero IPC calls in practice.
-	useEffect(() => {
-		const missing = allDocuments.filter((doc) => !(doc in seededTaskCounts));
-		if (missing.length === 0) {
-			setLoadingTaskCounts(false);
-			return;
+			);
+		} else {
+			onClose();
 		}
-
-		let cancelled = false;
-		const loadMissing = async () => {
-			setLoadingTaskCounts(true);
-			const additions: Record<string, number> = {};
-			for (const doc of missing) {
-				if (cancelled) return;
-				try {
-					additions[doc] = await getDocumentTaskCountRef.current(doc);
-				} catch {
-					additions[doc] = 0;
-				}
-			}
-			if (cancelled) return;
-			setTaskCounts((prev) => ({ ...prev, ...additions }));
-			setLoadingTaskCounts(false);
-		};
-
-		loadMissing();
-		return () => {
-			cancelled = true;
-		};
-	}, [allDocuments, seededTaskCounts]);
-
-	// Calculate total tasks across selected documents (excluding missing documents)
-	const totalTaskCount = documents.reduce((sum, doc) => {
-		// Don't count tasks from missing documents
-		if (doc.isMissing) return sum;
-		return sum + (taskCounts[doc.filename] || 0);
-	}, 0);
-	const hasNoTasks = totalTaskCount === 0;
-
-	// Count missing documents for warning display
-	const missingDocCount = documents.filter((doc) => doc.isMissing).length;
-
-	// Recommend a fresh-context mode based on average tasks per selected doc,
-	// using a threshold that scales with the agent's resolved context window.
-	// Small docs benefit from a shared agent across tasks (less spawn overhead,
-	// no repeated context priming); large docs do better with a fresh context
-	// per task so tool output from earlier tasks doesn't crowd later ones.
-	const tasksPerDocThreshold = useMemo(
-		() =>
-			effectiveContextWindow === null ? null : computeTasksPerDocThreshold(effectiveContextWindow),
-		[effectiveContextWindow]
-	);
-	const recommendation = useMemo<{
-		mode: TaskSelectionMode;
-		averageTasks: number;
-		docCount: number;
-		threshold: number;
-	} | null>(() => {
-		// Wait for the context window resolver - its value drives the threshold.
-		if (tasksPerDocThreshold === null) return null;
-		const validDocs = documents.filter((d) => !d.isMissing);
-		if (validDocs.length === 0) return null;
-		// Wait until at least one selected doc has a task count loaded -
-		// recommending against zeros would lock us into 'document' on first paint.
-		const knownCounts = validDocs
-			.map((d) => taskCounts[d.filename])
-			.filter((n): n is number => typeof n === 'number');
-		if (knownCounts.length === 0) return null;
-		const averageTasks = knownCounts.reduce((a, b) => a + b, 0) / knownCounts.length;
-		return {
-			mode: averageTasks < tasksPerDocThreshold ? 'document' : 'task',
-			averageTasks,
-			docCount: validDocs.length,
-			threshold: tasksPerDocThreshold,
-		};
-	}, [documents, taskCounts, tasksPerDocThreshold]);
-	const recommendedMode = recommendation?.mode ?? null;
-
-	// Auto-apply the task-count recommendation when documents/counts change.
-	// Skips if a playbook is loaded (it owns the mode) or the user has
-	// manually overridden - once they've picked, we respect it and warn
-	// instead of fighting them.
-	useEffect(() => {
-		if (userOverrodeMode) return;
-		if (loadedPlaybook) return;
-		if (recommendedMode === null) return;
-		if (recommendedMode === taskSelectionMode) return;
-		setTaskSelectionMode(recommendedMode);
-		// Keep the dirty check honest: an automatic mode shift shouldn't
-		// mark the form as having unsaved changes.
-		initialTaskSelectionModeRef.current = recommendedMode;
-	}, [recommendedMode, loadedPlaybook, userOverrodeMode, taskSelectionMode]);
-
-	// Wrapped setter for the toggle: any manual click flips the override flag
-	// so future doc-selection changes don't yank the mode back.
-	const handleTaskSelectionModeChange = useCallback((mode: TaskSelectionMode) => {
-		setUserOverrodeMode(true);
-		setTaskSelectionMode(mode);
-	}, []);
-
-	const showRecommendationWarning =
-		userOverrodeMode && recommendedMode !== null && recommendedMode !== taskSelectionMode;
-
-	// Noun for the "sent to the AI agent for each ___ in the queue" helper text.
-	// `taskSelectionMode` always holds a concrete value ('task' default), but a
-	// real selection only exists once the user clicks the toggle OR the
-	// auto-recommendation resolves from actual doc/task counts. Until then the
-	// value is just the un-vetted default, so show the combined "task/document".
-	const hasSelectedMode = userOverrodeMode || recommendedMode !== null;
-	const queueItemNoun = !hasSelectedMode
-		? 'task/document'
-		: taskSelectionMode === 'document'
-			? 'document'
-			: 'task';
-
-	// Human-readable explanation of the dynamic mode choice: average task count
-	// across selected docs + the resolved context window + the threshold that
-	// scales with it. Drives the copy shown above the Task/Document toggle.
-	const recommendationExplanation = useMemo<string | null>(() => {
-		if (recommendation === null || effectiveContextWindow === null) return null;
-		const { averageTasks, docCount, threshold, mode } = recommendation;
-		const avgLabel = Number.isInteger(averageTasks) ? `${averageTasks}` : averageTasks.toFixed(1);
-		const docLabel = docCount === 1 ? '1 document' : `${docCount} documents`;
-		const taskLabel = avgLabel === '1' ? '1 task' : `${avgLabel} tasks`;
-		const windowLabel = formatTokens(effectiveContextWindow);
-		const recommendedLabel = mode === 'task' ? 'Task' : 'Document';
-		const reason =
-			mode === 'task'
-				? `that's at or above the ${threshold}-task cutoff for a ${windowLabel} context window, so a clean context per task avoids crowding the window`
-				: `that's under the ${threshold}-task cutoff for a ${windowLabel} context window, so one shared session can hold the whole document`;
-		if (showRecommendationWarning) {
-			const currentLabel = taskSelectionMode === 'task' ? 'Task' : 'Document';
-			return `Heads up: your ${docLabel} average ${taskLabel} each; ${reason}, so ${recommendedLabel} is the better fit. You've chosen ${currentLabel} - if you know what you're doing, go for it.`;
-		}
-		return `Your ${docLabel} average ${taskLabel} each - ${reason}. Defaulted to ${recommendedLabel}.`;
-	}, [recommendation, effectiveContextWindow, showRecommendationWarning, taskSelectionMode]);
+	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
 
 	// Validate agent prompt has task references
 	const hasValidPrompt = validateAgentPromptHasTaskReference(prompt);
 	const isPromptEmpty = !prompt || !prompt.trim();
 
+	// Goal mode is launch-ready as soon as a non-empty goal is entered. The
+	// document/prompt gates below are meaningless without documents, so goal mode
+	// uses this single check instead.
+	const isGoalEmpty = !goal.trim();
+	const goalMode = autoRunMode === 'goal';
+
 	// Block launch (but not configuration) while the agent for this session is mid-thought.
 	const isAgentBusy = activeSession?.state === 'busy' || activeSession?.state === 'connecting';
+
+	// One Auto Run per agent at a time. If this session already has an active
+	// batch (spec OR goal driven), block launching another regardless of the
+	// mode the user is currently looking at. errorPaused runs still occupy the
+	// agent, so a paused run blocks a fresh launch too.
+	const isBatchRunningForSession = useBatchStore(
+		useCallback((s) => !!s.batchRunStates[sessionId]?.isRunning, [sessionId])
+	);
 
 	// Dispatching to a separate worktree spawns/uses a different agent, so the current
 	// session being busy is irrelevant - let the user launch regardless. (Busy open-worktree
 	// targets are already disabled in the WorktreeRunSection dropdown.)
 	const blocksLaunchWhileBusy = isAgentBusy && worktreeTarget === null;
+
+	// Whether the Go button should be disabled, branching on the active mode.
+	const isGoDisabled =
+		isPreparingWorktree ||
+		blocksLaunchWhileBusy ||
+		isBatchRunningForSession ||
+		(goalMode
+			? isGoalEmpty
+			: hasNoTasks ||
+				documents.length === 0 ||
+				documents.length === missingDocCount ||
+				isPromptEmpty ||
+				!hasValidPrompt);
 
 	useModalLayer(MODAL_PRIORITIES.BATCH_RUNNER, undefined, () => {
 		if (showDeleteConfirmModal) {
@@ -563,44 +464,92 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		}
 	});
 
-	// Focus textarea on mount
-	useEffect(() => {
-		setTimeout(() => textareaRef.current?.focus(), 100);
-	}, []);
+	// Cmd+Shift+[ / Cmd+Shift+] cycle between the Spec-Driven and Goal-Driven
+	// tabs. Suppressed while a nested overlay is up (help, prompt composer, or a
+	// playbook save/delete dialog) so the shortcut doesn't shift the tab behind them.
+	useBracketTabCycle<'spec' | 'goal'>({
+		enabled: !showHelp && !promptComposerOpen && !showSavePlaybookModal && !showDeleteConfirmModal,
+		values: AUTO_RUN_MODES,
+		active: autoRunMode,
+		onChange: setAutoRunMode,
+	});
 
-	const handleReset = () => {
-		showConfirmation('Reset the prompt to the default? Your customizations will be lost.', () => {
-			setPrompt(DEFAULT_BATCH_PROMPT);
-		});
-	};
-
-	const handleSave = () => {
+	// One-click save: update the loaded playbook in place, or create a new one
+	// named YYYY-MM-DD-CODENAME from the first document, then close.
+	const handleSaveAndExit = async () => {
+		if (documents.length === 0 || savingPlaybook) return;
 		onSave(prompt);
-		setSavedPrompt(prompt);
-		// Update initial ref so hasUnsavedConfigChanges doesn't flag a saved prompt as dirty
-		initialPromptRef.current = prompt;
+		let saved = loadedPlaybook;
+		if (!loadedPlaybook) {
+			const name = autoPlaybookName(
+				documents[0].filename,
+				playbooks.map((p) => p.name)
+			);
+			saved = await handleSaveAsPlaybook(name);
+		} else if (isPlaybookModified) {
+			saved = await handleSaveUpdate();
+		}
+		if (!saved) {
+			notifyCenterFlash({ message: 'Failed to save playbook', color: 'red' });
+			return;
+		}
+		notifyCenterFlash({ message: `Saved playbook "${saved.name}"`, color: 'green' });
+		onClose();
 	};
 
 	const handleGo = async () => {
 		// Also save when running
 		onSave(prompt);
 
+		// Persist the latest goal config immediately on launch (flush any pending
+		// debounced save) so the session reflects exactly what was run.
+		flushGoalConfig();
+
 		// Filter out missing documents before starting batch run
 		const validDocuments = documents.filter((doc) => !doc.isMissing);
 
-		// Build config (worktree configuration is now managed separately via WorktreeConfigModal)
-		const config: BatchRunConfig = {
-			documents: validDocuments,
-			prompt,
-			loopEnabled,
-			maxLoops: loopEnabled ? maxLoops : null,
-			taskSelectionMode,
-			...(worktreeTarget && { worktreeTarget }),
+		// Auto-resume travels on both run kinds. `autoResumeOnError` is written
+		// only when OFF: absence means ON everywhere else in the codebase, so
+		// writing `true` would be noise in every logged config.
+		const autoResumeFields = {
+			...(autoResumeOnError ? {} : { autoResumeOnError: false }),
+			autoResumeAfterMin: clampAutoResumeMinutes(autoResumeAfterMin),
+			maxAutoResumes: clampMaxAutoResumes(maxAutoResumes),
 		};
+
+		// Build config (worktree configuration is now managed separately via WorktreeConfigModal).
+		// The presence of `goalConfig` is the discriminator the engine uses to route to the
+		// goal runner; in goal mode there are no documents and no loop/task-selection semantics.
+		const config: BatchRunConfig =
+			autoRunMode === 'goal'
+				? {
+						documents: [],
+						prompt,
+						loopEnabled: false,
+						maxLoops: null,
+						goalConfig: { goal: goal.trim(), exitCriteria: exitCriteria.trim(), maxIterations },
+						...(worktreeTarget && { worktreeTarget }),
+						...(runModel && { model: runModel }),
+						...(runEffort && { effort: runEffort }),
+						...autoResumeFields,
+					}
+				: {
+						documents: validDocuments,
+						prompt,
+						loopEnabled,
+						maxLoops: loopEnabled ? maxLoops : null,
+						taskSelectionMode,
+						...(worktreeTarget && { worktreeTarget }),
+						...(runModel && { model: runModel }),
+						...(runEffort && { effort: runEffort }),
+						...(ignoreModelHints && { ignoreModelHints: true }),
+						...autoResumeFields,
+					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
 		window.maestro.logger.log('info', 'Go button clicked', 'BatchRunnerModal', {
 			documentsCount: validDocuments.length,
+			autoRunMode,
 		});
 
 		// Worktree creation/opening requires async work - show loading state
@@ -623,8 +572,6 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		}
 	};
 
-	const isModified = prompt !== DEFAULT_BATCH_PROMPT;
-	const hasUnsavedChanges = prompt !== savedPrompt && prompt !== DEFAULT_BATCH_PROMPT;
 	const resizableModal = useResizableModal({
 		resizeKey: 'batch-runner',
 		defaultSize: { width: 720, height: 720 },
@@ -677,10 +624,26 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						</button>
 					</div>
 					<div className="flex items-center gap-4">
+						{/* Auto Run active pill - shown when this agent already has a run in
+						    flight, explaining why Go is disabled in both modes. */}
+						{isBatchRunningForSession && (
+							<div
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-semibold whitespace-nowrap"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.bgMain,
+									border: `1px solid ${theme.colors.accent}`,
+								}}
+								title="An Auto Run is already active for this agent"
+							>
+								<Play className="w-2.5 h-2.5" />
+								<span>Auto Run active</span>
+							</div>
+						)}
 						{/* Agent thinking pill - shown only while the session agent is busy.
 						    Lives in the header (rather than over the Go button) so it stays
 						    visible without forcing the modal footer to grow. */}
-						{isAgentBusy && (
+						{isAgentBusy && !isBatchRunningForSession && (
 							<div
 								className="flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-semibold whitespace-nowrap"
 								style={{
@@ -693,29 +656,46 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								<span>Agent thinking</span>
 							</div>
 						)}
-						{/* Total Task Count Badge */}
-						<div
-							className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
-							style={{
-								backgroundColor: hasNoTasks
-									? theme.colors.error + '20'
-									: theme.colors.success + '20',
-								border: `1px solid ${hasNoTasks ? theme.colors.error + '40' : theme.colors.success + '40'}`,
-							}}
-						>
-							<span
-								className="text-lg font-bold"
-								style={{ color: hasNoTasks ? theme.colors.error : theme.colors.success }}
+						{/* Goal mode shows a small pill instead of the task count (which is
+						    meaningless without documents); spec mode shows the task total. */}
+						{goalMode ? (
+							<div
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+								style={{
+									backgroundColor: theme.colors.accent + '20',
+									border: `1px solid ${theme.colors.accent}40`,
+								}}
 							>
-								{loadingTaskCounts ? '...' : totalTaskCount}
-							</span>
-							<span
-								className="text-xs font-medium"
-								style={{ color: hasNoTasks ? theme.colors.error : theme.colors.success }}
+								<Target className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span className="text-xs font-medium" style={{ color: theme.colors.accent }}>
+									Goal-Driven
+								</span>
+							</div>
+						) : (
+							/* Total Task Count Badge */
+							<div
+								className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
+								style={{
+									backgroundColor: hasNoTasks
+										? theme.colors.error + '20'
+										: theme.colors.success + '20',
+									border: `1px solid ${hasNoTasks ? theme.colors.error + '40' : theme.colors.success + '40'}`,
+								}}
 							>
-								{totalTaskCount === 1 ? 'task' : 'tasks'}
-							</span>
-						</div>
+								<span
+									className="text-lg font-bold"
+									style={{ color: hasNoTasks ? theme.colors.error : theme.colors.success }}
+								>
+									{loadingTaskCounts ? '...' : totalTaskCount}
+								</span>
+								<span
+									className="text-xs font-medium"
+									style={{ color: hasNoTasks ? theme.colors.error : theme.colors.success }}
+								>
+									{totalTaskCount === 1 ? 'task' : 'tasks'}
+								</span>
+							</div>
+						)}
 						<button
 							onClick={handleCloseWithConfirmation}
 							aria-label="Close"
@@ -728,178 +708,220 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 				{/* Content */}
 				<div className="flex-1 overflow-y-auto p-6">
-					{/* Playbook Section */}
-					<div className="mb-6 flex items-center justify-between">
-						{/* Left side: Load Playbook and Playbook Exchange buttons */}
-						<div className="flex items-center gap-2">
-							{/* Load Playbook Dropdown - only show when playbooks exist or one is loaded */}
-							{(playbooks.length > 0 || loadedPlaybook) && (
-								<div className="relative" ref={playbackDropdownRef}>
-									<button
-										onClick={() => setShowPlaybookDropdown(!showPlaybookDropdown)}
-										className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
-										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-										disabled={loadingPlaybooks}
-									>
-										<FolderOpen className="w-4 h-4" style={{ color: theme.colors.accent }} />
-										<span className="text-sm">
-											{loadedPlaybook ? loadedPlaybook.name : 'Load Playbook'}
-										</span>
-										<ChevronDown className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-									</button>
+					{/* Spec-Driven / Goal-Driven tabs - the top-level choice for how this
+					    Auto Run is driven. Everything below adapts to the selection. */}
+					<div className="mb-6">
+						<p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
+							Spec-Driven runs your checklist documents to completion. Goal-Driven pursues an
+							open-ended goal until the agent reports it's done.
+						</p>
+						<ToggleButtonGroup<'spec' | 'goal'>
+							options={[
+								{ value: 'spec', label: 'Spec-Driven' },
+								{ value: 'goal', label: 'Goal-Driven' },
+							]}
+							value={autoRunMode}
+							onChange={setAutoRunMode}
+							theme={theme}
+						/>
+					</div>
 
-									{/* Dropdown Menu */}
-									{showPlaybookDropdown && (
-										<div
-											className="absolute top-full left-0 mt-1 min-w-64 max-w-[calc(700px-48px)] w-max rounded-lg border shadow-lg z-10 overflow-hidden"
-											style={{
-												backgroundColor: theme.colors.bgSidebar,
-												borderColor: theme.colors.border,
-											}}
+					{/* Playbook Section - Spec-Driven only; playbooks are checklist
+					    documents, which have no meaning in Goal-Driven mode. */}
+					{!goalMode && (
+						<div className="mb-6 flex flex-wrap items-center justify-center gap-2">
+							{/* The two groups below are `contents`, so their buttons are direct
+							    flex items of this centered row rather than two edge-anchored
+							    clusters. The whole set stays centered and wraps as buttons
+							    appear and disappear with the playbook state. */}
+							{/* Load / Import / Playbook Exchange */}
+							<div className="contents">
+								{/* Load Playbook Dropdown - only show when playbooks exist or one is loaded */}
+								{(playbooks.length > 0 || loadedPlaybook) && (
+									<div className="relative" ref={playbackDropdownRef}>
+										<button
+											onClick={() => setShowPlaybookDropdown(!showPlaybookDropdown)}
+											className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
+											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											disabled={loadingPlaybooks}
 										>
-											<div className="max-h-48 overflow-y-auto">
-												{playbooks.map((pb) => (
-													<div
-														key={pb.id}
-														className={`flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer transition-colors ${
-															loadedPlaybook?.id === pb.id ? 'bg-white/10' : ''
-														}`}
-														onClick={() => handleLoadPlaybook(pb)}
-													>
-														<span
-															className="flex-1 text-sm"
-															style={{ color: theme.colors.textMain }}
-														>
-															{pb.name}
-														</span>
-														<span
-															className="text-2xs shrink-0"
-															style={{ color: theme.colors.textDim }}
-														>
-															{pb.documents.length} doc{pb.documents.length !== 1 ? 's' : ''}
-														</span>
-														<button
-															onClick={(e) => {
-																e.stopPropagation();
-																handleExportPlaybook(pb);
-															}}
-															className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
-															style={{ color: theme.colors.textDim }}
-															title="Export playbook"
-														>
-															<Download className="w-3 h-3" />
-														</button>
-														<button
-															onClick={(e) => handleDeletePlaybook(pb, e)}
-															className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
-															style={{ color: theme.colors.textDim }}
-															title="Delete playbook"
-														>
-															<X className="w-3 h-3" />
-														</button>
-													</div>
-												))}
-											</div>
-										</div>
-									)}
-								</div>
-							)}
+											<FolderOpen className="w-4 h-4" style={{ color: theme.colors.accent }} />
+											<span className="text-sm">
+												{loadedPlaybook ? loadedPlaybook.name : 'Load Playbook'}
+											</span>
+											<ChevronDown
+												className="w-3.5 h-3.5"
+												style={{ color: theme.colors.textDim }}
+											/>
+										</button>
 
-							{/* Import Playbook - always visible so users with zero existing
+										{/* Dropdown Menu */}
+										{showPlaybookDropdown && (
+											<div
+												className="absolute top-full left-0 mt-1 min-w-64 max-w-[calc(700px-48px)] w-max rounded-lg border shadow-lg z-10 overflow-hidden"
+												style={{
+													backgroundColor: theme.colors.bgSidebar,
+													borderColor: theme.colors.border,
+												}}
+											>
+												<div className="max-h-48 overflow-y-auto">
+													{playbooks.map((pb) => (
+														<div
+															key={pb.id}
+															className={`flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer transition-colors ${
+																loadedPlaybook?.id === pb.id ? 'bg-white/10' : ''
+															}`}
+															onClick={() => handleLoadPlaybook(pb)}
+														>
+															<span
+																className="flex-1 text-sm"
+																style={{ color: theme.colors.textMain }}
+															>
+																{pb.name}
+															</span>
+															<span
+																className="text-2xs shrink-0"
+																style={{ color: theme.colors.textDim }}
+															>
+																{pb.documents.length} doc{pb.documents.length !== 1 ? 's' : ''}
+															</span>
+															<button
+																onClick={(e) => {
+																	e.stopPropagation();
+																	handleExportPlaybook(pb);
+																}}
+																className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+																style={{ color: theme.colors.textDim }}
+																title="Export playbook"
+															>
+																<Download className="w-3 h-3" />
+															</button>
+															<button
+																onClick={(e) => handleDeletePlaybook(pb, e)}
+																className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+																style={{ color: theme.colors.textDim }}
+																title="Delete playbook"
+															>
+																<X className="w-3 h-3" />
+															</button>
+														</div>
+													))}
+												</div>
+											</div>
+										)}
+									</div>
+								)}
+
+								{/* Import Playbook - always visible so users with zero existing
 							    playbooks can still import a .maestro-playbook.zip. Previously
 							    lived inside the Load Playbook dropdown, which only renders when
 							    at least one playbook exists - making the entry point unreachable
 							    on fresh worktrees / first-time users. */}
-							<button
-								onClick={handleImportPlaybook}
-								className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title="Import a playbook from a .maestro-playbook.zip file"
-							>
-								<Upload className="w-4 h-4" style={{ color: theme.colors.accent }} />
-								<span className="text-sm">Import Playbook</span>
-							</button>
-
-							{/* Playbook Exchange button */}
-							{onOpenMarketplace && (
 								<button
-									onClick={onOpenMarketplace}
+									onClick={handleImportPlaybook}
 									className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
 									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-									title="Browse Playbook Exchange"
+									title="Import a playbook from a .maestro-playbook.zip file"
 								>
-									<LayoutGrid className="w-4 h-4" style={{ color: theme.colors.accent }} />
-									<span className="text-sm">Playbook Exchange</span>
+									<Upload className="w-4 h-4" style={{ color: theme.colors.accent }} />
+									<span className="text-sm">Import Playbook</span>
 								</button>
-							)}
-						</div>
 
-						{/* Right side: Save as Playbook OR Save Update/Discard buttons */}
-						<div className="flex items-center gap-2">
-							{/* Save as Playbook button - shown when >1 doc and no playbook loaded */}
-							{documents.length > 1 && !loadedPlaybook && (
-								<button
-									onClick={() => setShowSavePlaybookModal(true)}
-									className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
-									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								>
-									<Bookmark className="w-4 h-4" style={{ color: theme.colors.accent }} />
-									<span className="text-sm">Save as Playbook</span>
-								</button>
-							)}
-
-							{/* Save Update, Save as New, and Discard buttons - shown when playbook is loaded and modified */}
-							{loadedPlaybook && isPlaybookModified && (
-								<>
+								{/* Playbook Exchange button */}
+								{onOpenMarketplace && (
 									<button
-										onClick={handleDiscardChanges}
-										className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
-										style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-										title="Discard changes and reload original playbook configuration"
+										onClick={onOpenMarketplace}
+										className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+										title="Browse Playbook Exchange"
 									>
-										<RotateCcw className="w-3.5 h-3.5" />
-										<span className="text-sm">Discard</span>
+										<LayoutGrid className="w-4 h-4" style={{ color: theme.colors.accent }} />
+										<span className="text-sm">Playbook Exchange</span>
 									</button>
+								)}
+							</div>
+
+							{/* Save as Playbook OR Save Update / Save as New / Discard */}
+							<div className="contents">
+								{/* Save as Playbook button - shown when >1 doc and no playbook loaded */}
+								{documents.length > 1 && !loadedPlaybook && (
 									<button
 										onClick={() => setShowSavePlaybookModal(true)}
-										disabled={savingPlaybook}
-										className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+										className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
 										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-										title="Save as a new playbook with a different name"
 									>
-										<Bookmark className="w-3.5 h-3.5" />
-										<span className="text-sm">Save as New</span>
+										<Bookmark className="w-4 h-4" style={{ color: theme.colors.accent }} />
+										<span className="text-sm">Save as Playbook</span>
 									</button>
-									<button
-										onClick={handleSaveUpdate}
-										disabled={savingPlaybook}
-										className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-										style={{ borderColor: theme.colors.accent, color: theme.colors.accent }}
-										title="Save changes to the loaded playbook"
-									>
-										<Save className="w-3.5 h-3.5" />
-										<span className="text-sm">{savingPlaybook ? 'Saving...' : 'Save Update'}</span>
-									</button>
-								</>
-							)}
-						</div>
-					</div>
+								)}
 
-					{/* Documents Section */}
-					<DocumentsPanel
-						theme={theme}
-						documents={documents}
-						setDocuments={setDocuments}
-						taskCounts={taskCounts}
-						loadingTaskCounts={loadingTaskCounts}
-						loopEnabled={loopEnabled}
-						setLoopEnabled={setLoopEnabled}
-						maxLoops={maxLoops}
-						setMaxLoops={setMaxLoops}
-						allDocuments={allDocuments}
-						documentTree={documentTree as import('./DocumentsPanel').DocTreeNode[] | undefined}
-						onRefreshDocuments={onRefreshDocuments}
-					/>
+								{/* Save Update, Save as New, and Discard buttons - shown when playbook is loaded and modified */}
+								{loadedPlaybook && isPlaybookModified && (
+									<>
+										<button
+											onClick={handleDiscardChanges}
+											className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
+											style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+											title="Discard changes and reload original playbook configuration"
+										>
+											<RotateCcw className="w-3.5 h-3.5" />
+											<span className="text-sm">Discard</span>
+										</button>
+										<button
+											onClick={() => setShowSavePlaybookModal(true)}
+											disabled={savingPlaybook}
+											className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											title="Save as a new playbook with a different name"
+										>
+											<Bookmark className="w-3.5 h-3.5" />
+											<span className="text-sm">Save as New</span>
+										</button>
+										<button
+											onClick={handleSaveUpdate}
+											disabled={savingPlaybook}
+											className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+											style={{ borderColor: theme.colors.accent, color: theme.colors.accent }}
+											title="Save changes to the loaded playbook"
+										>
+											<Save className="w-3.5 h-3.5" />
+											<span className="text-sm">
+												{savingPlaybook ? 'Saving...' : 'Save Update'}
+											</span>
+										</button>
+									</>
+								)}
+							</div>
+						</div>
+					)}
+
+					{/* Documents Section (Spec-Driven) or Goal config (Goal-Driven) */}
+					{goalMode ? (
+						<GoalConfigPanel
+							theme={theme}
+							goal={goal}
+							exitCriteria={exitCriteria}
+							maxIterations={maxIterations}
+							onGoalChange={setGoal}
+							onExitCriteriaChange={setExitCriteria}
+							onMaxIterationsChange={setMaxIterations}
+						/>
+					) : (
+						<DocumentsPanel
+							theme={theme}
+							documents={documents}
+							setDocuments={setDocuments}
+							taskCounts={taskCounts}
+							loadingTaskCounts={loadingTaskCounts}
+							loopEnabled={loopEnabled}
+							setLoopEnabled={setLoopEnabled}
+							maxLoops={maxLoops}
+							setMaxLoops={setMaxLoops}
+							allDocuments={allDocuments}
+							documentTree={documentTree as import('./DocumentsPanel').DocTreeNode[] | undefined}
+							onRefreshDocuments={onRefreshDocuments}
+						/>
+					)}
 
 					{/* Run in Worktree Section - hidden for non-git repos since worktrees require git */}
 					{worktreeParentSession?.isGitRepo && (
@@ -913,202 +935,357 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						/>
 					)}
 
-					{/* Agent Prompt Section */}
-					<div className="flex flex-col gap-2">
-						{/* Fresh-context-per selector - drives {{TASK_SELECTION_BLOCK}}.
-						    Hidden until at least one document is selected; the mode is then
-						    auto-chosen from the docs' task counts and the agent context window. */}
-						{documents.length > 0 && (
-							<div className="mb-2">
-								<div
-									className="text-2xs font-bold uppercase mb-1.5"
-									style={{ color: theme.colors.textDim }}
-								>
-									Fresh context per:
-								</div>
-								{recommendationExplanation && (
-									<p
-										className="text-2xs mb-1.5"
-										style={{
-											color: showRecommendationWarning
-												? theme.colors.warning
-												: theme.colors.textDim,
-										}}
+					{/* Spec-Driven config: Fresh-context selector + Agent Prompt. Hidden in
+					    goal mode, where the agent prompt is built internally by the goal
+					    runner and "Fresh context per" has no meaning without documents. */}
+					{!goalMode && (
+						<div className="mb-6 flex flex-col gap-2">
+							{/* Fresh-context-per selector - drives {{TASK_SELECTION_BLOCK}}.
+							    Hidden until at least one document is selected; the mode is then
+							    auto-chosen from the docs' task counts and the agent context window. */}
+							{documents.length > 0 && (
+								<div className="mb-2">
+									<div
+										className="text-2xs font-bold uppercase mb-1.5"
+										style={{ color: theme.colors.textDim }}
 									>
-										{recommendationExplanation}
+										Fresh context per:
+									</div>
+									{recommendationExplanation && (
+										<p
+											className="text-2xs mb-1.5"
+											style={{
+												color: showRecommendationWarning
+													? theme.colors.warning
+													: theme.colors.textDim,
+											}}
+										>
+											{recommendationExplanation}
+										</p>
+									)}
+									<ToggleButtonGroup<TaskSelectionMode>
+										options={[
+											{ value: 'task', label: 'Task' },
+											{ value: 'document', label: 'Document' },
+										]}
+										value={taskSelectionMode}
+										onChange={handleTaskSelectionModeChange}
+										theme={theme}
+									/>
+									<p className="text-2xs mt-1.5" style={{ color: theme.colors.textDim }}>
+										{taskSelectionMode === 'task'
+											? 'A new agent session is spawned for each unchecked task, clean context per work in the document.'
+											: 'A new agent session is spawned for each document, processing all tasks together.'}
 									</p>
-								)}
-								<ToggleButtonGroup<TaskSelectionMode>
-									options={[
-										{ value: 'task', label: 'Task' },
-										{ value: 'document', label: 'Document' },
-									]}
-									value={taskSelectionMode}
-									onChange={handleTaskSelectionModeChange}
-									theme={theme}
-								/>
-								<p className="text-2xs mt-1.5" style={{ color: theme.colors.textDim }}>
-									{taskSelectionMode === 'task'
-										? 'A new agent session is spawned for each unchecked task, clean context per work in the document.'
-										: 'A new agent session is spawned for each document, processing all tasks together.'}
-								</p>
-							</div>
-						)}
-
-						<div className="flex items-center justify-between">
-							<div className="flex items-center gap-3">
-								<label
-									className="text-xs font-bold uppercase"
-									style={{ color: theme.colors.textDim }}
-								>
-									Agent Prompt
-								</label>
-								{isModified && (
-									<span
-										className="text-2xs px-2 py-0.5 rounded-full"
-										style={{
-											backgroundColor: theme.colors.accent + '20',
-											color: theme.colors.accent,
-										}}
-									>
-										CUSTOMIZED
-									</span>
-								)}
-							</div>
-							<button
-								onClick={handleReset}
-								disabled={!isModified}
-								className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-								style={{ color: theme.colors.textDim }}
-								title="Reset to default prompt"
-							>
-								<RotateCcw className="w-3 h-3" />
-								Reset
-							</button>
-						</div>
-						<div className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
-							This prompt is sent to the AI agent for each {queueItemNoun} in the queue.{' '}
-							{isModified && lastModifiedAt && (
-								<span style={{ color: theme.colors.textMain }}>
-									Last modified {formatLastModified(lastModifiedAt)}.
-								</span>
+								</div>
 							)}
-						</div>
 
-						{/* Template Variables Documentation */}
-						<div
-							className="rounded-lg border overflow-hidden mb-2"
-							style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
-						>
-							<button
-								onClick={() => setVariablesExpanded(!variablesExpanded)}
-								className="w-full px-3 py-2 flex items-center justify-between hover:bg-white/5 transition-colors"
-							>
-								<div className="flex items-center gap-2">
-									<Variable className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-									<span
+							<div className="flex items-center justify-between">
+								<div className="flex items-center gap-3">
+									<label
 										className="text-xs font-bold uppercase"
 										style={{ color: theme.colors.textDim }}
 									>
-										Template Variables
-									</span>
+										Agent Prompt
+									</label>
+									{isModified && (
+										<span
+											className="text-2xs px-2 py-0.5 rounded-full"
+											style={{
+												backgroundColor: theme.colors.accent + '20',
+												color: theme.colors.accent,
+											}}
+										>
+											CUSTOMIZED
+										</span>
+									)}
 								</div>
-								{variablesExpanded ? (
-									<ChevronDown className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								) : (
-									<ChevronRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								)}
-							</button>
-							{variablesExpanded && (
-								<div
-									className="px-3 pb-3 pt-1 border-t"
-									style={{ borderColor: theme.colors.border }}
+								<button
+									onClick={handleReset}
+									disabled={!isModified}
+									className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+									style={{ color: theme.colors.textDim }}
+									title="Reset to default prompt"
 								>
-									<p className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
-										Use these variables in your prompt. They will be replaced with actual values at
-										runtime.
-									</p>
-									<div className="grid grid-cols-2 gap-x-4 gap-y-1 max-h-48 overflow-y-auto scrollbar-thin">
-										{TEMPLATE_VARIABLES.map(({ variable, description }) => (
-											<div key={variable} className="flex items-center gap-2 py-0.5">
-												<code
-													className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"
-													style={{
-														backgroundColor: theme.colors.bgActivity,
-														color: theme.colors.accent,
-													}}
-												>
-													{variable}
-												</code>
-												<span className="text-2xs truncate" style={{ color: theme.colors.textDim }}>
-													{description}
-												</span>
-											</div>
-										))}
+									<RotateCcw className="w-3 h-3" />
+									Reset
+								</button>
+							</div>
+							<div className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
+								This prompt is sent to the AI agent for each {queueItemNoun} in the queue.{' '}
+								{isModified && lastModifiedAt && (
+									<span style={{ color: theme.colors.textMain }}>
+										Last modified {formatLastModified(lastModifiedAt)}.
+									</span>
+								)}
+							</div>
+
+							{/* Template Variables Documentation */}
+							<div
+								className="rounded-lg border overflow-hidden mb-2"
+								style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
+							>
+								<button
+									onClick={() => setVariablesExpanded(!variablesExpanded)}
+									className="w-full px-3 py-2 flex items-center justify-between hover:bg-white/5 transition-colors"
+								>
+									<div className="flex items-center gap-2">
+										<Variable className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span
+											className="text-xs font-bold uppercase"
+											style={{ color: theme.colors.textDim }}
+										>
+											Template Variables
+										</span>
 									</div>
+									{variablesExpanded ? (
+										<ChevronDown className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+									) : (
+										<ChevronRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+									)}
+								</button>
+								{variablesExpanded && (
+									<div
+										className="px-3 pb-3 pt-1 border-t select-text"
+										style={{ borderColor: theme.colors.border }}
+									>
+										<p className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
+											Use these variables in your prompt. They will be replaced with actual values
+											at runtime.
+										</p>
+										<div className="grid grid-cols-2 gap-x-4 gap-y-1 max-h-48 overflow-y-auto scrollbar-thin">
+											{TEMPLATE_VARIABLES.map(({ variable, description }) => (
+												<div key={variable} className="flex items-center gap-2 py-0.5">
+													<code
+														className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"
+														style={{
+															backgroundColor: theme.colors.bgActivity,
+															color: theme.colors.accent,
+														}}
+													>
+														{variable}
+													</code>
+													<span
+														className="text-2xs truncate"
+														style={{ color: theme.colors.textDim }}
+													>
+														{description}
+													</span>
+												</div>
+											))}
+										</div>
+									</div>
+								)}
+							</div>
+							<div className="relative">
+								<textarea
+									ref={textareaRef}
+									value={prompt}
+									onChange={(e) => setPrompt(e.target.value)}
+									onKeyDown={(e) => {
+										// Insert actual tab character instead of moving focus
+										if (e.key === 'Tab') {
+											e.preventDefault();
+											const textarea = e.currentTarget;
+											const start = textarea.selectionStart;
+											const end = textarea.selectionEnd;
+											const newValue = prompt.substring(0, start) + '\t' + prompt.substring(end);
+											setPrompt(newValue);
+											// Restore cursor position after the tab
+											requestAnimationFrame(() => {
+												textarea.selectionStart = start + 1;
+												textarea.selectionEnd = start + 1;
+											});
+										}
+									}}
+									className="w-full p-4 pr-10 rounded border bg-transparent outline-none resize-none font-mono text-sm"
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+										minHeight: '200px',
+									}}
+									placeholder="Enter the system prompt for auto-run..."
+								/>
+								<button
+									onClick={() => setPromptComposerOpen(true)}
+									className="absolute top-2 right-2 p-1.5 rounded hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textDim }}
+									title="Expand editor"
+								>
+									<Maximize2 className="w-4 h-4" />
+								</button>
+							</div>
+							{/* Prompt validation warning */}
+							{isPromptEmpty && (
+								<div
+									className="text-xs px-3 py-2 rounded"
+									style={{
+										backgroundColor: theme.colors.error + '15',
+										color: theme.colors.error,
+									}}
+								>
+									Agent prompt cannot be empty. Reset to default or provide a prompt.
+								</div>
+							)}
+							{!isPromptEmpty && !hasValidPrompt && (
+								<div
+									className="text-xs px-3 py-2 rounded"
+									style={{
+										backgroundColor: theme.colors.error + '15',
+										color: theme.colors.error,
+									}}
+								>
+									Agent prompt must reference Markdown tasks (e.g., include checkbox syntax like
+									&quot;- [ ]&quot; or the phrase &quot;markdown task&quot;).
 								</div>
 							)}
 						</div>
-						<div className="relative">
-							<textarea
-								ref={textareaRef}
-								value={prompt}
-								onChange={(e) => setPrompt(e.target.value)}
-								onKeyDown={(e) => {
-									// Insert actual tab character instead of moving focus
-									if (e.key === 'Tab') {
-										e.preventDefault();
-										const textarea = e.currentTarget;
-										const start = textarea.selectionStart;
-										const end = textarea.selectionEnd;
-										const newValue = prompt.substring(0, start) + '\t' + prompt.substring(end);
-										setPrompt(newValue);
-										// Restore cursor position after the tab
-										requestAnimationFrame(() => {
-											textarea.selectionStart = start + 1;
-											textarea.selectionEnd = start + 1;
-										});
-									}
-								}}
-								className="w-full p-4 pr-10 rounded border bg-transparent outline-none resize-none font-mono text-sm"
-								style={{
-									borderColor: theme.colors.border,
-									color: theme.colors.textMain,
-									minHeight: '200px',
-								}}
-								placeholder="Enter the system prompt for auto-run..."
-							/>
-							<button
-								onClick={() => setPromptComposerOpen(true)}
-								className="absolute top-2 right-2 p-1.5 rounded hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textDim }}
-								title="Expand editor"
-							>
-								<Maximize2 className="w-4 h-4" />
-							</button>
-						</div>
-						{/* Prompt validation warning */}
-						{isPromptEmpty && (
-							<div
-								className="text-xs px-3 py-2 rounded"
-								style={{
-									backgroundColor: theme.colors.error + '15',
-									color: theme.colors.error,
-								}}
-							>
-								Agent prompt cannot be empty. Reset to default or provide a prompt.
+					)}
+
+					{/* Per-run model / effort override. Applies to every agent spawn this
+					    run makes (both modes, and worktree-dispatched runs), and dies with
+					    the run - the agent's own configured model is left alone. Each
+					    picker is hidden when its provider exposes no options. Lives last in
+					    both modes so the two layouts stay consistent. */}
+					{(availableModels.length > 0 || availableEfforts.length > 0) && (
+						<div className="flex flex-col gap-2">
+							<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+								Model for this run
 							</div>
-						)}
-						{!isPromptEmpty && !hasValidPrompt && (
-							<div
-								className="text-xs px-3 py-2 rounded"
-								style={{
-									backgroundColor: theme.colors.error + '15',
-									color: theme.colors.error,
-								}}
-							>
-								Agent prompt must reference Markdown tasks (e.g., include checkbox syntax like
-								&quot;- [ ]&quot; or the phrase &quot;markdown task&quot;).
+							<div className="flex items-center gap-2">
+								{availableModels.length > 0 && (
+									<select
+										value={runModel}
+										onChange={(e) => setRunModel(e.target.value)}
+										aria-label="Model for this run"
+										className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									>
+										<option value="">Use agent default</option>
+										{availableModels.map((m) => (
+											<option key={m} value={m}>
+												{m}
+											</option>
+										))}
+									</select>
+								)}
+								{availableEfforts.length > 0 && (
+									<select
+										value={runEffort}
+										onChange={(e) => setRunEffort(e.target.value)}
+										aria-label="Reasoning effort for this run"
+										className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									>
+										<option value="">Default effort</option>
+										{availableEfforts.map((e) => (
+											<option key={e} value={e}>
+												{e}
+											</option>
+										))}
+									</select>
+								)}
+							</div>
+							<p className="text-2xs" style={{ color: theme.colors.textDim }}>
+								Overrides the agent&apos;s configured model for this run only. The agent&apos;s own
+								settings and its interactive tabs are unchanged.
+							</p>
+							{/* Spec-Driven only: a Goal-Driven run has no documents, so there are
+							    no markers to ignore. */}
+							{autoRunMode !== 'goal' && (
+								<div className="flex items-start justify-between gap-3 pt-1">
+									<div className="flex flex-col gap-0.5">
+										<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+											Ignore model hints in documents
+										</span>
+										<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+											Run every task at the model and effort above, skipping the playbook&apos;s
+											per-phase and per-task model markers. With the pickers on their defaults, that
+											means the agent&apos;s own settings.
+										</span>
+									</div>
+									<ToggleSwitch
+										checked={ignoreModelHints}
+										onChange={setIgnoreModelHints}
+										theme={theme}
+										size="sm"
+										ariaLabel="Ignore model hints in documents"
+									/>
+								</div>
+							)}
+						</div>
+					)}
+
+					{/* Auto-resume. Deliberately OUTSIDE the model block above: that block
+					    only renders when the agent reports models or efforts, and an agent
+					    that reports neither still stops on errors. Nesting it there would
+					    silently deny auto-resume to exactly the agents nobody is watching. */}
+					<div className="flex flex-col gap-2">
+						<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+							If this run hits an error
+						</div>
+						<div className="flex items-start justify-between gap-3">
+							<div className="flex flex-col gap-0.5">
+								<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+									Auto-resume after
+								</span>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+									An error pauses the run until someone clicks Resume. With this on, Maestro waits
+									and clicks it for you, then gives up after the attempts below and leaves an ERR
+									badge on the agent. Quota pauses are left to Auto-Resume on Limit, which waits for
+									the window to actually reopen.
+								</span>
+							</div>
+							<ToggleSwitch
+								checked={autoResumeOnError}
+								onChange={setAutoResumeOnError}
+								theme={theme}
+								size="sm"
+								ariaLabel="Auto-resume after an error"
+							/>
+						</div>
+						{autoResumeOnError && (
+							<div className="flex flex-wrap items-center gap-4 pt-1">
+								<label className="flex items-center gap-2">
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Wait (minutes)
+									</span>
+									<input
+										type="number"
+										min={AUTO_RESUME_MIN_MINUTES}
+										max={AUTO_RESUME_MAX_MINUTES}
+										value={autoResumeAfterMin}
+										onChange={(e) => setAutoResumeAfterMin(parseInt(e.target.value, 10))}
+										onBlur={() => setAutoResumeAfterMin(clampAutoResumeMinutes(autoResumeAfterMin))}
+										aria-label="Minutes to wait before auto-resuming"
+										className="w-20 rounded border px-2 py-1 text-xs bg-transparent outline-none"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									/>
+								</label>
+								<label className="flex items-center gap-2">
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Max auto-resumes
+									</span>
+									<input
+										type="number"
+										min={AUTO_RESUME_MIN_ATTEMPTS}
+										max={AUTO_RESUME_MAX_ATTEMPTS}
+										value={maxAutoResumes}
+										onChange={(e) => setMaxAutoResumes(parseInt(e.target.value, 10))}
+										onBlur={() => setMaxAutoResumes(clampMaxAutoResumes(maxAutoResumes))}
+										aria-label="Maximum automatic resumes before stopping"
+										className="w-20 rounded border px-2 py-1 text-xs bg-transparent outline-none"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									/>
+								</label>
 							</div>
 						)}
 					</div>
@@ -1119,35 +1296,58 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					className="p-4 border-t flex items-center justify-between shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					{/* Left side: Auto-follow toggle + Hint */}
+					{/* Left side: Save & Exit, auto-follow toggle, hint. All three are document-centric
+					    (following the active task, drag-to-copy a document, saving a checklist playbook) and have no
+					    meaning in Goal-Driven mode, so they hide there. The container
+					    stays mounted to preserve the footer's justify-between layout. */}
 					<div className="flex items-center gap-4">
-						<label className="flex items-center gap-1.5 cursor-pointer">
-							<input
-								type="checkbox"
-								checked={autoFollowEnabled}
-								onChange={(e) => setAutoFollowEnabled(e.target.checked)}
-								className="w-3 h-3 rounded cursor-pointer accent-current"
-								style={{ accentColor: theme.colors.accent }}
-							/>
-							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								Follow active task
-							</span>
-						</label>
-						<div
-							className="flex items-center gap-2 text-xs"
-							style={{ color: theme.colors.textDim }}
-						>
-							<span
-								className="px-1.5 py-0.5 rounded border text-2xs font-mono"
-								style={{
-									borderColor: theme.colors.border,
-									backgroundColor: theme.colors.bgActivity,
-								}}
-							>
-								{formatMetaKey()} + Drag
-							</span>
-							<span>to copy document</span>
-						</div>
+						{!goalMode && (
+							<>
+								<button
+									onClick={handleSaveAndExit}
+									disabled={documents.length === 0 || savingPlaybook}
+									className="flex items-center gap-2 px-3 py-2 rounded border hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									title={
+										documents.length === 0
+											? 'No documents selected'
+											: loadedPlaybook
+												? `Save "${loadedPlaybook.name}" and close`
+												: 'Save as a dated playbook and close'
+									}
+								>
+									<LogOut className="w-4 h-4" style={{ color: theme.colors.accent }} />
+									{savingPlaybook ? 'Saving...' : 'Save & Exit'}
+								</button>
+								<label className="flex items-center gap-1.5 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={autoFollowEnabled}
+										onChange={(e) => setAutoFollowEnabled(e.target.checked)}
+										className="w-3 h-3 rounded cursor-pointer accent-current"
+										style={{ accentColor: theme.colors.accent }}
+									/>
+									<span className="text-xs" style={{ color: theme.colors.textDim }}>
+										Follow active task
+									</span>
+								</label>
+								<div
+									className="flex items-center gap-2 text-xs"
+									style={{ color: theme.colors.textDim }}
+								>
+									<span
+										className="px-1.5 py-0.5 rounded border text-2xs font-mono"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgActivity,
+										}}
+									>
+										{formatMetaKey()} + Drag
+									</span>
+									<span>to copy document</span>
+								</div>
+							</>
+						)}
 					</div>
 
 					{/* Right side: Buttons */}
@@ -1159,56 +1359,49 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						>
 							Cancel
 						</button>
-						<button
-							onClick={handleSave}
-							disabled={!hasUnsavedChanges}
-							className="flex items-center gap-2 px-4 py-2 rounded border hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							style={{ borderColor: theme.colors.border, color: theme.colors.success }}
-							title={hasUnsavedChanges ? 'Save prompt for this session' : 'No unsaved changes'}
-						>
-							<Save className="w-4 h-4" />
-							Save
-						</button>
+						{/* Save persists the Spec-Driven agent prompt for this session.
+						    Goal-Driven has no editable prompt to save, so it's hidden there. */}
+						{!goalMode && (
+							<button
+								onClick={handleSave}
+								disabled={!hasUnsavedChanges}
+								className="flex items-center gap-2 px-4 py-2 rounded border hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+								style={{ borderColor: theme.colors.border, color: theme.colors.success }}
+								title={hasUnsavedChanges ? 'Save prompt for this session' : 'No unsaved changes'}
+							>
+								<Save className="w-4 h-4" />
+								Save
+							</button>
+						)}
 						<button
 							onClick={handleGo}
-							disabled={
-								isPreparingWorktree ||
-								hasNoTasks ||
-								documents.length === 0 ||
-								documents.length === missingDocCount ||
-								isPromptEmpty ||
-								!hasValidPrompt ||
-								blocksLaunchWhileBusy
-							}
+							disabled={isGoDisabled}
 							className="flex items-center gap-2 px-4 py-2 rounded text-white font-bold disabled:opacity-40 disabled:cursor-not-allowed"
 							style={{
-								backgroundColor:
-									isPreparingWorktree ||
-									hasNoTasks ||
-									documents.length === 0 ||
-									documents.length === missingDocCount ||
-									isPromptEmpty ||
-									!hasValidPrompt ||
-									blocksLaunchWhileBusy
-										? theme.colors.textDim
-										: theme.colors.accent,
+								backgroundColor: isGoDisabled ? theme.colors.textDim : theme.colors.accent,
 							}}
 							title={
 								isPreparingWorktree
 									? 'Preparing worktree...'
-									: blocksLaunchWhileBusy
-										? 'Agent is thinking — finish or interrupt the current task before launching auto-run'
-										: isPromptEmpty
-											? 'Agent prompt cannot be empty'
-											: !hasValidPrompt
-												? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
-												: documents.length === 0
-													? 'No documents selected'
-													: documents.length === missingDocCount
-														? 'All selected documents are missing'
-														: hasNoTasks
-															? 'No unchecked tasks in documents'
-															: 'Start auto-run'
+									: isBatchRunningForSession
+										? 'An Auto Run is already active for this agent - stop it before launching another'
+										: blocksLaunchWhileBusy
+											? 'Agent is thinking - finish or interrupt the current task before launching auto-run'
+											: goalMode
+												? isGoalEmpty
+													? 'Enter a goal to launch a Goal-Driven run'
+													: 'Start goal-driven auto-run'
+												: isPromptEmpty
+													? 'Agent prompt cannot be empty'
+													: !hasValidPrompt
+														? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
+														: documents.length === 0
+															? 'No documents selected'
+															: documents.length === missingDocCount
+																? 'All selected documents are missing'
+																: hasNoTasks
+																	? 'No unchecked tasks in documents'
+																	: 'Start auto-run'
 							}
 						>
 							{isPreparingWorktree ? <Spinner size={16} /> : <Play className="w-4 h-4" />}

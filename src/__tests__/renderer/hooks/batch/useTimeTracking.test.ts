@@ -9,7 +9,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useTimeTracking } from '../../../../renderer/hooks/batch/useTimeTracking';
+import {
+	autoRunActiveElapsedMs,
+	useTimeTracking,
+} from '../../../../renderer/hooks/batch/useTimeTracking';
 import {
 	recordSystemSleep,
 	resetSystemSleepTracking,
@@ -182,5 +185,137 @@ describe('useTimeTracking', () => {
 		});
 
 		expect(finalMs).toBe(60_000);
+	});
+
+	it('stops the clock while paused and resumes from the resume moment', () => {
+		const onTimeUpdate = vi.fn();
+		const { result } = renderHook(() =>
+			useTimeTracking({ getActiveSessionIds: () => ['s1'], onTimeUpdate })
+		);
+		act(() => {
+			result.current.startTracking('s1');
+		});
+
+		vi.advanceTimersByTime(60_000);
+		act(() => {
+			result.current.pauseTracking('s1');
+		});
+		expect(onTimeUpdate).toHaveBeenLastCalledWith('s1', 60_000, null);
+
+		// A HITL gate left open for 40 hours adds nothing.
+		vi.advanceTimersByTime(40 * 3_600_000);
+		expect(result.current.getElapsedTime('s1')).toBe(60_000);
+
+		act(() => {
+			result.current.resumeTracking('s1');
+		});
+		expect(onTimeUpdate).toHaveBeenLastCalledWith('s1', 60_000, Date.now());
+
+		vi.advanceTimersByTime(30_000);
+		let finalMs = 0;
+		act(() => {
+			finalMs = result.current.stopTracking('s1');
+		});
+		expect(finalMs).toBe(90_000);
+	});
+
+	it('treats a repeated pause or resume as a no-op', () => {
+		const { result } = renderTracker();
+		act(() => {
+			result.current.startTracking('s1');
+		});
+
+		vi.advanceTimersByTime(10_000);
+		act(() => {
+			result.current.pauseTracking('s1');
+		});
+		vi.advanceTimersByTime(10_000);
+		// The runner re-pauses on every iteration that re-detects a HITL gate.
+		act(() => {
+			result.current.pauseTracking('s1');
+		});
+		expect(result.current.getElapsedTime('s1')).toBe(10_000);
+
+		act(() => {
+			result.current.resumeTracking('s1');
+		});
+		vi.advanceTimersByTime(5_000);
+		act(() => {
+			result.current.resumeTracking('s1');
+		});
+		expect(result.current.getElapsedTime('s1')).toBe(15_000);
+	});
+
+	it('does not subtract sleep taken while paused', () => {
+		const { result } = renderTracker();
+		act(() => {
+			result.current.startTracking('s1');
+		});
+
+		vi.advanceTimersByTime(20_000);
+		act(() => {
+			result.current.pauseTracking('s1');
+		});
+		vi.advanceTimersByTime(60_000);
+		act(() => {
+			recordSystemSleep(60_000);
+		});
+
+		expect(result.current.getElapsedTime('s1')).toBe(20_000);
+	});
+
+	it('ignores pause and resume for an untracked session', () => {
+		const onTimeUpdate = vi.fn();
+		const { result } = renderHook(() =>
+			useTimeTracking({ getActiveSessionIds: () => [], onTimeUpdate })
+		);
+		act(() => {
+			result.current.pauseTracking('s1');
+			result.current.resumeTracking('s1');
+		});
+
+		expect(onTimeUpdate).not.toHaveBeenCalled();
+		expect(result.current.isTracking('s1')).toBe(false);
+	});
+});
+
+describe('autoRunActiveElapsedMs', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+		resetSystemSleepTracking();
+	});
+
+	afterEach(() => {
+		resetSystemSleepTracking();
+		vi.useRealTimers();
+	});
+
+	it('adds the live span to the accumulated time while running', () => {
+		const now = Date.now();
+		expect(
+			autoRunActiveElapsedMs({
+				startTime: now - 3_600_000,
+				accumulatedElapsedMs: 60_000,
+				lastActiveTimestamp: now - 30_000,
+			})
+		).toBe(90_000);
+	});
+
+	it('freezes at the accumulated time while paused', () => {
+		const now = Date.now();
+		expect(
+			autoRunActiveElapsedMs({
+				startTime: now - 40 * 3_600_000,
+				accumulatedElapsedMs: 60_000,
+				lastActiveTimestamp: undefined,
+			})
+		).toBe(60_000);
+	});
+
+	it('falls back to sleep-aware time since start without tracker fields', () => {
+		const now = Date.now();
+		expect(autoRunActiveElapsedMs({ startTime: now - 45_000 })).toBe(45_000);
+		expect(autoRunActiveElapsedMs({})).toBe(0);
 	});
 });

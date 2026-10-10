@@ -36,6 +36,19 @@ npm run test          # Unit tests (excludes integration/e2e/performance)
 npm run test:watch    # Watch mode
 ```
 
+### maestro-p Live Suite
+
+The maestro-p unit tests (`src/__tests__/maestro-p/`) mock the PTY. The behavior that breaks in the field (envelopes, exit codes, slash commands, trust dialogs, `--continue`, process cleanup) only shows against a real `claude` TUI, so `scripts/maestro-p-suite.mjs` runs the binary end to end. Each case runs a real turn on the account it runs as. Run it after any change to `src/maestro-p/`, and add a case when you fix a bug only a live run can see.
+
+```bash
+npm run test:maestro-p:live -- --local                          # build this checkout and test it
+npm run test:maestro-p:live -- --local --only T18,T20           # a subset
+npm run test:maestro-p:live -- --config-dir ~/.claude-work      # another account
+npm run test:maestro-p:live -- --cli <Resources>/maestro-cli.js --cli-agent <id>   # adds T22, the CLI send path
+```
+
+Test folders go under `.maestro/scratch/maestro-p-suite` (override with `--root`), which must sit inside a folder claude already trusts on that account. Exit code: `0` all pass, `2` only known-issue failures (`KNOWN` in the script), `1` anything unexpected. Raw stdout and stderr of every failing run are kept under `<root>/logs/`.
+
 ---
 
 ## File Organization
@@ -230,28 +243,58 @@ vi.mocked(window.maestro.settings.get).mockResolvedValue('custom-value');
 
 ---
 
+## Cross-Platform Path Assertions
+
+Tests run on the CI matrix (Linux + Windows), so any assertion about a filesystem path must be OS-agnostic. Production code emits native paths via `path.join`, `path.resolve`, and `os.homedir()`, which differ per platform (`/a/b` vs `C:\a\b`), and `os.homedir()` is not `process.env.HOME` on Windows.
+
+```typescript
+// WRONG - POSIX-only; passes on the Linux leg, fails on the Windows leg
+expect(outputPath.startsWith('/')).toBe(true);
+expect(outputPath.endsWith('/sub/out.zip')).toBe(true);
+expect(outputPath).toBe(`${process.env.HOME}/Desktop/p.zip`);
+expect(key).toBe('/home/u/.claude');
+
+// CORRECT - assert the behavior through the path/os API
+import path from 'path';
+import os from 'os';
+expect(path.isAbsolute(outputPath)).toBe(true);
+expect(outputPath.endsWith(path.join('sub', 'out.zip'))).toBe(true);
+expect(outputPath).toBe(path.join(os.homedir(), 'Desktop', 'p.zip'));
+const configDir = path.join(os.tmpdir(), '.claude-test'); // native absolute fixture
+const key = resolveConfigDirKeyFromEnv({ CLAUDE_CONFIG_DIR: configDir });
+expect(key).toBe(path.resolve(configDir));
+```
+
+Never hardcode `/`, `\`, or `process.env.HOME` in path assertions or path fixtures. Use `path.isAbsolute`, `path.join`, `path.resolve`, `os.homedir()`, and `os.tmpdir()` so the test verifies identical behavior on every OS.
+
+---
+
 ## Common Mock Patterns
 
 ### Mocking Zustand Stores
 
-Zustand stores are singletons. Two approaches:
+Zustand stores are singletons. Prefer seeding the **real** store with `setState` after a full reset. Do not hand-roll partial default snapshots that drift from each store's create-time initial state.
 
-**Approach 1: Direct setState (preferred for store tests)**
+**Approach 1: `resetAllStores()` then seed (preferred)**
 
 ```typescript
+import { resetAllStores } from '../../helpers';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 beforeEach(() => {
-	useSettingsStore.setState({
-		settingsLoaded: false,
-		activeThemeId: 'dracula',
-		fontSize: 14,
-		// ... reset all fields to initial values
-	});
+	resetAllStores();
+	// Optional: seed only what this test needs
+	useSessionStore.setState({ sessions: [createMockSession()], activeSessionId: 's1' });
+	useSettingsStore.setState({ activeThemeId: 'dracula' });
 });
 ```
 
-**Approach 2: vi.mock with selector function (for hook/component tests)**
+`resetAllStores()` / `resetStore()` / `resetStores(...)` live in `src/__tests__/helpers/resetStores.ts` (re-exported from `src/__tests__/helpers`). They use Zustand v5 `getInitialState()` with replace mode and deep-clone `Set`/`Map`/array/plain-object defaults so in-place mutations cannot poison later tests. Store actions keep their original function references.
+
+For a single-store unit suite, `resetStore(useSessionStore)` (or `resetStores(useSessionStore, useUIStore)`) is enough.
+
+**Approach 2: vi.mock with selector function (legacy; avoid for new tests)**
 
 ```typescript
 const mockSettingsState: Record<string, unknown> = {
@@ -324,6 +367,33 @@ save / delete / restore block; there were three near-identical copies in one
 file and only some of them were applied where they mattered. When an agent
 definition gains a new `defaultEnvVars` key, add it to
 `SHELL_OVERRIDABLE_AGENT_ENV_KEYS`.
+
+### Driving a Touch-Only Branch (`setCoarsePointer`)
+
+`isCoarsePointer()` (`src/renderer/utils/touch.ts`) reads
+`window.matchMedia('(pointer: coarse)')`. jsdom has no `matchMedia`, so every
+test sees a mouse by default and a touch-only branch - the mic button, tap-to-
+open on a table row, tap-again-to-apply in the model console - is never
+exercised. Use the shared stub rather than defining `matchMedia` inline:
+
+```typescript
+import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
+
+afterEach(() => restorePointer());
+
+it('opens the row on a single tap under a coarse pointer', () => {
+	setCoarsePointer(true);
+	// ...render and fireEvent.click(...)
+});
+```
+
+`setCoarsePointer(true)` answers `matches: true` ONLY for a query containing
+`pointer: coarse`, so a component that also asks `(prefers-reduced-motion)` or
+`(max-width: ...)` keeps seeing `false` there. `restorePointer()` puts back
+whatever `matchMedia` was before the first call (or deletes it, matching bare
+jsdom), so the stub cannot leak into the next file. Pair every `true` with a
+`false` case: the point of the coarse branch is that the MOUSE path is
+unchanged, and only a second test proves that.
 
 ### Rendering a Surface That Contains `<MarkdownEditor>` (`markdownEditorModuleMock`)
 
@@ -859,7 +929,7 @@ describe('myStore', () => {
 
 1. **Always wrap modal components** in `<LayerStackProvider>`.
 2. **Use `vi.clearAllMocks()`** in `beforeEach` and `vi.restoreAllMocks()` in `afterEach`.
-3. **Reset Zustand stores** explicitly since they persist across tests.
+3. **Reset Zustand stores** with `resetAllStores()` (or `resetStore` / `resetStores`) from `src/__tests__/helpers` since stores persist across tests.
 4. **Use `vi.useFakeTimers()`** when testing timeouts, intervals, or debouncing.
 5. **Mock `window.maestro`** at the setup level; override specific methods per test.
 6. **Use `data-testid`** for elements that lack accessible roles.

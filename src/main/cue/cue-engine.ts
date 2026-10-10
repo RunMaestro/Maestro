@@ -70,6 +70,7 @@ import * as yaml from 'js-yaml';
 import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
 import { recordRunCompleted as recordTelemetryRunCompleted } from './cue-telemetry';
+import type { PluginEvent } from '../../shared/plugins/events';
 import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
@@ -106,12 +107,43 @@ export interface CueEngineDeps {
 	 */
 	getUsageStatsEnabled?: () => boolean;
 	/**
+	 * Optional metadata-only hook fired once per subscription dispatch with the
+	 * source event TYPE only. Threaded to the dispatch service to surface
+	 * `cue.fired` to subscribed plugins; never carries prompt text.
+	 */
+	onTriggerFired?: (eventType: string) => void;
+	/** Optional metadata-only plugin event sink. Threaded to surface Cue run
+	 * lifecycle (`cue.runStarted` / `cue.runFinished`) to subscribed plugins;
+	 * carries ids/status only, never prompt text or output. */
+	emitPluginEvent?: (event: PluginEvent) => void;
+	/**
 	 * The user's `cueHistoryRetentionDays` setting, forwarded to the recovery
 	 * service so the engine-start prune uses the window the user chose instead
 	 * of a hardcoded one. Read on every start so a change takes effect without
 	 * an app restart. Omit (tests) to prune with the default window.
 	 */
 	getCueHistoryRetentionDays?: () => unknown;
+}
+
+/**
+ * Granularity the Conductor level accrues in. Matches Auto Run's 60s progress
+ * ticker so both unattended sources credit on the same scale.
+ */
+const CONDUCTOR_CREDIT_GRANULARITY_MS = 60000;
+
+/**
+ * Classify a finished run for telemetry and Conductor credit.
+ *
+ * `agent.completed` events came from chain propagation (handoff between
+ * agents). Subscriptions with `action: command` represent a command node
+ * firing. Everything else is a trigger-driven run.
+ */
+function deriveCueTaskKind(
+	result: CueRunResult
+): 'agent_handoff' | 'command_node' | 'trigger_action' {
+	if (result.event.type === 'agent.completed') return 'agent_handoff';
+	if (result.event.payload?.actionKind === 'command') return 'command_node';
+	return 'trigger_action';
 }
 
 export class CueEngine {
@@ -153,6 +185,44 @@ export class CueEngine {
 	 *
 	 * Arrow-function field so `this` is bound when we pass it into subsystem deps.
 	 */
+	/**
+	 * Sub-minute Conductor credit carried between runs. Credit is emitted in
+	 * whole minutes, and this holds the leftover so a long tail of short runs
+	 * still accrues instead of being floored away every time.
+	 */
+	private conductorCreditRemainderMs = 0;
+
+	/**
+	 * Credit unattended AI time toward the Conductor level. Only autonomous AI
+	 * time advances the podium (badge progression + leaderboard, which read the
+	 * same cumulativeTimeMs, so there is no drift). Command nodes are
+	 * deterministic shell steps, not agent reasoning, so they never credit.
+	 *
+	 * Every terminal status credits, not just `completed`: a run that failed,
+	 * timed out, or was stopped still consumed unattended machine time, which is
+	 * exactly what the metric measures.
+	 *
+	 * Credit is emitted in whole minutes to match Auto Run's 60s ticker, but the
+	 * sub-minute remainder carries forward rather than being dropped - flooring
+	 * each run independently meant 60 consecutive 59-second runs credited zero.
+	 */
+	private creditConductorTime(result: CueRunResult): void {
+		if (deriveCueTaskKind(result) === 'command_node') return;
+		if (!(result.durationMs > 0)) return;
+
+		const pending = this.conductorCreditRemainderMs + result.durationMs;
+		const creditMs =
+			Math.floor(pending / CONDUCTOR_CREDIT_GRANULARITY_MS) * CONDUCTOR_CREDIT_GRANULARITY_MS;
+		this.conductorCreditRemainderMs = pending - creditMs;
+
+		if (creditMs > 0) {
+			this.meteredOnLog('debug', '[CUE] Conductor time credit', {
+				type: 'conductorTimeCredit',
+				creditMs,
+			} satisfies CueLogPayload);
+		}
+	}
+
 	private meteredOnLog: CueEngineDeps['onLog'] = (level, message, data) => {
 		this.recordMetricFromPayload(data);
 		// Preserve original arity: omit `data` when it's undefined so vi.fn() mocks
@@ -188,8 +258,26 @@ export class CueEngine {
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
 			onLog: meteredOnLog,
+			onRunStarted: (info) =>
+				this.safeEmitPluginEvent({
+					topic: 'cue.runStarted',
+					at: new Date().toISOString(),
+					payload: info,
+				}),
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth, chainRootId) => {
 				this.pushActivityLog(result);
+				this.safeEmitPluginEvent({
+					topic: 'cue.runFinished',
+					at: new Date().toISOString(),
+					payload: {
+						runId: result.runId,
+						sessionId: result.sessionId,
+						subscriptionName: result.subscriptionName,
+						status: result.status,
+						pipelineName: result.pipelineName,
+						durationMs: result.durationMs,
+					},
+				});
 				// `time.once` subscriptions are one-shot: rewrite cue.yaml to drop
 				// the sub on terminal status. `stopped` (manual abort) routes
 				// through `onRunStopped` instead and never self-destructs - the
@@ -199,15 +287,7 @@ export class CueEngine {
 				// Telemetry: emit `run_completed` once per natural completion.
 				// task_kind is derived here rather than inside the run manager
 				// so the engine remains the sole authority on telemetry shape.
-				// `agent.completed` events came from chain propagation (handoff
-				// between agents). Subscriptions with `action: command` represent
-				// a command node firing. Everything else is a trigger-driven run.
-				const taskKind: 'agent_handoff' | 'command_node' | 'trigger_action' =
-					result.event.type === 'agent.completed'
-						? 'agent_handoff'
-						: result.event.payload?.actionKind === 'command'
-							? 'command_node'
-							: 'trigger_action';
+				const taskKind = deriveCueTaskKind(result);
 				recordTelemetryRunCompleted({
 					subscriptionName,
 					pipelineName: result.pipelineName,
@@ -217,22 +297,9 @@ export class CueEngine {
 					durationMs: result.durationMs,
 					status: result.status,
 				});
-				// Conductor level credit: only autonomous AI time advances the
-				// podium (badge progression + leaderboard, which read the same
-				// cumulativeTimeMs, so there is no drift). Command nodes are
-				// deterministic shell steps, not agent reasoning, so they never
-				// credit. Each run is floored to whole minutes: a sub-minute agent
-				// run yields 0, matching Auto Run's minute-granularity accrual and
-				// keeping trivial/quick automations off the podium.
-				if (taskKind !== 'command_node' && result.status === 'completed') {
-					const creditMs = Math.floor(result.durationMs / 60000) * 60000;
-					if (creditMs > 0) {
-						this.meteredOnLog('debug', '[CUE] Conductor time credit', {
-							type: 'conductorTimeCredit',
-							creditMs,
-						});
-					}
-				}
+				// Conductor level credit for unattended AI time. Every terminal
+				// status credits - see creditConductorTime().
+				this.creditConductorTime(result);
 				// Carry forwarded outputs from the triggering event through to the
 				// completion notification so downstream agents can access them via
 				// per-source template variables ({{CUE_FORWARDED_<NAME>}}).
@@ -257,6 +324,21 @@ export class CueEngine {
 			},
 			onRunStopped: (result) => {
 				this.pushActivityLog(result);
+				this.safeEmitPluginEvent({
+					topic: 'cue.runFinished',
+					at: new Date().toISOString(),
+					payload: {
+						runId: result.runId,
+						sessionId: result.sessionId,
+						subscriptionName: result.subscriptionName,
+						status: result.status,
+						pipelineName: result.pipelineName,
+						durationMs: result.durationMs,
+					},
+				});
+				// A manually stopped run still burned unattended time up to the
+				// abort, so it credits the same as any other terminal status.
+				this.creditConductorTime(result);
 			},
 			onPreventSleep: deps.onPreventSleep,
 			onAllowSleep: deps.onAllowSleep,
@@ -333,6 +415,7 @@ export class CueEngine {
 				);
 			},
 			onLog: meteredOnLog,
+			onTriggerFired: deps.onTriggerFired,
 		});
 		this.sessionRuntimeService = createCueSessionRuntimeService({
 			enabled: () => this.enabled,
@@ -509,6 +592,12 @@ export class CueEngine {
 			type: 'engineStarted',
 		} satisfies CueLogPayload);
 
+		// Snapshot what a PREVIOUS run left in the queue before any session
+		// initializes: initSession can enqueue this boot's own app.startup or
+		// initial heartbeat behind a busy slot, and that enqueue persists a row
+		// the restore below would otherwise run a second time.
+		const persistedBeforeBoot = this.queuePersistence.persistedIds();
+
 		const sessions = this.deps.getSessions();
 		for (const session of sessions) {
 			this.sessionRuntimeService.initSession(session, { reason });
@@ -521,7 +610,7 @@ export class CueEngine {
 		// The prior persistId is discarded via remove() inside the restore
 		// helper's session-missing drop path (if applicable), or is discarded
 		// implicitly on re-enqueue since we never reuse the old id.
-		const restored = this.queuePersistence.restoreAll();
+		const restored = this.queuePersistence.restoreAll(persistedBeforeBoot);
 		for (const [sessionId, entries] of restored) {
 			for (const entry of entries) {
 				// Remove the persisted row immediately - runManager.execute will
@@ -556,8 +645,10 @@ export class CueEngine {
 			}
 		}
 
-		// Detect sleep gap from previous heartbeat
-		this.recoveryService.detectSleepAndReconcile();
+		// Detect the gap since the previous run's last heartbeat. Heartbeat
+		// subscriptions are skipped: each one already fired as its session
+		// initialized above, and a catch-up would run it twice in a row.
+		this.recoveryService.detectSleepAndReconcile({ atEngineStart: true });
 
 		// Start heartbeat writer (30s interval)
 		this.heartbeat.start();
@@ -1276,6 +1367,20 @@ export class CueEngine {
 	}
 
 	/**
+	 * Best-effort plugin event sink. The Cue run lifecycle (start/finish) must
+	 * never be broken by a throwing plugin bus: `onRunStarted` fires before the
+	 * run manager's try/finally, so an exception here would strand the run
+	 * outside cleanup. Emit failures are isolated and reported, never rethrown.
+	 */
+	private safeEmitPluginEvent(event: PluginEvent): void {
+		try {
+			this.deps.emitPluginEvent?.(event);
+		} catch (err) {
+			void captureException(err, { operation: 'cue:pluginEvent', topic: event.topic });
+		}
+	}
+
+	/**
 	 * If `result` finalized a `time.once` subscription, rewrite cue.yaml to drop
 	 * it so the one-shot task does not fire again on a future engine cycle.
 	 *
@@ -1357,7 +1462,7 @@ export class CueEngine {
 	 */
 	private hydrateActivityLogFromDb(): void {
 		try {
-			const records = getRecentCueEvents(0, 500);
+			const records = getRecentCueEvents(0, 1000);
 			if (records.length === 0) return;
 			const sessionNamesById = new Map(this.deps.getSessions().map((s) => [s.id, s.name]));
 			// getRecentCueEvents returns newest-first; reverse so the ring buffer

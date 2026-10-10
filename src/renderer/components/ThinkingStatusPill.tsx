@@ -5,7 +5,7 @@
  *
  * When AutoRun is active, shows a special AutoRun pill with total elapsed time instead.
  */
-import { memo, useState, useEffect, useRef } from 'react';
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { GitBranch, Compass } from 'lucide-react';
 import type {
 	Session,
@@ -16,8 +16,11 @@ import type {
 	BackgroundAutoRun,
 } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
-import { sleepAwareElapsedSince } from '../services/systemSleep';
+import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
+import { formatElapsedTicker } from '../../shared/duration';
+import { StopTurnButton } from './ui/StopTurnButton';
 import { useBackgroundAutoRuns } from '../hooks/batch/useBackgroundAutoRuns';
+import { useWindowContextOptional } from '../contexts/WindowContext';
 import {
 	selectPendingSteeringNotes,
 	useAutoRunSteeringStore,
@@ -44,38 +47,43 @@ interface ThinkingStatusPillProps {
 
 // ElapsedTimeDisplay - shows time since thinking (or the Auto Run) started.
 // Machine sleep is subtracted: the agent was suspended along with the app, so
-// counting the sleep would report an overnight wake as hours of work.
+// counting the sleep would report an overnight wake as hours of work. For an
+// Auto Run, pass the tracker fields too: a paused run's clock stops.
 const ElapsedTimeDisplay = memo(
-	({ startTime, textColor }: { startTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-			Math.floor(sleepAwareElapsedSince(startTime) / 1000)
+	({
+		startTime,
+		accumulatedElapsedMs,
+		lastActiveTimestamp,
+		textColor,
+	}: {
+		startTime: number;
+		accumulatedElapsedMs?: number;
+		lastActiveTimestamp?: number;
+		textColor: string;
+	}) => {
+		const measureSeconds = useCallback(
+			() =>
+				Math.floor(
+					autoRunActiveElapsedMs({ startTime, accumulatedElapsedMs, lastActiveTimestamp }) / 1000
+				),
+			[startTime, accumulatedElapsedMs, lastActiveTimestamp]
 		);
+		const [elapsedSeconds, setElapsedSeconds] = useState(measureSeconds);
 
 		useEffect(() => {
+			setElapsedSeconds(measureSeconds());
 			const interval = setInterval(() => {
-				setElapsedSeconds(Math.floor(sleepAwareElapsedSince(startTime) / 1000));
+				setElapsedSeconds(measureSeconds());
 			}, 1000);
 			return () => clearInterval(interval);
-		}, [startTime]);
-
-		const formatTime = (seconds: number): string => {
-			const days = Math.floor(seconds / 86400);
-			const hours = Math.floor((seconds % 86400) / 3600);
-			const mins = Math.floor((seconds % 3600) / 60);
-			const secs = seconds % 60;
-
-			if (days > 0) {
-				return `${days}d ${hours}h ${mins}m ${secs}s`;
-			} else if (hours > 0) {
-				return `${hours}h ${mins}m ${secs}s`;
-			} else {
-				return `${mins}m ${secs}s`;
-			}
-		};
+		}, [measureSeconds]);
 
 		return (
+			// Monospace on purpose, unlike the name slots around it: this counts up
+			// once a second, and proportional digits change width as they tick, so
+			// the pill would twitch on every frame.
 			<span className="font-mono text-xs" style={{ color: textColor }}>
-				{formatTime(elapsedSeconds)}
+				{formatElapsedTicker(elapsedSeconds * 1000)}
 			</span>
 		);
 	}
@@ -150,9 +158,7 @@ const ThinkingItemRow = memo(
 					<span className="text-xs truncate">
 						<span className="font-medium">{maestroName}</span>
 						<span style={{ color: theme.colors.textDim }}> / </span>
-						<span className="font-mono" style={{ color: theme.colors.textDim }}>
-							{tabDisplayName}
-						</span>
+						<span style={{ color: theme.colors.textDim }}>{tabDisplayName}</span>
 					</span>
 				</div>
 				<div
@@ -374,9 +380,11 @@ const AutoRunPill = memo(
 		}, []);
 
 		return (
-			<div className="relative flex justify-center pb-2 -mt-2">
+			// `status-pill-container` enables the container queries in index.css that drop
+			// non-essential segments on narrow widths so the Stop button never bleeds off-screen.
+			<div className="status-pill-container relative flex justify-center pb-2 -mt-2 min-w-0 px-2">
 				<div
-					className="relative flex items-center gap-2 px-4 py-1.5 rounded-full"
+					className="relative flex items-center gap-2 px-4 py-1.5 rounded-full max-w-full min-w-0"
 					style={{
 						backgroundColor: theme.colors.accent + '20',
 						border: `1px solid ${theme.colors.accent}50`,
@@ -432,30 +440,57 @@ const AutoRunPill = memo(
 						</span>
 					)}
 
-					{/* Divider */}
-					<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-
-					{/* Task progress */}
-					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span>Tasks:</span>
-						<span className="font-medium" style={{ color: theme.colors.textMain }}>
-							{completedTasks}/{totalTasks}
-						</span>
-					</div>
-
-					{/* Divider */}
-					<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
+					{/* Progress - goal percent for goal runs, task count otherwise. Each branch
+					    carries its own divider; the label words drop on very narrow widths (pill-label). */}
+					{autoRunState.goalMode ? (
+						<div
+							className="flex items-center gap-2 shrink-0 text-xs"
+							style={{ color: theme.colors.textDim }}
+							title={autoRunState.goalRationale || undefined}
+						>
+							<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+							<div className="flex items-center gap-1">
+								<span className="pill-label">Goal:</span>
+								<span className="font-medium" style={{ color: theme.colors.textMain }}>
+									{autoRunState.goalProgress ?? 0}%
+								</span>
+								{autoRunState.goalIteration ? (
+									<span className="opacity-70 pill-label">
+										· iteration {autoRunState.goalIteration}
+									</span>
+								) : null}
+							</div>
+						</div>
+					) : (
+						<div
+							className="flex items-center gap-2 shrink-0 text-xs"
+							style={{ color: theme.colors.textDim }}
+						>
+							<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+							<div className="flex items-center gap-1">
+								<span className="pill-label">Tasks:</span>
+								<span className="font-medium" style={{ color: theme.colors.textMain }}>
+									{completedTasks}/{totalTasks}
+								</span>
+							</div>
+						</div>
+					)}
 
 					{/* Total elapsed time */}
 					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
+						className="flex items-center gap-2 shrink-0 text-xs"
 						style={{ color: theme.colors.textDim }}
 					>
-						<span>Elapsed:</span>
-						<ElapsedTimeDisplay startTime={startTime} textColor={theme.colors.textMain} />
+						<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+						<div className="flex items-center gap-1">
+							<span className="pill-label">Elapsed:</span>
+							<ElapsedTimeDisplay
+								startTime={startTime}
+								accumulatedElapsedMs={autoRunState.accumulatedElapsedMs}
+								lastActiveTimestamp={autoRunState.lastActiveTimestamp}
+								textColor={theme.colors.textMain}
+							/>
+						</div>
 					</div>
 
 					{/* Stop button - only show when callback provided and not already stopping */}
@@ -599,7 +634,17 @@ function ThinkingStatusPillInner({
 	const [isExpanded, setIsExpanded] = useState(false);
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// Auto Runs on other agents. The viewed agent's run arrives as autoRunState.
-	const backgroundAutoRuns = useBackgroundAutoRuns(activeSessionId);
+	// Multi-window: drop runs on agents another window owns, the same scoping
+	// buildThinkingItems applies to busy tabs.
+	const ownsSession = useWindowContextOptional()?.ownsSession;
+	const allBackgroundAutoRuns = useBackgroundAutoRuns(activeSessionId);
+	const backgroundAutoRuns = useMemo(
+		() =>
+			ownsSession
+				? allBackgroundAutoRuns.filter((run) => ownsSession(run.sessionId))
+				: allBackgroundAutoRuns,
+		[allBackgroundAutoRuns, ownsSession]
+	);
 
 	const handleHoverEnter = () => {
 		if (closeTimerRef.current) {
@@ -644,7 +689,11 @@ function ThinkingStatusPillInner({
 				theme={theme}
 				autoRunState={autoRunState}
 				sessionId={activeSessionId}
-				onStop={onStopAutoRun}
+				// A run mirrored from another Maestro window has no local loop for
+				// Stop to reach, so drop the button rather than draw a dead one. The
+				// Right Panel card and the Auto Run tab keep a disabled Stop that
+				// explains why; this pill is too tight for that copy.
+				onStop={autoRunState.mirrored ? undefined : onStopAutoRun}
 				thinkingItems={thinkingItems}
 				namedSessions={namedSessions}
 				onSessionClick={onSessionClick}
@@ -714,6 +763,10 @@ function ThinkingStatusPillInner({
 	// prefer namedSessions, then tab name, then UUID octet (NOT session name - that's already shown)
 	const displayClaudeId =
 		customName || tabName || (agentSessionId ? agentSessionId.substring(0, 8).toUpperCase() : null);
+	// True only when the two name sources were empty and this fell through to the
+	// raw session id. A name is prose and belongs in the interface font; a hex
+	// octet is an identifier and reads better in the code face.
+	const displayIsSessionId = !customName && !tabName && Boolean(agentSessionId);
 
 	// For tooltip, show all available info
 	const tooltipParts = [maestroSessionName];
@@ -723,11 +776,13 @@ function ThinkingStatusPillInner({
 	const fullTooltip = tooltipParts.join(' | ');
 
 	return (
-		// Thinking Pill - centered container with negative top margin to offset parent padding
-		<div className="relative flex justify-center pb-2 -mt-2 min-w-0 px-2">
+		// Thinking Pill - centered container with negative top margin to offset parent padding.
+		// `status-pill-container` enables the container queries in index.css that drop
+		// non-essential segments on narrow widths so the Stop button never bleeds off-screen.
+		<div className="status-pill-container relative flex justify-center pb-2 -mt-2 min-w-0 px-2">
 			{/* Thinking Pill - shrinks to fit content; `relative` anchors the expanded dropdown to the pill's full width.
-			    `max-w-full min-w-0` bounds the pill to the available width so an over-long tab name truncates
-			    (it's the only child without `shrink-0`) instead of wrapping the whole pill to a second line. */}
+			    `max-w-full min-w-0` bounds the pill to the available width so the session name and an
+			    over-long tab name truncate instead of wrapping the whole pill to a second line. */}
 			<div
 				className="relative flex items-center gap-2 px-4 py-1.5 rounded-full max-w-full min-w-0"
 				style={{
@@ -741,71 +796,76 @@ function ThinkingStatusPillInner({
 					style={{ backgroundColor: theme.colors.warning }}
 				/>
 
-				{/* Maestro session name - always visible, not clickable */}
-				<span
-					className="text-xs font-medium shrink-0"
+				{/* Maestro session name - always visible, truncates on narrow widths. Clickable:
+				    it jumps to the thinking tab, same as the tab-name segment. The tab-name
+				    segment is the first thing container queries drop on narrow widths, so the
+				    name has to carry the jump too or the pill loses its only affordance. */}
+				<button
+					onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
+					className="text-xs font-medium truncate min-w-0 hover:underline cursor-pointer"
 					style={{ color: theme.colors.textMain }}
-					title={fullTooltip}
+					title={`Jump to this tab · ${fullTooltip}`}
 				>
 					{maestroSessionName}
-				</span>
+				</button>
 
-				{/* Divider */}
-				<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-
-				{/* Token info for this thought cycle - only show when available */}
-				{primaryTokens > 0 && (
-					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span>Tokens:</span>
-						<span className="font-medium" style={{ color: theme.colors.textMain }}>
-							{formatTokensCompact(primaryTokens)}
-						</span>
-					</div>
-				)}
-
-				{/* Placeholder when no tokens yet */}
-				{primaryTokens === 0 && (
-					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
-						style={{ color: theme.colors.textDim }}
-					>
+				{/* Token info / Thinking placeholder - carries its own divider so hiding the
+				    segment on narrow widths (pill-seg-tokens) takes the divider with it */}
+				<div
+					className="pill-seg-tokens flex items-center gap-2 shrink-0 text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+					{primaryTokens > 0 ? (
+						<div className="flex items-center gap-1">
+							<span>Tokens:</span>
+							<span className="font-medium" style={{ color: theme.colors.textMain }}>
+								{formatTokensCompact(primaryTokens)}
+							</span>
+						</div>
+					) : (
 						<span>Thinking...</span>
-					</div>
-				)}
+					)}
+				</div>
 
-				{/* Elapsed time - prefer tab's time for accurate parallel tracking */}
+				{/* Elapsed time - prefer tab's time for accurate parallel tracking.
+				    The "Elapsed:" label word drops on very narrow widths (pill-label). */}
 				{(primaryTab?.thinkingStartTime || primarySession.thinkingStartTime) && (
-					<>
-						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-						<div
-							className="flex items-center gap-1 shrink-0 text-xs"
-							style={{ color: theme.colors.textDim }}
-						>
-							<span>Elapsed:</span>
+					<div
+						className="flex items-center gap-2 shrink-0 text-xs"
+						style={{ color: theme.colors.textDim }}
+					>
+						<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+						<div className="flex items-center gap-1">
+							<span className="pill-label">Elapsed:</span>
 							<ElapsedTimeDisplay
 								startTime={primaryTab?.thinkingStartTime || primarySession.thinkingStartTime!}
 								textColor={theme.colors.textMain}
 							/>
 						</div>
-					</>
+					</div>
 				)}
 
-				{/* Thinking Pill - Claude session ID / tab name */}
+				{/* Thinking Pill - Claude session ID / tab name.
+				    First segment to drop on narrow widths (pill-seg-claude-id); still in the tooltip. */}
 				{displayClaudeId && (
-					<>
+					<div className="pill-seg-claude-id flex items-center gap-2 min-w-0">
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
 							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
-							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
+							className={`text-xs hover:underline cursor-pointer truncate min-w-0${
+								displayIsSessionId ? ' font-mono' : ''
+							}`}
 							style={{ color: theme.colors.accent }}
-							title={agentSessionId ? `Claude Session: ${agentSessionId}` : 'Claude Session'}
+							title={
+								agentSessionId
+									? `Jump to this tab · Claude Session: ${agentSessionId}`
+									: 'Jump to this tab'
+							}
 						>
 							{displayClaudeId}
 						</button>
-					</>
+					</div>
 				)}
 
 				{/* Additional thinking items indicator */}
@@ -830,21 +890,7 @@ function ThinkingStatusPillInner({
 				{onInterrupt && (
 					<>
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-						<button
-							type="button"
-							onClick={onInterrupt}
-							className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors hover:opacity-80"
-							style={{
-								backgroundColor: theme.colors.error,
-								color: 'white',
-							}}
-							title="Interrupt Claude (Ctrl+C)"
-						>
-							<svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-								<rect x="6" y="6" width="12" height="12" rx="1" />
-							</svg>
-							Stop
-						</button>
+						<StopTurnButton theme={theme} onClick={onInterrupt} />
 					</>
 				)}
 
@@ -879,7 +925,7 @@ function ThinkingStatusPillInner({
 									completedTasks={getAutoRunTaskCounts(demotedAutoRun).completed}
 									totalTasks={getAutoRunTaskCounts(demotedAutoRun).total}
 									isStopping={demotedAutoRun.isStopping}
-									onStop={onStopAutoRun}
+									onStop={demotedAutoRun.mirrored ? undefined : onStopAutoRun}
 								/>
 							)}
 							{thinkingItems.map((item) => (
@@ -922,7 +968,16 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prevAutoRun?.completedTasksAcrossAllDocs !== nextAutoRun?.completedTasksAcrossAllDocs ||
 			prevAutoRun?.totalTasksAcrossAllDocs !== nextAutoRun?.totalTasksAcrossAllDocs ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
-			prevAutoRun?.startTime !== nextAutoRun?.startTime
+			prevAutoRun?.startTime !== nextAutoRun?.startTime ||
+			prevAutoRun?.accumulatedElapsedMs !== nextAutoRun?.accumulatedElapsedMs ||
+			prevAutoRun?.lastActiveTimestamp !== nextAutoRun?.lastActiveTimestamp ||
+			// Decides whether the Stop button is rendered at all
+			prevAutoRun?.mirrored !== nextAutoRun?.mirrored ||
+			// Goal-Driven progress fields drive the goal readout on the pill
+			prevAutoRun?.goalMode !== nextAutoRun?.goalMode ||
+			prevAutoRun?.goalProgress !== nextAutoRun?.goalProgress ||
+			prevAutoRun?.goalIteration !== nextAutoRun?.goalIteration ||
+			prevAutoRun?.goalRationale !== nextAutoRun?.goalRationale
 		) {
 			return false;
 		}

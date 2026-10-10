@@ -33,6 +33,43 @@ describe('Web Preload API', () => {
 			api = createWebApi();
 		});
 
+		describe('claimAutoRunStart', () => {
+			it('should invoke the main-process Auto Run claim', async () => {
+				mockInvoke.mockResolvedValue(true);
+
+				await expect(api.claimAutoRunStart('session-123')).resolves.toBe(true);
+				expect(mockInvoke).toHaveBeenCalledWith('web:claimAutoRunStart', 'session-123');
+			});
+		});
+
+		describe('releaseAutoRunStartClaim', () => {
+			it('should invoke the main-process Auto Run claim rollback', async () => {
+				mockInvoke.mockResolvedValue(true);
+
+				await expect(api.releaseAutoRunStartClaim('session-123')).resolves.toBe(true);
+				expect(mockInvoke).toHaveBeenCalledWith('web:releaseAutoRunStartClaim', 'session-123');
+			});
+		});
+
+		describe('requestNewTab', () => {
+			it('should invoke web:requestNewTab against the desktop source of truth', async () => {
+				mockInvoke.mockResolvedValue({ tabId: 'tab-2' });
+
+				const result = await api.requestNewTab('session-123');
+
+				expect(mockInvoke).toHaveBeenCalledWith('web:requestNewTab', 'session-123', false);
+				expect(result).toEqual({ tabId: 'tab-2' });
+			});
+		});
+
+		describe('requestCloseTab', () => {
+			it('forwards the agent and tab ids to the desktop', async () => {
+				mockInvoke.mockResolvedValue(true);
+				await expect(api.requestCloseTab('session-123', 'tab-1')).resolves.toBe(true);
+				expect(mockInvoke).toHaveBeenCalledWith('web:requestCloseTab', 'session-123', 'tab-1');
+			});
+		});
+
 		describe('broadcastUserInput', () => {
 			it('should invoke web:broadcastUserInput with correct parameters', async () => {
 				mockInvoke.mockResolvedValue(undefined);
@@ -100,13 +137,14 @@ describe('Web Preload API', () => {
 					},
 				];
 
-				await api.broadcastTabsChange('session-123', tabs, 'tab-1');
+				await api.broadcastTabsChange('session-123', tabs, 'tab-1', true);
 
 				expect(mockInvoke).toHaveBeenCalledWith(
 					'web:broadcastTabsChange',
 					'session-123',
 					tabs,
-					'tab-1'
+					'tab-1',
+					true
 				);
 			});
 		});

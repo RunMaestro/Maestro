@@ -30,7 +30,7 @@
 
 import * as crypto from 'crypto';
 import { mapWithConcurrency } from '../utils/concurrency';
-import { fetchWithTimeout } from './cue-telemetry';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
 const ACCESS_TOKEN_URL = 'https://0din.ai/api/v1/access_tokens';
 const SUS_URL = 'https://defense.0din.ai/api/v1/sus';

@@ -48,11 +48,19 @@ export const MODAL_PRIORITIES = {
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
+	/** Claude Code standard-mode permission prompt - blocks until the user decides */
+	PERMISSION_PROMPT: 1008,
+
 	/** Forced parallel execution warning - one-time acknowledgment */
 	FORCED_PARALLEL_WARNING: 1005,
 
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
+
+	/** Full-screen pan/zoom viewer for a diagram or image. Opens from inside other
+	 * modals (Auto Run expanded, Director's Notes, file preview), so it sits
+	 * above all of them and Escape closes it first. */
+	ZOOM_VIEWER: 990,
 
 	/** Gist publish confirmation modal - high priority */
 	GIST_PUBLISH: 980,
@@ -78,6 +86,12 @@ export const MODAL_PRIORITIES = {
 
 	/** Terminal tab startup command configuration modal */
 	TERMINAL_STARTUP_COMMAND: 873,
+
+	/**
+	 * Keyboard-only model/effort picker for the active AI tab. Sits with the
+	 * other per-tab dialogs: it retunes one tab and nothing else.
+	 */
+	MODEL_EFFORT: 872,
 
 	/** Director's Notes modal - unified history and AI overview */
 	DIRECTOR_NOTES: 848,
@@ -152,10 +166,14 @@ export const MODAL_PRIORITIES = {
 	TAB_CONTEXT_MENU: 708,
 
 	/** Snoozed tabs list modal (shows every agent's snoozed tabs) */
-	SNOOZED_TABS: 704,
+	SNOOZED_TABS: 703,
 
-	/** Snooze history log (opens above the snoozed tabs list) */
-	SNOOZE_HISTORY: 703,
+	/**
+	 * Snooze history log. Must rank ABOVE SNOOZED_TABS: it opens on top of that
+	 * list, and Escape closes the highest-priority layer. Ranked below, Escape
+	 * closed the list instead, which unmounted the history with it.
+	 */
+	SNOOZE_HISTORY: 704,
 
 	/** Prompt composer modal for long prompts */
 	PROMPT_COMPOSER: 725,
@@ -239,6 +257,9 @@ export const MODAL_PRIORITIES = {
 	/** Debug: Re-Probe Agents modal */
 	DEBUG_AGENT_PROBE: 603,
 
+	/** Debug: Widget Gallery (shared widget-library preview) */
+	DEBUG_WIDGET_GALLERY: 602,
+
 	/** Debug: Performance-profiling capture progress modal */
 	DEBUG_PROFILING_CAPTURE: 606,
 
@@ -254,6 +275,9 @@ export const MODAL_PRIORITIES = {
 	/** Feedback modal */
 	FEEDBACK: 595,
 
+	/** GitHub CLI login opened from Send Feedback. Above the Feedback modal. */
+	GH_LOGIN: 597,
+
 	/** Process monitor modal */
 	PROCESS_MONITOR: 550,
 
@@ -263,6 +287,8 @@ export const MODAL_PRIORITIES = {
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
+	/** AgentRun ledger dashboard modal - above the Usage Dashboard and its sub-modals */
+	AGENT_RUN_DASHBOARD: 544,
 	/** Agent card fuzzy filter in the Usage Dashboard's Agents tab. Registered
 	 *  only while the box holds text, so Escape clears the filter before it
 	 *  closes the dashboard. Sits below the detail sub-modal: with both open,
@@ -285,46 +311,74 @@ export const MODAL_PRIORITIES = {
 	CUE_BACKUP_DIFF: 470,
 
 	/** Maestro Cue help modal (above Cue modal) */
-	CUE_HELP: 465,
+	CUE_HELP: 466,
 
 	/** Maestro Cue pattern preview modal (above YAML editor) */
-	CUE_PATTERN_PREVIEW: 464,
+	CUE_PATTERN_PREVIEW: 465,
 
 	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
-	CUE_YAML_EDITOR: 463,
+	CUE_YAML_EDITOR: 464,
 
 	/** Inline pipeline-rename field in the Cue modal's Pipeline List tab.
 	 *  Registered only while a rename is open, so Escape cancels the rename
 	 *  instead of closing the Cue modal. Same reasoning as
 	 *  CUE_SCHEDULED_TASK_FILTER below - an inline control inside the Cue modal
 	 *  can only claim Escape by outranking it in the layer stack. */
-	CUE_PIPELINE_RENAME: 462,
+	CUE_PIPELINE_RENAME: 463,
 
 	/** Fuzzy filter box in the Cue modal's Scheduled Tasks tab. Registered only
 	 *  while the box holds text, so Escape clears the filter before it closes
-	 *  the Cue modal. Sits just above CUE_MODAL and below every Cue sub-modal. */
-	CUE_SCHEDULED_TASK_FILTER: 461,
+	 *  the Cue modal. Sits just above CUE_MODAL and below every Cue sub-modal.
+	 *  461 is taken by PIANOLA_RULE_EDITOR, so this sits at 462. */
+	CUE_SCHEDULED_TASK_FILTER: 462,
 
 	/** Maestro Cue dashboard modal */
 	CUE_MODAL: 460,
 
+	/** Pianola dashboard modal (autonomous manager: rules + decision log) */
+	PIANOLA_MODAL: 459,
+
+	/** Pianola rule editor (above the Pianola dashboard so Escape closes it first) */
+	PIANOLA_RULE_EDITOR: 461,
+
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
+
+	/** Concerto stage - the agent-composed movement panels in one resizable
+	 * window. Sits below the plugin band and every settings-level modal, so a
+	 * modal opened on top of the stage takes Escape first and the stage stays up
+	 * behind it. */
+	CONCERTO_STAGE: 415,
+
+	/** Reserved band for community-plugin panels/modals. Plugin UI is allocated
+	 * sequentially from PLUGIN_PANEL_BASE up to (but not reaching) SSH_REMOTE/
+	 * Settings, so plugins always sit below first-party settings-level modals and
+	 * never above critical/confirmation modals. Use pluginPanelPriority(index). */
+	PLUGIN_PANEL_BASE: 420,
 
 	/** Custom theme base-theme picker dropdown (above settings so Escape closes
 	 * the dropdown first, leaving the Settings modal open for a second Esc). */
 	CUSTOM_THEME_BASE_SELECTOR: 451,
 
+	/** Extension/plugin details pane inside Settings (above settings so Escape
+	 * goes back to the extensions grid instead of closing the whole modal). */
+	EXTENSION_DETAILS: 452,
+
 	/** Settings modal */
 	SETTINGS: 450,
 
+	/** Thought Stream introspection panel - floating, non-blocking; sits below
+	 * real modals so they take Escape/focus first, above git overlays. */
+	THOUGHT_STREAM: 210,
 	/** Header git pill dropdown - above the modals it launches so Escape closes
 	 * the menu first. */
 	GIT_PILL_MENU: 220,
 
 	/** Branch switcher (fuzzy branch picker from the header git pill) - above the
-	 * git viewers so it layers on top when opened while one is showing. */
-	BRANCH_SWITCHER: 210,
+	 * git viewers so it layers on top when opened while one is showing. 205, not
+	 * 210: THOUGHT_STREAM already owns 210, and the uniqueness guard in
+	 * modalPriorities.test.ts caps the tree at four duplicate values. */
+	BRANCH_SWITCHER: 205,
 
 	/** Streaming git command console (pull / push) - above the branch switcher,
 	 * which is what launches a checkout that can spill into it. */
@@ -375,6 +429,21 @@ export const MODAL_PRIORITIES = {
 	/** File tree filter input */
 	FILE_TREE_FILTER: 30,
 } as const;
+
+/** Top of the reserved plugin band (exclusive). Plugin priorities are clamped
+ * below this so a plugin can never outrank SSH_REMOTE (458) / Settings (450). */
+const PLUGIN_PANEL_BAND_TOP = 449;
+
+/**
+ * Allocate a modal priority for the Nth open plugin panel within the reserved
+ * plugin band. Later panels sit above earlier ones, but the whole band stays
+ * below first-party settings-level modals. Clamped so it cannot escape the band.
+ */
+export function pluginPanelPriority(index: number): number {
+	const base = MODAL_PRIORITIES.PLUGIN_PANEL_BASE;
+	const safeIndex = Number.isFinite(index) && index > 0 ? Math.floor(index) : 0;
+	return Math.min(base + safeIndex, PLUGIN_PANEL_BAND_TOP);
+}
 
 /**
  * Type for modal priority keys

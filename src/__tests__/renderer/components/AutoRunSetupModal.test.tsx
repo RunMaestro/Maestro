@@ -19,7 +19,8 @@ import type { Theme } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
 // Mock lucide-react
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	X: () => <svg data-testid="x-icon" />,
 	Folder: () => <svg data-testid="folder-icon" />,
 	FileText: () => <svg data-testid="file-text-icon" />,

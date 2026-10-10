@@ -16,17 +16,22 @@ export interface FuzzyMatchResult {
  */
 export const fuzzyMatch = (text: string, query: string): boolean => {
 	if (!query) return true;
-	const lowerText = text.toLowerCase();
-	const lowerQuery = query.toLowerCase();
-	let queryIndex = 0;
+	return isSubsequence(text.toLowerCase(), query.toLowerCase());
+};
 
-	for (let i = 0; i < lowerText.length && queryIndex < lowerQuery.length; i++) {
-		if (lowerText[i] === lowerQuery[queryIndex]) {
+/**
+ * Case-sensitive, allocation-free subsequence test. Callers scanning large lists
+ * lowercase both sides once up front and use this as a cheap pre-filter before
+ * paying for fuzzyMatchWithScore.
+ */
+export const isSubsequence = (text: string, query: string): boolean => {
+	let queryIndex = 0;
+	for (let i = 0; i < text.length && queryIndex < query.length; i++) {
+		if (text.charCodeAt(i) === query.charCodeAt(queryIndex)) {
 			queryIndex++;
 		}
 	}
-
-	return queryIndex === lowerQuery.length;
+	return queryIndex === query.length;
 };
 
 /**

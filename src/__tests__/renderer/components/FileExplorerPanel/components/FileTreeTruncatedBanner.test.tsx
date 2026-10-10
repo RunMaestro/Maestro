@@ -111,4 +111,40 @@ describe('FileTreeTruncatedBanner', () => {
 		expect((screen.getByText(/Load more/) as HTMLButtonElement).disabled).toBe(true);
 		expect((screen.getByText('Load all') as HTMLButtonElement).disabled).toBe(true);
 	});
+
+	it('shows a spinner on the clicked button and disables both while a load runs', () => {
+		const { container } = render(
+			<FileTreeTruncatedBanner
+				theme={theme}
+				previousCap={100000}
+				onLoadMore={vi.fn()}
+				onLoadAll={vi.fn()}
+				isRefreshing={false}
+				pendingLoad="more"
+				onCollapse={vi.fn()}
+			/>
+		);
+		const loadMore = screen.getByText(/Loading 200,000/).closest('button') as HTMLButtonElement;
+		expect(loadMore.disabled).toBe(true);
+		expect(loadMore.getAttribute('aria-busy')).toBe('true');
+		expect(loadMore.querySelector('.animate-spin')).not.toBeNull();
+		expect((screen.getByText('Load all') as HTMLButtonElement).disabled).toBe(true);
+		expect(container.querySelectorAll('.animate-spin')).toHaveLength(1);
+	});
+
+	it('labels Load all as loading while it runs', () => {
+		render(
+			<FileTreeTruncatedBanner
+				theme={theme}
+				previousCap={100000}
+				onLoadMore={vi.fn()}
+				onLoadAll={vi.fn()}
+				isRefreshing={false}
+				pendingLoad="all"
+				onCollapse={vi.fn()}
+			/>
+		);
+		expect(screen.getByText('Loading all...').closest('button')?.disabled).toBe(true);
+		expect((screen.getByText(/Load more \(200,000\)/) as HTMLButtonElement).disabled).toBe(true);
+	});
 });

@@ -13,6 +13,8 @@ import type {
 	TerminalTab,
 	BrowserTab,
 } from '../../../../renderer/types';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { resetStore } from '../../../helpers/resetStores';
 
 // The renderer sentry module only exports these two helpers, so a full mock is
 // safe and avoids pulling @sentry/electron/renderer into jsdom. Lets us assert
@@ -117,6 +119,18 @@ const makeSession = (overrides: Partial<Session> = {}): Session => {
 /** Create a ref that renderHook can use for initialLoadComplete */
 const makeInitialLoadRef = (value: boolean) => ({ current: value });
 
+function seedSessions(sessions: Session[]) {
+	useSessionStore.setState({ sessions });
+}
+
+function renderPersistence(initialLoadRef: { current: boolean }, delay?: number) {
+	return renderHook(() =>
+		delay === undefined
+			? useDebouncedPersistence(initialLoadRef)
+			: useDebouncedPersistence(initialLoadRef, delay)
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -125,10 +139,81 @@ describe('useDebouncedPersistence', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.clearAllMocks();
+		resetStore(useSessionStore);
+		// The hook refuses to write a tree that was never read from disk. Every
+		// test here is about what happens AFTER a successful read, so model one.
+		useSessionStore.setState({ sessionsReadOk: true });
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	// -----------------------------------------------------------------------
+	// Regression: never write a session tree that was never read
+	// -----------------------------------------------------------------------
+	//
+	// sessions:getAll answers [] both for a new install and for a registry it
+	// could not read, and the restoration hook sets the tree to [] on failure.
+	// initialLoadComplete is set in a finally, so it is true either way, and
+	// flushNow with a snapshot skips it altogether. persistInternal is the one
+	// gate every flush path shares, so the refusal lives there.
+	describe('sessionsReadOk gate', () => {
+		it('does not persist on the debounce timer when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			renderPersistence(initialLoadRef);
+
+			act(() => {
+				seedSessions([makeSession()]);
+			});
+			act(() => {
+				vi.advanceTimersByTime(5000);
+			});
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		});
+
+		it('does not persist on flushNow with a snapshot when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			// The snapshot form is the path that bypasses initialLoadComplete.
+			act(() => {
+				hook.result.current.flushNow([makeSession()]);
+			});
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		});
+
+		it('does not persist on unmount when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			act(() => {
+				seedSessions([makeSession()]);
+			});
+			hook.unmount();
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		});
+
+		it('persists an empty tree that WAS read (a new install)', () => {
+			useSessionStore.setState({ sessionsReadOk: true });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			// The gate is "did the read succeed", never "was it non-empty" -
+			// otherwise a fresh user could never save their first agent.
+			act(() => {
+				hook.result.current.flushNow([]);
+			});
+
+			expect(window.maestro.sessions.setAll).toHaveBeenCalledWith([]);
+		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -167,11 +252,12 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				// Force flush
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const calls = vi.mocked(window.maestro.sessions.setAll).mock.calls;
@@ -202,10 +288,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -221,10 +308,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -267,10 +355,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -308,10 +397,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi
@@ -336,6 +426,44 @@ describe('useDebouncedPersistence', () => {
 				]);
 			});
 
+			it('drops ephemeral (incognito) tabs from persistence and nulls a stale active id', () => {
+				const keeper = makeBrowserTab({
+					id: 'browser-keep',
+					partition: 'persist:maestro-browser-session-session-eph',
+				});
+				// Ephemeral is recognized by flag OR partition prefix; cover both.
+				const flagged: BrowserTab = {
+					...makeBrowserTab({ id: 'browser-flagged' }),
+					ephemeral: true,
+				};
+				const prefixOnly = makeBrowserTab({
+					id: 'browser-prefix',
+					partition: 'maestro-ephemeral-session-eph-a1b2c3d4',
+				});
+				const session = makeSession({
+					id: 'session-eph',
+					browserTabs: [keeper, flagged, prefixOnly],
+					activeBrowserTabId: 'browser-flagged',
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				// Only the normal tab reaches disk; both incognito markers are dropped.
+				expect(persisted[0].browserTabs.map((tab) => tab.id)).toEqual(['browser-keep']);
+				// The active pointer referenced a dropped incognito tab: nulled, so a
+				// restart cannot resurrect a tab whose in-memory partition is gone.
+				expect(persisted[0].activeBrowserTabId).toBeNull();
+			});
+
 			it('repairs unsafe persisted browser partitions and stale active browser ids', () => {
 				const browserTab = makeBrowserTab({
 					id: 'browser-1',
@@ -355,10 +483,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi
@@ -391,10 +520,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi
@@ -411,6 +541,58 @@ describe('useDebouncedPersistence', () => {
 		});
 
 		describe('log truncation', () => {
+			it('should compact oversized tool output before persistence', () => {
+				const oversizedOutput = 'x'.repeat(50_000);
+				const tab = makeTab({
+					id: 'tool-output',
+					logs: [
+						{
+							...makeLog('tool'),
+							metadata: {
+								toolState: { status: 'completed', output: oversizedOutput },
+							},
+						},
+					],
+				});
+				const session = makeSession({ aiTabs: [tab], activeTabId: tab.id });
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				const output = persisted[0].aiTabs[0].logs[0].metadata?.toolState?.output as string;
+				expect(output.length).toBeLessThan(5_000);
+				expect(output).toContain('[tool output truncated');
+			});
+
+			it('should persist a connection hold until ownership reconciliation succeeds', () => {
+				const session = makeSession({
+					executionQueue: [
+						{
+							id: 'held-message',
+							timestamp: 1,
+							tabId: 'default-tab',
+							type: 'message',
+							text: 'send after reconnect',
+							waitingForConnection: true,
+						},
+					],
+				});
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => result.current.flushNow(useSessionStore.getState().sessions));
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].executionQueue[0].waitingForConnection).toBe(true);
+			});
+
 			it('should truncate tab logs to 100 entries (MAX_PERSISTED_LOGS_PER_TAB)', () => {
 				const logs = Array.from({ length: 200 }, (_, i) => makeLog(`log-${i}`));
 				const tab = makeTab({ id: 'big-logs', logs });
@@ -420,10 +602,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -439,10 +622,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -461,10 +645,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -481,10 +666,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -501,10 +687,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -519,10 +706,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -545,10 +733,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -577,10 +766,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -596,10 +786,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -617,10 +808,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -633,10 +825,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -649,10 +842,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -665,10 +859,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -684,10 +879,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -707,10 +903,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -732,10 +929,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -744,15 +942,143 @@ describe('useDebouncedPersistence', () => {
 			});
 		});
 
+		describe('limit-pause persistence (Auto-Resume On Limit)', () => {
+			// A limit pause is the one error state we deliberately KEEP so auto-resume
+			// can re-find the paused session after an app restart. Every other error
+			// stays stripped (covered by the tests above).
+			const makeLimitError = () => ({
+				type: 'rate_limited' as const,
+				message: 'Rate limited',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 1000,
+				resumeAttemptCount: 1,
+				limitResetAt: 5000,
+				limitPausedAt: 1000,
+			});
+
+			it('persists session-level limit-pause state and keeps state error', () => {
+				const error = makeLimitError();
+				const tab = makeTab({ id: 'paused', agentError: error as any });
+				const session = makeSession({
+					state: 'error',
+					agentError: error as any,
+					agentErrorPaused: true,
+					agentErrorTabId: 'paused',
+					aiTabs: [tab],
+					activeTabId: 'paused',
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].state).toBe('error');
+				expect(persisted[0].agentErrorPaused).toBe(true);
+				expect(persisted[0].agentErrorTabId).toBe('paused');
+				// Give-up/backoff fields survive the round-trip.
+				expect(persisted[0].agentError).toEqual(error);
+			});
+
+			it('keeps the paused tab agentError so the coordinator can re-attach', () => {
+				const error = makeLimitError();
+				const tab = makeTab({ id: 'paused', agentError: error as any });
+				const session = makeSession({
+					state: 'error',
+					agentError: error as any,
+					agentErrorPaused: true,
+					agentErrorTabId: 'paused',
+					aiTabs: [tab],
+					activeTabId: 'paused',
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].aiTabs[0].agentError).toEqual(error);
+			});
+
+			it('drops a limit error on a non-paused tab so stale error UI cannot revive', () => {
+				const error = makeLimitError();
+				// The session is paused on 'paused', but a DIFFERENT tab also carries a
+				// stale limit error. Only the paused tab's error should round-trip.
+				const pausedTab = makeTab({ id: 'paused', agentError: error as any });
+				const otherTab = makeTab({ id: 'other', agentError: error as any });
+				const session = makeSession({
+					state: 'error',
+					agentError: error as any,
+					agentErrorPaused: true,
+					agentErrorTabId: 'paused',
+					aiTabs: [pausedTab, otherTab],
+					activeTabId: 'paused',
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				const persistedPaused = persisted[0].aiTabs.find((t) => t.id === 'paused');
+				const persistedOther = persisted[0].aiTabs.find((t) => t.id === 'other');
+				expect(persistedPaused?.agentError).toEqual(error);
+				expect(persistedOther?.agentError).toBeUndefined();
+			});
+
+			it('still strips a non-limit error pause (auth/crash must not survive restart)', () => {
+				const session = makeSession({
+					state: 'error',
+					agentError: {
+						type: 'auth_expired',
+						message: 'Auth expired',
+						recoverable: true,
+						agentId: 'claude-code',
+						timestamp: 1000,
+					} as any,
+					agentErrorPaused: true,
+					agentErrorTabId: 'default-tab',
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].state).toBe('idle');
+				expect(persisted[0].agentError).toBeUndefined();
+				expect(persisted[0].agentErrorPaused).toBeUndefined();
+				expect(persisted[0].agentErrorTabId).toBeUndefined();
+			});
+		});
+
 		describe('session runtime state reset', () => {
 			it('should reset session state to idle', () => {
 				const session = makeSession({ state: 'busy' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -763,10 +1089,11 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ busySource: 'ai' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -777,10 +1104,11 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ thinkingStartTime: Date.now() });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -791,10 +1119,11 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ currentCycleTokens: 5000 });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -805,10 +1134,11 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ currentCycleBytes: 128000 });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -819,10 +1149,11 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ statusMessage: 'Agent is thinking...' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -837,10 +1168,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -851,10 +1183,11 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ sshRemoteId: 'remote-1' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -865,10 +1198,11 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ remoteCwd: '/remote/home/user/project' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -899,10 +1233,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -919,10 +1254,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -950,10 +1286,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -973,10 +1310,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1001,10 +1339,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1030,10 +1369,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1062,12 +1402,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session1, session2], initialLoadRef)
-				);
+				seedSessions([session1, session2]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1095,7 +1434,10 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(false);
 
-				renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				const hook = renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([session]);
+				});
 
 				// Advance well past the debounce delay
 				act(() => {
@@ -1105,34 +1447,92 @@ describe('useDebouncedPersistence', () => {
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
 			});
 
-			it('should persist after initialLoadComplete becomes true', () => {
+			it('should use the loaded tree as the first incremental baseline', () => {
 				const session = makeSession();
+				const secondSession = makeSession({ id: 'second-session' });
 				const initialLoadRef = makeInitialLoadRef(false);
 
-				const { rerender } = renderHook(
-					({ sessions, ref }) => useDebouncedPersistence(sessions, ref),
-					{
-						initialProps: { sessions: [session], ref: initialLoadRef },
-					}
-				);
+				renderPersistence(initialLoadRef);
 
-				// Initially should not persist
+				// Session change while load incomplete must not persist
+				act(() => {
+					seedSessions([session, secondSession]);
+				});
 				act(() => {
 					vi.advanceTimersByTime(3000);
 				});
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
 
-				// Mark initial load as complete and trigger re-render with new sessions array
+				// Mark initial load complete, then mutate sessions to schedule persist
 				initialLoadRef.current = true;
-				const updatedSession = makeSession({ id: session.id, name: 'Updated' });
-				rerender({ sessions: [updatedSession], ref: initialLoadRef });
+				const updatedSession = { ...session, name: 'Updated' };
+				act(() => {
+					seedSessions([updatedSession]);
+				});
 
-				// Advance past the debounce delay
 				act(() => {
 					vi.advanceTimersByTime(2000);
 				});
 
-				expect(window.maestro.sessions.setAll).toHaveBeenCalled();
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: session.id, name: 'Updated' })],
+					['second-session']
+				);
+			});
+
+			it('should persist untouched startup repairs on the first flush', () => {
+				const first = makeSession({ id: 'first', name: 'Stored First' });
+				const second = makeSession({ id: 'second', name: 'Stored Second' });
+				const initialLoadRef = makeInitialLoadRef(false);
+
+				renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([first, second]);
+				});
+
+				const repairedFirst = { ...first, name: 'Repaired First' };
+				const repairedSecond = { ...second, name: 'Repaired Second' };
+				act(() => {
+					seedSessions([repairedFirst, repairedSecond]);
+				});
+
+				initialLoadRef.current = true;
+				const updatedFirst = { ...repairedFirst, state: 'busy' as const };
+				act(() => {
+					seedSessions([updatedFirst, repairedSecond]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[
+						expect.objectContaining({ id: 'first', name: 'Repaired First' }),
+						expect.objectContaining({ id: 'second', name: 'Repaired Second' }),
+					],
+					[]
+				);
+			});
+
+			it('should preserve a deletion when the loaded tree predates the subscription', () => {
+				const first = makeSession({ id: 'first' });
+				const second = makeSession({ id: 'second' });
+				seedSessions([first, second]);
+
+				renderPersistence(makeInitialLoadRef(true));
+				act(() => {
+					seedSessions([first]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'first' })],
+					['second']
+				);
 			});
 		});
 
@@ -1141,7 +1541,10 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				const hook = renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([session]);
+				});
 
 				// Don't advance timers - it should not have been called yet
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
@@ -1151,7 +1554,10 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				const hook = renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([session]);
+				});
 
 				act(() => {
 					vi.advanceTimersByTime(2000);
@@ -1164,10 +1570,10 @@ describe('useDebouncedPersistence', () => {
 				const session1 = makeSession({ id: 's1', name: 'First' });
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { rerender } = renderHook(
-					({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-					{ initialProps: { sessions: [session1] } }
-				);
+				renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([session1]);
+				});
 
 				// Advance 1500ms (not enough for debounce)
 				act(() => {
@@ -1177,7 +1583,9 @@ describe('useDebouncedPersistence', () => {
 
 				// Trigger a new session change which resets the timer
 				const session2 = makeSession({ id: 's1', name: 'Second' });
-				rerender({ sessions: [session2] });
+				act(() => {
+					seedSessions([session2]);
+				});
 
 				// Advance another 1500ms (total 3000ms from start, but only 1500ms from last change)
 				act(() => {
@@ -1196,7 +1604,10 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				renderHook(() => useDebouncedPersistence([session], initialLoadRef, 500));
+				const hook = renderPersistence(initialLoadRef, 500);
+				act(() => {
+					seedSessions([session]);
+				});
 
 				act(() => {
 					vi.advanceTimersByTime(499);
@@ -1215,14 +1626,9 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
-
-				// The hook sets isPending in a useEffect, need to flush effects
-				// isPending won't be true until after the effect runs
-				// We need to advance to allow the effect to set isPending
+				const { result } = renderPersistence(initialLoadRef);
 				act(() => {
-					// trigger the effect by advancing minimally (not the full debounce)
-					vi.advanceTimersByTime(0);
+					seedSessions([session]);
 				});
 
 				act(() => {
@@ -1236,16 +1642,9 @@ describe('useDebouncedPersistence', () => {
 				const sessions = [makeSession()];
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				// Use a stable sessions reference via initialProps to avoid
-				// creating a new array on each render (which would re-trigger
-				// the debounce effect)
-				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
-					initialProps: { s: sessions },
-				});
-
-				// Allow effect to set isPending
+				const { result } = renderPersistence(initialLoadRef);
 				act(() => {
-					vi.advanceTimersByTime(0);
+					seedSessions(sessions);
 				});
 
 				vi.clearAllMocks();
@@ -1271,23 +1670,21 @@ describe('useDebouncedPersistence', () => {
 				const sessions = [makeSession({ id: 's1' })];
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
-					initialProps: { s: sessions },
-				});
+				seedSessions(sessions);
+				const { result } = renderPersistence(initialLoadRef);
 
 				// Seed the baseline with the initial setAll flush. Await the async
 				// persist so flushingRef settles before the next flush; clear mocks
 				// so the assertion only sees the snapshot-driven flush.
 				await act(async () => {
-					result.current.flushNow();
+					result.current.flushNow(sessions);
 					await Promise.resolve();
 				});
 				vi.clearAllMocks();
 
-				// Simulate a synchronous mutation the hook hasn't re-rendered for
-				// yet: a fresh sessions array the rendered `sessions` prop never
-				// carried. Passing it to flushNow must persist it via setMany even
-				// though isPending is false (no render happened).
+				// Simulate a synchronous mutation the hook hasn't observed via
+				// store subscribe yet. Passing it to flushNow must persist it via
+				// setMany even though isPending is false.
 				const mutated = [makeSession({ id: 's1', name: 'Renamed Via Snapshot' })];
 				act(() => {
 					result.current.flushNow(mutated);
@@ -1306,12 +1703,11 @@ describe('useDebouncedPersistence', () => {
 				const original = [makeSession({ id: 's1', name: 'Original' })];
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
-					initialProps: { s: original },
-				});
+				seedSessions(original);
+				const { result } = renderPersistence(initialLoadRef);
 
 				await act(async () => {
-					result.current.flushNow();
+					result.current.flushNow(original);
 					await Promise.resolve();
 				});
 				vi.clearAllMocks();
@@ -1331,7 +1727,8 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(false);
 
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				expect(result.current.isPending).toBe(false);
 			});
@@ -1340,10 +1737,11 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				const { result } = renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([session]);
+				});
 
-				// The useEffect sets isPending to true
-				// It runs asynchronously after render
 				expect(result.current.isPending).toBe(true);
 			});
 
@@ -1351,9 +1749,9 @@ describe('useDebouncedPersistence', () => {
 				const sessions = [makeSession()];
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				// Use stable sessions reference via initialProps
-				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
-					initialProps: { s: sessions },
+				const { result } = renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions(sessions);
 				});
 
 				expect(result.current.isPending).toBe(true);
@@ -1371,9 +1769,9 @@ describe('useDebouncedPersistence', () => {
 				const sessions = [makeSession()];
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				// Use stable sessions reference via initialProps
-				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
-					initialProps: { s: sessions },
+				const { result } = renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions(sessions);
 				});
 
 				expect(result.current.isPending).toBe(true);
@@ -1394,7 +1792,8 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { unmount } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { unmount } = renderPersistence(initialLoadRef);
 
 				unmount();
 
@@ -1406,7 +1805,8 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(false);
 
-				const { unmount } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { unmount } = renderPersistence(initialLoadRef);
 
 				unmount();
 
@@ -1438,10 +1838,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1465,10 +1866,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1486,10 +1888,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1509,10 +1912,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1531,10 +1935,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1555,10 +1960,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1581,12 +1987,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session1, session2], initialLoadRef)
-				);
+				seedSessions([session1, session2]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1612,10 +2017,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1634,10 +2040,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1651,10 +2058,11 @@ describe('useDebouncedPersistence', () => {
 				delete (session as Partial<Session>).filePreviewTabs;
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1675,10 +2083,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1696,10 +2105,11 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
 
 				act(() => {
-					result.current.flushNow();
+					result.current.flushNow(useSessionStore.getState().sessions);
 				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1739,10 +2149,11 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1770,10 +2181,11 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1797,10 +2209,11 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1815,10 +2228,11 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1830,10 +2244,11 @@ describe('useDebouncedPersistence', () => {
 			delete (session as Partial<Session>).terminalTabs;
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1847,10 +2262,11 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1864,10 +2280,11 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1881,10 +2298,11 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1901,10 +2319,11 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			act(() => {
-				result.current.flushNow();
+				result.current.flushNow(useSessionStore.getState().sessions);
 			});
 
 			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
@@ -1934,7 +2353,10 @@ describe('useDebouncedPersistence', () => {
 			const s1 = makeSession({ id: 's1', name: 'One' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			renderHook(() => useDebouncedPersistence([s1], initialLoadRef));
+			const hook = renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1]);
+			});
 			act(() => {
 				vi.advanceTimersByTime(2000);
 			});
@@ -1948,10 +2370,10 @@ describe('useDebouncedPersistence', () => {
 			const s2 = makeSession({ id: 's2', name: 'Two' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1, s2] } }
-			);
+			renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1, s2]);
+			});
 			// First flush - establishes baseline via setAll. Async because
 			// persistInternal awaits the IPC; the baseline is only captured
 			// after the mock's resolved promise flushes through microtasks.
@@ -1962,7 +2384,9 @@ describe('useDebouncedPersistence', () => {
 
 			// Mutate s1 only - Zustand pattern produces a new session object
 			const s1Updated = { ...s1, name: 'One Updated' };
-			rerender({ sessions: [s1Updated, s2] });
+			act(() => {
+				seedSessions([s1Updated, s2]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -1982,19 +2406,20 @@ describe('useDebouncedPersistence', () => {
 			const s1 = makeSession({ id: 's1', name: 'One' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1] } }
-			);
+			renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
 			vi.mocked(window.maestro.sessions.setAll).mockClear();
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
-			// Same array reference - re-render forces effect to re-run but the
-			// diff finds nothing changed.
-			rerender({ sessions: [s1] });
+			// Same sessions reference - store subscribe sees no change, so no IPC.
+			act(() => {
+				seedSessions([s1]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2008,16 +2433,18 @@ describe('useDebouncedPersistence', () => {
 			const s2 = makeSession({ id: 's2' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1, s2] } }
-			);
+			renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1, s2]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
-			rerender({ sessions: [s1] });
+			act(() => {
+				seedSessions([s1]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2036,16 +2463,18 @@ describe('useDebouncedPersistence', () => {
 			const s2 = makeSession({ id: 's2' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1] } }
-			);
+			renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
-			rerender({ sessions: [s1, s2] });
+			act(() => {
+				seedSessions([s1, s2]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2065,10 +2494,10 @@ describe('useDebouncedPersistence', () => {
 			const s3 = makeSession({ id: 's3', name: 'Drop' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1, s2, s3] } }
-			);
+			renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1, s2, s3]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2076,7 +2505,9 @@ describe('useDebouncedPersistence', () => {
 
 			const s2Updated = { ...s2, name: 'Mutated' };
 			const s4 = makeSession({ id: 's4', name: 'New' });
-			rerender({ sessions: [s1, s2Updated, s4] });
+			act(() => {
+				seedSessions([s1, s2Updated, s4]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2093,25 +2524,31 @@ describe('useDebouncedPersistence', () => {
 			const s1 = makeSession({ id: 's1', name: 'A' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1] } }
-			);
+			renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
 			// Three rapid mutations within the debounce window
-			rerender({ sessions: [{ ...s1, name: 'B' }] });
+			act(() => {
+				seedSessions([{ ...s1, name: 'B' }]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(500);
 			});
-			rerender({ sessions: [{ ...s1, name: 'C' }] });
+			act(() => {
+				seedSessions([{ ...s1, name: 'C' }]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(500);
 			});
-			rerender({ sessions: [{ ...s1, name: 'D' }] });
+			act(() => {
+				seedSessions([{ ...s1, name: 'D' }]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2128,16 +2565,18 @@ describe('useDebouncedPersistence', () => {
 			const s1 = makeSession({ id: 's1', name: 'A' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { result, rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1] } }
-			);
+			const { result } = renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
-			rerender({ sessions: [{ ...s1, name: 'B' }] });
+			act(() => {
+				seedSessions([{ ...s1, name: 'B' }]);
+			});
 			await act(async () => {
 				result.current.flushNow();
 				await vi.advanceTimersByTimeAsync(0);
@@ -2150,17 +2589,19 @@ describe('useDebouncedPersistence', () => {
 			const s1 = makeSession({ id: 's1', name: 'A' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { rerender, unmount } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1] } }
-			);
+			const { unmount } = renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
 			vi.mocked(window.maestro.sessions.setAll).mockClear();
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
-			rerender({ sessions: [{ ...s1, name: 'B' }] });
+			act(() => {
+				seedSessions([{ ...s1, name: 'B' }]);
+			});
 			unmount();
 
 			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
@@ -2176,10 +2617,10 @@ describe('useDebouncedPersistence', () => {
 			const s1 = makeSession({ id: 's1', name: 'One' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { result, rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1] } }
-			);
+			const { result } = renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1]);
+			});
 			// First flush succeeds (mock returns undefined, treated as truthy).
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
@@ -2189,7 +2630,9 @@ describe('useDebouncedPersistence', () => {
 
 			// Next flush hits a recoverable disk error.
 			vi.mocked(window.maestro.sessions.setMany).mockResolvedValueOnce(false);
-			rerender({ sessions: [{ ...s1, name: 'Two' }] });
+			act(() => {
+				seedSessions([{ ...s1, name: 'Two' }]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2202,7 +2645,10 @@ describe('useDebouncedPersistence', () => {
 			// Recovery: next flush should re-ship the same dirty session
 			// because the baseline didn't advance on the previous failure.
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
-			rerender({ sessions: [{ ...s1, name: 'Two' }] });
+			// Same name but new array/object refs so subscribe fires again.
+			act(() => {
+				seedSessions([{ ...s1, name: 'Two' }]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2221,10 +2667,10 @@ describe('useDebouncedPersistence', () => {
 			const s1 = makeSession({ id: 's1', name: 'One' });
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { result, rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1] } }
-			);
+			const { result } = renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions([s1]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2233,7 +2679,9 @@ describe('useDebouncedPersistence', () => {
 			vi.mocked(window.maestro.sessions.setMany).mockRejectedValueOnce(
 				new Error('IPC channel closed')
 			);
-			rerender({ sessions: [{ ...s1, name: 'Two' }] });
+			act(() => {
+				seedSessions([{ ...s1, name: 'Two' }]);
+			});
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(2000);
 			});
@@ -2241,21 +2689,24 @@ describe('useDebouncedPersistence', () => {
 			expect(result.current.isPending).toBe(true);
 		});
 
-		it('reference-equal session prop on rerender is treated as unchanged', () => {
+		it('reference-equal session array on setState is treated as unchanged', () => {
 			const s1 = makeSession({ id: 's1' });
+			const initial = [s1];
 			const initialLoadRef = makeInitialLoadRef(true);
 
-			const { rerender } = renderHook(
-				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
-				{ initialProps: { sessions: [s1] } }
-			);
+			renderPersistence(initialLoadRef);
+			act(() => {
+				seedSessions(initial);
+			});
 			act(() => {
 				vi.advanceTimersByTime(2000);
 			});
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
-			// Same s1 reference inside a new array - the diff sees no per-session change
-			rerender({ sessions: [s1] });
+			// Same array reference - subscribe early-returns on === sessions
+			act(() => {
+				seedSessions(initial);
+			});
 			act(() => {
 				vi.advanceTimersByTime(2000);
 			});
@@ -2273,7 +2724,8 @@ describe('useDebouncedPersistence', () => {
 			vi.mocked(window.maestro.sessions.setAll).mockResolvedValueOnce(false);
 			const session = makeSession({ id: 'session-qf' });
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			await act(async () => {
 				result.current.flushNow([session]);
@@ -2288,7 +2740,8 @@ describe('useDebouncedPersistence', () => {
 			vi.mocked(window.maestro.sessions.setAll).mockRejectedValueOnce(new Error('boom'));
 			const session = makeSession({ id: 'session-qf-2' });
 			const initialLoadRef = makeInitialLoadRef(true);
-			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+			seedSessions([session]);
+			const { result } = renderPersistence(initialLoadRef);
 
 			await act(async () => {
 				result.current.flushNow([session]);

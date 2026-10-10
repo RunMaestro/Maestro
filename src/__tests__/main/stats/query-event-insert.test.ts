@@ -29,6 +29,7 @@ const FULL_EVENT: Omit<QueryEvent, 'id'> = {
 	tabId: 'tab-1',
 	isRemote: true,
 	isWorktree: true,
+	userName: 'pedram',
 	inputTokens: 1000,
 	outputTokens: 250,
 	cacheReadTokens: 900,
@@ -51,6 +52,7 @@ describe('INSERT_QUERY_EVENT_SQL', () => {
 		expect(insertColumns()).toEqual(
 			expect.arrayContaining([
 				'is_worktree',
+				'user_name',
 				'input_tokens',
 				'output_tokens',
 				'cache_read_tokens',
@@ -84,6 +86,7 @@ describe('bindQueryEvent', () => {
 			tab_id: 'tab-1',
 			is_remote: 1,
 			is_worktree: 1,
+			user_name: 'pedram',
 			input_tokens: 1000,
 			output_tokens: 250,
 			cache_read_tokens: 900,
@@ -181,5 +184,21 @@ describe('bindQueryEvent', () => {
 
 		expect(row.project_path).toBeNull();
 		expect(row.tab_id).toBeNull();
+	});
+
+	it('nulls the sender for a turn typed at the desktop', () => {
+		// NULL means "nobody was signed in", which is a different fact from an
+		// account named the empty string - the "by user" breakdown counts on it.
+		const columns = insertColumns();
+		const values = bindQueryEvent('id-7', {
+			sessionId: 's',
+			agentType: 'codex',
+			source: 'user',
+			startTime: 1,
+			duration: 2,
+		});
+		const row = Object.fromEntries(columns.map((c, i) => [c, values[i]]));
+
+		expect(row.user_name).toBeNull();
 	});
 });

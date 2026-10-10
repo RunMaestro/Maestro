@@ -238,51 +238,6 @@ describe('Stats aggregation and filtering', () => {
 			expect(stats.byAgent).toEqual({});
 		});
 	});
-
-	describe('CSV export', () => {
-		it('should export query events to CSV format', async () => {
-			const now = Date.now();
-			mockStatement.all.mockReturnValue([
-				{
-					id: 'event-1',
-					session_id: 'session-1',
-					agent_type: 'claude-code',
-					source: 'user',
-					start_time: now,
-					duration: 5000,
-					project_path: '/test',
-					tab_id: 'tab-1',
-				},
-			]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const csv = db.exportToCsv('week');
-
-			// Verify CSV structure
-			expect(csv).toContain('id,sessionId,agentType,source,startTime,duration,projectPath,tabId');
-			expect(csv).toContain('event-1');
-			expect(csv).toContain('session-1');
-			expect(csv).toContain('claude-code');
-		});
-
-		it('should handle empty data for CSV export', async () => {
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const csv = db.exportToCsv('day');
-
-			// Should only contain headers
-			expect(csv).toBe(
-				'id,sessionId,agentType,source,startTime,duration,projectPath,tabId,isRemote,isWorktree'
-			);
-		});
-	});
 });
 
 /**

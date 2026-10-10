@@ -21,6 +21,7 @@ import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { createMockSession, createMockAITab } from '../../helpers';
+import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
 import type { Session } from '../../../renderer/types';
 
 const SESSION_ID = 'session-1';
@@ -71,6 +72,30 @@ describe('jumpToAgent', () => {
 		expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
 	});
 
+	it('closes the left drawer that would cover the agent on a narrow viewport', () => {
+		const originalWidth = window.innerWidth;
+		Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+		seed();
+		useUIStore.setState({ leftSidebarOpen: true });
+
+		jumpToAgent(SESSION_ID);
+
+		expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+	});
+
+	it('leaves the Left Bar open when it is a permanent column', () => {
+		const originalWidth = window.innerWidth;
+		Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+		seed();
+		useUIStore.setState({ leftSidebarOpen: true });
+
+		jumpToAgent(SESSION_ID);
+
+		expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+		Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+	});
+
 	it('closes the Document Graph overlay that would cover the agent', () => {
 		seed();
 		useFileExplorerStore.setState({ isGraphViewOpen: true } as never);
@@ -107,6 +132,17 @@ describe('jumpToAgent', () => {
 		jumpToAgent(SESSION_ID);
 
 		expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
+	});
+
+	it('asks the Left Bar to scroll the agent into view', () => {
+		// Explicit, because jumping to the agent that is already active changes
+		// nothing the Left Bar watches, yet its row may be scrolled out of sight.
+		seed();
+		const before = getSidebarRevealToken();
+
+		revealAgentInSidebar(useSessionStore.getState().sessions[0]);
+
+		expect(getSidebarRevealToken()).toBe(before + 1);
 	});
 
 	it('reports a miss instead of switching when the agent is gone', () => {

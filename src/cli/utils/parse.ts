@@ -5,6 +5,9 @@
 // same vocabulary. Three near-identical copies of the boolean parser had
 // already drifted (one accepted on/off, the others didn't).
 
+import * as path from 'path';
+import { expandTilde } from '../../shared/pathUtils';
+
 /** Values that read as `true` / `false` on the command line. */
 const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
 const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
@@ -32,4 +35,13 @@ const INHERIT_WORDS = new Set(['', 'inherit', 'default', 'none', 'clear', 'unset
 /** True when an argument means "drop the override and inherit". */
 export function isInheritValue(value: string): boolean {
 	return INHERIT_WORDS.has(String(value).trim().toLowerCase());
+}
+
+/**
+ * Resolve a path the user typed: `~` expanded, then made absolute against the
+ * CLI's cwd. The desktop app's cwd is unrelated (`/` for a Finder launch), so
+ * a path must be absolute before it crosses the bridge.
+ */
+export function resolveCliPath(input: string): string {
+	return path.resolve(process.cwd(), expandTilde(input.trim()));
 }

@@ -22,6 +22,7 @@ import type {
 	ToolType,
 	LeaderboardRegistration,
 	ThinkingMode,
+	AdditionalDirectory,
 	SessionWorktreeConfig,
 	QueuedItemEditPatch,
 } from '../../types';
@@ -78,6 +79,7 @@ export interface AppModalsProps {
 	onNavigateToSession: (sessionId: string, tabId?: string, processType?: string) => void;
 	onNavigateToGroupChat: (groupChatId: string) => void;
 	onCloseUsageDashboard: () => void;
+	onCloseAgentRunDashboard: () => void;
 	/** Default time range for the Usage Dashboard from settings */
 	defaultStatsTimeRange?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 	/** Enable colorblind-friendly colors for dashboard charts */
@@ -120,9 +122,9 @@ export interface AppModalsProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
-	existingSessions: Session[];
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
+	newInstancePresetWorkingDir?: string | null; // Working directory to seed the new agent with
 	onCloseEditAgentModal: () => void;
 	onSaveEditAgent: (
 		sessionId: string,
@@ -134,6 +136,7 @@ export interface AppModalsProps {
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
+		customEffort?: string,
 		customContextWindow?: number,
 		sessionSshRemoteConfig?: {
 			enabled: boolean;
@@ -142,7 +145,12 @@ export interface AppModalsProps {
 		},
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited'
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;
@@ -158,6 +166,7 @@ export interface AppModalsProps {
 
 	// --- AppGroupModals props ---
 	createGroupModalOpen: boolean;
+	createGroupParentId?: string;
 	onCloseCreateGroupModal: () => void;
 	onGroupCreated?: (groupId: string) => void;
 	renameGroupId: string | null;
@@ -165,6 +174,10 @@ export interface AppModalsProps {
 	setRenameGroupValue: (value: string) => void;
 	renameGroupEmoji: string;
 	setRenameGroupEmoji: (emoji: string) => void;
+	renameGroupIcon?: string;
+	setRenameGroupIcon: (icon: string | undefined) => void;
+	renameGroupColor?: string;
+	setRenameGroupColor: (color: string | undefined) => void;
 	onCloseRenameGroupModal: () => void;
 
 	// --- AppWorktreeModals props ---
@@ -185,6 +198,8 @@ export interface AppModalsProps {
 	onConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
 
 	// --- AppUtilityModals props ---
+	/** Left Bar draw order; the first ten own the Opt+Cmd+# slots */
+	visibleSessions?: Session[];
 	quickActionInitialMode: 'main' | 'move-to-group' | 'agents';
 	setQuickActionOpen: (open: boolean) => void;
 	setActiveSessionId: (id: string) => void;
@@ -194,6 +209,8 @@ export interface AppModalsProps {
 	setRenameGroupId: (id: string) => void;
 	setRenameGroupValueForQuickActions: (value: string) => void;
 	setRenameGroupEmojiForQuickActions: (emoji: string) => void;
+	setRenameGroupIconForQuickActions: (icon: string | undefined) => void;
+	setRenameGroupColorForQuickActions: (color: string | undefined) => void;
 	setRenameGroupModalOpenForQuickActions: (open: boolean) => void;
 	setCreateGroupModalOpenForQuickActions: (open: boolean) => void;
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -208,6 +225,7 @@ export interface AppModalsProps {
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
 	setUsageDashboardOpen?: (open: boolean) => void;
+	setAgentRunDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
@@ -253,6 +271,8 @@ export interface AppModalsProps {
 	onQuickCreateWorktree: (session: Session) => void;
 	onOpenCreatePR: (session: Session) => void;
 	onSummarizeAndContinue: () => void;
+	/** Send a plugin command-macro's templated prompt to the active agent. */
+	onRunPromptMacro?: (prompt: string) => void;
 	canSummarizeActiveTab: boolean;
 	onToggleRemoteControl: () => Promise<void>;
 	autoRunSelectedDocument: string | null;
@@ -314,6 +334,8 @@ export interface AppModalsProps {
 	onOpenDirectorNotes?: () => void;
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	// Pianola
+	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onCloseTabSwitcher: () => void;
 	onCloseCrossTabSearch: () => void;
@@ -481,12 +503,12 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		updateCheckModalOpen,
 		processMonitorOpen,
 		usageDashboardOpen,
+		agentRunDashboardOpen,
 		confirmModalOpen,
 		quitConfirmModalOpen,
 		activeTerminalTasks,
 		activeCueRunCount,
 		activeGroupChatCount,
-		hasFeedbackDraft,
 		newInstanceModalOpen,
 		editAgentModalOpen,
 		renameSessionModalOpen,
@@ -507,6 +529,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		gitLogOpen,
 		gitLogTarget,
 		gitDiffCwd,
+		gitDiffSessionId,
 		showNewGroupChatModal,
 		showGroupChatInfo,
 		leaderboardRegistrationOpen,
@@ -519,6 +542,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			updateCheckModalOpen: s.modals.get('updateCheck')?.open ?? false,
 			processMonitorOpen: s.modals.get('processMonitor')?.open ?? false,
 			usageDashboardOpen: s.modals.get('usageDashboard')?.open ?? false,
+			agentRunDashboardOpen: s.modals.get('agentRunDashboard')?.open ?? false,
 			confirmModalOpen: s.modals.get('confirm')?.open ?? false,
 			quitConfirmModalOpen: s.modals.get('quitConfirm')?.open ?? false,
 			activeTerminalTasks: (
@@ -527,7 +551,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 							activeTerminalTasks?: string[];
 							activeCueRunCount?: number;
 							activeGroupChatCount?: number;
-							hasFeedbackDraft?: boolean;
 					  }
 					| undefined
 			)?.activeTerminalTasks,
@@ -538,7 +561,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 								activeTerminalTasks?: string[];
 								activeCueRunCount?: number;
 								activeGroupChatCount?: number;
-								hasFeedbackDraft?: boolean;
 						  }
 						| undefined
 				)?.activeCueRunCount ?? 0,
@@ -549,21 +571,9 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 								activeTerminalTasks?: string[];
 								activeCueRunCount?: number;
 								activeGroupChatCount?: number;
-								hasFeedbackDraft?: boolean;
 						  }
 						| undefined
 				)?.activeGroupChatCount ?? 0,
-			hasFeedbackDraft:
-				(
-					s.modals.get('quitConfirm')?.data as
-						| {
-								activeTerminalTasks?: string[];
-								activeCueRunCount?: number;
-								activeGroupChatCount?: number;
-								hasFeedbackDraft?: boolean;
-						  }
-						| undefined
-				)?.hasFeedbackDraft ?? false,
 			newInstanceModalOpen: s.modals.get('newInstance')?.open ?? false,
 			editAgentModalOpen: s.modals.get('editAgent')?.open ?? false,
 			renameSessionModalOpen: s.modals.get('renameInstance')?.open ?? false,
@@ -584,6 +594,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			gitLogOpen: s.modals.get('gitLog')?.open ?? false,
 			gitLogTarget: (s.modals.get('gitLog')?.data as GitLogModalData | undefined) ?? null,
 			gitDiffCwd: (s.modals.get('gitDiff')?.data as GitDiffModalData | undefined)?.cwd ?? null,
+			gitDiffSessionId:
+				(s.modals.get('gitDiff')?.data as GitDiffModalData | undefined)?.sessionId ?? null,
 			showNewGroupChatModal: s.modals.get('newGroupChat')?.open ?? false,
 			showGroupChatInfo: s.modals.get('groupChatInfo')?.open ?? false,
 			leaderboardRegistrationOpen: s.modals.get('leaderboard')?.open ?? false,
@@ -616,6 +628,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onNavigateToSession,
 		onNavigateToGroupChat,
 		onCloseUsageDashboard,
+		onCloseAgentRunDashboard,
 		defaultStatsTimeRange,
 		colorBlindMode,
 		// Confirm modals
@@ -631,9 +644,9 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		// Session modals
 		onCloseNewInstanceModal,
 		onCreateSession,
-		existingSessions,
 		duplicatingSessionId,
 		newInstancePresetGroupId,
+		newInstancePresetWorkingDir,
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
@@ -649,6 +662,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onAutoNameTab,
 		// Group modals
 		createGroupModalOpen,
+		createGroupParentId,
 		onCloseCreateGroupModal,
 		onGroupCreated,
 		renameGroupId,
@@ -656,6 +670,10 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setRenameGroupValue,
 		renameGroupEmoji,
 		setRenameGroupEmoji,
+		renameGroupIcon,
+		setRenameGroupIcon,
+		renameGroupColor,
+		setRenameGroupColor,
 		onCloseRenameGroupModal,
 		// Worktree modals
 		onCloseWorktreeConfigModal,
@@ -674,6 +692,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onConfirmDeleteWorktree,
 		onConfirmAndDeleteWorktreeOnDisk,
 		// Utility modals
+		visibleSessions,
 		quickActionInitialMode,
 		setQuickActionOpen,
 		setActiveSessionId,
@@ -683,6 +702,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setRenameGroupId,
 		setRenameGroupValueForQuickActions,
 		setRenameGroupEmojiForQuickActions,
+		setRenameGroupIconForQuickActions,
+		setRenameGroupColorForQuickActions,
 		setRenameGroupModalOpenForQuickActions,
 		setCreateGroupModalOpenForQuickActions,
 		setLeftSidebarOpen,
@@ -697,6 +718,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
+		setAgentRunDashboardOpen,
 		setActiveRightTab,
 		setAgentSessionsOpen,
 		setMemoryViewerOpen,
@@ -735,6 +757,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickCreateWorktree,
 		onOpenCreatePR,
 		onSummarizeAndContinue,
+		onRunPromptMacro,
 		canSummarizeActiveTab,
 		onToggleRemoteControl,
 		autoRunSelectedDocument,
@@ -790,6 +813,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onOpenDirectorNotes,
 		// Maestro Cue
 		onOpenMaestroCue,
+		// Pianola
+		onOpenPianola,
 		onConfigureCue,
 		onCloseTabSwitcher,
 		onCloseCrossTabSearch,
@@ -917,6 +942,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseUsageDashboard={onCloseUsageDashboard}
 				defaultStatsTimeRange={defaultStatsTimeRange}
 				colorBlindMode={colorBlindMode}
+				agentRunDashboardOpen={agentRunDashboardOpen}
+				onCloseAgentRunDashboard={onCloseAgentRunDashboard}
 			/>
 
 			{/* Confirmation Modals */}
@@ -937,7 +964,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				activeTerminalTasks={activeTerminalTasks ?? []}
 				activeCueRunCount={activeCueRunCount}
 				activeGroupChatCount={activeGroupChatCount}
-				hasFeedbackDraft={hasFeedbackDraft}
 			/>
 
 			{/* Session Management Modals */}
@@ -949,9 +975,10 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				newInstanceModalOpen={newInstanceModalOpen}
 				onCloseNewInstanceModal={onCloseNewInstanceModal}
 				onCreateSession={onCreateSession}
-				existingSessions={existingSessions}
+				existingSessions={sessions}
 				sourceSession={sourceSession}
 				newInstancePresetGroupId={newInstancePresetGroupId}
+				newInstancePresetWorkingDir={newInstancePresetWorkingDir}
 				editAgentModalOpen={editAgentModalOpen}
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}
@@ -982,6 +1009,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				groups={groups}
 				setGroups={setGroups}
 				createGroupModalOpen={createGroupModalOpen}
+				createGroupParentId={createGroupParentId}
 				onCloseCreateGroupModal={onCloseCreateGroupModal}
 				onGroupCreated={onGroupCreated}
 				renameGroupModalOpen={renameGroupModalOpen}
@@ -990,6 +1018,10 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setRenameGroupValue={setRenameGroupValue}
 				renameGroupEmoji={renameGroupEmoji}
 				setRenameGroupEmoji={setRenameGroupEmoji}
+				renameGroupIcon={renameGroupIcon}
+				setRenameGroupIcon={setRenameGroupIcon}
+				renameGroupColor={renameGroupColor}
+				setRenameGroupColor={setRenameGroupColor}
 				onCloseRenameGroupModal={onCloseRenameGroupModal}
 			/>
 
@@ -1030,6 +1062,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				shortcuts={shortcuts}
 				tabShortcuts={tabShortcuts}
 				quickActionOpen={quickActionOpen}
+				visibleSessions={visibleSessions}
 				quickActionInitialMode={quickActionInitialMode}
 				setQuickActionOpen={setQuickActionOpen}
 				setActiveSessionId={setActiveSessionId}
@@ -1039,6 +1072,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setRenameGroupId={setRenameGroupId}
 				setRenameGroupValue={setRenameGroupValueForQuickActions}
 				setRenameGroupEmoji={setRenameGroupEmojiForQuickActions}
+				setRenameGroupIcon={setRenameGroupIconForQuickActions}
+				setRenameGroupColor={setRenameGroupColorForQuickActions}
 				setRenameGroupModalOpen={setRenameGroupModalOpenForQuickActions}
 				setCreateGroupModalOpen={setCreateGroupModalOpenForQuickActions}
 				setLeftSidebarOpen={setLeftSidebarOpen}
@@ -1053,6 +1088,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setLogViewerOpen={setLogViewerOpen}
 				setProcessMonitorOpen={setProcessMonitorOpen}
 				setUsageDashboardOpen={setUsageDashboardOpen}
+				setAgentRunDashboardOpen={setAgentRunDashboardOpen}
 				setActiveRightTab={setActiveRightTab}
 				setAgentSessionsOpen={setAgentSessionsOpen}
 				setMemoryViewerOpen={setMemoryViewerOpen}
@@ -1092,6 +1128,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onQuickCreateWorktree={onQuickCreateWorktree}
 				onOpenCreatePR={onOpenCreatePR}
 				onSummarizeAndContinue={onSummarizeAndContinue}
+				onRunPromptMacro={onRunPromptMacro}
 				canSummarizeActiveTab={canSummarizeActiveTab}
 				onToggleRemoteControl={onToggleRemoteControl}
 				autoRunSelectedDocument={autoRunSelectedDocument}
@@ -1117,6 +1154,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}
+				onOpenPianola={onOpenPianola}
 				onConfigureCue={onConfigureCue}
 				lightboxImage={lightboxImage}
 				lightboxImages={lightboxImages}
@@ -1127,6 +1165,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onUpdateLightboxImage={onUpdateLightboxImage}
 				gitDiffPreview={gitDiffPreview}
 				gitDiffCwd={gitDiffCwd}
+				gitDiffSessionId={gitDiffSessionId}
 				gitViewerCwd={gitViewerCwd}
 				onCloseGitDiff={onCloseGitDiff}
 				gitLogOpen={gitLogOpen}

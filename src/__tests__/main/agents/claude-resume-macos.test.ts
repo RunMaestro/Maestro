@@ -448,6 +448,7 @@ describe('Claude Code resume on macOS', () => {
 				baseArgs: claudeCode.apiModeArgs ?? claudeCode.args,
 				prompt: 'continue',
 				cwd: ICLOUD_PROJECT,
+				permissionMode: 'full',
 				agentSessionId: SESSION_ID,
 			});
 			expect(args).toEqual([
@@ -467,6 +468,7 @@ describe('Claude Code resume on macOS', () => {
 				baseArgs: [maestroP, ...(claudeCode.interactiveModeArgs ?? [])],
 				prompt: 'continue',
 				cwd: ICLOUD_PROJECT,
+				permissionMode: 'full',
 				agentSessionId: SESSION_ID,
 			});
 			expect(args).toEqual([maestroP, '--dangerously-skip-permissions', '--resume', SESSION_ID]);

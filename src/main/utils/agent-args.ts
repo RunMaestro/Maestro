@@ -1,4 +1,5 @@
 import type { AgentConfig, AgentDefinition } from '../agents';
+import type { AdditionalDirectory } from '../../shared/types';
 import { logger } from './logger';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
@@ -17,7 +18,14 @@ type BuildAgentArgsOptions = {
 	readOnlyMode?: boolean;
 	modelId?: string;
 	yoloMode?: boolean;
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	agentSessionId?: string;
+	/**
+	 * The session's Additional Directories. Providers that declare
+	 * `supportsAdditionalDirectories` turn these into native grant flags; the rest
+	 * ignore them here and rely on the system-prompt block instead.
+	 */
+	additionalDirectories?: AdditionalDirectory[];
 	/**
 	 * Force the agent's batch-mode args (batchModePrefix / batchModeArgs /
 	 * jsonOutputArgs) to be applied even when `prompt` is an empty string. The
@@ -174,6 +182,15 @@ export function buildAgentArgs(
 		return finalArgs;
 	}
 
+	// Resolve effective permission level. permissionMode takes precedence over the
+	// legacy readOnlyMode/yoloMode booleans when set explicitly.
+	const isFullAccess =
+		options.permissionMode === 'full' ||
+		(options.permissionMode === undefined && options.yoloMode === true);
+	const isReadOnly =
+		options.permissionMode === 'readonly' ||
+		(options.permissionMode === undefined && options.readOnlyMode === true);
+
 	// Batch-mode gate: normally we infer "batch mode" from the presence of a
 	// truthy prompt, so a bare interactive launch (no prompt) doesn't get batch
 	// args it never asked for. Callers that never launch interactive mode pass
@@ -187,10 +204,10 @@ export function buildAgentArgs(
 
 	if (agent.batchModeArgs && inBatchMode) {
 		// Skip batch mode args (e.g. -y, --dangerously-bypass-approvals-and-sandbox)
-		// when readOnlyMode is active. Batch mode args grant write/approval permissions
+		// when in read-only mode. Batch mode args grant write/approval permissions
 		// that conflict with read-only intent, regardless of whether the agent has
 		// CLI-enforced read-only mode or prompt-only enforcement.
-		if (!options.readOnlyMode) {
+		if (!isReadOnly) {
 			finalArgs = [...finalArgs, ...agent.batchModeArgs];
 		}
 	}
@@ -210,24 +227,28 @@ export function buildAgentArgs(
 		finalArgs = [...agent.workingDirArgs(options.cwd), ...finalArgs];
 	}
 
-	if (options.readOnlyMode && agent.readOnlyArgs) {
-		finalArgs = [...finalArgs, ...agent.readOnlyArgs];
+	if (isFullAccess) {
+		// Prefer fullAccessArgs over the legacy yoloModeArgs alias.
+		const fullArgs = agent.fullAccessArgs ?? agent.yoloModeArgs;
+		if (fullArgs) {
+			finalArgs = [...finalArgs, ...fullArgs];
+		}
+	} else if (isReadOnly) {
+		if (agent.readOnlyArgs) {
+			finalArgs = [...finalArgs, ...agent.readOnlyArgs];
+		}
+		if (agent.readOnlyCliEnforced === false) {
+			logger.warn(
+				`Agent ${agent.name}: read-only mode requested but no CLI-level enforcement available`,
+				LOG_CONTEXT,
+				{ agentId: agent.id }
+			);
+		}
 	}
-
-	if (options.readOnlyMode && agent.readOnlyCliEnforced === false) {
-		logger.warn(
-			`Agent ${agent.name}: read-only mode requested but no CLI-level enforcement available`,
-			LOG_CONTEXT,
-			{ agentId: agent.id }
-		);
-	}
+	// standard mode: no bypass args, no read-only args - agent uses its default permission model
 
 	if (options.modelId && agent.modelArgs) {
 		finalArgs = [...finalArgs, ...agent.modelArgs(options.modelId)];
-	}
-
-	if (options.yoloMode && agent.yoloModeArgs) {
-		finalArgs = [...finalArgs, ...agent.yoloModeArgs];
 	}
 
 	if (options.agentSessionId && agent.resumeArgs) {
@@ -248,7 +269,33 @@ export function buildAgentArgs(
 		dedupedArgs.push(arg);
 	}
 
-	return dedupedArgs;
+	// Additional Directories are appended AFTER the dedupe on purpose. Every
+	// provider expresses a multi-directory grant by repeating its flag
+	// (`--add-dir a --add-dir b`), and the dedupe above drops repeated flag
+	// tokens - it would keep the first `--add-dir`, delete the second, and leave
+	// the orphaned path behind as a stray positional that the CLI would read as
+	// the prompt. Emitting them last also keeps them ahead of the prompt, which
+	// callers append after this function returns.
+	return [...dedupedArgs, ...buildAdditionalDirArgs(agent, options.additionalDirectories)];
+}
+
+/**
+ * Translate the session's directory grants into provider-native CLI args.
+ *
+ * Returns [] for providers that have no native mechanism - they still receive
+ * the grants through the `{{ADDITIONAL_DIRECTORIES}}` system-prompt block, which
+ * is built independently of this path. Exported so the CLI spawner
+ * (`src/cli/services/agent-spawner.ts`), which assembles args itself rather than
+ * calling `buildAgentArgs`, produces byte-identical flags.
+ */
+export function buildAdditionalDirArgs(
+	agent: Pick<AgentConfig, 'additionalDirArgs'> | AgentDefinition | null | undefined,
+	dirs: AdditionalDirectory[] | undefined
+): string[] {
+	if (!agent?.additionalDirArgs || !dirs?.length) {
+		return [];
+	}
+	return agent.additionalDirArgs(dirs);
 }
 
 /** Apply agent configuration overrides (custom args, env vars, model selection) to base args. */
@@ -289,8 +336,12 @@ export function applyAgentConfigOverrides(
 				}
 			} else if (
 				(option.key === 'effort' || option.key === 'reasoningEffort') &&
-				overrides.sessionCustomEffort !== undefined
+				overrides.sessionCustomEffort !== undefined &&
+				overrides.sessionCustomEffort !== ''
 			) {
+				// Empty means "cleared" and falls through to the agent-level config, the
+				// same rule `model` uses above - and the same order the effort pill shows
+				// (tab > agent override > agent config).
 				value = overrides.sessionCustomEffort;
 			} else {
 				value =

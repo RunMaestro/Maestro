@@ -110,7 +110,7 @@ describe('readDirWithResolvedTypes', () => {
 		] as any);
 
 		vi.mocked(fs.stat).mockImplementation((p: any) => {
-			if (p === '/proj/linked-lib') {
+			if (String(p).replace(/\\/g, '/') === '/proj/linked-lib') {
 				return Promise.resolve({
 					isDirectory: () => true,
 					isFile: () => false,

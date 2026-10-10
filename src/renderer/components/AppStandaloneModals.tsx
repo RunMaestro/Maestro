@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense } from 'react';
+import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
@@ -8,9 +8,12 @@ import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
+import { usePluginContributions } from '../hooks/usePluginContributions';
+import { mergePluginThemes } from '../utils/pluginThemes';
 import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
+import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { useProfilingAutoStop } from '../hooks/ui/useProfilingAutoStop';
 import { WindowsWarningModal } from './WindowsWarningModal';
@@ -65,6 +68,9 @@ const CueModal = lazy(() => import('./CueModal').then((m) => ({ default: m.CueMo
 const CueYamlEditor = lazy(() =>
 	import('./CueYamlEditor').then((m) => ({ default: m.CueYamlEditor }))
 );
+const PianolaModal = lazy(() =>
+	import('./PianolaModal').then((m) => ({ default: m.PianolaModal }))
+);
 
 /**
  * Props for the AppStandaloneModals component.
@@ -94,13 +100,16 @@ export interface AppStandaloneModalsProps {
 	onMarketplaceImportComplete: (folderName: string) => Promise<void>;
 
 	// --- Symphony ---
-	sessions: Session[];
 	setActiveSessionId: (id: string) => void;
 	onStartContribution: (data: SymphonyContributionData) => Promise<void>;
 	encoreFeatures: EncoreFeatureFlags;
 
 	// --- Director's Notes ---
-	onDirectorNotesResumeSession: (sourceSessionId: string, agentSessionId: string) => void;
+	onDirectorNotesResumeSession: (
+		sourceSessionId: string,
+		agentSessionId: string,
+		sessionName?: string
+	) => void;
 	onFileClick: (node: FileNode, path: string) => void;
 
 	// --- Cue ---
@@ -175,7 +184,6 @@ function AppStandaloneModalsInner({
 	// Marketplace
 	onMarketplaceImportComplete,
 	// Symphony
-	sessions,
 	setActiveSessionId,
 	onStartContribution,
 	encoreFeatures,
@@ -253,6 +261,8 @@ function AppStandaloneModalsInner({
 		setDirectorNotesOpen,
 		cueModalOpen,
 		setCueModalOpen,
+		pianolaModalOpen,
+		setPianolaModalOpen,
 		cueYamlEditorOpen,
 		cueYamlEditorSessionId,
 		cueYamlEditorProjectRoot,
@@ -262,6 +272,7 @@ function AppStandaloneModalsInner({
 		settingsModalOpen,
 		settingsTab,
 		settingsPromptId,
+		settingsSettingId,
 		wizardResumeModalOpen,
 		wizardResumeState,
 		tourOpen,
@@ -282,6 +293,20 @@ function AppStandaloneModalsInner({
 
 	// Self-source active session
 	const activeSession = useActiveSession();
+
+	// Typography chooser: "does this user already have agents" is what tells a
+	// returning user from a fresh install, and it is the only signal that needs
+	// no new persisted state. A returning user with every agent deleted gets the
+	// new-user copy, which offers the same two choices - harmless either way.
+	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
+	// Merge plugin-contributed themes into the picker list through the shared
+	// contribution registry (built-in always wins an id collision). Identical to
+	// THEMES when the plugins Encore flag is off (no contributions).
+	const pluginContributions = usePluginContributions();
+	const mergedThemes = useMemo(
+		() => mergePluginThemes(THEMES, pluginContributions.themes),
+		[pluginContributions.themes]
+	);
 
 	return (
 		<>
@@ -307,8 +332,8 @@ function AppStandaloneModalsInner({
 			    One step on screen at a time; see OnboardingSeriesHost. */}
 			<OnboardingSeriesHost
 				theme={theme}
-				themes={THEMES as unknown as Record<string, Theme>}
-				isReturningUser={sessions.length > 0}
+				themes={mergedThemes}
+				isReturningUser={hasAnySession}
 				onOpenSettings={(tab) => openSettings(tab)}
 				hasActiveAgent={Boolean(activeSession)}
 			/>
@@ -349,6 +374,9 @@ function AppStandaloneModalsInner({
 				<DebugAgentProbeModal theme={theme} onClose={() => setDebugAgentProbeOpen(false)} />
 			)}
 
+			{/* --- DEBUG: WIDGET GALLERY (self-subscribes to the widgetGallery modal) --- */}
+			<WidgetGallery theme={theme} />
+
 			{/* --- PERFORMANCE PROFILING: STOP + BUNDLE PROGRESS --- */}
 			{profilingCaptureOpen && (
 				<ProfilingCaptureModal theme={theme} onClose={() => setProfilingCaptureOpen(false)} />
@@ -380,7 +408,6 @@ function AppStandaloneModalsInner({
 						theme={theme}
 						isOpen={symphonyModalOpen}
 						onClose={() => setSymphonyModalOpen(false)}
-						sessions={sessions}
 						onSelectSession={(sessionId) => {
 							setActiveSessionId(sessionId);
 							setSymphonyModalOpen(false);
@@ -426,8 +453,15 @@ function AppStandaloneModalsInner({
 					<CueModal
 						theme={theme}
 						onClose={() => setCueModalOpen(false)}
-						cueShortcutKeys={shortcuts.maestroCue?.keys}
+						cueShortcutKeys={shortcuts.openCue?.keys}
 					/>
+				</Suspense>
+			)}
+
+			{/* --- PIANOLA MODAL (lazy-loaded, Encore Feature) --- */}
+			{encoreFeatures.pianola && pianolaModalOpen && (
+				<Suspense fallback={null}>
+					<PianolaModal theme={theme} onClose={() => setPianolaModalOpen(false)} />
 				</Suspense>
 			)}
 
@@ -648,9 +682,10 @@ function AppStandaloneModalsInner({
 						isOpen={settingsModalOpen}
 						onClose={onCloseSettings}
 						theme={theme}
-						themes={THEMES}
+						themes={mergedThemes}
 						initialTab={settingsTab}
 						initialSelectedPromptId={settingsPromptId}
+						initialSettingId={settingsSettingId}
 						hasNoAgents={hasNoAgents}
 						onThemeImportError={(msg) => setFlashNotification(msg)}
 						onThemeImportSuccess={(msg) => setFlashNotification(msg)}

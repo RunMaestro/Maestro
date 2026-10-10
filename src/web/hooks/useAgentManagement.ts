@@ -33,7 +33,11 @@ export interface UseAgentManagementReturn {
 	/** Fetch the latest groups list. */
 	getGroups: () => Promise<GroupData[]>;
 	/** Create a new group. Returns { id } on success, null on failure. */
-	createGroup: (name: string, emoji?: string) => Promise<{ id: string } | null>;
+	createGroup: (
+		name: string,
+		emoji?: string,
+		parentGroupId?: string
+	) => Promise<{ id: string } | null>;
 	/** Rename a group. */
 	renameGroup: (groupId: string, name: string) => Promise<boolean>;
 	/** Delete a group. */
@@ -169,12 +173,20 @@ export function useAgentManagement(
 	 * Create a new group.
 	 */
 	const createGroup = useCallback(
-		async (name: string, emoji?: string): Promise<{ id: string } | null> => {
+		async (
+			name: string,
+			emoji?: string,
+			parentGroupId?: string
+		): Promise<{ id: string } | null> => {
 			try {
 				const response = await sendRequest<{
 					success?: boolean;
 					groupId?: string;
-				}>('create_group', { name, emoji });
+				}>('create_group', {
+					name,
+					emoji,
+					...(parentGroupId ? { parentGroupId } : {}),
+				});
 				if (response.success && response.groupId) {
 					return { id: response.groupId };
 				}

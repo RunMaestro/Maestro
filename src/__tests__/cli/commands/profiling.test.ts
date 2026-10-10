@@ -4,6 +4,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import path from 'path';
+import os from 'os';
 
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 
@@ -69,8 +71,8 @@ describe('profiling commands', () => {
 			expect(cap.payload?.type).toBe('profiling_stop');
 			expect(cap.responseType).toBe('profiling_stop_result');
 			const outputPath = cap.payload?.outputPath as string;
-			expect(outputPath.startsWith('/')).toBe(true);
-			expect(outputPath.endsWith('/sub/out.zip')).toBe(true);
+			expect(path.isAbsolute(outputPath)).toBe(true);
+			expect(outputPath.endsWith(path.join('sub', 'out.zip'))).toBe(true);
 			// Compression is slow; the command must raise the default 10s timeout.
 			expect(cap.timeout ?? 0).toBeGreaterThan(60_000);
 		});
@@ -79,7 +81,7 @@ describe('profiling commands', () => {
 			const cap = mockSend({ success: true, path: '/x.zip' });
 			await profilingStop({ output: '~/Desktop/p.zip' });
 			const outputPath = cap.payload?.outputPath as string;
-			expect(outputPath).toBe(`${process.env.HOME}/Desktop/p.zip`);
+			expect(outputPath).toBe(path.join(os.homedir(), 'Desktop', 'p.zip'));
 		});
 
 		it('exits non-zero when the app reports failure', async () => {

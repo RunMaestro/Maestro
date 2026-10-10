@@ -11,6 +11,7 @@ import type {
 // Extracted batch processing modules
 import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
 import { useBatchStore } from '../../stores/batchStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
@@ -20,12 +21,14 @@ import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
 import { useBatchSelectors } from './internal/useBatchSelectors';
 import { useBatchBroadcast } from './internal/useBatchBroadcast';
+import { useAutoRunStateMirror } from './useAutoRunStateMirror';
 import {
 	useBatchControlActions,
 	type ErrorResolutionEntry,
 } from './internal/useBatchControlActions';
 import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
+import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
 
 export interface BatchCompleteInfo {
 	sessionId: string;
@@ -52,11 +55,16 @@ export interface PRResultInfo {
 	error?: string;
 }
 
-interface UseBatchProcessorProps {
-	sessions: Session[];
+export interface UseBatchProcessorProps {
 	groups: Group[];
 	onUpdateSession: (sessionId: string, updates: Partial<Session>) => void;
 	onSpawnAgent: AutoRunSpawnAgentFn;
+	/**
+	 * Resume an existing provider session and run a prompt (used by the goal
+	 * runner to fetch a handoff note between iterations). Same primitive the
+	 * document runner uses for its exit synopsis.
+	 */
+	spawnBackgroundSynopsis: UseGoalRunnerDeps['spawnBackgroundSynopsis'];
 	onAddHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => void | Promise<void>;
 	onComplete?: (info: BatchCompleteInfo) => void;
 	// Callback for PR creation results (success or failure)
@@ -117,10 +125,10 @@ export { countUnfinishedTasks, uncheckAllTasks };
  * - Extracted hooks (useSessionDebounce, useTimeTracking) handle their own cleanup
  */
 export function useBatchProcessor({
-	sessions,
 	groups,
 	onUpdateSession,
 	onSpawnAgent,
+	spawnBackgroundSynopsis,
 	onAddHistoryEntry,
 	onComplete,
 	onPRResult,
@@ -149,9 +157,10 @@ export function useBatchProcessor({
 	// Refs for tracking stop requests per session
 	const stopRequestedRefs = useRef<Record<string, boolean>>({});
 
-	// Ref to always have access to latest sessions (fixes stale closure in startBatchRun)
-	const sessionsRef = useRef(sessions);
-	sessionsRef.current = sessions;
+	// PERF: Read sessions at event time via getState() so App (this hook's
+	// caller) does not re-render on streaming session updates. Downstream
+	// runners already fall back to the store when a session is missing.
+	const getSessions = useCallback(() => useSessionStore.getState().sessions, []);
 
 	// Refs to always have access to latest audio feedback settings (fixes stale closure during batch run)
 	// Without refs, toggling settings off during a batch run won't take effect until the next run
@@ -203,20 +212,9 @@ export function useBatchProcessor({
 	const { broadcastAutoRunState, updateBatchStateAndBroadcast, flushDebouncedUpdate } =
 		useBatchBroadcast({ dispatch });
 
-	// External lifecycle controls (stop + pause/skip/resume/abort)
-	const {
-		stopBatchRun,
-		pauseBatchOnError,
-		skipCurrentDocument,
-		resumeAfterError,
-		abortBatchOnError,
-	} = useBatchControlActions({
-		broadcastAutoRunState,
-		dispatch,
-		errorResolutionRefs,
-		stopRequestedRefs,
-		isMountedRef,
-	});
+	// The inbound half of that same bridge: render runs OWNED by another Maestro
+	// client (web-desktop watching the desktop app). No-op in the Electron build.
+	useAutoRunStateMirror();
 
 	// Use extracted time tracking hook (replaces manual visibility-based time tracking)
 	const timeTracking = useTimeTracking({
@@ -233,12 +231,29 @@ export function useBatchProcessor({
 					sessionId,
 					payload: {
 						accumulatedElapsedMs: accumulatedMs,
-						lastActiveTimestamp: activeTimestamp ?? undefined,
+						lastActiveTimestamp: activeTimestamp,
 					},
 				});
 			},
 			[]
 		),
+	});
+
+	// External lifecycle controls (stop + pause/skip/resume/abort). Follows
+	// `useTimeTracking` because a pause stops the run's clock.
+	const {
+		stopBatchRun,
+		pauseBatchOnError,
+		skipCurrentDocument,
+		resumeAfterError,
+		abortBatchOnError,
+	} = useBatchControlActions({
+		broadcastAutoRunState,
+		dispatch,
+		errorResolutionRefs,
+		stopRequestedRefs,
+		isMountedRef,
+		timeTracking,
 	});
 
 	// Force-kill action with kill-vs-natural-completion arbitration.
@@ -268,9 +283,9 @@ export function useBatchProcessor({
 	// per-module - keeping the ref in the coordinator is intentional).
 	updateBatchStateAndBroadcastRef.current = updateBatchStateAndBroadcast;
 
-	// Auto Run orchestrator (the main `startBatchRun` callback)
-	const { startBatchRun } = useBatchRunner({
-		sessionsRef,
+	// Document/task-driven Auto Run orchestrator.
+	const { startBatchRun: startDocumentBatchRun } = useBatchRunner({
+		getSessions,
 		audioFeedbackEnabledRef,
 		audioFeedbackCommandRef,
 		autoRunFlushStateRefs,
@@ -294,6 +309,42 @@ export function useBatchProcessor({
 		onPRResult,
 		onProcessQueueAfterCompletion,
 	});
+
+	// Goal-Driven Auto Run orchestrator. Shares the same lifecycle dependency
+	// surface so stop/kill/pause controls and state behavior stay consistent.
+	const { startGoalRun } = useGoalRunner({
+		getSessions,
+		audioFeedbackEnabledRef,
+		audioFeedbackCommandRef,
+		autoRunFlushStateRefs,
+		stopRequestedRefs,
+		isMountedRef,
+		errorResolutionRefs,
+		updateBatchStateAndBroadcastRef,
+		broadcastAutoRunState,
+		flushDebouncedUpdate,
+		dispatch,
+		timeTracking,
+		groups,
+		onSpawnAgent,
+		spawnBackgroundSynopsis,
+		onAddHistoryEntry,
+		onComplete,
+		onProcessQueueAfterCompletion,
+	});
+
+	// Single public entry point. The presence of `config.goalConfig` selects goal
+	// mode; otherwise we run the existing document/task loop. The signature is
+	// unchanged so no caller breaks.
+	const startBatchRun = useCallback(
+		(sessionId: string, config: BatchRunConfig, folderPath: string) => {
+			if (config.goalConfig) {
+				return startGoalRun(sessionId, config, folderPath);
+			}
+			return startDocumentBatchRun(sessionId, config, folderPath);
+		},
+		[startGoalRun, startDocumentBatchRun]
+	);
 
 	return {
 		batchRunStates,

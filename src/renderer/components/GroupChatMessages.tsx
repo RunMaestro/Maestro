@@ -13,11 +13,14 @@ import {
 	useState,
 	forwardRef,
 	useImperativeHandle,
+	memo,
 } from 'react';
 import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2 } from 'lucide-react';
 import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } from '../types';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { useSurfaceTypography } from '../hooks/ui/useSurfaceTypography';
 import { stripMarkdown } from '../utils/textProcessing';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { generateParticipantColor, buildParticipantColorMap } from '../utils/participantColors';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -25,15 +28,22 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { formatTimestamp as formatTimestampShared } from '../../shared/formatters';
 import { isDirectModeratorMessage } from '../../shared/groupChatModeratorView';
 import { useMessageGistStore } from '../stores/messageGistStore';
-import { jumpToMessageEdge, isTextInputTarget } from '../utils/messageScrollNavigation';
+import { useSettingsStore } from '../stores/settingsStore';
+import { isTextInputTarget } from '../utils/messageScrollNavigation';
 import { JumpToMessageTopButton } from './JumpToMessageTopButton';
-import { useSurfaceTypography } from '../hooks/ui/useSurfaceTypography';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface GroupChatMessagesProps {
 	theme: Theme;
 	messages: GroupChatMessage[];
 	participants: GroupChatParticipant[];
 	state: GroupChatState;
+	/**
+	 * Stable identifier for the active group chat. The component instance is
+	 * reused (props swap, no remount) when the active chat changes, so this is
+	 * used to reset the one-time initial scroll-to-bottom per conversation.
+	 */
+	chatId?: string;
 	markdownEditMode?: boolean;
 	onToggleMarkdownEditMode?: () => void;
 	maxOutputLines?: number;
@@ -47,6 +57,13 @@ interface GroupChatMessagesProps {
 	ghCliAvailable?: boolean;
 	/** Callback to publish a message as a GitHub Gist */
 	onPublishGist?: (text: string, messageId?: string) => void;
+	/**
+	 * When Find is open, raise virtualizer overscan so off-screen messages stay
+	 * in the DOM long enough for match counting/highlight to see them.
+	 */
+	searchActive?: boolean;
+	/** Optional external ref to the scroll container (used by group Find). */
+	scrollContainerRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
 /** Handle exposed via ref for scrolling to messages */
@@ -54,13 +71,14 @@ export interface GroupChatMessagesHandle {
 	scrollToMessage: (timestamp: number) => void;
 }
 
-export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMessagesProps>(
-	function GroupChatMessages(
+export const GroupChatMessages = memo(
+	forwardRef<GroupChatMessagesHandle, GroupChatMessagesProps>(function GroupChatMessages(
 		{
 			theme,
 			messages,
 			participants,
 			state,
+			chatId,
 			markdownEditMode,
 			onToggleMarkdownEditMode,
 			maxOutputLines = 30,
@@ -69,6 +87,8 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			onOpenLightbox,
 			ghCliAvailable,
 			onPublishGist,
+			searchActive = false,
+			scrollContainerRef: externalScrollRef,
 		},
 		ref
 	) {
@@ -76,64 +96,111 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 		// than inheriting whatever the app shell happens to be set to.
 		const { fontFamily: chatFontFamily, fontSize: chatFontSize } = useSurfaceTypography('chat');
 
-		const containerRef = useRef<HTMLDivElement>(null);
+		const containerRef = useRef<HTMLDivElement | null>(null);
+		const setContainerRef = useCallback(
+			(el: HTMLDivElement | null) => {
+				containerRef.current = el;
+				if (externalScrollRef) {
+					externalScrollRef.current = el;
+				}
+			},
+			[externalScrollRef]
+		);
 		const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
+
+		// The moderator-only view is a display filter, not a deletion: `messages`
+		// still holds the whole transcript, so switching back restores it without a
+		// reload. Each row carries its index in the FULL list so the collapse state
+		// (keyed by that index) survives a flip between the two views - and so the
+		// timestamp jump below can still find a row by its original position.
+		//
+		// The virtualizer is measured against THIS list, not `messages`: a virtual
+		// index is a position in what is drawn, so counting hidden rows would leave
+		// the window scrolling past rows that render nothing.
+		const visibleMessages = useMemo(() => {
+			const rows = messages.map((msg, index) => ({ msg, index }));
+			return moderatorOnly ? rows.filter(({ msg }) => isDirectModeratorMessage(msg)) : rows;
+		}, [messages, moderatorOnly]);
+		const hiddenCount = messages.length - visibleMessages.length;
+
+		const hasVirtualTypingIndicator = state !== 'idle' && visibleMessages.length > 0;
+		const virtualItemCount = visibleMessages.length + (hasVirtualTypingIndicator ? 1 : 0);
+		const estimateMessageHeight = useCallback(
+			(index: number) => {
+				if (index === visibleMessages.length) return 72;
+				const message = visibleMessages[index]?.msg;
+				if (!message) return 140;
+				const lineCount = message.content.split('\n').length;
+				const visibleLines =
+					maxOutputLines === Infinity ? lineCount : Math.min(lineCount, maxOutputLines);
+				const imageHeight = message.images?.length ? 96 : 0;
+				return Math.max(112, Math.min(visibleLines, 24) * 22 + 88 + imageHeight);
+			},
+			[visibleMessages, maxOutputLines]
+		);
+		const virtualizer = useVirtualizer({
+			count: virtualItemCount,
+			getScrollElement: () => containerRef.current,
+			estimateSize: estimateMessageHeight,
+			getItemKey: (index) => {
+				if (index === visibleMessages.length) return 'typing-indicator';
+				const row = visibleMessages[index];
+				// Keyed by the ORIGINAL index so a row keeps its identity (and its
+				// measured height) when the filter flips and its visible position moves.
+				return `${row?.msg.timestamp ?? 'message'}-${row?.index ?? index}`;
+			},
+			overscan: searchActive ? Math.max(visibleMessages.length, 50) : 5,
+			initialRect: { width: 900, height: 700 },
+		});
+		const virtualMessages = virtualizer.getVirtualItems();
 
 		// Expose scrollToMessage method via ref
 		useImperativeHandle(
 			ref,
 			() => ({
 				scrollToMessage: (timestamp: number) => {
-					if (!containerRef.current) return;
-
-					// Find the message element by timestamp
-					// Try exact match first, then find closest message
-					let targetElement = containerRef.current.querySelector(
-						`[data-message-timestamp="${timestamp}"]`
-					);
-
-					// If no exact match, find the closest message by timestamp
-					if (!targetElement) {
-						const allMessages = containerRef.current.querySelectorAll('[data-message-timestamp]');
-						let closestElement: Element | null = null;
-						let closestDiff = Infinity;
-
-						allMessages.forEach((el) => {
-							const msgTimestamp = el.getAttribute('data-message-timestamp');
-							if (msgTimestamp) {
-								// Handle both ISO string and numeric timestamp formats
-								const msgTime = isNaN(Number(msgTimestamp))
-									? new Date(msgTimestamp).getTime()
-									: Number(msgTimestamp);
-								const diff = Math.abs(msgTime - timestamp);
-								if (diff < closestDiff) {
-									closestDiff = diff;
-									closestElement = el;
-								}
-							}
-						});
-
-						// Only use closest if within 5 seconds
-						if (closestElement && closestDiff < 5000) {
-							targetElement = closestElement;
+					let targetIndex = -1;
+					let closestDiff = Infinity;
+					messages.forEach((message, index) => {
+						const numericTimestamp = Number(message.timestamp);
+						const messageTime = Number.isNaN(numericTimestamp)
+							? new Date(message.timestamp).getTime()
+							: numericTimestamp;
+						const diff = Math.abs(messageTime - timestamp);
+						if (diff < closestDiff) {
+							closestDiff = diff;
+							targetIndex = index;
 						}
-					}
-
-					if (targetElement) {
-						targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-						// Flash highlight effect
-						const element = targetElement as HTMLElement;
+					});
+					if (targetIndex < 0 || closestDiff >= 5000) return;
+					// The virtualizer indexes what is DRAWN, so a jump has to be
+					// expressed in visible-row space. A message hidden by the
+					// moderator-only filter has no row to scroll to, so bail rather
+					// than scrolling to an unrelated one.
+					const visibleIndex = visibleMessages.findIndex((row) => row.index === targetIndex);
+					if (visibleIndex < 0) return;
+					virtualizer.scrollToIndex(visibleIndex, { align: 'center' });
+					let remainingFrames = 12;
+					const highlightWhenMounted = () => {
+						const element = containerRef.current?.querySelector(
+							`[data-message-index="${targetIndex}"]`
+						) as HTMLElement | null;
+						if (!element) {
+							remainingFrames -= 1;
+							if (remainingFrames > 0) requestAnimationFrame(highlightWhenMounted);
+							return;
+						}
 						element.style.transition = 'background-color 0.3s ease';
 						const originalBg = element.style.backgroundColor;
 						element.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
 						setTimeout(() => {
 							element.style.backgroundColor = originalBg;
 						}, 1000);
-					}
+					};
+					requestAnimationFrame(highlightWhenMounted);
 				},
 			}),
-			[]
+			[messages, virtualizer]
 		);
 
 		const copyToClipboard = useCallback(async (text: string) => {
@@ -141,6 +208,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 		}, []);
 
 		const publishedGists = useMessageGistStore((s) => s.published);
+		const groupChatAutoScroll = useSettingsStore((s) => s.groupChatAutoScroll);
 
 		const toggleExpanded = useCallback((msgKey: string) => {
 			setExpandedMessages((prev) => {
@@ -160,22 +228,38 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			[theme]
 		);
 
-		// The moderator-only view is a display filter, not a deletion: `messages`
-		// still holds the whole transcript, so switching back restores it without a
-		// reload. Each row carries its index in the FULL list so the collapse state
-		// (keyed by that index) survives a flip between the two views.
-		const visibleMessages = useMemo(() => {
-			const rows = messages.map((msg, index) => ({ msg, index }));
-			return moderatorOnly ? rows.filter(({ msg }) => isDirectModeratorMessage(msg)) : rows;
-		}, [messages, moderatorOnly]);
-		const hiddenCount = messages.length - visibleMessages.length;
+		// Mirror the auto-scroll setting into a ref so toggling it does not re-run
+		// the scroll effect below; only message changes drive a scroll, so turning
+		// the setting on or off never yanks the reader away from their position.
+		const groupChatAutoScrollRef = useRef(groupChatAutoScroll);
+		groupChatAutoScrollRef.current = groupChatAutoScroll;
+		// Whether the one-time scroll-to-bottom for the loaded conversation ran.
+		const hasAutoScrolledRef = useRef(false);
+		// The component instance is reused when the active chat changes (props
+		// swap without a remount), so reset the one-time initial-scroll flag when
+		// the chat identity changes. Done during render (before the scroll effect
+		// runs) so each newly opened chat still lands at its newest message even
+		// when auto-scroll is disabled.
+		const prevChatIdRef = useRef(chatId);
+		if (prevChatIdRef.current !== chatId) {
+			prevChatIdRef.current = chatId;
+			hasAutoScrolledRef.current = false;
+		}
 
-		// Auto-scroll on new messages
+		// Auto-scroll to the newest message. The first scroll for a loaded chat
+		// (initial mount / first messages load) always lands at the bottom so an
+		// existing conversation opens at its latest message; later new-message
+		// scrolls are gated by the global setting.
 		useEffect(() => {
+			if (messages.length === 0) return;
+			const isInitialScroll = !hasAutoScrolledRef.current;
+			if (!isInitialScroll && !groupChatAutoScrollRef.current) return;
+			hasAutoScrolledRef.current = true;
 			if (containerRef.current) {
 				containerRef.current.scrollTop = containerRef.current.scrollHeight;
+				virtualizer.scrollToIndex(virtualItemCount - 1, { align: 'end' });
 			}
-		}, [visibleMessages]);
+		}, [visibleMessages, virtualizer, virtualItemCount]);
 
 		// Use external colors if provided, otherwise generate locally
 		// Include 'Moderator' at index 0 to match the participant panel's color assignment
@@ -211,14 +295,40 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 				</>
 			);
 		};
+		const typingIndicatorContent = state !== 'idle' && (
+			<>
+				{/* Matches the timestamp gutter, which only exists from `sm` up. */}
+				<div className="hidden sm:block w-20 shrink-0" />
+				<div
+					className="flex-1 min-w-0 p-4 rounded-xl border rounded-tl-none"
+					style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				>
+					<div className="flex items-center gap-2">
+						<div
+							className="w-2 h-2 rounded-full animate-pulse"
+							style={{ backgroundColor: theme.colors.warning }}
+						/>
+						<span className="text-sm" style={{ color: theme.colors.textDim }}>
+							{state === 'moderator-thinking' ? 'Moderator is thinking...' : 'Agent is working...'}
+						</span>
+					</div>
+				</div>
+			</>
+		);
 
 		return (
 			<div
-				ref={containerRef}
+				ref={setContainerRef}
 				tabIndex={0}
 				role="region"
 				aria-label="Group chat messages"
 				className="group-chat-messages flex-1 overflow-y-auto scrollbar-thin py-2 outline-none"
+				// A group chat IS an AI transcript, so it follows the AI Chat font
+				// like the main panel and the tiled panes do. Set on the scroll
+				// container and inherited by every message below, the same way
+				// TerminalOutput carries it - the markdown, the tool cards, and the
+				// code fences nested several components deep all pick it up without
+				// being touched.
 				style={{ fontFamily: chatFontFamily, fontSize: `${chatFontSize}px` }}
 				onKeyDown={(e) => {
 					if (
@@ -235,11 +345,21 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 					// Shift+Arrow: jump message-by-message.
 					if (e.shiftKey) {
 						e.preventDefault();
-						jumpToMessageEdge(
-							container,
-							'[data-message-timestamp]',
-							e.key === 'ArrowUp' ? 'up' : 'down'
-						);
+						const visible = virtualizer.getVirtualItems();
+						const viewportStart = container.scrollTop;
+						const viewportEnd = viewportStart + container.clientHeight;
+						const firstVisible = visible.find((item) => item.end > viewportStart) ?? visible[0];
+						const lastVisible =
+							[...visible].reverse().find((item) => item.start < viewportEnd) ??
+							visible[visible.length - 1];
+						const edgeIndex =
+							e.key === 'ArrowUp'
+								? Math.max(0, (firstVisible?.index ?? 0) - 1)
+								: Math.min(virtualItemCount - 1, (lastVisible?.index ?? 0) + 1);
+						virtualizer.scrollToIndex(edgeIndex, {
+							align: e.key === 'ArrowUp' ? 'start' : 'end',
+							behavior: 'smooth',
+						});
 						return;
 					}
 					// Plain Arrow: nudge scroll by ~100px.
@@ -269,18 +389,6 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 				) : messages.length === 0 ? (
 					<div className="flex items-center justify-center h-full px-6">
 						<div className="text-center max-w-md space-y-3">
-							<div className="flex justify-center mb-4">
-								<span
-									className="text-2xs font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
-								>
-									Beta
-								</span>
-							</div>
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
 								Messages you send go directly to the{' '}
 								<span style={{ color: theme.colors.warning }}>moderator</span>, who orchestrates the
@@ -293,303 +401,332 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 						</div>
 					</div>
 				) : (
-					visibleMessages.map(({ msg, index }) => {
-						const isUser = msg.from === 'user';
-						const isSystem = msg.from === 'system';
-						const msgKey = `${msg.timestamp}-${index}`;
-						const isExpanded = expandedMessages.has(msgKey);
+					<div
+						style={{
+							height: `${virtualizer.getTotalSize()}px`,
+							position: 'relative',
+							width: '100%',
+						}}
+					>
+						{virtualMessages.map((virtualMessage) => {
+							// Position in the DRAWN list. `data-index` must carry this one -
+							// it is how the virtualizer matches a measured element back to
+							// its row - while the message's own identity below stays on its
+							// index in the full transcript.
+							const virtualIndex = virtualMessage.index;
+							if (virtualIndex === visibleMessages.length) {
+								return (
+									<div
+										key="typing-indicator"
+										ref={virtualizer.measureElement}
+										data-index={virtualIndex}
+										data-typing-indicator
+										className="flex gap-4 px-3 sm:px-6 py-2"
+										style={{
+											position: 'absolute',
+											top: 0,
+											left: 0,
+											width: '100%',
+											transform: `translateY(${virtualMessage.start}px)`,
+										}}
+									>
+										{typingIndicatorContent}
+									</div>
+								);
+							}
+							const row = visibleMessages[virtualIndex];
+							if (!row) return null;
+							const { msg, index } = row;
+							const isUser = msg.from === 'user';
+							const isSystem = msg.from === 'system';
+							const msgKey = `${msg.timestamp}-${index}`;
+							const isExpanded = expandedMessages.has(msgKey);
 
-						// Calculate if content should be collapsed
-						const lineCount = msg.content.split('\n').length;
-						const shouldCollapse =
-							!isUser && !isSystem && lineCount > maxOutputLines && maxOutputLines !== Infinity;
-						const displayContent =
-							shouldCollapse && !isExpanded
-								? msg.content.split('\n').slice(0, maxOutputLines).join('\n')
-								: msg.content;
+							// Calculate if content should be collapsed
+							const lineCount = msg.content.split('\n').length;
+							const shouldCollapse =
+								!isUser && !isSystem && lineCount > maxOutputLines && maxOutputLines !== Infinity;
+							const displayContent =
+								shouldCollapse && !isExpanded
+									? msg.content.split('\n').slice(0, maxOutputLines).join('\n')
+									: msg.content;
 
-						// Get sender color for non-user messages
-						// Use 'Moderator' (capitalized) to match the color map key
-						// System messages use error color
-						const senderColor = isSystem
-							? theme.colors.error
-							: msg.from === 'moderator'
-								? getParticipantColor('Moderator')
-								: getParticipantColor(msg.from);
+							// Get sender color for non-user messages
+							// Use 'Moderator' (capitalized) to match the color map key
+							// System messages use error color
+							const senderColor = isSystem
+								? theme.colors.error
+								: msg.from === 'moderator'
+									? getParticipantColor('Moderator')
+									: getParticipantColor(msg.from);
 
-						return (
-							<div
-								key={msgKey}
-								data-message-timestamp={msg.timestamp}
-								className={`flex gap-4 group ${isUser ? 'flex-row-reverse' : ''} px-6 py-2`}
-							>
-								{/* Timestamp - outside bubble, like AI Terminal */}
+							return (
 								<div
-									className={`w-20 shrink-0 text-2xs pt-2 ${isUser ? 'text-right' : 'text-left'}`}
-									style={{ color: theme.colors.textDim, opacity: 0.6 }}
-								>
-									{formatTimestamp(msg.timestamp)}
-								</div>
-
-								{/* Message bubble */}
-								<div
-									className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isUser ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+									key={msgKey}
+									ref={virtualizer.measureElement}
+									data-index={virtualIndex}
+									data-message-index={index}
+									data-message-timestamp={msg.timestamp}
+									// Narrow screens (phones / web-desktop mobile): the fixed side
+									// gutter for the timestamp costs ~96px of bubble width, so the
+									// row stacks - timestamp above, bubble full-width. From `sm` up
+									// it's the classic side-by-side layout with the w-20 timestamp
+									// column. Same treatment as the AI Terminal's own rows in
+									// TerminalOutput/components/LogItem.tsx.
+									className={`flex flex-col gap-1 sm:gap-4 group ${isUser ? 'sm:flex-row-reverse' : 'sm:flex-row'} px-3 sm:px-6 py-2`}
 									style={{
-										backgroundColor: isUser
-											? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
-											: theme.colors.bgActivity,
-										borderColor: isUser ? theme.colors.accent + '40' : theme.colors.border,
-										borderLeftWidth: !isUser ? '3px' : undefined,
-										borderLeftColor: !isUser ? senderColor : undefined,
-										color: theme.colors.textMain,
+										position: 'absolute',
+										top: 0,
+										left: 0,
+										width: '100%',
+										transform: `translateY(${virtualMessage.start}px)`,
 									}}
 								>
-									{/* Sender label for non-user messages */}
-									{!isUser && (
-										<div className="text-xs font-medium mb-2" style={{ color: senderColor }}>
-											{msg.from === 'moderator'
-												? 'Moderator'
-												: msg.from === 'system'
-													? 'System'
-													: msg.from}
-										</div>
-									)}
+									{/* Timestamp - outside bubble, like AI Terminal */}
+									<div
+										className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isUser ? 'text-right justify-end' : 'text-left'}`}
+										style={{ color: theme.colors.textDim, opacity: 0.6 }}
+									>
+										{formatTimestamp(msg.timestamp)}
+									</div>
 
-									{/* Attached images */}
-									{msg.images && msg.images.length > 0 && (
-										<div
-											className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
-											style={{ overscrollBehavior: 'contain' }}
-										>
-											{msg.images.map((img, imgIdx) => (
-												<button
-													key={`${msgKey}-img-${imgIdx}`}
-													type="button"
-													className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
-													onClick={() => onOpenLightbox?.(img, msg.images, 'history')}
+									{/* Message bubble */}
+									<div
+										className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isUser ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+										style={{
+											backgroundColor: isUser
+												? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
+												: theme.colors.bgActivity,
+											borderColor: isUser ? theme.colors.accent + '40' : theme.colors.border,
+											borderLeftWidth: !isUser ? '3px' : undefined,
+											borderLeftColor: !isUser ? senderColor : undefined,
+											color: theme.colors.textMain,
+										}}
+									>
+										{/* Sender label for non-user messages */}
+										{!isUser && (
+											<div className="text-xs font-medium mb-2" style={{ color: senderColor }}>
+												{msg.from === 'moderator'
+													? 'Moderator'
+													: msg.from === 'system'
+														? 'System'
+														: msg.from}
+											</div>
+										)}
+
+										{/* Attached images */}
+										{msg.images && msg.images.length > 0 && (
+											<div
+												className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
+												style={{ overscrollBehavior: 'contain' }}
+											>
+												{msg.images.map((img, imgIdx) => (
+													<button
+														key={`${msgKey}-img-${imgIdx}`}
+														type="button"
+														className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
+														onClick={() => onOpenLightbox?.(img, msg.images, 'history')}
+													>
+														<img
+															src={displayImageSrc(img)}
+															alt={`Attached image ${imgIdx + 1}`}
+															className="h-20 rounded border cursor-zoom-in block"
+															style={{
+																objectFit: 'contain',
+																maxWidth: '200px',
+																borderColor: theme.colors.border,
+															}}
+														/>
+													</button>
+												))}
+											</div>
+										)}
+
+										{/* Message content */}
+										{shouldCollapse && !isExpanded ? (
+											// Collapsed view
+											<div>
+												<div
+													className="text-sm overflow-hidden"
+													style={{ maxHeight: `${maxOutputLines * 1.5}em` }}
 												>
-													<img
-														src={img}
-														alt={`Attached image ${imgIdx + 1}`}
-														className="h-20 rounded border cursor-zoom-in block"
-														style={{
-															objectFit: 'contain',
-															maxWidth: '200px',
-															borderColor: theme.colors.border,
-														}}
-													/>
+													{!markdownEditMode ? (
+														<MarkdownRenderer
+															content={displayContent}
+															theme={theme}
+															onCopy={copyToClipboard}
+															chatLineBreaks
+															chatMath
+														/>
+													) : (
+														<div className="whitespace-pre-wrap">
+															{isUser ? displayContent : stripMarkdown(displayContent)}
+														</div>
+													)}
+												</div>
+												<button
+													onClick={() => toggleExpanded(msgKey)}
+													className="flex items-center gap-2 mt-2 text-xs px-3 py-1.5 rounded border hover:opacity-70 transition-opacity"
+													style={{
+														borderColor: theme.colors.border,
+														backgroundColor: theme.colors.bgActivity,
+														color: theme.colors.accent,
+													}}
+												>
+													<ChevronDown className="w-3 h-3" />
+													Show all {lineCount} lines
 												</button>
-											))}
-										</div>
-									)}
-
-									{/* Message content */}
-									{shouldCollapse && !isExpanded ? (
-										// Collapsed view
-										<div>
-											<div
-												// No text-sm: Tailwind pins that to a fixed 0.875rem,
-												// which would override the AI Chat font size the
-												// container set inline (see fontSize on
-												// .group-chat-messages above) and make the setting a
-												// no-op for message bodies.
-												className="overflow-hidden"
-												style={{ maxHeight: `${maxOutputLines * 1.5}em` }}
-											>
-												{!markdownEditMode ? (
-													<MarkdownRenderer
-														content={displayContent}
-														theme={theme}
-														onCopy={copyToClipboard}
-														chatLineBreaks
-														chatMath
-													/>
-												) : (
-													<div className="whitespace-pre-wrap">
-														{isUser ? displayContent : stripMarkdown(displayContent)}
-													</div>
-												)}
 											</div>
-											<button
-												onClick={() => toggleExpanded(msgKey)}
-												className="flex items-center gap-2 mt-2 text-xs px-3 py-1.5 rounded border hover:opacity-70 transition-opacity"
-												style={{
-													borderColor: theme.colors.border,
-													backgroundColor: theme.colors.bgActivity,
-													color: theme.colors.accent,
-												}}
-											>
-												<ChevronDown className="w-3 h-3" />
-												Show all {lineCount} lines
-											</button>
-										</div>
-									) : shouldCollapse && isExpanded ? (
-										// Expanded view (was collapsed)
-										<div>
-											<div
-												className="overflow-auto scrollbar-thin"
-												style={{ maxHeight: '600px', overscrollBehavior: 'contain' }}
-												onWheel={(e) => {
-													const el = e.currentTarget;
-													const { scrollTop, scrollHeight, clientHeight } = el;
-													const atTop = scrollTop <= 0;
-													const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
-													if ((e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom)) {
-														e.stopPropagation();
-													}
-												}}
-											>
-												{!markdownEditMode ? (
-													<MarkdownRenderer
-														content={msg.content}
-														theme={theme}
-														onCopy={copyToClipboard}
-														chatLineBreaks
-														chatMath
-													/>
-												) : (
-													<div className="whitespace-pre-wrap">
-														{isUser ? msg.content : stripMarkdown(msg.content)}
-													</div>
-												)}
+										) : shouldCollapse && isExpanded ? (
+											// Expanded view (was collapsed)
+											<div>
+												<div
+													className="text-sm overflow-auto scrollbar-thin"
+													style={{ maxHeight: '600px', overscrollBehavior: 'contain' }}
+													onWheel={(e) => {
+														const el = e.currentTarget;
+														const { scrollTop, scrollHeight, clientHeight } = el;
+														const atTop = scrollTop <= 0;
+														const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+														if ((e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom)) {
+															e.stopPropagation();
+														}
+													}}
+												>
+													{!markdownEditMode ? (
+														<MarkdownRenderer
+															content={msg.content}
+															theme={theme}
+															onCopy={copyToClipboard}
+															chatLineBreaks
+															chatMath
+														/>
+													) : (
+														<div className="whitespace-pre-wrap">
+															{isUser ? msg.content : stripMarkdown(msg.content)}
+														</div>
+													)}
+												</div>
+												<button
+													onClick={() => toggleExpanded(msgKey)}
+													className="flex items-center gap-2 mt-2 text-xs px-3 py-1.5 rounded border hover:opacity-70 transition-opacity"
+													style={{
+														borderColor: theme.colors.border,
+														backgroundColor: theme.colors.bgActivity,
+														color: theme.colors.accent,
+													}}
+												>
+													<ChevronUp className="w-3 h-3" />
+													Show less
+												</button>
 											</div>
-											<button
-												onClick={() => toggleExpanded(msgKey)}
-												className="flex items-center gap-2 mt-2 text-xs px-3 py-1.5 rounded border hover:opacity-70 transition-opacity"
-												style={{
-													borderColor: theme.colors.border,
-													backgroundColor: theme.colors.bgActivity,
-													color: theme.colors.accent,
-												}}
-											>
-												<ChevronUp className="w-3 h-3" />
-												Show less
-											</button>
-										</div>
-									) : !markdownEditMode ? (
-										// Normal non-collapsed markdown view (#622: user
-										// messages get the same markdown treatment as
-										// assistant messages by default - toggle exposes
-										// the raw view consistently for both)
-										<div>
-											<MarkdownRenderer
-												content={msg.content}
-												theme={theme}
-												onCopy={copyToClipboard}
-												chatLineBreaks
-												chatMath
-											/>
-										</div>
-									) : (
-										// Raw mode - user sees their literal input; for
-										// assistant content we strip markdown so the raw
-										// view is readable as plain text.
-										<div className="whitespace-pre-wrap">
-											{isUser ? msg.content : stripMarkdown(msg.content)}
-										</div>
-									)}
+										) : !markdownEditMode ? (
+											// Normal non-collapsed markdown view (#622: user
+											// messages get the same markdown treatment as
+											// assistant messages by default - toggle exposes
+											// the raw view consistently for both)
+											<div className="text-sm">
+												<MarkdownRenderer
+													content={msg.content}
+													theme={theme}
+													onCopy={copyToClipboard}
+													chatLineBreaks
+													chatMath
+												/>
+											</div>
+										) : (
+											// Raw mode - user sees their literal input; for
+											// assistant content we strip markdown so the raw
+											// view is readable as plain text.
+											<div className="text-sm whitespace-pre-wrap">
+												{isUser ? msg.content : stripMarkdown(msg.content)}
+											</div>
+										)}
 
-									{/* Jump to top of this message - bottom left corner */}
-									<JumpToMessageTopButton
-										scrollContainerRef={containerRef}
-										messageAncestorSelector="[data-message-timestamp]"
-										theme={theme}
-									/>
-									{/* Action buttons - bottom right corner. Available on
+										{/* Jump to top of this message - bottom left corner */}
+										<JumpToMessageTopButton
+											scrollContainerRef={containerRef}
+											messageAncestorSelector="[data-message-timestamp]"
+											theme={theme}
+										/>
+										{/* Action buttons - bottom right corner. Available on
 									    user messages too so the markdown/raw toggle and
 									    copy behavior is consistent with assistant
 									    messages (#622). */}
-									<div
-										className="absolute bottom-2 right-2 flex items-center gap-1"
-										style={{ transition: 'opacity 0.15s ease-in-out' }}
-									>
-										{/* Markdown toggle button */}
-										{onToggleMarkdownEditMode && (
-											<button
-												onClick={onToggleMarkdownEditMode}
-												className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-												style={{
-													color: markdownEditMode ? theme.colors.accent : theme.colors.textDim,
-												}}
-												title={
-													markdownEditMode
-														? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
-														: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
-												}
-											>
-												{markdownEditMode ? (
-													<Eye className="w-4 h-4" />
-												) : (
-													<FileText className="w-4 h-4" />
-												)}
-											</button>
-										)}
-										{/* Copy to Clipboard Button */}
-										<button
-											onClick={() => copyToClipboard(msg.content)}
-											className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-											style={{ color: theme.colors.textDim }}
-											title="Copy to clipboard"
+										<div
+											className="absolute bottom-2 right-2 flex items-center gap-1"
+											style={{ transition: 'opacity 0.15s ease-in-out' }}
 										>
-											<Copy className="w-3.5 h-3.5" />
-										</button>
-										{/* Publish to GitHub Gist (non-user messages only;
+											{/* Markdown toggle button */}
+											{onToggleMarkdownEditMode && (
+												<button
+													onClick={onToggleMarkdownEditMode}
+													className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+													style={{
+														color: markdownEditMode ? theme.colors.accent : theme.colors.textDim,
+													}}
+													title={
+														markdownEditMode
+															? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
+															: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
+													}
+												>
+													{markdownEditMode ? (
+														<Eye className="w-4 h-4" />
+													) : (
+														<FileText className="w-4 h-4" />
+													)}
+												</button>
+											)}
+											{/* Copy to Clipboard Button */}
+											<button
+												onClick={() => copyToClipboard(msg.content)}
+												className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+												style={{ color: theme.colors.textDim }}
+												title="Copy to clipboard"
+											>
+												<Copy className="w-3.5 h-3.5" />
+											</button>
+											{/* Publish to GitHub Gist (non-user messages only;
 										    users would publish their own input via the
 										    feedback flow instead) */}
-										{!isUser &&
-											ghCliAvailable &&
-											onPublishGist &&
-											(() => {
-												const publishedUrl = publishedGists[msgKey]?.gistUrl;
-												return (
-													<button
-														onClick={() => onPublishGist(msg.content, msgKey)}
-														className={`p-1.5 rounded hover:!opacity-100 ${
-															publishedUrl ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
-														}`}
-														style={{
-															color: publishedUrl ? theme.colors.accent : theme.colors.textDim,
-														}}
-														title={
-															publishedUrl
-																? `Published as Gist: ${publishedUrl}`
-																: 'Publish as GitHub Gist'
-														}
-													>
-														<Share2 className="w-3.5 h-3.5" />
-													</button>
-												);
-											})()}
+											{!isUser &&
+												ghCliAvailable &&
+												onPublishGist &&
+												(() => {
+													const publishedUrl = publishedGists[msgKey]?.gistUrl;
+													return (
+														<button
+															onClick={() => onPublishGist(msg.content, msgKey)}
+															className={`p-1.5 rounded hover:!opacity-100 ${
+																publishedUrl ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
+															}`}
+															style={{
+																color: publishedUrl ? theme.colors.accent : theme.colors.textDim,
+															}}
+															title={
+																publishedUrl
+																	? `Published as Gist: ${publishedUrl}`
+																	: 'Publish as GitHub Gist'
+															}
+														>
+															<Share2 className="w-3.5 h-3.5" />
+														</button>
+													);
+												})()}
+										</div>
 									</div>
 								</div>
-							</div>
-						);
-					})
+							);
+						})}
+					</div>
 				)}
 
-				{/* Typing indicator */}
-				{state !== 'idle' && (
-					<div className="flex gap-4 px-6 py-2">
-						<div className="w-20 shrink-0" />
-						<div
-							className="flex-1 min-w-0 p-4 rounded-xl border rounded-tl-none"
-							style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
-						>
-							<div className="flex items-center gap-2">
-								<div
-									className="w-2 h-2 rounded-full animate-pulse"
-									style={{ backgroundColor: theme.colors.warning }}
-								/>
-								<span className="text-sm" style={{ color: theme.colors.textDim }}>
-									{state === 'moderator-thinking'
-										? 'Moderator is thinking...'
-										: 'Agent is working...'}
-								</span>
-							</div>
-						</div>
-					</div>
+				{/* Empty chats do not create a virtual list, so keep their indicator inline. */}
+				{messages.length === 0 && state !== 'idle' && (
+					<div className="flex gap-4 px-6 py-2">{typingIndicatorContent}</div>
 				)}
 			</div>
 		);
-	}
+	})
 );

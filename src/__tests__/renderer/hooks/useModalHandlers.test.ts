@@ -38,7 +38,7 @@ import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { useAgentErrorRecovery } from '../../../renderer/hooks/agent/useAgentErrorRecovery';
 import { gitService } from '../../../renderer/services/git';
 import type { Session, AITab } from '../../../renderer/types';
-import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
+import { createMockAITab as createBaseMockAITab, createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
@@ -82,7 +82,7 @@ beforeEach(() => {
 	});
 	useGroupChatStore.setState({
 		activeGroupChatId: null,
-		groupChatStagedImages: [],
+		groupChatStagedImagesById: {},
 	});
 
 	// Ensure window.maestro.app mock is present
@@ -1030,7 +1030,7 @@ describe('useModalHandlers', () => {
 		it('handleDeleteLightboxImage removes image from group chat staged images', () => {
 			useGroupChatStore.setState({
 				activeGroupChatId: 'gc-1',
-				groupChatStagedImages: ['img1.png', 'img2.png', 'img3.png'],
+				groupChatStagedImagesById: { 'gc-1': ['img1.png', 'img2.png', 'img3.png'] },
 			});
 
 			// Open lightbox with isGroupChat = true
@@ -1046,7 +1046,10 @@ describe('useModalHandlers', () => {
 				result.current.handleDeleteLightboxImage('img2.png');
 			});
 
-			expect(useGroupChatStore.getState().groupChatStagedImages).toEqual(['img1.png', 'img3.png']);
+			expect(useGroupChatStore.getState().groupChatStagedImagesById['gc-1']).toEqual([
+				'img1.png',
+				'img3.png',
+			]);
 			const lightboxData = useModalStore.getState().getData('lightbox');
 			expect(lightboxData?.images).toEqual(['img1.png', 'img3.png']);
 		});
@@ -1306,6 +1309,97 @@ describe('useModalHandlers', () => {
 			});
 
 			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
+		});
+
+		it('handleQuickActionsRenameTab targets the active file tab, pre-filling its custom name', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', name: 'notes', customName: 'My Notes' });
+			const session = createMockSession({
+				id: 'session-1',
+				// File tabs keep inputMode 'ai' but set activeFileTabId; the handler
+				// must target the visible file tab, not the hidden AI tab.
+				inputMode: 'ai',
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-1',
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+				filePreviewTabs: [fileTab],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleQuickActionsRenameTab();
+			});
+
+			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
+			const renameData = useModalStore.getState().getData('renameTab');
+			expect(renameData?.tabId).toBe('file-1');
+			expect(renameData?.initialName).toBe('My Notes');
+		});
+
+		it('handleQuickActionsRenameTab pre-fills empty when the file tab has no custom name', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', name: 'notes', customName: undefined });
+			const session = createMockSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				activeFileTabId: 'file-1',
+				filePreviewTabs: [fileTab],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleQuickActionsRenameTab();
+			});
+
+			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
+			const renameData = useModalStore.getState().getData('renameTab');
+			expect(renameData?.tabId).toBe('file-1');
+			expect(renameData?.initialName).toBe('');
+		});
+
+		it('handleQuickActionsRenameTab targets the focused pane of an active tiled group', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				activeTabId: 'tab-1',
+				aiTabs: [createMockAITab({ id: 'tab-1', name: 'My Tab' })],
+				terminalTabs: [{ id: 'term-1', name: null } as any],
+				activeGroupId: 'group-1',
+				tabGroups: [
+					{
+						id: 'group-1',
+						name: 'Group: Terminal 1',
+						focusedPaneId: 'leaf-term',
+						createdAt: 0,
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [
+								{ kind: 'leaf', id: 'leaf-ai', tab: { type: 'ai', id: 'tab-1' } },
+								{ kind: 'leaf', id: 'leaf-term', tab: { type: 'terminal', id: 'term-1' } },
+							],
+						},
+					} as any,
+				],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleQuickActionsRenameTab();
+			});
+
+			const renameData = useModalStore.getState().getData('renameTab');
+			expect(renameData?.tabId).toBe('term-1');
+			expect(renameData?.initialName).toBe('');
 		});
 
 		it('handleQuickActionsOpenTabSwitcher opens tab switcher when session has aiTabs', () => {
@@ -1924,10 +2018,12 @@ describe('useModalHandlers', () => {
 			);
 
 			act(() => {
-				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1', 'My Session');
 			});
 
-			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+			// Arg 2 is `providedMessages`, left undefined so the resume reads the
+			// transcript itself; the name goes in arg 3.
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1', undefined, 'My Session');
 		});
 
 		it('defers resume when on different session, then resumes after activeSession change', () => {
@@ -1945,7 +2041,7 @@ describe('useModalHandlers', () => {
 
 			// Call with sourceSessionId='session-1' while activeSession is session-2
 			act(() => {
-				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1', 'My Session');
 			});
 
 			// Should have switched to session-1
@@ -1953,8 +2049,9 @@ describe('useModalHandlers', () => {
 
 			// The setActiveSessionId triggers a store update + re-render within the same act(),
 			// which fires the pending resume effect synchronously. The resume should have been
-			// called with the deferred agentSessionId.
-			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+			// called with the deferred agentSessionId - and the name, which has to
+			// survive the agent switch because the entry that carried it is gone.
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1', undefined, 'My Session');
 		});
 
 		it('leaves the active group chat when jumping to a different agent', () => {
@@ -1977,7 +2074,9 @@ describe('useModalHandlers', () => {
 
 			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
 			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
-			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+			// Arg 2 is `providedMessages` and arg 3 the recorded session name; both
+			// are absent here because this call supplies no name.
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1', undefined, undefined);
 		});
 
 		it('leaves the active group chat when the target agent is already active', () => {
@@ -1995,7 +2094,7 @@ describe('useModalHandlers', () => {
 			});
 
 			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
-			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1', undefined, undefined);
 		});
 
 		it('does not call resume when ref is null', () => {

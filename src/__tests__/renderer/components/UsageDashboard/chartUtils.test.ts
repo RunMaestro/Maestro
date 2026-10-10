@@ -10,6 +10,9 @@ import {
 	prettifyAgentType,
 	resolveAgentDisplayName,
 	buildNameMap,
+	computeAxisLabelIndices,
+	PHONE_AXIS_LABELS,
+	barChartLabelWidth,
 	DONUT_CHART,
 	describeDonutArc,
 } from '../../../../renderer/components/UsageDashboard/chartUtils';
@@ -238,6 +241,91 @@ describe('chartUtils', () => {
 	});
 });
 
+describe('computeAxisLabelIndices', () => {
+	/** Smallest distance between any two chosen labels. */
+	function minGap(indices: Set<number>): number {
+		const sorted = [...indices].sort((a, b) => a - b);
+		if (sorted.length < 2) return Infinity;
+		let min = Infinity;
+		for (let i = 1; i < sorted.length; i++) min = Math.min(min, sorted[i] - sorted[i - 1]);
+		return min;
+	}
+
+	/** The density heuristic the charts use: aim for ~7 labels. */
+	function interval(count: number): number {
+		return count > 14 ? Math.ceil(count / 7) : count > 7 ? 2 : 1;
+	}
+
+	it('returns nothing for an empty axis', () => {
+		expect(computeAxisLabelIndices(0).size).toBe(0);
+	});
+
+	it('labels every tick when the axis is short', () => {
+		expect([...computeAxisLabelIndices(5)]).toEqual([0, 1, 2, 3, 4]);
+	});
+
+	it('always labels the first and last tick', () => {
+		for (const count of [1, 8, 20, 31, 44, 90]) {
+			const indices = computeAxisLabelIndices(count);
+			expect(indices.has(0)).toBe(true);
+			expect(indices.has(count - 1)).toBe(true);
+		}
+	});
+
+	it('never spaces labels tighter than the interval, so they cannot overlap', () => {
+		// Counts like 20/32/44 are the regression: forcing the final label used to
+		// place it 1 slot after the previous one, printing the two on top of
+		// each other at the right edge of the chart.
+		for (let count = 2; count <= 120; count++) {
+			expect(minGap(computeAxisLabelIndices(count))).toBeGreaterThanOrEqual(interval(count));
+		}
+	});
+
+	it('drops the penultimate label rather than colliding with the forced last one', () => {
+		// 32 ticks, interval 5: naive picks ...25, 30, then forces 31.
+		const indices = computeAxisLabelIndices(32);
+		expect(indices.has(31)).toBe(true);
+		expect(indices.has(30)).toBe(false);
+		expect(indices.has(25)).toBe(true);
+	});
+
+	it('keeps the natural last label when it already lands on the interval', () => {
+		// 31 ticks, interval 5: 30 is both on-interval and last - nothing dropped.
+		const indices = computeAxisLabelIndices(31);
+		expect([...indices]).toEqual([0, 5, 10, 15, 20, 25, 30]);
+	});
+
+	// Seven "Aug 20"-sized labels need about 300px, and a phone gives a chart
+	// roughly 340px, so a narrow caller says so rather than printing them on
+	// top of each other.
+	it('thins the labels when the caller declares a smaller budget', () => {
+		const wide = computeAxisLabelIndices(31);
+		const narrow = computeAxisLabelIndices(31, PHONE_AXIS_LABELS);
+
+		expect(narrow.size).toBeLessThan(wide.size);
+		expect(narrow.size).toBeLessThanOrEqual(PHONE_AXIS_LABELS + 1);
+		expect(minGap(narrow)).toBeGreaterThan(minGap(wide));
+	});
+
+	it('still labels both ends under a smaller budget', () => {
+		for (const count of [1, 8, 20, 31, 90]) {
+			const indices = computeAxisLabelIndices(count, PHONE_AXIS_LABELS);
+			expect(indices.has(0)).toBe(true);
+			expect(indices.has(count - 1)).toBe(true);
+		}
+	});
+
+	it('never goes below two labels, however small the budget', () => {
+		// A budget of 0 or 1 would otherwise divide the axis by zero labels.
+		expect(computeAxisLabelIndices(20, 0).size).toBeGreaterThanOrEqual(2);
+		expect(computeAxisLabelIndices(20, 1).size).toBeGreaterThanOrEqual(2);
+	});
+
+	it('is unchanged at the default budget', () => {
+		expect([...computeAxisLabelIndices(31, 7)]).toEqual([...computeAxisLabelIndices(31)]);
+	});
+});
+
 describe('DONUT_CHART geometry', () => {
 	it('leaves the hovered slice inside the svg box', () => {
 		expect(DONUT_CHART.outerRadius + DONUT_CHART.hoverExpansion).toBeLessThanOrEqual(
@@ -269,5 +357,22 @@ describe('describeDonutArc', () => {
 	it('splits a full circle into two sub-paths so it renders at all', () => {
 		const d = describeDonutArc(100, 100, 88, 62, 0, 360);
 		expect(d.match(/M /g)).toHaveLength(2);
+	});
+});
+
+describe('barChartLabelWidth', () => {
+	it('keeps the 112px floor for short labels', () => {
+		expect(barChartLabelWidth(['Codex'])).toBe(112);
+	});
+
+	it('grows to fit the longest label, swatch included', () => {
+		const bare = barChartLabelWidth(['Claude Code (Worktree)']);
+		const withSwatch = barChartLabelWidth(['Claude Code (Worktree)'], { withSwatch: true });
+		expect(bare).toBeGreaterThan(112);
+		expect(withSwatch).toBe(bare + 18);
+	});
+
+	it('caps one pathological name so the bars keep their room', () => {
+		expect(barChartLabelWidth(['x'.repeat(500)], { withSwatch: true })).toBe(320);
 	});
 });

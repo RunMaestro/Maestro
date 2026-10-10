@@ -20,15 +20,20 @@ vi.mock('electron', () => ({
 	},
 }));
 
-vi.mock('fs/promises', () => ({
-	default: {
+vi.mock('fs/promises', () => {
+	const mock = {
 		readFile: vi.fn(),
 		writeFile: vi.fn(),
 		unlink: vi.fn(),
+		mkdir: vi.fn(),
+		rename: vi.fn(),
 		access: vi.fn(),
 		readdir: vi.fn(),
-	},
-}));
+	};
+	// Provide both default (feedback.ts) and named (atomic-json-store) shapes,
+	// sharing the same vi.fn instances so assertions see every write.
+	return { ...mock, default: mock };
+});
 
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -45,6 +50,7 @@ vi.mock('../../../../main/prompt-manager', () => ({
 }));
 
 vi.mock('../../../../main/utils/cliDetection', () => ({
+	clearGhCache: vi.fn(),
 	isGhInstalled: vi.fn(),
 	setCachedGhStatus: vi.fn(),
 	getCachedGhStatus: vi.fn(),
@@ -75,6 +81,7 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 import fs from 'fs/promises';
 import os from 'os';
 import {
+	clearGhCache,
 	getCachedGhStatus,
 	isGhInstalled,
 	setCachedGhStatus,
@@ -87,9 +94,25 @@ import {
 	saveImageToTempFile,
 } from '../../../../main/process-manager/utils/imageUtils';
 import { registerFeedbackHandlers } from '../../../../main/ipc/handlers/feedback';
+import { clearFeedbackRepoVerdicts } from '../../../../main/feedback';
+
+/** `gh auth status` for a signed-in account, in gh 2.40+ wording. */
+const statusOk = () => ({
+	exitCode: 0,
+	stdout: '',
+	stderr:
+		'github.com\n  ✓ Logged in to github.com account octocat (keyring)\n  - Active account: true',
+});
+/** The empty-issue probe on an account GitHub lets file: authorized, then 422. */
+const probeAllowed = () => ({
+	exitCode: 1,
+	stdout: '{"message":"Invalid request.","status":"422"}',
+	stderr: 'gh: Invalid request.\n\n"title" wasn\'t supplied. (HTTP 422)',
+});
 
 describe('feedback handlers', () => {
 	beforeEach(() => {
+		clearFeedbackRepoVerdicts();
 		vi.clearAllMocks();
 		registeredHandlers.clear();
 		mockProcessManager.write.mockReset();
@@ -104,15 +127,126 @@ describe('feedback handlers', () => {
 		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:compose-prompt', expect.any(Function));
 	});
 
-	it('returns cached gh auth result when available', async () => {
+	it('trusts a cached install, and still proves repo access once per minute', async () => {
 		vi.mocked(getCachedGhStatus).mockReturnValue({ installed: true, authenticated: true });
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce(statusOk() as any)
+			.mockResolvedValueOnce(probeAllowed() as any);
 
 		const handler = registeredHandlers.get('feedback:check-gh-auth');
-		const result = await handler!({});
+		const first = await handler!({});
+		const second = await handler!({});
 
-		expect(result).toEqual({ authenticated: true });
+		expect(first).toEqual({
+			authenticated: true,
+			account: { host: 'github.com', login: 'octocat' },
+		});
+		expect(second).toEqual(first);
 		expect(getCachedGhStatus).toHaveBeenCalledWith('gh');
 		expect(isGhInstalled).not.toHaveBeenCalled();
+		// auth status + probe, once: the second check is answered from memory.
+		expect(execFileNoThrow).toHaveBeenCalledTimes(2);
+	});
+
+	// `gh auth status` only proves the token is valid. What fails at submit is a
+	// WRITE refused by an org's OAuth App restriction, which still allows every
+	// public read - so the probe has to be a write that cannot create anything.
+	describe('the up-front repo access probe', () => {
+		beforeEach(() => {
+			vi.mocked(getCachedGhStatus).mockReturnValue(null);
+			vi.mocked(isGhInstalled).mockResolvedValue(true);
+		});
+
+		it('POSTs an empty issue, so GitHub authorizes the write and then rejects the missing title', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(statusOk() as any)
+				.mockResolvedValueOnce(probeAllowed() as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({ authenticated: true });
+			expect(execFileNoThrow).toHaveBeenLastCalledWith(
+				'gh',
+				['api', 'repos/RunMaestro/Maestro/issues', '--method', 'POST', '--input', '-'],
+				undefined,
+				expect.objectContaining({ input: '{}', env: { PATH: '/usr/bin' } })
+			);
+		});
+
+		it('fails up front on an OAuth restriction, names the fix, and offers the login', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(statusOk() as any)
+				.mockResolvedValueOnce({
+					exitCode: 1,
+					stdout: '',
+					stderr:
+						'gh: Although you appear to have the correct authorization credentials, the `RunMaestro` organization has enabled OAuth App access restrictions, meaning that data access to third-parties is limited. (HTTP 403)',
+				} as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({
+				authenticated: false,
+				reason: 'no-repo-access',
+				needsGhLogin: true,
+				account: { host: 'github.com', login: 'octocat' },
+				login: { args: expect.arrayContaining(['auth', 'login']) },
+			});
+			expect(result.message).toContain('settings/connections/applications');
+		});
+
+		it('blocks a 403 that a new login cannot fix, without offering one', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(statusOk() as any)
+				.mockResolvedValueOnce({
+					exitCode: 1,
+					stdout: '',
+					stderr: 'gh: You are blocked from this repository. (HTTP 403)',
+				} as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({
+				authenticated: false,
+				reason: 'no-repo-access',
+				needsGhLogin: false,
+			});
+			expect(result.login).toBeUndefined();
+		});
+
+		it('lets an inconclusive probe through: a network failure says nothing about the account', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(statusOk() as any)
+				.mockResolvedValueOnce({
+					exitCode: 1,
+					stdout: '',
+					stderr: 'error connecting to api.github.com',
+				} as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({ authenticated: true });
+		});
+
+		it('names the signed-out account so the user knows which login expired', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr:
+					'github.com\n  X Failed to log in to github.com account octocat (keyring)\n  - Active account: true\n  - The token in keyring is invalid.',
+			} as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({
+				authenticated: false,
+				reason: 'not-authenticated',
+				needsGhLogin: true,
+				account: { host: 'github.com', login: 'octocat' },
+			});
+			// Signed out: there is nothing to probe.
+			expect(execFileNoThrow).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it('creates a structured bug report issue with uploaded screenshot markdown', async () => {
@@ -256,6 +390,35 @@ describe('feedback handlers', () => {
 			{ PATH: '/usr/bin' }
 		);
 		expect(result).toEqual({ success: true });
+	});
+
+	it('tells the user to re-run gh auth login when gh rejects an expired token', async () => {
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as any)
+			.mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr:
+					'HTTP 401: Bad credentials (https://api.github.com/graphql)\nTry authenticating with:  gh auth login',
+			} as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:submit');
+		const result = await handler!(
+			{},
+			{
+				sessionId: 'session-123',
+				category: 'feature_request',
+				summary: 'Add a diagnostics copy action',
+				expectedBehavior: 'Users should be able to copy a sanitized diagnostics block.',
+				details: 'Issue reporting still requires manual environment gathering.',
+			}
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Run "gh auth login"');
+		expect(result.error).not.toContain('HTTP 401');
 	});
 
 	it('composes feedback prompts with uploaded screenshot markdown', async () => {
@@ -535,8 +698,67 @@ describe('feedback handlers', () => {
 		expect(setCachedGhStatus).toHaveBeenCalledWith('/custom/bin/gh', false, false);
 		expect(result).toEqual({
 			authenticated: false,
+			reason: 'not-installed',
 			message: expect.stringContaining('not installed'),
 		});
+	});
+
+	it('reports a gh that is not signed in with the exact login command for that binary', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({
+			get: vi.fn(() => '/custom/bin/gh'),
+		} as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce({ exitCode: 0, stdout: 'gh version 2', stderr: '' } as any)
+			.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not logged in' } as any);
+
+		const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+		expect(result).toMatchObject({
+			authenticated: false,
+			reason: 'not-authenticated',
+			login: {
+				command: '/custom/bin/gh',
+				args: ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web'],
+				display: '/custom/bin/gh auth login --hostname github.com --git-protocol https --web',
+			},
+		});
+	});
+
+	it('skips the cached verdict when asked for a fresh check', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({ get: vi.fn(() => '') } as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(isGhInstalled).mockResolvedValue(true);
+		vi.mocked(execFileNoThrow).mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' } as any);
+
+		const result = await registeredHandlers.get('feedback:check-gh-auth')!({}, { fresh: true });
+
+		expect(clearGhCache).toHaveBeenCalledOnce();
+		expect(result).toEqual({ authenticated: true });
+	});
+
+	it('flags a submit that gh refused for an expired login, so the chat can offer to sign in', async () => {
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as any)
+			.mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr: 'HTTP 401: Bad credentials',
+			} as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+		const result = await registeredHandlers.get('feedback:submit-conversation')!(
+			{},
+			{
+				category: 'bug_report',
+				summary: 'Player stuck',
+				expectedBehavior: 'It moves',
+				actualBehavior: 'It does not',
+			}
+		);
+
+		expect(result).toMatchObject({ success: false, needsGhLogin: true });
 	});
 
 	it('falls back to which-based detection when no custom path is configured', async () => {
@@ -681,5 +903,394 @@ describe('feedback handlers', () => {
 			expect(environment).toContain('Maestro version: 0.15.3');
 			expect(environment).not.toContain('maestro-cli:');
 		});
+	});
+});
+
+describe('feedback drafts handlers', () => {
+	const sampleDraft = {
+		id: 'draft-1',
+		suggestedName: 'App crashes on save',
+		category: 'bug_report' as const,
+		summary: 'App crashes on save',
+		confidence: 80,
+		agentType: 'claude-code',
+		messages: [{ role: 'user' as const, content: 'It crashes when I save', timestamp: 1000 }],
+		attachments: [
+			{ id: 'a1', name: 'shot.png', dataUrl: 'data:image/png;base64,abc123', sizeBytes: 42 },
+		],
+		inputDraft: 'more details to add',
+		includeDebugPackage: false,
+		createdAt: 1000,
+		updatedAt: 1000,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		registeredHandlers.clear();
+		registerFeedbackHandlers({
+			getProcessManager: () => mockProcessManager as any,
+		});
+	});
+
+	it('registers the drafts list/save/delete handlers', () => {
+		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:drafts:list', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:drafts:save', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:drafts:delete', expect.any(Function));
+	});
+
+	it('returns an empty list when the drafts file is missing', async () => {
+		vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+
+		const handler = registeredHandlers.get('feedback:drafts:list');
+		const result = await handler!({});
+
+		expect(result).toEqual({ drafts: [] });
+	});
+
+	it('lists drafts sorted by updatedAt descending', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(
+			JSON.stringify({
+				drafts: [
+					{ ...sampleDraft, id: 'older', updatedAt: 100 },
+					{ ...sampleDraft, id: 'newer', updatedAt: 900 },
+				],
+			}) as any
+		);
+
+		const handler = registeredHandlers.get('feedback:drafts:list');
+		const result = await handler!({});
+
+		expect(result.drafts.map((d: { id: string }) => d.id)).toEqual(['newer', 'older']);
+	});
+
+	it('saves a new draft and writes it with timestamps', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+		const result = await handler!({}, sampleDraft);
+
+		expect(result.draft.id).toBe('draft-1');
+		expect(result.draft.updatedAt).toBeGreaterThan(0);
+
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-drafts.json'));
+		expect(writeCall).toBeDefined();
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.drafts).toHaveLength(1);
+		expect(written.drafts[0].id).toBe('draft-1');
+		expect(written.drafts[0].suggestedName).toBe('App crashes on save');
+		expect(written.drafts[0].attachments).toHaveLength(1);
+	});
+
+	it('upserts an existing draft instead of duplicating it', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [sampleDraft] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+		await handler!({}, { ...sampleDraft, summary: 'Updated summary' });
+
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-drafts.json'));
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.drafts).toHaveLength(1);
+		expect(written.drafts[0].id).toBe('draft-1');
+		expect(written.drafts[0].summary).toBe('Updated summary');
+		expect(written.drafts[0].createdAt).toBe(1000);
+	});
+
+	it('deletes a draft by id and writes the remaining list', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [sampleDraft] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:delete');
+		const result = await handler!({}, { id: 'draft-1' });
+
+		expect(result).toEqual({});
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-drafts.json'));
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.drafts).toEqual([]);
+	});
+
+	it('persists and clamps the submit-ready response on save', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+		const result = await handler!(
+			{},
+			{
+				...sampleDraft,
+				lastResponse: {
+					confidence: 95,
+					ready: true,
+					message: 'Looks good',
+					category: 'bug_report',
+					summary: 'Crash on save',
+					structured: {
+						expectedBehavior: 'no crash',
+						actualBehavior: 'crash',
+						reproductionSteps: 'save',
+						additionalContext: '',
+					},
+				},
+			}
+		);
+
+		expect(result.draft.lastResponse?.ready).toBe(true);
+		expect(result.draft.lastResponse?.structured.expectedBehavior).toBe('no crash');
+
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-drafts.json'));
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.drafts[0].lastResponse.ready).toBe(true);
+		expect(written.drafts[0].lastResponse.structured.actualBehavior).toBe('crash');
+	});
+
+	it('normalizes a malformed lastResponse to null', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+		const result = await handler!({}, { ...sampleDraft, lastResponse: 'not-an-object' });
+
+		expect(result.draft.lastResponse).toBeNull();
+	});
+
+	it('serializes overlapping saves so neither draft is lost (read-modify-write race)', async () => {
+		// Back the mocked fs with an in-memory file so an unserialized
+		// read-modify-write would clobber: both saves would read the empty base
+		// and the later write would drop the earlier draft.
+		const norm = (p: unknown): string => String(p).replace(/\\/g, '/');
+		const draftsFile = '/mock/userData/feedback-drafts.json';
+		const files = new Map<string, string>([[draftsFile, JSON.stringify({ drafts: [] })]]);
+		const tmps = new Map<string, string>();
+		vi.mocked(fs.mkdir).mockResolvedValue(undefined as any);
+		vi.mocked(fs.readFile).mockImplementation(async (p: any) => {
+			await new Promise((r) => setTimeout(r, 0));
+			const content = files.get(norm(p));
+			if (content === undefined) throw new Error('ENOENT');
+			return content as any;
+		});
+		vi.mocked(fs.writeFile).mockImplementation(async (p: any, data: any) => {
+			await new Promise((r) => setTimeout(r, 0));
+			tmps.set(norm(p), String(data));
+			return undefined as any;
+		});
+		vi.mocked(fs.rename).mockImplementation(async (from: any, to: any) => {
+			const content = tmps.get(norm(from));
+			if (content !== undefined) files.set(norm(to), content);
+			tmps.delete(norm(from));
+			return undefined as any;
+		});
+
+		const save = registeredHandlers.get('feedback:drafts:save');
+		await Promise.all([
+			save!({}, { ...sampleDraft, id: 'first' }),
+			save!({}, { ...sampleDraft, id: 'second' }),
+		]);
+
+		const ids = JSON.parse(String(files.get(draftsFile)))
+			.drafts.map((d: { id: string }) => d.id)
+			.sort();
+		expect(ids).toEqual(['first', 'second']);
+	});
+
+	it('keeps the newest messages when trimming beyond the cap', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		// 205 messages: only the last 200 (MAX_DRAFT_MESSAGES) survive, and they
+		// must be the newest ones, not the oldest. Trimming from the front would
+		// drop a user's most recent exchange on resume.
+		const messages = Array.from({ length: 205 }, (_, i) => ({
+			role: 'user' as const,
+			content: `msg-${i}`,
+			timestamp: 1000 + i,
+		}));
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+		const result = await handler!({}, { ...sampleDraft, messages });
+
+		expect(result.draft.messages).toHaveLength(200);
+		// Oldest five (msg-0..msg-4) dropped; newest message survives at the end.
+		expect(result.draft.messages[0].content).toBe('msg-5');
+		expect(result.draft.messages[199].content).toBe('msg-204');
+	});
+
+	it('preserves long unsent composer input up to the draft message cap', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+
+		// 8000 chars exceeds the 5000 field cap but fits the 20000 message cap:
+		// composer text in that range must survive a save/resume round-trip
+		// instead of being silently truncated to the field limit.
+		const longInput = 'a'.repeat(8000);
+		const result = await handler!({}, { ...sampleDraft, inputDraft: longInput });
+		expect(result.draft.inputDraft).toHaveLength(8000);
+
+		// Beyond the message cap it is still clamped to MAX_DRAFT_MESSAGE_LENGTH.
+		const hugeInput = 'a'.repeat(25000);
+		const clamped = await handler!({}, { ...sampleDraft, inputDraft: hugeInput });
+		expect(clamped.draft.inputDraft).toHaveLength(20000);
+	});
+
+	const sampleIssue = {
+		number: 101,
+		url: 'https://github.com/RunMaestro/Maestro/issues/101',
+		title: 'Bug: Feedback modal crashes',
+		category: 'bug_report' as const,
+		submittedAt: 1000,
+		state: 'open' as const,
+		lastCheckedAt: 1000,
+	};
+
+	it('registers the submitted-issue history handlers', () => {
+		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:issues:list', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:issues:delete', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith(
+			'feedback:issues:refresh-states',
+			expect.any(Function)
+		);
+	});
+
+	it('returns an empty issue history when the file is missing', async () => {
+		vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+
+		const handler = registeredHandlers.get('feedback:issues:list');
+		const result = await handler!({});
+
+		expect(result).toEqual({ issues: [] });
+	});
+
+	it('lists submitted issues sorted by submittedAt descending', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(
+			JSON.stringify({
+				issues: [
+					{ ...sampleIssue, number: 1, submittedAt: 100 },
+					{ ...sampleIssue, number: 2, submittedAt: 900 },
+				],
+			}) as any
+		);
+
+		const handler = registeredHandlers.get('feedback:issues:list');
+		const result = await handler!({});
+
+		expect(result.issues.map((i: { number: number }) => i.number)).toEqual([2, 1]);
+	});
+
+	it('deletes a submitted issue by number and writes the remaining list', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(
+			JSON.stringify({ issues: [sampleIssue, { ...sampleIssue, number: 202 }] }) as any
+		);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:issues:delete');
+		const result = await handler!({}, { number: 101 });
+
+		expect(result).toEqual({});
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-submitted-issues.json'));
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.issues.map((i: { number: number }) => i.number)).toEqual([202]);
+	});
+
+	it('refresh-states updates open/closed from a gh GraphQL response', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ issues: [sampleIssue] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: JSON.stringify({ data: { repository: { i101: { number: 101, state: 'CLOSED' } } } }),
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:issues:refresh-states');
+		const result = await handler!({});
+
+		expect(result.issues[0].state).toBe('closed');
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-submitted-issues.json'));
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.issues[0].state).toBe('closed');
+	});
+
+	it('refresh-states returns the cached list unchanged when gh fails', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ issues: [sampleIssue] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 1,
+			stdout: '',
+			stderr: 'gh: not authenticated',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:issues:refresh-states');
+		const result = await handler!({});
+
+		expect(result.issues[0].state).toBe('open');
+		// No persistence when the refresh could not resolve any state.
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-submitted-issues.json'));
+		expect(writeCall).toBeUndefined();
+	});
+
+	it('records a submitted issue after a successful submit', async () => {
+		// The issue-history file starts empty; the submit path appends to it.
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ issues: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+		// Args-aware so the test does not depend on the exact pre-create gh call
+		// count: the issue-create call returns the URL, everything else succeeds.
+		vi.mocked(execFileNoThrow).mockImplementation((_cmd: any, args: any) => {
+			const argv: string[] = Array.isArray(args) ? args : [];
+			if (argv.includes('issue') && argv.includes('create')) {
+				return Promise.resolve({
+					exitCode: 0,
+					stdout: 'https://github.com/RunMaestro/Maestro/issues/456',
+					stderr: '',
+				} as any);
+			}
+			return Promise.resolve({ exitCode: 0, stdout: '{}', stderr: '' } as any);
+		});
+
+		const handler = registeredHandlers.get('feedback:submit');
+		const result = await handler!(
+			{},
+			{
+				sessionId: 'session-1',
+				category: 'bug_report',
+				summary: 'Something broke',
+				expectedBehavior: 'It should work.',
+				details: 'It did not work.',
+				reproductionSteps: '1. Do the thing\n2. Watch it break',
+			}
+		);
+
+		expect(result.success).toBe(true);
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-submitted-issues.json'));
+		expect(writeCall).toBeDefined();
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.issues).toHaveLength(1);
+		expect(written.issues[0].number).toBe(456);
+		expect(written.issues[0].state).toBe('open');
+		expect(written.issues[0].url).toBe('https://github.com/RunMaestro/Maestro/issues/456');
 	});
 });

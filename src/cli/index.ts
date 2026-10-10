@@ -13,6 +13,16 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { ask } from './commands/ask';
+import { queueList, queueRemove } from './commands/queue';
+import {
+	snoozeDismiss,
+	snoozeHistory,
+	snoozeList,
+	snoozeReschedule,
+	snoozeTabCommand,
+	snoozeWake,
+} from './commands/snooze';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -24,12 +34,22 @@ import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
+import { version } from './commands/version';
+import {
+	groupChatList,
+	groupChatSend,
+	groupChatStart,
+	groupChatStatus,
+	groupChatStop,
+} from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
 import { reference } from './commands/reference';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
+import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
+import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
 import {
 	cuePipelineAdd,
@@ -51,6 +71,8 @@ import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
+import { testSshRemote } from './commands/test-ssh-remote';
+import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
@@ -76,15 +98,40 @@ import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
+import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
+import {
+	movementBegin,
+	movementAdd,
+	movementUpdate,
+	movementMove,
+	movementRemove,
+	movementClear,
+	movementProgress,
+	movementState,
+	movementInspect,
+	movementInteract,
+} from './commands/movement';
+import { supportPackage } from './commands/support-package';
+import {
+	feedbackAccounts,
+	feedbackAuth,
+	feedbackLogin,
+	feedbackSearch,
+	feedbackSubmit,
+	feedbackSubscribe,
+} from './commands/feedback';
 import { stats, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
+import { updateGroup } from './commands/update-group';
 import {
 	stopAutoRun,
 	resumeAutoRun,
 	skipAutoRun,
 	abortAutoRun,
 	resetAutoRunTasks,
+	autoRunStatus,
+	autoRunFolder,
 } from './commands/auto-run-control';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
@@ -109,6 +156,34 @@ import { gloss } from './commands/gloss';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
 import { setVerbosity } from './output/verbosity';
+import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
+import { pianolaLearn } from './commands/pianola-learn';
+import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
+import {
+	pianolaPlanSet,
+	pianolaPlanList,
+	pianolaPlanShow,
+	pianolaOrchestrate,
+} from './commands/pianola-orchestrate';
+import {
+	pianolaSuperviseWatch,
+	pianolaSuperviseOrchestrate,
+	pianolaSuperviseList,
+	pianolaSuperviseRemove,
+	pianolaSuperviseSetEnabled,
+} from './commands/pianola-supervise';
+import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
+import {
+	agentRunAppendEvent,
+	agentRunList,
+	agentRunRecord,
+	agentRunShow,
+	campaignList,
+	campaignRecord,
+	campaignShow,
+} from './commands/agent-run';
+import { mcpServe } from './commands/mcp';
+import { logger } from '../main/utils/logger';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -116,6 +191,11 @@ import { setVerbosity } from './output/verbosity';
 declare const __MAESTRO_CLI_VERSION__: string;
 const cliVersion: string =
 	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
+
+// stdout carries command output (often JSON that scripts parse), so the
+// main-process logger shared with modules like the WakaTime manager must keep
+// its diagnostics on stderr. See #1698.
+logger.routeConsoleToStderr();
 
 const program = new Command();
 
@@ -133,6 +213,64 @@ program.hook('preAction', (thisCommand) => {
 	const opts = thisCommand.opts();
 	setVerbosity({ quiet: Boolean(opts.quiet), verbose: Boolean(opts.verbose) });
 });
+// AgentRun and campaign commands - neutral ledger/read-model spine for external
+// agent work. Pianola remains the authoritative orchestrator; these commands
+// record and inspect runs/campaigns without replacing `pianola plan`.
+const agentRun = program.command('agent-run').description('Record and inspect agent runs');
+
+agentRun
+	.command('record')
+	.description('Record or update an agent run from a JSON file')
+	.requiredOption('--file <json>', 'Agent run JSON file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(agentRunRecord);
+
+agentRun
+	.command('append-event <run-id>')
+	.description('Append an event to an agent run')
+	.requiredOption('--type <type>', 'Event type')
+	.option('--status <status>', 'Update the run status with this event')
+	.option('--message <text>', 'Human-readable event message')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((runId, options) => agentRunAppendEvent(runId, options));
+
+agentRun
+	.command('list')
+	.description('List recent agent runs')
+	.option('--status <status>', 'Filter by run status')
+	.option('--campaign <id>', 'Filter by campaign id')
+	.option('--limit <n>', 'Maximum number of runs to show')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(agentRunList);
+
+agentRun
+	.command('show <run-id>')
+	.description('Show an agent run and its events')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((runId, options) => agentRunShow(runId, options));
+
+const campaign = program.command('campaign').description('Record and inspect agent campaigns');
+
+campaign
+	.command('record')
+	.description('Record or update a campaign from a JSON file')
+	.requiredOption('--file <json>', 'Campaign JSON file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(campaignRecord);
+
+campaign
+	.command('list')
+	.description('List campaigns')
+	.option('--status <status>', 'Filter by campaign status')
+	.option('--limit <n>', 'Maximum number of campaigns to show')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(campaignList);
+
+campaign
+	.command('show <id>')
+	.description('Show a campaign')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((campaignId, options) => campaignShow(campaignId, options));
 
 // List commands
 const list = program.command('list').description('List resources');
@@ -205,9 +343,48 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
+	)
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
+	});
+
+// Goal-Driven Auto Run command (lazy-loaded)
+program
+	.command('goal-run <agent-id> <goal>')
+	.description('Launch a Goal-Driven Auto Run: pursue a free-text goal until done')
+	.option('--exit-criteria <text>', 'What "done" looks like and when to declare a deadlock')
+	.option('--max-iterations <n>', 'Cap iterations (default: infinite)')
+	.option('--no-history', 'Do not write history entries')
+	.option('--json', 'Output as JSON lines (for scripting)')
+	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option(
+		'--visible',
+		'Run inside the Maestro desktop app (visible Auto Run) instead of headlessly'
+	)
+	.option('--wait', 'With --visible, wait for the agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
+	.action(async (agentId: string, goal: string, options: Record<string, unknown>) => {
+		const { goalRun } = await import('./commands/goal-run');
+		return goalRun(agentId, goal, options);
 	});
 
 // Run-doc command - run raw Auto Run documents headlessly without saving a
@@ -232,6 +409,18 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
+	)
 	.action(async (docs: string[], options: Record<string, unknown>) => {
 		const { runDoc } = await import('./commands/run-doc');
 		return runDoc(docs, options as never);
@@ -269,21 +458,165 @@ program
 	.description(
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
-	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
+	.option(
+		'--new-tab',
+		'Create a fresh AI tab and deliver the prompt into it. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+	)
 	.option(
 		'--background',
 		'Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)'
 	)
-	.option('--focus', 'Move the view to the target after dispatching')
 	.option(
 		'-t, --tab <id>',
 		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
 	)
 	.option(
 		'-f, --force',
-		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab — a fresh tab is never busy)'
+		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)'
+	)
+	.option(
+		'--focus',
+		'Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)'
+	)
+	.option(
+		'--queue',
+		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.'
+	)
+	.option('--wait', 'Alias for --queue')
+	.option(
+		'--notify-on-complete <agent-id>',
+		'Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.'
+	)
+	.option(
+		'--callback-tab <id>',
+		'Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)'
+	)
+	.option(
+		'--callback-prompt <text>',
+		'Override the callback prompt body. {{DISPATCH_STATUS}}, {{DISPATCH_TAB_ID}}, {{DISPATCH_TARGET_ID}}, {{DISPATCH_OUTPUT}}, {{DISPATCH_DURATION}}, {{DISPATCH_TASKS_COMPLETED}}, {{DISPATCH_TASKS_TOTAL}}, {{DISPATCH_PROMPT}} and {{DISPATCH_CALLBACK_ID}} are substituted.'
+	)
+	.option(
+		'--callback-timeout <seconds>',
+		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
 	)
 	.action(dispatch);
+
+// Ask command - the agent-to-agent question. `dispatch` hands WORK to an agent
+// and lands in a real tab; `ask` asks a QUESTION and rides the cross-agent
+// consult path (hidden tab on the target, fresh context, no focus, no unread),
+// returning the answer here instead of interrupting whatever conversation the
+// human has open with that agent.
+program
+	.command('ask <agent-id> <question>')
+	.description(
+		"Ask another agent a question and print its answer (background consult - never touches the target's open conversation)"
+	)
+	.option(
+		'--from <agent-id>',
+		'Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult. Defaults to the agent this runs under inside Maestro'
+	)
+	.option(
+		'--with-context',
+		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
+	)
+	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
+	.option('--json', 'Output the answer as JSON')
+	.action(ask);
+
+// Queue commands - inspect and manage the desktop execution queue populated by
+// `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable
+// cleanup/debugging. The queue lives authoritatively in the desktop renderer.
+const queue = program
+	.command('queue')
+	.description('Inspect and manage the desktop execution queue (from dispatch --queue)');
+
+queue
+	.command('list')
+	.description('List queued execution items as JSON (all agents, or one with --agent)')
+	.option(
+		'-a, --agent <id>',
+		'Only list items for this agent (default: every agent with queued items)'
+	)
+	.action(queueList);
+
+queue
+	.command('remove <item-id>')
+	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueRemove);
+
+// Snooze commands - the CLI half of the Snooze dialog (Opt+Cmd+S), the Snoozed
+// Tabs list, and its history log. `<when>` takes the same expressions the dialog
+// does ("2h", "tomorrow", "next fri 3pm", "aug 5"), parsed locally so a typo
+// fails before a round trip.
+const snooze = program
+	.command('snooze')
+	.description('Park a tab until later, and manage what is parked');
+
+snooze
+	.command('tab <tab-id> <when>')
+	.description('Snooze a tab or tiled group until <when> (e.g. 2h, tomorrow, "next fri 3pm")')
+	.option(
+		'-a, --agent <id>',
+		'Agent that owns the tab. Required for a file, terminal, browser, or group tab, which are not in the AI tab list'
+	)
+	.option('-n, --note <text>', 'Note-to-self surfaced in the wake notification')
+	.option(
+		'-p, --wake-prompt <text>',
+		'Prompt sent to the agent the moment the tab comes back (AI tabs and groups only)'
+	)
+	.option('--background', 'Park it without flashing the "Snoozed until ..." confirmation')
+	.option('--focus', 'Show the confirmation flash (the default)')
+	.option('--json', 'Output the stored snooze as JSON')
+	.action(snoozeTabCommand);
+
+snooze
+	.command('list')
+	.description('List snoozed tabs across every agent, soonest wake first')
+	.option('-a, --agent <id>', 'Only list snoozes held by this agent')
+	.option('--json', 'Output as JSON')
+	.action(snoozeList);
+
+snooze
+	.command('wake <snooze-id>')
+	.description('Bring a snoozed tab back right now (accepts a unique id prefix)')
+	.option('--background', 'Accepted and ignored: a wake restores the tab without focusing it')
+	.option('--focus', 'Accepted and ignored: a wake restores the tab without focusing it')
+	.option('--json', 'Output as JSON')
+	.action(snoozeWake);
+
+snooze
+	.command('dismiss <snooze-id>')
+	.description("Drop a snooze and its tab - it won't come back")
+	.option('--background', 'Dismiss it without raising the "Snooze dismissed" toast')
+	.option('--focus', 'Raise the toast (the default)')
+	.option('--json', 'Output as JSON')
+	.action(snoozeDismiss);
+
+snooze
+	.command('reschedule <snooze-id> <when>')
+	.description('Move a snooze to a new time, optionally rewriting its note or wake prompt')
+	.option('-n, --note <text>', 'Replace the note (pass an empty string to clear it)')
+	.option('-p, --wake-prompt <text>', 'Replace the wake prompt (empty string clears it)')
+	.option('--json', 'Output as JSON')
+	.action(snoozeReschedule);
+
+snooze
+	.command('history')
+	.description('Snoozes that have already resolved - woken, unsnoozed, or dismissed')
+	.option('--limit <n>', 'Only show the newest <n> entries')
+	.option('--json', 'Output as JSON')
+	.action(snoozeHistory);
+
+// `unsnooze` is the verb people reach for, and it is what the Snoozed Tabs list
+// calls the button, so it is spelled out here rather than left as `snooze wake`.
+program
+	.command('unsnooze <snooze-id>')
+	.description('Bring a snoozed tab back right now (alias for "snooze wake")')
+	.option('--background', 'Accepted and ignored: a wake restores the tab without focusing it')
+	.option('--focus', 'Accepted and ignored: a wake restores the tab without focusing it')
+	.option('--json', 'Output as JSON')
+	.action(snoozeWake);
 
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
@@ -310,10 +643,69 @@ session
 	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
 
-// Open file command - open a file in the Maestro desktop app
+// Group chat commands - start and drive multi-agent group chats in the desktop app.
+// `start` is how a script hands a job to a moderator (the release commands use it);
+// participants join by @mention, exactly as when a user types them. Never moves the view.
+const groupChat = program
+	.command('group-chat')
+	.description('Start, message, and inspect group chats in the desktop app');
+
+groupChat
+	.command('start <name>')
+	.description('Create a group chat and send its moderator the opening message')
+	.option(
+		'-p, --participant <agent>',
+		'Participant agent ID or name (repeatable; at least one)',
+		(value: string, prev: string[]) => [...prev, value],
+		[] as string[]
+	)
+	.option(
+		'--moderator <agent-type>',
+		"Moderator agent type (e.g. claude-code); defaults to the first participant's type"
+	)
+	.option('-m, --message <text>', 'Opening message for the moderator (defaults to the name)')
+	.option('--message-file <path>', 'Read the opening message from a file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatStart);
+
+groupChat
+	.command('send <chat> [message]')
+	.description('Send a message to a group chat (ID, ID prefix, or name); refused while busy')
+	.option('--message-file <path>', 'Read the message from a file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatSend);
+
+groupChat
+	.command('status <chat>')
+	.description("Show a group chat's state, participants, and latest messages")
+	.option('--tail <n>', 'How many recent messages to print (default 5; 0 for none)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatStatus);
+
+groupChat
+	.command('list')
+	.description('List group chats and whether each is busy')
+	.option('--all', 'Include archived chats')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatList);
+
+groupChat
+	.command('stop <chat>')
+	.description("Stop a group chat's moderator and participants")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatStop);
+
+// Open file command - open a file in the Maestro desktop app.
+//
+// Also the verb that PLAYS media: the renderer's open path recognizes a
+// playable local audio or video file and hands it to the floating player
+// instead of making a tab, so there is no separate `play` command and nothing
+// should be shelling out to the OS player.
 program
 	.command('open-file <file-path>')
-	.description('Open a file as a preview tab in the Maestro desktop app')
+	.description(
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)'
+	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
 		'--background',
@@ -321,6 +713,10 @@ program
 	)
 	.option('--focus', 'Switch to the file after opening it (default)')
 	.option('--no-switch', "Don't switch to the target agent, but still activate the tab there")
+	.option(
+		'--queue',
+		'Audio/video only: add to the media player queue and show the player without starting playback'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
 
@@ -495,6 +891,18 @@ program
 		'--pr-target-branch <branch>',
 		'Target branch for the PR (defaults to the repo default branch)'
 	)
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
+	)
 	.action(autoRun);
 
 // Auto Run control commands - stop a run and recover from an error pause. These
@@ -534,6 +942,50 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((filename, options) => resetAutoRunTasks(options.agent, filename, options));
 
+program
+	.command('auto-run-status')
+	.description('Show whether an Auto Run is active and its document/task progress')
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => autoRunStatus(options.agent, options));
+
+program
+	.command('auto-run-folder <path>')
+	.description(
+		"Point an agent at a different Auto Run folder (relative paths resolve against this shell's cwd)"
+	)
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((folder, options) => autoRunFolder(options.agent, folder, options));
+
+// Playbook Exchange - browse and install community playbooks
+const marketplace = program
+	.command('marketplace')
+	.description('Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)');
+
+marketplace
+	.command('list')
+	.description('List playbooks in the official + local catalog')
+	.option('-c, --category <name>', 'Only this category')
+	.option('-s, --search <text>', 'Match id, title, description, or tags')
+	.option('--refresh', 'Bypass the catalog cache')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceList);
+
+marketplace
+	.command('show <playbook-id>')
+	.description("Show a playbook's details, documents, and README")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceShow);
+
+marketplace
+	.command('import <playbook-id>')
+	.description("Install a playbook into an agent's Auto Run folder")
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('-f, --folder <name>', 'Folder name under the Auto Run folder (default: from the title)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceImport);
+
 // Remove playbook command - delete a saved playbook from an agent
 program
 	.command('remove-playbook <agent-id> <playbook-id>')
@@ -557,6 +1009,28 @@ cue
 	.description('List all Cue subscriptions across agents')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
+
+cue
+	.command('enable <subscription>')
+	.description('Turn a Cue subscription on (name, or the full id from `cue list --json`)')
+	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEnable);
+
+cue
+	.command('disable <subscription>')
+	.description('Turn a Cue subscription off without deleting it')
+	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueDisable);
+
+cue
+	.command('activity')
+	.description('Show recent Cue runs, newest first')
+	.option('-a, --agent <id>', 'Only runs for this agent')
+	.option('-n, --limit <n>', 'How many runs to show (default 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueActivity);
 
 // Cue schedule - author / inspect / edit / cancel Scheduled Tasks (the
 // clock-driven subscriptions: time.once, time.scheduled, time.heartbeat).
@@ -653,7 +1127,7 @@ directorNotes
 	.description('Show unified history across all agents')
 	.option('-d, --days <n>', 'Lookback period in days (default: from app settings)')
 	.option('-f, --format <type>', 'Output format: json, markdown, text (default: text)')
-	.option('--filter <type>', 'Filter by entry type: auto, user, cue')
+	.option('--filter <type>', 'Filter by entry type: auto, user, cue, agent')
 	.option('-l, --limit <n>', 'Maximum entries to show (default: 100)')
 	.option('--json', 'Output as JSON (shorthand for --format json)')
 	.action(directorNotesHistory);
@@ -671,6 +1145,14 @@ program
 	.command('status')
 	.description('Check if the Maestro desktop app is running and reachable')
 	.action(status);
+
+// Version command - report the running app's version + build commit hash (the
+// hash shown in the About modal), plus the CLI's own version.
+program
+	.command('version')
+	.description("Show the running Maestro app's version and build commit hash")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => version(cliVersion, options));
 
 // Doctor command - diagnose connection, version skew, handler support, SSH config
 program
@@ -699,7 +1181,7 @@ program
 	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
 	.option(
 		'-t, --type <type>',
-		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, gemini-cli, qwen3-coder)',
+		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)',
 		'claude-code'
 	)
 	.option('-g, --group <id>', 'Group ID to assign the agent to')
@@ -737,6 +1219,12 @@ program
 	.command('create-group <name>')
 	.description('Create a new group in the Maestro desktop app')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group')
+	.option(
+		'--icon <icon-id>',
+		'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+	)
+	.option('--color <color>', 'Label color as #RRGGBB, or a plugin color ID')
+	.option('--parent <group-id>', 'Create inside this root group')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createGroup);
 
@@ -757,6 +1245,27 @@ program
 	.description('Rename a group in the Maestro desktop app')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, newName, options) => renameGroup(groupId, newName, options));
+
+// Update group command - change a group's name, appearance, or parent. Covers
+// everything the Left Bar's group editor does; rename-group stays for
+// backward compatibility.
+program
+	.command('update-group <group-id>')
+	.description("Update a group's name, icon, color, or parent in the Maestro desktop app")
+	.option('-n, --name <name>', 'New group name')
+	.option('-e, --emoji <emoji>', 'Emoji icon for the group. Mutually exclusive with --icon')
+	.option(
+		'--icon <icon-id>',
+		'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+	)
+	.option('--color <color>', 'Label color as #RRGGBB, or a plugin color ID')
+	.option('--parent <group-id>', 'Move the group inside this root group')
+	.option('--clear-emoji', 'Reset the emoji to the default folder')
+	.option('--clear-icon', 'Remove the icon')
+	.option('--clear-color', 'Remove the label color')
+	.option('--clear-parent', 'Promote the group to the top level')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, options) => updateGroup(groupId, options));
 
 // Create-worktree command - create a new agent in a git worktree off a parent
 // agent, without an Auto Run playbook. The parent agent must already exist in
@@ -1016,11 +1525,70 @@ program
 		(val: string, prev: string[]) => [...prev, val],
 		[] as string[]
 	)
+	.option(
+		'--ssh-option <KEY=VALUE>',
+		'Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
 	.option('--ssh-config', 'Use ~/.ssh/config for connection settings (host becomes Host pattern)')
 	.option('--disabled', 'Create in disabled state')
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createSshRemote);
+
+// Update SSH remote command - edit an existing SSH remote configuration
+program
+	.command('update-ssh-remote <remote-id>')
+	.description('Update an existing SSH remote configuration')
+	.option('-n, --name <name>', 'Display name')
+	.option('-H, --host <host>', 'SSH hostname, IP, or SSH config Host pattern')
+	.option('-p, --port <port>', 'SSH port')
+	.option('-u, --username <user>', 'SSH username (empty string clears it)')
+	.option('-k, --key <path>', 'Path to private key file (empty string clears it)')
+	.option(
+		'--env <KEY=VALUE>',
+		'Remote environment variable, merged with existing (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--clear-env', 'Remove all remote environment variables before applying --env')
+	.option(
+		'--disable-env <KEY>',
+		'Switch an env var off, keeping its value (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--enable-env <KEY>',
+		'Switch a previously disabled env var back on (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--ssh-option <KEY=VALUE>',
+		'Extra ssh -o option, merged with existing (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--clear-ssh-options', 'Remove all extra ssh -o options before applying --ssh-option')
+	.option(
+		'--disable-ssh-option <KEY>',
+		'Switch an ssh -o option off, keeping its value (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--enable-ssh-option <KEY>',
+		'Switch a previously disabled ssh -o option back on (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--ssh-config <bool>', 'Use ~/.ssh/config for connection settings (true/false)')
+	.option('--enabled <bool>', 'Enable or disable this remote (true/false)')
+	.option('--set-default', 'Set as the global default SSH remote')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(updateSshRemote);
 
 // Remove SSH remote command - delete an SSH remote configuration
 program
@@ -1029,6 +1597,19 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeSshRemote);
 
+// Test SSH remote command - dial a configured remote and report the result
+program
+	.command('test-ssh-remote <remote-id>')
+	.description('Test an SSH remote connection and report what the remote answered')
+	.option('-a, --agent <command>', 'Also check whether this binary is on the remote PATH')
+	.option('--timeout <seconds>', 'Give up after this many seconds (default: 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(testSshRemote);
+
+// Display / typography commands
+//
+// Addressed by SURFACE rather than by settings key: `settings set` can already
+// write these ten keys, but only if you know their names and the
 // Display / typography commands
 //
 // Addressed by SURFACE rather than by settings key: `settings set` can already
@@ -1210,7 +1791,9 @@ encore
 
 encore
 	.command('enable <feature>')
-	.description('Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue)')
+	.description(
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
 
@@ -1219,6 +1802,171 @@ encore
 	.description('Disable an Encore feature')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, false, options));
+
+// Pianola - the autonomous manager agent (Encore-gated, off by default).
+const pianola = program
+	.command('pianola')
+	.description('Pianola manager agent: watch tabs, auto-answer or escalate per your rules');
+
+pianola
+	.command('watch <tab-id>')
+	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
+	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--dry-run', 'Classify and record decisions but never send a message')
+	.option('--once', 'Run a single iteration instead of looping')
+	.option('--json', 'Reserved for scripting; affects the disabled-feature error only')
+	.action((tabId, options) => pianolaWatch(tabId, options));
+
+pianola
+	.command('rules')
+	.description('List the configured Pianola rules')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaRules(options));
+
+pianola
+	.command('add-rule')
+	.description(
+		'Add a Pianola rule (how the manager agent turns a conversation into a durable rule)'
+	)
+	.option('--scope <scope>', 'global | project | tab (default global)')
+	.option('--scope-id <id>', 'Project path (scope project) or tab id (scope tab)')
+	.option('--action <action>', 'auto_answer | escalate | ignore (required)')
+	.option('--answer <text>', 'Reply text (required for auto_answer)')
+	.option('--max-risk <risk>', 'Only fire when risk is at most: low | medium | high')
+	.option('--kinds <list>', 'Comma list of signal kinds: question,blocked,none')
+	.option('--topic-includes <list>', 'Comma list of case-insensitive topic substrings')
+	.option('--priority <n>', 'Lower runs first (default 100)')
+	.option('--description <text>', 'Human-readable description')
+	.option('--disabled', 'Create the rule disabled')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaAddRule(options));
+
+pianola
+	.command('learn')
+	.description(
+		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)'
+	)
+	.option('--agent <list>', 'Comma list of agents to crawl: claude-code,codex (default both)')
+	.option('--limit <n>', 'Max sessions per agent, newest first (default 300)')
+	.option('--since <date>', 'Only crawl transcripts modified on/after this date (e.g. 2026-06-01)')
+	.option(
+		'--project <substr>',
+		'Only keep decisions from sessions whose path contains this substring'
+	)
+	.option('--exclude <substr>', 'Drop decisions from sessions whose path contains this substring')
+	.option(
+		'--max-pairs <n>',
+		'Max decision pairs to print inline when --out is not used (default 200)'
+	)
+	.option('--out <file>', 'Write the full corpus JSON to a file instead of stdout')
+	.option('--json', 'Compact JSON output (for scripting)')
+	.action((options) => pianolaLearn(options));
+
+pianola
+	.command('profile')
+	.description('Read a learned decision profile (per-project with --project, else global)')
+	.option('--project <path>', 'Project path to read the profile for (falls back to global)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaProfile(options));
+
+pianola
+	.command('set-profile')
+	.description('Save a learned decision profile from --file or stdin (per-project or global)')
+	.option('--project <path>', 'Project path this profile is for (omit for the global profile)')
+	.option('--file <path>', 'Read the profile markdown from this file (else reads stdin)')
+	.option('--pair-count <n>', 'How many decision pairs this profile was synthesized from')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaSetProfile(options));
+
+pianola
+	.command('log')
+	.description('Show recent Pianola decisions from the audit log')
+	.option('--limit <n>', 'Maximum number of records to show (default 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaLog(options));
+
+// Pianola plan - author and inspect task DAGs the orchestrator runs.
+const pianolaPlan = pianola
+	.command('plan')
+	.description('Author and inspect Pianola task plans (DAGs)');
+
+pianolaPlan
+	.command('set')
+	.description('Save a plan from --file or piped stdin (validated before write)')
+	.option('--file <path>', 'Read the plan JSON from this file (else reads stdin)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaPlanSet(options));
+
+pianolaPlan
+	.command('list')
+	.description('List saved plans with a progress summary')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaPlanList(options));
+
+pianolaPlan
+	.command('show <planId>')
+	.description('Show one plan: its tasks, statuses, and dependencies')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaPlanShow(planId, options));
+
+pianola
+	.command('orchestrate <planId>')
+	.description('Run a saved plan to completion, dispatching tasks as their dependencies finish')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--concurrency <n>', 'Max tasks running at once (default 3)')
+	.option('--once', 'Run a single iteration instead of looping')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaOrchestrate(planId, options));
+
+// Pianola supervise - register background targets the desktop keeps alive
+// (restart on crash, relaunch on app start, visible health). These write the
+// shared supervisor store; the running app reconciles within ~1s.
+const pianolaSupervise = pianola
+	.command('supervise')
+	.description(
+		'Register desktop-supervised watchers and orchestrations (survive crashes/restarts)'
+	);
+
+pianolaSupervise
+	.command('watch <tabId>')
+	.description('Register a supervised tab watcher the desktop keeps alive')
+	.option('--agent <agent-id>', 'Agent id to dispatch answers to (required)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => pianolaSuperviseWatch(tabId, options));
+
+pianolaSupervise
+	.command('orchestrate <planId>')
+	.description('Register a supervised plan orchestration the desktop keeps alive')
+	.option('--concurrency <n>', 'Max tasks running at once (default 3)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaSuperviseOrchestrate(planId, options));
+
+pianolaSupervise
+	.command('list')
+	.description('List registered supervised targets')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaSuperviseList(options));
+
+pianolaSupervise
+	.command('remove <id>')
+	.description('Unregister a supervised target by id (the desktop stops its child)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseRemove(id, options));
+
+pianolaSupervise
+	.command('enable <id>')
+	.description('Enable a supervised target by id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseSetEnabled(id, true, options));
+
+pianolaSupervise
+	.command('disable <id>')
+	.description('Disable a supervised target by id (the desktop stops its child)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseSetEnabled(id, false, options));
 
 // Prompts command - read Maestro's bundled or user-customized system prompts.
 // Designed for agent self-fetch: parent prompts reference includes via `{{REF:_name}}`
@@ -1270,7 +2018,7 @@ notify
 	)
 	.option(
 		'--dismissible',
-		'Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout'
+		'Sticky toast - no auto-dismiss; user must click to close. Cannot combine with --timeout'
 	)
 	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
 	.option(
@@ -1279,7 +2027,7 @@ notify
 	)
 	.option(
 		'--tab <id>',
-		'AI tab ID within the agent — clicking jumps to that tab (requires --agent)'
+		'AI tab ID within the agent - clicking jumps to that tab (requires --agent)'
 	)
 	.option(
 		'--action-url <url>',
@@ -1311,7 +2059,7 @@ notify
 
 notify
 	.command('flash <message>')
-	.description('Show a center-screen flash (momentary, exclusive — replaces any active flash)')
+	.description('Show a center-screen flash (momentary, exclusive - replaces any active flash)')
 	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
 	.option('-D, --detail <text>', 'Optional second line shown beneath the message')
 	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')
@@ -1344,6 +2092,266 @@ profiling
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(profilingStatus);
 
+// Cadenza commands - open small cadenza panels that display or track work.
+const cadenza = program
+	.command('cadenza')
+	.description('Open small cadenza views to display or track work in the Maestro desktop app');
+
+cadenza
+	.command('open <id>')
+	.description('Open (or replace by id) a cadenza view')
+	.option(
+		'--type <type>',
+		'tracker | file | markdown | image | code | view | html | decision (default: tracker)'
+	)
+	.option('--title <text>', 'Header label for the panel')
+	.option(
+		'--body <text>',
+		'Body content - tracker line, markdown/code source, JSON block spec (--type view), HTML document, or decision prompt'
+	)
+	.option(
+		'--body-file <path>',
+		'Read body content from a file (markdown, view JSON, code, or HTML)'
+	)
+	.option(
+		'--path <path>',
+		'File/image path (required for file and image; for --type code, shows that file as a snippet)'
+	)
+	.option(
+		'--lang <lang>',
+		'Language for --type code highlighting (inferred from --path if omitted)'
+	)
+	.option(
+		'--option <label:value>',
+		'A decision button (repeatable); clicking replies value to --agent. Requires --type decision',
+		(val: string, prev: string[]) => prev.concat([val]),
+		[] as string[]
+	)
+	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
+	.option(
+		'-a, --agent <id>',
+		'Owning agent - lets a file cadenza expand into its tab, and the reply target for --type decision'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cadenzaOpen);
+
+cadenza
+	.command('update <id>')
+	.description('Update fields of an open cadenza in place (the living view)')
+	.option('--title <text>', 'New header label')
+	.option('--body <text>', 'New body content (tracker line or markdown source)')
+	.option('--body-file <path>', 'Read new body content from a file')
+	.option('--path <path>', 'New file/image path')
+	.option('-c, --color <color>', 'green | yellow | orange | red | theme')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cadenzaUpdate);
+
+cadenza
+	.command('close <id>')
+	.description('Close a cadenza view by id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cadenzaClose);
+
+// Movement commands - compose the roomy, agent-driven "living view" in the main
+// window. Each item is free-placed at (x, y) and renders a native BlockView or
+// an isolated single-page HTML mockup.
+const movement = program
+	.command('movement')
+	.description(
+		'Compose the agent-driven movement (free-placed data views) in the Maestro main window'
+	);
+
+movement
+	.command('begin <id>')
+	.description('Immediately show a host-rendered Concerto shell before its HTML is ready')
+	.requiredOption('--title <text>', 'Concerto title shown in its frame')
+	.option('--x <px>', 'X position (px from the Concerto stage left)')
+	.option('--y <px>', 'Y position (px from the Concerto stage top)')
+	.option('--width <px>', 'Shell width in px (default: 880)')
+	.option('--height <px>', 'Shell height in px (default: 560)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementBegin);
+
+movement
+	.command('add <id>')
+	.description('Add (or replace by id) a native data view or interactive HTML mockup')
+	.option('--type <type>', 'view | html (default: view)')
+	.option('--x <px>', 'X position (px from movement left)')
+	.option('--y <px>', 'Y position (px from movement top)')
+	.option('--width <px>', 'Item width in px (default: 500 view, 880 html)')
+	.option('--height <px>', 'Optional fixed item height in px (default: fit content)')
+	.option('--title <text>', 'Item header title')
+	.option(
+		'--body <content>',
+		'Block spec JSON for --type view, or a complete document for --type html'
+	)
+	.option('--body-file <path>', 'Read the view JSON or HTML document from a file')
+	.option('--html-file <path>', 'Read an HTML document from a file (implies --type html)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementAdd);
+
+movement
+	.command('update <id>')
+	.description('Update fields of an existing movement item in place')
+	.option('--type <type>', 'Switch or confirm the item type: view | html')
+	.option('--x <px>', 'New X position')
+	.option('--y <px>', 'New Y position')
+	.option('--width <px>', 'New width')
+	.option('--height <px>', 'New fixed height')
+	.option('--title <text>', 'New title')
+	.option('--body <content>', 'New block spec JSON or HTML document')
+	.option('--body-file <path>', 'Read the new view JSON or HTML document from a file')
+	.option('--html-file <path>', 'Read a new HTML document from a file (implies --type html)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementUpdate);
+
+movement
+	.command('move <id>')
+	.description('Reposition a movement item')
+	.requiredOption('--x <px>', 'New X position')
+	.requiredOption('--y <px>', 'New Y position')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementMove);
+
+movement
+	.command('remove <id>')
+	.description('Remove a movement item by id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementRemove);
+
+movement
+	.command('clear')
+	.description('Remove all movement items')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementClear);
+
+movement
+	.command('progress <id>')
+	.description("Report one Concerto track's current design phase and subdivision")
+	.requiredOption('--title <text>', 'Concerto title shown in the pipeline')
+	.requiredOption('--phase <phase>', 'composing | refining | arranging | reviewing | testing')
+	.option('--step <n>', 'Active one-based substep (default: 1)')
+	.option('--steps <n>', 'Planned substeps in this phase, 1 through 8 (default: 1)')
+	.option(
+		'--notes <pattern>',
+		'Comma-separated quarter/eighth/sixteenth notes with optional +dotted, +triad, or +tie'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementProgress);
+
+movement
+	.command('state')
+	.description('Read the current movement layout (items + size) to compose around it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementState);
+
+movement
+	.command('inspect <id>')
+	.description('Capture a live HTML Movement preview and report its runtime diagnostics')
+	.requiredOption('--output <png>', 'Write the live mockup screenshot to this PNG path')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementInspect);
+
+movement
+	.command('interact <id>')
+	.description('Interact with a live HTML Movement by CSS selector')
+	.option('--click <selector>', 'Click the matching element')
+	.option('--type <selector>', 'Enter text into the matching input or editable element')
+	.option('--value <text>', 'Text used with --type')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementInteract);
+program
+	.command('support-package')
+	.description(
+		'Write a sanitized support (debug) package zip, as Create Debug Package does, without a save dialog'
+	)
+	.requiredOption(
+		'-o, --output <dir>',
+		'Directory to write maestro-debug-<timestamp>.zip into (created if missing; ~ expanded)'
+	)
+	.option('--no-logs', 'Leave out application logs')
+	.option('--no-errors', 'Leave out recent errors')
+	.option('--no-sessions', 'Leave out agent/session metadata')
+	.option('--no-group-chats', 'Leave out group chat metadata')
+	.option('--no-batch-state', 'Leave out Auto Run state')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(supportPackage);
+
+const feedback = program
+	.command('feedback')
+	.description(
+		'Send Feedback from the CLI: check gh, find duplicates, +1 an issue, or file a new one (open the modal with `open feedback`)'
+	);
+
+feedback
+	.command('auth')
+	.description(
+		'Check that the GitHub CLI (gh) is installed, logged in, and allowed to file on the feedback repo (required to file); names the gh account, and prints the login command when signing in can fix it'
+	)
+	.option('--fresh', 'Skip the cached verdict (after logging in elsewhere)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackAuth);
+
+feedback
+	.command('login')
+	.description(
+		'Sign the GitHub CLI in for feedback (gh auth login, device code + browser), as the modal\'s "Log in to GitHub" does'
+	)
+	.option('--json', 'Output the result as JSON (for scripting)')
+	.action(feedbackLogin);
+
+feedback
+	.command('accounts')
+	.description(
+		'List the provider accounts the Feedback chat can run as, in the order it tries them (first usable one wins)'
+	)
+	.option(
+		'--use <key>',
+		'Make this account (a key from the list) the one the next chat tries first'
+	)
+	.option('--clear', 'Forget the remembered account and pick automatically again')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackAccounts);
+
+feedback
+	.command('search <query>')
+	.description('Search RunMaestro/Maestro for issues matching a description')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackSearch);
+
+feedback
+	.command('submit')
+	.description(
+		'File a GitHub issue exactly as the Feedback modal does. Stops on likely duplicates unless --force'
+	)
+	.requiredOption('-c, --category <category>', 'bug | feature | improvement | general')
+	.requiredOption('-s, --summary <text>', 'One-line summary (max 120 chars; becomes the title)')
+	.requiredOption(
+		'-e, --expected <text>',
+		'Expected behavior (bug) or desired outcome (other categories)'
+	)
+	.requiredOption('-a, --actual <text>', 'Actual behavior (bug) or details (other categories)')
+	.option('--steps <text>', 'Steps to reproduce')
+	.option('--context <text>', 'Additional context')
+	.option(
+		'--attach <image...>',
+		'Screenshots to attach: PNG, JPG, GIF, or WebP, up to 5 files, 10 MB each'
+	)
+	.option(
+		'--support-package',
+		'Generate a sanitized support package and link it from the issue (the modal checkbox)'
+	)
+	.option('--force', 'File even when possible duplicates exist')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackSubmit);
+
+feedback
+	.command('subscribe <issue>')
+	.description('Add a +1 to an existing issue instead of filing a duplicate')
+	.option('--comment <text>', 'Also post this comment on the issue')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackSubscribe);
+
 // Stats commands - introspect the Usage Dashboard's SQLite store (requires the
 // running Maestro desktop app, which owns the open database).
 program
@@ -1364,6 +2372,67 @@ program
 	)
 	.option('--json', 'Output rows as JSON instead of a tab-separated table')
 	.action(statsQuery);
+
+// Plugin authoring commands - scaffold, validate, sign, and package a Maestro
+// plugin from the command line. The manifest/signature contracts are the shared
+// pure modules the host loads against, so what validates and signs here is what
+// the desktop app verifies at install time.
+const plugin = program
+	.command('plugin')
+	.description('Author, validate, sign, and package Maestro plugins');
+
+plugin
+	.command('init [dir]')
+	.description('Scaffold a new plugin in <dir> (defaults to the current directory)')
+	.option('--tier <0|1|2>', 'Plugin trust/capability tier (default 1)')
+	.option('--id <id>', 'Plugin id (defaults to a slug of the directory name)')
+	.option('--name <name>', 'Human-readable plugin name (defaults to the id)')
+	.option('--force', 'Scaffold into a non-empty directory')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginInit(dir, options));
+
+plugin
+	.command('validate [dir]')
+	.description('Validate <dir>/plugin.json and, when present, its signature.json')
+	.option(
+		'--trusted-key <keys>',
+		'Comma-separated base64 public keys to treat as trusted when resolving signature status'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginValidate(dir, options));
+
+plugin
+	.command('sign <dir>')
+	.description('Sign <dir> with ed25519 and write signature.json')
+	.option('--key <path>', 'Private key to sign with (PEM, or base64-encoded PKCS8 DER)')
+	.option('--gen-key', 'Generate a fresh ed25519 keypair (requires --key-out)')
+	.option('--key-out <path>', 'Where to write the generated private key (with --gen-key)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginSign(dir, options));
+
+plugin
+	.command('pack <dir>')
+	.description('Package <dir> into a distributable archive (excludes node_modules/.git/keys)')
+	.option('--out <file>', 'Output archive path (default <id>-<version>.tgz)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginPack(dir, options));
+
+// MCP bridge command - an MCP stdio server that exposes the running app's
+// registered plugin tools to an agent's model. Agents spawn this via their
+// per-invocation MCP config (see src/shared/plugins/mcp-agent-config.ts); it
+// bridges tools/list + tools/call to the desktop over the CLI WebSocket, each
+// call risk-gated before the broker invokes the plugin handler.
+const mcp = program
+	.command('mcp')
+	.description('Model Context Protocol bridge for Maestro plugin tools');
+
+mcp
+	.command('serve')
+	.description(
+		'Run an MCP stdio server exposing registered plugin tools (spawned by an agent via its MCP config)'
+	)
+	.option('--tab <id>', 'Originating desktop tab id (diagnostics only)')
+	.action((options) => mcpServe(options));
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander

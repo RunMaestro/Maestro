@@ -1,5 +1,5 @@
 /**
- * TabBreakdown - per-tab stat tiles inside the per-agent detail modal.
+ * TabBreakdown - the per-tab activity list inside the per-agent detail modal.
  *
  * An agent's queries are already attributed to the AI tab that issued them
  * (`query_events.tab_id`), so the agent's totals can be split per tab without
@@ -21,6 +21,12 @@
  * accumulates hundreds of retired tab ids, and a list of bare octets is not
  * what someone opening this modal is looking for. The wider filters are there
  * for when the question really is "what was I working on recently".
+ *
+ * It renders as a sortable table rather than a tile grid: a tab row carries a
+ * name and four small numbers, which is little enough that rows scan faster
+ * than cards, and it keeps this view visually distinct from the agent tiles the
+ * reader just clicked through to get here. Column headers are the sort control,
+ * so there is no separate sort bar to keep in agreement with them.
  */
 
 import { memo, useMemo, useState } from 'react';
@@ -29,15 +35,18 @@ import type { QueryEvent } from '../../../shared/stats-types';
 import { formatAgeShort, formatDurationHuman, formatNumber } from '../../../shared/formatters';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
+import { MiniBadge } from '../ui/MiniBadge';
 import { Pager } from '../ui/Pager';
+import { SortableTh } from '../ui/SortableTh';
 import { usePagination } from '../../hooks/ui/usePagination';
-import { EntityTile } from './EntityTile';
+import { useTableSort, type SortDirection } from '../../hooks/ui/useTableSort';
+import { Sparkline } from './Sparkline';
 
-/** Days of daily-count history behind each tile's sparkline. */
+/** Days of daily-count history behind each row's sparkline. */
 const SPARKLINE_DAYS = 14;
 
 /**
- * Tiles per page. Chosen so the bounded filters never paginate - Last 25 is the
+ * Rows per page. Chosen so the bounded filters never paginate - Last 25 is the
  * largest of them - and only "All" (which reaches four figures on a long-lived
  * agent) turns the pager on. That way the control appears exactly when it is
  * needed and is absent the rest of the time.
@@ -47,7 +56,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 type TabStatus = 'open' | 'snoozed' | 'closed';
 
-export type TabSortMode = 'recent' | 'queries' | 'duration' | 'name';
+export type TabSortMode = 'recent' | 'queries' | 'duration' | 'auto' | 'name';
 export type TabFilterMode = 'open' | 'recent10' | 'recent25' | 'all';
 
 interface TabStat {
@@ -72,12 +81,33 @@ interface TabStat {
 	sparkline: number[] | null;
 }
 
-const SORT_OPTIONS: SegmentedOption<TabSortMode>[] = [
-	{ value: 'recent', label: 'Recent', title: 'Most recently active first' },
-	{ value: 'queries', label: 'Queries', title: 'Most queries first' },
-	{ value: 'duration', label: 'Time', title: 'Most total agent time first' },
-	{ value: 'name', label: 'Name', title: 'Alphabetical' },
+/**
+ * The table's sortable columns, in render order. Every column except the
+ * sparkline sorts - a header row where only some cells respond to a click
+ * reads as broken rather than as a deliberate limit.
+ */
+const COLUMNS: Array<{
+	key: TabSortMode;
+	label: string;
+	title: string;
+	align: 'left' | 'right';
+}> = [
+	{ key: 'name', label: 'Tab', title: 'Sort alphabetically', align: 'left' },
+	{ key: 'queries', label: 'Queries', title: 'Sort by query count', align: 'right' },
+	{ key: 'duration', label: 'Time', title: 'Sort by total agent time', align: 'right' },
+	{
+		key: 'auto',
+		label: 'Auto %',
+		title: 'Sort by share of Auto Run / Cue queries',
+		align: 'right',
+	},
+	{ key: 'recent', label: 'Last Active', title: 'Sort by recency', align: 'right' },
 ];
+
+/** Text columns read A-Z first; magnitude columns read biggest-first. */
+function defaultDirectionFor(key: TabSortMode): SortDirection {
+	return key === 'name' ? 'asc' : 'desc';
+}
 
 const FILTER_OPTIONS: SegmentedOption<TabFilterMode>[] = [
 	{ value: 'open', label: 'Open', title: 'Tabs currently open on this agent' },
@@ -86,7 +116,7 @@ const FILTER_OPTIONS: SegmentedOption<TabFilterMode>[] = [
 	{ value: 'all', label: 'All', title: 'Every tab with recorded activity' },
 ];
 
-/** How many tiles each filter admits. `null` means unbounded. */
+/** How many rows each filter admits. `null` means unbounded. */
 const FILTER_LIMITS: Record<TabFilterMode, number | null> = {
 	open: null,
 	recent10: 10,
@@ -124,7 +154,7 @@ function formatUnknownTabLabel(tabId: string): string {
 
 /**
  * Bucket a tab's events into daily counts over the trailing window. Returns
- * null when nothing lands in the window, so the tile can omit the sparkline
+ * null when nothing lands in the window, so the row can omit the sparkline
  * rather than draw a flat line that reads as "idle right now".
  */
 function buildTabSparkline(events: QueryEvent[], now: number): number[] | null {
@@ -158,7 +188,7 @@ export function buildTabStats(session: Session, events: QueryEvent[], now: numbe
 		else byTab.set(event.tabId, [event]);
 	}
 
-	// Open tabs with no recorded queries still deserve a tile.
+	// Open tabs with no recorded queries still deserve a row.
 	for (const tab of session.aiTabs ?? []) {
 		if (!byTab.has(tab.id)) byTab.set(tab.id, []);
 	}
@@ -190,7 +220,7 @@ export function buildTabStats(session: Session, events: QueryEvent[], now: numbe
 	return stats;
 }
 
-/** Apply the tile filter. Recent-N sorts by recency first so "last 10" means
+/** Apply the row filter. Recent-N sorts by recency first so "last 10" means
  *  the 10 most recent regardless of the sort the user is viewing them in. */
 export function applyTabFilter(stats: TabStat[], filter: TabFilterMode): TabStat[] {
 	if (filter === 'open') return stats.filter((s) => s.status === 'open');
@@ -202,24 +232,34 @@ export function applyTabFilter(stats: TabStat[], filter: TabFilterMode): TabStat
 		.slice(0, limit);
 }
 
-export function sortTabStats(stats: TabStat[], sort: TabSortMode): TabStat[] {
-	const sorted = stats.slice();
-	switch (sort) {
-		case 'queries':
-			sorted.sort((a, b) => b.queries - a.queries);
-			break;
-		case 'duration':
-			sorted.sort((a, b) => b.totalDuration - a.totalDuration);
-			break;
-		case 'name':
-			sorted.sort((a, b) => a.name.localeCompare(b.name));
-			break;
-		case 'recent':
-		default:
-			sorted.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
-			break;
-	}
-	return sorted;
+export function sortTabStats(
+	stats: TabStat[],
+	sort: TabSortMode,
+	direction: SortDirection = defaultDirectionFor(sort)
+): TabStat[] {
+	const flip = direction === 'desc' ? -1 : 1;
+	return stats.slice().sort((a, b) => {
+		switch (sort) {
+			case 'queries':
+				return flip * (a.queries - b.queries);
+			case 'duration':
+				return flip * (a.totalDuration - b.totalDuration);
+			case 'auto':
+				// A tab with no recorded queries has no share to rank, so it sinks
+				// in both directions instead of leading the ascending view on a
+				// value it does not have.
+				if (a.autoPercent === null || b.autoPercent === null) {
+					if (a.autoPercent === b.autoPercent) return 0;
+					return a.autoPercent === null ? 1 : -1;
+				}
+				return flip * (a.autoPercent - b.autoPercent);
+			case 'name':
+				return flip * a.name.localeCompare(b.name);
+			case 'recent':
+			default:
+				return flip * ((a.lastActive ?? 0) - (b.lastActive ?? 0));
+		}
+	});
 }
 
 interface TabBreakdownProps {
@@ -237,7 +277,9 @@ export const TabBreakdown = memo(function TabBreakdown({
 	events,
 	now,
 }: TabBreakdownProps) {
-	const [sortMode, setSortMode] = useState<TabSortMode>('recent');
+	const { sortKey, direction, toggleSort } = useTableSort<TabSortMode>('recent', {
+		defaultDirectionFor,
+	});
 	const [filterMode, setFilterMode] = useState<TabFilterMode>('open');
 
 	const allStats = useMemo(
@@ -246,14 +288,14 @@ export const TabBreakdown = memo(function TabBreakdown({
 	);
 
 	const visibleStats = useMemo(
-		() => sortTabStats(applyTabFilter(allStats, filterMode), sortMode),
-		[allStats, filterMode, sortMode]
+		() => sortTabStats(applyTabFilter(allStats, filterMode), sortKey, direction),
+		[allStats, filterMode, sortKey, direction]
 	);
 
 	// Reset to page 1 whenever the user changes what they are looking at:
 	// staying on page 7 after re-sorting would show an arbitrary slice of a
 	// brand-new ordering.
-	const pager = usePagination(visibleStats, TABS_PER_PAGE, `${filterMode}:${sortMode}`);
+	const pager = usePagination(visibleStats, TABS_PER_PAGE, `${filterMode}:${sortKey}:${direction}`);
 
 	if (!events) {
 		return (
@@ -273,55 +315,40 @@ export const TabBreakdown = memo(function TabBreakdown({
 
 	return (
 		<div className="flex flex-col gap-3" data-testid="tab-breakdown">
-			<div className="flex items-center justify-between gap-3 flex-wrap">
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<SegmentedControl
-						value={filterMode}
-						onChange={setFilterMode}
-						options={FILTER_OPTIONS}
+			<div className="flex items-center gap-2 flex-wrap">
+				<span className="text-xs" style={{ color: theme.colors.textDim }}>
+					Show:
+				</span>
+				<SegmentedControl
+					value={filterMode}
+					onChange={setFilterMode}
+					options={FILTER_OPTIONS}
+					theme={theme}
+					ariaLabel="Filter tabs"
+					testId="tab-breakdown-filter"
+				/>
+				<span
+					className="text-xs tabular-nums whitespace-nowrap"
+					style={{ color: theme.colors.textDim }}
+					data-testid="tab-breakdown-count"
+				>
+					{pager.isPaginated
+						? `${pager.range.from}-${pager.range.to} of ${visibleStats.length}`
+						: `${visibleStats.length} of ${allStats.length}`}
+				</span>
+				{pager.isPaginated && (
+					<Pager
 						theme={theme}
-						ariaLabel="Filter tabs"
-						testId="tab-breakdown-filter"
+						page={pager.page}
+						totalPages={pager.totalPages}
+						onPrev={pager.prevPage}
+						onNext={pager.nextPage}
+						canGoPrev={pager.canGoPrev}
+						canGoNext={pager.canGoNext}
+						ariaLabel="Tab pages"
+						testId="tab-breakdown-pager"
 					/>
-					<span
-						className="text-xs tabular-nums whitespace-nowrap"
-						style={{ color: theme.colors.textDim }}
-						data-testid="tab-breakdown-count"
-					>
-						{pager.isPaginated
-							? `${pager.range.from}-${pager.range.to} of ${visibleStats.length}`
-							: `${visibleStats.length} of ${allStats.length}`}
-					</span>
-					{pager.isPaginated && (
-						<Pager
-							theme={theme}
-							page={pager.page}
-							totalPages={pager.totalPages}
-							onPrev={pager.prevPage}
-							onNext={pager.nextPage}
-							canGoPrev={pager.canGoPrev}
-							canGoNext={pager.canGoNext}
-							ariaLabel="Tab pages"
-							testId="tab-breakdown-pager"
-						/>
-					)}
-				</div>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Sort by:
-					</span>
-					<SegmentedControl
-						value={sortMode}
-						onChange={setSortMode}
-						options={SORT_OPTIONS}
-						theme={theme}
-						ariaLabel="Sort tabs"
-						testId="tab-breakdown-sort"
-					/>
-				</div>
+				)}
 			</div>
 
 			{visibleStats.length === 0 ? (
@@ -336,22 +363,55 @@ export const TabBreakdown = memo(function TabBreakdown({
 						: 'No tabs match this filter.'}
 				</div>
 			) : (
-				<div
-					className="grid gap-3"
-					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}
-					data-testid="tab-breakdown-grid"
-					role="region"
-					aria-label="Tab activity"
-				>
-					{pager.pageItems.map((stat, index) => (
-						<TabCard
-							key={stat.tabId}
-							stat={stat}
-							theme={theme}
-							animationIndex={index}
-							highlightedStat={sortMode}
-						/>
-					))}
+				<div className="overflow-x-auto">
+					<table
+						className="w-full text-sm"
+						style={{ borderCollapse: 'separate', borderSpacing: 0 }}
+						data-testid="tab-breakdown-table"
+						aria-label="Tab activity"
+					>
+						<thead>
+							<tr>
+								{COLUMNS.map((column) => (
+									<SortableTh
+										key={column.key}
+										columnKey={column.key}
+										label={column.label}
+										sortKey={sortKey}
+										direction={direction}
+										onSort={toggleSort}
+										theme={theme}
+										align={column.align}
+										title={column.title}
+										className={`text-xs font-medium uppercase tracking-wider px-3 py-2 border-b select-none whitespace-nowrap ${
+											column.align === 'right' ? 'text-right' : 'text-left'
+										}`}
+										style={{ borderColor: theme.colors.border }}
+										testId={`tab-breakdown-sort-${column.key}`}
+									/>
+								))}
+								{/* The sparkline has nothing to sort by, so its header is a
+								    plain label rather than a dead button. */}
+								<th
+									className="text-right text-xs font-medium uppercase tracking-wider px-3 py-2 border-b select-none"
+									style={{ color: theme.colors.textDim, borderColor: theme.colors.border }}
+								>
+									Activity
+								</th>
+							</tr>
+						</thead>
+						<tbody>
+							{pager.pageItems.map((stat, index) => (
+								<TabRow
+									key={stat.tabId}
+									stat={stat}
+									theme={theme}
+									isOdd={index % 2 === 1}
+									sortKey={sortKey}
+								/>
+							))}
+						</tbody>
+					</table>
 				</div>
 			)}
 		</div>
@@ -366,89 +426,151 @@ function getTabStatusColor(stat: TabStat, theme: Theme): string {
 	return theme.colors.textDim;
 }
 
-interface TabCardProps {
+interface TabRowProps {
 	stat: TabStat;
 	theme: Theme;
-	animationIndex: number;
-	highlightedStat: TabSortMode;
+	/** Zebra striping flag; the row owns its own hover color. */
+	isOdd: boolean;
+	/** Active sort column, accented in the row so the ordering is legible. */
+	sortKey: TabSortMode;
 }
 
-const TabCard = memo(function TabCard({
-	stat,
-	theme,
-	animationIndex,
-	highlightedStat,
-}: TabCardProps) {
-	const badges = [];
-	if (stat.isActive) badges.push({ label: 'Active', testId: 'tab-card-active-badge' });
-	if (stat.status === 'snoozed') {
-		badges.push({
-			label: 'Snoozed',
-			testId: 'tab-card-snoozed-badge',
-			color: theme.colors.warning,
-		});
-	}
+const TabRow = memo(function TabRow({ stat, theme, isOdd, sortKey }: TabRowProps) {
+	const restingBackground = isOdd ? `${theme.colors.border}10` : 'transparent';
 
-	const ageLabel = stat.lastActive ? formatAgeShort(stat.lastActive) : undefined;
+	const ageLabel = stat.lastActive ? formatAgeShort(stat.lastActive) : '—';
 	const ageTitle = stat.lastActive
 		? `Last active ${new Date(stat.lastActive).toLocaleString()}`
 		: undefined;
-
 	const durationLabel = stat.totalDuration > 0 ? formatDurationHuman(stat.totalDuration) : '—';
 	const autoLabel = stat.autoPercent === null ? '—' : `${stat.autoPercent}%`;
 
-	const ariaLabel = `${stat.name}, ${stat.status} tab, ${stat.queries} ${
-		stat.queries === 1 ? 'query' : 'queries'
-	}, ${durationLabel} total${ageLabel ? `, last active ${ageLabel}` : ''}`;
+	// Only states worth calling out get a chip. An ordinary open tab is already
+	// described by its green dot, so tagging it "Open" would put a chip on
+	// nearly every row and stop the chips meaning anything.
+	const badge =
+		stat.isActive || stat.status !== 'open'
+			? {
+					label: stat.isActive ? 'Active' : stat.status === 'snoozed' ? 'Snoozed' : 'Closed',
+					color:
+						stat.status === 'snoozed'
+							? theme.colors.warning
+							: stat.status === 'closed'
+								? theme.colors.textDim
+								: theme.colors.accent,
+					testId: stat.isActive
+						? 'tab-row-active-badge'
+						: stat.status === 'snoozed'
+							? 'tab-row-snoozed-badge'
+							: 'tab-row-closed-badge',
+				}
+			: null;
+
+	const numericCell = (column: TabSortMode) =>
+		`px-3 py-2 text-right tabular-nums whitespace-nowrap${
+			sortKey === column ? ' font-semibold' : ''
+		}`;
+	const numericColor = (column: TabSortMode, muted: boolean) =>
+		sortKey === column && !muted
+			? theme.colors.accent
+			: muted
+				? theme.colors.textDim
+				: theme.colors.textMain;
 
 	return (
-		<EntityTile
-			theme={theme}
-			testId="tab-card"
-			title={stat.name}
-			statusColor={getTabStatusColor(stat, theme)}
-			statusPulsing={stat.isBusy}
-			age={ageLabel}
-			ageTitle={ageTitle}
-			ageHighlighted={highlightedStat === 'recent'}
-			badges={badges.length > 0 ? badges : undefined}
-			// A closed tab is history rather than live state; the dashed border
-			// separates the two at a glance without needing a third badge.
-			isDashed={stat.status === 'closed'}
-			stats={[
-				{
-					label: 'Queries',
-					value: formatNumber(stat.queries),
-					highlighted: highlightedStat === 'queries',
-					testId: 'tab-card-query-count',
-				},
-				{
-					label: 'Time',
-					value: durationLabel,
-					highlighted: highlightedStat === 'duration',
-					muted: stat.totalDuration === 0,
-					testId: 'tab-card-duration',
-					title:
-						stat.avgDuration > 0
-							? `${formatDurationHuman(stat.avgDuration)} average per query`
-							: undefined,
-				},
-				{
-					label: 'Auto %',
-					value: autoLabel,
-					muted: stat.autoPercent === null,
-					testId: 'tab-card-auto-pct',
-					title:
-						stat.autoPercent === null
-							? 'No recorded queries'
-							: `${stat.autoPercent}% of queries from Auto Run / Cue`,
-				},
-			]}
-			sparkline={stat.sparkline ?? undefined}
-			sparklineColor={getTabStatusColor(stat, theme)}
-			animationIndex={animationIndex}
-			ariaLabel={ariaLabel}
-		/>
+		<tr
+			className="transition-colors"
+			style={{ backgroundColor: restingBackground }}
+			data-testid="tab-row"
+			onMouseEnter={(e) => {
+				e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`;
+			}}
+			onMouseLeave={(e) => {
+				e.currentTarget.style.backgroundColor = restingBackground;
+			}}
+		>
+			<td className="px-3 py-2 max-w-[260px]">
+				<div className="flex items-center gap-2 min-w-0">
+					<span
+						className="flex-shrink-0 w-2 h-2 rounded-full"
+						style={{
+							backgroundColor: getTabStatusColor(stat, theme),
+							animation: stat.isBusy ? 'status-pulse 1.4s ease-in-out infinite' : undefined,
+						}}
+						aria-hidden="true"
+						data-testid="tab-row-status-dot"
+					/>
+					<span
+						className="truncate"
+						style={{
+							color: stat.status === 'closed' ? theme.colors.textDim : theme.colors.textMain,
+						}}
+						title={stat.name}
+					>
+						{stat.name}
+					</span>
+					{badge && (
+						<MiniBadge
+							label={badge.label}
+							theme={theme}
+							color={badge.color}
+							testId={badge.testId}
+						/>
+					)}
+				</div>
+			</td>
+			<td
+				className={numericCell('queries')}
+				style={{ color: numericColor('queries', false) }}
+				data-testid="tab-row-query-count"
+			>
+				{formatNumber(stat.queries)}
+			</td>
+			<td
+				className={numericCell('duration')}
+				style={{ color: numericColor('duration', stat.totalDuration === 0) }}
+				title={
+					stat.avgDuration > 0
+						? `${formatDurationHuman(stat.avgDuration)} average per query`
+						: undefined
+				}
+				data-testid="tab-row-duration"
+			>
+				{durationLabel}
+			</td>
+			<td
+				className={numericCell('auto')}
+				style={{ color: numericColor('auto', stat.autoPercent === null) }}
+				title={
+					stat.autoPercent === null
+						? 'No recorded queries'
+						: `${stat.autoPercent}% of queries from Auto Run / Cue`
+				}
+				data-testid="tab-row-auto-pct"
+			>
+				{autoLabel}
+			</td>
+			<td
+				className={numericCell('recent')}
+				style={{ color: numericColor('recent', stat.lastActive === null) }}
+				title={ageTitle}
+				data-testid="tab-row-age"
+			>
+				{ageLabel}
+			</td>
+			<td className="px-3 py-2 text-right">
+				{stat.sparkline && (
+					<div className="inline-flex opacity-80 pointer-events-none align-middle">
+						<Sparkline
+							data={stat.sparkline}
+							color={getTabStatusColor(stat, theme)}
+							width={70}
+							height={18}
+						/>
+					</div>
+				)}
+			</td>
+		</tr>
 	);
 });
 

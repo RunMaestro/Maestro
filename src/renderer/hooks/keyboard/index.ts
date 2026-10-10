@@ -22,6 +22,10 @@ export type {
 	UseKeyboardShortcutHelpersReturn,
 } from './useKeyboardShortcutHelpers';
 
+// Tab-tiling (split panes) Ctrl+Cmd shortcut handlers
+export { useTilingShortcuts } from './useTilingShortcuts';
+export type { TilingShortcutHandlers } from './useTilingShortcuts';
+
 // Generic list navigation
 export { useListNavigation } from './useListNavigation';
 export type { UseListNavigationOptions, UseListNavigationReturn } from './useListNavigation';

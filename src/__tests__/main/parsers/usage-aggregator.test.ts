@@ -65,6 +65,38 @@ describe('aggregateModelUsage', () => {
 	it('should use default context window of 200000', () => {
 		const result = aggregateModelUsage(undefined, {}, 0);
 		expect(result.contextWindow).toBe(200000);
+		// The default is an injected fallback, never provider truth (finding P1).
+		expect(result.contextWindowResolved).toBeUndefined();
+	});
+
+	it('should treat a below-fallback provider window as authoritative', () => {
+		// Review of PR #1356: a model reporting a window SMALLER than the 200000
+		// fallback is still provider truth, and must both replace the fallback and
+		// be flagged resolved. Comparing against the fallback instead of against
+		// the other reported windows left a 128k-class model unreported, so the
+		// renderer let a stored customContextWindow outrank the provider and drew
+		// the gauge and timeline against the wrong denominator.
+		const modelUsage: Record<string, ModelStats> = {
+			model1: { inputTokens: 100, contextWindow: 150000 },
+		};
+
+		const result = aggregateModelUsage(modelUsage, {}, 0);
+		expect(result.contextWindow).toBe(150000);
+		expect(result.contextWindowResolved).toBe(true);
+	});
+
+	it('should keep the highest window when reports straddle the fallback', () => {
+		// The max is taken across REPORTED windows only, so a small model reporting
+		// after a large one cannot drag the window down, and the fallback never
+		// wins over a real report.
+		const modelUsage: Record<string, ModelStats> = {
+			model1: { inputTokens: 100, contextWindow: 150000 },
+			model2: { inputTokens: 100, contextWindow: 180000 },
+		};
+
+		const result = aggregateModelUsage(modelUsage, {}, 0);
+		expect(result.contextWindow).toBe(180000);
+		expect(result.contextWindowResolved).toBe(true);
 	});
 
 	it('should use highest context window from models', () => {
@@ -76,6 +108,8 @@ describe('aggregateModelUsage', () => {
 
 		const result = aggregateModelUsage(modelUsage, {}, 0);
 		expect(result.contextWindow).toBe(300000);
+		// A model actually reported this one, so it is authoritative.
+		expect(result.contextWindowResolved).toBe(true);
 	});
 });
 

@@ -16,14 +16,6 @@ export interface SessionState {
 	 *  correct location. Undefined when the config lives at the session's own root. */
 	configRoot?: string;
 	triggerSources: CueTriggerSource[];
-	/**
-	 * Filesystem watchers for every cue.yaml that contributes to this session's
-	 * config - usually one (the local or ancestor file) but two when the session
-	 * has its OWN local cue.yaml AND merges in subs from a higher ancestor that
-	 * explicitly target it (cross-root pipelines). Each watcher fires
-	 * `onRefreshRequested` so any of them changing reloads the merged view.
-	 */
-	yamlWatchers: Array<() => void>;
 	lastTriggered?: string;
 	/** Non-empty when this session's unowned subscriptions are suppressed because
 	 *  ownership of the cue.yaml is contested or unresolvable. Used by the Cue

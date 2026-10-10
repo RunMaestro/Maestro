@@ -8,6 +8,9 @@
 export { useRemoteIntegration } from './useRemoteIntegration';
 export type { UseRemoteIntegrationDeps, UseRemoteIntegrationReturn } from './useRemoteIntegration';
 
+// Group chat requests from the CLI / web client (mounted by useRemoteIntegration)
+export { useRemoteGroupChat } from './useRemoteGroupChat';
+
 // Live overlay panel state
 export { useLiveOverlay } from './useLiveOverlay';
 export type { UseLiveOverlayReturn, TunnelStatus, UrlTab } from './useLiveOverlay';
@@ -29,6 +32,9 @@ export type {
 // SSH remote configuration management
 export { useSshRemotes } from './useSshRemotes';
 export type { UseSshRemotesReturn } from './useSshRemotes';
+
+// SSH remote id -> display name lookup (for list surfaces labelling many agents)
+export { useSshRemoteNames } from './useSshRemoteNames';
 
 // Remote command handling & SSH name mapping (Phase 2K)
 export { useRemoteHandlers } from './useRemoteHandlers';

@@ -4,6 +4,7 @@ import {
 	AgentConfig,
 	AgentConfigOption,
 	AgentCapabilities,
+	getAgentIds,
 } from '../../../main/agents';
 
 // Mock dependencies
@@ -30,10 +31,30 @@ vi.mock('../../../main/agents/opencode-config', async () => {
 	};
 });
 
+// Spy on the omp catalog prime at the module boundary so the detector's
+// detection-time warm-up is observable without firing the real `omp models
+// --json` fetch. Keep every other export real (setOmpModelCatalog and
+// computeOmpCatalogKey are used by the discoverModels path and by the
+// default-identity key assertion below).
+vi.mock('../../../main/agents/omp-model-catalog', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/agents/omp-model-catalog')>(
+		'../../../main/agents/omp-model-catalog'
+	);
+	return {
+		...actual,
+		primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
+	};
+});
+
 // Make readFileSync mockable for ESM - vi.spyOn on ESM namespace fails
 // Also mock fs.promises.access to prevent real filesystem probing
-const { _readFileSync, _fsAccess } = vi.hoisted(() => ({
+const { _readFileSync, _readdirSync, _fsAccess } = vi.hoisted(() => ({
 	_readFileSync: vi.fn(),
+	// Claude Code model discovery lists ~/.claude/cache/model-catalog. Mock it so
+	// the suite never reads the developer's real catalog.
+	_readdirSync: vi.fn(() => {
+		throw new Error('ENOENT: no such file or directory');
+	}),
 	_fsAccess: vi.fn().mockRejectedValue(new Error('ENOENT: no such file or directory')),
 }));
 vi.mock('fs', async () => {
@@ -43,6 +64,7 @@ vi.mock('fs', async () => {
 	const mod: Record<string, unknown> = {};
 	for (const key of Reflect.ownKeys(actual) as string[]) {
 		if (key === 'readFileSync') continue;
+		if (key === 'readdirSync') continue;
 		if (key === 'promises') continue;
 		try {
 			mod[key] = (actual as any)[key];
@@ -51,6 +73,7 @@ vi.mock('fs', async () => {
 		}
 	}
 	mod.readFileSync = _readFileSync;
+	mod.readdirSync = _readdirSync;
 	// Clone promises with overridden access
 	const promMod: Record<string, unknown> = {};
 	for (const key of Reflect.ownKeys(actual.promises) as string[]) {
@@ -70,6 +93,7 @@ vi.mock('fs', async () => {
 // Get mocked modules
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../main/agents/omp-model-catalog';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -84,6 +108,9 @@ describe('agent-detector', () => {
 		// Reset fs.promises.access mock to always fail (set up via vi.mock above).
 		// This ensures tests rely on 'which'/'where' command mocking instead of actual filesystem.
 		_fsAccess.mockRejectedValue(new Error('ENOENT: no such file or directory'));
+		_readdirSync.mockImplementation(() => {
+			throw new Error('ENOENT: no such file or directory');
+		});
 		detector = new AgentDetector();
 		// Default: no binaries found
 		mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 1 });
@@ -322,15 +349,17 @@ describe('agent-detector', () => {
 
 			const agents = await detector.detectAgents();
 
-			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, copilot-cli)
-			expect(agents.length).toBe(8);
+			expect(agents.length).toBe(getAgentIds().length);
 
 			const agentIds = agents.map((a) => a.id);
 			expect(agentIds).toContain('terminal');
 			expect(agentIds).toContain('claude-code');
 			expect(agentIds).toContain('codex');
 			expect(agentIds).toContain('gemini-cli');
+			expect(agentIds).toContain('antigravity');
 			expect(agentIds).toContain('qwen3-coder');
+			expect(agentIds).toContain('hermes');
+			expect(agentIds).toContain('pi');
 			expect(agentIds).toContain('opencode');
 			expect(agentIds).toContain('factory-droid');
 			expect(agentIds).toContain('copilot-cli');
@@ -364,7 +393,7 @@ describe('agent-detector', () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];
 				const terminalBinary = process.platform === 'win32' ? 'powershell.exe' : 'bash';
-				if (binaryName === terminalBinary || binaryName === 'claude') {
+				if (binaryName === terminalBinary || binaryName === 'claude' || binaryName === 'hermes') {
 					return { stdout: `/usr/bin/${binaryName}\n`, stderr: '', exitCode: 0 };
 				}
 				return { stdout: '', stderr: 'not found', exitCode: 1 };
@@ -374,7 +403,94 @@ describe('agent-detector', () => {
 
 			expect(agents.find((a) => a.id === 'terminal')?.available).toBe(true);
 			expect(agents.find((a) => a.id === 'claude-code')?.available).toBe(true);
+			expect(agents.find((a) => a.id === 'hermes')?.available).toBe(true);
 			expect(agents.find((a) => a.id === 'codex')?.available).toBe(false);
+			expect(agents.find((a) => a.id === 'pi')?.available).toBe(false);
+		});
+
+		it('warms the default-identity omp catalog when omp detection succeeds', async () => {
+			// When omp is detected, the detector fires a non-blocking prime of the
+			// default-identity context-window catalog so a user's first prompt
+			// already has the real per-turn window (killing the cold-start race
+			// against the spawn-time prime cap). It must run with the expanded env
+			// and the binary's own dir first on PATH (so a bun-based omp resolves
+			// its co-located runtime), under the default-identity key.
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			await detector.detectAgents();
+
+			expect(primeOmpModelCatalog).toHaveBeenCalledTimes(1);
+			const [command, env, key] = vi.mocked(primeOmpModelCatalog).mock.calls[0];
+			// Primed against the resolved omp binary...
+			expect(command).toBe('/usr/bin/omp');
+			// ...under the default identity (env overrides undefined)...
+			expect(key).toBe(computeOmpCatalogKey('/usr/bin/omp', undefined));
+			// ...with the binary's own dir first on PATH (co-located runtime),
+			// not a raw process.env.
+			const pathEntries = (env?.PATH ?? '').split(path.delimiter);
+			expect(pathEntries[0]).toBe(path.dirname('/usr/bin/omp'));
+			expect(pathEntries.length).toBeGreaterThan(1);
+		});
+
+		it('does not warm the omp catalog when omp is not installed', async () => {
+			// Default mock: no binaries found. omp detection fails, so no prime fires.
+			mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: 'not found', exitCode: 1 });
+
+			await detector.detectAgents();
+
+			expect(primeOmpModelCatalog).not.toHaveBeenCalled();
+		});
+
+		it('should detect Hermes using the shared CLI metadata', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'hermes') {
+					return { stdout: '/usr/local/bin/hermes\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const hermesAgent = agents.find((a) => a.id === 'hermes');
+
+			expect(hermesAgent?.available).toBe(true);
+			expect(hermesAgent?.path).toBe('/usr/local/bin/hermes');
+			expect(hermesAgent?.name).toBe('Hermes');
+			expect(hermesAgent?.binaryName).toBe('hermes');
+		});
+
+		it('should keep Pi unavailable when its binary is missing', async () => {
+			mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: 'not found', exitCode: 1 });
+
+			const agents = await detector.detectAgents();
+			const piAgent = agents.find((a) => a.id === 'pi');
+
+			expect(piAgent?.available).toBe(false);
+			expect(piAgent?.path).toBeUndefined();
+			expect(piAgent?.name).toBe('Pi');
+			expect(piAgent?.binaryName).toBe('pi');
+		});
+
+		it('should detect Pi using the shared CLI metadata', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'pi') {
+					return { stdout: '/usr/local/bin/pi\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const piAgent = agents.find((a) => a.id === 'pi');
+
+			expect(piAgent?.available).toBe(true);
+			expect(piAgent?.path).toBe('/usr/local/bin/pi');
+			expect(piAgent?.name).toBe('Pi');
+			expect(piAgent?.binaryName).toBe('pi');
 		});
 
 		it('should use deduplication for parallel calls', async () => {
@@ -411,7 +527,7 @@ describe('agent-detector', () => {
 			expect(claudeAgent?.command).toBe('claude');
 			expect(claudeAgent?.args).toContain('--print');
 			expect(claudeAgent?.args).toContain('--verbose');
-			expect(claudeAgent?.args).toContain('--dangerously-skip-permissions');
+			expect(claudeAgent?.fullAccessArgs).toContain('--dangerously-skip-permissions');
 		});
 
 		it('should include terminal as hidden agent', async () => {
@@ -604,6 +720,7 @@ describe('agent-detector', () => {
 			const claude = agents.find((a) => a.id === 'claude-code');
 			expect(claude?.available).toBe(true);
 			expect(claude?.path).toBe('/usr/bin/claude');
+			expect(claude?.customPath).toBeUndefined();
 
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('custom path not valid'),
@@ -628,7 +745,9 @@ describe('agent-detector', () => {
 		});
 
 		it('should log when falling back to PATH after invalid custom path', async () => {
-			vi.spyOn(fs.promises, 'stat').mockRejectedValue(new Error('ENOENT'));
+			vi.spyOn(fs.promises, 'stat').mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				if (args[0] === 'claude') {
 					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
@@ -968,8 +1087,8 @@ describe('agent-detector', () => {
 
 			const result = await detectPromise;
 			expect(result).toBeDefined();
-			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, copilot-cli)
-			expect(result.length).toBe(8);
+			// Should stay aligned with the live agent catalog, even as new agents are added.
+			expect(result.length).toBe(getAgentIds().length);
 		});
 
 		it('should handle very long PATH', async () => {
@@ -1050,8 +1169,8 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 		});
 
-		it('should discover models for Claude Code from stats-cache.json', async () => {
-			// Setup: claude-code is available
+		/** Make claude-code resolve so discoverModels() reaches the discovery branch. */
+		const mockClaudeAvailable = () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];
 				if (binaryName === 'claude') {
@@ -1062,17 +1181,51 @@ describe('agent-detector', () => {
 				}
 				return { stdout: '', stderr: 'not found', exitCode: 1 };
 			});
+		};
 
-			// Mock fs.readFileSync to return stats-cache.json with model usage
-			const statsData = JSON.stringify({
-				modelUsage: {
-					'claude-opus-4-6': { inputTokens: 100 },
-					'claude-sonnet-4-6': { inputTokens: 200 },
+		/**
+		 * Catalog shape A: one file holding every surface, keyed by name under
+		 * `document.surfaces`, each surface carrying an ARRAY of selector configs.
+		 * Observed on Claude Code 2.1.257 as `published-<hash>.json`.
+		 */
+		const catalogShapeA = (...ids: string[]) =>
+			JSON.stringify({
+				document: {
+					surfaces: {
+						// Other surfaces carry different model lists; only `cc` is Claude Code.
+						chat: { model_selector_config: [{ models: [{ id: 'chat-only-model' }] }] },
+						cc: { model_selector_config: [{ models: ids.map((id) => ({ id })) }] },
+					},
 				},
 			});
+
+		/**
+		 * Catalog shape B: one file PER surface, the surface named in a field
+		 * instead of a key, and a single selector config object instead of an
+		 * array. Observed on Claude Code 2.1.294 as `<uuid>-<hash>-<surface>.json`.
+		 */
+		const catalogShapeB = (surface: string, ...ids: string[]) =>
+			JSON.stringify({
+				version: 2,
+				fetchedAt: 1790690260525,
+				staleAt: 1790690260525,
+				catalog: {
+					surface,
+					config: {
+						id: 'default',
+						models: ids.map((id) => ({ id, thinking: true })),
+						settings_vocabulary: {},
+					},
+				},
+			});
+
+		it('should discover models from the Claude Code model catalog (shape A)', async () => {
+			mockClaudeAvailable();
+
+			_readdirSync.mockReturnValue(['published-floor.json', 'published-abc123.json']);
 			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
-				if (typeof filePath === 'string' && filePath.includes('stats-cache.json')) {
-					return statsData;
+				if (typeof filePath === 'string' && filePath.includes('published-abc123.json')) {
+					return catalogShapeA('claude-opus-5-5', 'claude-sonnet-5-5');
 				}
 				throw new Error('ENOENT');
 			});
@@ -1081,33 +1234,289 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 
 			const models = await detector.discoverModels('claude-code');
-			// Should include aliases + [1m] variants + historical models
-			expect(models).toContain('fable');
-			expect(models).toContain('sonnet');
-			expect(models).toContain('opus');
-			expect(models).toContain('haiku');
-			expect(models).toContain('opus[1m]');
-			expect(models).toContain('sonnet[1m]');
-			expect(models).toContain('claude-opus-4-6');
-			expect(models).toContain('claude-sonnet-4-6');
-			expect(logger.info).toHaveBeenCalledWith(
-				expect.stringContaining('Discovered 8 models'),
-				'AgentDetector',
-				expect.any(Object)
+			// Aliases stay at the head of the list, full IDs follow.
+			expect(models.slice(0, 6)).toEqual([
+				'fable',
+				'sonnet',
+				'opus',
+				'haiku',
+				'opus[1m]',
+				'sonnet[1m]',
+			]);
+			expect(models).toContain('claude-opus-5-5');
+			expect(models).toContain('claude-sonnet-5-5');
+			// published-floor.json is an index, not a catalog.
+			expect(_readFileSync).not.toHaveBeenCalledWith(
+				expect.stringContaining('published-floor.json'),
+				expect.anything()
+			);
+			// Another surface's models must not leak into the Claude Code list.
+			expect(models).not.toContain('chat-only-model');
+		});
+
+		it('should discover models from the per-surface catalog layout (shape B)', async () => {
+			mockClaudeAvailable();
+
+			// Newer CLI builds write one file per surface and drop the `published-`
+			// prefix entirely, so the reader must not key off the file name.
+			_readdirSync.mockReturnValue([
+				'published-floor.json',
+				'0f2b-9a1c-cc.json',
+				'0f2b-9a1c-chat.json',
+				'not-a-catalog.txt',
+			]);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath !== 'string') throw new Error('ENOENT');
+				if (filePath.includes('0f2b-9a1c-cc.json')) {
+					return catalogShapeB('cc', 'claude-opus-5-5', 'claude-haiku-5-5');
+				}
+				if (filePath.includes('0f2b-9a1c-chat.json')) {
+					return catalogShapeB('chat', 'chat-only-model');
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toContain('claude-opus-5-5');
+			expect(models).toContain('claude-haiku-5-5');
+			// The surface lives in a field now, so only the field can exclude `chat`.
+			expect(models).not.toContain('chat-only-model');
+			expect(_readFileSync).not.toHaveBeenCalledWith(
+				expect.stringContaining('published-floor.json'),
+				expect.anything()
+			);
+			expect(_readFileSync).not.toHaveBeenCalledWith(
+				expect.stringContaining('not-a-catalog.txt'),
+				expect.anything()
 			);
 		});
 
-		it('should return aliases when Claude stats-cache.json is missing', async () => {
-			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
-				const binaryName = args[0];
-				if (binaryName === 'claude') {
-					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
-				}
-				if (binaryName === 'bash') {
-					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
-				}
-				return { stdout: '', stderr: 'not found', exitCode: 1 };
+		it('should read both catalog shapes side by side', async () => {
+			mockClaudeAvailable();
+
+			// A machine that upgraded mid-cycle keeps the old file next to the new one.
+			_readdirSync.mockReturnValue(['published-abc123.json', '0f2b-9a1c-cc.json']);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath !== 'string') throw new Error('ENOENT');
+				if (filePath.includes('published-abc123.json')) return catalogShapeA('claude-opus-5');
+				if (filePath.includes('0f2b-9a1c-cc.json')) return catalogShapeB('cc', 'claude-opus-5-5');
+				throw new Error('ENOENT');
 			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toContain('claude-opus-5');
+			expect(models).toContain('claude-opus-5-5');
+		});
+
+		it('should surface models the user has run that the catalog does not list', async () => {
+			mockClaudeAvailable();
+
+			// The catalog carries only published models; a limited-access model is
+			// reachable solely because this user has already run it.
+			_readdirSync.mockReturnValue(['published-abc123.json']);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath !== 'string') {
+					throw new Error('ENOENT');
+				}
+				if (filePath.includes('published-abc123.json')) {
+					return catalogShapeA('claude-opus-5-5');
+				}
+				if (filePath.endsWith('.claude.json')) {
+					return JSON.stringify({
+						projects: {
+							'/home/dev/a': { lastModelUsage: { 'claude-preview-9': { inputTokens: 1 } } },
+							// Already in the catalog - must not be duplicated.
+							'/home/dev/b': { lastModelUsage: { 'claude-opus-5-5': { inputTokens: 2 } } },
+						},
+					});
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toContain('claude-preview-9');
+			expect(models.filter((m) => m === 'claude-opus-5-5')).toHaveLength(1);
+		});
+
+		it('should surface used models when there is no catalog at all', async () => {
+			mockClaudeAvailable();
+
+			// Each source must stand on its own: no catalog directory, valid usage.
+			_readdirSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.endsWith('.claude.json')) {
+					return JSON.stringify({
+						projects: { '/home/dev/a': { lastModelUsage: { 'claude-preview-9': {} } } },
+					});
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			expect(await detector.discoverModels('claude-code')).toContain('claude-preview-9');
+		});
+
+		it('should keep catalog models when .claude.json is corrupt', async () => {
+			mockClaudeAvailable();
+
+			// The mirror of the case above: a good catalog must survive a bad
+			// usage file, so neither source can quietly come to depend on the other.
+			_readdirSync.mockReturnValue(['published-abc123.json']);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath !== 'string') throw new Error('ENOENT');
+				if (filePath.includes('published-abc123.json')) return catalogShapeA('claude-opus-5-5');
+				if (filePath.endsWith('.claude.json')) return '{ not json';
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			expect(await detector.discoverModels('claude-code')).toContain('claude-opus-5-5');
+		});
+
+		it('should still read the legacy stats cache when a machine has one', async () => {
+			mockClaudeAvailable();
+
+			// Current CLI builds no longer write this file here, but a machine that
+			// ran an older build keeps its history in it.
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.endsWith('stats-cache.json')) {
+					return JSON.stringify({ modelUsage: { 'claude-opus-4-1-20250805': { cost: 1 } } });
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			expect(await detector.discoverModels('claude-code')).toContain('claude-opus-4-1-20250805');
+		});
+
+		it('should read every source from CLAUDE_CONFIG_DIR when it is set', async () => {
+			mockClaudeAvailable();
+
+			// path.resolve, not path.join: the detector resolves CLAUDE_CONFIG_DIR, which
+			// prefixes a drive letter on Windows, so a bare rooted path never matches.
+			const configDir = path.resolve(path.sep, 'tmp', 'maestro-test-claude-account-b');
+			const previous = process.env.CLAUDE_CONFIG_DIR;
+			process.env.CLAUDE_CONFIG_DIR = configDir;
+
+			try {
+				_readdirSync.mockImplementation((dir: fs.PathLike) => {
+					if (String(dir) === path.join(configDir, 'cache', 'model-catalog')) {
+						return ['published-abc123.json'] as unknown as fs.Dirent[];
+					}
+					throw new Error('ENOENT');
+				});
+				_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+					if (typeof filePath !== 'string') throw new Error('ENOENT');
+					if (
+						filePath === path.join(configDir, 'cache', 'model-catalog', 'published-abc123.json')
+					) {
+						return catalogShapeA('claude-account-b-model');
+					}
+					if (filePath === path.join(configDir, '.claude.json')) {
+						return JSON.stringify({
+							projects: { '/w': { lastModelUsage: { 'claude-account-b-preview': {} } } },
+						});
+					}
+					if (filePath === path.join(configDir, 'stats-cache.json')) {
+						return JSON.stringify({ modelUsage: { 'claude-account-b-legacy': {} } });
+					}
+					// Anything under the default account is the bug this guards against.
+					throw new Error('ENOENT');
+				});
+
+				detector.clearCache();
+				await detector.detectAgents();
+
+				const models = await detector.discoverModels('claude-code');
+				expect(models).toContain('claude-account-b-model');
+				expect(models).toContain('claude-account-b-preview');
+				expect(models).toContain('claude-account-b-legacy');
+				// The default account's `~/.claude.json` must not be consulted: with
+				// CLAUDE_CONFIG_DIR set, the CLI writes inside the config dir instead.
+				expect(_readFileSync).not.toHaveBeenCalledWith(
+					path.join(os.homedir(), '.claude.json'),
+					expect.anything()
+				);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.CLAUDE_CONFIG_DIR;
+				} else {
+					process.env.CLAUDE_CONFIG_DIR = previous;
+				}
+			}
+		});
+
+		it('should treat a blank CLAUDE_CONFIG_DIR as unset', async () => {
+			mockClaudeAvailable();
+
+			// A blank value resolves to the process cwd if passed through verbatim,
+			// which would point discovery at a directory that is nobody's account.
+			const previous = process.env.CLAUDE_CONFIG_DIR;
+			process.env.CLAUDE_CONFIG_DIR = '  ';
+
+			try {
+				_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+					if (filePath === path.join(os.homedir(), '.claude.json')) {
+						return JSON.stringify({
+							projects: { '/w': { lastModelUsage: { 'claude-default-account': {} } } },
+						});
+					}
+					throw new Error('ENOENT');
+				});
+
+				detector.clearCache();
+				await detector.detectAgents();
+
+				expect(await detector.discoverModels('claude-code')).toContain('claude-default-account');
+			} finally {
+				if (previous === undefined) {
+					delete process.env.CLAUDE_CONFIG_DIR;
+				} else {
+					process.env.CLAUDE_CONFIG_DIR = previous;
+				}
+			}
+		});
+
+		it('should skip a corrupt catalog file without losing the others', async () => {
+			mockClaudeAvailable();
+
+			_readdirSync.mockReturnValue(['published-broken.json', 'published-good.json']);
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('published-broken.json')) {
+					return '{ not json';
+				}
+				if (typeof filePath === 'string' && filePath.includes('published-good.json')) {
+					return catalogShapeA('claude-opus-5-5');
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('claude-code');
+			expect(models).toContain('claude-opus-5-5');
+		});
+
+		it('should return aliases when no Claude Code state is on disk', async () => {
+			mockClaudeAvailable();
 
 			_readFileSync.mockImplementation(() => {
 				throw new Error('ENOENT');
@@ -1183,6 +1592,110 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 
 			const models = await detector.discoverModels('codex');
+			expect(models).toEqual([]);
+		});
+
+		it('should discover models for Grok from models_cache.json', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			// Grok's cache shape differs from Codex: models is an object map keyed by
+			// model ID, each entry wrapping an `info` object with a `hidden` flag.
+			const cacheData = JSON.stringify({
+				models: {
+					'grok-4.5': { info: { id: 'grok-4.5', hidden: false, context_window: 500000 } },
+					'grok-composer-2.5-fast': {
+						info: { id: 'grok-composer-2.5-fast', hidden: false, context_window: 200000 },
+					},
+					'grok-internal-preview': { info: { id: 'grok-internal-preview', hidden: true } },
+				},
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
+					return cacheData;
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('grok');
+			expect(models).toEqual(['grok-4.5', 'grok-composer-2.5-fast']);
+			expect(models).not.toContain('grok-internal-preview'); // hidden
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Discovered 2 models'),
+				'AgentDetector',
+				expect.any(Object)
+			);
+		});
+
+		it('should fall back to parsing `grok models` output when models_cache.json is missing', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/grok' && args[0] === 'models') {
+					// Captured from `grok models` v0.2.93
+					return {
+						stdout:
+							'You are logged in with grok.com.\n' +
+							'\n' +
+							'Default model: grok-4.5\n' +
+							'\n' +
+							'Available models:\n' +
+							'  * grok-4.5 (default)\n' +
+							'  - grok-composer-2.5-fast\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			_readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('grok');
+			expect(models).toEqual(['grok-4.5', 'grok-composer-2.5-fast']);
+		});
+
+		it('should return empty array when Grok cache and CLI discovery both fail', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			_readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('grok');
 			expect(models).toEqual([]);
 		});
 
@@ -1331,6 +1844,119 @@ describe('agent-detector', () => {
 			const models = await detector.discoverModels('opencode');
 
 			expect(models).toEqual(['model1', 'model2']);
+		});
+
+		it('should discover models for Oh My Pi from omp models --json', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/omp' && args[0] === 'models' && args[1] === '--json') {
+					return {
+						stdout: JSON.stringify({
+							models: [
+								{ id: 'claude-opus-4-8', selector: 'anthropic/claude-opus-4-8' },
+								{ id: 'gpt-5.2', selector: 'openai-codex/gpt-5.2' },
+								{ id: 'gpt-5.2', selector: 'openai-codex/gpt-5.2' },
+							],
+						}),
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			detector.clearModelCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('omp');
+
+			// Prefers the provider-qualified selector and de-duplicates entries
+			expect(models).toEqual(['anthropic/claude-opus-4-8', 'openai-codex/gpt-5.2']);
+		});
+
+		it('runs omp model discovery with the prime env, not the shared expanded env', async () => {
+			// The `omp models --json` that feeds setOmpModelCatalog must run with the
+			// same env as the two prime sites (detection warm-up and spawn), i.e.
+			// buildOmpPrimeEnv: the binary's own dir first (co-located bun runtime)
+			// plus ~/.bun/bin. getExpandedEnv() omits ~/.bun/bin, so discovery could
+			// fail where the primes succeed and the catalogs would drift apart.
+			Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+			// Pin the inherited PATH so a dev machine that already has ~/.bun/bin
+			// exported cannot make the assertion below pass spuriously.
+			const originalPath = process.env.PATH;
+			process.env.PATH = '/inherited/only';
+
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/omp' && args[0] === 'models' && args[1] === '--json') {
+					return {
+						stdout: JSON.stringify({ models: [{ selector: 'anthropic/claude-opus-4-8' }] }),
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			let discoveryEnv: NodeJS.ProcessEnv | undefined;
+			try {
+				detector.clearCache();
+				detector.clearModelCache();
+				await detector.detectAgents();
+				await detector.discoverModels('omp');
+
+				const discoveryCall = mockExecFileNoThrow.mock.calls.find(
+					(call) => call[0] === '/usr/bin/omp' && call[1][0] === 'models' && call[1][1] === '--json'
+				);
+				expect(discoveryCall).toBeDefined();
+				discoveryEnv = discoveryCall![3] as NodeJS.ProcessEnv | undefined;
+			} finally {
+				process.env.PATH = originalPath;
+			}
+
+			const pathEntries = (discoveryEnv?.PATH ?? '').split(path.delimiter);
+			// Binary's own dir first, so a co-located runtime resolves...
+			expect(pathEntries[0]).toBe(path.dirname('/usr/bin/omp'));
+			// ...and the bun install dir is on PATH (getExpandedEnv would not have it).
+			expect(pathEntries).toContain(`${os.homedir()}/.bun/bin`);
+		});
+
+		it('does not cache a transient empty omp discovery failure', async () => {
+			let attempt = 0;
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/omp' && args[0] === 'models' && args[1] === '--json') {
+					attempt += 1;
+					if (attempt === 1) {
+						return { stdout: '', stderr: 'transient failure', exitCode: 1 };
+					}
+					return {
+						stdout: JSON.stringify({ models: [{ selector: 'anthropic/claude-opus-4-8' }] }),
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			detector.clearModelCache();
+			await detector.detectAgents();
+
+			const first = await detector.discoverModels('omp');
+			expect(first).toEqual([]);
+
+			// The empty failure must NOT be cached: a second call (no forceRefresh)
+			// re-runs discovery and now succeeds.
+			const second = await detector.discoverModels('omp');
+			expect(second).toEqual(['anthropic/claude-opus-4-8']);
 		});
 	});
 
@@ -1762,11 +2388,69 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 
 			const options = await detector.discoverConfigOptions('codex', 'reasoningEffort');
-			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 			expect(logger.debug).toHaveBeenCalledWith(
 				'Could not read Codex models_cache.json for config option discovery',
 				'AgentDetector'
 			);
+		});
+
+		it('should discover Grok model options from models_cache.json with empty default first', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			// Include a model beyond the static fallback list to prove the values
+			// come from the cache, not the definition.
+			const cacheData = JSON.stringify({
+				models: {
+					'grok-4.5': { info: { id: 'grok-4.5', hidden: false } },
+					'grok-composer-2.5-fast': { info: { id: 'grok-composer-2.5-fast', hidden: false } },
+					'grok-5-preview': { info: { id: 'grok-5-preview', hidden: false } },
+				},
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
+					return cacheData;
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('grok', 'model');
+			expect(options).toEqual(['', 'grok-4.5', 'grok-composer-2.5-fast', 'grok-5-preview']);
+		});
+
+		it('falls back to static Grok model options when cache and CLI discovery both fail', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			_readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('grok', 'model');
+			expect(options).toEqual(['', 'grok-4.5', 'grok-composer-2.5-fast']);
 		});
 
 		it('should fall back to static options for select config options without dynamic discovery', async () => {

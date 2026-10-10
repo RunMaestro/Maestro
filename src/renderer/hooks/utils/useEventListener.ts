@@ -5,8 +5,8 @@
  * cleanup on unmount or when the event type / target / enabled state changes.
  *
  * The handler is held in a ref so callers can pass an inline function
- * without re-subscribing on every render - only `eventType`, `target`, and
- * `enabled` cause re-subscription.
+ * without re-subscribing on every render - only `eventType`, `target`,
+ * `enabled`, and `capture` cause re-subscription.
  */
 
 import { useEffect, useRef } from 'react';
@@ -25,6 +25,19 @@ export interface UseEventListenerOptions {
 	 * `false` re-attaches / detaches the listener cleanly. Defaults to `true`.
 	 */
 	enabled?: boolean;
+	/**
+	 * Passed through as `AddEventListenerOptions.passive`. Set to `false` for
+	 * handlers that must call `preventDefault()` on events browsers treat as
+	 * passive by default (wheel, touchstart, touchmove). Left undefined, the
+	 * browser default applies.
+	 */
+	passive?: boolean;
+	/**
+	 * Listen in the capture phase. Use when the listener must see an event
+	 * before a handler lower in the tree can stop it, or before React's own
+	 * root listener runs. Defaults to `false`.
+	 */
+	capture?: boolean;
 }
 
 /**
@@ -50,7 +63,12 @@ export function useEventListener(
 	handler: (event: Event) => void,
 	options?: UseEventListenerOptions
 ): void {
-	const { target = typeof window !== 'undefined' ? window : null, enabled = true } = options ?? {};
+	const {
+		target = typeof window !== 'undefined' ? window : null,
+		enabled = true,
+		passive,
+		capture = false,
+	} = options ?? {};
 
 	// Keep a stable ref to the handler so the effect only re-runs when
 	// eventType / target / enabled change, not on every render where the
@@ -61,9 +79,11 @@ export function useEventListener(
 	useEffect(() => {
 		if (!enabled || !target) return;
 		const listener = (event: Event) => handlerRef.current(event);
-		target.addEventListener(eventType, listener);
+		const listenerOptions: AddEventListenerOptions =
+			passive === undefined ? { capture } : { capture, passive };
+		target.addEventListener(eventType, listener, listenerOptions);
 		return () => {
-			target.removeEventListener(eventType, listener);
+			target.removeEventListener(eventType, listener, capture);
 		};
-	}, [eventType, target, enabled]);
+	}, [eventType, target, enabled, passive, capture]);
 }

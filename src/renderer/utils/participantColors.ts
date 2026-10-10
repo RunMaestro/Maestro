@@ -7,7 +7,12 @@
 import type { Theme } from '../types';
 
 // Re-export name normalization utilities from shared for backward compatibility
-export { normalizeMentionName, mentionMatches } from '../../shared/group-chat-types';
+export {
+	normalizeMentionName,
+	mentionMatches,
+	getMentionNameForContext,
+	formatGroupMentionExpansion,
+} from '../../shared/group-chat-types';
 
 /**
  * Generate a theme-compatible color for a participant based on their index.

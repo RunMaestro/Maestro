@@ -12,6 +12,7 @@ import type { CueModalData, ModalId } from '../stores/modalStore';
 import { getModalActions, useModalStore } from '../stores/modalStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
+import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { notifyToast } from '../stores/notificationStore';
 import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
@@ -66,6 +67,14 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');
 			return { ok: true };
+		case 'feedback': {
+			// Same as the Feedback button: a parked draft is restored, not replaced
+			// by a fresh modal that would throw the conversation away.
+			const draft = useFeedbackDraftStore.getState();
+			if (draft.isMinimized) draft.setMinimized(false);
+			else useModalStore.getState().openModal('feedback');
+			return { ok: true };
+		}
 		default:
 			// Surfaces with no data payload open generically - one line here beats
 			// a switch arm per modal that would drift as the registry grows.

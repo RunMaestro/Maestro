@@ -6,6 +6,57 @@ Shared UI patterns, component library, and design system conventions for the Mae
 
 ---
 
+## Every Surface Needs Three Ways In and Two Ways Out
+
+A dashboard, modal, or panel the user is meant to open is not finished until all
+of these exist. This is not a style preference: a surface with one entry point is
+a surface most users never find, and one with no visible exit strands anyone on a
+tablet or a remote desktop. Ship them together, in the same change.
+
+**Three ways in:**
+
+| Way                 | Where it goes                                                                                                                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hotkey**          | `DEFAULT_SHORTCUTS` in `src/renderer/constants/shortcuts.ts`, handled in `useMainKeyboardHandler`                                                                                                                                   |
+| **Command palette** | A `build*Commands()` module under `src/renderer/components/QuickActionsModal/commands/`, wired in `QuickActionsModal.tsx`                                                                                                           |
+| **Menu**            | `HamburgerMenuContent.tsx` for a destination the user navigates to. Skip this one for an in-the-moment toggle (show/hide something already on screen), which belongs on a key and in the palette but not in a menu of places to go. |
+
+Register the surface in `UI_SURFACES` (`src/shared/uiSurfaces.ts`) at the same
+time. One entry gives you `maestro-cli open <surface>`, the `open_modal` bridge
+validation, and the discovery hint that teaches the user the hotkey - and it is
+the list a reviewer checks against.
+
+**Two ways out:** Escape (free via `useModalLayer` / the shared `Modal`) **and** a
+visible control - `<EscCloseButton>` or the `Modal` header's X. Never Escape alone.
+
+**And it should be resizable.** Any surface bigger than a confirm dialog takes a
+`resizeKey` so `useResizableModal` remembers the size the user dragged it to. A
+fixed-size dashboard is wrong on somebody's display.
+
+**Closing must park, never destroy.** If the content owns live state (an iframe,
+a media element, a running view), keep it mounted and pass `hidden` to `Modal`
+instead of unmounting it - see `ConcertoStageModal`. Reopening must return the
+user to exactly what they left.
+
+### Docked or floating (`Modal`'s `floating` prop)
+
+A surface the user watches while they keep working - rather than one that owns
+their attention - can offer a pop-out. Pass `floating={{ position, onMovePointerDown }}`
+and the same `Modal` renders as a free-positioned, non-blocking window: no
+backdrop, a click-through layer, a passive layer registration (Escape still
+closes it, but it neither traps focus nor blanks the app's shortcuts), a header
+that doubles as the drag handle, and resize handles on the bottom/right only
+(a top-left-pinned frame cannot honor a north or west drag without also moving).
+
+Drive the drag with `usePointerDrag` and `ignoreButtons: true` so the header's own
+buttons still click, clamp with `clampModalPosition()` from `utils/modalSizing.ts`
+so the title bar can never be dragged off screen, and persist on `onEnd` rather
+than per pointer-move.
+
+**Do NOT branch between a `<Modal>` and a hand-rolled floating `<div>`.** They
+must be the same element with different props, or React unmounts the subtree on
+every toggle - which restarts whatever the pop-out existed to keep running.
+
 ## Modal System (LayerStack)
 
 Maestro uses a centralized **LayerStack** to manage all modals, overlays, and search interfaces. Every dismissable UI surface registers with the stack so that Escape always closes the topmost layer first.
@@ -134,9 +185,30 @@ Guidance:
 
 The expanded Prompt Composer (`src/renderer/components/PromptComposerModal.tsx`) is the reference implementation of the compact-vs-`90vw x 90vh` toggle.
 
+### Naming the Subject in a Modal Header (`subtitle`)
+
+A modal opened from a **right-click menu** frequently acts on something other than the highlighted agent. `git push` as a header names the operation but not the target, so a user who right-clicked an arbitrary Left Bar row has no way to tell which agent is about to push.
+
+Pass `<Modal subtitle={...}>` for the subject: which agent, which repo, which file. It renders dimmed after the title (`git push · Sonoma-Fix`) and is skipped entirely when empty, so a modal with nothing to name looks exactly as it did before. `GitCommandRunnerModal.tsx` is the reference use.
+
+**Do not concatenate the subject into `title`.** `title` is the `aria-label` and the modal-layer label, and it seeds the fallback resize key via `getDefaultResizeKey()` - a per-agent title mints a different persisted window size for every agent, so the modal would forget its size each time you targeted a different one. That is also why any test asserting on the bare title keeps passing after a `subtitle` is added.
+
+Most openers already carry what they need: `useGitAgentActions.ts` has been putting `sessionId` in the `gitCommandRunner` payload since it was written, the modal just ignored it. Check the payload before plumbing a new prop.
+
+**Two shapes `subtitle` cannot reach**, both of which own their header instead of letting `<Modal>` draw it:
+
+- A modal passing `customHeader` - that replaces `<Modal>`'s header wholesale, so the prop silently never renders (`BranchSwitcherModal`).
+- A bespoke shell with its own `<h2>` and no `<Modal>` at all (`CreatePRModal`, `CreateWorktreeModal`, `WorktreeConfigModal`, `GitLogViewer`, `GitDiffViewer`).
+
+Both render `<ModalSubtitle theme={theme} subtitle={name} />` directly, exported from `ui/Modal.tsx`. `<Modal>` renders the same component from its own `subtitle` prop, so every surface shares one dim, one separator, and one `data-testid="modal-subtitle"`. Do NOT hand-roll the dimmed span. When you add the name to a bespoke header, give the heading `shrink-0` and the wrapper `min-w-0`, or the name pushes the close button instead of ellipsising.
+
+**Check for a second header.** `GitDiffViewer` draws a separate one in its empty-diff branch, which needs the name more than the populated one does - "No changes to display" is exactly the message a user misreads as belonging to the agent they meant to right-click.
+
+**Do not force-activate the agent to make a modal find it.** `Configure Worktrees` used to call `setActiveSessionId()` before opening so the modal's `activeSession` read would land on the right agent. That silently moved the user's selection and retargeted every other surface bound to the active agent. Put the target in the modal payload instead, and give the modal AND its callbacks one shared resolver (pinned agent, else active) so the dialog and its Save button cannot target different agents - see `resolveWorktreeConfigTarget()` in `useWorktreeHandlers.ts`.
+
 ### Resizable Modals
 
-A modal opts into drag-to-resize by passing `resizeKey` to `<Modal>`. Do NOT hand-roll a resize handle, a `ResizeObserver`, or CSS `resize: both` - the shared path already covers persistence, minimums, and viewport clamping.
+Dialog-style modals can offer persisted, center-anchored drag-to-resize via `useResizableModal()` (`src/renderer/hooks/ui/useResizableModal.ts`), backed by pure sizing/clamping helpers in `src/renderer/utils/modalSizing.ts` and the handle UI in `src/renderer/components/ui/ResizeHandles.tsx`. Sizes persist in the `modalSizes` setting (`src/renderer/stores/settingsStore.ts`: `setModalSize`/`resetModalSize`/`resetModalSizes`), clamped to a `320x240` minimum and the `90vw x 90vh` app-wide ceiling described above, with per-modal `minSize`/`maxSize` overrides for dense tools or width-capped reading surfaces (e.g. Director's Notes caps `maxSize.width` at `1050`).
 
 ```tsx
 <Modal
@@ -150,7 +222,9 @@ A modal opts into drag-to-resize by passing `resizeKey` to `<Modal>`. Do NOT han
 >
 ```
 
-How it works:
+**Resetting a size.** Double-clicking any resize handle forgets that one modal's remembered size and snaps it back to its declared `defaultSize`. Pass the hook's `onResetSize`/`canReset` through to `ResizeHandles` to enable it - `<Modal>` already does, and every bespoke shell that renders `ResizeHandles` directly should too, so the gesture is uniform. `canReset` only gates the tooltip wording (the handles are invisible until hover, so the native `title` is the gesture's only discoverability), and `resetModalSize` skips the settings write when nothing was stored, so an idle double-click is free. Settings -> Display -> Modal Layout still offers the reset-every-modal escape hatch (`resetModalSizes`).
+
+The shared `<Modal>` component wires this up automatically via `resizable`/`resizeKey`/`defaultSize`/`minSize`/`maxSize` props, but **resizing only activates when the caller passes an explicit, stable `resizeKey`.** Omitting it (the default for most `<Modal>` callers - simple confirms, help dialogs) falls back to the legacy fixed `width`/`maxHeight`/`scaleWidthWithFont` sizing instead of a title-derived key: a title/priority-derived fallback isn't stable across unrelated dialogs (every default-titled `ConfirmModal` would otherwise collide on one persisted size). Bespoke modal shells that don't use `<Modal>` (e.g. `QuitConfirmModal.tsx`) should stay off `useResizableModal` entirely if they're simple, non-resizable confirms.
 
 - `useResizableModal` (`src/renderer/hooks/ui/useResizableModal.ts`) owns the drag. Like `useResizablePanel` it writes to the DOM during the drag and commits React state once on mouseup. Deltas are doubled because the card is centered: growing the width by W moves the right edge by only W/2, so doubling keeps the grip under the pointer.
 - **A surface that is NOT centered passes `anchor="top-left"`**, which drops that doubling and tracks the cursor 1:1. That is the case for anything pinned to a corner rather than to the viewport - a dropdown hanging off its trigger, a popover (`PipelineSelector` is the reference caller). Such a surface must expose only the `s`, `e` and `se` handles, or just `ModalResizeGrip`: dragging `n` or `w` would have to move the anchor, which the hook does not do. Give it a `minSize` of its own too, or the 320 x 240 default floor makes a small menu unresizable.
@@ -162,6 +236,8 @@ How it works:
 - The frame is a flex column with a fixed header and footer, so **the body must be told to fill it**: a scroll container still carrying `max-h-[400px]` (or any fixed height) leaves dead space below the list no matter how far the user drags. Pass `contentClassName="p-6 flex-1 min-h-0 flex flex-col"` and give the scrolling child `flex-1 min-h-0 overflow-y-auto` instead of a height cap. `ShortcutsHelpModal` is the reference caller.
 
 `resizeKey` must be stable across renders - it is the persistence key, not a label.
+
+When two toggleable states of the same modal need independent footprints (e.g. Prompt Composer's compact vs. fullscreen), use two distinct `resizeKey`s (`prompt-composer-compact` / `prompt-composer-fullscreen`) rather than one shared key with a mode-dependent `defaultSize` - `defaultSize` is only consulted before the first saved size exists, so a single key would let one mode's manual resize silently pin the other mode's size too.
 
 **Sizing a canvas modal by the viewport.** A fixed pixel default is right for a
 form or a dialog: its content has a natural width and more room buys nothing.
@@ -241,6 +317,33 @@ expect(modal.parentElement).toBe(document.body);
 React context flows through portals, so `useModalLayer` registration, Escape
 handling, and theming are unaffected by the relocation.
 
+### Modals Launched From Inside Settings (`launchFromSettings`)
+
+The Settings modal renders at `z-[9999]`, above every other modal surface. A
+control inside Settings that opens a SEPARATE top-level modal (Extensions ->
+"Open Pianola", a plugin's contributed `modal` panel) therefore opens it
+_behind_ Settings: the click appears to do nothing until the user closes
+Settings and finds the modal waiting underneath.
+
+Route those launchers through `launchFromSettings()` in
+`src/renderer/utils/launchFromSettings.ts`:
+
+```tsx
+onClick={() => launchFromSettings(() => getModalActions().setPianolaModalOpen(true))}
+```
+
+It closes Settings and then runs the launcher, in that order. Keeping the order
+in one helper matters: a launcher that itself deep-links back into Settings (a
+different tab, say) has to win over the close.
+
+Use it only for launchers that open a separate top-level modal. Inline settings
+controls, confirmations, and pickers that are meant to stack ON TOP of Settings
+must not use it.
+
+Because jsdom has no layout engine, a test cannot observe the occlusion. Assert
+the store state instead: `isOpen('settings')` is `false` and the launched modal
+is open.
+
 ### Resizable Textareas
 
 Any textarea with a native `resize-y` grip should remember the height the user drags it to. A size someone picked by hand is a preference, so snapping back to the default on the next open (or the next app launch) is a bug, not a reset.
@@ -302,6 +405,33 @@ Two mechanical points when the ladder needs render-scope values (the live query,
 - Read focus from `document.activeElement === searchInputRef.current` rather than tracking a `isSearchFocused` boolean. The key never reaches the input, so nothing is guaranteed to have updated that flag.
 
 A higher-priority overlay registered by the same surface (the graph's legend drawer) is an implicit rung above all of this - the stack closes the top layer first, so it needs no branch in the ladder.
+
+### Every Modal Needs a Graphical Exit (`<EscCloseButton>`)
+
+**Rule:** a modal, palette, or find bar must always be dismissable with the pointer alone. Escape is not enough: remote desktop sessions swallow it, tablets driving the web interface have no key to send, and a keyboard-only exit reads as "stuck" to the user.
+
+The `ESC` pill is that exit. Use `<EscCloseButton>` (`src/renderer/components/ui/EscCloseButton.tsx`) - do NOT hand-roll the `px-2 py-0.5 rounded text-xs font-bold` pill again. It was previously copy-pasted as an inert `<div>` (three of them with `pointer-events-none`) in nine places, so every one of those surfaces advertised an exit that did nothing on click.
+
+```tsx
+// Header pill, sitting in the search row
+<EscCloseButton theme={theme} onClose={onClose} />
+
+// Adornment pill, absolutely positioned inside a `relative` input wrapper
+<EscCloseButton
+	theme={theme}
+	variant="adornment"
+	label="Close filter (Esc)"
+	onClose={handleFilterEscape}
+/>
+```
+
+`onClose` must do **exactly** what pressing Escape does. When the Escape path lives in a `useModalLayer` / `registerLayer` callback, extract it into a named `useCallback` and pass the same function to both, rather than duplicating the body (see `TerminalOutput`'s `closeOutputSearch` and `QuickActionsModal`'s `handleEscape`).
+
+Tests: query the pill by role, not by index. It is a real `<button>` now, so `getAllByRole('button')[n]` in a modal test counts it - scope list assertions to the rows themselves (e.g. `[data-action-label]`).
+
+### Fixed-Position UI Inside the Mobile Drawers (portal or it's trapped)
+
+On narrow viewports the Left Bar and Right Bar float as CSS-transformed drawers (`index.css`, `[data-panel='left'|'right']`). A transformed ancestor becomes the containing block for `position: fixed`, so any full-screen overlay rendered inside them (modals, sheets) gets trapped to the ~320px drawer box instead of covering the viewport. Render such overlays through `createPortal(..., document.body)` - see `HistoryDetailModal.tsx` and `SessionList/HamburgerDropdown.tsx` (which also swaps the anchored dropdown for a full-screen sheet at the xs breakpoint). If the overlay must survive outside-click closers keyed on a container ref, mark it (e.g. `data-hamburger-sheet`) and have the closer ignore clicks inside the marker.
 
 ### Querying the Stack
 
@@ -373,6 +503,8 @@ A horizontal row of mutually exclusive options rendered as one joined pill bar -
 It owns the active-segment coloring, the seam borders, `role="radiogroup"` + `role="radio"` semantics, arrow-key navigation between segments, and a single tab stop (`tabIndex` follows the selection, as a native radio group does). Each segment gets `data-testid="${testId}-${value}"`, so existing per-segment test ids keep working when a hand-rolled bar is migrated.
 
 For a bar that must shrink, give an option a `shortLabel`. Both forms render, the short one `hidden`; the HOST's container query swaps them by targeting `.segmented-label-full` / `.segmented-label-short`, because only the host knows what else shares its row. `GroupChatHeader` and its `groupchatheader` block in `index.css` are the reference.
+
+**A bar wider than its row scrolls sideways; it does not clip.** The container was `overflow-hidden` (which is what rounds the corners), so a five-segment bar on a phone simply lost its last two options - invisible AND unclickable, with no scrollbar to hint they were there. It is now `overflow-x-auto overflow-y-hidden no-scrollbar` with `shrink-0` segments. Two things are load-bearing: `overflow-y-hidden` must accompany `overflow-x: auto` (alone, `overflow-y` computes to `auto` and adds a vertical bar), and the segments do NOT shrink, because a squeezed segment reads as a different label rather than a narrower one. So the host still owns the shrink decision via `shortLabel` - this is only the floor that stops an option disappearing.
 
 **This is not `<RadioGroup>`.** That primitive renders the same semantics as stacked, description-carrying list rows for settings panes. `SegmentedControl` is the compact toolbar form for short labels where vertical space is scarce. Pick by layout, and do not add a `variant` prop to either one to cover the other.
 
@@ -508,11 +640,85 @@ It returns `0` until the first measurement lands, so gate width-dependent childr
 
 This matters for any resizable modal that draws a chart: a hard-coded SVG width silently stops matching the frame the moment the user drags it.
 
+### Horizontally Scrolling Strips (`useHorizontalScroll`)
+
+`useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage, scrollIntoView }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
+
+**A strip is for the sets that do not fit, not for every set.** The same wizard drops back to a centered wrapping block whenever the tiles fit in two rows - see [Two Shapes for One Tile Set](#two-shapes-for-one-tile-set-agentgridlayout) below. Four tiles pinned to the left edge of a wide scrolling row read as a layout that forgot to reflow, and the affordances the hook exists to provide (fades, arrows) have nothing to point at.
+
+Two things a bare `overflow-x-auto` gets wrong, and this hook fixes:
+
+- **Silence at the edge.** Nothing tells the user more content exists past the right edge. Use the flags to render an honest affordance - a gradient fade plus an arrow button. Do not render the arrows unconditionally: an arrow that cannot move is worse than no arrow.
+- **A swallowed wheel gesture.** A strip has no vertical overflow of its own, so a mouse wheel or trackpad flick over it scrolls an ancestor or does nothing. The hook maps VERTICAL deltas onto the horizontal axis.
+
+Three rules the wheel handler follows, each of them a bug someone felt before it was written:
+
+- **A gesture that is already horizontal is handed back to the browser.** A trackpad two-finger swipe or a tilt wheel already targets this strip's axis, and the native path carries the platform's own momentum and interruption behaviour. Taking it over replaces a fling with a stepped, dead-feeling drag, so the handler returns without calling `preventDefault()` whenever `|deltaX| > |deltaY|`.
+- **Wheel deltas are not always pixels.** `deltaMode` says whether the number counts pixels (0), lines (1), or pages (2). Using the raw value makes a line-reporting mouse crawl three pixels per notch, so scale it before it becomes a scroll offset.
+- **The gesture is only claimed when it actually moves the strip.** At an end stop, a further scroll in that direction belongs to the surrounding page; swallowing it there traps the pointer over a strip that no longer responds while the page behind it refuses to scroll.
+
+**Do NOT put `scroll-smooth` on the strip element.** That class applies to EVERY programmatic scroll, including the browser's own scroll-into-view when arrow-key focus lands on an off-screen tile and the per-tick write a wheel gesture makes - each one becomes a fresh ~300ms eased animation started from wherever the previous one had reached, so a flick queues dozens of them and the strip drifts along behind the gesture instead of tracking it. The hook scrolls with an explicit `behavior`: `'instant'` for wheel ticks, `'smooth'` for `scrollByPage`, so the arrow buttons stay eased without the strip opting in globally. Both go through one helper that falls back to a `scrollLeft` write, because jsdom implements `scrollLeft` but not `scrollTo`.
+
+Scroll events also fire far faster than the screen repaints, and measuring reads `scrollWidth`/`clientWidth`, so the hook coalesces measurement to one `requestAnimationFrame` per frame rather than forcing a synchronous layout for every event in a flick.
+
+Keep the arrow buttons out of the tab order (`tabIndex={-1}`) when the strip's items are already reachable with the arrow keys - otherwise they become dead ends in the middle of the keyboard path.
+
+**Do not lean on the browser's own scroll-into-view to keep the focus ring visible.** It gets two things wrong on a strip like this. It scrolls the item flush against the edge, where the gradient fade and the arrow button float over the strip's own ends, so the item it just revealed sits underneath one and still reads as off-screen. And a DISABLED item never takes DOM focus at all - the focus ring still moves onto it, so arrowing across an uninstalled provider looks like the strip froze. Focus with `focus({ preventScroll: true })` and drive the strip yourself:
+
+```tsx
+const { scrollIntoView } = useHorizontalScroll(stripRef, tiles.length);
+
+// Tracks the ring's INDEX, not DOM focus, so a disabled tile still moves the strip.
+useEffect(() => {
+	// Read the ref inside the effect: ref callbacks run at commit, so a render-time
+	// read on the first mount captures null with no re-render to correct it.
+	scrollIntoView(tileRefs.current?.[focusedIndex], STRIP_EDGE_PADDING_PX);
+}, [focusedIndex, scrollIntoView, tileRefs, tiles]);
+```
+
+`scrollIntoView(child, edgePaddingPx?)` scrolls the minimum that reveals the child, and only for the edge it is actually past. Pass the width of whatever floats over the strip's ends as `edgePaddingPx` - share one constant with the fade's own `width` so the two cannot drift. It measures from `getBoundingClientRect()` rather than `offsetLeft`, which is relative to the nearest positioned ancestor (the wrapper, not the strip) and would silently drift by the wrapper's padding. An item wider than the viewport overflows both edges at once; the left edge wins, since a visible leading edge beats a visible trailing one.
+
+It no-ops without `ResizeObserver`, so jsdom component tests render without a polyfill (and both flags read `false`, since jsdom reports zero for every measurement).
+
+### Two Shapes for One Tile Set (`agentGridLayout`)
+
+The New Agent Wizard draws the same provider tiles two ways, and which one it
+picks is derived from the count rather than authored:
+`resolveAgentGridLayout(tileCount, containerWidth)` in
+`components/Wizard/screens/AgentSelectionScreen/utils/agentGridLayout.ts`.
+
+- **More tiles than fit in two rows -> the scrolling strip.** A third row pushes
+  the Continue button below the fold, which is the whole reason the strip exists.
+- **Two rows or fewer -> a centered wrapping block.** This is the everyday case
+  once the user filters to the providers they actually have. A handful of tiles
+  pinned to the left edge of a wide scrolling row reads as a layout that forgot
+  to reflow.
+
+Two rules that are easy to get wrong:
+
+- **Balance the rows, do not fill them.** Five tiles across a four-wide row draws
+  4 + 1, which looks like a mistake; `ceil(n / 2)` columns draws 3 + 2, which
+  reads as an arrangement. The block then caps its own `maxWidth` at that many
+  tiles, which is what forces the break - `flex-wrap` alone would fill the row.
+- **Measure the OUTER wrapper, never the block itself.** The block's width is an
+  output of the layout, so measuring it feeds the cap back in and it shrinks a
+  step on every pass. `useElementWidth` on the full-width parent is the input.
+
+The column count is also what up/down arrow movement steps by, so the component
+reports it upward (`onColumnsChange`) rather than letting the keyboard handler
+assume a shape. A handler moving by an assumed row width jumps the focus ring to
+a tile that is not above or below the one the user is on, and the same width cap
+that keeps the block from spreading wider than the strip is what keeps the two
+in agreement. Fall back to a fixed column count until the first measurement
+lands, since `useElementWidth` reports 0 on the first frame and in jsdom.
+
 ### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
 
-The Usage Dashboard's card grids (the agent grid in `AgentOverviewCards`, the per-tab grid in `TabBreakdown`) all render the same tile: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
+The Usage Dashboard's card grid (the agent grid in `AgentOverviewCards`) renders one tile shape: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
 
 Adding a new dashboard grid means shaping data into `EntityTileStat[]` and passing it, not re-deriving 150 lines of tile styling. `EntityTile` is presentational: it takes formatted strings and colors and reports clicks, so callers keep their own sort/filter state and their own number formatting.
+
+**A tile grid is not the default for every dashboard collection.** `TabBreakdown` (the per-tab list inside the agent detail modal) used to render tiles and now renders a `<SortableTh>` table: a tab row carries a name and four small numbers, which is little enough that rows scan faster than cards, and it keeps the view visually distinct from the agent tiles the reader just clicked through to reach it. Pick tiles when a row's worth of data needs the space; pick a table when it does not.
 
 It deliberately lives under `UsageDashboard/` rather than in `renderer/widgets/`: widgets are barred from importing from `UsageDashboard/`, and this tile is an entity summary (many stats, one subject) rather than the widget library's `StatCard` (one headline metric).
 
@@ -524,6 +730,8 @@ The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedS
 
 **A queued message freezes its settings when it is QUEUED, not when it dispatches.** Queuing is the send from the user's point of view - they picked a model, typed, hit Enter - but the turn may not spawn until several model changes later. So every path that builds a `QueuedItem` spreads `captureQueuedTurnSettings(tab, session)` into `item.turnSettings`, and both consumers read it back through `codifyQueuedTurnSettings(item, tab, session)`: `markTabRunningQueuedItem()` for the pills, and `agentStore.processQueuedItem()` for the actual `sessionCustomModel` / `sessionCustomEffort` it spawns with. The queued-item rows in the inline list and the Execution Queue browser render the same `<TurnSettingPills>`, so the user can see which pending message is on the big model before it runs.
 
+**Both pills leave every card on a phone.** They carry `data-turn-setting-pill`, and one rule in the "Phone layout" block of `src/renderer/index.css` hides everything with that attribute at `xs`. The queued card's footer is a three-column grid whose outer tracks hold a `whitespace-nowrap` Force Send button and a cluster of four icon buttons, so at 390px the tracks overflow into the centered pills and the three groups paint on top of each other. The pill is the thing to drop, for the same reason the header's cost, context and LOCAL badges are: it is a readout with a `title` tooltip no touch screen can open, while every control in the row does something. Mark a new pill in this family with the attribute rather than gating it on `usePhoneLayout()` in JSX - the attribute is what keeps the rule exhaustive.
+
 The presence of the `turnSettings` OBJECT is the capture flag, not the presence of its fields. `undefined` model/effort inside a present object means "the agent's default was in force when I queued", which is a real choice - never write `item.turnSettings?.model ?? liveModel`, or an item queued on the default silently inherits whatever the user selected afterwards. The object is absent only on items restored from a build that predates the capture, which is the one case that falls back to live values.
 
 **The token-source half is opt-in.** The `showProviderModePill` display setting (Settings -> Display -> Provider Mode Pill, default OFF) suppresses the `claude -p` / `TUI Wrapper` pill everywhere it appears: the chat footer (`TerminalOutput`), the History list row (`HistoryEntryItem`), and the history detail view (`HistoryDetailModal`). The model and effort pills are NOT gated by it - they are separate facts about the turn. All three surfaces read the store field directly rather than threading a prop, so a new surface that renders `getTokenSourcePill()` has to remember the gate itself.
@@ -532,6 +740,33 @@ Two traps when touching this row:
 
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
 - `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes. `showProviderModePill` is passed down as a primitive prop (not read from the store inside `LogItem`) for exactly this reason, and it is listed in the comparator.
+
+### Keycaps (`<Keycap>` / `<KeycapHint>`)
+
+`src/renderer/components/ui/Keycap.tsx` draws a keyboard key as a physical key - a face, a border, and a lip along the bottom edge - rather than as a glyph in a dim caption. `Keycap` is the cap alone; `KeycapHint` is one or more caps beside the action they perform (`[↑][↓] Model`).
+
+Two props are the reason it exists rather than another hand-rolled `<kbd>`:
+
+- **`pressed`** collapses the lip and sinks the cap by exactly the lip's height, so a surface that already listens for the key can echo the real keypress on screen. Drive it from a short timer, not from `keyup`: a held key repeats without ever sending `keyup`, so a cap released on `keyup` stays stuck down.
+- **`onClick`** turns the hint into the control. A surface showing `↵ Apply` and `esc Cancel` needs no separate button row, and the pointer-only user (remote desktop, tablet) clicks the same key the keyboard user presses - which is how it satisfies [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton).
+
+The hover wash is drawn from `theme.colors.border`, not a fixed white overlay, so it stays visible on light themes. Glyph choice is the caller's: pass `'↑'`, `'↵'`, `'esc'`, or `formatShortcutKeys()` output.
+
+### The Two-Axis Console (`ModelEffortModal`)
+
+`src/renderer/components/ModelEffortModal.tsx` is the reference for a surface where **the shape of the control is the explanation of the control**. Both axes are live at once - Up/Down walks the model, Left/Right walks the effort - so it is deliberately NOT a `<Modal>`: dialog chrome would add a focus ring and invite tabbing between panes, which is the interaction the design is trying to remove. It portals a blurred scrim and floats the composition on it, registering with `useModalLayer` for Escape and priority.
+
+Ideas worth reusing:
+
+- **A wheel, not a list.** Rows are absolutely positioned by `transform` and keyed by model id, so a row that survives a step animates to its new slot instead of being repainted in place. The wrap radius is capped at `floor((count - 1) / 2)`, which is what lets a short catalog wrap without the same model appearing in two slots at once.
+- **The end-fade and the depth falloff are one decision.** A `maskImage` fades the wheel's ends; the outermost `WHEEL_DEPTH` entry has to survive that fade with something still legible. Deepening the wheel past what the mask lets through buys dead air, not rows - that is why the radius is 2.
+- **Ordered scales get a level meter; unordered sets do not.** Effort bars ramp with the level and fill up to the selection, so the scale reads without reading a word. Model has no order, so it gets none. The `(default)` stop sits off the scale behind a hairline and carries no bar - which is also why the row aligns `items-start` with a fixed-height bar slot, rather than `items-end` on a baseline the default stop does not have.
+- **A scale only reads as a scale on one line.** A provider with seven stops is wider than the wheel's column, so the effort row sizes to its content (`w-max`) and breaks out of that column rather than folding `max` and `ultra` onto a second row; `max-w-[92vw]` is what brings wrapping back on a window too narrow to hold the line at all. Sizing to content is also why the space either side of the pills is still scrim - a `w-full` row swallows the mousedown across the whole column, so clicking beside the pills stopped closing the modal.
+- **Type-to-jump beats a scrollbar.** A printable key jumps the wheel to the matching model; repeating a letter walks every model starting with it. Gate it on `isTypeaheadKey` (no `metaKey` / `ctrlKey` / `altKey`) - swallowing modified keys would stop `Cmd+W` reaching the window and trap the user inside the surface.
+
+**No legend, but still a graphical exit.** The surface shows no shortcut caption: the axes are self-describing, and the caption was the only thing on screen that had to be read rather than seen. [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton) is still satisfied without a button row - clicking the scrim cancels and double-clicking a row applies, both routed through the same handlers Escape and Enter use, so pointer and keyboard cannot drift. Under a coarse pointer there is no double-tap to give (iOS reserves it, and a home-screen web app never sees a `dblclick`), so there the second tap on the row that is ALREADY picked is the apply - the first tap still only picks, and a mouse user re-clicking the row they are on is not thrown out of the console.
+
+Anything with an inline `transition` must carry a class the reduced-motion block can name (`.maestro-wheel-row`, `.maestro-effort-stop`, `.maestro-keycap`); the blanket `.transition-*` reset in `index.css` only matches Tailwind's utility classes.
 
 ### Queued Item Tab Labels (`resolveQueuedItemTabName`)
 
@@ -557,7 +792,7 @@ Distinct from `useScrollIntoView` (brings ONE element into view inside a list, f
 
 ### Restoring a Transcript's Scroll Position
 
-An AI tab is left in one of TWO states, and they restore differently. `TerminalOutput` takes both `initialScrollTop` (the tab's saved `scrollTop`) and `initialIsAtBottom` (the tab's saved `isAtBottom`), and it needs both.
+An AI tab is left in one of TWO states, and they restore differently. `TerminalOutput` takes both `initialScrollTop` (the tab's saved `scrollTop`) and `initialIsAtBottom` (the tab's saved `isAtBottom`) and hands them to `useTerminalOutputScroll()`, and it needs both.
 
 **Following the tail** (`isAtBottom` true, or unset). The saved `scrollTop` is only a snapshot of where the bottom HAPPENED TO BE at save time, and the transcript keeps growing while the tab is off screen. Restoring that number verbatim drops the user however far the agent wrote while they were away, and because the stale offset is then far above the new bottom, the restore ALSO pauses auto-scroll - so the transcript will not even follow the output that stranded them. Clicking a toast to read a finished reply landed thousands of pixels above it, with the tail switched off. Such a tab restores to the BOTTOM and ignores the saved number.
 
@@ -567,10 +802,10 @@ An AI tab is left in one of TWO states, and they restore differently. `TerminalO
 
 **Neither target is reached in one frame.** A single `requestAnimationFrame` proves the DOM is MOUNTED, not that its height has settled: images are still decoding, fonts still swapping, code blocks still re-highlighting. `scrollHeight` is short on that first frame and `maxScroll` with it, so the restore clamps to less than it was asked for and the tab opens above where the user left it. The restore therefore re-attempts across frames, and the two states latch differently:
 
-- A fixed offset latches as soon as the content is tall enough to hold it.
-- The bottom cannot, because `maxScroll` MOVES with every late image. "Landed on the bottom" is true on the first frame and wrong on the next, so a tail-following restore keeps chasing until the HEIGHT stops changing (`MAX_QUIET_FRAMES`).
+- A fixed offset latches as soon as the content is tall enough to hold it, so the restore re-applies under a `ResizeObserver` on the container until it lands, with `SCROLL_RESTORE_SETTLE_MS` as a hard stop.
+- The bottom cannot be latched that way at all, because `maxScroll` MOVES with every late image. "Landed on the bottom" is true on the first frame and wrong on the next, so a tail-following tab does not run the offset restore: the mount-time bottom jump plus the follow-the-tail `MutationObserver`/`ResizeObserver` keep it pinned to the live bottom as the content grows.
 
-A genuine user scroll during the settle abandons the restore (`userScrolledDuringRestoreRef`); their input wins, because a restore that keeps yanking the view is worse than landing slightly high. An in-flight cross-tab search jump wins for the same reason.
+A genuine user scroll during the settle abandons the restore (`wheel` / `touchstart` on the container tear the retry down); their input wins, because a restore that keeps yanking the view is worse than landing slightly high. An in-flight cross-tab search jump wins for the same reason (`jumpInFlightRef`).
 
 Do not "simplify" this back to a single saved offset. A pixel offset cannot express "wherever the newest message is", and that is the state most tabs are actually left in.
 
@@ -821,6 +1056,75 @@ Users can rebind `DEFAULT_SHORTCUTS` and `TAB_SHORTCUTS` via the ShortcutEditor 
 ```tsx
 const { shortcuts, setShortcuts, tabShortcuts, setTabShortcuts } = useSettings();
 ```
+
+### Arrow Navigation Over a List or Grid (`useListNavigation`)
+
+`useListNavigation()` in `src/renderer/hooks/keyboard/useListNavigation.ts` owns
+arrow/vim/page/Enter navigation for every list-shaped surface (command palette,
+tab switcher, git log, history). Do NOT hand-roll another
+`selectedIndex` + keydown switch.
+
+Pass `columns` to navigate a 2-D **grid** instead: left/right step one tile,
+up/down jump a full row. Omitting it is exactly the old list behavior, where
+left/right stay inert because other things own those keys (text carets, tree
+expand/collapse).
+
+Grid mode keys on the option's **presence**, not on `columns > 1`. A grid that
+has reflowed down to a single column still answers all four arrows - there,
+left/right simply mean previous/next. Gating the horizontal arrows on the
+measured value makes them die exactly when the window gets narrow, which reads
+as broken rather than as a narrow grid.
+
+For a responsive grid, feed it the MEASURED column count from
+`useGridColumnCount(el, itemCount)` (`src/renderer/hooks/ui/useGridColumnCount.ts`),
+which reads the resolved `grid-template-columns` and re-measures on reflow. A
+hard-coded row width silently walks to the wrong tile the moment an `auto-fill`
+grid drops to two columns.
+
+It takes the ELEMENT, not a ref object, and the caller holds that element in
+**state** via a callback ref:
+
+```tsx
+const [gridEl, setGridEl] = useState<HTMLDivElement | null>(null);
+const columns = useGridColumnCount(gridEl, items.length);
+const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
+	listLength: items.length,
+	columns,
+	onSelect: (i) => open(items[i]),
+});
+// ...
+<Grid onGridElement={setGridEl} ... />
+```
+
+A ref's `.current` changing is invisible to React, so a version keyed on a ref
+object keeps observing a grid that has since unmounted. That is not theoretical:
+removing an observed element from the document resizes it to 0 and fires its
+ResizeObserver, a detached node resolves `grid-template-columns` to the empty
+string, and the count collapses to 1. Symptom: arrow navigation works, the user
+opens a detail pane, comes back, and up/down have quietly degraded to
+single-item steps for the rest of the visit. The hook also refuses to measure a
+detached node for the same reason.
+
+Wire the result up as a **roving tabindex**: the active item gets `tabIndex={0}`
+and every other item `tabIndex={-1}`, with `onKeyDown` on the container. Tab then
+crosses the whole grid in one press while the arrows walk it, which is the
+standard composite-widget contract. Keep the items native `<button>`s so Space
+activates them; Enter is handled by the hook, whose `preventDefault` suppresses
+the button's own activation so the item opens exactly once.
+
+Two things the Extensions grid (`Settings/Extensions/`) gets right and a new
+grid should copy:
+
+- **Take focus on mount.** A grid the user navigated to is the thing they came
+  to use, so claim focus rather than making them click or Tab into it first.
+  Consume that with a ref so it happens once per mount; re-focusing on every
+  index change yanks the caret back from wherever the user moved it.
+- **Own the active index ABOVE the grid** when the grid unmounts for a detail
+  view, and let the remount restore focus. Otherwise Escape drops the user on
+  the first tile and they lose their place.
+- **Move DOM focus only when focus is already inside the grid.** An effect that
+  focuses on every index change steals the caret out of the search box the
+  moment filtering changes the list.
 
 ### Surface-Local Chords (`useCommandKeyShortcut`)
 
@@ -1166,6 +1470,35 @@ Standard cancel/confirm button layout:
 />
 ```
 
+### `<ShortcutHint>` (`src/renderer/components/ui/ShortcutHint.tsx`)
+
+The keys badge at the right edge of a tab overlay-menu row:
+
+```tsx
+{
+	tabShortcuts.moveTabToStart && (
+		<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
+	);
+}
+```
+
+Used by every tab item's overlay menu (`AITabOverlayMenu`, `FileTab`, `TerminalTabItem`, `BrowserTabItem`, `GroupTabChip`). It was previously re-declared inline, byte-identical, in four of those components - do NOT add a fifth copy. Positions itself with `ml-auto`, so it only lays out correctly inside a flex row item. Key glyphs come from `formatShortcutKeys`, which is platform-correct; never hard-code `⌘` / `Ctrl` in menu copy.
+
+### `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/AdditionalDirectoriesSection.tsx`)
+
+The row editor for an agent's extra directory grants (path + independent R / W square toggles + remove). Shared by NewInstanceModal, EditAgentModal, and the Wizard's DirectorySelectionScreen so all three emit the same `AdditionalDirectory[]`.
+
+```tsx
+<AdditionalDirectoriesSection
+	theme={theme}
+	directories={additionalDirectories}
+	onChange={setAdditionalDirectories}
+	disableBrowse={isSshEnabled} // local folder picker can't see the remote host
+/>
+```
+
+Always run the value through `normalizeAdditionalDirectories(dirs, homeDir)` (`src/shared/additionalDirectories.ts`) before persisting it on the session - the component keeps raw rows so the user can type and toggle freely. Grants are prompt-level only; see SHARED-UTILS.md → Additional Directories.
+
 ### `<CornerDot>` (`src/renderer/components/ui/CornerDot.tsx`)
 
 The small pip pinned to the corner of something else: the red unread dot over a
@@ -1188,6 +1521,70 @@ four copies and they had already drifted on size and offset.
 - `title` - gives both a hover tooltip and an accessible name. Without one the dot is `aria-hidden`,
   since it usually just repeats what its parent already says. The dot is deliberately NOT
   `pointer-events-none` (that kills the tooltip); clicks bubble to the parent.
+
+### `<MiniBadge>` (`src/renderer/components/ui/MiniBadge.tsx`)
+
+The tiny uppercase text chip that tags an item's state: "WT" beside a worktree
+agent, "Active" / "Snoozed" beside a tab. It is the generic text counterpart to
+`<CountBadge>`, which says a number and nothing else, and to the domain pills
+beside it (`WorktreePill`, `GitRunningBadge`) that say one fixed word in their
+own colors. Do NOT hand-roll another `text-[9px] px-1 rounded uppercase` span -
+the Usage Dashboard's tiles carried one copy and the per-tab list needed the
+identical chip, which is exactly where two copies start drifting on padding and
+weight.
+
+```tsx
+<MiniBadge label="Snoozed" theme={theme} color={theme.colors.warning} testId="tab-snoozed" />
+```
+
+- `color` defaults to the theme accent and tints both the text and its translucent fill.
+- The label is its own accessible name, so pass a real word rather than an abbreviation
+  the reader has to decode - unless the abbreviation is the established UI term, in which
+  case pass `title` with the long form.
+
+### `<ProviderAvailabilityBar>` (`src/renderer/components/ui/ProviderAvailabilityBar.tsx`)
+
+"4 providers available locally of 11 supported", plus the toggle that switches
+between the two lists. Most of the providers Maestro supports are not installed
+on any given machine, so listing all of them buries the two or three a user can
+pick behind a wall of dimmed rows. Both provider pickers - the wizard's tile
+strip and the New Agent modal's list - show this one bar, so the count and the
+toggle cannot disagree about what is being filtered.
+
+**Which way the toggle starts is per-picker, and deliberately not the same.**
+The New Agent modal opens FILTERED, because it is the everyday path and its user
+already knows what they have installed. The wizard opens on ALL supported
+providers, because it is a first-run screen: someone whose provider is installed
+but undetected (a custom path, an SSH host detection could not probe) would
+otherwise open the wizard, not see it, and conclude Maestro does not support it.
+The filtering RULES below are shared regardless, so the two can only differ in
+where they start, never in what "available" means.
+
+The filtering rules themselves live in `src/renderer/utils/providerAvailability.ts`
+(`filterToAvailableProviders`, `providerLocationLabel`) rather than in either
+picker. Three rules, each of them a dead end if broken:
+
+- **The count always describes ALL supported providers, never the filtered list.**
+  A count that shrank along with the rows would report "4 of 4" and answer nothing.
+- **Filtering down to nothing falls back to the full list.** An empty picker has no
+  row to reach per-provider settings through, so a user whose binary sits in a
+  non-standard place would have no way to point Maestro at it and no way to proceed.
+- **The selected provider survives the filter regardless.** Duplicating an agent whose
+  provider is missing from this machine would otherwise hide the very row that shows
+  what is selected, and the picker would look like it has no selection.
+
+`variant="compact"` drops to the counts alone for a bar that rides a section
+heading (the New Agent modal); `full` is the standalone row (the wizard). The
+location phrase comes from `providerLocationLabel(remoteHost)` - both pickers can
+point at an SSH remote, and "locally" is a claim about the wrong machine whenever
+one is selected.
+
+Two things a container has to respect. If the surface runs one keydown handler
+across the whole screen (the wizard does, to drive the strip), exempt the bar's
+subtree with `PROVIDER_BAR_NAV_EXEMPT_ATTR` or the toggle loses its own Tab and
+arrow keys the moment it takes focus. And when the filter flips, **carry the
+focus ring by PROVIDER, not by index** - the list renumbers, so keeping the raw
+index slides the ring onto whichever unrelated provider inherited that slot.
 
 ### `<FontScaleControl>` (`src/renderer/components/ui/FontScaleControl.tsx`)
 
@@ -1534,6 +1931,39 @@ Portal-rendered toast notification stack. Rendered in `App.tsx`:
 <ToastContainer theme={theme} onSessionClick={handleSessionClick} />
 ```
 
+### Output Widget Library (`src/renderer/components/widgets/`)
+
+Shared, theme-aware, **presentational-only** display widgets. Every widget is
+memoized, takes its data via props (no IPC, no store reads), and is independent
+of any Encore flag - so it can be composed onto any surface. Import from the
+barrel (`components/widgets`), not from `output/` directly. Reuse these before
+hand-rolling stat cards, bar charts, donuts, or activity timelines.
+
+| Widget              | Use for                                                              |
+| ------------------- | -------------------------------------------------------------------- |
+| `StatCard`          | Headline metric: large value, label, optional `Sparkline` + icon     |
+| `StatCardGrid`      | Responsive auto-fit grid of `StatCard`s from a `StatCardDatum[]`     |
+| `SectionCard`       | Titled content card (icon + accent + action slot) framing a block    |
+| `ActivityTimeline`  | Compact stacked AUTO/USER/CUE bar timeline from `TimelineBucket[]`   |
+| `TypeBreakdown`     | Donut breakdown of `DonutSlice[]` with center total + legend %       |
+| `AgentActivityBars` | Horizontal bars from `BarDatum[]`: sorted desc, top-N + overflow row |
+
+Shared prop types live in `widgets/types.ts` (`WidgetProps` carries `theme`;
+plus `StatCardDatum`, `BarDatum`, `TimelineBucket`, `DonutSlice`). Colors follow
+the unified-history language (AUTO = `theme.colors.warning`, USER =
+`theme.colors.accent`, CUE = `CUE_COLOR`); pass a `colors` override for
+colorblind palettes. `StatCard`/`TypeBreakdown` reuse `Sparkline` and
+`formatNumber` rather than re-implementing SVG paths or number formatting.
+
+First consumer: Director's Notes Rich Mode (`DirectorNotes/RichOverview.tsx`),
+which composes the widgets from deterministic IPC data (`getGraphData` /
+`getUnifiedHistory`) and wraps each chart in `ChartErrorBoundary`.
+
+Full reference (all output + input widget props, the input-family contract, the
+presentational-only/Encore-flag-independent rules, and the Widget Gallery dev
+command): [WIDGET-LIBRARY.md](WIDGET-LIBRARY.md). Reuse a widget from there
+before hand-rolling a stat card, chart, sparkline, or input control.
+
 ### `<EnvVarList>` (`src/renderer/components/ui/EnvVarList.tsx`)
 
 Read-only view of an agent's **effective** environment: the merged result of all
@@ -1634,6 +2064,19 @@ not worth a Settings row. Do NOT hand-roll another
 reset every time the panel re-rendered, which reads as the banner refusing to
 stay closed.
 
+`usePersistedChoice(storageKey, options, defaultValue)` in
+`src/renderer/hooks/ui/usePersistedChoice.ts` is the enum counterpart, for a
+preference whose answer is one of three words rather than yes/no (the Extensions
+grid's A-Z / Newest sort). It validates the stored string against the option
+list on read, so a mode left behind by an older build falls back to the default
+instead of stranding the surface in a state its control can no longer express.
+Both hooks reach Storage through `safeStorageGet` / `safeStorageSet`
+(`src/renderer/utils/safeLocalStorage.ts`), which is also what
+`useScalePreference` uses - do NOT write a fourth private `storage()` guard,
+and do NOT optional-chain `getItem`/`setItem` on `safeLocalStorage()`. The
+accessor only covers reaching the object; method-level failures (quota,
+Safari private mode) are what the get/set pair swallows.
+
 ---
 
 ## Right-Click Image Menu (`ImageContextMenuHost`)
@@ -1668,6 +2111,182 @@ This rule applies to **content containers** sized to wrap text. It does NOT appl
 
 ---
 
+## Responsive Headers - Container Queries, Not JS Width
+
+Header rows that sit inside a resizable panel (main panel header, left-sidebar section headers) must degrade **on a single line** as the panel narrows: progressively hide the least useful elements rather than wrapping onto a second row. Wrapping is always a bug here - it shifts every row below it and looks broken.
+
+Do this with **CSS container queries**, not JavaScript width detection. A JS approach needs a `ResizeObserver`, re-renders on every drag frame, and lags a pointer-driven resize; the CSS is declarative, runs at layout time, and cannot desync.
+
+### The pattern
+
+Three pieces, all required:
+
+1. **Establish the context** on the header element:
+   ```css
+   .my-header-container {
+   	container-type: inline-size;
+   	container-name: myheader;
+   }
+   ```
+2. **Guarantee no-wrap structurally** in the JSX: `whitespace-nowrap` (plus `truncate` for the title) on the label group, and `shrink-0` on the icons and the right-hand control cluster. This holds the single line even where container queries don't apply - the queries only decide _when_ each item drops, never _whether_ the row wraps.
+3. **Give each droppable element a hook class** and hide it at a threshold, dropping the least informative item first:
+   ```css
+   @container myheader (max-width: 340px) {
+   	.my-count-badge {
+   		display: none;
+   	}
+   }
+   ```
+
+### Rules
+
+- **Drop counts and labels; keep buttons.** Put the hook class on the count `<span>` inside a button, never on the button itself - an affordance that vanishes is unreachable, a number that vanishes costs nothing. Collapse a labelled button to its icon/glyph instead of removing it.
+- **Preserve the accessible name.** When a label is `display: none`, the accessible name must still come from a `title` (or `aria-label`) on the button, or the collapsed control becomes unidentifiable to screen readers.
+- **All thresholds must clear the panel's minimum width.** The left sidebar clamps to `minWidth: 280` (`useResizablePanel` in `SessionList.tsx`); everything droppable must have dropped by then or the header wraps at the drag floor.
+- **Adding a control to one of these headers means adding a drop rule for it.** This is the most likely way to regress the layout - a new button widens the row with no threshold to shed it.
+
+### Canonical implementations
+
+| Surface                     | Container  | Hook classes                                                 | CSS                              |
+| --------------------------- | ---------- | ------------------------------------------------------------ | -------------------------------- |
+| Main panel header           | `header`   | `.header-session-name`, `.header-cost-widget`, ...           | `index.css` "Header Bar"         |
+| Group Chats sidebar section | `gcheader` | `.gc-count-badge`, `.gc-archived-count`, `.gc-newchat-label` | `index.css` "Group Chats Header" |
+
+### Testing
+
+jsdom has **no layout engine and never evaluates container queries**, so no unit test can assert "the label is hidden at 275px". Test the _contract_ instead, in two layers:
+
+- **Render test** (`GroupChatList.test.tsx` -> "single-line header contract"): the container class is present, the anti-wrap utilities survive, each droppable element carries its hook class, and the collapsed button keeps its accessible name and click handler.
+- **Cross-file test** (`groupChatHeaderResponsive.regression.test.ts`): the JSX hook classes and the `@container` rules still agree in both directions (a rename on either side fails), the drop order is preserved, and no threshold falls below the sidebar minimum.
+
+That pairing is what makes the silent failure mode loud - the class names are the only thing tying the two files together, and nothing else in the build would catch drift.
+
+---
+
+## Touch Gestures (`useLongPress`)
+
+The desktop renderer also runs on phones (web-desktop build), where several interactions are right-click-only or hover-only and thus unreachable. `useLongPress` (`src/renderer/hooks/utils/useLongPress.ts`) is the canonical way to expose a right-click affordance (context menu, tab action overlay) to touch users. Do NOT hand-roll a `setTimeout` + `touchmove` gesture; reuse this hook.
+
+It differentiates tap, scroll, and long-press:
+
+- A ~500ms press without moving past a 10px threshold fires `onLongPress(rect)` with the element's bounding rect (so callers can anchor a menu at the touch position) and a `success` haptic.
+- A `touchmove` past the threshold cancels the long-press (scroll-aware): the menu does NOT pop while the user is scrolling a list.
+- A short press fires the optional `onTap` with a `tap` haptic.
+- `handleContextMenu` triggers the same `onLongPress` immediately on desktop right-click, so mouse behavior is preserved when you wire both.
+
+```tsx
+const { elementRef, handlers, handleContextMenu } = useLongPress({
+	onLongPress: (rect) => openMenuAt(rect.left, rect.bottom),
+});
+
+<div
+	ref={elementRef as React.RefObject<HTMLDivElement>}
+	{...handlers}
+	onContextMenu={handleContextMenu} // keep existing right-click behavior
+/>;
+```
+
+Gate any touch-only wiring behind `isCoarsePointer()` from `src/renderer/utils/touch.ts` when you must not change mouse/keyboard behavior.
+
+---
+
+## Virtual Keyboard Offset (`useKeyboardVisibility`)
+
+On phones the on-screen keyboard covers the bottom of the layout viewport, hiding the AI input and send controls. `useKeyboardVisibility` (`src/renderer/hooks/utils/useKeyboardVisibility.ts`) is the canonical detector - do NOT re-derive `window.visualViewport` math or listen for `focusin`/`resize` yourself. It is pure Visual Viewport API with zero app coupling, so it is a no-op on the Electron desktop app and anywhere the API is unavailable (both return `{ keyboardOffset: 0, isKeyboardVisible: false }`).
+
+- Compares `window.innerHeight` to `visualViewport.height` (minus `offsetTop`); a shrink past a 50px threshold reads as a keyboard and reports the eaten pixel height as `keyboardOffset`.
+- Recomputes on the viewport's `resize` (and, while the keyboard is up, `scroll`) events; cleans up its listeners on unmount.
+
+The app shell in `App.tsx` publishes the offset as a CSS custom property, and `.maestro-app-shell` consumes it as bottom padding (scoped to `html[data-runtime='web-desktop']`, so the native app is untouched):
+
+```tsx
+const { keyboardOffset, isKeyboardVisible } = useKeyboardVisibility();
+const keyboardShellOffset = isWebDesktop() && isKeyboardVisible ? keyboardOffset : 0;
+
+<div className="maestro-app-shell" style={{ '--keyboard-offset': `${keyboardShellOffset}px` } as React.CSSProperties}>
+```
+
+```css
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-bottom: calc(env(safe-area-inset-bottom) + var(--keyboard-offset, 0px));
+}
+```
+
+Because the shell is `box-sizing: border-box` at `height: 100dvh`, the added bottom padding shrinks the content box and the flex column re-lays with the input sitting just above the keyboard. Gate the applied offset behind `isWebDesktop()` (from `src/renderer/utils/runtimeContext.ts`) so it stays a no-op on the Electron desktop app.
+
+---
+
+## Voice Input (`useVoiceInput`)
+
+`useVoiceInput` (`src/renderer/hooks/utils/useVoiceInput.ts`) is the canonical speech-to-text hook for the AI input on touch devices. Do NOT re-instantiate `SpeechRecognition` or hand-roll vendor-prefix detection - it wraps the Web Speech API (with the `webkitSpeechRecognition` fallback), carries its own typings, and reuses `triggerHaptic`/`HAPTIC_PATTERNS` from `src/renderer/utils/touch.ts`.
+
+- Call it where the live draft lives (`InputArea`), passing `currentValue` (the draft), `onTranscriptionChange` (the draft setter), and an optional `focusRef` (the textarea, refocused when dictation ends). Streaming interim results call `onTranscriptionChange` so the draft updates live; the final transcript is appended to the value captured when listening began.
+- `voiceSupported` (support detection), `isListening`, and `toggleVoiceInput` drive the UI. `toggleVoiceInput`'s identity changes with the draft, so wrap it in a ref-backed stable callback before handing it to a memoized child (e.g. `ToolbarControls`) - otherwise the child re-renders on every keystroke.
+
+The mic toggle lives in `ToolbarControls` and renders only when `voiceSupported && isCoarsePointer()` (touch), so desktop mouse/keyboard users never see it. It sits in the always-visible left action group (not the collapsing overflow toggle group), because a voice affordance buried behind the `...` menu on the phones it targets defeats the purpose.
+
+```tsx
+const voice = useVoiceInput({
+	currentValue: inputValue,
+	onTranscriptionChange: setInputValue,
+	focusRef: inputRef,
+	disabled: isTerminalMode,
+});
+const voiceToggleRef = useRef(voice.toggleVoiceInput);
+voiceToggleRef.current = voice.toggleVoiceInput;
+const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
+```
+
+---
+
+## Swipe Gestures (`useSwipeGestures`)
+
+`useSwipeGestures` (`src/renderer/hooks/utils/useSwipeGestures.ts`) is the canonical multi-directional swipe detector (distance/velocity thresholds, direction locking, optional offset tracking). It returns touch handlers to spread on a target element. Do NOT hand-roll `touchstart`/`touchmove` math - reuse this hook.
+
+Key caveat: `handleTouchMove` calls `e.preventDefault()` once it locks to a horizontal swipe, so it suppresses native horizontal scroll on whatever element it's attached to. Attach it only to elements where that's intended - screen-edge drawer zones or a modal backdrop - never a scrollable content region (terminal, tab bar, tables).
+
+App.tsx uses it for edge-swipe drawers on phones, gated on `isNarrowViewport && isWebDesktop() && isCoarsePointer()`:
+
+- Two thin (24px) fixed edge strips (`.maestro-edge-swipe-zone`, `touch-action: pan-y`) host the openers - a rightward swipe from the left edge opens the Left Bar (`setLeftSidebarOpen(true)`), a leftward swipe from the right edge opens the Right Panel. Because gestures can only START in the edge strips, center-content horizontal scrolling is never intercepted.
+- The mobile backdrop (only present while a drawer is open) hosts the closer - swipe left to close the left drawer, swipe right to close the right.
+
+---
+
+## Right-Click Image Menu (`ImageContextMenuHost`)
+
+Every image anywhere in the app - raster `<img>`, agent-authored inline `<svg>`, Mermaid charts, thumbnails, the lightbox - gets the same three actions on right-click: **Copy Image**, **Save to Project...**, and **Save As...**.
+
+**Surfaces wire up nothing.** `<ImageContextMenuHost>` is mounted once in `App.tsx` and owns a single delegated `contextmenu` listener on the document that resolves the image from the click target. Do NOT add an `onContextMenu` to a new image surface, do not call a hook, and do not add a per-surface copy/save button pair. There is no per-surface wiring to forget, which is the entire point: the menu used to hang off individual components, so every new image surface silently shipped without it.
+
+- `resolveImageFromEvent(e)` (exported from `ImageContextMenuHost.tsx`) decides what counts. It skips three things: anything inside a `[data-no-image-menu]` subtree, lucide icons (which are `<svg>` but carry the `lucide` class), and anything under 32px rendered (favicons, inline badges).
+- **Opting a surface out:** put `data-no-image-menu` on its container. Use this only when the surface owns its own right-click behavior (e.g. `AnnotatorCanvas`). A menu that already handled the click and called `preventDefault()` is skipped automatically via `defaultPrevented` - that is how `LinkContextMenu` / `FileContextMenu` coexist with this one.
+- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` returns `'image' | 'text' | 'failed'` so the UI can admit when only markup or a URL reached the clipboard rather than claiming a paste-able image. `saveImageToProject()` writes into the project's `DIAGRAMS_DIR` (`.maestro/diagrams/`) and works over SSH; `saveImageElementToDisk()` is the native-dialog path. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
+- `ImageDestinationModal` is the "Save to Project..." destination picker (folder, file name, SVG/PNG format, live path preview). Not to be confused with `FilePreview/ImageSaveModal`, which is the annotator's overwrite-vs-save-as prompt.
+
+`serializeSvg()` stamps the measured size onto the clone when the source has none. Mermaid sizes charts with CSS (`width="100%"`), and without this the rasterized copy comes out cropped at the browser's 300x150 default.
+
+---
+
+## Table of Contents (`components/Toc`)
+
+Any long scrollable surface that wants a jump list uses the shared TOC. Do NOT re-implement the floating button, the panel, or its keyboard handling: users have muscle memory from File Preview, and a second copy drifts from it.
+
+| Piece               | Location                            | Responsibility                                                                      |
+| ------------------- | ----------------------------------- | ----------------------------------------------------------------------------------- |
+| `<TocOverlay>`      | `components/Toc/TocOverlay.tsx`     | The button + panel, entry rendering, Arrow/Home/End navigation, focus-first-on-open |
+| `useTocOverlay()`   | `hooks/ui/useTocOverlay.ts`         | Open state, toggle hotkey, Escape, click-outside, focus restore on close            |
+| `computeTocWidth()` | `components/Toc/tocWidth.ts`        | Panel width from the longest entry (clamped 200-500px)                              |
+| `extractHeadings()` | `components/Toc/extractHeadings.ts` | Markdown headings -> `TocEntry[]`, code-fence aware, `github-slugger` slugs         |
+
+Consumers: `FilePreviewToc` (markdown files) and `AIOverviewTab` (Director's Notes, both reading modes).
+
+Two things a host must get right:
+
+- **Anchors have to exist.** The default scroll path is `containerRef.querySelector('#slug')`. For rendered markdown that means passing `rehype-slug` so headings carry ids matching `extractHeadings`' slugs. For non-heading targets (Director's Notes' `SectionCard`s, the virtualized Fast tier) either put a matching `id` on the target or pass `onSelectEntry` and handle the scroll yourself.
+- **The keydown must reach the hook.** `handleKeyDown` fires from the element that has DOM focus, and keys bubble UP. If an ancestor owns focus, the hook never sees the hotkey. Focus the scroll region itself - in Director's Notes the tab exposes a `TabFocusHandle` whose `focus()` targets the content region for exactly this reason.
+
+Escape ordering is the host's call. On a layer-stack modal, delegate to `closeIfOpen()` first and only close the modal when it returns false, so Escape dismisses the panel before the modal.
+
 ## Left Bar Header Width Gates
 
 The Left Bar header is a single row that neither wraps nor scrolls, and the user can drag the sidebar down to 256px. Every control added to it (the badge pill, the now-playing pill, the LIVE toggle) takes room from a fixed budget, so the row needs a declared yield order rather than whatever CSS happens to shrink first.
@@ -1684,7 +2303,9 @@ const showWordmark =
 
 The wand button stays at every width, so the header never loses its identity or its switch-agent affordance.
 
-**The now-playing pill is the row's shrink target of last resort.** Something has to yield, and the filename inside that pill is the only thing in the row that can be clipped without looking broken. It is therefore `min-w-0` rather than `shrink-0` (a flex item defaults to `min-width: auto` and refuses to go below its content, so both the pill and the button inside it need `min-w-0`), while both transport buttons, both icons, and the divider stay `shrink-0` - they are the entire transport a minimized player has.
+**The now-playing pill is the row's shrink target of last resort.** Something has to yield, and the filename inside that pill is the only thing in the row that can be clipped without looking broken. The filename is the ONLY thing that yields, and the pill must never shrink past its own transport. So the pill is NOT `min-w-0` and NOT `overflow-hidden` (that pair let a squeezed band shrink it below its buttons and clip the restore button in half); it keeps its automatic minimum, and that minimum is exactly the transport, because the toggle is a grid whose label track is `minmax(0, max-content)`. The label takes its natural width when there is room and contributes nothing to the pill's min-content. The toggle itself stays free of `min-w-0` too, or the glyph spills over the divider. Without the pill's clip, the hover backgrounds carry their own corner radius so they do not square off its rounded ends.
+
+**Reserves built from rem units scale with the root.** The trophy badge and the now-playing pill are padding and icon boxes with no label to measure, so `useHeaderTextDelta().remScale` (root size over the 14px baseline, floored at 1) multiplies `HEADER_BADGE_WIDTH` and both now-playing reserves. Without it a larger root drew both wider than the header had reserved.
 
 **The wordmark yields ahead of the indicators, so it stops charging them once it is gone.** The LIVE toggle's label threshold adds the badge's reserve only while `showWordmark` is true:
 
@@ -1702,6 +2323,26 @@ Three rules for adding a control here:
 - **Charge a reserve only against what is still drawn.** A control that competes with the wordmark stops competing the moment the wordmark drops out; keeping its cost in a downstream threshold spends room nothing is occupying.
 
 Testing this drives `leftSidebarWidth` in `useSettingsStore` directly, the same way the LIVE-pill tests do; jsdom measures nothing, so a real-layout test is not available. Assert the wordmark's ABSENCE at narrow widths, not that `truncate` is gone - the latter passes on a wordmark that still renders clipped.
+
+---
+
+## Right Bar Toolbar Density (`historyPillDensity`)
+
+The History panel's toolbar is the same problem one panel over, and it is worth reading as the counter-example to a static threshold. The row is `[search button][USER][AGENT][AUTO][CUE][help button]`, it neither wraps nor scrolls, and it used to decide its own density from one number: `rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD`.
+
+**A panel width cannot answer "does this fit".** What the pills need also depends on the interface font (the root is a proportional face now, and Inter's capitals average nearer 0.7em where Roboto Mono was a flat 0.6em), on the Cmd+= zoom, and on whether Cue is on - three pills or four. Same 420px panel, several different answers. When the answer came out wrong nothing shrank, because every child was `flex-shrink-0`: the overflow spilled out of both ends of a centred row and clipped the search and help buttons off the edges. A control the user cannot see is a control they do not have.
+
+The fix is to measure, and the shape of it generalizes:
+
+- **Measure the PARENT, never yourself.** The row's own width is the thing being decided, so a figure read from it is circular: it renders at some rung, measures itself, concludes it fits (it is its own width, so it always does), and never moves. `useFreeWidthInFlexRow` (in `useElementWidth.ts`) reports the parent's content box minus its other children and the gaps, which nothing about the row can influence.
+- **Knowing the free width is not the same as taking it.** An earlier pass gave the row `flex-1` so it could measure itself, and that swallowed the whole toolbar: the search and help buttons were shoved against the two panel edges with a lake of dead space between them and the pills. The row is natural-width with `min-w-0` and its default shrink, so the toolbar's `justify-center` gathers pills and buttons into one centred group, and a squeeze the ladder has not caught up with shrinks THIS row instead of pushing a neighbour out. The ladder is opt-in via `fillWidth`; the Director's Notes copy sits beside an activity graph that already consumes the leftover width, so there is no free figure to read and it leaves the flag off.
+- **Measure a mirror, never the live controls.** A hidden, out-of-flow copy of the labels at the BASE size gives a width that is a property of the font rather than of the rung currently rendered. Feeding the rendered pills back in would make each choice depend on the last one and oscillate.
+- **Everything else is arithmetic, not a second measurement.** Label advance scales linearly with font size and the tracking is in `em`, so one measured width covers every rung. The padding, icon, and gaps are rem-based, so they are computed from the live root font size rather than from pixel literals - a literal is right only at a 16px root, which is the bug in miniature.
+- **Declare a yield order.** `PILL_DENSITIES` gives up the icon first (it repeats what the pill spells out in words, and the glyph plus its gap is over an em per pill), then padding, then two steps of type size. Line height is fixed at every rung, so the pills keep one height and the toolbar does not change shape as the panel is dragged.
+- **Keep a last-resort guarantee.** `min-w-0` plus `overflow-hidden` means that at an interface font the bottom rung cannot absorb, the pills clip and the buttons do not. Pick which one loses; do not leave it to paint order. Note `min-w-0` is the load-bearing half - a flex item defaults to `min-width: auto` and refuses to go below its content, which is how the row pushed its neighbours out in the first place.
+- **Keep the static prediction as the pre-measurement prior.** `useElementWidth` reports 0 until its first observation, so the first paint has nothing to compare. The old `compact` flag is exactly the right guess for that one frame, which is why the prop stayed.
+
+The selection logic is a pure function (`resolvePillDensity` in `src/renderer/components/History/historyPillDensity.ts`) precisely so it can be tested: jsdom has no layout engine, so the component test can only assert the layout contract (the row fills, the mirror exists, the overflow is contained) and the arithmetic has to be exercised separately.
 
 ---
 
@@ -1748,7 +2389,7 @@ Each tab has an `AITab` type with:
 - `handleCloseTabsLeft()` / `handleCloseTabsRight()` - close tabs on one side of active
 - `handleCloseCurrentTab()` - returns `CloseCurrentTabResult` indicating which tab type was closed
 - `handleTabReorder(fromIndex, toIndex)` - reorder AI tabs
-- `handleUnifiedTabReorder(fromIndex, toIndex)` - reorder the unified tab bar (mixes AI, file, browser, terminal)
+- `handleUnifiedTabReorder(fromIndex, toIndex)` - reorder the unified tab bar (mixes AI, file, browser, terminal, and tiled-group chips). A tiled group is ONE unified tab and drags/reorders as a single unit like any other chip; its panes are referenced by the group's layout tree, not by `unifiedTabOrder`, so moving the chip never disturbs the tiling.
 - `handleRequestTabRename(tabId)` - open rename modal
 - `handleTabStar(tabId, starred)` - pin/unpin
 - `handleTabMarkUnread(tabId)` - mark unread
@@ -1764,6 +2405,71 @@ Each tab has an `AITab` type with:
 - `handleFileTabNavigateBack()` / `handleFileTabNavigateForward()` - per-file-tab navigation history
 
 The hook also returns selectors: `activeTab`, `unifiedTabs`, `activeFileTab`, `activeBrowserTab`, and the file-tab history state (`fileTabBackHistory`, `fileTabForwardHistory`, `fileTabCanGoBack`, `fileTabCanGoForward`).
+
+### New pane / new tab focus - move the caret, not just the ring
+
+A tab group's `focusedPaneId` drives the focus RING and input routing. It does **not**
+move DOM focus, so a keyboard pane switch alone leaves the caret in the previous
+pane and the user's next keystroke goes to the wrong place. The same is true of a
+plain new tab: activating it does not put a caret anywhere.
+
+Every path that wants the caret publishes a one-shot `focusRequest` on `uiStore`,
+addressed **either** by tiled pane leaf id (`requestPaneFocus`) **or** by tab ref
+(`requestTabFocus`) - one slot, so there is a single focus owner and a single
+cancel chain, and a later request always supersedes an earlier one:
+
+- `useTilingShortcuts` - `focusPane`, `cyclePane`, `splitFocusedPane`, and
+  `closeFocusedPane` when the group survives.
+- `tileNewTabAction` - the tile-below family.
+- `useFilePreviewTabHandlers.handleNewFileTab` / `useBrowserTabHandlers.handleNewBrowserTab` -
+  a blank file opens with the caret in the editor, a new browser tab with the caret
+  in the address bar.
+
+`MainPanelContent` consumes it (clearing immediately so a stale request can't
+re-steal focus on a later remount) and routes by tab kind through
+`focusPaneInputWhenReady` in `utils/paneFocus.ts`. It also resets `activeFocus` to
+`'main'`, because the pane shortcuts are not gated on it and can fire while the
+Left/Right Bar owns it.
+
+Three things to preserve when touching this:
+
+- **The retry belongs to a ref, not to the effect's cleanup.** Consuming the request
+  nulls the store field the effect subscribes to, so the consume re-renders the
+  component. Returning the canceller from the effect made it tear its own retry down
+  a few ms in - always before the first 50ms attempt - and NO pane ever took focus.
+  A superseded request still cancels the one before it, which is all the cleanup was
+  for. The regression test is `still focuses after the re-render its own consume
+causes`; its mocked `clearFocusRequest` really nulls the value, because a bare
+  `vi.fn()` never triggers the re-render that breaks it.
+- **Use `focusTerminal(tabId)`, never `focusActiveTerminal()`.** A tiled terminal pane
+  does not set `activeTerminalTabId` (`focusPaneInSession` only syncs `activeTabId`,
+  and only for AI panes), so the "active" variant lands on the wrong terminal or none.
+- **Keep it a request, not an effect keyed on `focusedPaneId`.** A mouse press anywhere
+  in a pane also moves `focusedPaneId`, so a derived effect would yank the caret into
+  the AI input mid-drag and break text selection in the conversation. Keeping it
+  explicit ties the focus steal to user intent.
+
+### Creating a tab straight into a tile - `tileNewTab`
+
+`tileNewTab(session, kind, defaults, zone?)` in `src/renderer/hooks/tabs/tileNewTab.ts`
+creates an AI / file / terminal / browser tab and drops it into a pane beside whatever
+is on screen, in one session update. It is what the command palette's **Tile New ...
+Below** family calls (`commands/tileCommands.ts`), and it is the entry point for any
+future surface that wants "split the view and put a new X here" without a drag.
+
+It reuses the drag path's primitives rather than re-deriving layout: a live group is
+extended with `tileTabIntoGroup` on its FOCUSED pane (not the whole grid), and an
+untiled view is paired via `createGroupFromDrop`. `canTileNewTab(session)` reports
+whether there is anything on screen to tile against, so a caller can hide the
+affordance instead of offering a no-op.
+
+The one rule to preserve: **the new tab must be minted non-activating.** Every ordinary
+new-tab path (`createTab`, `addTerminalTab`, `handleNewBrowserTab`, `handleNewFileTab`)
+clears `activeGroupId` and claims the panel, because a standalone tab has to or the
+group would keep winning render precedence. Here that is backwards - it would tear
+down the group being built - so `createTab`/`addTerminalTab` are called with
+`activate: false` and the file/browser tabs are appended without touching any
+`active*TabId`. The tiling call at the end is what sets focus and activates the group.
 
 ---
 

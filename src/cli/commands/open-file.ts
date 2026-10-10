@@ -9,12 +9,19 @@
 //                 still changes, which is why the name over-promises.
 //   --background  change nothing that is currently rendered, on any agent.
 //                 Strictly stronger, so it wins when both are passed.
+//
+// `--queue` is for audio/video only: it adds the file to the floating media
+// player's queue WITHOUT starting playback, and shows the player. With nothing
+// loaded, the file loads paused so the user presses play themselves; with
+// something already loaded, it lines up behind it and nothing is interrupted.
+// It never switches agents - the player is app-wide, so there is nowhere to go.
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { getSessionById } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { isMediaFile, type MediaOpenMode } from '../../shared/mediaTypes';
 import { resolveOwningAgent } from '../utils/owning-agent';
 
 interface OpenFileOptions {
@@ -23,6 +30,8 @@ interface OpenFileOptions {
 	switch?: boolean;
 	background?: boolean;
 	focus?: boolean;
+	/** Add audio/video to the player's queue without starting playback. */
+	queue?: boolean;
 	json?: boolean;
 }
 
@@ -39,6 +48,14 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 		process.exit(1);
 	}
 
+	if (options.queue && !isMediaFile(target.absolutePath)) {
+		const error = `--queue only applies to audio and video files: ${target.absolutePath}`;
+		if (options.json) console.log(JSON.stringify({ success: false, error }));
+		else console.error(`Error: ${error}`);
+		process.exit(1);
+	}
+	const mediaMode: MediaOpenMode = options.queue ? 'queue' : 'play';
+
 	const background = resolveBackgroundFlag(options, 'open-file');
 	// `--background` is strictly stronger, so it implies the weaker ask too and
 	// there is no combination that has to be rejected.
@@ -53,6 +70,7 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 					filePath: target.absolutePath,
 					background,
 					switchToAgent,
+					mediaMode,
 				},
 				'open_file_tab_result'
 			);
@@ -67,7 +85,12 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 						path: target.absolutePath,
 						background,
 						switchToAgent,
+						mediaMode,
 					})
+				);
+			else if (mediaMode === 'queue')
+				console.log(
+					`Queued ${path.basename(target.absolutePath)} in the media player (not playing)`
 				);
 			else
 				console.log(

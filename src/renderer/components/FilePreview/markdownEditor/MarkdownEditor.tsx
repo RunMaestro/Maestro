@@ -34,6 +34,33 @@ import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
  * Imperative handle (see `./types`) is the only abstraction the host uses;
  * the underlying CM6 view is intentionally not exposed.
  */
+
+/**
+ * The single change that turns `current` into `next`, trimmed to the span
+ * between their common prefix and common suffix.
+ */
+export function minimalReplacement(
+	current: string,
+	next: string
+): { from: number; to: number; insert: string } {
+	const maxPrefix = Math.min(current.length, next.length);
+	let prefix = 0;
+	while (prefix < maxPrefix && current.charCodeAt(prefix) === next.charCodeAt(prefix)) prefix++;
+	const maxSuffix = maxPrefix - prefix;
+	let suffix = 0;
+	while (
+		suffix < maxSuffix &&
+		current.charCodeAt(current.length - 1 - suffix) === next.charCodeAt(next.length - 1 - suffix)
+	) {
+		suffix++;
+	}
+	return {
+		from: prefix,
+		to: current.length - suffix,
+		insert: next.slice(prefix, next.length - suffix),
+	};
+}
+
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
 	function MarkdownEditor(
 		{
@@ -151,8 +178,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			// Mount-only: prop changes are handled by the dedicated effects below.
 		}, []);
 
-		// External `value` → editor doc. Diff so identical strings are a no-op
-		// and we preserve cursor/scroll/history. CM6 transactions are cheap.
+		// External `value` → editor doc. Replace only the span that differs:
+		// swapping the whole document maps the caret to one end of it, so an
+		// agent ticking one box would throw the user's cursor to the top.
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
@@ -160,9 +188,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			if (current === value) return;
 			applyingExternalRef.current = true;
 			try {
-				view.dispatch({
-					changes: { from: 0, to: current.length, insert: value },
-				});
+				view.dispatch({ changes: minimalReplacement(current, value) });
 			} finally {
 				applyingExternalRef.current = false;
 			}

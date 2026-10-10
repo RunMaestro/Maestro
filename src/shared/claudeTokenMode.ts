@@ -1,14 +1,19 @@
 /**
  * Claude Token-Source Mode
  *
- * Claude Code can spend either Max-plan quota (by driving the real claude TUI
- * through `maestro-p`) or per-token API credit (`claude --print`). A Maestro
- * agent picks one of three behaviors:
+ * A Claude Code turn runs through either the real claude TUI (driven by
+ * `maestro-p`) or `claude --print`. A Maestro agent picks one of three behaviors:
  *
- *   - `api`         always `claude --print` (per-token API credit)
- *   - `interactive` always the maestro-p TUI (Max-plan quota)
- *   - `dynamic`     start interactive, fall back to API when the latest usage
- *                   snapshot shows a window at/above the limit threshold
+ *   - `api`         always `claude --print`
+ *   - `interactive` always the maestro-p TUI
+ *   - `dynamic`     start interactive, switch to `claude --print` when the latest
+ *                   usage snapshot shows a window at/above the limit threshold
+ *
+ * The mode picks the INTERFACE, not the bill. Signed in with a Claude plan,
+ * `claude --print` draws from the same 5-hour and weekly limits as the TUI
+ * (verified 2026-10-10: `apiKeySource: none` plus the plan's own
+ * `rate_limit_event` windows), so Dynamic's switch only buys time when the
+ * agent also carries a separate credential such as `ANTHROPIC_API_KEY`.
  *
  * Storage keeps the legacy `enableMaestroP` boolean (the original Adaptive
  * toggle) plus a `maestroPMode` refinement so existing sessions migrate

@@ -27,6 +27,10 @@ import type { FileNode } from '../../types/fileTree';
 import { ConfirmModal } from '../ConfirmModal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../../hooks/batch/useAutoRunStateMirror';
 
 interface AutoRunExpandedModalProps {
 	theme: Theme;
@@ -112,6 +116,15 @@ export function AutoRunExpandedModal({
 	// Local mode state - independent from the right panel behind the modal
 	const [localMode, setLocalMode] = useState<'edit' | 'preview'>(initialMode);
 
+	// The cmd+e capture listener reads the mode and the setter through refs so it
+	// registers once instead of re-subscribing on every mode flip - a listener
+	// that tears down and re-adds mid-keystroke can miss the very event it exists
+	// to catch. Assigned during render, so they are current by the time any event
+	// fires.
+	const localModeRef = useRef(localMode);
+	localModeRef.current = localMode;
+	const setModeRef = useRef<(mode: 'edit' | 'preview') => void>(() => {});
+
 	// Wrap onStateChange to prevent mode from propagating to parent
 	// This keeps the expanded modal's mode independent from the right panel
 	const handleStateChange = useCallback(
@@ -140,6 +153,10 @@ export function AutoRunExpandedModal({
 	const isEditLocked = isRunActive && !isErrorPaused;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isStopping = batchRunState?.isStopping || false;
+	// Mirrored from another Maestro window: the document is still locked (that
+	// window really is writing to it) but Stop cannot reach the loop from here.
+	const isMirroredRun = useIsMirroredBatchRun(sessionId);
+	const stopDisabled = isStopping || isMirroredRun;
 
 	// Track dirty state from AutoRun component
 	const [isDirty, setIsDirty] = useState(false);
@@ -222,9 +239,23 @@ export function AutoRunExpandedModal({
 	}, [isTopLayer]);
 
 	// Modal-scoped shortcuts: cmd+s saves (when dirty); cmd+o opens the
-	// document selector dropdown. Registered in the capture phase so we run
-	// before the global keyboard handler in useMainKeyboardHandler (which
-	// would otherwise treat cmd+o as `agentSwitcher`).
+	// document selector dropdown; cmd+e toggles edit/preview. Registered in the
+	// capture phase so we run before the global keyboard handler in
+	// useMainKeyboardHandler (which would otherwise treat cmd+o as
+	// `agentSwitcher`, and cmd+e as the chat's raw-markdown toggle).
+	//
+	// cmd+e in particular MUST be claimed here rather than left to the AutoRun
+	// component's own React onKeyDown. That handler only fires when focus is
+	// inside its subtree, and this modal shares the app with a second, fully
+	// mounted AutoRun in the right panel behind it. Whenever focus was anywhere
+	// else - the body after dismissing a nested dialog, a toolbar button - the
+	// keystroke sailed past both and landed on the global handler, which toggled
+	// the main panel's markdown mode. The user saw a modal that ignored its own
+	// shortcut while something changed behind it.
+	//
+	// A window-capture listener runs before any React handler, and only while
+	// this modal is mounted, so the topmost surface wins by construction rather
+	// than by whoever happens to hold focus.
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const metaPressed = e.metaKey || e.ctrlKey;
@@ -240,6 +271,16 @@ export function AutoRunExpandedModal({
 				e.preventDefault();
 				e.stopPropagation();
 				autoRunRef.current?.openDocumentSelector();
+			} else if (key === 'e' && !e.shiftKey) {
+				// Swallowed even while locked: editing is disabled during a run,
+				// but letting it through would toggle the main panel behind us,
+				// which is the exact leak this closes. Cmd+Shift+E is a different
+				// shortcut ("Edit Last Queued Message") and is left alone.
+				e.preventDefault();
+				e.stopPropagation();
+				if (!isEditLocked) {
+					setModeRef.current(localModeRef.current === 'edit' ? 'preview' : 'edit');
+				}
 			}
 		};
 		window.addEventListener('keydown', handleKeyDown, { capture: true });
@@ -258,6 +299,8 @@ export function AutoRunExpandedModal({
 		},
 		[onModeChange]
 	);
+	setModeRef.current = setMode;
+
 	const resizableModal = useResizableModal({
 		resizeKey: 'auto-run-expanded',
 		defaultSize: { width: 960, height: 720 },
@@ -398,16 +441,22 @@ export function AutoRunExpandedModal({
 						{/* Run / Stop button */}
 						{isRunActive ? (
 							<button
-								onClick={() => !isStopping && onStopBatchRun?.(sessionId)}
-								disabled={isStopping}
-								className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors font-semibold ${isStopping ? 'cursor-not-allowed' : ''}`}
+								onClick={() => !stopDisabled && onStopBatchRun?.(sessionId)}
+								disabled={stopDisabled}
+								className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors font-semibold ${stopDisabled ? 'cursor-not-allowed' : ''}`}
 								style={{
 									backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
 									color: isStopping ? theme.colors.bgMain : 'white',
 									border: `1px solid ${isStopping ? theme.colors.warning : theme.colors.error}`,
-									pointerEvents: isStopping ? 'none' : 'auto',
+									opacity: isMirroredRun ? 0.6 : 1,
 								}}
-								title={isStopping ? 'Stopping after current task...' : 'Stop auto-run'}
+								title={
+									isMirroredRun
+										? MIRRORED_RUN_CONTROL_TITLE
+										: isStopping
+											? 'Stopping after current task...'
+											: 'Stop auto-run'
+								}
 							>
 								{isStopping ? <Spinner size={14} /> : <Square className="w-3.5 h-3.5" />}
 								{isStopping ? 'Stopping' : 'Stop'}

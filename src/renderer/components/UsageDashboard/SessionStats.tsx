@@ -17,7 +17,7 @@ import type { Theme, Session, ToolType } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
-import { isWorktreeAgent, resolveAgentDisplayName } from './chartUtils';
+import { isWorktreeAgent, resolveAgentDisplayName, barChartLabelWidth } from './chartUtils';
 
 interface SessionStatsProps {
 	/** Array of all sessions */
@@ -205,6 +205,15 @@ export const SessionStats = memo(function SessionStats({
 		[stats.byAgent, theme, colorBlindMode, agentSessions]
 	);
 
+	const labelWidth = useMemo(
+		() =>
+			barChartLabelWidth(
+				sortedAgents.map((a) => a.displayName),
+				{ withSwatch: true }
+			),
+		[sortedAgents]
+	);
+
 	if (agentSessions.length === 0) {
 		return (
 			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
@@ -234,7 +243,7 @@ export const SessionStats = memo(function SessionStats({
 			</h3>
 
 			{/* Summary Cards */}
-			<div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+			<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mb-6">
 				<StatCard
 					label="Total Agents"
 					value={stats.total}
@@ -295,14 +304,16 @@ export const SessionStats = memo(function SessionStats({
 							<div key={agent.agent} className="flex items-center gap-3">
 								{/* Agent name */}
 								<div
-									className="w-28 text-sm truncate flex-shrink-0 flex items-center gap-2"
-									style={{ color: theme.colors.textDim }}
+									className="text-sm flex-shrink-0 flex items-center gap-2"
+									style={{ width: labelWidth, color: theme.colors.textDim }}
+									title={agent.displayName}
+									data-testid="bar-chart-label"
 								>
 									<div
 										className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
 										style={{ backgroundColor: agent.color }}
 									/>
-									{agent.displayName}
+									<span className="truncate">{agent.displayName}</span>
 								</div>
 
 								{/* Bar */}

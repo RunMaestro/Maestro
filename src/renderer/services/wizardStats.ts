@@ -17,8 +17,17 @@
  * REPLACE` in the main process makes that idempotent and never double-counts.
  *
  * A run that is never finished stays `outcome: 'in-progress'` with its counts
- * intact, and `endedAt` tracks last activity rather than close, so
- * `endedAt - startedAt` is always real time spent talking to the wizard.
+ * intact.
+ *
+ * ## Why time is accrued, not measured as open-to-close
+ *
+ * A wizard tab can stay open for days. `endedAt - startedAt` would then count
+ * every hour the tab sat idle, and one run left open overnight swamped all the
+ * real use (a 9-message run once logged 26 hours). So `activeMs` is accrued gap
+ * by gap between milestones: a gap while the agent is working counts in full
+ * (that is the agent's time, however long a generation takes), and a gap while
+ * the wizard waits on the user counts only up to `USER_GAP_CAP_MS` (reading a
+ * reply, typing the next message). Idle time past the cap is not wizard time.
  *
  * All writes are fire-and-forget: analytics must never block or break a wizard.
  */
@@ -28,10 +37,33 @@ import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 
 /**
+ * Most of one user gap that counts as wizard time: reading the agent's reply,
+ * thinking, typing or dictating the next message. Anything longer is the user
+ * away from the wizard.
+ */
+export const USER_GAP_CAP_MS = 5 * 60_000;
+
+/**
+ * Most of one agent turn that counts. A real turn (even a long document
+ * generation) is well under this; a turn that runs longer is a hung agent, not
+ * work the user spent in the wizard.
+ */
+export const AGENT_TURN_CAP_MS = 60 * 60_000;
+
+/** A run plus the accrual state that never leaves the renderer. */
+interface LiveRun {
+	row: WizardRun & { activeMs: number };
+	/** Epoch ms of the last milestone; the next gap is measured from here. */
+	lastActivityAt: number;
+	/** True while an agent turn or a document generation is in flight. */
+	agentWorking: boolean;
+}
+
+/**
  * Live runs by key. The key is the caller's stable handle on the run: the AI
  * tab id for the inline wizard, `ONBOARDING_RUN_KEY` for the onboarding wizard.
  */
-const activeRuns = new Map<string, WizardRun>();
+const activeRuns = new Map<string, LiveRun>();
 
 /** Key for the onboarding wizard, which only ever has one run in flight. */
 export const ONBOARDING_RUN_KEY = 'onboarding-wizard';
@@ -54,6 +86,18 @@ function flush(run: WizardRun): void {
 }
 
 /**
+ * Close the gap since the last milestone into `activeMs`, capped by who was
+ * holding the turn, and stamp `endedAt` as this milestone.
+ */
+function accrue(live: LiveRun): void {
+	const now = Date.now();
+	const gap = Math.max(0, now - live.lastActivityAt);
+	live.row.activeMs += Math.min(gap, live.agentWorking ? AGENT_TURN_CAP_MS : USER_GAP_CAP_MS);
+	live.lastActivityAt = now;
+	live.row.endedAt = now;
+}
+
+/**
  * Open a run. Safe to call again for the same key - a wizard restarted on a tab
  * whose previous run was never finished closes that one out first, so the
  * abandoned run keeps its counts instead of being overwritten by the new one.
@@ -71,7 +115,7 @@ export function beginWizardRun(
 	finishWizardRun(key);
 
 	const now = Date.now();
-	const run: WizardRun = {
+	const row: LiveRun['row'] = {
 		id: generateId(),
 		sessionId: init.sessionId,
 		agentType: init.agentType,
@@ -85,10 +129,11 @@ export function beginWizardRun(
 		exchanges: 0,
 		documents: 0,
 		tasks: 0,
+		activeMs: 0,
 		projectPath: init.projectPath,
 	};
-	activeRuns.set(key, run);
-	flush(run);
+	activeRuns.set(key, { row, lastActivityAt: now, agentWorking: false });
+	flush(row);
 }
 
 /** Patch a live run and re-flush. No-op when the key has no run in flight. */
@@ -96,20 +141,34 @@ export function updateWizardRun(
 	key: string,
 	patch: Partial<Pick<WizardRun, 'mode' | 'agentType' | 'projectPath'>>
 ): void {
-	const run = activeRuns.get(key);
-	if (!run) return;
-	Object.assign(run, patch);
-	run.endedAt = Date.now();
-	flush(run);
+	const live = activeRuns.get(key);
+	if (!live) return;
+	Object.assign(live.row, patch);
+	accrue(live);
+	flush(live.row);
 }
 
 /** Count one user message sent to the wizard. */
 export function countWizardExchange(key: string): void {
-	const run = activeRuns.get(key);
-	if (!run) return;
-	run.exchanges += 1;
-	run.endedAt = Date.now();
-	flush(run);
+	const live = activeRuns.get(key);
+	if (!live) return;
+	live.row.exchanges += 1;
+	accrue(live);
+	flush(live.row);
+}
+
+/**
+ * Mark the start or end of agent work: a conversation turn or a document
+ * generation. Every agent call must be bracketed by `true` then `false` -
+ * a turn left marked as working counts its gaps up to `AGENT_TURN_CAP_MS`
+ * instead of `USER_GAP_CAP_MS`.
+ */
+export function setWizardAgentWorking(key: string, working: boolean): void {
+	const live = activeRuns.get(key);
+	if (!live || live.agentWorking === working) return;
+	accrue(live);
+	live.agentWorking = working;
+	flush(live.row);
 }
 
 /**
@@ -122,31 +181,36 @@ export function recordWizardDocuments(
 	key: string,
 	totals: { documents: number; tasks: number }
 ): void {
-	const run = activeRuns.get(key);
-	if (!run) return;
-	run.documents = totals.documents;
-	run.tasks = totals.tasks;
-	run.outcome = totals.documents > 0 ? 'generated' : run.outcome;
-	run.endedAt = Date.now();
-	flush(run);
+	const live = activeRuns.get(key);
+	if (!live) return;
+	const { row } = live;
+	row.documents = totals.documents;
+	row.tasks = totals.tasks;
+	row.outcome = totals.documents > 0 ? 'generated' : row.outcome;
+	accrue(live);
+	flush(row);
 }
 
 /**
  * Close a run. A run that produced documents settles as 'generated' whatever
- * happens afterwards; one that produced none settles as 'abandoned'.
+ * happens afterwards; one that produced none settles as 'abandoned'. The gap
+ * before the close accrues like any other, so a tab closed days later adds at
+ * most `USER_GAP_CAP_MS`.
  */
 export function finishWizardRun(key: string): void {
-	const run = activeRuns.get(key);
-	if (!run) return;
+	const live = activeRuns.get(key);
+	if (!live) return;
 	activeRuns.delete(key);
-	run.outcome = run.documents > 0 ? 'generated' : 'abandoned';
-	run.endedAt = Date.now();
-	flush(run);
+	accrue(live);
+	live.row.outcome = live.row.documents > 0 ? 'generated' : 'abandoned';
+	flush(live.row);
 }
 
 /**
  * Record a run that was only observed at its end - the onboarding wizard hands
  * over a duration and totals in one callback rather than reporting milestones.
+ * That duration is taken as active time: the onboarding wizard is a full-window
+ * flow that lives inside one app session, not a tab that can sit open for days.
  */
 export function recordCompletedWizardRun(init: {
 	sessionId: string;
@@ -160,6 +224,7 @@ export function recordCompletedWizardRun(init: {
 	projectPath?: string;
 }): void {
 	const endedAt = Date.now();
+	const durationMs = Math.max(0, init.durationMs);
 	flush({
 		id: generateId(),
 		sessionId: init.sessionId,
@@ -167,11 +232,12 @@ export function recordCompletedWizardRun(init: {
 		surface: init.surface,
 		mode: init.mode,
 		outcome: init.documents > 0 ? 'generated' : 'abandoned',
-		startedAt: endedAt - Math.max(0, init.durationMs),
+		startedAt: endedAt - durationMs,
 		endedAt,
 		exchanges: init.exchanges,
 		documents: init.documents,
 		tasks: init.tasks,
+		activeMs: durationMs,
 		projectPath: init.projectPath,
 	});
 }

@@ -2,8 +2,14 @@
  * useResizablePanel - Shared drag-to-resize logic for sidebar/panel components.
  *
  * Uses direct DOM manipulation during drag for performance (avoids ~60 re-renders/sec),
- * committing React state and persisting to settings only on mouseup.
+ * committing React state and persisting to settings only on pointer up.
  * Disables CSS transitions during drag to prevent animation fighting with DOM updates.
+ *
+ * Uses Pointer Events (not mouse events) so the drag works with touch and pen as
+ * well as a mouse. The handle captures the pointer on down, so the drag keeps
+ * tracking even when the pointer leaves the thin handle. Pair the returned
+ * `onResizeStart` with `touch-action: none` on the handle so the browser does
+ * not hijack the gesture as a scroll/pan on touch.
  */
 
 import { useRef, useState, useCallback, useEffect } from 'react';
@@ -34,8 +40,8 @@ export interface UseResizablePanelReturn {
 	panelRef: React.RefObject<HTMLDivElement>;
 	/** True while actively dragging - use to disable CSS transitions */
 	isResizing: boolean;
-	/** onMouseDown handler for the resize handle */
-	onResizeStart: (e: React.MouseEvent) => void;
+	/** onPointerDown handler for the resize handle (mouse, touch, and pen) */
+	onResizeStart: (e: React.PointerEvent) => void;
 	/** CSS class string for width transitions (disabled during drag) */
 	transitionClass: string;
 }
@@ -62,14 +68,26 @@ export function useResizablePanel({
 	}, []);
 
 	const onResizeStart = useCallback(
-		(e: React.MouseEvent) => {
+		(e: React.PointerEvent) => {
 			e.preventDefault();
 			setIsResizing(true);
 			const startX = e.clientX;
 			const startWidth = width;
 			let currentWidth = startWidth;
 
-			const handleMouseMove = (moveEvent: MouseEvent) => {
+			// Capture the pointer on the handle so the drag keeps tracking even when
+			// the pointer slides off the thin handle. Captured pointer events are
+			// dispatched to this element, so we listen on it rather than document.
+			const handle = e.currentTarget as HTMLElement;
+			const pointerId = e.pointerId;
+			try {
+				handle.setPointerCapture(pointerId);
+			} catch {
+				// setPointerCapture can throw if the pointer is already released; the
+				// drag still works via the listeners below, so ignore.
+			}
+
+			const handlePointerMove = (moveEvent: PointerEvent) => {
 				const delta = side === 'left' ? moveEvent.clientX - startX : startX - moveEvent.clientX;
 				currentWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + delta));
 				if (panelRef.current) {
@@ -77,24 +95,32 @@ export function useResizablePanel({
 				}
 			};
 
-			const handleMouseUp = () => {
-				setIsResizing(false);
-				setWidth(currentWidth);
-				if (settingsKey) {
-					window.maestro.settings.set(settingsKey, currentWidth);
+			const cleanup = () => {
+				handle.removeEventListener('pointermove', handlePointerMove);
+				handle.removeEventListener('pointerup', handlePointerUp);
+				handle.removeEventListener('pointercancel', handlePointerUp);
+				try {
+					handle.releasePointerCapture(pointerId);
+				} catch {
+					// Already released (e.g. pointercancel); nothing to do.
 				}
-				document.removeEventListener('mousemove', handleMouseMove);
-				document.removeEventListener('mouseup', handleMouseUp);
 				cleanupRef.current = null;
 			};
 
-			cleanupRef.current = () => {
-				document.removeEventListener('mousemove', handleMouseMove);
-				document.removeEventListener('mouseup', handleMouseUp);
+			const handlePointerUp = () => {
+				setIsResizing(false);
+				setWidth(currentWidth);
+				// Only top-level chrome persists through settings; a pane inside another
+				// surface omits settingsKey and persists via usePersistedPanelWidth.
+				if (settingsKey) window.maestro.settings.set(settingsKey, currentWidth);
+				cleanup();
 			};
 
-			document.addEventListener('mousemove', handleMouseMove);
-			document.addEventListener('mouseup', handleMouseUp);
+			cleanupRef.current = cleanup;
+
+			handle.addEventListener('pointermove', handlePointerMove);
+			handle.addEventListener('pointerup', handlePointerUp);
+			handle.addEventListener('pointercancel', handlePointerUp);
 		},
 		[width, minWidth, maxWidth, settingsKey, setWidth, side]
 	);

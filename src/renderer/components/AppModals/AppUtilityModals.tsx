@@ -9,6 +9,7 @@ import type {
 	RightPanelTab,
 	SettingsTab,
 	BatchRunConfig,
+	SnoozeContent,
 	ThinkingMode,
 	QueuedItemEditPatch,
 } from '../../types';
@@ -19,6 +20,7 @@ import type { FlatFileItem } from '../FileSearchModal';
 
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
+import type { GitLogModalData } from '../../stores/modalStore';
 
 // Utility Modal Components
 import { QuickActionsModal } from '../QuickActionsModal';
@@ -27,12 +29,9 @@ import { FileSearchModal } from '../FileSearchModal';
 import { CrossTabSearchModal } from '../CrossTabSearchModal';
 import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
+import { ModelEffortModal } from '../ModelEffortModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
-import { useTabStore } from '../../stores/tabStore';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
-import { notifyCenterFlash } from '../../stores/centerFlashStore';
-import { formatSnoozeTarget } from '../../../shared/snooze';
-import { mirrorSnoozedTranscript } from '../../utils/snoozeTranscriptMirror';
+import { snoozeTabWithMirror } from '../../services/snoozeActions';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
 import { BatchRunnerModal } from '../BatchRunnerModal';
@@ -57,6 +56,8 @@ const GitLogViewer = lazy(() =>
 export interface AppUtilityModalsProps {
 	theme: Theme;
 	sessions: Session[];
+	/** Left Bar draw order; the first ten own the Opt+Cmd+# slots */
+	visibleSessions?: Session[];
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	activeSessionId: string;
 	activeSession: Session | null;
@@ -76,6 +77,8 @@ export interface AppUtilityModalsProps {
 	setRenameGroupId: (id: string) => void;
 	setRenameGroupValue: (value: string) => void;
 	setRenameGroupEmoji: (emoji: string) => void;
+	setRenameGroupIcon: (icon: string | undefined) => void;
+	setRenameGroupColor: (color: string | undefined) => void;
 	setRenameGroupModalOpen: (open: boolean) => void;
 	setCreateGroupModalOpen: (open: boolean) => void;
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -90,6 +93,7 @@ export interface AppUtilityModalsProps {
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
 	setUsageDashboardOpen?: (open: boolean) => void;
+	setAgentRunDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
@@ -137,6 +141,8 @@ export interface AppUtilityModalsProps {
 	onQuickCreateWorktree: (session: Session) => void;
 	onOpenCreatePR: (session: Session) => void;
 	onSummarizeAndContinue: () => void;
+	/** Send a plugin command-macro's templated prompt to the active agent. */
+	onRunPromptMacro?: (prompt: string) => void;
 	canSummarizeActiveTab: boolean;
 	onToggleRemoteControl: () => Promise<void>;
 	autoRunSelectedDocument: string | null;
@@ -175,6 +181,8 @@ export interface AppUtilityModalsProps {
 
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	// Pianola
+	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 
 	// LightboxModal
@@ -190,13 +198,15 @@ export interface AppUtilityModalsProps {
 	gitDiffPreview: string | null;
 	/** Repo the diff came from, when taken for a non-active agent. */
 	gitDiffCwd?: string | null;
+	/** Agent the diff was taken for, so the viewer can name it. */
+	gitDiffSessionId?: string | null;
 	gitViewerCwd: string;
 	onCloseGitDiff: () => void;
 
 	// GitLogViewer
 	gitLogOpen: boolean;
 	/** Explicit repo to show, when opened for a non-active agent. */
-	gitLogTarget?: { cwd: string; sshRemoteId?: string } | null;
+	gitLogTarget?: GitLogModalData | null;
 	onCloseGitLog: () => void;
 
 	// Shared by both git viewers: open a clicked file path as a preview tab.
@@ -319,6 +329,7 @@ export interface AppUtilityModalsProps {
 export const AppUtilityModals = memo(function AppUtilityModals({
 	theme,
 	sessions,
+	visibleSessions,
 	setSessions,
 	activeSessionId,
 	activeSession,
@@ -337,6 +348,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setRenameGroupId,
 	setRenameGroupValue,
 	setRenameGroupEmoji,
+	setRenameGroupIcon,
+	setRenameGroupColor,
 	setRenameGroupModalOpen,
 	setCreateGroupModalOpen,
 	setLeftSidebarOpen,
@@ -351,6 +364,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setLogViewerOpen,
 	setProcessMonitorOpen,
 	setUsageDashboardOpen,
+	setAgentRunDashboardOpen,
 	setActiveRightTab,
 	setAgentSessionsOpen,
 	setMemoryViewerOpen,
@@ -391,6 +405,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onQuickCreateWorktree,
 	onOpenCreatePR,
 	onSummarizeAndContinue,
+	onRunPromptMacro,
 	canSummarizeActiveTab,
 	onToggleRemoteControl,
 	autoRunSelectedDocument,
@@ -423,6 +438,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onOpenDirectorNotes,
 	// Maestro Cue
 	onOpenMaestroCue,
+	// Pianola
+	onOpenPianola,
 	onConfigureCue,
 	// LightboxModal
 	lightboxImage,
@@ -435,6 +452,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// GitDiffViewer
 	gitDiffPreview,
 	gitDiffCwd,
+	gitDiffSessionId,
 	gitViewerCwd,
 	onCloseGitDiff,
 	// GitLogViewer
@@ -526,30 +544,29 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	const snoozeTabOpen = useModalStore(selectModalOpen('snoozeTab'));
 	const snoozeTabData = useModalStore(selectModalData('snoozeTab'));
 	const snoozedTabsOpen = useModalStore(selectModalOpen('snoozedTabs'));
+	// Model & effort picker (Opt+Cmd+.) - same deal: it resolves the tab, agent,
+	// and option lists itself, so all it needs from here is the theme.
+	const modelEffortOpen = useModalStore(selectModalOpen('modelEffort'));
+	const modelEffortData = useModalStore(selectModalData('modelEffort'));
+	const closeModelEffort = useCallback(
+		() => useModalStore.getState().closeModal('modelEffort'),
+		[]
+	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
 	const closeSnoozedTabs = useCallback(
 		() => useModalStore.getState().closeModal('snoozedTabs'),
 		[]
 	);
 
-	const handleSnoozeConfirm = useCallback((tabId: string, wakeAt: number, note: string) => {
-		// Capture the session BEFORE snoozing: the tab leaves aiTabs as part of the
-		// snooze, taking its agentSessionId with it.
-		const sessionBefore = selectActiveSession(useSessionStore.getState());
-		const tabBefore = sessionBefore?.aiTabs.find((t) => t.id === tabId);
-
-		const entry = useTabStore.getState().snoozeTab(tabId, wakeAt, note);
-		if (!entry) return;
-
-		// A snooze can outlive the provider's retention of the transcript, so keep
-		// our own copy for its duration - same protection starred sessions get.
-		mirrorSnoozedTranscript(sessionBefore, tabBefore);
-
-		notifyCenterFlash({
-			message: `Snoozed until ${formatSnoozeTarget(wakeAt)}`,
-			color: 'theme',
-		});
-	}, []);
+	const handleSnoozeConfirm = useCallback(
+		(tabId: string, wakeAt: number, content: SnoozeContent) => {
+			// The transcript mirror and the ack ride along inside the service, which
+			// `maestro-cli snooze` shares, so a scripted snooze and a clicked one
+			// leave the same state behind.
+			snoozeTabWithMirror(tabId, wakeAt, content);
+		},
+		[]
+	);
 
 	return (
 		<>
@@ -558,6 +575,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<QuickActionsModal
 					theme={theme}
 					sessions={sessions}
+					visibleSessions={visibleSessions}
 					setSessions={setSessions}
 					activeSessionId={activeSessionId}
 					groups={groups}
@@ -572,6 +590,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setRenameGroupId={setRenameGroupId}
 					setRenameGroupValue={setRenameGroupValue}
 					setRenameGroupEmoji={setRenameGroupEmoji}
+					setRenameGroupIcon={setRenameGroupIcon}
+					setRenameGroupColor={setRenameGroupColor}
 					setRenameGroupModalOpen={setRenameGroupModalOpen}
 					setCreateGroupModalOpen={setCreateGroupModalOpen}
 					setLeftSidebarOpen={setLeftSidebarOpen}
@@ -586,6 +606,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setLogViewerOpen={setLogViewerOpen}
 					setProcessMonitorOpen={setProcessMonitorOpen}
 					setUsageDashboardOpen={setUsageDashboardOpen}
+					setAgentRunDashboardOpen={setAgentRunDashboardOpen}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setMemoryViewerOpen={setMemoryViewerOpen}
@@ -626,6 +647,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onQuickCreateWorktree={onQuickCreateWorktree}
 					onOpenCreatePR={onOpenCreatePR}
 					onSummarizeAndContinue={onSummarizeAndContinue}
+					onRunPromptMacro={onRunPromptMacro}
 					canSummarizeActiveTab={canSummarizeActiveTab}
 					onToggleRemoteControl={onToggleRemoteControl}
 					autoRunSelectedDocument={autoRunSelectedDocument}
@@ -652,6 +674,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
 					onOpenMaestroCue={onOpenMaestroCue}
+					onOpenPianola={onOpenPianola}
 					onConfigureCue={onConfigureCue}
 					onOpenQueueBrowser={onOpenQueueBrowser}
 					onNewTab={onQuickActionsNewTab}
@@ -686,6 +709,9 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					<GitDiffViewer
 						diffText={gitDiffPreview}
 						cwd={gitDiffCwd ?? gitViewerCwd}
+						// Falls back to the active agent, matching the cwd fallback
+						// above: the header names whichever agent's repo is on screen.
+						sessionId={gitDiffSessionId ?? activeSession?.id}
 						theme={theme}
 						onClose={onCloseGitDiff}
 						onOpenFile={onOpenGitFile}
@@ -700,6 +726,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<Suspense fallback={null}>
 					<GitLogViewer
 						cwd={gitLogTarget?.cwd ?? gitViewerCwd}
+						sessionId={gitLogTarget?.sessionId ?? activeSession?.id}
 						theme={theme}
 						onClose={onCloseGitLog}
 						onOpenFile={onOpenGitFile}
@@ -856,12 +883,18 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<SnoozeTabModal
 					theme={theme}
 					tabLabel={snoozeTabData.tabLabel}
+					canRunWakePrompt={snoozeTabData.canRunWakePrompt}
 					onClose={closeSnoozeTab}
-					onConfirm={(wakeAt, note) => {
-						handleSnoozeConfirm(snoozeTabData.tabId, wakeAt, note);
+					onConfirm={(wakeAt, content) => {
+						handleSnoozeConfirm(snoozeTabData.tabId, wakeAt, content);
 						closeSnoozeTab();
 					}}
 				/>
+			)}
+
+			{/* --- MODEL & EFFORT (keyboard-only per-tab tuning) --- */}
+			{modelEffortOpen && modelEffortData && (
+				<ModelEffortModal theme={theme} tabId={modelEffortData.tabId} onClose={closeModelEffort} />
 			)}
 
 			{/* --- SNOOZED TABS (list across all agents) --- */}

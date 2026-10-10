@@ -14,11 +14,15 @@ Double-click any supported audio or video file - in the Files pane, from a link 
 
 This holds for a file anywhere on disk, not just inside the project. A media path an agent mentions is a link, and clicking it plays the file in Maestro rather than handing it to your system's default player.
 
+You can also just ask an agent to play something. Agents are told to reach for Maestro's player rather than your system's, so "play that recording" starts it here, in front of you, with a transport you can pause. Under the hood they run `maestro-cli open-file <path>` - the same command that previews a document, since a playable file is diverted to the player before a tab can be made.
+
 Audio opens as a slim control strip, since there is nothing to look at. Video opens as a proper frame, sized to that file's own aspect ratio - a 4:3 screen recording and a vertical phone clip each get a box that fits them, so nothing ever plays inside black bars.
 
 There is only ever **one** player. Opening a second file switches to it and keeps the first in the queue, so two things can never play over each other.
 
 To line a file up instead of switching to it, right-click it and choose **Add to Play Queue**. Select several files, right-click, and **Preview** plays the first and queues the rest - that is how you start a playlist in one gesture.
+
+An agent can do the same without starting anything: `maestro-cli open-file <path> --queue` puts a file in the player and leaves pressing play to you. See [Open a File](/cli#open-a-file).
 
 <Note>
 Media files never appear in the tab bar. If you want the file itself - to inspect it, move it, or open it in another app - use the Files pane, or the player's own **Open in default app** button.
@@ -41,6 +45,8 @@ Files on an [SSH remote](/ssh-remote-execution) also fall through to that previe
 
 **Drag the title bar** to move the player anywhere on screen. The grip on the left is the affordance, but the whole bar is grabbable, including the filename. It stays inside the window, and if you resize the window it stays on screen.
 
+Because the whole bar drags, the filename it shows cannot be selected with the mouse. The **copy icon** beside it puts that name on your clipboard, for pasting into a note or a prompt.
+
 **Drag the grip in the bottom-right corner** to resize. Double-click that grip to snap back to the default size.
 
 Resizing sets the width; the height follows the file, so a video keeps its shape as it grows. Where you leave the player is remembered across restarts, and the width is remembered **per kind** - size a movie the way you like without your podcast bar becoming half the screen wide.
@@ -57,6 +63,7 @@ When the queue steps from an audio file to a video one, the player reshapes itse
 | **Volume**              | Slider, with a mute toggle                                         |
 | **Loop**                | Repeat the current file                                            |
 | **Speed**               | 0.25x through 4x, pitch-corrected so a 2x podcast stays listenable |
+| **Copy file name**      | Copy the loaded file's name, which the title bar cannot select     |
 | **Play queue**          | The list of what plays next (see below)                            |
 | **Recently played**     | Jump to anything you played earlier (see below)                    |
 | **Open in default app** | Hand the file to macOS, Windows, or Linux                          |
@@ -66,7 +73,7 @@ Playback speed is global and persists: pick 1.5x once and every file after it st
 
 ### Keyboard
 
-Click the player to focus it, then:
+The player takes focus when you bring it up from the Command Palette or the Left Bar pill, so these work straight away. Click it to focus it if you got there another way.
 
 | Key                   | Action                    |
 | --------------------- | ------------------------- |
@@ -78,6 +85,7 @@ Click the player to focus it, then:
 | `L`                   | Loop                      |
 | `,` / `.`             | Slower / faster           |
 | `F`                   | Fullscreen (video)        |
+| `Esc`                 | Minimize to the Left Bar  |
 
 ## The play queue and Recently Played
 
@@ -111,7 +119,11 @@ The pill names the file it is holding, and drops to just the two buttons on a na
 
 **Close** (the `x` button) stops playback and puts the player away. The rest of your queue is left intact, so opening any media file brings the player back with the playlist still there.
 
-You can also reopen a minimized player from the Command Palette with **Show Floating Media Player**.
+**Open Media Player** in the Command Palette brings the player back on whatever it should be showing: the loaded track if there is one, otherwise the last thing you played. A track you closed comes back in the queue, paused, at the position you stopped at, so closing the player is never how you lose your place.
+
+`Esc` minimizes rather than closes, so a reflexive press can never stop what you are listening to. It closes the queue or history list first if one is open, and it leaves a fullscreen video alone, since Escape is already how you come back out of fullscreen.
+
+The same **Open Media Player** command brings a minimized player back, focused, so `Esc` puts it away again without a click first. Adding files to the queue brings it back too, so a batch you just queued never lands somewhere you cannot see it - including when every file you picked was already in the queue. What is loaded keeps playing either way.
 
 ## Tips
 

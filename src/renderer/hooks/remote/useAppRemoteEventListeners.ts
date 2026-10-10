@@ -14,6 +14,7 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
+import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -41,6 +42,79 @@ import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { notifyToast } from '../../stores/notificationStore';
+import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
+import {
+	canCreateGroupInside,
+	canSetGroupParent,
+	removeGroupAndPromoteChildren,
+	setGroupParent,
+} from '../../../shared/groupHierarchy';
+import {
+	validateGroupAppearance,
+	validateGroupUpdate,
+	type GroupUpdateRequest,
+} from '../../../shared/groupAppearance';
+
+// ============================================================================
+// Group update helpers
+// ============================================================================
+
+/**
+ * Write the group list straight to disk and wait for it.
+ *
+ * The store's own persistence runs from a React effect, so it lands after this
+ * listener has already answered the caller. A CLI that verifies its write by
+ * reading `maestro-groups.json` back would then see the pre-update list and
+ * report a false mismatch. Flushing before responding makes the readback
+ * deterministic; the effect's later write is the same data and is idempotent.
+ * Same reasoning as the remote session-rename handler above.
+ */
+async function flushGroupsToDisk(groups: Group[]): Promise<void> {
+	try {
+		await window.maestro.groups.setAll(groups);
+	} catch (error) {
+		logger.error('[Remote] Failed to persist group change:', undefined, error);
+	}
+}
+
+/**
+ * Apply a validated update to one group. Pure so the ordering rules are
+ * testable: the parent move runs first (it can reject on its own terms and
+ * returns the list unchanged when it does), then the field-level sets and
+ * clears are applied to the moved list.
+ */
+function applyGroupUpdate(
+	groups: Group[],
+	groupId: string,
+	request: GroupUpdateRequest,
+	clear: Set<string>
+): Group[] {
+	let next = groups;
+	if (request.parentGroupId) {
+		next = setGroupParent(next, groupId, request.parentGroupId);
+	} else if (clear.has('parent')) {
+		next = setGroupParent(next, groupId, undefined);
+	}
+
+	return next.map((group) => {
+		if (group.id !== groupId) return group;
+		const updated: Group = { ...group };
+		if (request.name) updated.name = request.name.toUpperCase();
+		// An icon and an emoji are alternative presentations of the same group,
+		// and the Groups+ gate falls back to the emoji, so setting one never
+		// discards the other - clearing is always explicit.
+		if (request.emoji) updated.emoji = request.emoji;
+		if (request.icon) updated.icon = request.icon;
+		if (request.color) updated.color = request.color;
+		// The emoji is non-optional on Group and the Left Bar renders it when
+		// Groups+ is off, so clearing it restores the default folder rather
+		// than leaving a group with no glyph at all.
+		if (clear.has('emoji')) updated.emoji = '\u{1F4C2}';
+		if (clear.has('icon')) delete updated.icon;
+		if (clear.has('color')) delete updated.color;
+		return updated;
+	});
+}
 
 // ============================================================================
 // Dependencies interface
@@ -66,7 +140,7 @@ export interface UseAppRemoteEventListenersDeps {
 			/** Optional 1-based line to jump to once the editor mounts (deep links). */
 			pendingScrollToLine?: number;
 		},
-		options?: { targetSessionId?: string; activate?: boolean }
+		options?: { targetSessionId?: string; activate?: boolean; mediaMode?: MediaOpenMode }
 	) => void;
 	/** Refresh the file tree for a session */
 	refreshFileTree: (sessionId: string) => void;
@@ -126,7 +200,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, background, switchToAgent, line } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, background, switchToAgent, mediaMode, line } = (e as CustomEvent)
+			.detail as {
 			sessionId: string;
 			filePath: string;
 			/**
@@ -141,6 +216,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			 * but still activate the tab inside the target one. Absent means switch.
 			 */
 			switchToAgent?: boolean;
+			/**
+			 * 'queue' = audio/video goes into the player's queue without starting
+			 * (`maestro-cli open-file --queue`). Absent means open-and-play.
+			 */
+			mediaMode?: MediaOpenMode;
 			/** Optional 1-based line to jump to once the file is open. Set by
 			 *  maestro://file/...#L<n> deep links. */
 			line?: number;
@@ -163,7 +243,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// a file tab outranks the AI tab in the render precedence, so activating
 		// one changes the view even when the caller stayed on the same agent.
 		// That is exactly why `--no-switch` reads like `--background` and is not.
-		if (!background && switchToAgent !== false) {
+		//
+		// Queueing media never switches agents either: the player is app-wide, so
+		// the agent the file belongs to is not somewhere the user needs to be.
+		if (!background && switchToAgent !== false && mediaMode !== 'queue') {
 			switchActiveSession(sessionId, 'open-file');
 		}
 		try {
@@ -183,7 +266,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						sshRemoteId,
 						pendingScrollToLine: line,
 					},
-					{ targetSessionId: sessionId, activate: !background }
+					{ targetSessionId: sessionId, activate: !background, mediaMode }
 				);
 			}
 		} catch (error) {
@@ -730,11 +813,18 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// helper writes the resolved values back into config.worktree when
 				// createPROnCompletion is true; we mirror that result onto batchConfig
 				// below so PR creation downstream sees the correct path/branch.
+				// Per-run model/effort override (CLI `--model` / `--effort`). Spread
+				// only when set so an omitted flag never serializes as an empty string,
+				// which would pin the run to a nonexistent model instead of falling
+				// through to the agent default.
 				const batchConfig: BatchRunConfig = {
 					documents,
 					prompt: config.prompt || DEFAULT_BATCH_PROMPT,
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
+					...(config.model && { model: config.model }),
+					...(config.effort && { effort: config.effort }),
+					...(config.ignoreModelHints && { ignoreModelHints: true }),
 				};
 
 				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,
@@ -849,6 +939,120 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				success: false,
 				error: String(error),
 			});
+		}
+	});
+
+	// Handle a remote Goal-Driven Auto Run launch from the CLI
+	// (`maestro-cli goal-run --visible`). Routes to the SAME
+	// `startBatchRun({ goalConfig })` entry point the Auto Run modal's Go button
+	// uses, so the run is desktop-owned: it appears in the Auto Run surface, is
+	// stoppable via `stop-auto-run`, and shows up in `session list` for free.
+	//
+	// Unlike `maestro:configureAutoRun`, this does NOT ack success up front.
+	// Every cheap failure is checked synchronously before the agent is claimed,
+	// and the reply then waits for the run to actually reach a running state -
+	// a CLI that is told "launched" needs that to be true.
+	useEventListener('maestro:launchGoalRun', async (e: Event) => {
+		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			config: {
+				goal: string;
+				exitCriteria?: string;
+				maxIterations?: number | null;
+				model?: string;
+				effort?: string;
+			};
+			responseChannel: string;
+		};
+
+		const respond = (result: { success: boolean; tabId?: string; code?: string; error?: string }) =>
+			window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, result);
+
+		const session =
+			sessionsRef.current.find((s) => s.id === sessionId) ||
+			selectSessionById(sessionId)(useSessionStore.getState());
+		if (!session) {
+			respond({
+				success: false,
+				code: 'SESSION_NOT_FOUND',
+				error: `Agent ${sessionId} not found`,
+			});
+			return;
+		}
+
+		const goal = config?.goal?.trim() ?? '';
+		if (!goal) {
+			respond({ success: false, code: 'EMPTY_GOAL', error: 'A non-empty goal is required' });
+			return;
+		}
+
+		// The goal runner honors this too, but it bails with only a toast, which
+		// would surface to the CLI as an opaque failed launch.
+		if (useSettingsStore.getState().autoRunDisabled) {
+			respond({
+				success: false,
+				code: 'AUTO_RUN_DISABLED',
+				error: 'Auto Run is disabled in Settings',
+			});
+			return;
+		}
+
+		// Synchronous claim - see goalRunLaunch.ts for why this cannot be a plain
+		// isRunning read.
+		if (!reserveGoalRunLaunch(sessionId)) {
+			respond({
+				success: false,
+				code: 'AGENT_BUSY',
+				error: `Agent "${session.name}" already has an Auto Run in progress`,
+			});
+			return;
+		}
+
+		try {
+			const batchConfig: BatchRunConfig = {
+				documents: [],
+				prompt: '',
+				loopEnabled: false,
+				maxLoops: null,
+				goalConfig: {
+					goal,
+					exitCriteria: config.exitCriteria?.trim() ?? '',
+					maxIterations: config.maxIterations ?? null,
+				},
+				...(config.model && { model: config.model }),
+				...(config.effort && { effort: config.effort }),
+			};
+
+			// Goal mode is document-less, so folderPath is only used for history
+			// bookkeeping; the agent runs in its own cwd.
+			const runPromise = startBatchRun(sessionId, batchConfig, session.autoRunFolderPath || '');
+			runPromise.catch((err) => {
+				logger.error('[Remote] Visible goal run failed:', undefined, err);
+			});
+
+			const started = await waitForGoalRunStart(sessionId, runPromise);
+			if (!started) {
+				respond({
+					success: false,
+					code: 'LAUNCH_FAILED',
+					error:
+						'The desktop app did not start the goal run (check the Auto Run prompt template and Settings)',
+				});
+				return;
+			}
+
+			// Goal runs attach to the AGENT, not a tab, and surface on whichever AI
+			// tab is active - that is the tab the returned deep link addresses.
+			respond({ success: true, tabId: session.activeTabId });
+		} catch (error) {
+			captureException(error, { extra: { event: 'maestro:launchGoalRun', sessionId } });
+			respond({
+				success: false,
+				code: 'LAUNCH_FAILED',
+				error: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			releaseGoalRunLaunch(sessionId);
 		}
 	});
 
@@ -1351,6 +1555,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.customContextWindow && {
 					customContextWindow: config.customContextWindow as number,
 				}),
+				...(config?.contextWindowSource === 'user-edited' && {
+					contextWindowSource: 'user-edited' as const,
+				}),
 				...(config?.customProviderPath && {
 					customProviderPath: config.customProviderPath as string,
 				}),
@@ -1585,6 +1792,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				customEnvVars: undefined,
 				customModel: undefined,
 				customContextWindow: undefined,
+				// Provenance describes the value cleared above and must not outlive
+				// it (finding AD1); mirrors the Edit Agent modal's switch branch.
+				contextWindowSource: undefined,
 				enableMaestroP: undefined,
 				maestroPPath: undefined,
 				maestroPMode: undefined,
@@ -1722,6 +1932,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'customModel',
 			'customEffort',
 			'customContextWindow',
+			// Provenance for the key above (finding AD1). Must be allowlisted or
+			// `maestro-cli update-agent --context-window` writes the number without
+			// its provenance, and the value it just set stays outranked by the
+			// provider's report - the deliberate edit would silently not apply.
+			'contextWindowSource',
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
@@ -1737,6 +1952,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
+		}
+
+		// Clearing the window clears its provenance too, even when the caller sent
+		// only `customContextWindow: null`. Otherwise a stale 'user-edited' outlives
+		// the value it described and the next window set without provenance
+		// inherits precedence nobody asked for (finding AD1).
+		if (patch.customContextWindow === null) {
+			updated.contextWindowSource = undefined;
 		}
 
 		if (Object.keys(updated).length === 0) {
@@ -1810,23 +2033,52 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// --- Group CRUD ---
 
 	// Handle remote create group from web interface
-	useEventListener('maestro:remoteCreateGroup', (e: Event) => {
-		const { name, emoji, responseChannel } = (e as CustomEvent).detail;
+	useEventListener('maestro:remoteCreateGroup', async (e: Event) => {
+		const {
+			name,
+			emoji,
+			parentGroupId: requestedParentGroupId,
+			appearance,
+			responseChannel,
+		} = (e as CustomEvent).detail;
 		const trimmed = name.trim();
 		if (!trimmed) {
 			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
 			return;
 		}
+		const parentGroupId =
+			typeof requestedParentGroupId === 'string' && requestedParentGroupId
+				? requestedParentGroupId
+				: undefined;
+		if (!canCreateGroupInside(useSessionStore.getState().groups, parentGroupId)) {
+			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
+			return;
+		}
+		// Re-validate here rather than trusting the sender: this listener is
+		// reachable from any client on the WS bridge, and a bad icon id written
+		// into the group list would survive every later read.
+		const validated = validateGroupAppearance({
+			emoji,
+			icon: appearance?.icon,
+			color: appearance?.color,
+		});
+		if (!validated.ok) {
+			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
+			return;
+		}
 		const newGroupId = `group-${generateId()}`;
-		setGroups((prev: Group[]) => [
-			...prev,
-			{
-				id: newGroupId,
-				name: trimmed.toUpperCase(),
-				emoji: emoji || '\u{1F4C2}',
-				collapsed: false,
-			},
-		]);
+		const newGroup: Group = {
+			id: newGroupId,
+			name: trimmed.toUpperCase(),
+			emoji: validated.value.emoji || '\u{1F4C2}',
+			kind: 'user',
+			...(validated.value.icon ? { icon: validated.value.icon } : {}),
+			...(validated.value.color ? { color: validated.value.color } : {}),
+			...(parentGroupId ? { parentGroupId } : {}),
+			collapsed: false,
+		};
+		setGroups((prev: Group[]) => [...prev, newGroup]);
+		await flushGroupsToDisk(useSessionStore.getState().groups);
 		window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, { id: newGroupId });
 	});
 
@@ -1844,6 +2096,46 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		window.maestro.process.sendRemoteRenameGroupResponse(responseChannel, true);
 	});
 
+	// Handle a remote group update (name / appearance / parent). The payload is
+	// already validated by the WS handler; what only the renderer can decide is
+	// whether the group exists and whether the requested reparent is legal, so
+	// both are checked before any state is written.
+	useEventListener('maestro:remoteUpdateGroup', async (e: Event) => {
+		const { groupId, update, responseChannel } = (e as CustomEvent).detail as {
+			groupId: string;
+			update: GroupUpdateRequest;
+			responseChannel: string;
+		};
+		const respond = (success: boolean) =>
+			window.maestro.process.sendRemoteUpdateGroupResponse(responseChannel, success);
+
+		const validated = validateGroupUpdate(update ?? {});
+		if (!validated.ok) {
+			respond(false);
+			return;
+		}
+		const request = validated.value;
+		const clear = new Set(request.clear ?? []);
+
+		const currentGroups = useSessionStore.getState().groups;
+		if (!currentGroups.some((g) => g.id === groupId)) {
+			respond(false);
+			return;
+		}
+		if (
+			request.parentGroupId &&
+			!canSetGroupParent(currentGroups, groupId, request.parentGroupId)
+		) {
+			respond(false);
+			return;
+		}
+
+		const nextGroups = applyGroupUpdate(currentGroups, groupId, request, clear);
+		setGroups(() => nextGroups);
+		await flushGroupsToDisk(nextGroups);
+		respond(true);
+	});
+
 	// Handle remote delete group from web interface (fire-and-forget)
 	useEventListener('maestro:remoteDeleteGroup', (e: Event) => {
 		const { groupId } = (e as CustomEvent).detail;
@@ -1852,7 +2144,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			prev.map((s) => (s.groupId === groupId ? { ...s, groupId: undefined } : s))
 		);
 		// Remove the group
-		setGroups((prev: Group[]) => prev.filter((g) => g.id !== groupId));
+		setGroups((prev: Group[]) => removeGroupAndPromoteChildren(prev, groupId));
 	});
 
 	// Handle remote move session to group from web interface

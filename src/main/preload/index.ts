@@ -18,6 +18,7 @@ import {
 } from './settings';
 import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
+import { createWebLoginApi } from './webLogin';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -38,6 +39,7 @@ import { createSpeckitApi, createOpenspecApi, createBmadApi } from './commands';
 import { createAutorunApi, createPlaybooksApi, createMarketplaceApi } from './autorun';
 import { createDebugApi, createDocumentGraphApi } from './debug';
 import { createGroupChatApi } from './groupChat';
+import { createCrossAgentApi } from './crossAgent';
 import { createStatsApi } from './stats';
 import { createCueStatsApi } from './cueStats';
 import { createNotificationApi } from './notifications';
@@ -51,15 +53,36 @@ import { createParquetApi } from './parquet';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
+import { createTabsApi } from './tabs';
 import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
+import { createPianolaApi } from './pianola';
+import { createPluginsApi } from './plugins';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createContextTimelineApi } from './contextTimeline';
+import { createAgentRunApi } from './agentRun';
+import { createCoworkingApi } from './coworking';
+import { createBrowserSessionApi } from './browserSession';
+import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
+
+/**
+ * The real on-disk maestro-cli.js path, handed in by the main process via an
+ * additionalArguments flag (a sandboxed preload can't resolve it from fs).
+ * Exposed as `window.maestro.maestroCliPath` so the shared template resolver
+ * can point `{{MAESTRO_CLI_PATH}}` at a file that actually exists (dev vs
+ * packaged). Null when the main process couldn't find a bundled CLI.
+ */
+const resolvedMaestroCliPath: string | null =
+	process.argv
+		.find((a) => a.startsWith(MAESTRO_CLI_PATH_ARG_PREFIX))
+		?.slice(MAESTRO_CLI_PATH_ARG_PREFIX.length) ?? null;
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -98,6 +121,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Live Session API
 	live: createLiveApi(),
+
+	// Web Login API (accounts for the web interface - desktop-only)
+	webLogin: createWebLoginApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -183,11 +209,18 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Group Chat API
 	groupChat: createGroupChatApi(),
 
+	// Cross-Agent Dispatch API (@mentions)
+	crossAgent: createCrossAgentApi(),
+
 	// App lifecycle API
 	app: createAppApi(),
 
 	// Synchronous platform string - process.platform never changes at runtime
 	platform: process.platform,
+
+	// Resolved on-disk maestro-cli.js path (dev vs packaged), or null. Used by
+	// the shared template resolver for `{{MAESTRO_CLI_PATH}}`.
+	maestroCliPath: resolvedMaestroCliPath,
 
 	// Stats API
 	stats: createStatsApi(),
@@ -204,6 +237,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Tab Naming API (automatic tab name generation)
 	tabNaming: createTabNamingApi(),
 
+	// Tab lifecycle API (renderer -> main tab-close notification)
+	tabs: createTabsApi(),
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: createAiCommandApi(),
 
@@ -216,6 +251,12 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
+	// Pianola API (autonomous manager: rules + decision log)
+	pianola: createPianolaApi(),
+
+	// Plugins API (community plugin subsystem: list/toggle/install/uninstall)
+	plugins: createPluginsApi(),
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
 
@@ -225,6 +266,17 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+	// Context Timeline capture log (backfills the per-agent turn history)
+	contextTimeline: createContextTimelineApi(),
+	// AgentRun control-plane API (neutral run/campaign ledger)
+	agentRun: createAgentRunApi(),
+	// Coworking API (per-agent MCP installer + terminal registry sync)
+	coworking: createCoworkingApi(),
+	// Browser Session API (clear per-partition browsing data)
+	browserSession: createBrowserSessionApi(),
+
+	// Multi-window API (window.maestro.windows.* - enumerate/create/move windows)
+	windows: createWindowsApi(),
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
@@ -243,6 +295,8 @@ export {
 	createWebApi,
 	createWebserverApi,
 	createLiveApi,
+	// Web Login accounts
+	createWebLoginApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,
@@ -278,6 +332,8 @@ export {
 	createDocumentGraphApi,
 	// Group Chat
 	createGroupChatApi,
+	// Cross-Agent Dispatch (@mentions)
+	createCrossAgentApi,
 	// Stats
 	createStatsApi,
 	// Cue Stats (Phase 03 aggregation query)
@@ -309,6 +365,10 @@ export {
 	createCueApi,
 	// Cue Backup
 	createCueBackupApi,
+	// Pianola
+	createPianolaApi,
+	// Plugins
+	createPluginsApi,
 	// WakaTime
 	createWakatimeApi,
 	// Maestro CLI
@@ -317,6 +377,14 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
+	// AgentRun
+	createAgentRunApi,
+	// Coworking
+	createCoworkingApi,
+	// Browser Session
+	createBrowserSessionApi,
+	// Multi-window
+	createWindowsApi,
 	// Session Images
 	createImagesApi,
 };
@@ -528,6 +596,10 @@ export type {
 	TabNamingConfig,
 } from './tabNaming';
 export type {
+	// From tabs
+	TabsApi,
+} from './tabs';
+export type {
 	// From aiCommand
 	AiCommandApi,
 	AiCommandSuggestRequest,
@@ -552,6 +624,10 @@ export type {
 	CueRunStatus,
 } from './cue';
 export type {
+	// From pianola
+	PianolaApi,
+} from './pianola';
+export type {
 	// From wakatime
 	WakatimeApi,
 } from './wakatime';
@@ -564,6 +640,37 @@ export type {
 	PromptsApi,
 	CorePromptData,
 } from './prompts';
+
+export type {
+	// From agentRun
+	AgentRunApi,
+	AgentRunListOptions,
+	AgentRunListResponse,
+	AgentRunRecordResponse,
+	AgentRunShowResponse,
+	AgentRunEventsResponse,
+	AgentRunEventRecordResponse,
+	CampaignListOptions,
+	CampaignListResponse,
+	CampaignRecordResponse,
+	CampaignShowResponse,
+} from './agentRun';
+export type {
+	// From coworking
+	CoworkingApi,
+	CoworkingTerminalEntry,
+	CoworkingTerminalRecord,
+	CoworkingInstallStatus,
+} from './coworking';
+export type {
+	// From browserSession
+	BrowserSessionApi,
+} from './browserSession';
+export type {
+	// From windows
+	WindowsApi,
+	WindowBounds,
+} from './windows';
 export type {
 	// From images
 	ImagesApi,

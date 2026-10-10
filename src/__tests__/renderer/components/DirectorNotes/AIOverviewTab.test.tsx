@@ -19,6 +19,15 @@ const settingsMock = vi.hoisted(() => ({
 			defaultMode: undefined as 'rich' | 'plain' | undefined,
 		},
 		bionifyReadingMode: false,
+		// The table-of-contents hotkey is matched against the user's configured
+		// shortcuts, so the mock has to carry the binding the real settings do.
+		shortcuts: {
+			toggleFilePreviewToc: {
+				id: 'toggleFilePreviewToc',
+				label: 'Toggle Table of Contents (Markdown Preview)',
+				keys: ['Meta', '\\'],
+			},
+		},
 	},
 }));
 vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
@@ -1072,6 +1081,126 @@ describe('AIOverviewTab', () => {
 			const copied = mockWriteText.mock.calls[0][0] as string;
 			expect(copied).toContain('- Recovered bullet');
 			expect(copied).not.toContain('"version"');
+		});
+	});
+
+	// The TOC is the File Preview control, reused. These pin the behavior a user
+	// has muscle memory for: the same hotkey toggles it, Escape dismisses it (and
+	// is reported as consumed so the modal stays open), and the jump list matches
+	// whichever reading mode is showing.
+	describe('table of contents', () => {
+		const narrative = {
+			version: 1 as const,
+			sections: [
+				{
+					kind: 'accomplishments' as const,
+					title: 'Accomplishments',
+					items: [{ text: 'Shipped the TOC' }],
+				},
+				{ kind: 'challenges' as const, title: 'Challenges', items: [{ text: 'A blocker' }] },
+			],
+		};
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: JSON.stringify(narrative),
+				narrative,
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+		});
+
+		/** The content region owns the keydown, matching File Preview's container. */
+		const contentRegion = () => document.querySelector('.scrollbar-thin') as HTMLElement;
+
+		const pressToggle = () =>
+			fireEvent.keyDown(contentRegion(), { key: '\\', metaKey: true, code: 'Backslash' });
+
+		async function renderReady(ref?: React.Ref<{ onEscape?: () => boolean; focus: () => void }>) {
+			render(<AIOverviewTab ref={ref as never} theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+		}
+
+		it('shows the toggle button once there is something to jump to', async () => {
+			await renderReady();
+			expect(screen.getByTitle('Table of Contents')).toBeInTheDocument();
+		});
+
+		it('opens and closes on the same hotkey File Preview uses', async () => {
+			await renderReady();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+
+			pressToggle();
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+
+			pressToggle();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+		});
+
+		it('lists the Rich Mode sections: widgets then narrative', async () => {
+			await renderReady();
+			pressToggle();
+
+			// The entry list sits between the two boundary sashes.
+			const entryList = screen.getByTestId('toc-top-button').nextElementSibling as HTMLElement;
+			const labels = Array.from(entryList.querySelectorAll('button[title]')).map((b) =>
+				b.getAttribute('title')
+			);
+			expect(labels).toEqual([
+				'Activity Timeline',
+				'Success vs Failure',
+				'Source Breakdown',
+				'Agent Activity',
+				'Accomplishments',
+				'Challenges',
+			]);
+		});
+
+		it('lists the narrative headings in Plain Mode', async () => {
+			await renderReady();
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+			pressToggle();
+
+			expect(screen.getByTitle('Accomplishments')).toBeInTheDocument();
+			expect(screen.getByTitle('Challenges')).toBeInTheDocument();
+			// The widget cards don't exist in Plain Mode, so they aren't offered.
+			expect(screen.queryByTitle('Activity Timeline')).not.toBeInTheDocument();
+		});
+
+		it('offers Top and Bottom sashes', async () => {
+			await renderReady();
+			pressToggle();
+			expect(screen.getByTestId('toc-top-button')).toBeInTheDocument();
+			expect(screen.getByTestId('toc-bottom-button')).toBeInTheDocument();
+		});
+
+		it('dismisses on Escape and reports the key as consumed', async () => {
+			const ref = React.createRef<{ onEscape?: () => boolean; focus: () => void }>();
+			await renderReady(ref);
+			pressToggle();
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+
+			// The modal delegates Escape to the tab first: true means "I handled it",
+			// which is what keeps Escape from closing Director's Notes outright.
+			expect(ref.current?.onEscape?.()).toBe(true);
+			await waitFor(() => {
+				expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			});
+		});
+
+		it('leaves Escape to the modal when the panel is closed', async () => {
+			const ref = React.createRef<{ onEscape?: () => boolean; focus: () => void }>();
+			await renderReady(ref);
+			expect(ref.current?.onEscape?.()).toBe(false);
+		});
+
+		it('exposes focus() so the modal can hand keys to the content region', async () => {
+			const ref = React.createRef<{ onEscape?: () => boolean; focus: () => void }>();
+			await renderReady(ref);
+			ref.current?.focus();
+			expect(document.activeElement).toBe(contentRegion());
 		});
 	});
 });

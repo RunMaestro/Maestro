@@ -50,7 +50,7 @@ if (savedMySetting !== undefined) setMySettingState(savedMySetting);
 
 **MANDATORY: Register the setting with Settings Search.** Every user-facing setting must be findable from the Settings modal search bar (Cmd+F). Two steps, both required:
 
-1. Wrap the rendered control in `<div data-setting-id="<tab>-<slug>">…</div>` inside the appropriate tab file (e.g., `src/renderer/components/Settings/tabs/GeneralTab.tsx`). The id must be unique and kebab-case.
+1. Wrap the rendered control in `<div data-setting-id="<tab>-<slug>">…</div>` inside the appropriate tab file (e.g., `src/renderer/components/Settings/tabs/GeneralTab/GeneralTab.tsx`). The id must be unique and kebab-case.
 2. Add a matching entry to the corresponding array in `src/renderer/components/Settings/searchableSettings.ts` (`GENERAL_SETTINGS`, `DISPLAY_SETTINGS`, etc.) with `id`, `tab`, `tabLabel`, `label`, `description`, and `keywords` covering every visible string a user might type after seeing the section in the UI.
 
 The DOM-parity test at `src/__tests__/renderer/components/Settings/searchableSettings.test.ts` enforces both directions (rendered-id ↔ registry-entry). It will fail CI if either is missing. For any new visible string you want guaranteed-findable, add a query to the `it.each` block in that test.
@@ -104,7 +104,7 @@ Agents support multiple AI conversation tabs and file preview tabs in a unified 
 // Session tab state (three arrays that MUST stay in sync)
 session.aiTabs: AITab[]                    // AI conversation tab data
 session.filePreviewTabs: FilePreviewTab[]  // File preview tab data
-session.unifiedTabOrder: UnifiedTabRef[]   // Visual order — TabBar source of truth
+session.unifiedTabOrder: UnifiedTabRef[]   // Visual order - TabBar source of truth
 
 session.activeTabId: string                // Active AI tab
 session.activeFileTabId: string | null     // Active file tab (null if AI tab active)
@@ -115,7 +115,7 @@ session.activeFileTabId: string | null     // Active file tab (null if AI tab ac
 Always update both the tab array AND `unifiedTabOrder`:
 
 ```typescript
-// CORRECT — tab appears in TabBar
+// CORRECT - tab appears in TabBar
 return {
 	...s,
 	aiTabs: [...s.aiTabs, newTab],
@@ -123,12 +123,12 @@ return {
 	unifiedTabOrder: [...s.unifiedTabOrder, { type: 'ai', id: newTabId }],
 };
 
-// WRONG — tab content renders but no tab visible
+// WRONG - tab content renders but no tab visible
 return {
 	...s,
 	aiTabs: [...s.aiTabs, newTab],
 	activeTabId: newTabId,
-	// unifiedTabOrder not updated — ghost tab!
+	// unifiedTabOrder not updated - ghost tab!
 };
 ```
 
@@ -146,7 +146,7 @@ return {
 };
 ```
 
-### Shared Utilities (`tabHelpers.ts`)
+### Shared Utilities (`tabHelpers`)
 
 - **`buildUnifiedTabs(session)`** - Builds the unified tab list from session data. Follows `unifiedTabOrder` then appends orphaned tabs as a safety net. Single source of truth used by both `useTabHandlers.ts` and `tabStore.ts`.
 - **`ensureInUnifiedTabOrder(order, type, id)`** - Returns order unchanged if tab is present, appends it otherwise. Zero-cost no-op when no repair needed (returns same reference).
@@ -269,7 +269,7 @@ const handleMouseEnter = () => {
 - Theme-aware styling
 - Dividers separate action groups
 
-See `src/renderer/components/TabBar.tsx` (Tab component) for implementation details.
+See `src/renderer/components/TabBar/TabBar.tsx` (Tab component) for implementation details.
 
 ## 10. SSH Remote Agents
 
@@ -326,7 +326,7 @@ When debugging visual issues (tooltips clipped, elements not visible, scroll beh
 
 3. **Portal Escape:** For overlays/tooltips that get clipped, use `createPortal(el, document.body)` to escape stacking context
 
-4. **Fixed Positioning:** Elements with `position: fixed` inside transformed parents won't position relative to viewport-check ancestor transforms
+4. **Fixed Positioning:** Elements with `position: fixed` inside transformed parents won't position relative to viewport - check ancestor transforms
 
 **Common fixes:**
 
@@ -356,6 +356,8 @@ When adding a new Encore Feature, gate **all** access points:
 5. **Keyboard shortcuts** - Guard with `ctx.encoreFeatures?.yourFeature` in `useMainKeyboardHandler.ts`
 6. **Hamburger menu** - Make the setter optional, conditionally render the menu item in `SessionList.tsx`
 7. **Command palette** - Pass `undefined` for the handler in `QuickActionsModal.tsx` (already conditionally renders based on handler existence)
+8. **Left Bar / cycling** - A feature that adds a pinned AGENT (like Pianola) must also be hidden from the keyboard orders: the agent persists in the session store while the flag is off, so add it to `isSessionVisibleInSidebar()` in `src/renderer/utils/sessionVisibility.ts` or `Cmd+[` / `Cmd+]` still lands on it
+9. **Usage guide** - Fill in the entry's `description` in `src/shared/plugins/first-party.ts`, and add a `usage` block when the one-liner cannot carry it: `overview` (what it does), `access` (every way in - name a `shortcutId` rather than literal key text so the pane prints the user's LIVE binding), `steps` (an ordered walkthrough when setup takes more than one action), `notes` (guard rails worth stating before someone enables it), `agentCommands`, and `docsSlug`. `UsageGuide.tsx` renders whichever sections exist, so nothing is hard-coded per feature in the view
 
 ### Reference Implementations
 
@@ -390,7 +392,7 @@ When a `<webview>` has focus, keyboard events are trapped in its guest Chromium 
 
 **Key files:** `window-manager.ts` (before-input-event + guest injection), `preload/system.ts` (IPC bridge), `useMainKeyboardHandler.ts` (IPC → dispatch), `BrowserTabView.tsx` (focus guard)
 
-**Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers.ts`) must explicitly handle `browser` type tabs - they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
+**Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers`) must explicitly handle `browser` type tabs - they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
 
 See [[IPC-PATTERNS.md → Browser Tab Shortcut Forwarding]](docs/agent-guides/IPC-PATTERNS.md#browser-tab-shortcut-forwarding) for the full event flow.
 
@@ -437,6 +439,6 @@ Any search or filter input that is dismissible via Escape **must** display an in
 3. The pill is a `<button>` (focusable, click-dismissible), not decorative text.
 4. For inputs inside modals registered with the LayerStack, the pill still belongs - Escape closes the layer, the pill mirrors that.
 
-**Examples that follow this pattern:** `LogViewer.tsx`, `FileSearchModal.tsx`, `AgentSessionsModal.tsx`, `TabSwitcherModal.tsx`, `QuickActionsModal.tsx`.
+**Examples that follow this pattern:** `LogViewer.tsx`, `FileSearchModal.tsx`, `TabSwitcherModal.tsx`, `QuickActionsModal.tsx`.
 
 When adding any new search/filter input, include the ESC pill from the start.

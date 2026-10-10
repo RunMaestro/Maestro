@@ -102,4 +102,47 @@ if [ "$saw_ref" -eq 1 ] && [ "$only_deletes" -eq 1 ]; then
 	exit 0
 fi
 
+# Skip validation when the push only adds TAGS whose commits are already on a
+# pushed branch. Those commits passed this hook (and CI) when their branch was
+# pushed; re-running the full suite for the tag cost two release agents their
+# 30-minute turn on 2026-09-25 and changed nothing. A tag on a commit no remote
+# branch contains still gets the full run, since that commit was never tested.
+only_known_tags=1
+while read -r local_ref local_sha remote_ref remote_sha; do
+	[ -z "$local_ref$remote_ref" ] && continue
+	case "$local_sha" in "$z40" | "") continue ;; esac
+	case "$remote_ref" in
+		refs/tags/*)
+			tagged_commit=$(git rev-parse --verify --quiet "$local_sha^{commit}")
+			if [ -z "$tagged_commit" ] || [ -z "$(git branch -r --contains "$tagged_commit" 2>/dev/null)" ]; then
+				only_known_tags=0
+			fi
+			;;
+		*) only_known_tags=0 ;;
+	esac
+done <"$refs_file"
+
+if [ "$saw_ref" -eq 1 ] && [ "$only_known_tags" -eq 1 ]; then
+	echo "[pre-push] Tag-only push of already-pushed commits; skipping validate:push."
+	exit 0
+fi
+
+# Preflight: confirm the toolchain is actually linked before running validate:push.
+# validate:push invokes prettier/tsc/eslint/vitest as bare commands resolved from
+# node_modules/.bin. A package-manager install links those .bin shims LAST (after
+# unpacking package dirs), so during an in-flight or interrupted install the package
+# exists but its shim is briefly missing - the gate then dies with a cryptic
+# "command not found" (exit 127) that reads like a broken push. This happens in the
+# auto-managed worktrees whose node_modules is reconciled out from under a push.
+# Turn that into an actionable message and stop before the confusing failure.
+for bin in prettier tsc eslint vitest; do
+	if [ ! -e "node_modules/.bin/$bin" ]; then
+		echo "[pre-push] node_modules/.bin/$bin is missing - dependencies are not fully linked."
+		echo "[pre-push] A node_modules install is likely in flight or was interrupted."
+		echo "[pre-push] Run 'npm ci' (or wait for the worktree to settle), verify"
+		echo "[pre-push] 'node_modules/.bin/prettier' resolves, then re-push."
+		exit 1
+	fi
+done
+
 npm run validate:push

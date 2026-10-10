@@ -12,6 +12,8 @@ import { ExecutionQueueBrowser } from '../../../renderer/components/ExecutionQue
 import type { Session, Theme, QueuedItem } from '../../../renderer/types';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retryStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 
 // Mock the LayerStackContext
 const mockRegisterLayer = vi.fn().mockReturnValue('layer-1');
@@ -155,14 +157,17 @@ describe('ExecutionQueueBrowser', () => {
 					onSwitchSession={mockOnSwitchSession}
 				/>
 			);
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: expect.any(Number),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: expect.any(Number),
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'strict',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('should unregister from layer stack when closed', () => {
@@ -853,6 +858,55 @@ describe('ExecutionQueueBrowser', () => {
 			);
 
 			expect(screen.getByText('Please fix the bug')).toBeInTheDocument();
+		});
+
+		it('explains when an item is waiting for the connection', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ waitingForConnection: true })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('WAITING FOR CONNECTION')).toHaveAttribute(
+				'title',
+				'This message will run after Maestro reconnects'
+			);
+		});
+
+		it('labels the failed turn an outage parked in the queue', () => {
+			const held = createQueuedItem({ id: 'held-item' });
+			const session = createSession({ id: 'active-session', executionQueue: [held] });
+			useRetryStore.setState({
+				retries: {
+					'active-session:tab': { heldItemId: 'held-item' } as RetryEntry,
+				},
+			});
+			try {
+				render(
+					<ExecutionQueueBrowser
+						isOpen={true}
+						onClose={mockOnClose}
+						sessions={[session]}
+						activeSessionId="active-session"
+						theme={theme}
+						onRemoveItem={mockOnRemoveItem}
+						onSwitchSession={mockOnSwitchSession}
+					/>
+				);
+				expect(screen.getByTestId('held-for-retry-badge')).toHaveTextContent('Awaiting retry');
+			} finally {
+				useRetryStore.setState({ retries: {} });
+			}
 		});
 
 		it('should render up to 4k characters of message text and rely on CSS line-clamp for visual truncation', () => {
@@ -2119,12 +2173,33 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.queryByText('Send Now')).not.toBeInTheDocument();
 		});
 
-		it('disables Send Now when another tab is working and forced parallel is off', () => {
+		it('dims Send Now when another tab is working and forced parallel is off', () => {
 			const onForceSendItem = vi.fn();
 			renderBrowser(forceSendSession(['idle', 'busy']), onForceSendItem);
 
-			expect(screen.getByText('Send Now').closest('button')).toBeDisabled();
+			const button = screen.getByText('Send Now').closest('button');
+			expect(button).toHaveAttribute('aria-disabled', 'true');
+			expect(button).toBeEnabled();
 			expect(onForceSendItem).not.toHaveBeenCalled();
+		});
+
+		it('explains the dimmed Send Now and deep-links to the Forced Parallel setting', () => {
+			const onForceSendItem = vi.fn();
+			renderBrowser(forceSendSession(['idle', 'busy']), onForceSendItem);
+
+			fireEvent.click(screen.getByText('Send Now'));
+			// The ghosted control is a way in, not a dead end - and it never sends.
+			expect(screen.getByText('Force Send Is Off')).toBeInTheDocument();
+			expect(onForceSendItem).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Open Setting'));
+			const settings = useModalStore.getState().modals.get('settings');
+			expect(settings?.open).toBe(true);
+			expect(settings?.data).toEqual({ tab: 'general', settingId: 'general-forced-parallel' });
+			// Settings sits below this browser in the layer stack, so it closes itself.
+			expect(mockOnClose).toHaveBeenCalled();
+			expect(screen.queryByText('Force Send Is Off')).not.toBeInTheDocument();
+			useModalStore.getState().closeModal('settings');
 		});
 
 		it('confirms before running in parallel with another working tab', () => {

@@ -278,6 +278,35 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 
+	it('selects a known local auth path for agent environment variables', async () => {
+		vi.mocked(window.maestro.agents.getKnownAuthDirs).mockResolvedValueOnce({
+			claudeConfigDirs: ['/Users/me/.claude-work', '/Users/me/.claude-personal'],
+			codexHomes: [],
+		});
+		const onEnvVarValueChange = vi.fn();
+
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+					onEnvVarValueChange,
+				})}
+			/>
+		);
+
+		fireEvent.change(await screen.findByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
+			target: { value: '/Users/me/.claude-personal' },
+		});
+
+		// Third arg is the row's enabled flag: the auth-path picker sits on a LIVE
+		// row, and the value handler needs to know which record to write back to.
+		expect(onEnvVarValueChange).toHaveBeenCalledWith(
+			'CLAUDE_CONFIG_DIR',
+			'/Users/me/.claude-personal',
+			true
+		);
+	});
+
 	describe('Model field clear button', () => {
 		const modelAgent = createMockAgent({
 			configOptions: [
@@ -600,6 +629,23 @@ describe('AgentConfigPanel', () => {
 			);
 
 			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
+		});
+
+		it('shows no Time Limits / API Limits pill next to the selector', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.queryByText('API Limits')).not.toBeInTheDocument();
+			expect(screen.queryByText('Time Limits')).not.toBeInTheDocument();
 		});
 	});
 });

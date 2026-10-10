@@ -19,6 +19,8 @@ import { ClaudePlanUsage } from '../../../../renderer/components/UsageDashboard/
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { selectModalData, useModalStore } from '../../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../../renderer/stores/authOutageStore';
 import { THEMES } from '../../../../shared/themes';
 
 const theme = THEMES['dracula'];
@@ -39,7 +41,10 @@ beforeEach(() => {
 			refreshClaudeUsageSnapshots: refreshClaudeUsageSnapshotsMock,
 			getCustomEnvVars: getCustomEnvVarsMock,
 		},
+		fs: { homeDir: vi.fn().mockResolvedValue('/Users/me') },
 	};
+	useModalStore.getState().closeAll();
+	useAuthOutageStore.setState({ outages: {} });
 
 	useClaudeUsageStore.getState().__resetForTests();
 	useSessionStore.setState({ sessions: [] } as any);
@@ -65,7 +70,7 @@ function seedSessions(configDirs: string[]) {
 	useSessionStore.setState({ sessions } as any);
 }
 
-describe('ClaudePlanUsage — empty state', () => {
+describe('ClaudePlanUsage - empty state', () => {
 	it('renders the empty message when no accounts are configured and no snapshots cached', () => {
 		render(<ClaudePlanUsage theme={theme} />);
 		expect(screen.getByTestId('claude-plan-empty')).toBeInTheDocument();
@@ -73,7 +78,7 @@ describe('ClaudePlanUsage — empty state', () => {
 	});
 });
 
-describe('ClaudePlanUsage — configured account without snapshot', () => {
+describe('ClaudePlanUsage - configured account without snapshot', () => {
 	it('renders a "hit Refresh" CTA for a session-configured account that has no snapshot yet', () => {
 		// Session declares CLAUDE_CONFIG_DIR but the snapshot store is empty -
 		// the tab list should still surface the account, and the per-tab body
@@ -112,7 +117,7 @@ describe('ClaudePlanUsage — configured account without snapshot', () => {
 	});
 });
 
-describe('ClaudePlanUsage — multi-account tabs', () => {
+describe('ClaudePlanUsage - multi-account tabs', () => {
 	it('renders a tab per account but only one row at a time (selected tab)', () => {
 		seedSnapshots({
 			'/Users/me/.claude': {
@@ -211,7 +216,36 @@ describe('ClaudePlanUsage — multi-account tabs', () => {
 	});
 });
 
-describe('ClaudePlanUsage — exhausted account', () => {
+describe('ClaudePlanUsage - case-variant dedup', () => {
+	it('collapses a case-variant CLAUDE_CONFIG_DIR onto the canonical snapshot row', () => {
+		// macOS filesystem is case-insensitive: `/Users/me/.claude-opswat` (the
+		// fs-discovered, snapshot-keyed spelling) and `/users/me/.claude-opswat`
+		// (a lowercase path typed into a session env var) are one directory. The
+		// dashboard must render a single account, not two near-identical rows.
+		seedSnapshots({
+			'/Users/me/.claude-opswat': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-opswat',
+				authState: 'authenticated',
+				session: { percent: 12, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 8, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+		seedSessions(['/users/me/.claude-opswat']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		// Exactly one opswat account row, and it's the canonical-cased one that
+		// carries the snapshot (three bars render, not a pending CTA).
+		expect(screen.getAllByTestId('claude-plan-account-opswat')).toHaveLength(1);
+		expect(screen.getByText('/Users/me/.claude-opswat')).toBeInTheDocument();
+		expect(screen.queryByText('/users/me/.claude-opswat')).toBeNull();
+		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
+	});
+});
+
+describe('ClaudePlanUsage - exhausted account', () => {
 	// The panel an account renders once its weekly limit is gone: no reset row
 	// under the idle session, and a second weekly window named after the
 	// current premium tier rather than Sonnet.
@@ -282,7 +316,7 @@ describe('ClaudePlanUsage — exhausted account', () => {
 	});
 });
 
-describe('ClaudePlanUsage — unauthenticated row', () => {
+describe('ClaudePlanUsage - unauthenticated row', () => {
 	it('renders the "run /login" CTA in place of bars when authState is unauthenticated', () => {
 		seedSnapshots({
 			'/Users/me/.claude-0din': {
@@ -302,6 +336,27 @@ describe('ClaudePlanUsage — unauthenticated row', () => {
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 		expect(screen.getByText(/Not logged in/i)).toBeInTheDocument();
 		expect(screen.getByText(/\/login/i)).toBeInTheDocument();
+	});
+
+	it('offers a login pinned to the logged-out config dir', async () => {
+		seedSnapshots({
+			'/Users/me/.claude-0din': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-0din',
+				authState: 'unauthenticated',
+				session: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+				weekAllModels: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+		fireEvent.click(screen.getByTestId('claude-plan-row-0din-unauthenticated-login'));
+
+		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
+		const data = selectModalData('reauth')(useModalStore.getState())!;
+		expect(data.providerKey).toBe('claude-code');
+		expect(data.host?.customEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/Users/me/.claude-0din' });
 	});
 
 	it('renders the unauthenticated CTA when its tab is selected', () => {
@@ -360,7 +415,7 @@ describe('ClaudePlanUsage — unauthenticated row', () => {
 	});
 });
 
-describe('ClaudePlanUsage — refresh wiring', () => {
+describe('ClaudePlanUsage - refresh wiring', () => {
 	it('calls the refresh IPC and re-pulls the store on click', async () => {
 		getClaudeUsageSnapshotsMock.mockResolvedValue({
 			'/Users/me/.claude': {
@@ -422,7 +477,7 @@ describe('ClaudePlanUsage — refresh wiring', () => {
 	});
 });
 
-describe('ClaudePlanUsage — hide/show accounts (list view)', () => {
+describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 	function seedTwoAccounts() {
 		seedSnapshots({
 			'/Users/me/.claude': {
@@ -878,5 +933,32 @@ describe('ClaudePlanUsage - sample age', () => {
 		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
 		expect(screen.queryByTestId('claude-plan-last-refreshed')).toBeNull();
 		expect(screen.queryByText(/Last refreshed/)).toBeNull();
+	});
+});
+
+describe('ClaudePlanUsage - narrow rows', () => {
+	// A 176px label, a 192px `whitespace-nowrap` reset caption and 32px of gaps
+	// is 400px of fixed width before the bar gets any, so on a 390px phone the
+	// bar - the one number this panel exists to show - was squeezed to nothing.
+	// The row wraps below `sm`: label and caption share the first line, the bar
+	// takes the whole of a second one.
+	it('lets the bar take its own full-width line below the sm breakpoint', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 42, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 99, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		const bar = screen.getAllByRole('progressbar')[0];
+		expect(bar).toHaveClass('w-full', 'order-last');
+		// ...and goes back to sharing the row from `sm` up.
+		expect(bar).toHaveClass('sm:w-auto', 'sm:flex-1', 'sm:order-none');
+		expect(bar.parentElement).toHaveClass('flex-wrap', 'sm:flex-nowrap');
 	});
 });

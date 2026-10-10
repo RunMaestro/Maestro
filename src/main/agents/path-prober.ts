@@ -36,6 +36,61 @@ export interface BinaryDetectionResult {
 	path?: string;
 }
 
+function getCodexDesktopBinRoot(): string {
+	const home = os.homedir();
+	const localAppData = process.env.LOCALAPPDATA || path.win32.join(home, 'AppData', 'Local');
+	return path.win32.join(localAppData, 'OpenAI', 'Codex', 'bin');
+}
+
+function isCodexDesktopBinaryPath(binaryPath: string): boolean {
+	const normalizedPath = path.win32.normalize(binaryPath);
+	const binRoot = path.win32.normalize(getCodexDesktopBinRoot());
+
+	return (
+		path.win32.basename(normalizedPath).toLowerCase() === 'codex.exe' &&
+		path.win32.dirname(path.win32.dirname(normalizedPath)).toLowerCase() === binRoot.toLowerCase()
+	);
+}
+
+function isMissingPathError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+async function findLatestCodexDesktopBinary(): Promise<string | null> {
+	const binRoot = getCodexDesktopBinRoot();
+
+	try {
+		const entries = await fs.promises.readdir(binRoot, { withFileTypes: true });
+		const candidates = await Promise.all(
+			entries
+				.filter((entry) => entry.isDirectory())
+				.map(async (entry) => {
+					const candidatePath = path.win32.join(binRoot, entry.name, 'codex.exe');
+					try {
+						const stats = await fs.promises.stat(candidatePath);
+						return stats.isFile() ? { path: candidatePath, installedAt: stats.birthtimeMs } : null;
+					} catch (error) {
+						if (isMissingPathError(error)) return null;
+						throw error;
+					}
+				})
+		);
+
+		return (
+			candidates
+				.filter(
+					(candidate): candidate is { path: string; installedAt: number } => candidate !== null
+				)
+				.sort((a, b) => b.installedAt - a.installedAt || b.path.localeCompare(a.path))[0]?.path ||
+			null
+		);
+	} catch (error) {
+		if (isMissingPathError(error)) return null;
+		throw error;
+	}
+}
+
 // ============ Environment Expansion ============
 
 /**
@@ -116,6 +171,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			'/usr/local/sbin',
 			`${home}/.local/bin`, // User local installs (pip, etc.)
 			`${home}/.npm-global/bin`, // npm global with custom prefix
+			`${home}/.bun/bin`, // Bun runtime and package manager (omp installs here)
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
@@ -248,6 +304,20 @@ export async function checkCustomPath(customPath: string): Promise<BinaryDetecti
 					return { exists: true, path: cmdPath };
 				}
 			}
+
+			// Codex Desktop rotates the version directory containing codex.exe on update.
+			// Recover only this known path shape so arbitrary missing overrides are not
+			// silently redirected to a different executable.
+			if (isCodexDesktopBinaryPath(expandedPath)) {
+				const currentCodexPath = await findLatestCodexDesktopBinary();
+				if (currentCodexPath) {
+					logger.info(`Recovered rotated Codex Desktop path`, LOG_CONTEXT, {
+						original: customPath,
+						resolved: currentCodexPath,
+					});
+					return { exists: true, path: currentCodexPath };
+				}
+			}
 		}
 
 		return { exists: false };
@@ -318,7 +388,9 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// npm (has known issues on Windows, but check anyway)
 			...npmGlobal('opencode'),
 		],
-		'copilot-cli': [
+		// Keyed by binary name, like every other entry: this table is looked up
+		// with `agentDef.binaryName`, and copilot-cli's is `copilot`.
+		copilot: [
 			// WinGet installation (primary method on Windows)
 			path.join(programFiles, 'GitHub Copilot CLI', 'copilot.exe'),
 			// npm global installation
@@ -340,6 +412,30 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 		gemini: [
 			// npm global installation
 			...npmGlobal('gemini'),
+		],
+		hermes: [
+			// Python/pipx and standalone installations
+			...localBin('hermes'),
+			path.join(home, 'AppData', 'Roaming', 'Python', 'Scripts', 'hermes.exe'),
+			...npmGlobal('hermes'),
+		],
+		pi: [
+			// npm global installation
+			...npmGlobal('pi'),
+			...localBin('pi'),
+		],
+		omp: [
+			// Bun global installation (primary method for Oh My Pi)
+			path.join(home, '.bun', 'bin', 'omp.exe'),
+			// npm global installation
+			...npmGlobal('omp'),
+			...localBin('omp'),
+		],
+		agy: [
+			// Official install.ps1 / install.cmd target
+			path.join(localAppData, 'agy', 'bin', 'agy.exe'),
+			// Some shells resolve the installer's shim from the user local bin
+			...localBin('agy'),
 		],
 		gh: [
 			// GitHub CLI official installer (MSI)
@@ -381,6 +477,12 @@ export async function probeWindowsPaths(binaryName: string): Promise<string | nu
  */
 export async function probeWindowsPathsAll(binaryName: string): Promise<string[]> {
 	const pathsToCheck = getWindowsKnownPaths(binaryName);
+	if (binaryName === 'codex') {
+		const codexDesktopPath = await findLatestCodexDesktopBinary();
+		if (codexDesktopPath) {
+			pathsToCheck.push(codexDesktopPath);
+		}
+	}
 
 	if (pathsToCheck.length === 0) {
 		return [];
@@ -457,11 +559,10 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('opencode'),
 		],
-		'copilot-cli': [
-			// Homebrew installation (primary method on macOS)
+		// Keyed by binary name - see the Windows table above.
+		copilot: [
+			// Homebrew (primary method on macOS): Apple Silicon, then Intel.
 			...homebrew('copilot'),
-			// GitHub CLI installation
-			'/usr/local/bin/copilot',
 			path.join(home, '.local', 'bin', 'copilot'),
 			// npm global
 			...npmGlobal('copilot'),
@@ -477,6 +578,37 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...homebrew('gemini'),
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('gemini'),
+		],
+		hermes: [
+			// Python/pipx and standalone installations
+			...localBin('hermes'),
+			...homebrew('hermes'),
+			path.join(home, 'bin', 'hermes'),
+		],
+		pi: [
+			// npm global and Node version manager installations
+			...localBin('pi'),
+			...homebrew('pi'),
+			...npmGlobal('pi'),
+			path.join(home, 'bin', 'pi'),
+			...nodeVersionManagers('pi'),
+		],
+		omp: [
+			// Bun global installation (primary method for Oh My Pi)
+			path.join(home, '.bun', 'bin', 'omp'),
+			...localBin('omp'),
+			...homebrew('omp'),
+			...npmGlobal('omp'),
+			path.join(home, 'bin', 'omp'),
+			...nodeVersionManagers('omp'),
+		],
+		agy: [
+			// Official install.sh target on macOS/Linux
+			...localBin('agy'),
+			// User bin directory
+			path.join(home, 'bin', 'agy'),
+			// Homebrew, should a formula land later
+			...homebrew('agy'),
 		],
 		gh: [
 			// Homebrew (Apple Silicon + Intel)

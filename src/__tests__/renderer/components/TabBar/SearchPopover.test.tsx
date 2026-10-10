@@ -1,9 +1,16 @@
 /// <reference types="@testing-library/jest-dom/vitest" />
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SearchPopover } from '../../../../renderer/components/TabBar/SearchPopover';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { mockTheme } from '../../../helpers/mockTheme';
+
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
 
 function setup(overrides: Record<string, unknown> = {}) {
 	const props = {
@@ -18,6 +25,33 @@ function setup(overrides: Record<string, unknown> = {}) {
 	};
 	return { ...props, ...render(<SearchPopover {...(props as any)} />) };
 }
+
+describe('SearchPopover on a phone', () => {
+	beforeEach(() => {
+		useSettingsStore.setState({ showTabCountBadge: true });
+		mockedUsePhoneLayout.mockReturnValue(true);
+	});
+
+	afterEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+	});
+
+	// The four-item menu is keyboard chords a phone cannot press and modals that
+	// do not fit a 390px screen. The magnifier IS the tab list there.
+	it('opens the tab switcher directly instead of the menu', () => {
+		const { onSearchTabs, onSearchMessages } = setup();
+		fireEvent.click(screen.getByTitle('Switch tab (7 open tabs)'));
+		expect(onSearchTabs).toHaveBeenCalledTimes(1);
+		expect(onSearchMessages).not.toHaveBeenCalled();
+		expect(screen.queryByText('Search Tabs')).not.toBeInTheDocument();
+		expect(screen.queryByText('See All Snoozed Tabs')).not.toBeInTheDocument();
+	});
+
+	it('keeps the open-tab count on the magnifier', () => {
+		setup();
+		expect(screen.getByLabelText('7 open tabs')).toBeInTheDocument();
+	});
+});
 
 describe('SearchPopover tab count', () => {
 	beforeEach(() => {

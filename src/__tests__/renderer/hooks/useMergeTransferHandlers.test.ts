@@ -99,8 +99,10 @@ vi.mock('../../../renderer/stores/modalStore', () => ({
 
 // Mock notificationStore
 const mockNotifyToast = vi.fn();
+const mockShowOsNotification = vi.fn();
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
+	showOsNotification: (...args: unknown[]) => mockShowOsNotification(...args),
 }));
 
 // Mock other dependencies
@@ -130,6 +132,7 @@ import {
 } from '../../../renderer/hooks/agent/useMergeTransferHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../renderer/stores/tabStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useMergeSessionWithSessions } from '../../../renderer/hooks/agent/useMergeSession';
 import { useSendToAgentWithSessions } from '../../../renderer/hooks/agent/useSendToAgent';
 
@@ -541,7 +544,7 @@ describe('useMergeTransferHandlers', () => {
 	// handleSendToAgent - terminal buffer transfer path
 	// ----------------------------------------------------------------
 
-	describe('handleSendToAgent — terminal buffer mode', () => {
+	describe('handleSendToAgent - terminal buffer mode', () => {
 		beforeEach(() => {
 			useTabStore.getState().setPendingTerminalBufferSend(null);
 		});
@@ -758,25 +761,26 @@ describe('useMergeTransferHandlers', () => {
 	// ----------------------------------------------------------------
 
 	describe('sub-hook callbacks', () => {
-		it('passes sessions and setSessions to useMergeSessionWithSessions', () => {
+		it('passes setSessions and activeTabId to useMergeSessionWithSessions', () => {
 			const deps = createMockDeps();
 			renderHook(() => useMergeTransferHandlers(deps));
 
 			const mockMerge = vi.mocked(useMergeSessionWithSessions);
 			const callArgs = mockMerge.mock.calls[0]?.[0];
-			expect(callArgs).toHaveProperty('sessions');
+			expect(callArgs).not.toHaveProperty('sessions');
 			expect(callArgs).toHaveProperty('setSessions');
+			expect(callArgs).toHaveProperty('activeTabId');
 			expect(callArgs).toHaveProperty('onSessionCreated');
 			expect(callArgs).toHaveProperty('onMergeComplete');
 		});
 
-		it('passes sessions and setSessions to useSendToAgentWithSessions', () => {
+		it('passes setSessions to useSendToAgentWithSessions', () => {
 			const deps = createMockDeps();
 			renderHook(() => useMergeTransferHandlers(deps));
 
 			const mockTransfer = vi.mocked(useSendToAgentWithSessions);
 			const callArgs = mockTransfer.mock.calls[0]?.[0];
-			expect(callArgs).toHaveProperty('sessions');
+			expect(callArgs).not.toHaveProperty('sessions');
 			expect(callArgs).toHaveProperty('setSessions');
 			expect(callArgs).toHaveProperty('onSessionCreated');
 		});
@@ -808,9 +812,12 @@ describe('useMergeTransferHandlers', () => {
 					title: 'Session Merged',
 				})
 			);
-			expect((window as any).maestro.notification.show).toHaveBeenCalledWith(
+			expect(mockShowOsNotification).toHaveBeenCalledWith(
 				'Session Merged',
-				expect.stringContaining('Merged Session')
+				expect.stringContaining('Merged Session'),
+				undefined,
+				undefined,
+				{ fallbackToast: false }
 			);
 		});
 
@@ -877,7 +884,7 @@ describe('useMergeTransferHandlers', () => {
 	// handleSendToAgent - additional coverage
 	// ----------------------------------------------------------------
 
-	describe('handleSendToAgent — additional coverage', () => {
+	describe('handleSendToAgent - additional coverage', () => {
 		it('formats context message with empty logs as no-context message', async () => {
 			const sourceSession = createMockSession({
 				aiTabs: [
@@ -1144,10 +1151,102 @@ describe('useMergeTransferHandlers', () => {
 	});
 
 	// ----------------------------------------------------------------
+	// handleSendToAgent - busy target (queue vs Force Send)
+	// ----------------------------------------------------------------
+
+	describe('handleSendToAgent — busy target', () => {
+		const setupBusyTarget = () => {
+			const targetSession = createMockSession({
+				id: 'busy-target',
+				name: 'Busy Agent',
+				state: 'busy',
+				executionQueue: [],
+			});
+			useSessionStore.setState({
+				sessions: [createMockSession(), targetSession],
+				activeSessionId: 'session-1',
+			});
+			return renderHook(() => useMergeTransferHandlers(createMockDeps()));
+		};
+
+		afterEach(() => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+		});
+
+		it('queues the context behind the running turn instead of spawning', async () => {
+			const { result } = setupBusyTarget();
+
+			let sendResult: any;
+			await act(async () => {
+				sendResult = await result.current.handleSendToAgent('busy-target', {
+					groomContext: false,
+					targetSessionId: 'busy-target',
+				});
+			});
+
+			expect(sendResult.success).toBe(true);
+			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'busy-target')!;
+			const newTab = target.aiTabs.find((t) => t.id === sendResult.newTabId)!;
+			expect(newTab.state).toBe('idle');
+			expect(newTab.logs.map((l) => l.source)).toEqual(['system']);
+			expect(target.executionQueue).toHaveLength(1);
+			expect(target.executionQueue[0]).toMatchObject({
+				tabId: sendResult.newTabId,
+				type: 'message',
+				text: expect.stringContaining('# Context from Previous Session'),
+			});
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Context Queued' })
+			);
+		});
+
+		it('still queues a Force Send when Forced Parallel Execution is off', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+			const { result } = setupBusyTarget();
+
+			await act(async () => {
+				await result.current.handleSendToAgent('busy-target', {
+					groomContext: false,
+					targetSessionId: 'busy-target',
+					forceSend: true,
+				});
+			});
+
+			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'busy-target')!;
+			expect(target.executionQueue).toHaveLength(1);
+		});
+
+		it('spawns immediately on Force Send when Forced Parallel Execution is on', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			const { result } = setupBusyTarget();
+
+			let sendResult: any;
+			await act(async () => {
+				sendResult = await result.current.handleSendToAgent('busy-target', {
+					groomContext: false,
+					targetSessionId: 'busy-target',
+					forceSend: true,
+				});
+			});
+
+			await vi.waitFor(() => {
+				expect((window as any).maestro.process.spawn).toHaveBeenCalledTimes(1);
+			});
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'busy-target')!;
+			expect(target.executionQueue).toHaveLength(0);
+			const newTab = target.aiTabs.find((t) => t.id === sendResult.newTabId)!;
+			expect(newTab.state).toBe('busy');
+		});
+	});
+
+	// ----------------------------------------------------------------
 	// onMergeComplete - additional coverage
 	// ----------------------------------------------------------------
 
-	describe('onMergeComplete — additional coverage', () => {
+	describe('onMergeComplete - additional coverage', () => {
 		it('does not navigate or toast when merge result is not successful', () => {
 			const mockSetActiveSessionId = vi.fn();
 			const deps = createMockDeps({ setActiveSessionId: mockSetActiveSessionId });
@@ -1263,7 +1362,7 @@ describe('useMergeTransferHandlers', () => {
 	// onSessionCreated - additional coverage
 	// ----------------------------------------------------------------
 
-	describe('onSessionCreated — additional coverage', () => {
+	describe('onSessionCreated - additional coverage', () => {
 		it('includes saved tokens info when tokensSaved > 0', () => {
 			const deps = createMockDeps();
 			renderHook(() => useMergeTransferHandlers(deps));
@@ -1342,9 +1441,12 @@ describe('useMergeTransferHandlers', () => {
 				});
 			});
 
-			expect((window as any).maestro.notification.show).toHaveBeenCalledWith(
+			expect(mockShowOsNotification).toHaveBeenCalledWith(
 				'Session Merged',
-				'Created "My Merged Session" with merged context'
+				'Created "My Merged Session" with merged context',
+				undefined,
+				undefined,
+				{ fallbackToast: false }
 			);
 		});
 	});
@@ -1353,7 +1455,7 @@ describe('useMergeTransferHandlers', () => {
 	// handleMerge - additional coverage
 	// ----------------------------------------------------------------
 
-	describe('handleMerge — additional coverage', () => {
+	describe('handleMerge - additional coverage', () => {
 		it('passes all parameters to executeMerge', async () => {
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useMergeTransferHandlers(deps));
