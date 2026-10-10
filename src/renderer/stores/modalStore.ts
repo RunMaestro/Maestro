@@ -191,7 +191,34 @@ export interface AgentErrorModalData {
  */
 export interface ReauthModalData {
 	providerKey: string;
+	/**
+	 * Where the login runs, when it must not be the outage's first blocked
+	 * agent. Set by an ACCOUNT login (Usage Dashboard quota panels): the
+	 * outage is keyed by provider, but a provider can hold several accounts,
+	 * and the blocked agent may be on a different one - or the account may
+	 * have no agent at all.
+	 */
+	host?: ReauthHost;
 }
+
+/**
+ * The fields of an agent the re-auth login reads to decide where it runs and
+ * which account it writes to. A real `Session` satisfies it; an account with
+ * no agent is described by a synthesized one (see `quotaAccountLogin.ts`).
+ */
+export type ReauthHost = Pick<
+	Session,
+	| 'id'
+	| 'name'
+	| 'toolType'
+	| 'cwd'
+	| 'projectRoot'
+	| 'customEnvVars'
+	| 'customPath'
+	| 'sessionSshRemoteConfig'
+	| 'sshRemoteId'
+	| 'remoteCwd'
+>;
 
 /** Delete agent modal data */
 export interface DeleteAgentModalData {

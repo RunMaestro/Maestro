@@ -161,8 +161,10 @@ export const AppAgentModals = memo(function AppAgentModals({
 	const reauthOutage = useAuthOutageStore(selectAuthOutage(reauthData?.providerKey));
 	// Any blocked agent can host the login shell; they share the credential
 	// store. The first is the one that failed first.
+	// An account login names its own host: the outage's first blocked agent
+	// may be on a different account of the same provider.
 	const reauthSession = reauthOutage
-		? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId)
+		? (reauthData?.host ?? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId))
 		: undefined;
 
 	return (
