@@ -370,3 +370,35 @@ describe('plugin sandbox realm - behavioral parity', () => {
 		]);
 	});
 });
+
+describe('media SDK contract', () => {
+	it('sends opaque media params and preserves machine-readable failure codes in the sandbox realm', async () => {
+		const sent: string[] = [];
+		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			`module.exports = { activate: function (maestro) {
+			return maestro.media.run('job', 'audio', { profile: 'whisper-cli', model: 'base', language: 'de' }).catch(function (error) {
+				console.log(error.code + ':' + (error instanceof Error));
+			});
+		} };`,
+			'media-roundtrip'
+		);
+		const activated = realm.activate();
+		const request = JSON.parse(sent[0]);
+		expect(request).toMatchObject({
+			method: 'media.run',
+			params: { jobId: 'job', audioId: 'audio', options: { model: 'base', language: 'de' } },
+		});
+		realm.deliverResponse(
+			JSON.stringify({
+				id: request.id,
+				ok: false,
+				error: 'MediaTimeout',
+				errorCode: 'MediaTimeout',
+			})
+		);
+		await activated;
+		expect(bridge.log).toHaveBeenCalledWith('info', 'MediaTimeout:true');
+	});
+});

@@ -96,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.16.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.22.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.16.0');
+		expect(HOST_API_VERSION).toBe('1.22.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -257,4 +257,16 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(validatePluginManifest(wildcard)).toEqual(srcValidatePluginManifest(wildcard));
 		expect(validatePluginManifest(wildcard).manifest).toBeNull();
 	});
+});
+
+import { MEDIA_LIMITS, MEDIA_MODEL_IDS, MEDIA_ERROR_CODES } from '../index';
+import {
+	MEDIA_LIMITS as SRC_MEDIA_LIMITS,
+	MEDIA_MODEL_IDS as SRC_MEDIA_MODELS,
+	MEDIA_ERROR_CODES as SRC_MEDIA_ERRORS,
+} from '../../../../src/shared/plugins/media-tools';
+it('media ceilings, model IDs and failure codes match the host', () => {
+	expect(MEDIA_LIMITS).toEqual(SRC_MEDIA_LIMITS);
+	expect(MEDIA_MODEL_IDS).toEqual(SRC_MEDIA_MODELS);
+	expect(MEDIA_ERROR_CODES).toEqual(SRC_MEDIA_ERRORS);
 });

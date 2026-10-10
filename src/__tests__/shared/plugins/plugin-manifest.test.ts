@@ -78,6 +78,15 @@ describe('validatePluginManifest', () => {
 		).toBeNull();
 	});
 
+	it('rejects calendar rollovers and accepts an actual leap day', () => {
+		for (const releaseDate of ['2023-02-29', '2024-02-30', '2026-04-31']) {
+			expect(validatePluginManifest(validManifest({ releaseDate })).manifest).toBeNull();
+		}
+		expect(
+			validatePluginManifest(validManifest({ releaseDate: '2024-02-29' })).manifest?.releaseDate
+		).toBe('2024-02-29');
+	});
+
 	it('rejects an out-of-range tier', () => {
 		expect(validatePluginManifest(validManifest({ tier: 3 })).manifest).toBeNull();
 		expect(validatePluginManifest(validManifest({ tier: '0' })).manifest).toBeNull();

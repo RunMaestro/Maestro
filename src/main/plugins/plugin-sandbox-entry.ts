@@ -130,7 +130,11 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 		if (!call) return;
 		pending.delete(res.id);
 		if (res.ok) call.resolve(res.result);
-		else call.reject(new Error(typeof res.error === 'string' ? res.error : 'host call failed'));
+		else {
+			var failure = new Error(typeof res.error === 'string' ? res.error : 'host call failed');
+			if (typeof res.errorCode === 'string') failure.code = res.errorCode;
+			call.reject(failure);
+		}
 	}
 
 	// ---- curated globals -----------------------------------------------------
@@ -247,6 +251,15 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				read: function (path) { return hostCall('fs.read', { path: path }); },
 				write: function (path, contents) { return hostCall('fs.write', { path: path, contents: contents }); },
 				watch: function (path, opts) { return hostCall('fs.watch', { path: path, opts: opts }); }
+			}),
+			media: Object.freeze({
+				status: function () { return hostCall('media.status', {}); },
+				open: function () { return hostCall('media.open', {}); },
+				download: function (jobId, url) { return hostCall('media.download', { jobId: jobId, url: url }); },
+				probe: function (jobId, audioId) { return hostCall('media.probe', { jobId: jobId, audioId: audioId }); },
+				decode: function (jobId, audioId) { return hostCall('media.decode', { jobId: jobId, audioId: audioId }); },
+				run: function (jobId, audioId, options) { return hostCall('media.run', { jobId: jobId, audioId: audioId, options: options }); },
+				close: function (jobId) { return hostCall('media.close', { jobId: jobId }); }
 			}),
 			net: Object.freeze({
 				fetch: function (url, init) { return hostCall('net.fetch', { url: url, init: init }); },

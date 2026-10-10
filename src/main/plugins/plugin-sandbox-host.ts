@@ -12,6 +12,7 @@
  * children down (graceful shutdown message, then hard kill after a grace).
  */
 
+import { MEDIA_ERROR_CODES, MEDIA_LIMITS } from '../../shared/plugins/media-tools';
 import { utilityProcess, type UtilityProcess } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -34,7 +35,10 @@ export interface SandboxControlEvent {
 
 /** An injected implementation of one host method. Receives the calling plugin
  * id (for per-plugin scoping) and the validated params. */
-export type HostCallHandler = (pluginId: string, params: unknown) => Promise<unknown>;
+export type HostCallHandler = ((pluginId: string, params: unknown) => Promise<unknown>) & {
+	/** Host-only ownership query for rate-limit exemptions on active release requests. */
+	ownsReleaseResource?: (pluginId: string, params: unknown) => boolean;
+};
 export type HostCallHandlers = Partial<Record<HostMethod, HostCallHandler>>;
 
 export interface PluginSandboxHostDeps {
@@ -103,6 +107,9 @@ interface PendingTool {
 }
 
 interface RunningPlugin {
+	/** Separate bounded release slots so saturated ordinary calls cannot block cancellation. */
+	mediaClosesInFlight: number;
+	mediaCloseWindowCount: number;
 	proc: UtilityProcess;
 	shutdownTimer?: NodeJS.Timeout;
 	inFlight: number;
@@ -226,6 +233,8 @@ export class PluginSandboxHost {
 			inFlight: 0,
 			windowStart: Date.now(),
 			windowCount: 0,
+			mediaClosesInFlight: 0,
+			mediaCloseWindowCount: 0,
 			pendingTools: new Map(),
 			nextToolId: 1,
 		};
@@ -419,6 +428,20 @@ export class PluginSandboxHost {
 		const request = msg as unknown as HostRequest;
 
 		const respond = (res: Omit<HostResponse, 'id'>): void => {
+			if (request.method.startsWith('media.') && !res.ok) {
+				const code = (MEDIA_ERROR_CODES as readonly string[]).includes(res.error ?? '')
+					? res.error!
+					: /permission denied/.test(res.error ?? '')
+						? 'MediaDenied'
+						: /rate limit|concurrent|concurrency limit/.test(res.error ?? '')
+							? 'MediaBusy'
+							: /not implemented/.test(res.error ?? '')
+								? 'MediaUnavailable'
+								: /serializable|size limit/.test(res.error ?? '')
+									? 'MediaInvalid'
+									: 'MediaProcessFailed';
+				res = { ok: false, error: code, errorCode: code };
+			}
 			try {
 				proc.postMessage({ id: request.id, ...res });
 			} catch {
@@ -429,17 +452,25 @@ export class PluginSandboxHost {
 		// Backpressure + rate limiting against a flooding child.
 		const record = this.running.get(pluginId);
 		if (record) {
+			if (
+				request.method === 'media.close' &&
+				record.mediaClosesInFlight >= MEDIA_LIMITS.maxJobsPerPlugin
+			) {
+				respond({ ok: false, error: 'MediaBusy' });
+				return;
+			}
 			const now = Date.now();
 			if (now - record.windowStart > RATE_WINDOW_MS) {
 				record.windowStart = now;
 				record.windowCount = 0;
+				record.mediaCloseWindowCount = 0;
 			}
 			record.windowCount += 1;
-			if (record.inFlight >= MAX_IN_FLIGHT) {
+			if (record.inFlight >= MAX_IN_FLIGHT && request.method !== 'media.close') {
 				respond({ ok: false, error: 'too many concurrent host calls' });
 				return;
 			}
-			if (record.windowCount > RATE_MAX_PER_WINDOW) {
+			if (record.windowCount > RATE_MAX_PER_WINDOW && request.method !== 'media.close') {
 				respond({ ok: false, error: 'host call rate limit exceeded' });
 				return;
 			}
@@ -471,7 +502,21 @@ export class PluginSandboxHost {
 			return;
 		}
 
-		if (record) record.inFlight += 1;
+		if (record && method === 'media.close') {
+			if (
+				record.mediaCloseWindowCount >= RATE_MAX_PER_WINDOW &&
+				!handler.ownsReleaseResource?.(pluginId, request.params)
+			) {
+				respond({ ok: false, error: 'MediaBusy' });
+				return;
+			}
+			record.mediaCloseWindowCount += 1;
+		}
+
+		if (record) {
+			record.inFlight += 1;
+			if (method === 'media.close') record.mediaClosesInFlight += 1;
+		}
 		const act = this.activityFor(pluginId);
 		act.totalCalls += 1;
 		act.inFlight += 1;
@@ -483,7 +528,11 @@ export class PluginSandboxHost {
 		} catch (err) {
 			respond({ ok: false, error: err instanceof Error ? err.message : String(err) });
 		} finally {
-			if (record) record.inFlight = Math.max(0, record.inFlight - 1);
+			if (record) {
+				record.inFlight = Math.max(0, record.inFlight - 1);
+				if (method === 'media.close')
+					record.mediaClosesInFlight = Math.max(0, record.mediaClosesInFlight - 1);
+			}
 			act.inFlight = Math.max(0, act.inFlight - 1);
 		}
 	}

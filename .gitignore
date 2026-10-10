@@ -69,3 +69,6 @@ yarn-error.log*
 
 # Bundled-plugin signing artifact (release-time build output; dev signs locally)
 examples/plugins/*/signature.json
+
+# Local media broker build and test evidence
+.build/

@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                                                                                                                                                                       |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                                                                                                                                                                                |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                                                                                                                                                                              |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.16.0`)                                                                                                                                                                        |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.22.0`)                                                                                                                                                                        |
 | `description` | string                   | no        |                                                                                                                                                                                                                    |
 | `author`      | string                   | no        |                                                                                                                                                                                                                    |
 | `license`     | string                   | no        |                                                                                                                                                                                                                    |
@@ -773,3 +773,11 @@ await maestro.ui.grouping.publish({
 
 Published group ids are local to the declared grouping, may nest only one level,
 and use session metadata only. The host silently drops unknown session ids.
+
+## Bounded local media primitives
+
+Use `maestro.media` (API 1.22.0), `media:tools` scope `discord-voice`, for host-confined
+Discord voice downloads and fixed ffprobe/ffmpeg/whisper-cli profiles. Keep STT
+orchestration and result interpretation in the plugin. General network/file/process
+grants are unnecessary. Read [the media contract](../plugin-media-tools.md) before
+adding an adapter; it defines opaque jobs, ceilings, cancellation, errors and prerequisites.
