@@ -26,6 +26,14 @@ export interface ProviderProfileConfig {
 	envVar: string;
 	/** Directory under $HOME used when the env var is unset (`.claude`). */
 	defaultSubdir: string;
+	/**
+	 * Subdirectory of the account home holding that account's transcripts.
+	 *
+	 * Two account homes that resolve to the same real transcript tree are one
+	 * account for attribution purposes, so this is what callers dedupe on. See
+	 * `getProviderAccountDirs()` in `src/main/agents/provider-account-dirs.ts`.
+	 */
+	sessionsSubdir: string;
 }
 
 /**
@@ -35,11 +43,50 @@ export interface ProviderProfileConfig {
  * statement about what Maestro can currently attribute, not about what the CLI
  * supports: adding an entry here immediately splits that provider's agents in
  * every surface built on this module.
+ *
+ * Absent on purpose, verified 2026-09-14 against each vendor's shipped binary
+ * and current docs:
+ *   - `opencode` has no provider-scoped data-dir var. Its credentials and
+ *     transcripts follow `XDG_DATA_HOME`, which is an OS-wide setting rather
+ *     than an OpenCode account selector, and `OPENCODE_CONFIG*` selects config
+ *     (agents, commands, plugins), not the data store.
+ *   - `factory-droid` ships no config-dir override at all: its whole env
+ *     surface is `FACTORY_API_KEY`, `FACTORY_API_KEY_HELPER_TTL_MS`,
+ *     `FACTORY_DISABLE_KEYRING`, `FACTORY_DROID_AUTO_UPDATE_ENABLED`,
+ *     `FACTORY_LOG_FILE`, and `FACTORY_PROJECT_DIR`.
+ * If either ships one, the single-line entry here is the whole change.
  */
 export const PROVIDER_PROFILE_CONFIGS: Readonly<Record<string, ProviderProfileConfig>> = {
-	'claude-code': { envVar: 'CLAUDE_CONFIG_DIR', defaultSubdir: '.claude' },
-	codex: { envVar: 'CODEX_HOME', defaultSubdir: '.codex' },
+	'claude-code': {
+		envVar: 'CLAUDE_CONFIG_DIR',
+		defaultSubdir: '.claude',
+		sessionsSubdir: 'projects',
+	},
+	codex: { envVar: 'CODEX_HOME', defaultSubdir: '.codex', sessionsSubdir: 'sessions' },
+	'copilot-cli': {
+		envVar: 'COPILOT_HOME',
+		defaultSubdir: '.copilot',
+		sessionsSubdir: 'session-state',
+	},
 };
+
+/**
+ * Directory names that read as a copy of an account rather than an account.
+ *
+ * A `~/.claude-backup` left over from a migration holds a full transcript tree,
+ * so nothing about its contents distinguishes it - only its name does.
+ */
+export const ACCOUNT_DIR_EXCLUDE_RE =
+	/(^|[-_.])(backup|bak|old|archive|archived|stage|local|server)([-_.]|$)/i;
+
+/**
+ * Whether a `$HOME` entry name looks like an account dir for a provider whose
+ * default subdir is `prefix` (`.claude` matches `.claude` and `.claude-work`).
+ */
+export function isAccountDirName(name: string, prefix: string): boolean {
+	if (ACCOUNT_DIR_EXCLUDE_RE.test(name)) return false;
+	return name === prefix || name.startsWith(`${prefix}-`);
+}
 
 export function getProviderProfileConfig(toolType: string): ProviderProfileConfig | undefined {
 	return PROVIDER_PROFILE_CONFIGS[toolType];

@@ -7,7 +7,7 @@
 
 import type { CueRunResult } from './cue-types';
 
-const ACTIVITY_LOG_MAX = 500;
+const ACTIVITY_LOG_MAX = 1000;
 
 export interface CueActivityLog {
 	push(result: CueRunResult): void;

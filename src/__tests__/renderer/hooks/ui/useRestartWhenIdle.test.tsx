@@ -1,15 +1,5 @@
-/**
- * Tests for useRestartWhenIdle.
- *
- * This hook reads the SAME activity selectors as useIdleNotification, which is
- * the point: the two must not drift on what "idle" means. The stakes are higher
- * here - announcing idle over a full queue is annoying, restarting the app out
- * from under one throws the queued work away.
- */
-
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { act } from 'react';
 import { useRestartWhenIdle } from '../../../../renderer/hooks/ui/useRestartWhenIdle';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useRestartPendingStore } from '../../../../renderer/stores/restartPendingStore';
@@ -17,77 +7,77 @@ import { useBatchStore } from '../../../../renderer/stores/batchStore';
 import { createMockSession } from '../../../helpers/mockSession';
 import type { QueuedItem, Session } from '../../../../renderer/types';
 
-const install = vi.fn();
+/**
+ * This hook shares its activity definition with `useIdleNotification`, but
+ * where that one speaks, this one calls `updates.install()` and relaunches the
+ * app. So the gap between two queued turns is not a cosmetic problem here: a
+ * restart fired in that window takes the app down with queued work still in the
+ * queue.
+ */
+
+const install = vi.fn().mockResolvedValue(undefined);
 
 function queuedItem(overrides: Partial<QueuedItem> = {}): QueuedItem {
-	return {
-		id: 'q-1',
-		timestamp: 1700000000000,
-		tabId: 'tab-1',
-		type: 'message',
-		text: 'do the thing',
-		...overrides,
-	} as QueuedItem;
+	return { id: 'q1', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'go', ...overrides };
 }
 
-function setSession(state: Session['state'], executionQueue: QueuedItem[] = []): void {
-	useSessionStore.setState({
-		sessions: [createMockSession({ id: 'sess-1', state, executionQueue })],
-	});
+function setSessions(sessions: Session[]): void {
+	useSessionStore.setState({ sessions });
 }
-
-beforeEach(() => {
-	install.mockClear();
-	(globalThis as any).window.maestro = {
-		...((globalThis as any).window.maestro ?? {}),
-		updates: { install },
-	};
-
-	useSessionStore.setState({ sessions: [] });
-	useBatchStore.setState({ batches: {} } as any);
-	useRestartPendingStore.setState({ pending: true });
-});
 
 describe('useRestartWhenIdle', () => {
-	it('does not restart while an agent still has runnable queued work', () => {
-		setSession('busy', [queuedItem()]);
+	beforeEach(() => {
+		install.mockClear();
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			updates: { install },
+		};
+		useBatchStore.setState({ batchRunStates: {} });
+		useRestartPendingStore.setState({ pending: false });
+		setSessions([]);
+	});
+
+	it('does not restart in the gap between two queued turns', () => {
+		setSessions([createMockSession({ state: 'busy', executionQueue: [queuedItem({ id: 'q2' })] })]);
+		useRestartPendingStore.setState({ pending: true });
 		const { rerender } = renderHook(() => useRestartWhenIdle());
 
-		act(() => setSession('idle', [queuedItem()]));
+		// Turn ends, next item still queued. A restart here would kill queued work.
+		setSessions([createMockSession({ state: 'idle', executionQueue: [queuedItem({ id: 'q2' })] })]);
 		rerender();
 
 		expect(install).not.toHaveBeenCalled();
-		// The pending flag must survive, or the deferred restart is silently lost.
 		expect(useRestartPendingStore.getState().pending).toBe(true);
 	});
 
+	it('restarts once the queue is genuinely drained', () => {
+		setSessions([createMockSession({ state: 'busy', executionQueue: [queuedItem({ id: 'q2' })] })]);
+		useRestartPendingStore.setState({ pending: true });
+		const { rerender } = renderHook(() => useRestartWhenIdle());
+
+		setSessions([createMockSession({ state: 'idle', executionQueue: [queuedItem({ id: 'q2' })] })]);
+		rerender();
+		expect(install).not.toHaveBeenCalled();
+
+		setSessions([createMockSession({ state: 'idle', executionQueue: [] })]);
+		rerender();
+
+		expect(install).toHaveBeenCalledTimes(1);
+		expect(useRestartPendingStore.getState().pending).toBe(false);
+	});
+
 	it('restarts when the queue holds only paused items', () => {
-		setSession('busy', [queuedItem({ paused: true })]);
-		const { rerender } = renderHook(() => useRestartWhenIdle());
-
-		act(() => setSession('idle', [queuedItem({ paused: true })]));
-		rerender();
-
-		expect(install).toHaveBeenCalledTimes(1);
-	});
-
-	it('restarts on the busy -> idle edge with an empty queue', () => {
-		setSession('busy', []);
-		const { rerender } = renderHook(() => useRestartWhenIdle());
-
-		act(() => setSession('idle', []));
-		rerender();
+		setSessions([
+			createMockSession({ state: 'idle', executionQueue: [queuedItem({ paused: true })] }),
+		]);
+		useRestartPendingStore.setState({ pending: true });
+		renderHook(() => useRestartWhenIdle());
 
 		expect(install).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not restart when no update is pending', () => {
-		useRestartPendingStore.setState({ pending: false });
-		setSession('busy', []);
-		const { rerender } = renderHook(() => useRestartWhenIdle());
-
-		act(() => setSession('idle', []));
-		rerender();
+	it('does nothing while no restart is pending', () => {
+		setSessions([createMockSession({ state: 'idle', executionQueue: [] })]);
+		renderHook(() => useRestartWhenIdle());
 
 		expect(install).not.toHaveBeenCalled();
 	});

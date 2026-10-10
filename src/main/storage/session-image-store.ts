@@ -32,19 +32,19 @@ import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { getImageMimeType } from '../../shared/gitUtils';
 import {
-	IMAGE_REF_PREFIX,
 	MAX_THUMB_DIMENSION,
+	SESSION_IMAGE_REF_PREFIX,
 	THUMB_HEIGHT_PARAM,
 	THUMB_WIDTH_PARAM,
+	isSessionImageRef,
+	sessionImageRefBasename,
 } from '../../shared/sessionImageRefs';
 
 const IMAGE_DIR_NAME = 'session-images';
-export { IMAGE_REF_PREFIX };
-
-// Only lowercase-hex sha256 basenames with a known image extension are ever
-// served or resolved. Guards the protocol handler against path traversal and
-// keeps `resolveToFilePath` from touching anything but our own files.
-const REF_BASENAME_RE = /^[0-9a-f]{64}\.(png|jpe?g|gif|webp|bmp|svg)$/;
+// The reference grammar is shared with the renderer (which rewrites refs to
+// the web server's image route) and the web server route itself, so all three
+// agree on what a reference looks like. See src/shared/sessionImageRefs.ts.
+export const IMAGE_REF_PREFIX = SESSION_IMAGE_REF_PREFIX;
 
 /**
  * mediaType (e.g. 'image/png') -> file extension. Mirrors the split('/')[1]
@@ -92,7 +92,7 @@ export function getImageDir(): string {
 
 /** True if `value` is a `maestro-image://` reference produced by this store. */
 export function isImageRef(value: string): boolean {
-	return typeof value === 'string' && value.startsWith(IMAGE_REF_PREFIX);
+	return isSessionImageRef(value);
 }
 
 /** True if `value` is an inline base64 image data URL. */
@@ -123,10 +123,15 @@ function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } | 
  * ignored here - it selects a rendition, not a different source file.
  */
 export function resolveToFilePath(ref: string): string | null {
-	if (!isImageRef(ref)) return null;
-	const withoutQuery = stripRefQuery(ref);
-	const basename = withoutQuery.slice(IMAGE_REF_PREFIX.length);
-	if (!REF_BASENAME_RE.test(basename)) return null;
+	// The query selects a RENDITION, not a different source file, so it comes off
+	// before the ref is validated - a thumbnail URL must resolve to the same file
+	// its bare ref does. Validation is then `sessionImageRefBasename`, the shared
+	// grammar the web route and the renderer also use: only a lowercase-hex
+	// sha256 with a known image extension ever resolves, which is what guards the
+	// protocol handler against path traversal. Stripping first cannot widen that:
+	// a traversal attempt with a query appended still fails the basename test.
+	const basename = sessionImageRefBasename(stripRefQuery(ref));
+	if (!basename) return null;
 	return path.join(getImageDir(), basename);
 }
 

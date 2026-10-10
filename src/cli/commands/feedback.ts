@@ -15,6 +15,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { runGhLogin } from '../services/gh-login';
 import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import { resolveCliPath } from '../utils/parse';
@@ -26,9 +27,16 @@ import {
 	MAX_FEEDBACK_ATTACHMENT_BYTES,
 	resolveFeedbackCategory,
 	type FeedbackAttachmentPayload,
+	type FeedbackAuthResponse,
 	type FeedbackConversationSubmitPayload,
+	type FeedbackGhLoginCommand,
 	type FeedbackIssueMatch,
 } from '../../shared/feedback';
+import {
+	describeFeedbackAccountStatus,
+	isFeedbackAccountUsable,
+	type FeedbackAccountsResponse,
+} from '../../shared/feedbackAccounts';
 
 /**
  * Filing uploads screenshots, may build and upload a support package, and runs
@@ -133,17 +141,43 @@ async function searchIssues(query: string): Promise<FeedbackIssueMatch[]> {
 	return result.issues ?? [];
 }
 
+type AuthResult = { success: boolean; error?: string } & Partial<FeedbackAuthResponse>;
+
+/** Ask the app whether gh can file feedback. `fresh` skips the cached verdict. */
+async function checkAuth(fresh: boolean): Promise<AuthResult> {
+	return withMaestroClient((client) =>
+		client.sendCommand(
+			{ type: 'feedback_check_auth', ...(fresh ? { fresh: true } : {}) },
+			'feedback_check_auth_result',
+			GH_TIMEOUT_MS
+		)
+	);
+}
+
+/** Print an auth verdict: the same reason the Feedback modal shows, plus the fix. */
+function printAuth(result: AuthResult): void {
+	const as = result.account ? ` as ${result.account.login} @ ${result.account.host}` : '';
+	if (result.authenticated) {
+		console.log(`GitHub CLI is signed in${as} and can file issues. Feedback can be filed.`);
+		return;
+	}
+	if (as) console.log(`GitHub CLI is signed in${as}.`);
+	console.log(result.message || 'GitHub CLI is not ready.');
+	if (result.reason === 'not-authenticated' || result.needsGhLogin) {
+		if (result.login) console.log(`Sign in with:  ${result.login.display}`);
+		console.log('Or run:        maestro-cli feedback login');
+	}
+}
+
+interface AuthOptions extends JsonOption {
+	fresh?: boolean;
+}
+
 /** `feedback auth` - can feedback be filed from this machine at all. */
-export async function feedbackAuth(options: JsonOption): Promise<void> {
-	let result: { success: boolean; authenticated?: boolean; message?: string; error?: string };
+export async function feedbackAuth(options: AuthOptions): Promise<void> {
+	let result: AuthResult;
 	try {
-		result = await withMaestroClient((client) =>
-			client.sendCommand(
-				{ type: 'feedback_check_auth' },
-				'feedback_check_auth_result',
-				GH_TIMEOUT_MS
-			)
-		);
+		result = await checkAuth(options.fresh === true);
 	} catch (error) {
 		failFromError(error, options);
 	}
@@ -151,13 +185,143 @@ export async function feedbackAuth(options: JsonOption): Promise<void> {
 
 	const authenticated = result.authenticated === true;
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, authenticated, message: result.message }));
-	} else if (authenticated) {
-		console.log('GitHub CLI is installed and authenticated. Feedback can be filed.');
+		console.log(
+			JSON.stringify({
+				success: true,
+				authenticated,
+				message: result.message,
+				reason: result.reason,
+				needsGhLogin: result.needsGhLogin,
+				login: result.login,
+				account: result.account,
+			})
+		);
 	} else {
-		console.log(result.message || 'GitHub CLI is not ready.');
+		printAuth(result);
 	}
 	if (!authenticated) exitWith(ExitCode.GeneralError);
+}
+
+/**
+ * `feedback login` - sign the GitHub CLI in, the way the Feedback modal's
+ * "Log in to GitHub" does: the same gh binary (a configured custom path wins)
+ * and the same device-code web flow, run here with this terminal attached.
+ * Re-checks afterwards, skipping the cached verdict.
+ *
+ * Runs even when gh already reports signed in: an organization's OAuth
+ * restriction refuses a token `gh auth status` calls valid, and signing in
+ * again is where the user approves the organization.
+ */
+export async function feedbackLogin(options: JsonOption): Promise<void> {
+	let login: { success: boolean; error?: string } & Partial<FeedbackGhLoginCommand>;
+	try {
+		const before = await checkAuth(true);
+		if (before.success && before.reason === 'not-installed') {
+			fail(before.message || 'GitHub CLI (gh) is not installed.', options, ExitCode.GeneralError);
+		}
+		login = await withMaestroClient((client) =>
+			client.sendCommand({ type: 'feedback_gh_login_command' }, 'feedback_gh_login_command_result')
+		);
+	} catch (error) {
+		failFromError(error, options);
+	}
+	if (!login.success || !login.command || !login.args) {
+		fail(login.error || 'Could not resolve the gh login command.', options, ExitCode.GeneralError);
+	}
+	const command: FeedbackGhLoginCommand = {
+		command: login.command,
+		args: login.args,
+		display: login.display ?? login.command,
+	};
+
+	if (!options.json) console.log(`Running: ${command.display}`);
+	let code: number;
+	try {
+		code = await runGhLogin(command, options.json === true);
+	} catch (error) {
+		failFromError(error, options);
+	}
+
+	let after: AuthResult;
+	try {
+		after = await checkAuth(true);
+	} catch (error) {
+		failFromError(error, options);
+	}
+	const authenticated = after.success && after.authenticated === true;
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: authenticated,
+				exitCode: code,
+				authenticated,
+				message: after.message,
+				reason: after.reason,
+				account: after.account,
+			})
+		);
+	} else {
+		if (code !== 0) console.log(`gh exited with code ${code}.`);
+		printAuth(after);
+	}
+	if (!authenticated) exitWith(ExitCode.GeneralError);
+}
+
+interface AccountsOptions extends JsonOption {
+	use?: string;
+	clear?: boolean;
+}
+
+/**
+ * `feedback accounts` - which provider account the Feedback chat runs as. The
+ * chat tries them in this order and falls through to the next when a first
+ * turn fails; `--use` is the chat's account picker.
+ */
+export async function feedbackAccounts(options: AccountsOptions): Promise<void> {
+	if (options.use !== undefined && options.clear) {
+		fail('Pass --use or --clear, not both.', options, ExitCode.InvalidUsage);
+	}
+	const use = options.clear ? null : options.use;
+	let result: { success: boolean; error?: string } & Partial<FeedbackAccountsResponse>;
+	try {
+		result = await withMaestroClient((client) =>
+			client.sendCommand(
+				{ type: 'feedback_accounts', ...(use !== undefined ? { use } : {}) },
+				'feedback_accounts_result'
+			)
+		);
+	} catch (error) {
+		failFromError(error, options);
+	}
+	if (!result.success)
+		fail(result.error || 'Listing accounts failed', options, ExitCode.GeneralError);
+
+	const accounts = result.accounts ?? [];
+	const lastWorkingKey = result.lastWorkingKey ?? null;
+	const pick = accounts.find(isFeedbackAccountUsable) ?? null;
+	if (options.json) {
+		console.log(
+			JSON.stringify({ success: true, accounts, lastWorkingKey, pickKey: pick?.key ?? null })
+		);
+		return;
+	}
+	if (accounts.length === 0) {
+		console.log(
+			'No Claude Code, Codex, or OpenCode account found. Install one to use the Feedback chat.'
+		);
+		exitWith(ExitCode.GeneralError);
+	}
+	for (const account of accounts) {
+		const marker = account === pick ? '>' : ' ';
+		const agents =
+			account.agentNames.length > 0 ? ` - agents: ${account.agentNames.join(', ')}` : '';
+		const detail = account.statusDetail ? ` (${account.statusDetail})` : '';
+		console.log(
+			`${marker} ${account.label} [${describeFeedbackAccountStatus(account)}]${detail}${agents}`
+		);
+		console.log(`    key: ${account.key}`);
+	}
+	if (!pick) exitWith(ExitCode.GeneralError);
 }
 
 /** `feedback search <query>` - possible duplicates on RunMaestro/Maestro. */

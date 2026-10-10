@@ -4,6 +4,7 @@
  * Tests:
  *   - No-op when no active session
  *   - AI mode interrupt: sends SIGINT, adds "Canceled by user" log, clears thinking/tool logs
+ *   - Cross-agent consults: Stop reaches the ephemeral `cross-agent-*` processes
  *   - Terminal mode interrupt: sends SIGINT without canceled log
  *   - Execution queue processing after interrupt
  *   - Force kill fallback when interrupt fails
@@ -46,6 +47,9 @@ const mockMaestro = {
 		interrupt: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
 		getActiveProcesses: vi.fn().mockResolvedValue([]),
+	},
+	crossAgent: {
+		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
 	},
 };
 
@@ -516,6 +520,77 @@ describe('useInterruptHandler', () => {
 
 			expect(mockMaestro.process.kill).toHaveBeenCalledWith('sess-kill-all-ai-tab-b');
 			expect(mockMaestro.process.kill).toHaveBeenCalledWith('sess-kill-all-ai-tab-a');
+		});
+	});
+
+	// ========================================================================
+	// Cross-agent consult cancellation
+	// ========================================================================
+	describe('cross-agent consults', () => {
+		it('stops the consults this agent fanned out, not just its own processes', async () => {
+			// A `@mention` runs each consult as its own ephemeral `cross-agent-*`
+			// process, which carries none of this agent's process ids - so the SIGINT
+			// loop can never reach it and it keeps answering into a stopped chat.
+			const tab = createTab({ id: 'tab-x', state: 'busy' });
+			const session = createSession({
+				id: 'sess-xa',
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-x',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-xa' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.crossAgent.cancel).toHaveBeenCalledWith('sess-xa');
+		});
+
+		it('still signals the agent processes when consult cancellation fails', async () => {
+			mockMaestro.crossAgent.cancel.mockRejectedValueOnce(new Error('bridge down'));
+			const tab = createTab({ id: 'tab-y', state: 'busy' });
+			const session = createSession({
+				id: 'sess-xa-fail',
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-y',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-xa-fail' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-xa-fail-ai-tab-y');
+		});
+
+		it('leaves consults alone when Stop is pressed in terminal mode', async () => {
+			// Terminal mode does not target the AI tabs, so it must not reach into
+			// work those tabs started either.
+			const session = createSession({
+				id: 'sess-xa-term',
+				inputMode: 'terminal',
+				state: 'busy',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-xa-term' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.crossAgent.cancel).not.toHaveBeenCalled();
 		});
 	});
 

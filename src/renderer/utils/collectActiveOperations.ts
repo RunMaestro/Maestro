@@ -8,15 +8,14 @@
  * Used both by the quit-confirmation check (decide whether to warn) and by the
  * "Quit when idle" watcher (decide when everything has finally gone quiet).
  *
- * Feedback drafts are reported but deliberately NOT counted as an "operation" -
- * a draft never finishes on its own, so it must not block an idle-quit. It's a
- * data-loss warning, surfaced separately.
+ * Feedback drafts are deliberately absent. They persist to disk and are
+ * resumable, and the quit handler writes the live editor out before asking this
+ * question, so a draft is neither an operation to wait for nor work at risk.
  */
 
 import { useSessionStore } from '../stores/sessionStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../stores/batchStore';
 import { useGroupChatStore } from '../stores/groupChatStore';
-import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { getBusyGroupChatIds } from './groupChatStatus';
 
 export interface ActiveOperationsSnapshot {
@@ -30,11 +29,9 @@ export interface ActiveOperationsSnapshot {
 	activeCueRunCount: number;
 	/** Count of group chats that aren't idle (moderator thinking or agents working). */
 	activeGroupChatCount: number;
-	/** True when the Feedback window has an unsent draft. Not an "operation". */
-	hasFeedbackDraft: boolean;
 	/**
-	 * True when at least one real operation is in flight. Excludes feedback
-	 * drafts. This is the gate the idle-quit watcher waits to clear.
+	 * True when at least one real operation is in flight. This is the gate the
+	 * idle-quit watcher waits to clear.
 	 */
 	hasActiveOperations: boolean;
 }
@@ -93,8 +90,6 @@ export async function collectActiveOperations(): Promise<ActiveOperationsSnapsho
 	const gcStore = useGroupChatStore.getState();
 	const activeGroupChatCount = getBusyGroupChatIds(gcStore.groupChats, gcStore).length;
 
-	const hasFeedbackDraft = useFeedbackDraftStore.getState().hasDraft;
-
 	const hasActiveOperations =
 		busyAgents.length > 0 ||
 		activeBatchSessionIds.length > 0 ||
@@ -108,7 +103,6 @@ export async function collectActiveOperations(): Promise<ActiveOperationsSnapsho
 		activeTerminalTasks,
 		activeCueRunCount,
 		activeGroupChatCount,
-		hasFeedbackDraft,
 		hasActiveOperations,
 	};
 }

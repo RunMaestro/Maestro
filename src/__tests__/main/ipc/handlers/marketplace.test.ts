@@ -494,7 +494,8 @@ describe('marketplace IPC handlers', () => {
 			const result = await handler!({} as any, 'playbooks/test-playbook', 'phase-1');
 
 			expect(mockFetch).toHaveBeenCalledWith(
-				expect.stringContaining('playbooks/test-playbook/phase-1.md')
+				expect.stringContaining('playbooks/test-playbook/phase-1.md'),
+				expect.objectContaining({ signal: expect.any(AbortSignal) })
 			);
 			expect(result.content).toBe(docContent);
 		});
@@ -527,7 +528,8 @@ describe('marketplace IPC handlers', () => {
 			const result = await handler!({} as any, 'playbooks/test-playbook');
 
 			expect(mockFetch).toHaveBeenCalledWith(
-				expect.stringContaining('playbooks/test-playbook/README.md')
+				expect.stringContaining('playbooks/test-playbook/README.md'),
+				expect.objectContaining({ signal: expect.any(AbortSignal) })
 			);
 			expect(result.content).toBe(readmeContent);
 		});

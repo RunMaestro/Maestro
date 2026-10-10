@@ -93,16 +93,26 @@ vi.mock('../../../../renderer/hooks', () => ({
 }));
 
 vi.mock('../../../../renderer/components/DirectorNotes/OverviewTab', () => ({
-	OverviewTab: React.forwardRef(({ theme }: { theme: Theme }, _ref: any) => (
-		<div data-testid="overview-tab" tabIndex={0}>
-			Overview Content
-		</div>
-	)),
+	OverviewTab: React.forwardRef(
+		(
+			{ onOpenSetting }: { theme: Theme; onOpenSetting?: (settingId: string) => void },
+			_ref: any
+		) => (
+			<div data-testid="overview-tab" tabIndex={0}>
+				Overview Content
+				<button
+					data-testid="overview-open-setting"
+					onClick={() => onOpenSetting?.('encore-director-notes-ideal-end-state')}
+				/>
+			</div>
+		)
+	),
 	TabFocusHandle: {},
 }));
 
 // Import after mocks
 import { DirectorNotesModal } from '../../../../renderer/components/DirectorNotes/DirectorNotesModal';
+import { useModalStore, selectModalData } from '../../../../renderer/stores/modalStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 describe('DirectorNotesModal', () => {
@@ -158,6 +168,21 @@ describe('DirectorNotesModal', () => {
 			// Overview tab should be hidden since history is default
 			const overviewContainer = screen.getByTestId('overview-tab').closest('.h-full');
 			expect(overviewContainer).toHaveClass('hidden');
+		});
+
+		// Settings sits below Director's Notes in the layer stack, so the Help
+		// tab's deep-link has to close this modal or Settings opens hidden.
+		it('closes and deep-links to the setting the Help tab asks for', async () => {
+			renderModal();
+
+			fireEvent.click(await screen.findByTestId('overview-open-setting'));
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(selectModalData('settings')(useModalStore.getState())).toEqual({
+				tab: 'encore',
+				settingId: 'encore-director-notes-ideal-end-state',
+			});
+			useModalStore.getState().closeModal('settings');
 		});
 
 		it('renders AI Overview tab content (hidden initially)', async () => {
@@ -313,7 +338,11 @@ describe('DirectorNotesModal', () => {
 
 			expect(screen.getByText('generating…')).toBeInTheDocument();
 			expect(screen.queryByText('failed')).not.toBeInTheDocument();
-			expect(screen.getByText('AI Overview').closest('button')).not.toHaveAttribute('title');
+			// rc titles every tab with its label; only the failure message is gone.
+			expect(screen.getByText('AI Overview').closest('button')).toHaveAttribute(
+				'title',
+				'AI Overview'
+			);
 		});
 
 		it('can switch to Help tab', async () => {
@@ -492,14 +521,17 @@ describe('DirectorNotesModal', () => {
 		it('registers modal layer on mount', async () => {
 			renderModal();
 
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: 848,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'lenient',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: 848,
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'lenient',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('unregisters modal layer on unmount', async () => {
@@ -609,5 +641,44 @@ describe('DirectorNotesModal', () => {
 			const overviewTabButton = screen.getByText('AI Overview').closest('button');
 			expect(overviewTabButton).not.toBeDisabled();
 		});
+	});
+});
+
+// Phone: the title drops its "Since <date>" tail (it wrapped to two lines) and
+// the tab strip shows short labels so three tabs fit one row.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('DirectorNotesModal on a phone', () => {
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('shows a bare title and short tab labels', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<DirectorNotesModal theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+		});
+		expect(screen.queryByText(/Director's Notes Since/)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /^History$/ })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Unified History/ })).not.toBeInTheDocument();
+		// The full label survives as the tooltip.
+		expect(screen.getByRole('button', { name: /^History$/ })).toHaveAttribute(
+			'title',
+			'Unified History'
+		);
+	});
+
+	it('keeps the dated title and full labels on desktop', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		render(<DirectorNotesModal theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText(/Director's Notes Since/)).toBeInTheDocument();
+		});
+		expect(screen.getByRole('button', { name: /Unified History/ })).toBeInTheDocument();
 	});
 });

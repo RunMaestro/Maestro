@@ -14,6 +14,7 @@ import {
 	parseArgs,
 	DEFAULT_MAX_WAIT_SECONDS,
 	DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS,
+	DEFAULT_READY_TIMEOUT_SECONDS,
 } from '../../maestro-p/args';
 
 describe('parseArgs', () => {
@@ -172,11 +173,17 @@ describe('parseArgs', () => {
 			expect(result.passThroughArgs).toEqual([]);
 		});
 
-		it('drops --verbose with a stderr warning', () => {
+		it('drops --verbose without a warning, since the output is already verbose-shaped', () => {
 			const result = callArgs(['--verbose', '-p', 'hi']);
 			expect(result.passThroughArgs).toEqual([]);
-			expect(warnSpy).toHaveBeenCalledTimes(1);
-			expect(warnSpy.mock.calls[0][0]).toMatch(/--verbose/);
+			expect(warnSpy).not.toHaveBeenCalled();
+		});
+
+		it('drops --output-format stream-json without a warning', () => {
+			const result = callArgs(['--output-format', 'stream-json', '-p', 'hi']);
+			expect(result.passThroughArgs).toEqual([]);
+			expect(result.prompt).toBe('hi');
+			expect(warnSpy).not.toHaveBeenCalled();
 		});
 
 		// Regression: when Maestro forwards its API-mode claude args verbatim
@@ -200,17 +207,37 @@ describe('parseArgs', () => {
 			// --output-format is the STRIPPED branch (claude's API-mode flag), not
 			// --input-format, so streamJsonInput stays false here.
 			expect(result.streamJsonInput).toBe(false);
-			const messages = warnSpy.mock.calls.map((c) => c[0]).join('\n');
-			expect(messages).toMatch(/--print requires a value/);
-			expect(messages).toMatch(/--verbose/);
-			expect(messages).toMatch(/--output-format/);
+			// Maestro passes exactly this line on every spawn, and maestro-p honors
+			// all of it, so none of it may produce a warning.
+			expect(warnSpy).not.toHaveBeenCalled();
 		});
 
 		it('does not consume a flag-looking next token as the prompt value for -p', () => {
 			const result = callArgs(['-p', '--verbose', 'real prompt']);
 			expect(result.prompt).toBe('real prompt');
+			// A bare -p is claude's print-mode switch, not a missing value.
+			expect(warnSpy).not.toHaveBeenCalled();
+		});
+
+		it('still warns when --prompt has no value', () => {
+			callArgs(['--prompt', '--verbose', 'real prompt']);
 			const messages = warnSpy.mock.calls.map((c) => c[0]).join('\n');
-			expect(messages).toMatch(/-p requires a value/);
+			expect(messages).toMatch(/--prompt requires a value/);
+		});
+
+		it('warns when --output-format asks for something other than stream-json', () => {
+			const result = callArgs(['--output-format', 'json', 'real prompt']);
+			expect(result.prompt).toBe('real prompt');
+			const messages = warnSpy.mock.calls.map((c) => c[0]).join('\n');
+			expect(messages).toMatch(
+				/ignoring --output-format json - maestro-p always writes stream-json/
+			);
+		});
+
+		it('accepts --output-format=stream-json inline without a warning', () => {
+			const result = callArgs(['--output-format=stream-json', 'real prompt']);
+			expect(result.prompt).toBe('real prompt');
+			expect(warnSpy).not.toHaveBeenCalled();
 		});
 
 		it('still accepts a flag-looking prompt via the inline form', () => {
@@ -309,6 +336,37 @@ describe('parseArgs', () => {
 			const result = callArgs(['--max-wait', '600', '--first-byte-timeout', '90', '-p', 'hi']);
 			expect(result.maxWaitSeconds).toBe(600);
 			expect(result.firstByteTimeoutSeconds).toBe(90);
+		});
+	});
+
+	describe('--ready-timeout', () => {
+		it('defaults well above the old fixed 8s boot ceiling (issue #1765)', () => {
+			const result = callArgs(['-p', 'hi']);
+			expect(result.readyTimeoutSeconds).toBe(DEFAULT_READY_TIMEOUT_SECONDS);
+			expect(DEFAULT_READY_TIMEOUT_SECONDS).toBeGreaterThan(8);
+		});
+
+		it('parses --ready-timeout 60 and consumes it (not in passThroughArgs)', () => {
+			const result = callArgs(['--ready-timeout', '60', '-p', 'hi']);
+			expect(result.readyTimeoutSeconds).toBe(60);
+			expect(result.passThroughArgs).toEqual([]);
+		});
+
+		it('parses --ready-timeout=60 (inline form)', () => {
+			const result = callArgs(['--ready-timeout=60', '-p', 'hi']);
+			expect(result.readyTimeoutSeconds).toBe(60);
+		});
+
+		it('warns and falls back to the default on a non-positive value', () => {
+			const result = callArgs(['--ready-timeout', '0', '-p', 'hi']);
+			expect(result.readyTimeoutSeconds).toBe(DEFAULT_READY_TIMEOUT_SECONDS);
+			expect(warnSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('clamps the ready budget to the first-byte budget, whose timer spans the handshake', () => {
+			const result = callArgs(['--first-byte-timeout', '20', '--ready-timeout', '45', '-p', 'hi']);
+			expect(result.firstByteTimeoutSeconds).toBe(20);
+			expect(result.readyTimeoutSeconds).toBe(20);
 		});
 	});
 

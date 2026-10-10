@@ -1,12 +1,10 @@
 import type React from 'react';
 import type {
-	Session,
 	Theme,
 	BatchRunState,
 	UnifiedTab,
 	FilePreviewTab,
 	BrowserTab,
-	ThinkingItem,
 	AgentError,
 	QueuedItem,
 	QueuedItemEditPatch,
@@ -71,10 +69,6 @@ export interface MainPanelProps {
 	agentSessionsOpen: boolean;
 	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
-	activeSession: Session | null;
-	// PERF: Receive pre-filtered thinkingItems instead of full sessions array.
-	// This prevents cascade re-renders when unrelated session updates occur.
-	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	isMobileLandscape?: boolean;
 	stagedImages: string[];
@@ -89,16 +83,13 @@ export interface MainPanelProps {
 	tabCompletionSuggestions?: import('../../hooks').TabCompletionSuggestion[];
 	selectedTabCompletionIndex?: number;
 	tabCompletionFilter?: import('../../hooks').TabCompletionFilter;
-	// @ mention completion props (AI mode)
+	// @ mention completion props (AI mode) - unified picker (files/dirs/agents/groups)
 	atMentionOpen?: boolean;
 	atMentionFilter?: string;
 	atMentionStartIndex?: number;
-	atMentionSuggestions?: Array<{
-		value: string;
-		type: 'file' | 'folder';
-		displayText: string;
-		fullPath: string;
-	}>;
+	atMentionItems?: import('../../hooks/input/useMentionPicker').MentionPickerItem[];
+	atMentionCounts?: Record<import('../../hooks/input/useMentionPicker').MentionCategory, number>;
+	atMentionCategory?: import('../../hooks/input/useMentionPicker').MentionCategory;
 	selectedAtMentionIndex?: number;
 
 	// Setters
@@ -136,6 +127,9 @@ export interface MainPanelProps {
 	setAtMentionFilter?: (filter: string) => void;
 	setAtMentionStartIndex?: (index: number) => void;
 	setSelectedAtMentionIndex?: (index: number) => void;
+	setAtMentionCategory?: (
+		category: import('../../hooks/input/useMentionPicker').MentionCategory
+	) => void;
 	setGitLogOpen: (open: boolean) => void;
 
 	// Refs
@@ -178,7 +172,7 @@ export interface MainPanelProps {
 	onNewTab?: () => void;
 	onRequestTabRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
-	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	onUpdateTabByClaudeSessionId?: (
@@ -209,8 +203,9 @@ export interface MainPanelProps {
 	activeBrowserTab?: BrowserTab | null;
 	onFileTabSelect?: (tabId: string) => void;
 	onFileTabClose?: (tabId: string) => void;
+	onFileTabRename?: (tabId: string) => void;
 	onNewFileTab?: () => void;
-	onNewBrowserTab?: () => void;
+	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	onBrowserTabSelect?: (tabId: string) => void;
 	onBrowserTabClose?: (tabId: string) => void;
 	onBrowserTabRename?: (tabId: string) => void;
@@ -248,6 +243,8 @@ export interface MainPanelProps {
 	onAtBottomChange?: (isAtBottom: boolean) => void;
 	// Input blur handler for persisting AI input state
 	onInputBlur?: () => void;
+	/** Capture composer owner on focus so blur can pin the write target */
+	onComposerFocus?: () => void;
 	// Prompt composer modal
 	onOpenPromptComposer?: () => void;
 	// Replay a user message (AI mode)
@@ -288,7 +285,9 @@ export interface MainPanelProps {
 	backHistory?: { name: string; path: string; scrollTop?: number }[];
 	forwardHistory?: { name: string; path: string; scrollTop?: number }[];
 	currentHistoryIndex?: number;
-	onNavigateToIndex?: (index: number) => void;
+	// `tabId` addresses a specific file tab; omitted it means the active one. Tiled
+	// file panes pass their own id (focusing a file pane does not set activeFileTabId).
+	onNavigateToIndex?: (index: number, tabId?: string) => void;
 	onClearFilePreviewHistory?: () => void;
 
 	// Agent error handling

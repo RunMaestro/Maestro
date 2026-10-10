@@ -103,7 +103,7 @@ export function QuickActionRow({
 			    be handed its shortcut record, and an empty chip would draw a blank
 			    box where a chord belongs. */}
 			{action.shortcut?.keys?.length ? (
-				<span className="text-xs font-mono opacity-60">
+				<span className="text-xs font-mono opacity-60" data-shortcut-hint="">
 					{formatShortcutKeys(action.shortcut.keys)}
 				</span>
 			) : null}

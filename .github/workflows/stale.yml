@@ -1,0 +1,95 @@
+name: Mark stale issues and PRs
+
+# Implements the policy requested in issue #574:
+#   - Mark issues/PRs stale after 60 days of inactivity
+#   - Auto-close 14 days after being marked stale (≈74 days total)
+#   - Exempt "security" plus the repo's active triage labels.
+#     ("pinned" is included for forward compatibility; it is a no-op until a
+#     maintainer creates/applies a "pinned" label, and GitHub's pinned-issue UI
+#     state is intentionally NOT covered by exempt-*-labels.)
+#
+# Runs daily. Manual runs (workflow_dispatch) default to a DRY RUN: actions/stale
+# is invoked with debug-only, so it logs what it *would* mark/close without
+# touching anything - maintainers can validate the policy safely, then re-dispatch
+# with dry_run=false (or wait for the schedule) to apply it for real.
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: log what would happen without labeling or closing anything'
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  issues: write
+  pull-requests: write
+
+# Avoid overlapping runs if a manual dispatch lands during the scheduled one.
+concurrency:
+  group: stale
+  cancel-in-progress: false
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/stale only *applies* the stale label; it does not create it. Make
+      # sure it exists (idempotent: --force creates or updates) so the policy
+      # actually takes effect on a repo that has no "stale" label yet.
+      - name: Ensure the "stale" label exists
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh label create stale
+          --repo "$GITHUB_REPOSITORY"
+          --color ededed
+          --description "No recent activity; will be auto-closed if it stays inactive"
+          --force
+
+      - uses: actions/stale@v9
+        with:
+          # Manual dispatch defaults to a non-destructive dry run; the schedule
+          # always runs live.
+          debug-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+
+          # --- Issues ---
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          stale-issue-label: stale
+          exempt-issue-labels: 'pinned,security,up next,back burner,approved,blocking,high-priority'
+          stale-issue-message: >
+            This issue has been automatically marked as stale because it has had
+            no activity for 60 days. It will be closed in 14 days if no further
+            activity occurs. If it is still relevant, leave a comment or remove
+            the `stale` label to keep it open. Thank you for your contributions.
+          close-issue-message: >
+            This issue was closed automatically because it had no activity for
+            74 days. If it is still relevant, please reopen it or open a new
+            issue with updated details.
+
+          # --- Pull requests ---
+          days-before-pr-stale: 60
+          days-before-pr-close: 14
+          stale-pr-label: stale
+          exempt-pr-labels: 'pinned,security,approved,blocking,dependencies,high-priority'
+          exempt-draft-pr: true
+          stale-pr-message: >
+            This pull request has been automatically marked as stale because it
+            has had no activity for 60 days. It will be closed in 14 days if no
+            further activity occurs. Push a commit or leave a comment to keep it
+            open. Thank you for your contributions.
+          close-pr-message: >
+            This pull request was closed automatically because it had no
+            activity for 74 days. Feel free to reopen it once you are ready to
+            continue.
+
+          # Remove the stale label as soon as someone interacts again.
+          remove-stale-when-updated: true
+          # Bound the work per run so a backlog can't exhaust the API budget.
+          operations-per-run: 200
+          ascending: true

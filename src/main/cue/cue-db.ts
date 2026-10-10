@@ -9,7 +9,7 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
-import { app } from 'electron';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = '[CueDB]';
@@ -50,7 +50,9 @@ export interface CueEventRecord {
 	/**
 	 * Process exit code the run terminated with. For agent runs through
 	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
-	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 1 =
+	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 7 =
+	 * workspace_untrusted, 8 = terminal API error such as an unknown model, 9 =
+	 * resumed session has no transcript on this host, 1 =
 	 * tui_exited, 2 = limit, 0 = success). NULL when the run never produced an exit code (spawn error,
 	 * still running) or for status flips that aren't run completions.
 	 */
@@ -275,7 +277,7 @@ export function initCueDb(
 
 	if (onLog) logFn = onLog;
 
-	const dbPath = dbPathOverride ?? path.join(app.getPath('userData'), 'cue.db');
+	const dbPath = dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
 	const dir = path.dirname(dbPath);
 	if (!fs.existsSync(dir)) {
 		fs.mkdirSync(dir, { recursive: true });
@@ -774,6 +776,72 @@ export function getCueEventGroupCounts(options: {
 		runCount: row.run_count,
 		failureCount: row.failure_count,
 		latest: rowToCueEventRecord(row),
+	}));
+}
+
+/**
+ * Cue's contribution to the delegation split: how many runs finished and how
+ * much wall-clock time they took, over all retained history or since `sinceMs`.
+ *
+ * Only naturally-completed runs count, matching the crediting rule the engine
+ * and `getHistoricalConductorCreditMs` already use. A failed or killed run has
+ * a `completed_at` too, so including them would credit hours of hung processes
+ * as delegated work - the dashboard's Cue duration total already does that, and
+ * it is why that figure reads so much higher than the Conductor card's.
+ *
+ * Unlike the Conductor credit, durations are NOT floored to whole minutes: this
+ * feeds a ratio against per-turn query durations, most of which are seconds, so
+ * flooring would drop the short runs entirely and skew the ratio.
+ *
+ * Returns zeroes when the DB hasn't been initialized, the same tolerance as the
+ * other read paths, so a delegation surface renders "no Cue history" instead of
+ * throwing.
+ */
+export function getCueRunTotals(sinceMs = 0): { count: number; durationMs: number } {
+	if (!db) return { count: 0, durationMs: 0 };
+	const row = db
+		.prepare(
+			`SELECT COUNT(*) AS count, COALESCE(SUM(completed_at - created_at), 0) AS duration_ms
+			 FROM cue_events
+			 WHERE status = 'completed'
+			   AND completed_at IS NOT NULL
+			   AND completed_at >= created_at
+			   AND created_at >= ?`
+		)
+		.get(sinceMs) as { count: number; duration_ms: number } | undefined;
+	return { count: row?.count ?? 0, durationMs: Math.max(0, row?.duration_ms ?? 0) };
+}
+
+/**
+ * The same completed-run totals, bucketed by local-time day so the delegation
+ * trend chart can lay Cue runs alongside the per-day query series.
+ *
+ * Bucketing is by `created_at` (when the run started), matching how the stats
+ * DB buckets a query by its start time - a run that crosses midnight belongs to
+ * the day it was triggered on.
+ */
+export function getCueRunTotalsByDay(
+	sinceMs = 0
+): Array<{ date: string; count: number; durationMs: number }> {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS date,
+			        COUNT(*) AS count,
+			        COALESCE(SUM(completed_at - created_at), 0) AS duration_ms
+			 FROM cue_events
+			 WHERE status = 'completed'
+			   AND completed_at IS NOT NULL
+			   AND completed_at >= created_at
+			   AND created_at >= ?
+			 GROUP BY date(created_at / 1000, 'unixepoch', 'localtime')
+			 ORDER BY date ASC`
+		)
+		.all(sinceMs) as Array<{ date: string; count: number; duration_ms: number }>;
+	return rows.map((row) => ({
+		date: row.date,
+		count: row.count,
+		durationMs: Math.max(0, row.duration_ms),
 	}));
 }
 

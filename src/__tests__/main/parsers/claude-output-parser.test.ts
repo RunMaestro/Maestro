@@ -76,6 +76,7 @@ describe('ClaudeOutputParser', () => {
 			expect(event?.text).toBe('Partial response...');
 			expect(event?.sessionId).toBe('sess-abc123');
 			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBeUndefined();
 		});
 
 		it('should handle assistant messages with content array', () => {
@@ -217,6 +218,33 @@ describe('ClaudeOutputParser', () => {
 			expect(usage?.cacheCreationTokens).toBe(10);
 			expect(usage?.contextWindow).toBe(200000);
 			expect(usage?.costUsd).toBe(0.01);
+			// The model reported 200000 itself. That it happens to equal the
+			// fallback seed does not make it less of a provider report, so it is
+			// flagged authoritative (review of PR #1356). Before that fix the
+			// "is it LARGER than the fallback" test silently demoted every
+			// 200k-and-under model to unreported.
+			expect(usage?.contextWindowReported).toBe(true);
+		});
+
+		it('flags a genuinely reported context window as provider-reported', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					result: 'test',
+					modelUsage: {
+						'claude-opus-5': {
+							inputTokens: 100,
+							outputTokens: 50,
+							contextWindow: 1000000,
+						},
+					},
+					total_cost_usd: 0.01,
+				})
+			);
+
+			const usage = parser.extractUsage(event!);
+			expect(usage?.contextWindow).toBe(1000000);
+			expect(usage?.contextWindowReported).toBe(true);
 		});
 
 		it('should extract usage with fallback to top-level usage', () => {
@@ -267,6 +295,165 @@ describe('ClaudeOutputParser', () => {
 			// MAX values: max(100, 200)=200, max(50, 100)=100
 			expect(usage?.inputTokens).toBe(200);
 			expect(usage?.outputTokens).toBe(100);
+		});
+	});
+
+	describe('absoluteUsage occupancy snapshot (finding Q1)', () => {
+		// A fresh parser per test: the snapshot is per-turn state on the instance,
+		// and the shared `parser` above has been fed unrelated messages.
+		const assistantMessage = (usage: Record<string, number>, extra: Record<string, unknown> = {}) =>
+			JSON.stringify({
+				type: 'assistant',
+				session_id: 'sess-q1',
+				message: {
+					id: 'msg-1',
+					role: 'assistant',
+					content: [{ type: 'text', text: 'working' }],
+					usage,
+				},
+				...extra,
+			});
+
+		const resultMessage = (modelUsage: Record<string, unknown>) =>
+			JSON.stringify({
+				type: 'result',
+				result: 'done',
+				session_id: 'sess-q1',
+				modelUsage,
+				total_cost_usd: 0.5,
+			});
+
+		it('attaches the LAST assistant call usage, not the sum and not the first call', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 90,
+					cache_read_input_tokens: 15007,
+					cache_creation_input_tokens: 9468,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 3,
+					output_tokens: 40,
+					cache_read_input_tokens: 20000,
+					cache_creation_input_tokens: 100,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+
+			// The CLI's own per-model sum across all three calls - the quantity that
+			// overflows the window and pinned the gauge at 0%.
+			const event = p.parseJsonLine(
+				resultMessage({
+					'claude-opus-5': {
+						inputTokens: 7,
+						outputTokens: 142,
+						cacheReadInputTokens: 59482,
+						cacheCreationInputTokens: 9677,
+						contextWindow: 1000000,
+					},
+				})
+			);
+
+			const usage = p.extractUsage(event!);
+			// Top-level fields stay the CLI's turn totals (token spend).
+			expect(usage?.inputTokens).toBe(7);
+			expect(usage?.cacheReadTokens).toBe(59482);
+			// The snapshot is the third call only: 2 / 12 / 24475 / 109.
+			expect(usage?.absoluteUsage).toEqual({
+				inputTokens: 2,
+				outputTokens: 12,
+				cacheReadInputTokens: 24475,
+				cacheCreationInputTokens: 109,
+				reasoningTokens: 0,
+			});
+		});
+
+		it('is idempotent when stream-json emits an assistant message twice', () => {
+			const p = new ClaudeOutputParser();
+			const line = assistantMessage({
+				input_tokens: 2,
+				output_tokens: 12,
+				cache_read_input_tokens: 24475,
+				cache_creation_input_tokens: 109,
+			});
+
+			p.parseJsonLine(line);
+			p.parseJsonLine(line);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			expect(event?.usage?.absoluteUsage?.cacheReadInputTokens).toBe(24475);
+		});
+
+		it('ignores subagent assistant messages, which have their own context window', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage(
+					{
+						input_tokens: 5,
+						output_tokens: 20,
+						cache_read_input_tokens: 900,
+						cache_creation_input_tokens: 3,
+					},
+					{ parent_tool_use_id: 'toolu_subagent' }
+				)
+			);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			// The main-transcript call, not the subagent's much smaller one.
+			expect(event?.usage?.absoluteUsage?.cacheReadInputTokens).toBe(24475);
+		});
+
+		it('does not leak a snapshot across turns', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+			p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+
+			// Second turn: no assistant message carried usage this time.
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 9 } }));
+			expect(event?.usage).toBeDefined();
+			expect(event?.usage?.absoluteUsage).toBeUndefined();
+		});
+
+		it('omits the snapshot when assistant messages carry no usage', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+				})
+			);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			expect(event?.usage?.absoluteUsage).toBeUndefined();
 		});
 	});
 
@@ -409,6 +596,229 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('tool_result extraction', () => {
+		// Fresh parser per test: tool_use id -> name correlation is instance state.
+		const toolUseLine = (id: string, name: string) =>
+			JSON.stringify({
+				type: 'assistant',
+				message: { content: [{ type: 'tool_use', id, name, input: { file: 'x.ts' } }] },
+			});
+		const toolResultLine = (toolUseId: string, content: unknown, isError?: boolean) =>
+			JSON.stringify({
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: toolUseId,
+							content,
+							...(isError === undefined ? {} : { is_error: isError }),
+						},
+					],
+				},
+			});
+
+		it('should emit a completed tool_use event correlated to the earlier tool_use', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_abc', 'Read'));
+
+			const event = p.parseJsonLine(toolResultLine('toolu_abc', 'file contents here'));
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_abc');
+			expect(event?.toolName).toBe('Read');
+			expect(event?.toolState).toEqual({
+				status: 'completed',
+				output: 'file contents here',
+			});
+		});
+
+		it('should emit status failed when is_error is true', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_err', 'Bash'));
+
+			const event = p.parseJsonLine(toolResultLine('toolu_err', 'command not found', true));
+			expect(event?.toolName).toBe('Bash');
+			expect((event?.toolState as { status: string }).status).toBe('failed');
+		});
+
+		it('should fall back to a generic tool name for unknown tool_use_id', () => {
+			const p = new ClaudeOutputParser();
+
+			const event = p.parseJsonLine(toolResultLine('toolu_unseen', 'output'));
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_unseen');
+			expect(event?.toolName).toBe('Tool');
+		});
+
+		it('should flatten array content into a single output string', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_arr', 'Grep'));
+
+			const event = p.parseJsonLine(
+				toolResultLine('toolu_arr', [
+					{ type: 'text', text: 'line one\n' },
+					{ type: 'image', source: {} },
+					{ type: 'text', text: 'line two' },
+				])
+			);
+			expect((event?.toolState as { output: string }).output).toBe('line one\nline two');
+		});
+
+		it('should not reuse a tool name once its result has been emitted', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_once', 'Edit'));
+
+			expect(p.parseJsonLine(toolResultLine('toolu_once', 'ok'))?.toolName).toBe('Edit');
+			expect(p.parseJsonLine(toolResultLine('toolu_once', 'ok'))?.toolName).toBe('Tool');
+		});
+
+		it('should carry extra parallel tool_results in toolResultBlocks', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_a', 'Read'));
+			p.parseJsonLine(toolUseLine('toolu_b', 'Grep'));
+
+			// One user message bundling two parallel tool_result blocks.
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'a-out' },
+							{ type: 'tool_result', tool_use_id: 'toolu_b', content: 'b-out', is_error: true },
+						],
+					},
+				})
+			);
+
+			// Primary result stays in the top-level fields (existing behavior).
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_a');
+			expect(event?.toolName).toBe('Read');
+			expect((event?.toolState as { status: string }).status).toBe('completed');
+
+			// The second parallel result rides along so it is not left running.
+			expect(event?.toolResultBlocks).toHaveLength(1);
+			expect(event?.toolResultBlocks?.[0].toolCallId).toBe('toolu_b');
+			expect(event?.toolResultBlocks?.[0].toolName).toBe('Grep');
+			expect((event?.toolResultBlocks?.[0].toolState as { status: string }).status).toBe('failed');
+		});
+
+		it('should omit toolResultBlocks for a single tool_result', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_solo', 'Read'));
+			const event = p.parseJsonLine(toolResultLine('toolu_solo', 'ok'));
+			expect(event?.toolResultBlocks).toBeUndefined();
+		});
+
+		it('should not emit tool_result text as assistant prose', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(toolResultLine('toolu_x', 'raw tool output'));
+			expect(event?.type).not.toBe('text');
+			expect(event?.text).toBeUndefined();
+		});
+
+		it('should leave ordinary user messages as system events', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: 'hello there' },
+				})
+			);
+			expect(event?.type).toBe('system');
+		});
+	});
+
+	describe('parent_tool_use_id (Task subagents)', () => {
+		it('should carry parentToolUseId on subagent tool_use blocks', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'assistant',
+						content: [
+							{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: { pattern: 'x' } },
+						],
+					},
+				})
+			);
+
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+			expect(event?.toolUseBlocks?.[0]?.name).toBe('Grep');
+		});
+
+		it('should carry parentToolUseId on subagent text events', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'searching...' }] },
+				})
+			);
+
+			expect(event?.type).toBe('text');
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+		});
+
+		it('should carry parentToolUseId on subagent tool_result events', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: {} }],
+					},
+				})
+			);
+
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'toolu_child', content: 'no matches' }],
+					},
+				})
+			);
+
+			expect(event?.type).toBe('tool_use');
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+		});
+
+		it('should leave parentToolUseId undefined for main-transcript messages', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+				})
+			);
+
+			expect(event?.parentToolUseId).toBeUndefined();
+		});
+
+		it('should normalize a null parent_tool_use_id to undefined', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: null,
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+				})
+			);
+
+			expect(event?.parentToolUseId).toBeUndefined();
+		});
+	});
+
 	describe('thinking blocks extraction', () => {
 		it('should extract thinking content from assistant messages', () => {
 			const line = JSON.stringify({
@@ -425,6 +835,7 @@ describe('ClaudeOutputParser', () => {
 			expect(event?.type).toBe('text');
 			expect(event?.text).toBe('Let me analyze this codebase...');
 			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBe(true);
 		});
 
 		it('should prioritize thinking content over text content', () => {
@@ -441,6 +852,7 @@ describe('ClaudeOutputParser', () => {
 			const event = parser.parseJsonLine(line);
 			// Thinking content should be emitted for thinking-chunk events
 			expect(event?.text).toBe('Analyzing the problem...');
+			expect(event?.isReasoning).toBe(true);
 		});
 
 		it('should extract multiple thinking blocks', () => {
@@ -456,6 +868,7 @@ describe('ClaudeOutputParser', () => {
 
 			const event = parser.parseJsonLine(line);
 			expect(event?.text).toBe('First I will analyze the code structure.');
+			expect(event?.isReasoning).toBe(true);
 		});
 
 		it('should fall back to text content when no thinking blocks', () => {
@@ -468,6 +881,7 @@ describe('ClaudeOutputParser', () => {
 
 			const event = parser.parseJsonLine(line);
 			expect(event?.text).toBe('Here is my response.');
+			expect(event?.isReasoning).toBeUndefined();
 		});
 
 		it('should ignore redacted_thinking blocks', () => {
@@ -484,6 +898,7 @@ describe('ClaudeOutputParser', () => {
 			const event = parser.parseJsonLine(line);
 			// Should fall back to text since redacted_thinking is ignored
 			expect(event?.text).toBe('Response after redacted thinking');
+			expect(event?.isReasoning).toBeUndefined();
 		});
 
 		it('should handle thinking blocks alongside tool_use blocks', () => {
@@ -499,6 +914,7 @@ describe('ClaudeOutputParser', () => {
 
 			const event = parser.parseJsonLine(line);
 			expect(event?.text).toBe('I need to read the file.');
+			expect(event?.isReasoning).toBe(true);
 			expect(event?.toolUseBlocks).toHaveLength(1);
 			expect(event?.toolUseBlocks?.[0].name).toBe('Read');
 		});
@@ -541,6 +957,112 @@ describe('ClaudeOutputParser', () => {
 				})
 			);
 			expect(event?.usage?.costUsd).toBe(0);
+		});
+	});
+
+	describe('Stop hook continuations', () => {
+		const assistantText = (id: string, text: string, extra: Record<string, unknown> = {}) => ({
+			type: 'assistant',
+			message: { id, role: 'assistant', content: [{ type: 'text', text }] },
+			...extra,
+		});
+		const assistantTool = (id: string) => ({
+			type: 'assistant',
+			message: {
+				id,
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: `tool-${id}`, name: 'Bash', input: {} }],
+			},
+		});
+		const toolResult = (id: string) => ({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [{ type: 'tool_result', tool_use_id: `tool-${id}`, content: 'ok' }],
+			},
+		});
+		const stopHookFeedback = {
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [
+					{
+						type: 'text',
+						text: 'Stop hook feedback:\n[scripts/stop-if-dirty.sh]: Uncommitted changes: 8 paths.',
+					},
+				],
+			},
+		};
+		const result = (text: string) => ({ type: 'result', subtype: 'success', result: text });
+		const feed = (p: ClaudeOutputParser, messages: object[]) =>
+			messages.map((message) => p.parseJsonObject(message));
+
+		it('keeps the reply a Stop hook held back ahead of the post-hook text', () => {
+			const p = new ClaudeOutputParser();
+			const events = feed(p, [
+				assistantText('m1', 'Email login never went live.'),
+				stopHookFeedback,
+				assistantText('m2', 'I committed the 8 paths.'),
+				result('I committed the 8 paths.'),
+			]);
+
+			expect(events[events.length - 1]?.text).toBe(
+				'Email login never went live.\n\n---\n\nI committed the 8 paths.'
+			);
+		});
+
+		it('does not hold narration that led to a tool call', () => {
+			const p = new ClaudeOutputParser();
+			const events = feed(p, [
+				assistantText('m1', 'Deploying now.'),
+				assistantTool('m1'),
+				toolResult('m1'),
+				assistantText('m2', 'Charts are live.'),
+				stopHookFeedback,
+				assistantText('m3', 'Nothing to commit.'),
+				result('Nothing to commit.'),
+			]);
+
+			expect(events[events.length - 1]?.text).toBe('Charts are live.\n\n---\n\nNothing to commit.');
+		});
+
+		it('leaves a turn with no Stop hook block unchanged', () => {
+			const p = new ClaudeOutputParser();
+			const events = feed(p, [assistantText('m1', 'Paris.'), result('Paris.')]);
+
+			expect(events[events.length - 1]?.text).toBe('Paris.');
+		});
+
+		it('ignores subagent messages and starts the next turn clean', () => {
+			const p = new ClaudeOutputParser();
+			feed(p, [assistantText('m1', 'First answer.'), stopHookFeedback, result('Follow-up.')]);
+			const events = feed(p, [
+				assistantText('s1', 'Subagent text.', { parent_tool_use_id: 'task-1' }),
+				{ ...stopHookFeedback, parent_tool_use_id: 'task-1' },
+				assistantText('m2', 'Second answer.'),
+				result('Second answer.'),
+			]);
+
+			expect(events[events.length - 1]?.text).toBe('Second answer.');
+		});
+
+		it('survives duplicate emission and re-parsing of the same lines', () => {
+			const p = new ClaudeOutputParser();
+			const reply = assistantText('m1', 'The answer.');
+			const final = result('Follow-up.');
+			feed(p, [
+				reply,
+				reply,
+				stopHookFeedback,
+				stopHookFeedback,
+				assistantText('m2', 'Follow-up.'),
+			]);
+
+			const first = p.parseJsonObject(final);
+			const reparsed = p.parseJsonObject(final);
+
+			expect(first?.text).toBe('The answer.\n\n---\n\nFollow-up.');
+			expect(reparsed?.text).toBe(first?.text);
 		});
 	});
 

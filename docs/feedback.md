@@ -9,7 +9,11 @@ Maestro includes a built-in feedback system that uses AI to help you craft well-
 ## Prerequisites
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) must be installed
-- You must be authenticated (`gh auth login`)
+- gh must be signed in to GitHub. If it is not, the Feedback modal offers **Log in to GitHub**, which runs `gh auth login` (one-time code plus browser) in a terminal inside Maestro and continues into the chat as soon as it finishes. **Check Again** re-checks if you signed in somewhere else.
+
+Before the chat starts, Maestro also checks that GitHub will accept an issue from your gh account, so a refusal shows up front instead of after you write the report. The check sends GitHub an empty issue, which it authorizes and then rejects for having no title: nothing is created. If GitHub refuses the account (for example, an organization has not approved the GitHub CLI, or the token lacks a scope), the modal names the account gh is signed in as and says what to fix, offering **Log in to GitHub** when signing in again can fix it.
+
+If filing still fails later because the gh login expired or was revoked, the same **Log in to GitHub** button appears beside the error and files the issue again once you are signed in.
 
 ## Sending Feedback
 
@@ -21,13 +25,13 @@ Click the **Feedback** button in the bottom-left corner of the sidebar, next to 
 
 You can also open it via **Quick Actions** (`Cmd+K` / `Ctrl+K`) → "Send Feedback".
 
-### 2. Choose an AI Agent
+### 2. Which Account Runs the Chat
 
-Select which installed AI provider will conduct the feedback conversation. Maestro auto-detects available agents (Claude Code, Codex, OpenCode) and pre-selects the first one found.
+Maestro picks the account for you. It looks at the accounts your own agents run as (Claude Code, Codex, or OpenCode, including any per-agent `CLAUDE_CONFIG_DIR` or `CODEX_HOME`) and uses the first one that is installed and signed in. The provider's default login and accounts on SSH remotes are tried last.
 
-![Agent selection](./screenshots/feedback-1.png)
+If the first account cannot answer (for example, its login expired), the chat sends your message to the next account instead of failing. The account that answered is remembered for next time.
 
-Click **Start** to begin.
+The **Running as** menu under the progress bar shows the account in use. Pick another one there to override it.
 
 ### 3. Describe Your Issue
 
@@ -90,7 +94,9 @@ Once submitted, you'll see a confirmation with:
 Agents and scripts can file the same issue through `maestro-cli`, with no modal:
 
 ```bash
-maestro-cli feedback auth                          # gh installed and logged in?
+maestro-cli feedback auth                          # gh installed, logged in, and allowed to file? (--fresh skips the cache)
+maestro-cli feedback login                         # sign gh in (device code + browser)
+maestro-cli feedback accounts                      # which account the chat runs as (--use <key> to pick)
 maestro-cli feedback search "tab closes on escape" # find duplicates first
 maestro-cli feedback submit -c bug -s "..." -e "..." -a "..." --attach shot.png --support-package
 maestro-cli feedback subscribe 1234 --comment "Same on Linux"

@@ -22,16 +22,25 @@
  */
 
 import { getBasename } from '../../shared/formatters';
+import { safeDecodeURIComponent } from '../../shared/stringUtils';
 import { shouldOpenExternally } from './fileExplorer';
 
 /**
  * The filesystem path behind a `file://` href, or null when the href is not
- * one. The link plugins build these by concatenation (`file://${absolute}`),
- * so the path is not percent-encoded and needs no decoding.
+ * one.
+ *
+ * Percent-decoding is NOT optional. A `file://` href is a URL, so every
+ * producer reaching this point has already encoded it: an agent writes
+ * `file:///a/Voice%20Cloning/x.wav` by hand, and mdast-util-to-hast runs
+ * every link destination through `normalizeUri` besides. Handing that
+ * literal string to `fs.readFile` is an ENOENT, which the file-click handler
+ * reports by returning - so the click silently does nothing for any path
+ * containing a space, a `#`, or a non-ASCII character. Same rule, same
+ * reason as `resolveLocalImagePath` in Markdown/components/LocalImage.tsx.
  */
 export function fileUrlToPath(href: string): string | null {
 	if (!/^file:\/\//.test(href)) return null;
-	return href.replace(/^file:\/\//, '');
+	return safeDecodeURIComponent(href.replace(/^file:\/\//, ''));
 }
 
 /**

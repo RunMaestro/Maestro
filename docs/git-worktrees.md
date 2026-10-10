@@ -31,6 +31,7 @@ The log viewer shows:
 - **Commit history** with messages, authors, and timestamps
 - **Branch visualization** with merge points
 - **Quick navigation** to any commit
+- **Search** (`Cmd+F` / `Ctrl+F`, or `/`) over hash, message, author, branch and date, narrowing the List and the Graph together
 
 Access via the git menu (branch pill or right-click) → **View Git Log**, **Command Palette** (`Cmd+K` / `Ctrl+K`) → "Git Log", or `Cmd+Shift+G` / `Ctrl+Shift+G`.
 
@@ -99,6 +100,8 @@ In the configuration modal:
 **Tip:** Configure the worktree directory to be outside your main repository (e.g., `~/Projects/Maestro-WorkTrees/`). This keeps worktrees organized and prevents them from appearing in your main repo's file tree.
 
 **Note:** Once configured, you can quickly create additional worktrees by right-clicking the parent session and selecting **"Create Worktree"** (bypasses the full configuration modal).
+
+**Agents honor it too.** The directory is printed in every agent's system prompt as its Worktree Directory, and `maestro-cli show agent <id> --json` reports it as `worktreeBasePath`. Agents are told to create worktrees only through `maestro-cli create-worktree`, which uses this directory and registers the result as a worktree agent, so nothing an agent branches off ends up somewhere you cannot see.
 
 ### Setup Scripts
 

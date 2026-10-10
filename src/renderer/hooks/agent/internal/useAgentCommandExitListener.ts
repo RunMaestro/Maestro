@@ -13,13 +13,17 @@ import { useEffect } from 'react';
 import type { LogEntry, SessionState } from '../../../types';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { generateId } from '../../../utils/ids';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 
 export function useAgentCommandExitListener(): void {
+	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 
 		const unsubscribe = window.maestro.process.onCommandExit((sessionId: string, code: number) => {
+			// Window scoping: ignore agents this window doesn't own (broadcast events).
+			if (!ownedGate.current?.(sessionId)) return;
 			const actualSessionId = sessionId;
 			if (!getSessions().some((s) => s.id === actualSessionId)) return;
 
@@ -60,5 +64,5 @@ export function useAgentCommandExitListener(): void {
 		return () => {
 			unsubscribe();
 		};
-	}, []);
+	}, [ownedGate]);
 }

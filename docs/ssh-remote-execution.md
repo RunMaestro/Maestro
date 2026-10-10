@@ -103,6 +103,103 @@ To switch back to manual configuration:
 1. Click the **×** button next to "Using SSH Config" indicator
 2. Fill in all required fields manually
 
+### SSH Options (Advanced)
+
+The **SSH Options** section in the remote's dialog holds extra `ssh -o KEY=VALUE`
+pairs. Each one is passed straight to the `ssh` command Maestro runs, on top of
+its own defaults.
+
+Reach for it when the host is not reachable by a plain `ssh user@host`:
+
+| Option           | Use                                                                     |
+| ---------------- | ----------------------------------------------------------------------- |
+| `ProxyCommand`   | Route the connection through a tunnel (tailcat, cloudflared, Teleport)  |
+| `ProxyJump`      | Reach the host through a bastion                                        |
+| `ConnectTimeout` | Give a slow tunnel longer than the default 10 seconds to finish dialing |
+| `IdentityAgent`  | Point at a specific `ssh-agent` socket                                  |
+
+A command-line `-o` outranks `~/.ssh/config`, so this section is also the only
+place Maestro's own defaults can be changed. If a remote works from your
+terminal but fails in Maestro, a default is usually why - `ConnectTimeout=10`
+in particular is short for a tunnel that has to bootstrap a relay before it can
+connect.
+
+`RequestTTY` is reserved and cannot be set here. Maestro derives it per command
+from whether the agent speaks stream-json, and a forced TTY injects terminal
+control sequences that corrupt that stream.
+
+#### Switching an entry off
+
+The eye button beside a row switches that option (or environment variable) off
+without deleting it. The value stays in the dialog, struck through and dimmed,
+and comes back the moment you switch it on again - so testing whether a
+`ProxyCommand` is the reason a host stopped answering does not mean pasting the
+string into a scratch file first.
+
+A switched-off entry is never passed to `ssh`. It is kept in a separate list
+that nothing but this dialog reads, which is also why a broken entry can be
+parked and saved: only live entries are validated, so an option you cannot get
+working today does not block the rest of the remote.
+
+<Warning>
+A `ProxyCommand` is an arbitrary program run on your machine, with your
+credentials, every time an agent connects. Treat one the same way you would
+treat a line in your own `~/.ssh/config`.
+</Warning>
+
+The same options are reachable from the CLI, which is how an agent can set up a
+remote for you:
+
+```bash
+maestro-cli create-ssh-remote "Tunnelled box" \
+  --host tailcat-devbox \
+  --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
+  --ssh-option HostKeyAlias=tailcat-devbox \
+  --ssh-option ConnectTimeout=45
+
+# Adjust one option later without disturbing the rest
+maestro-cli update-ssh-remote tunnelled --ssh-option ConnectTimeout=60
+
+# Switch one off, keeping its value, then switch it back on
+maestro-cli update-ssh-remote tunnelled --disable-ssh-option ProxyCommand
+maestro-cli update-ssh-remote tunnelled --enable-ssh-option ProxyCommand
+
+# See the full option set ssh will actually receive
+maestro-cli list ssh-remotes --json
+```
+
+#### Example: a tailcat tunnel
+
+The `create-ssh-remote` call above is a working tailcat
+setup. Two of its options are there on purpose:
+
+- **`HostKeyAlias`**. With a `ProxyCommand`, `ssh` files the host key in
+  `known_hosts` under whatever `--host` says. If that is the machine's LAN name
+  or address, the tunnelled entry collides with the direct one and `ssh`
+  refuses the connection as a changed host key. A stable alias gives the tunnel
+  its own entry.
+- **`ConnectTimeout=45`**. tailcat has to bootstrap a relay before it can
+  connect, which regularly takes longer than Maestro's default 10 seconds.
+
+On the server, generate a key once, then keep `tailcat serve` running under
+launchd or systemd with `KeepAlive` (or `Restart=always`). It proxies into the
+real `sshd`, so `authorized_keys` still does the authentication:
+
+```bash
+# Once: create the key and print the tcXXXX address
+tailcat genkey --key=devbox --embed-derp-map
+
+# Always running (launchd KeepAlive / systemd Restart=always)
+tailcat serve --key=devbox 22
+```
+
+<Warning>
+Since tailcat v0.6 the `tcXXXX` address includes a WireGuard pre-shared key by
+default, so treat it as a secret, not a hostname. Maestro stores it in plaintext
+in its settings as part of the `ProxyCommand`. Never publish it in a DNS TXT
+record (or anywhere else public) for a server that relies on the PSK.
+</Warning>
+
 ### Connection Testing
 
 Before saving, you can test your SSH configuration:
@@ -204,11 +301,11 @@ The Command Terminal executes commands on the remote host:
 - Tab completion works with remote file paths
 - Command history is preserved per-session
 
-### Claude Max Plan on Remote Hosts
+### Claude TUI Wrapper on Remote Hosts
 
-Running a Claude Code agent against your Max plan quota (the TUI Wrapper and Dynamic [token sources](/provider-notes#token-source-max-plan-vs-api)) relies on the **maestro-p** helper. It ships bundled with the desktop app for local agents, but over SSH the Claude TUI runs on the remote machine, so maestro-p must be on the **remote host's** PATH. If it is missing, Maestro disables the Max plan options for that agent and falls back to the per-token API source.
+The TUI Wrapper and Dynamic [token sources](/provider-notes#token-source) rely on the **maestro-p** helper. It ships bundled with the desktop app for local agents, but over SSH the Claude TUI runs on the remote machine, so maestro-p must be on the **remote host's** PATH. If it is missing, Maestro disables those options for that agent and falls back to `claude -p`.
 
-To enable Max plan billing on a remote host, install maestro-p from the [maestro-p install page](https://runmaestro.ai/maestro-p/) on that host, then click **Re-check** in the agent's Claude Token Source panel.
+To enable the TUI Wrapper on a remote host, install maestro-p from the [maestro-p install page](https://runmaestro.ai/maestro-p/) on that host, then click **Re-check** in the agent's Claude Token Source panel.
 
 ### Group Chat with Remote Agents
 

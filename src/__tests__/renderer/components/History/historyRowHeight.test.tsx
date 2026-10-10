@@ -167,4 +167,23 @@ describe('estimateHistoryRowHeight for DB-sourced CUE rows', () => {
 			ESTIMATED_ROW_HEIGHT_BASE + ESTIMATED_ROW_HEIGHT_FOOTER
 		);
 	});
+
+	it('charges the footer for a row whose only footer content is the sender pill', () => {
+		// The Web Login sender pill lives in the footer, so a turn a browser
+		// sent opens the footer row on its own - exactly like the hostname pill.
+		// Missing that term under-estimates the row and overlaps the next one.
+		const entry: HistoryEntry = {
+			id: 'web-1',
+			type: 'USER',
+			timestamp: Date.now(),
+			summary: 'Asked from a phone',
+			projectPath: '/test/project',
+			userName: 'pedram',
+			userDisplayName: 'Pedram A',
+		};
+		expect(estimateHistoryRowHeight(entry)).toBe(renderedHeightTerms(entry));
+		expect(estimateHistoryRowHeight(entry)).toBe(
+			ESTIMATED_ROW_HEIGHT_BASE + ESTIMATED_ROW_HEIGHT_FOOTER
+		);
+	});
 });

@@ -23,6 +23,8 @@ interface ToggleButtonGroupProps<T extends string | number> {
 	theme: Theme;
 	/** Optional custom labels map (alternative to ToggleButtonOption.label) */
 	labels?: Record<string, string>;
+	/** Disable all options */
+	disabled?: boolean;
 }
 
 function ToggleButtonGroupInner<T extends string | number>({
@@ -31,6 +33,7 @@ function ToggleButtonGroupInner<T extends string | number>({
 	onChange,
 	theme,
 	labels,
+	disabled = false,
 }: ToggleButtonGroupProps<T>) {
 	return (
 		<div className="flex gap-2">
@@ -61,8 +64,13 @@ function ToggleButtonGroupInner<T extends string | number>({
 				return (
 					<button
 						key={String(optValue)}
-						onClick={() => onChange(optValue)}
-						className={`flex-1 py-2 px-3 rounded border transition-all ${isActive ? 'ring-2' : ''}`}
+						onClick={() => {
+							if (!disabled) onChange(optValue);
+						}}
+						disabled={disabled}
+						className={`flex-1 py-2 px-3 rounded border transition-all ${
+							isActive ? 'ring-2' : ''
+						} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
 						style={
 							{
 								borderColor: theme.colors.border,

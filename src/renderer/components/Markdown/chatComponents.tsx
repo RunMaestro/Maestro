@@ -20,7 +20,13 @@ import { InlineCode } from './components/InlineCode';
 import { createMarkdownLink } from './components/MarkdownLink';
 import { createShikiCodeBlock } from './components/ShikiCodeBlock';
 import { AlertCallout } from './components/AlertCallout';
+import { FollowupChip } from './components/FollowupChip';
+import { CodexFileCitation } from './components/CodexFileCitation';
+import { CodeCommentCard } from './components/CodeCommentCard';
+import { GitActionCard, isGitDirectiveName } from './components/GitActionCard';
 import { alertTypeFromClassName } from './remarkAlert';
+import { readCodexDirectiveProps } from './remarkCodexDirectives';
+import { requestCodexFollowup } from '../../services/codexFollowup';
 
 export interface ChatMarkdownComponentsOptions {
 	theme: Theme;
@@ -39,6 +45,14 @@ export interface ChatMarkdownComponentsOptions {
 	/** Right-click handlers (owned by the shell so it can render the menus). */
 	onLinkContextMenu: (e: React.MouseEvent, url: string) => void;
 	onFileContextMenu: (e: React.MouseEvent, absPath: string, fileName: string) => void;
+	/**
+	 * Which conversation an ACTIONABLE directive belongs to - a `:codex-followup`
+	 * chip and the five `::git-*` actions. Present only where a Codex agent's own
+	 * message is being drawn, because that is the only place a directive is an
+	 * OFFER rather than text somebody typed. Absent leaves the directive as its
+	 * label, with no control to press.
+	 */
+	codexFollowup?: { sessionId: string; tabId: string };
 }
 
 export function createChatMarkdownComponents(
@@ -55,6 +69,7 @@ export function createChatMarkdownComponents(
 		bionifyAlgorithm,
 		onLinkContextMenu,
 		onFileContextMenu,
+		codexFollowup,
 	} = options;
 
 	const withReadableTransforms = (children: React.ReactNode) =>
@@ -208,5 +223,98 @@ export function createChatMarkdownComponents(
 			onToggle: _onToggle,
 			...props
 		}: JSX.IntrinsicElements['details'] & ExtraProps) => <details {...props} />,
+		/*
+		 * Codex assistant directives, tagged as spans by `remarkCodexDirectives`.
+		 *
+		 * Anything that is not a directive falls through to the plain span with its
+		 * children, which is what keeps the override inert on the rest of a
+		 * message: chat renders sanitized raw HTML, so an agent drawing its own
+		 * `<span>` must still get one.
+		 *
+		 * A directive with no chip behind it renders its LABEL as text. That is
+		 * two real cases - there is no `codexFollowup` context (nothing to click
+		 * into), or the name is one of the allowlist entries nothing draws yet -
+		 * and in both the plain span is NOT the right fallback: the plugin
+		 * deliberately emits no children, so returning it would render nothing at
+		 * all and delete the offer from the message. The label is the part the
+		 * agent wrote for a reader, which is the most the element still carries.
+		 */
+		span: ({ node: _node, children, ...props }: JSX.IntrinsicElements['span'] & ExtraProps) => {
+			const directive = readCodexDirectiveProps(props as Record<string, unknown>);
+			if (!directive) return <span {...props}>{children}</span>;
+
+			// A citation needs no conversation context: it points at a file and
+			// nothing else, so it draws wherever it appears. A path-less one falls
+			// through to its label, because a link to nowhere is not a link.
+			if (directive.name === 'codex-file-citation' && directive.attributes.path) {
+				return (
+					<CodexFileCitation
+						path={directive.attributes.path}
+						// Anything that is not literally `output` is read as a source.
+						// The hue and the hover text both claim the agent CHANGED this
+						// file, which a malformed attribute must not be able to assert.
+						purpose={directive.attributes.purpose === 'output' ? 'output' : 'source'}
+						artifactKind={directive.attributes.artifact_kind}
+						pageNumber={directive.attributes.page_number}
+						theme={theme}
+						LinkComponent={ChatLink}
+					/>
+				);
+			}
+
+			// A review comment is a statement about the code, not an offer, so it
+			// draws with no conversation context either. `body` is the one part
+			// that cannot be missing: a card with a title and no explanation says
+			// less than the label fallback below.
+			if (directive.name === 'code-comment' && directive.attributes.body) {
+				return (
+					<CodeCommentCard
+						title={directive.attributes.title}
+						body={directive.attributes.body}
+						file={directive.attributes.file}
+						start={directive.attributes.start}
+						end={directive.attributes.end}
+						priority={directive.attributes.priority}
+						theme={theme}
+						LinkComponent={ChatLink}
+					/>
+				);
+			}
+
+			// A git action is about ONE agent's repository, so it needs the same
+			// conversation context a follow-up does - without it there is no agent
+			// to act on, and the directive falls through to its label.
+			if (isGitDirectiveName(directive.name) && codexFollowup) {
+				return (
+					<GitActionCard
+						name={directive.name}
+						attributes={directive.attributes}
+						sessionId={codexFollowup.sessionId}
+						theme={theme}
+					/>
+				);
+			}
+
+			if (directive.name !== 'codex-followup' || !codexFollowup) {
+				return <span {...props}>{directive.label}</span>;
+			}
+
+			const { sessionId, tabId } = codexFollowup;
+			const prompt = directive.attributes.prompt ?? '';
+			return (
+				<FollowupChip
+					// The `[Label]` is optional in the grammar even though the bundled
+					// skills always emit one. Showing the prompt is the honest fallback:
+					// the alternative is a chip with nothing but an arrow on it, which
+					// says less about what a click does than the wire text did.
+					label={directive.label || prompt}
+					prompt={prompt}
+					sessionId={sessionId}
+					tabId={tabId}
+					theme={theme}
+					onActivate={(mode) => requestCodexFollowup({ prompt, sessionId, tabId, mode })}
+				/>
+			);
+		},
 	};
 }

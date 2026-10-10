@@ -37,6 +37,7 @@ describe('useLayerStack', () => {
 			priority: options.priority ?? 100,
 			blocksLowerLayers: options.blocksLowerLayers ?? true,
 			capturesFocus: options.capturesFocus ?? true,
+			blocksAppShortcuts: options.blocksAppShortcuts,
 			focusTrap: options.focusTrap ?? 'strict',
 			onEscape: options.onEscape ?? vi.fn(),
 			ariaLabel: options.ariaLabel,
@@ -55,6 +56,7 @@ describe('useLayerStack', () => {
 			priority: options.priority ?? 50,
 			blocksLowerLayers: options.blocksLowerLayers ?? false,
 			capturesFocus: options.capturesFocus ?? false,
+			blocksAppShortcuts: options.blocksAppShortcuts,
 			focusTrap: options.focusTrap ?? 'none',
 			onEscape: options.onEscape ?? vi.fn(),
 			allowClickOutside: options.allowClickOutside ?? true,
@@ -553,6 +555,32 @@ describe('useLayerStack', () => {
 
 			expect(result.current.hasOpenLayers()).toBe(false);
 		});
+
+		// A passive panel (floating inspector, thought stream) is stacked so that
+		// Escape reaches it, but it takes no focus. Counting it here is what used
+		// to make Cmd+K and Opt+Cmd+T go dead the moment such a panel opened.
+		it('should ignore layers that declared blocksAppShortcuts: false', () => {
+			const { result } = renderHook(() => useLayerStack());
+
+			act(() => {
+				result.current.registerLayer(createModalLayer({ blocksAppShortcuts: false }));
+				result.current.registerLayer(createOverlayLayer({ blocksAppShortcuts: false }));
+			});
+
+			expect(result.current.layerCount).toBe(2);
+			expect(result.current.hasOpenLayers()).toBe(false);
+		});
+
+		it('should still report a blocking layer stacked alongside a passive one', () => {
+			const { result } = renderHook(() => useLayerStack());
+
+			act(() => {
+				result.current.registerLayer(createModalLayer({ blocksAppShortcuts: false }));
+				result.current.registerLayer(createModalLayer({ priority: 200 }));
+			});
+
+			expect(result.current.hasOpenLayers()).toBe(true);
+		});
 	});
 
 	describe('hasOpenModal', () => {
@@ -608,6 +636,30 @@ describe('useLayerStack', () => {
 
 			act(() => {
 				result.current.unregisterLayer(modalId!);
+			});
+
+			expect(result.current.hasOpenModal()).toBe(false);
+		});
+
+		// Dropdowns and docked search bars register as `type: 'modal'` (that is all
+		// useModalLayer can register) while declaring they do not block what is
+		// under them. Treating them as true modals blocked every app shortcut.
+		it('should not count a modal that declared blocksLowerLayers: false', () => {
+			const { result } = renderHook(() => useLayerStack());
+
+			act(() => {
+				result.current.registerLayer(createModalLayer({ blocksLowerLayers: false }));
+			});
+
+			expect(result.current.layerCount).toBe(1);
+			expect(result.current.hasOpenModal()).toBe(false);
+		});
+
+		it('should not count a modal that declared blocksAppShortcuts: false', () => {
+			const { result } = renderHook(() => useLayerStack());
+
+			act(() => {
+				result.current.registerLayer(createModalLayer({ blocksAppShortcuts: false }));
 			});
 
 			expect(result.current.hasOpenModal()).toBe(false);

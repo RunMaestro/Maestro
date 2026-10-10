@@ -38,6 +38,7 @@ import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
 import { logger } from '../../utils/logger';
 import { daysToLookbackHours, bucketCountForLookback } from './lookback';
 import { NarrativeSections } from './NarrativeSections';
+import { richSectionId } from './directorNotesToc';
 import { useNarrativeGroupLookup } from './useNarrativeGroupLookup';
 import { NarrativeParseError } from './NarrativeParseError';
 import {
@@ -202,11 +203,15 @@ export function RichOverview({
 	}));
 
 	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
+	// Until the first stats arrive every widget would render its empty state
+	// ("No activity in this window", a 0-total donut) - a claim, not a loading
+	// state. Show one spinner instead.
+	const awaitingStats = isLoading && !richStats;
 
 	return (
 		<div className="flex flex-col gap-4">
 			{/* Headline stat cards */}
-			{isLoading && !richStats ? (
+			{awaitingStats ? (
 				<div className="flex items-center gap-3 py-6 px-1">
 					<Spinner size={18} color={theme.colors.accent} />
 					<span className="text-sm" style={{ color: theme.colors.textDim }}>
@@ -217,57 +222,81 @@ export function RichOverview({
 				<StatCardGrid theme={theme} cards={cards} />
 			)}
 
-			{/* Activity timeline */}
-			<SectionCard theme={theme} title="Activity Timeline" icon={Activity}>
-				<ChartErrorBoundary theme={theme} chartName="Activity Timeline">
-					{/* Cue starts hidden: on a Cue-heavy install its bars dwarf every
+			{!awaitingStats && (
+				<>
+					{/* Activity timeline */}
+					<SectionCard
+						theme={theme}
+						id={richSectionId('Activity Timeline')}
+						title="Activity Timeline"
+						icon={Activity}
+					>
+						<ChartErrorBoundary theme={theme} chartName="Activity Timeline">
+							{/* Cue starts hidden: on a Cue-heavy install its bars dwarf every
 					    other source and flatten them into invisible slivers. The
 					    legend toggles it back on. */}
-					<ActivityTimeline
-						theme={theme}
-						buckets={timelineBuckets}
-						colors={{ auto: autoColor, user: userColor, cue: CUE_COLOR }}
-						defaultHiddenSeries={['cue']}
-					/>
-				</ChartErrorBoundary>
-			</SectionCard>
+							<ActivityTimeline
+								theme={theme}
+								buckets={timelineBuckets}
+								colors={{ auto: autoColor, user: userColor, cue: CUE_COLOR }}
+								defaultHiddenSeries={['cue']}
+							/>
+						</ChartErrorBoundary>
+					</SectionCard>
 
-			{/* Success vs failure + source breakdown share a row: both are narrow
+					{/* Success vs failure + source breakdown share a row: both are narrow
 			    (a split bar and a 132px donut), so stacking them wasted a screen of
 			    vertical space. Collapses to one column on a narrow modal. */}
-			<div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
-				<SectionCard theme={theme} title="Success vs Failure" icon={CheckCircle2}>
-					<ChartErrorBoundary theme={theme} chartName="Success vs Failure">
-						<SuccessFailureWidget
+					<div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
+						<SectionCard
 							theme={theme}
-							successCount={successCount}
-							failureCount={failureCount}
-							colors={{ success: successColor, failure: failureColor }}
-						/>
-					</ChartErrorBoundary>
-				</SectionCard>
+							id={richSectionId('Success vs Failure')}
+							title="Success vs Failure"
+							icon={CheckCircle2}
+						>
+							<ChartErrorBoundary theme={theme} chartName="Success vs Failure">
+								<SuccessFailureWidget
+									theme={theme}
+									successCount={successCount}
+									failureCount={failureCount}
+									colors={{ success: successColor, failure: failureColor }}
+								/>
+							</ChartErrorBoundary>
+						</SectionCard>
 
-				<SectionCard theme={theme} title="Source Breakdown" icon={PieChart}>
-					<ChartErrorBoundary theme={theme} chartName="Source Breakdown">
-						<TypeBreakdown theme={theme} slices={slices} />
-					</ChartErrorBoundary>
-				</SectionCard>
-			</div>
+						<SectionCard
+							theme={theme}
+							id={richSectionId('Source Breakdown')}
+							title="Source Breakdown"
+							icon={PieChart}
+						>
+							<ChartErrorBoundary theme={theme} chartName="Source Breakdown">
+								<TypeBreakdown theme={theme} slices={slices} />
+							</ChartErrorBoundary>
+						</SectionCard>
+					</div>
 
-			{/* Per-agent activity. The unit is spelled out: a bare "5.0K" beside an
+					{/* Per-agent activity. The unit is spelled out: a bare "5.0K" beside an
 			    agent name is unreadable without knowing what was counted. */}
-			<SectionCard theme={theme} title="Agent Activity" icon={Users}>
-				<ChartErrorBoundary theme={theme} chartName="Agent Activity">
-					<AgentActivityBars
+					<SectionCard
 						theme={theme}
-						data={agentBars}
-						unitLabel="history entries in this window"
-						atLeastHint={`At least this many. This agent's history file is full at its ${formatNumber(
-							MAX_ENTRIES_PER_SESSION
-						)}-entry retention limit, so older runs were already discarded and the real total is higher.`}
-					/>
-				</ChartErrorBoundary>
-			</SectionCard>
+						id={richSectionId('Agent Activity')}
+						title="Agent Activity"
+						icon={Users}
+					>
+						<ChartErrorBoundary theme={theme} chartName="Agent Activity">
+							<AgentActivityBars
+								theme={theme}
+								data={agentBars}
+								unitLabel="history entries in this window"
+								atLeastHint={`At least this many. This agent's history file is full at its ${formatNumber(
+									MAX_ENTRIES_PER_SESSION
+								)}-entry retention limit, so older runs were already discarded and the real total is higher.`}
+							/>
+						</ChartErrorBoundary>
+					</SectionCard>
+				</>
+			)}
 
 			{/* AI narrative slot. Priority: structured narrative -> overt parse
 			    failure -> legacy markdown fallback (e.g. a cached result that only

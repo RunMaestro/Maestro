@@ -26,7 +26,13 @@ import type {
 	WizardMode,
 	SessionWizardState,
 } from '../../types';
-import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	selectSessionById,
+	updateSessionWith,
+	updateAiTab,
+} from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
@@ -65,6 +71,8 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
+import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { getHomeDir } from '../../utils/homeDir';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
 import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
 import type { WizardState } from '../../components/Wizard/WizardContext';
@@ -178,8 +186,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		inputRef,
 	} = deps;
 
-	// --- Store subscriptions (reactive) ---
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. Effects use narrow fields; callbacks resolve via getState().
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
+	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
+	const activeToolType = useSessionStore((s) => selectActiveSession(s)?.toolType);
+	const activeCwd = useSessionStore((s) => selectActiveSession(s)?.cwd);
+	const activeCustomPath = useSessionStore((s) => selectActiveSession(s)?.customPath);
+	const activeAgentCommands = useSessionStore((s) => selectActiveSession(s)?.agentCommands);
+	const activeProjectRoot = useSessionStore((s) => selectActiveSession(s)?.projectRoot);
 
 	// --- Store actions (stable) ---
 	const { setSessions, setActiveSessionId } = useMemo(() => useSessionStore.getState(), []);
@@ -247,16 +262,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				);
 
 				if (customCommandObjects.length > 0) {
-					useSessionStore.getState().setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const existingCommands = s.agentCommands || [];
-							return {
-								...s,
-								agentCommands: mergeCommands(existingCommands, customCommandObjects),
-							};
-						})
-					);
+					updateSessionWith(sessionId, (s) => {
+						const existingCommands = s.agentCommands || [];
+						return {
+							...s,
+							agentCommands: mergeCommands(existingCommands, customCommandObjects),
+						};
+					});
 				}
 			} catch (error) {
 				if (!cancelled) {
@@ -287,16 +299,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				}));
 
 				if (agentCommandObjects.length > 0) {
-					useSessionStore.getState().setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const existingCommands = s.agentCommands || [];
-							return {
-								...s,
-								agentCommands: mergeCommands(existingCommands, agentCommandObjects),
-							};
-						})
-					);
+					updateSessionWith(sessionId, (s) => {
+						const existingCommands = s.agentCommands || [];
+						return {
+							...s,
+							agentCommands: mergeCommands(existingCommands, agentCommandObjects),
+						};
+					});
 				}
 			} catch (error) {
 				if (!cancelled) {
@@ -318,12 +327,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			cancelled = true;
 		};
 	}, [
-		activeSession?.id,
-		activeSession?.toolType,
-		activeSession?.cwd,
-		activeSession?.customPath,
-		activeSession?.agentCommands,
-		activeSession?.projectRoot,
+		activeSessionId,
+		activeToolType,
+		activeCwd,
+		activeCustomPath,
+		activeAgentCommands,
+		activeProjectRoot,
 	]);
 
 	// ========================================================================
@@ -372,13 +381,14 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// Wizard state sync effect (context → tab state)
 	// ========================================================================
 	useEffect(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 
 		const activeTab = getActiveTab(activeSession);
-		const activeTabId = activeTab?.id;
-		if (!activeTabId) return;
+		const tabId = activeTab?.id;
+		if (!tabId) return;
 
-		const tabWizardState = getInlineWizardStateForTab(activeTabId);
+		const tabWizardState = getInlineWizardStateForTab(tabId);
 		const hasWizardOnThisTab = tabWizardState?.isActive || tabWizardState?.isGeneratingDocs;
 		const currentTabWizardState = activeTab?.wizardState;
 
@@ -395,23 +405,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const hadConversation = (currentTabWizardState.conversationHistory ?? []).length > 0;
 			const summary: LogEntry | undefined = hadConversation
 				? {
-						id: `wizard-ended-${activeTabId}`,
+						id: `wizard-ended-${tabId}`,
 						timestamp: Date.now(),
 						source: 'system',
 						text: 'Wizard mode ended. The conversation above is preserved and you can keep chatting in this tab.',
 					}
 				: undefined;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === activeTabId ? flattenWizardIntoTab(tab, { summary }) : tab
-						),
-					};
-				})
-			);
+			updateAiTab(activeSession.id, tabId, (tab) => flattenWizardIntoTab(tab, { summary }));
 			return;
 		}
 
@@ -419,67 +419,57 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			return;
 		}
 
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSession.id) return s;
+		updateAiTab(activeSession.id, tabId, (tab) => {
+			const latestWizardState = tab.wizardState;
 
-				const latestTab = s.aiTabs.find((tab) => tab.id === activeTabId);
-				const latestWizardState = latestTab?.wizardState;
+			const newWizardState: SessionWizardState = {
+				isActive: tabWizardState.isActive,
+				isInitializing: tabWizardState.isInitializing,
+				isWaiting: tabWizardState.isWaiting,
+				mode: (tabWizardState.mode === 'ask' ? 'new' : tabWizardState.mode) as WizardMode,
+				goal: tabWizardState.goal ?? undefined,
+				confidence: tabWizardState.confidence,
+				ready: tabWizardState.ready,
+				conversationHistory: tabWizardState.conversationHistory.map((msg) => ({
+					id: msg.id,
+					role: msg.role as 'user' | 'assistant' | 'system',
+					content: msg.content,
+					timestamp: msg.timestamp,
+					confidence: msg.confidence,
+					ready: msg.ready,
+					images: msg.images,
+				})),
+				previousUIState: tabWizardState.previousUIState ?? {
+					readOnlyMode: false,
+					saveToHistory: true,
+					showThinking: 'off',
+				},
+				error: tabWizardState.error,
+				isGeneratingDocs: tabWizardState.isGeneratingDocs,
+				docGenerationStartedAt: tabWizardState.docGenerationStartedAt,
+				generatedDocuments: tabWizardState.generatedDocuments.map((doc) => ({
+					filename: doc.filename,
+					content: doc.content,
+					taskCount: doc.taskCount,
+					savedPath: doc.savedPath,
+				})),
+				streamingContent: tabWizardState.streamingContent,
+				currentDocumentIndex: tabWizardState.currentDocumentIndex,
+				currentGeneratingIndex: tabWizardState.generationProgress?.current,
+				totalDocuments: tabWizardState.generationProgress?.total,
+				autoRunFolderPath: tabWizardState.projectPath
+					? `${tabWizardState.projectPath}/Auto Run Docs`
+					: undefined,
+				subfolderPath: tabWizardState.subfolderPath ?? undefined,
+				agentSessionId: tabWizardState.agentSessionId ?? undefined,
+				subfolderName: tabWizardState.subfolderName ?? undefined,
+				showWizardThinking: latestWizardState?.showWizardThinking ?? false,
+				thinkingContent: latestWizardState?.thinkingContent ?? '',
+			};
 
-				const newWizardState: SessionWizardState = {
-					isActive: tabWizardState.isActive,
-					isInitializing: tabWizardState.isInitializing,
-					isWaiting: tabWizardState.isWaiting,
-					mode: (tabWizardState.mode === 'ask' ? 'new' : tabWizardState.mode) as WizardMode,
-					goal: tabWizardState.goal ?? undefined,
-					confidence: tabWizardState.confidence,
-					ready: tabWizardState.ready,
-					conversationHistory: tabWizardState.conversationHistory.map((msg) => ({
-						id: msg.id,
-						role: msg.role as 'user' | 'assistant' | 'system',
-						content: msg.content,
-						timestamp: msg.timestamp,
-						confidence: msg.confidence,
-						ready: msg.ready,
-						images: msg.images,
-					})),
-					previousUIState: tabWizardState.previousUIState ?? {
-						readOnlyMode: false,
-						saveToHistory: true,
-						showThinking: 'off',
-					},
-					error: tabWizardState.error,
-					isGeneratingDocs: tabWizardState.isGeneratingDocs,
-					docGenerationStartedAt: tabWizardState.docGenerationStartedAt,
-					generatedDocuments: tabWizardState.generatedDocuments.map((doc) => ({
-						filename: doc.filename,
-						content: doc.content,
-						taskCount: doc.taskCount,
-						savedPath: doc.savedPath,
-					})),
-					streamingContent: tabWizardState.streamingContent,
-					currentDocumentIndex: tabWizardState.currentDocumentIndex,
-					currentGeneratingIndex: tabWizardState.generationProgress?.current,
-					totalDocuments: tabWizardState.generationProgress?.total,
-					autoRunFolderPath: tabWizardState.projectPath
-						? `${tabWizardState.projectPath}/Auto Run Docs`
-						: undefined,
-					subfolderPath: tabWizardState.subfolderPath ?? undefined,
-					agentSessionId: tabWizardState.agentSessionId ?? undefined,
-					subfolderName: tabWizardState.subfolderName ?? undefined,
-					showWizardThinking: latestWizardState?.showWizardThinking ?? false,
-					thinkingContent: latestWizardState?.thinkingContent ?? '',
-				};
-
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === activeTabId ? { ...tab, wizardState: newWizardState } : tab
-					),
-				};
-			})
-		);
-	}, [activeSession?.id, activeSession?.activeTabId, getInlineWizardStateForTab, setSessions]);
+			return { ...tab, wizardState: newWizardState };
+		});
+	}, [activeSessionId, activeTabId, getInlineWizardStateForTab]);
 
 	// ========================================================================
 	// sendWizardMessageWithThinking
@@ -491,26 +481,17 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 			const activeTab = getActiveTab(currentSession);
 			if (activeTab?.wizardState) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((tab) => {
-								if (tab.id !== activeTab.id) return tab;
-								if (!tab.wizardState) return tab;
-								return {
-									...tab,
-									wizardState: {
-										...tab.wizardState,
-										thinkingContent: '',
-										toolExecutions: [],
-									},
-								};
-							}),
-						};
-					})
-				);
+				updateAiTab(currentSession.id, activeTab.id, (tab) => {
+					if (!tab.wizardState) return tab;
+					return {
+						...tab,
+						wizardState: {
+							...tab.wizardState,
+							thinkingContent: '',
+							toolExecutions: [],
+						},
+					};
+				});
 			}
 
 			const sessionId = currentSession.id;
@@ -534,66 +515,60 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 							return;
 						}
 
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== sessionId) return s;
-								const tab = s.aiTabs.find((t) => t.id === tabId);
+						updateSessionWith(sessionId, (s) => {
+							const tab = s.aiTabs.find((t) => t.id === tabId);
 
-								if (!tab?.wizardState?.showWizardThinking) {
-									return s;
-								}
+							if (!tab?.wizardState?.showWizardThinking) {
+								return s;
+							}
 
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((t) => {
-										if (t.id !== tabId) return t;
-										if (!t.wizardState) return t;
-										return {
-											...t,
-											wizardState: {
-												...t.wizardState,
-												thinkingContent: (t.wizardState.thinkingContent || '') + chunk,
-											},
-										};
-									}),
-								};
-							})
-						);
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((t) => {
+									if (t.id !== tabId) return t;
+									if (!t.wizardState) return t;
+									return {
+										...t,
+										wizardState: {
+											...t.wizardState,
+											thinkingContent: (t.wizardState.thinkingContent || '') + chunk,
+										},
+									};
+								}),
+							};
+						});
 					},
 					onToolExecution: (toolEvent) => {
 						if (!sessionId || !tabId) return;
 
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== sessionId) return s;
-								const tab = s.aiTabs.find((t) => t.id === tabId);
+						updateSessionWith(sessionId, (s) => {
+							const tab = s.aiTabs.find((t) => t.id === tabId);
 
-								if (!tab?.wizardState?.showWizardThinking) {
-									return s;
-								}
+							if (!tab?.wizardState?.showWizardThinking) {
+								return s;
+							}
 
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((t) => {
-										if (t.id !== tabId) return t;
-										if (!t.wizardState) return t;
-										return {
-											...t,
-											wizardState: {
-												...t.wizardState,
-												toolExecutions: [...(t.wizardState.toolExecutions || []), toolEvent],
-											},
-										};
-									}),
-								};
-							})
-						);
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((t) => {
+									if (t.id !== tabId) return t;
+									if (!t.wizardState) return t;
+									return {
+										...t,
+										wizardState: {
+											...t.wizardState,
+											toolExecutions: [...(t.wizardState.toolExecutions || []), toolEvent],
+										},
+									};
+								}),
+							};
+						});
 					},
 				},
 				tabId
 			);
 		},
-		[activeSession?.id, sendInlineWizardMessage, setSessions]
+		[activeSessionId, sendInlineWizardMessage]
 	);
 
 	// ========================================================================
@@ -659,25 +634,14 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				const parsed = parseSynopsis(result.response);
 
 				if (parsed.nothingToReport) {
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== currentSession.id) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((tab) => {
-									if (tab.id !== activeTab.id) return tab;
-									return {
-										...tab,
-										logs: tab.logs.map((log) =>
-											log.id === pendingLog.id
-												? { ...log, text: 'Nothing to report - no history entry created.' }
-												: log
-										),
-									};
-								}),
-							};
-						})
-					);
+					updateAiTab(currentSession.id, activeTab.id, (tab) => ({
+						...tab,
+						logs: tab.logs.map((log) =>
+							log.id === pendingLog.id
+								? { ...log, text: 'Nothing to report - no history entry created.' }
+								: log
+						),
+					}));
 					return;
 				}
 
@@ -710,26 +674,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					elapsedTimeMs,
 				});
 
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((tab) => {
-								if (tab.id !== activeTab.id) return tab;
-								return {
-									...tab,
-									lastSynopsisTime: synopsisTime,
-									logs: tab.logs.map((log) =>
-										log.id === pendingLog.id
-											? { ...log, text: `Synopsis saved to history: ${parsed.shortSummary}` }
-											: log
-									),
-								};
-							}),
-						};
-					})
-				);
+				updateAiTab(currentSession.id, activeTab.id, (tab) => ({
+					...tab,
+					lastSynopsisTime: synopsisTime,
+					logs: tab.logs.map((log) =>
+						log.id === pendingLog.id
+							? { ...log, text: `Synopsis saved to history: ${parsed.shortSummary}` }
+							: log
+					),
+				}));
 
 				notifyToast({
 					type: 'success',
@@ -742,49 +695,27 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					tabName: activeTab.name || undefined,
 				});
 			} else {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((tab) => {
-								if (tab.id !== activeTab.id) return tab;
-								return {
-									...tab,
-									logs: tab.logs.map((log) =>
-										log.id === pendingLog.id
-											? { ...log, text: 'Failed to generate history synopsis. Try again.' }
-											: log
-									),
-								};
-							}),
-						};
-					})
-				);
+				updateAiTab(currentSession.id, activeTab.id, (tab) => ({
+					...tab,
+					logs: tab.logs.map((log) =>
+						log.id === pendingLog.id
+							? { ...log, text: 'Failed to generate history synopsis. Try again.' }
+							: log
+					),
+				}));
 			}
 		} catch (error) {
 			logger.error('[handleHistoryCommand] Error:', undefined, error);
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== currentSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) => {
-							if (tab.id !== activeTab!.id) return tab;
-							return {
-								...tab,
-								logs: tab.logs.map((log) =>
-									log.id === pendingLog.id
-										? { ...log, text: `Error generating synopsis: ${(error as Error).message}` }
-										: log
-								),
-							};
-						}),
-					};
-				})
-			);
+			updateAiTab(currentSession.id, activeTab!.id, (tab) => ({
+				...tab,
+				logs: tab.logs.map((log) =>
+					log.id === pendingLog.id
+						? { ...log, text: `Error generating synopsis: ${(error as Error).message}` }
+						: log
+				),
+			}));
 		}
-	}, [activeSession?.id, spawnBackgroundSynopsis, addHistoryEntry, setSessions]);
+	}, [activeSessionId, spawnBackgroundSynopsis, addHistoryEntry]);
 
 	// ========================================================================
 	// handleSkillsCommand - /skills slash command
@@ -849,7 +780,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					lines.push('|-------|--------|-------------|');
 					for (const skill of projectSkills) {
 						const desc =
-							skill.description && skill.description !== 'No description' ? skill.description : '—';
+							skill.description && skill.description !== 'No description' ? skill.description : '-';
 						lines.push(`| **${skill.name}** | ${formatTokenCount(skill.tokenCount)} | ${desc} |`);
 					}
 					lines.push('');
@@ -862,7 +793,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					lines.push('|-------|--------|-------------|');
 					for (const skill of userSkills) {
 						const desc =
-							skill.description && skill.description !== 'No description' ? skill.description : '—';
+							skill.description && skill.description !== 'No description' ? skill.description : '-';
 						lines.push(`| **${skill.name}** | ${formatTokenCount(skill.tokenCount)} | ${desc} |`);
 					}
 				}
@@ -887,7 +818,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 			addLogToTab(currentSession.id, errorLog);
 		}
-	}, [activeSession?.id]);
+	}, [activeSessionId]);
 
 	// ========================================================================
 	// handleWizardCommand - /wizard slash command
@@ -936,12 +867,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const withPlaceholderName = (tab: AITab): AITab =>
 				tab.id === activeTab.id ? { ...tab, name: WIZARD_TAB_PLACEHOLDER_NAME } : tab;
 
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== currentSession.id) return s;
-					return { ...s, aiTabs: s.aiTabs.map(withPlaceholderName) };
-				})
-			);
+			updateAiTab(currentSession.id, activeTab.id, (tab) => ({
+				...tab,
+				name: WIZARD_TAB_PLACEHOLDER_NAME,
+			}));
 
 			// `/wizard <input>` already says what we are working on, so the placeholder
 			// can be replaced right away instead of waiting for the first chat message.
@@ -966,7 +895,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 			useSessionStore.getState().addLogToTab(currentSession.id, wizardLog);
 		},
-		[activeSession?.id, startInlineWizard, setSessions]
+		[activeSessionId, startInlineWizard]
 	);
 
 	// ========================================================================
@@ -993,15 +922,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		const newTab = result.tab;
 		const updatedSession = result.session;
 
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== currentSession.id) return s;
-				return {
-					...updatedSession,
-					activeTabId: newTab.id,
-				};
-			})
-		);
+		updateSessionWith(currentSession.id, () => ({
+			...updatedSession,
+			activeTabId: newTab.id,
+		}));
 
 		const currentUIState: PreviousUIState = {
 			readOnlyMode: false,
@@ -1038,36 +962,35 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 			addLogToTab(currentSession.id, wizardLog, newTab.id);
 		}, 0);
-	}, [activeSession?.id, startInlineWizard, setSessions]);
+	}, [activeSessionId, startInlineWizard]);
 
 	// ========================================================================
 	// isWizardActiveForCurrentTab - derived value
 	// ========================================================================
 	const isWizardActiveForCurrentTab = useMemo(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return false;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return false;
 		// Use the per-tab primitive instead of the hook's singleton currentTabId - the latter only
 		// tracks the last-touched wizard and is wrong when concurrent wizards run on multiple tabs.
+		// Reactivity comes from isInlineWizardActiveForTab (useCallback on tabStates), not from
+		// a full-session subscription.
 		return isInlineWizardActiveForTab(activeTab.id);
-	}, [activeSession, activeSession?.activeTabId, isInlineWizardActiveForTab]);
+	}, [activeSessionId, activeTabId, isInlineWizardActiveForTab]);
 
 	// Keep useInlineWizard's internal currentTabId pointed at whatever tab the user is currently on,
 	// so that sendMessage/setMode/setGoal/etc. (which fall back to currentTabId) route to the right
 	// wizard when multiple are active concurrently.
 	useEffect(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
 		if (isInlineWizardActiveForTab(activeTab.id)) {
 			selectInlineWizardTab(activeTab.id);
 		}
-	}, [
-		activeSession,
-		activeSession?.activeTabId,
-		isInlineWizardActiveForTab,
-		selectInlineWizardTab,
-	]);
+	}, [activeSessionId, activeTabId, isInlineWizardActiveForTab, selectInlineWizardTab]);
 
 	// ========================================================================
 	// completeWizardImpl - shared logic for wizard completion
@@ -1120,29 +1043,26 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const shouldPointAutoRun = opts.startAutoRun && !!subfolderPath;
 			const firstDocBase = generatedDocs[0]?.filename.replace(/\.md$/i, '');
 
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== currentSession.id) return s;
-					const updatedTabs = s.aiTabs.map((tab) => {
-						if (tab.id !== activeTabId) return tab;
-						return {
-							...flattenWizardIntoTab(tab, { summary: summaryMessage }),
-							name: tabName,
-						};
-					});
+			updateSessionWith(currentSession.id, (s) => {
+				const updatedTabs = s.aiTabs.map((tab) => {
+					if (tab.id !== activeTabId) return tab;
 					return {
-						...s,
-						aiTabs: updatedTabs,
-						...(shouldPointAutoRun
-							? {
-									autoRunFolderPath: subfolderPath!,
-									autoRunSelectedFile: firstDocBase,
-									autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
-								}
-							: {}),
+						...flattenWizardIntoTab(tab, { summary: summaryMessage }),
+						name: tabName,
 					};
-				})
-			);
+				});
+				return {
+					...s,
+					aiTabs: updatedTabs,
+					...(shouldPointAutoRun
+						? {
+								autoRunFolderPath: subfolderPath!,
+								autoRunSelectedFile: firstDocBase,
+								autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+							}
+						: {}),
+				};
+			});
 
 			// Pass the tab explicitly. The hook's internal currentTabId only tracks the
 			// last-touched wizard, and completion clears `tab.wizardState` here regardless -
@@ -1163,7 +1083,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				}, 0);
 			}
 		},
-		[activeSession?.id, setSessions, endInlineWizard, handleAutoRunRefreshRef, setInputValueRef]
+		[activeSessionId, endInlineWizard, handleAutoRunRefreshRef, setInputValueRef]
 	);
 
 	// ========================================================================
@@ -1229,7 +1149,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		if (activeTabLocal) {
 			generateInlineWizardDocuments(undefined, activeTabLocal.id);
 		}
-	}, [activeSession?.id, generateInlineWizardDocuments]);
+	}, [activeSessionId, generateInlineWizardDocuments]);
 
 	// ========================================================================
 	// handleToggleWizardShowThinking
@@ -1239,29 +1159,20 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		if (!currentSession) return;
 		const activeTabLocal = getActiveTab(currentSession);
 		if (!activeTabLocal?.wizardState) return;
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== currentSession.id) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) => {
-						if (tab.id !== activeTabLocal.id) return tab;
-						if (!tab.wizardState) return tab;
-						return {
-							...tab,
-							wizardState: {
-								...tab.wizardState,
-								showWizardThinking: !tab.wizardState.showWizardThinking,
-								thinkingContent: !tab.wizardState.showWizardThinking
-									? ''
-									: tab.wizardState.thinkingContent,
-							},
-						};
-					}),
-				};
-			})
-		);
-	}, [activeSession?.id, setSessions]);
+		updateAiTab(currentSession.id, activeTabLocal.id, (tab) => {
+			if (!tab.wizardState) return tab;
+			return {
+				...tab,
+				wizardState: {
+					...tab.wizardState,
+					showWizardThinking: !tab.wizardState.showWizardThinking,
+					thinkingContent: !tab.wizardState.showWizardThinking
+						? ''
+						: tab.wizardState.thinkingContent,
+				},
+			};
+		});
+	}, [activeSessionId]);
 
 	// ========================================================================
 	// handleWizardLaunchSession - creates session from onboarding wizard
@@ -1271,6 +1182,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const {
 				selectedAgent,
 				directoryPath,
+				additionalDirectories,
 				agentName,
 				generatedDocuments,
 				customPath,
@@ -1363,6 +1275,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				cwd: directoryPath,
 				fullPath: directoryPath,
 				projectRoot: directoryPath,
+				// getHomeDir() reads the module cache the app warmed at startup, so `~`
+				// paths typed in the wizard expand the same way they do in the modals.
+				additionalDirectories: normalizeAdditionalDirectories(additionalDirectories, getHomeDir()),
 				createdAt: Date.now(),
 				isGitRepo,
 				gitBranches,
@@ -1405,6 +1320,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				activeTerminalTabId: null,
 				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 				unifiedClosedTabHistory: [],
+				tabGroups: [],
+				activeGroupId: null,
 				autoRunFolderPath,
 				autoRunSelectedFile,
 				customPath,

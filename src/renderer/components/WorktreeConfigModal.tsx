@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, GitBranch, FolderOpen, Plus, AlertTriangle, Server } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { ModalSubtitle } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import type { Theme, Session, GhCliStatus, SessionWorktreeConfig } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -224,11 +225,15 @@ export function WorktreeConfigModal({
 					className="flex items-center justify-between px-4 py-3 border-b shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-2">
-						<GitBranch className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="font-bold" style={{ color: theme.colors.textMain }}>
+					<div className="flex items-center gap-2 min-w-0">
+						<GitBranch className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+						<h2 className="font-bold shrink-0" style={{ color: theme.colors.textMain }}>
 							Worktree Configuration
 						</h2>
+						{/* Which agent is being configured. This modal no longer force-
+						    activates the agent it was opened for, so the header is the
+						    only thing saying whose config Save will write. */}
+						<ModalSubtitle theme={theme} subtitle={session.name} />
 					</div>
 					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />

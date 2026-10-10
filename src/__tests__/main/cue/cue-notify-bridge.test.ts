@@ -14,37 +14,64 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-const isWebContentsAvailableMock = vi.fn();
-vi.mock('../../../main/utils/safe-send', () => ({
-	isWebContentsAvailable: (win: unknown) => isWebContentsAvailableMock(win),
+// Mock the bridge fan-out leaf so we can assert web-desktop clients receive the
+// toast. The bridge always fires regardless of desktop-window liveness, which is
+// exactly the parity guarantee this migration adds.
+const broadcastBridgeEventMock = vi.fn();
+vi.mock('../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: (...args: unknown[]) => broadcastBridgeEventMock(...args),
 }));
 
 import { emitCueNotifyToast } from '../../../main/cue/cue-notify-bridge';
 
-function fakeWindow(): { win: BrowserWindow; send: ReturnType<typeof vi.fn> } {
+/** A live window: not destroyed, webContents present and not destroyed. */
+function aliveWindow(): { win: BrowserWindow; send: ReturnType<typeof vi.fn> } {
 	const send = vi.fn();
-	const win = { webContents: { send } } as unknown as BrowserWindow;
+	const win = {
+		isDestroyed: () => false,
+		webContents: { isDestroyed: () => false, send },
+	} as unknown as BrowserWindow;
 	return { win, send };
 }
 
+/** A destroyed window: still an object, but no longer sendable. */
+function destroyedWindow(): { win: BrowserWindow; send: ReturnType<typeof vi.fn> } {
+	const send = vi.fn();
+	const win = {
+		isDestroyed: () => true,
+		webContents: { isDestroyed: () => false, send },
+	} as unknown as BrowserWindow;
+	return { win, send };
+}
+
+const EXPECTED_PAYLOAD = {
+	title: 'My Agent',
+	message: 'standup time',
+	color: 'theme',
+	dismissible: false,
+	sessionId: 'agent-1',
+	clickAction: { kind: 'jump-session', sessionId: 'agent-1' },
+};
+
 describe('emitCueNotifyToast', () => {
 	beforeEach(() => {
-		isWebContentsAvailableMock.mockReset().mockReturnValue(true);
+		broadcastBridgeEventMock.mockReset();
 	});
 
-	it('returns false and skips send when mainWindow is null', () => {
-		isWebContentsAvailableMock.mockReturnValue(false);
+	it('fans out to web-desktop bridge clients even when mainWindow is null', () => {
 		const result = emitCueNotifyToast(null, {
 			agentId: 'agent-1',
 			title: 'My Agent',
 			message: 'standup time',
 		});
+		// No desktop renderer to reach, but the bridge still delivers.
 		expect(result).toBe(false);
+		expect(broadcastBridgeEventMock).toHaveBeenCalledTimes(1);
+		expect(broadcastBridgeEventMock).toHaveBeenCalledWith('remote:notifyToast', [EXPECTED_PAYLOAD]);
 	});
 
-	it('returns false when webContents is unavailable', () => {
-		const { win, send } = fakeWindow();
-		isWebContentsAvailableMock.mockReturnValue(false);
+	it('fans out to the bridge even when the desktop window is destroyed', () => {
+		const { win, send } = destroyedWindow();
 		const result = emitCueNotifyToast(win, {
 			agentId: 'agent-1',
 			title: 'My Agent',
@@ -52,10 +79,11 @@ describe('emitCueNotifyToast', () => {
 		});
 		expect(result).toBe(false);
 		expect(send).not.toHaveBeenCalled();
+		expect(broadcastBridgeEventMock).toHaveBeenCalledWith('remote:notifyToast', [EXPECTED_PAYLOAD]);
 	});
 
-	it('sends a remote:notifyToast payload with theme color and jump-session default', () => {
-		const { win, send } = fakeWindow();
+	it('sends to both the desktop renderer and the bridge when the window is alive', () => {
+		const { win, send } = aliveWindow();
 		const result = emitCueNotifyToast(win, {
 			agentId: 'agent-1',
 			title: 'My Agent',
@@ -63,18 +91,12 @@ describe('emitCueNotifyToast', () => {
 		});
 		expect(result).toBe(true);
 		expect(send).toHaveBeenCalledTimes(1);
-		expect(send).toHaveBeenCalledWith('remote:notifyToast', {
-			title: 'My Agent',
-			message: 'standup time',
-			color: 'theme',
-			dismissible: false,
-			sessionId: 'agent-1',
-			clickAction: { kind: 'jump-session', sessionId: 'agent-1' },
-		});
+		expect(send).toHaveBeenCalledWith('remote:notifyToast', EXPECTED_PAYLOAD);
+		expect(broadcastBridgeEventMock).toHaveBeenCalledWith('remote:notifyToast', [EXPECTED_PAYLOAD]);
 	});
 
 	it('marks the toast sticky when sticky: true', () => {
-		const { win, send } = fakeWindow();
+		const { win, send } = aliveWindow();
 		emitCueNotifyToast(win, {
 			agentId: 'agent-1',
 			title: 'Critical',
@@ -86,7 +108,7 @@ describe('emitCueNotifyToast', () => {
 	});
 
 	it('passes through a caller-provided clickAction', () => {
-		const { win, send } = fakeWindow();
+		const { win, send } = aliveWindow();
 		emitCueNotifyToast(win, {
 			agentId: 'agent-1',
 			title: 'My Agent',

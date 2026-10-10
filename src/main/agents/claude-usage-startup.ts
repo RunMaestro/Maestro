@@ -50,6 +50,7 @@ import { getAllSnapshots, resolveConfigDirKey, setSnapshot } from '../stores/cla
 import { getRememberedQuotaAccountKeys, rememberQuotaAccounts } from '../stores/quotaAccountsStore';
 import {
 	effectiveAgentCustomEnvVars,
+	isAccountDirName,
 	resolveAgentBillingCredential,
 } from '../../shared/providerProfiles';
 
@@ -99,13 +100,6 @@ interface SamplingTarget {
 	customEnvVars: Record<string, string>;
 }
 
-const ACCOUNT_DIR_EXCLUDE_RE =
-	/(^|[-_.])(backup|bak|old|archive|archived|stage|local|server)([-_.]|$)/i;
-
-function isLikelyClaudeAccountDirName(name: string): boolean {
-	return name === '.claude' || name.startsWith('.claude-');
-}
-
 /**
  * Discover local Claude Code account directories, mirroring the common
  * `/token-cockpit` setup where each account lives in a separate
@@ -130,8 +124,7 @@ export async function discoverClaudeConfigDirs(homeDir = os.homedir()): Promise<
 		// `~/.claude-gmail` at another directory is a normal way to run two
 		// accounts. The `.claude.json` check below follows the link and settles it.
 		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-		if (!isLikelyClaudeAccountDirName(entry.name)) continue;
-		if (ACCOUNT_DIR_EXCLUDE_RE.test(entry.name)) continue;
+		if (!isAccountDirName(entry.name, '.claude')) continue;
 
 		const dir = path.join(homeDir, entry.name);
 		try {

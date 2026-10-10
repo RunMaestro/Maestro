@@ -16,7 +16,7 @@ import { ipcMain, App, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 import { SshRemoteConfig } from '../../../shared/types';
 import type { MaestroSettings } from './persistence';
 import {
@@ -34,6 +34,8 @@ export interface MarketplaceHandlerDependencies {
 	app: App;
 	/** Settings store for SSH remote configuration lookup */
 	settingsStore?: Store<MaestroSettings>;
+	/** Main window getter, used to bridge manifest-change pushes to web clients */
+	getMainWindow?: () => BrowserWindow | null;
 }
 
 let marketplaceSettingsStore: Store<MaestroSettings> | undefined;
@@ -62,7 +64,8 @@ const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions
  * Register all Marketplace-related IPC handlers.
  */
 export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies): void {
-	const { app, settingsStore } = deps;
+	const { app, settingsStore, getMainWindow } = deps;
+	const safeSend = createSafeSend(getMainWindow ?? (() => null));
 
 	marketplaceSettingsStore = settingsStore;
 
@@ -70,12 +73,9 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 	manifestWatcher?.stop();
 	manifestWatcher = createLocalManifestWatcher(app, () => {
 		logger.info('Local manifest changed, broadcasting refresh event', LOG_CONTEXT);
-		const allWindows = BrowserWindow.getAllWindows();
-		for (const win of allWindows) {
-			if (isWebContentsAvailable(win)) {
-				win.webContents.send('marketplace:manifestChanged');
-			}
-		}
+		// safeSend reaches the desktop renderer (when alive) and always fans out
+		// to web-desktop bridge clients, so mobile/web users see the refresh too.
+		safeSend('marketplace:manifestChanged');
 	});
 
 	app.on('will-quit', () => {

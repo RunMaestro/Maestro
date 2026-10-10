@@ -1,13 +1,28 @@
 import React, { memo } from 'react';
 import type { MutableRefObject } from 'react';
-import { File, Folder } from 'lucide-react';
+import { File, Folder, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
-import type { AtMentionSuggestion } from '../types';
+import {
+	buildMentionAccept,
+	MENTION_CATEGORY_CYCLE,
+	type MentionCategory,
+	type MentionPickerItem,
+} from '../../../hooks/input/useMentionPicker';
+import { getAgentIcon } from '../../../constants/agentIcons';
+import { getAgentDisplayName } from '../../../../shared/agentMetadata';
+import { useSshRemoteNames } from '../../../hooks/remote/useSshRemoteNames';
+import { SshRemotePill } from '../../ui/SshRemotePill';
 
 interface AtMentionPopoverProps {
 	isOpen: boolean;
 	isTerminalMode: boolean;
-	suggestions: AtMentionSuggestion[];
+	/** Unified picker rows for the active category. */
+	items: MentionPickerItem[];
+	/** Per-category totals for the category bar labels. */
+	counts?: Record<MentionCategory, number>;
+	/** Active filter scope. */
+	category: MentionCategory;
+	setCategory?: (category: MentionCategory) => void;
 	selectedIndex: number;
 	filter: string;
 	startIndex: number;
@@ -20,12 +35,52 @@ interface AtMentionPopoverProps {
 	setStartIndex?: (index: number) => void;
 	setSelectedIndex?: (index: number) => void;
 	inputRef: React.RefObject<HTMLTextAreaElement>;
+	/**
+	 * Show the All/Files/Directories/Agents category bar. Defaults to true (InputArea's
+	 * behavior, unchanged). A caller that locks `category` to a single scope with no
+	 * `setCategory` (Group Chat, which has no file mentions) passes `false` so the bar
+	 * doesn't show three permanently-empty, non-functional tabs.
+	 */
+	showCategoryBar?: boolean;
 }
+
+/** Human labels for the category bar segments. */
+const CATEGORY_LABELS: Record<MentionCategory, string> = {
+	all: 'All',
+	files: 'Files',
+	directories: 'Directories',
+	agents: 'Agents',
+};
+
+/** Empty-state copy per category. */
+const EMPTY_LABELS: Record<MentionCategory, string> = {
+	all: 'No matches',
+	files: 'No files',
+	directories: 'No directories',
+	agents: 'No agents available',
+};
+
+/**
+ * Guidance shown for the Agents category when there are genuinely no other
+ * agents to consult (empty filter + zero rows), rather than a filter miss.
+ */
+const NO_OTHER_AGENTS_LABEL =
+	'No other agents available - open another agent in the Left Bar to consult it.';
+
+const ZERO_COUNTS: Record<MentionCategory, number> = {
+	all: 0,
+	files: 0,
+	directories: 0,
+	agents: 0,
+};
 
 export const AtMentionPopover = memo(function AtMentionPopover({
 	isOpen,
 	isTerminalMode,
-	suggestions,
+	items,
+	counts,
+	category,
+	setCategory,
 	selectedIndex,
 	filter,
 	startIndex,
@@ -38,73 +93,223 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 	setStartIndex,
 	setSelectedIndex,
 	inputRef,
+	showCategoryBar = true,
 }: AtMentionPopoverProps) {
-	if (!isOpen || isTerminalMode || suggestions.length === 0) {
+	// Resolved before the early return (hooks can't sit behind a conditional).
+	// One shared, cached lookup labels every SSH row in the list.
+	const sshRemoteNames = useSshRemoteNames();
+
+	// The picker stays mounted while open (even with zero rows) so the category
+	// bar and empty-state row remain visible - it never silently collapses.
+	if (!isOpen || isTerminalMode) {
 		return null;
 	}
 
+	const safeCounts = counts ?? ZERO_COUNTS;
+
+	const acceptItem = (item: MentionPickerItem) => {
+		const accept = buildMentionAccept(inputValue, startIndex, filter, item);
+		setInputValue(accept.value);
+		if (accept.keepOpen) {
+			// Directory drill-in: keep the picker open and re-filter inside it.
+			setFilter?.(accept.nextFilter);
+			setSelectedIndex?.(0);
+		} else {
+			setOpen?.(false);
+			setFilter?.('');
+			setStartIndex?.(-1);
+		}
+		inputRef.current?.focus();
+		// Land the caret right after the inserted token (past its trailing space)
+		// so the user keeps typing seamlessly instead of the caret jumping to the
+		// end of the whole field on a mid-text insertion. Deferred to a frame so it
+		// runs after the controlled value commits.
+		requestAnimationFrame(() => {
+			const el = inputRef.current;
+			if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
+		});
+	};
+
+	const selectCategory = (next: MentionCategory) => {
+		setCategory?.(next);
+		setSelectedIndex?.(0);
+		inputRef.current?.focus();
+	};
+
+	// Distinguish "no other agents exist" (empty filter + zero rows -> actionable
+	// guidance) from a plain filter miss.
+	const emptyLabel =
+		category === 'agents' && !filter ? NO_OTHER_AGENTS_LABEL : EMPTY_LABELS[category];
+
 	return (
 		<div
-			className="absolute bottom-full left-4 right-4 mb-1 rounded-lg border shadow-lg overflow-hidden z-50"
+			className="absolute bottom-full left-4 right-4 mb-1 rounded-lg border shadow-lg overflow-hidden z-50 select-none"
 			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 		>
-			<div
-				className="px-3 py-2 border-b text-xs font-medium"
-				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-			>
-				Files {filter && <span className="opacity-50">matching "{filter}"</span>}
-			</div>
-			<div className="overflow-y-auto max-h-56 scrollbar-thin">
-				{suggestions.map((suggestion, idx) => {
-					const isSelected = idx === selectedIndex;
-					const IconComponent = suggestion.type === 'folder' ? Folder : File;
-
-					return (
-						<button
-							type="button"
-							key={`${suggestion.type}-${suggestion.value}`}
-							ref={(el) => (itemRefs.current[idx] = el)}
-							className={`w-full px-3 py-2 text-left text-sm font-mono flex items-center gap-2 ${isSelected ? 'ring-1 ring-inset' : ''}`}
-							style={
-								{
-									backgroundColor: isSelected ? theme.colors.bgActivity : 'transparent',
-									'--tw-ring-color': theme.colors.accent,
-									color: theme.colors.textMain,
-								} as React.CSSProperties
-							}
-							onClick={() => {
-								const beforeAt = inputValue.substring(0, startIndex);
-								const afterFilter = inputValue.substring(startIndex + 1 + filter.length);
-								setInputValue(beforeAt + '@' + suggestion.value + ' ' + afterFilter);
-								setOpen?.(false);
-								setFilter?.('');
-								setStartIndex?.(-1);
-								inputRef.current?.focus();
-							}}
-							onMouseEnter={() => setSelectedIndex?.(idx)}
-						>
-							<IconComponent
-								className="w-3.5 h-3.5 flex-shrink-0"
+			{/* Category bar: Left/Right cycle these; each shows its live count. */}
+			{showCategoryBar && (
+				<div
+					className="flex items-stretch border-b text-xs"
+					style={{ borderColor: theme.colors.border }}
+				>
+					{MENTION_CATEGORY_CYCLE.map((cat) => {
+						const isActive = cat === category;
+						return (
+							<button
+								type="button"
+								key={cat}
+								onClick={() => selectCategory(cat)}
+								className="flex-1 px-2 py-1.5 flex items-center justify-center gap-1 transition-colors"
 								style={{
-									color: suggestion.type === 'folder' ? theme.colors.warning : theme.colors.textDim,
+									backgroundColor: isActive ? theme.colors.bgActivity : 'transparent',
+									color: isActive ? theme.colors.textMain : theme.colors.textDim,
+									fontWeight: isActive ? 600 : 400,
+									borderBottom: isActive
+										? `2px solid ${theme.colors.accent}`
+										: '2px solid transparent',
 								}}
-							/>
-							<span className="flex-1 truncate">{suggestion.fullPath}</span>
-							{suggestion.source === 'autorun' && (
+							>
+								<span>{CATEGORY_LABELS[cat]}</span>
 								<span
-									className="text-3xs px-1 py-0.5 rounded flex-shrink-0"
+									className="text-2xs px-1 rounded"
 									style={{
-										backgroundColor: `${theme.colors.accent}30`,
-										color: theme.colors.accent,
+										backgroundColor: isActive ? `${theme.colors.accent}30` : 'transparent',
+										color: isActive ? theme.colors.accent : theme.colors.textDim,
+										opacity: safeCounts[cat] === 0 ? 0.4 : 1,
 									}}
 								>
-									Auto Run
+									{safeCounts[cat]}
 								</span>
-							)}
-							<span className="text-2xs opacity-40 flex-shrink-0">{suggestion.type}</span>
-						</button>
-					);
-				})}
+							</button>
+						);
+					})}
+				</div>
+			)}
+
+			<div className="overflow-y-auto max-h-56 scrollbar-thin">
+				{items.length === 0 ? (
+					<div
+						className="px-3 py-3 text-sm italic text-center"
+						style={{ color: theme.colors.textDim }}
+					>
+						{emptyLabel}
+						{filter && <span className="opacity-70"> matching &quot;{filter}&quot;</span>}
+					</div>
+				) : (
+					items.map((item, idx) => {
+						const isSelected = idx === selectedIndex;
+						const rowStyle = {
+							backgroundColor: isSelected ? theme.colors.bgActivity : 'transparent',
+							'--tw-ring-color': theme.colors.accent,
+							color: theme.colors.textMain,
+						} as React.CSSProperties;
+
+						// Agent or group row (positive discriminant narrows to the
+						// agent-suggestion shape, exposing toolType/displayText).
+						if (item.kind === 'agent' || item.kind === 'group') {
+							const isGroup = item.kind === 'group';
+							return (
+								<button
+									type="button"
+									key={`${item.kind}-${item.value}-${idx}`}
+									ref={(el) => (itemRefs.current[idx] = el)}
+									className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 ${isSelected ? 'ring-1 ring-inset' : ''}`}
+									style={rowStyle}
+									onClick={() => acceptItem(item)}
+									onMouseEnter={() => setSelectedIndex?.(idx)}
+								>
+									{isGroup ? (
+										<Users
+											className="w-3.5 h-3.5 flex-shrink-0"
+											style={{ color: theme.colors.accent }}
+										/>
+									) : (
+										<span className="w-4 flex-shrink-0 text-center leading-none">
+											{getAgentIcon(item.toolType ?? '')}
+										</span>
+									)}
+									<span className="flex-1 truncate font-medium">{item.displayText}</span>
+									{/* Where the message will actually run. No pill means local -
+									    the same convention the Left Bar and header use. */}
+									{!isGroup && item.isSshRemote && (
+										<SshRemotePill
+											remoteName={
+												item.sshRemoteId ? sshRemoteNames.get(item.sshRemoteId) : undefined
+											}
+											className="max-w-[140px]"
+										/>
+									)}
+									{!isGroup && item.toolType && (
+										<span className="text-2xs opacity-50 flex-shrink-0">
+											{getAgentDisplayName(item.toolType)}
+										</span>
+									)}
+									{/* Groups expand into their members on accept, so say how many
+									    agents the row is about to insert. */}
+									{isGroup && (
+										<span className="text-2xs opacity-50 flex-shrink-0">
+											{item.memberSessionIds?.length ?? 0}{' '}
+											{item.memberSessionIds?.length === 1 ? 'agent' : 'agents'}
+										</span>
+									)}
+									<span
+										className="text-3xs px-1 py-0.5 rounded flex-shrink-0 uppercase tracking-wide"
+										style={{
+											backgroundColor: isGroup
+												? `${theme.colors.accent}30`
+												: `${theme.colors.textDim}25`,
+											color: isGroup ? theme.colors.accent : theme.colors.textDim,
+										}}
+									>
+										{isGroup ? 'group' : 'agent'}
+									</span>
+								</button>
+							);
+						}
+
+						// File or directory row (positive discriminant narrows to the
+						// file-suggestion shape, exposing fullPath/source).
+						if (item.kind === 'file' || item.kind === 'directory') {
+							const IconComponent = item.kind === 'directory' ? Folder : File;
+							return (
+								<button
+									type="button"
+									key={`${item.kind}-${item.value}-${idx}`}
+									ref={(el) => (itemRefs.current[idx] = el)}
+									className={`w-full px-3 py-2 text-left text-sm font-mono flex items-center gap-2 ${isSelected ? 'ring-1 ring-inset' : ''}`}
+									style={rowStyle}
+									onClick={() => acceptItem(item)}
+									onMouseEnter={() => setSelectedIndex?.(idx)}
+								>
+									<IconComponent
+										className="w-3.5 h-3.5 flex-shrink-0"
+										style={{
+											color:
+												item.kind === 'directory' ? theme.colors.warning : theme.colors.textDim,
+										}}
+									/>
+									<span className="flex-1 truncate">{item.fullPath}</span>
+									{item.source === 'autorun' && (
+										<span
+											className="text-3xs px-1 py-0.5 rounded flex-shrink-0"
+											style={{
+												backgroundColor: `${theme.colors.accent}30`,
+												color: theme.colors.accent,
+											}}
+										>
+											Auto Run
+										</span>
+									)}
+									<span className="text-2xs opacity-40 flex-shrink-0">
+										{item.kind === 'directory' ? 'folder' : 'file'}
+									</span>
+								</button>
+							);
+						}
+
+						return null;
+					})
+				)}
 			</div>
 		</div>
 	);

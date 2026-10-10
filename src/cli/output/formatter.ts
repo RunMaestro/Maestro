@@ -462,6 +462,34 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 			return `${separator}\n${header}\n${separator}\n${prompt}\n${separator}`;
 		}
 
+		case 'goal_start':
+			return `${timeStr} ${c('cyan', '🎯')} ${bold('Starting Goal-Driven Auto Run')} ${dim(
+				truncate((event.goal as string) || '', 60)
+			)}`;
+
+		case 'goal_iteration_start': {
+			const iteration = event.iteration as number;
+			return `${timeStr} ${c('yellow', '⏳')} Iteration ${iteration}`;
+		}
+
+		case 'goal_iteration_complete': {
+			const iteration = event.iteration as number;
+			const progress = event.progress as number;
+			const summary = truncate((event.summary as string) || '', 70);
+			return `${timeStr}    ${c('green', '✓')} Iteration ${iteration} ${bold(`${progress}%`)} ${dim(summary)}`;
+		}
+
+		case 'goal_complete': {
+			const success = event.success as boolean;
+			const finalProgress = event.finalProgress as number;
+			const iterations = event.iterations as number;
+			const reason = event.exitReason as string;
+			const icon = success ? c('green', '✓') : c('yellow', '■');
+			return `${timeStr} ${icon} ${bold('Goal run finished')} ${dim(
+				`(${reason}, ${finalProgress}%, ${iterations} iteration${iterations === 1 ? '' : 's'})`
+			)}`;
+		}
+
 		default:
 			return `${timeStr} ${dim(event.type)}`;
 	}
@@ -848,6 +876,7 @@ export interface DirectorNotesHistoryDisplay {
 		autoCount: number;
 		userCount: number;
 		cueCount: number;
+		agentEntryCount: number;
 		totalCount: number;
 		lookbackDays: number;
 	};
@@ -875,13 +904,13 @@ export function formatDirectorNotesHistory(
 	// Header
 	const period =
 		lookbackDays > 0 ? `last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'all time';
-	lines.push(bold(c('cyan', "DIRECTOR'S NOTES — HISTORY")) + dim(` (${period})`));
+	lines.push(bold(c('cyan', "DIRECTOR'S NOTES - HISTORY")) + dim(` (${period})`));
 	lines.push('');
 
 	// Stats
 	const { stats } = data;
 	lines.push(
-		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue)`)}`
+		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent)`)}`
 	);
 	lines.push(`  ${c('white', 'Showing:')}  ${data.showing} of ${data.total}`);
 	lines.push('');
@@ -906,7 +935,9 @@ export function formatDirectorNotesHistory(
 				? c('blue', '[AUTO]')
 				: entry.type === 'CUE'
 					? c('magenta', '[CUE]')
-					: c('yellow', '[USER]');
+					: entry.type === 'AGENT'
+						? c('cyan', '[AGENT]')
+						: c('yellow', '[USER]');
 		const agent = entry.agentName
 			? c('white', truncate(entry.agentName, 20))
 			: dim(entry.sourceSessionId.slice(0, 8));

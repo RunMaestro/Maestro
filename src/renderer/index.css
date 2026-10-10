@@ -40,6 +40,14 @@ body {
 	-moz-osx-font-smoothing: grayscale;
 }
 
+/* HUD mode: the cadenza overlay window is transparent so the desktop and
+   other apps show through the gaps between floating cards. */
+html.cadenza-hud,
+html.cadenza-hud body,
+html.cadenza-hud #root {
+	background: transparent !important;
+}
+
 /* Placeholder text styling - ensure clear distinction from actual input values */
 /* Uses lower opacity and italic to clearly indicate placeholder state */
 input::placeholder,
@@ -55,23 +63,23 @@ textarea::placeholder {
    Theme tokens (set on :root by useThemeStyles in src/renderer/hooks/ui/
    useThemeStyles.ts):
 
-     --scrollbar-thumb        — idle thumb color (theme `border`)
-     --scrollbar-thumb-hover  — hover thumb color (theme `textDim`)
-     --scrollbar-thumb-active — actively-scrolling thumb (theme `accent`)
-     --scrollbar-track        — track tint (theme `bgActivity`)
+     --scrollbar-thumb        - idle thumb color (theme `border`)
+     --scrollbar-thumb-hover  - hover thumb color (theme `textDim`)
+     --scrollbar-thumb-active - actively-scrolling thumb (theme `accent`)
+     --scrollbar-track        - track tint (theme `bgActivity`)
 
    Three layers, in order of specificity:
 
-   1) Global default (`*::-webkit-scrollbar`) — themes EVERY scrollable
+   1) Global default (`*::-webkit-scrollbar`) - themes EVERY scrollable
       element in the app, including the ~200 inline `overflow: auto`
       containers that don't carry an explicit class. Width 10px, soft theme
       colors. Works on light and dark themes.
 
-   2) `.scrollbar-thin` — slim 6px variant for tight UI areas (sidebars,
+   2) `.scrollbar-thin` - slim 6px variant for tight UI areas (sidebars,
       autocomplete dropdowns, command palettes, the right rail). Used in
       ~50 components. Reuses the same CSS variables.
 
-   3) `.scrollbar-thin.scrolling` / `.scrollbar-thin.fading` — stateful
+   3) `.scrollbar-thin.scrolling` / `.scrollbar-thin.fading` - stateful
       classes toggled by useThemeStyles to brighten the thumb during active
       scrolling and fade it out after 1s of idle. Only fires for elements
       with `.scrollbar-thin` (managed in JS to avoid wiring scroll listeners
@@ -83,7 +91,7 @@ textarea::placeholder {
    useThemeStyles runs).
 */
 
-/* (1) Global default scrollbar — themes every scrollable element */
+/* (1) Global default scrollbar - themes every scrollable element */
 *::-webkit-scrollbar {
 	width: 10px;
 	height: 10px;
@@ -119,7 +127,7 @@ textarea::placeholder {
 	scrollbar-width: thin;
 }
 
-/* (2) Slim variant for tight UI areas — opt-in via .scrollbar-thin */
+/* (2) Slim variant for tight UI areas - opt-in via .scrollbar-thin */
 .scrollbar-thin::-webkit-scrollbar {
 	width: 6px;
 	height: 6px;
@@ -173,7 +181,7 @@ textarea::placeholder {
 	scrollbar-width: none;
 }
 
-/* Hide xterm scrollbar when terminal container is not visible — prevents
+/* Hide xterm scrollbar when terminal container is not visible - prevents
    the xterm-viewport scrollbar from bleeding through behind the AI tab.
    Both overflow and scrollbar-width are needed because Chromium's compositor
    can paint native scrollbars even on visibility:hidden elements. */
@@ -186,7 +194,7 @@ textarea::placeholder {
 	display: none !important;
 }
 
-/* xterm.js viewport scrollbar — match Maestro's thin scrollbar style */
+/* xterm.js viewport scrollbar - match Maestro's thin scrollbar style */
 .xterm-viewport::-webkit-scrollbar {
 	width: 6px;
 	height: 6px;
@@ -391,12 +399,17 @@ textarea::placeholder {
 	}
 }
 
+/* Scrolling stripes for an active progress bar. The stripes live on an
+   oversized ::after that slides by one tile with `transform`, rather than on
+   the bar itself with an animated `background-position`. background-position is
+   not compositable, so the old version repainted the bar every frame for as
+   long as any progress bar was on screen. */
 @keyframes progress-stripe {
 	0% {
-		background-position: 0 0;
+		transform: translateX(0);
 	}
 	100% {
-		background-position: 40px 0;
+		transform: translateX(40px);
 	}
 }
 
@@ -430,7 +443,7 @@ textarea::placeholder {
 
 /* Claude Plan Usage - in-flight refresh sweep (indeterminate progress).
    Wider than the button so the gradient enters from offscreen on the left,
-   passes through, and exits offscreen on the right — reads as a recurring
+   passes through, and exits offscreen on the right - reads as a recurring
    light sweep rather than a strobing flash. */
 @keyframes claude-plan-refresh-sweep {
 	0% {
@@ -484,7 +497,7 @@ textarea::placeholder {
 
 /* Usage Dashboard - Staggered card entrance animation.
    Final keyframe must use `transform: none` (not translateY(0) scale(1)) so
-   the resting state doesn't leave a non-none transform behind — that would
+   the resting state doesn't leave a non-none transform behind - that would
    create a stacking context per card and trap sibling chart tooltips
    (z-50, fixed) underneath later sections. */
 @keyframes card-enter {
@@ -524,7 +537,7 @@ textarea::placeholder {
 
 /* Usage Dashboard - Chart section enter animation.
    Final keyframe uses `transform: none` (not translateY(0)) so the resting
-   state doesn't create a per-section stacking context — otherwise chart
+   state doesn't create a per-section stacking context - otherwise chart
    tooltips (fixed, z-50) inside the first section get trapped underneath
    later sections like SummaryCards. */
 @keyframes dashboard-section-enter {
@@ -548,7 +561,7 @@ textarea::placeholder {
 	opacity: 0;
 }
 
-/* Bouncing dots — three dots that bounce in sequence for loading / thinking */
+/* Bouncing dots - three dots that bounce in sequence for loading / thinking */
 .bounce-dots {
 	display: inline-flex;
 	align-items: center;
@@ -620,6 +633,20 @@ textarea::placeholder {
 
 /* Animated progress bar with stripes for indeterminate state */
 .progress-bar-animated {
+	position: relative;
+	overflow: hidden;
+}
+
+.progress-bar-animated::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	/* One tile wider than the bar, extended in the direction the stripes travel
+	   FROM, so translating by exactly one tile never exposes a gap. */
+	left: -40px;
+	pointer-events: none;
 	background-image: linear-gradient(
 		45deg,
 		rgba(255, 255, 255, 0.15) 25%,
@@ -632,6 +659,7 @@ textarea::placeholder {
 	);
 	background-size: 40px 40px;
 	animation: progress-stripe 1s linear infinite;
+	will-change: transform;
 }
 
 /* Shimmer effect for drag-and-drop */
@@ -658,15 +686,23 @@ textarea::placeholder {
 	}
 }
 
-/* Status indicator glow - subtle box-shadow expansion paired with a colored dot.
-   Set --status-glow-color on the element to control the hue. */
+/* Status indicator glow - a soft breathing halo.
+   Set --status-glow-color on the element to control the hue.
+
+   Implemented as an overlay whose OPACITY animates, not as an animated
+   box-shadow. Chrome cannot composite a box-shadow animation: every frame
+   repaints the element, and this class lands on a full-width transcript card
+   that streams for the length of a turn. The halo now lives on a ::after at a
+   fixed blur, so the whole animation runs on the compositor. The ring is inset
+   because the elements this decorates are `overflow-hidden`, which would clip
+   an outer shadow drawn by a child. */
 @keyframes status-glow {
 	0%,
 	100% {
-		box-shadow: 0 0 4px var(--status-glow-color, currentColor);
+		opacity: 0.45;
 	}
 	50% {
-		box-shadow: 0 0 8px var(--status-glow-color, currentColor);
+		opacity: 1;
 	}
 }
 
@@ -675,7 +711,18 @@ textarea::placeholder {
 }
 
 .animate-status-glow {
+	position: relative;
+}
+
+.animate-status-glow::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow: inset 0 0 8px var(--status-glow-color, currentColor);
 	animation: status-glow 2s ease-in-out infinite;
+	will-change: opacity;
 }
 
 /* Restore list styling for markdown preview prose containers */
@@ -794,7 +841,7 @@ textarea::placeholder {
 	background-color: rgba(0, 0, 0, 0.85);
 }
 
-/* Modal width utilities — scale with the Cmd+= font-size setting via --font-scale
+/* Modal width utilities - scale with the Cmd+= font-size setting via --font-scale
  * (set in useSettings.ts; 14px is the design baseline → scale = 1). Use these
  * instead of w-[Npx] on modal containers so contents that grow with rem
  * (pills, headers, buttons) don't wrap into a fixed-width shell. The 95vw
@@ -818,27 +865,39 @@ textarea::placeholder {
 	width: min(calc(1200px * var(--font-scale, 1)), 95vw);
 }
 
-/* Document Graph - Search highlight animation for matching nodes */
+/* Document Graph - Search highlight animation for matching nodes.
+
+   The ring is drawn once on a ::after overlay and only its opacity and scale
+   animate, both of which the compositor owns. Animating the box-shadow itself
+   repainted every matching node every frame, and a broad query can light up a
+   large share of the graph at once. */
 @keyframes search-highlight-glow {
-	0% {
-		box-shadow:
-			0 0 0 3px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
-			0 4px 12px var(--search-shadow-color, rgba(99, 102, 241, 0.2));
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
 	}
 	50% {
-		box-shadow:
-			0 0 0 5px var(--search-highlight-color, rgba(99, 102, 241, 0.25)),
-			0 4px 16px var(--search-shadow-color, rgba(99, 102, 241, 0.3));
-	}
-	100% {
-		box-shadow:
-			0 0 0 3px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
-			0 4px 12px var(--search-shadow-color, rgba(99, 102, 241, 0.2));
+		opacity: 0.6;
+		transform: scale(1.02);
 	}
 }
 
 .search-highlight {
+	position: relative;
+}
+
+.search-highlight::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow:
+		0 0 0 4px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
+		0 4px 14px var(--search-shadow-color, rgba(99, 102, 241, 0.25));
 	animation: search-highlight-glow 2s ease-in-out infinite;
+	will-change: opacity, transform;
 }
 
 /* The busy wand animates on the <svg> ROOT and never on its <path> children.
@@ -898,6 +957,64 @@ svg.wand-profiling-active {
 
 svg.wand-sparkle-active {
 	animation: wand-breathe 2.4s ease-in-out infinite;
+}
+
+/* ==========================================
+   Two-Axis Console (Model & Effort picker)
+
+   A chromeless overlay: a blurred scrim, and a composition that floats on it
+   with no card behind it. The scrim's blur is what separates the two axes from
+   the transcript underneath, so it replaces the border a dialog would have had.
+   ========================================== */
+
+.maestro-console-scrim {
+	backdrop-filter: blur(6px) saturate(115%);
+	-webkit-backdrop-filter: blur(6px) saturate(115%);
+	animation: maestro-console-scrim-in 160ms ease-out;
+}
+
+.maestro-console-enter {
+	animation: maestro-console-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes maestro-console-scrim-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes maestro-console-in {
+	from {
+		opacity: 0;
+		transform: translateY(10px) scale(0.97);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+/* The keycap's sink is a transform, so it is covered by the reduced-motion
+   transition rule below; the cap still changes color and loses its lip, which
+   is enough to register the press without any movement. */
+.maestro-keycap {
+	transition:
+		transform 90ms ease,
+		box-shadow 90ms ease,
+		background-color 90ms ease,
+		border-color 90ms ease,
+		color 90ms ease;
+}
+
+.maestro-keycap-hint {
+	transition: background-color 120ms ease;
+}
+
+button.maestro-keycap-hint:hover {
+	background-color: rgba(255, 255, 255, 0.07);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1088,7 +1205,7 @@ svg.wand-profiling-active {
  * The Cue PipelineCanvas passes a custom <PipelineConnectionLine> component
  * via `connectionLineComponent` so we render the path ourselves with full
  * control. This rule is a belt-and-suspenders safety net for any ReactFlow
- * surface that falls back to the default ConnectionLine — without it, the
+ * surface that falls back to the default ConnectionLine - without it, the
  * default `stroke: #b1b1b7` is invisible against the dark theme.
  *
  * If the inline style on a custom component sets stroke explicitly, that
@@ -1096,7 +1213,7 @@ svg.wand-profiling-active {
  * only kicks in when nothing else has styled the path.
  */
 .react-flow__connection-path {
-	stroke: #06b6d4; /* CUE_COLOR — keep in sync with shared/cue-pipeline-types.ts */
+	stroke: #06b6d4; /* CUE_COLOR - keep in sync with shared/cue-pipeline-types.ts */
 	stroke-width: 2;
 	stroke-dasharray: 6 3;
 	fill: none;
@@ -1178,6 +1295,25 @@ svg.wand-profiling-active {
 }
 
 /* Below 300px: Hide session name */
+@container header (max-width: 480px) {
+	/* Drop secondary header buttons (Memory Viewer + Agent Sessions) so the
+	 * right group fits - both are still reachable via the Menu drawer. */
+	.header-secondary-btn {
+		display: none !important;
+	}
+}
+
+/*
+ * Tighten the MainPanel header padding on narrow viewports. The container
+ * query above can't restyle its own container, so we drive padding off the
+ * `data-bp` attribute that useViewportBreakpoint writes on <html>.
+ */
+:root[data-bp='xs'] .header-container,
+:root[data-bp='sm'] .header-container {
+	padding-left: 0.5rem !important;
+	padding-right: 0.5rem !important;
+}
+
 @container header (max-width: 300px) {
 	.header-session-name {
 		display: none;
@@ -1341,6 +1477,107 @@ svg.wand-profiling-active {
    ========================================== */
 
 /* ==========================================
+   Status Pill Container Queries
+   ==========================================
+   Progressive disclosure for the status pills docked above the input area
+   (ThinkingStatusPill, AutoRunPill). On narrow widths (phone viewports in the
+   web-desktop build, or a very narrow desktop window) the pill's fixed
+   segments can exceed the row and push the Stop button off-screen. Drop
+   non-essential segments in order so the pill stays on ONE line and Stop is
+   always reachable:
+     1. Claude session ID / tab name link (still in the tooltip)
+     2. Tokens / "Thinking..." segment (the pulsing dot already conveys busy)
+     3. label words ("Elapsed:", "Tasks:", "Goal:", iteration counter)
+   Each segment carries its own leading divider, so hiding one never leaves a
+   double divider behind. */
+.status-pill-container {
+	container-type: inline-size;
+	container-name: statuspill;
+}
+
+@container statuspill (max-width: 480px) {
+	.pill-seg-claude-id {
+		display: none;
+	}
+}
+
+@container statuspill (max-width: 400px) {
+	.pill-seg-tokens {
+		display: none;
+	}
+}
+
+@container statuspill (max-width: 340px) {
+	.pill-label {
+		display: none;
+	}
+}
+
+/* ==========================================
+   End Status Pill Container Queries
+   ========================================== */
+
+/* ==========================================
+   File Explorer Stats Bar Container Queries
+   ==========================================
+   The stats bar at the bottom of the Files panel ("3,356 files, 398 folders /
+   Size: 111 MB") must never wrap to a second line. When the panel is narrow
+   (phone drawer, or a slim desktop Right Bar) swap the label words for icons:
+   the numbers keep their meaning via the leading FileText/Folder/HardDrive
+   icon and each segment's title tooltip. */
+.file-stats-container {
+	container-type: inline-size;
+	container-name: filestats;
+}
+
+/* Icons are hidden while the text labels fit */
+.file-stats-icon {
+	display: none;
+}
+
+@container filestats (max-width: 340px) {
+	.file-stats-label {
+		display: none;
+	}
+	.file-stats-icon {
+		display: inline-block;
+	}
+}
+
+/* ==========================================
+   History Detail Modal - phone layout
+   ==========================================
+   At the xs breakpoint the centered dialog is too cramped: consume the whole
+   viewport instead (no border/rounding, full dvh so the virtual keyboard and
+   browser chrome are respected), tighten footer padding, and collapse the
+   Delete/Prev/Next button labels to their icons so every control stays
+   on-screen. data-bp is set by useViewportBreakpoint on <html>. */
+:root[data-bp='xs'] .history-detail-modal {
+	/* !important: the modal is resizable and sets width/height/max-width/
+	   max-height inline (higher specificity than any class selector), which
+	   would otherwise silently defeat this phone breakpoint override. */
+	width: 100vw !important;
+	max-width: 100vw !important;
+	height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
+	max-height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
+	border-radius: 0;
+	border-width: 0;
+}
+
+:root[data-bp='xs'] .history-detail-modal .hdm-footer {
+	padding-left: 0.75rem;
+	padding-right: 0.75rem;
+}
+
+:root[data-bp='xs'] .history-detail-modal .hdm-btn-label {
+	display: none;
+}
+
+/* ==========================================
    Sidebar Parent-Child Tree Connectors
    ==========================================
    Visually links a parent agent in the sidebar to its expanded worktree
@@ -1448,15 +1685,39 @@ svg.wand-profiling-active {
 		animation: none !important;
 	}
 
-	/* Disable Document Graph search highlight animations */
-	.search-highlight {
+	/* Disable Document Graph search highlight animations. The ring now lives on
+	   a ::after, so the pseudo-element has to be named or it keeps animating. */
+	.search-highlight,
+	.search-highlight::after {
 		animation: none !important;
 	}
 
-	/* Disable status indicator animations */
+	/* Disable status indicator animations. The glow now lives on a ::after, so
+	   the pseudo-element has to be named or its animation keeps running. */
 	.animate-status-pulse,
-	.animate-status-glow {
+	.animate-status-glow,
+	.animate-status-glow::after {
 		animation: none !important;
+	}
+
+	/* The Model & Effort console: no entrance animation, and the wheel snaps
+	   between rows instead of rotating. The selection is still legible - it is
+	   carried by size, opacity, and the accent gate, not by the motion. */
+	.maestro-console-scrim,
+	.maestro-console-enter {
+		animation: none !important;
+	}
+
+	/* The wheel rows and effort stops carry inline transitions, which the
+	   blanket .transition-* reset above cannot reach - they need naming. */
+	.maestro-keycap,
+	.maestro-wheel-row,
+	.maestro-effort-stop {
+		transition: none !important;
+	}
+
+	.maestro-keycap {
+		transform: none !important;
 	}
 }
 
@@ -1492,6 +1753,575 @@ svg.wand-profiling-active {
 
 .code-fence .shiki-host pre.shiki .line {
 	color: unset;
+}
+
+/*
+ * Narrow-viewport (xs / sm) overlay behavior.
+ *
+ * The desktop layout assumes a 3-column flex row. Below 768px the inline
+ * widths squeeze MainPanel to nothing. These rules turn the left and right
+ * sidebars into fixed-position drawers (full height, fixed width, transform
+ * to hide). data-bp is set by useViewportBreakpoint on <html>. data-panel
+ * is set by SessionList / RightPanel root divs. Inline width is overridden
+ * with !important because the components set it via the style prop.
+ */
+/*
+ * App shell height: use dynamic viewport so iOS Safari's collapsible URL bar
+ * and bottom toolbar don't occlude the input area. Falls back to 100vh on
+ * older browsers. The bottom safe-area inset (iPhone home indicator + Safari
+ * bottom bar where it overlays) is reserved as padding so toolbar pills stay
+ * tappable.
+ */
+.maestro-app-shell {
+	height: 100vh;
+	height: 100dvh;
+	padding-bottom: env(safe-area-inset-bottom);
+}
+
+/*
+ * Tri-state left sidebar.
+ *
+ * Closed (data-collapsed='true') keeps the inline 64px status-dot strip so
+ * users can see all sessions at a glance. Hidden (data-hidden='true') drops
+ * the panel entirely - used when the user wants maximum room for the main
+ * content. Hidden state applies at every breakpoint, including desktop.
+ */
+[data-panel='left'][data-hidden='true'] {
+	display: none !important;
+}
+
+/*
+ * Left sidebar on narrow viewports: only the OPEN state floats as a drawer.
+ * Closed state stays inline at its natural 64px width so the collapsed-mode
+ * status-dot strip is always visible.
+ */
+:root[data-bp='xs'] [data-panel='left'][data-collapsed='false'][data-hidden='false'],
+:root[data-bp='sm'] [data-panel='left'][data-collapsed='false'][data-hidden='false'] {
+	position: fixed !important;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: min(85vw, 320px) !important;
+	max-width: 85vw;
+	z-index: 50;
+	transform: translateX(0);
+	transition: transform 200ms ease;
+	box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);
+}
+
+/*
+ * Left sidebar collapsed strip on phones (web-desktop only): the 64px
+ * status-dot strip would permanently eat a sixth of a 390px viewport, so hide
+ * it entirely at xs. The hamburger in MainPanelHeader still reopens the sidebar
+ * (it flips data-collapsed to 'false', which floats the drawer via the rule
+ * above). Scoped to web-desktop so a narrow Electron desktop window keeps its
+ * strip; scoped to xs so the sm breakpoint keeps the inline strip too.
+ */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='true'][data-hidden='false'] {
+	display: none !important;
+}
+
+:root[data-bp='xs'] [data-panel='right'],
+:root[data-bp='sm'] [data-panel='right'] {
+	position: fixed !important;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	width: min(85vw, 320px) !important;
+	max-width: 85vw;
+	z-index: 50;
+	transform: translateX(0);
+	transition: transform 200ms ease;
+	box-shadow: -4px 0 20px rgba(0, 0, 0, 0.4);
+	opacity: 1 !important;
+}
+
+:root[data-bp='xs'] [data-panel='right'][data-open='false'],
+:root[data-bp='sm'] [data-panel='right'][data-open='false'] {
+	transform: translateX(100%);
+	box-shadow: none;
+	pointer-events: none;
+}
+
+.maestro-mobile-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.55);
+	z-index: 40;
+	animation: maestro-fade-in 150ms ease;
+}
+
+/*
+ * Edge-swipe drawer openers have no element. They used to be two invisible
+ * fixed strips here, which sat in the hit-test order above the tab bar and
+ * swallowed taps on its magnifier and first chip. The gesture now rides the
+ * app shell, gated on where the touch starts - see useEdgeSwipeHandlers.
+ */
+
+@keyframes maestro-fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+/*
+ * ============================================================================
+ * Web-desktop mobile groundwork
+ * ============================================================================
+ * Touch/PWA hardening ported from the legacy mobile app (src/web/index.css
+ * ~lines 147-260). Every rule below is scoped under
+ * html[data-runtime='web-desktop'] (the attribute set by
+ * src/web-desktop/bootstrap.ts) so the native Electron desktop app - which
+ * loads this same stylesheet but never sets data-runtime - is unaffected.
+ * Additive only; no existing rule is modified.
+ */
+
+/*
+ * Kill the iOS Safari 300ms double-tap zoom on tappable surfaces. Harmless on
+ * desktop browsers (no double-tap gesture there).
+ */
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] button,
+html[data-runtime='web-desktop'] a {
+	touch-action: manipulation;
+}
+
+/*
+ * Prevent accidental browser pull-to-refresh / overscroll chaining on the
+ * scroll root. `contain` stops the gesture at the app boundary without
+ * disabling normal scrolling inside it.
+ */
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	overscroll-behavior-y: contain;
+}
+
+/*
+ * Never let the page itself be wider than the screen. At xs/sm the Right Bar
+ * is parked just outside the viewport while closed; mobile Chromium can count
+ * that off-screen drawer toward the document width and make the page slide
+ * sideways. iOS already receives the stronger body overflow rule below.
+ */
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body {
+	overflow-x: hidden;
+}
+
+/*
+ * Lift the app shell above the on-screen keyboard. App.tsx sets
+ * `--keyboard-offset` (from useKeyboardVisibility, Visual Viewport API) to the
+ * pixel height the virtual keyboard eats. Because the shell is box-sizing:
+ * border-box with height:100dvh, adding that to the bottom padding shrinks the
+ * content box so the flex column re-lays with the AI input and send controls
+ * sitting just above the keyboard. Defaults to 0px (no keyboard visible, or the
+ * Visual Viewport API is unavailable), so this is inert until a keyboard
+ * appears. Scoped to web-desktop so the native Electron app keeps its plain
+ * safe-area padding.
+ */
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-bottom: calc(env(safe-area-inset-bottom) + var(--keyboard-offset, 0px));
+}
+
+/*
+ * Home-screen web apps on iOS (Add to Home Screen, `black-translucent` status
+ * bar). Two things went wrong there, and both surfaced on the first RC that
+ * made mobile connectivity work:
+ *
+ * 1. The page extends under the status bar, and iOS 26 draws a frosted status
+ *    bar layer over whatever sits there and swallows taps in that band. Nothing
+ *    applied env(safe-area-inset-top), so the Main Panel header, hamburger
+ *    included, sat inside it: dimmed, blurred, untappable. The left-edge swipe
+ *    was the only way to the menu.
+ * 2. The roots (html, body, #root) were `height: 100%`, which resolves to the
+ *    SMALL viewport (100svh, 812pt on an iPhone 16 Pro) while the shell is
+ *    100dvh (874pt). With overflow hidden on the roots, the shell was clipped
+ *    at the status-bar line and a status-bar-tall band of the boot background
+ *    showed under the composer. Measured on the iOS 26.5 simulator.
+ *
+ * --maestro-top-inset is env() where WebKit reports it, and the JS-measured bar
+ * height where it does not (installStandaloneStatusBarInset: WebKit bug 301994
+ * reports env() as 0 and shortens the viewport instead). Browser-mode Safari,
+ * desktop browsers and Electron report 0 for both, so every rule here is inert
+ * outside a home-screen web app.
+ */
+html[data-runtime='web-desktop'] {
+	--maestro-top-inset: max(env(safe-area-inset-top, 0px), var(--maestro-status-bar-inset, 0px));
+}
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] #root {
+	height: 100vh;
+	height: 100dvh;
+}
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-top: var(--maestro-top-inset, 0px);
+}
+/* The floating drawers are position: fixed at top: 0, outside the shell's padding. */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='sm']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'],
+html[data-runtime='web-desktop'][data-bp='sm'] [data-panel='right'] {
+	padding-top: var(--maestro-top-inset, 0px);
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/*
+ * Smooth momentum scrolling on scrollable containers (Tailwind overflow
+ * utilities). `-webkit-overflow-scrolling` is an iOS-only property and is
+ * silently ignored everywhere else.
+ */
+html[data-runtime='web-desktop'] .overflow-auto,
+html[data-runtime='web-desktop'] .overflow-y-auto,
+html[data-runtime='web-desktop'] .overflow-scroll,
+html[data-runtime='web-desktop'] .overflow-y-scroll {
+	-webkit-overflow-scrolling: touch;
+}
+
+/*
+ * iOS rubber-band fix. `@supports (-webkit-touch-callout: none)` matches iOS
+ * Safari only (desktop Safari and other browsers do not support the property),
+ * so this never fires on a laptop web-desktop client. Pin the body so the page
+ * itself cannot rubber-band, and hand scrolling to the app shell as the scroll
+ * container. Mirrors src/web/index.css ~lines 194-208.
+ */
+@supports (-webkit-touch-callout: none) {
+	html[data-runtime='web-desktop'] body {
+		position: fixed;
+		width: 100%;
+		height: 100%;
+		overflow: hidden;
+	}
+
+	html[data-runtime='web-desktop'] .maestro-app-shell {
+		overflow: auto;
+		-webkit-overflow-scrolling: touch;
+	}
+}
+
+/*
+ * Prevent iOS Safari auto-zoom on input focus at phone breakpoints. iOS zooms
+ * the page whenever a focused form control has font-size < 16px; the renderer's
+ * inputs are text-sm (14px). Force 16px only at xs/sm inside web-desktop so the
+ * zoom never triggers, without touching the components' Tailwind classes or the
+ * native desktop app. `!important` guarantees the 16px floor regardless of
+ * utility-class specificity; line-height keeps the taller text readable. The
+ * AI composer has a decorative mention overlay beneath its transparent textarea,
+ * so that overlay receives the same font size or its visible glyphs drift from
+ * the native caret on iOS.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] textarea,
+html[data-runtime='web-desktop'][data-bp='xs'] input[type='text'],
+html[data-runtime='web-desktop'][data-bp='xs'] input[type='search'],
+html[data-runtime='web-desktop'][data-bp='xs'] input:not([type]),
+html[data-runtime='web-desktop'][data-bp='xs'] select,
+html[data-runtime='web-desktop'][data-bp='sm'] textarea,
+html[data-runtime='web-desktop'][data-bp='sm'] input[type='text'],
+html[data-runtime='web-desktop'][data-bp='sm'] input[type='search'],
+html[data-runtime='web-desktop'][data-bp='sm'] input:not([type]),
+html[data-runtime='web-desktop'][data-bp='sm'] select {
+	font-size: 16px !important;
+	line-height: 1.4;
+}
+
+html[data-runtime='web-desktop'][data-bp='xs'] .maestro-input-text-overlay,
+html[data-runtime='web-desktop'][data-bp='sm'] .maestro-input-text-overlay {
+	font-size: 16px !important;
+}
+
+/*
+ * Reveal hover-only row actions on coarse (touch) pointers.
+ *
+ * ~17 components hide their row / header controls behind Tailwind's
+ * `opacity-0 group-hover:opacity-100` pattern. There is no hover on touch, so
+ * those controls (delete, copy, worktree, etc.) are invisible and unreachable
+ * on a phone. Tailwind emits the variant name verbatim in the class attribute,
+ * so an attribute-contains selector matches every one of them at once.
+ *
+ * This is a DELIBERATE blanket rule: rather than touch 17 files, force the
+ * revealed state whenever the primary pointer is coarse. It is gated on
+ * `(pointer: coarse)` (not the web-desktop runtime) so a touchscreen laptop
+ * running the native app benefits too, while mouse users are unaffected.
+ * `!important` guarantees the reveal regardless of utility-class source order.
+ * A component that later wants a bespoke touch affordance can override this
+ * with a more specific rule.
+ */
+@media (pointer: coarse) {
+	[class*='group-hover:opacity-100'] {
+		opacity: 1 !important;
+	}
+}
+
+/*
+ * ============================================================================
+ * Phone layout (web-desktop bundle at the xs breakpoint)
+ * ============================================================================
+ * JS twin: usePhoneLayout() / isPhoneLayout() in hooks/ui/useViewportBreakpoint.ts.
+ * Every rule here matches `html[data-runtime='web-desktop'][data-bp='xs']`, so
+ * a surface that simplifies itself in JS and one that does it in CSS agree
+ * about when a phone is a phone. The native Electron app never sets
+ * data-runtime and is untouched.
+ */
+
+/*
+ * Drawers take the whole screen. A 320px drawer on a 390px phone left a 70px
+ * sliver of main panel showing through that could not be read or used, while
+ * the drawer itself was starved for the width its rows need. The backdrop
+ * behind it is fully covered, so the close-swipe handlers ride the drawer
+ * itself (AppShell wraps each panel) rather than the backdrop.
+ */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	max-width: none;
+	box-shadow: none;
+}
+
+/* A full-width drawer has no edge to drag; the resize grip would only steal taps. */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='left'] .resize-handle,
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'] .resize-handle {
+	display: none;
+}
+
+/*
+ * Long-press is a gesture on tab chips and agent rows (it opens their action
+ * menu), so iOS must not answer the same press with its own callout.
+ */
+html[data-runtime='web-desktop'] [data-tab-id],
+html[data-runtime='web-desktop'] .session-row {
+	-webkit-touch-callout: none;
+}
+
+/*
+ * A tab chip never grows wider than the strip can show. Every chip label is
+ * `whitespace-nowrap` with no cap ("always show the full name; the bar scrolls
+ * when crowded"), which is right beside a mouse and wrong on a 390px phone: a
+ * chip named "Maestro Account Rebalance" came out wider than the span between
+ * the sticky search cluster on the left and the sticky "+" on the right. The
+ * keep-active-visible scroll in TabBar then had to choose an edge, chose the
+ * label's start, and left the close button's other half painted under the "+"
+ * cluster, so a tap on the x landed on the cluster and closed nothing. Capping
+ * the chip lets the label ellipsize in the middle of the strip instead.
+ *
+ * `data-tab-label` marks the one span per chip that may shrink; everything
+ * else in a chip (dot, badge, icon, close) stays `shrink-0`, so the close x is
+ * always the last thing drawn and always inside the chip's own width. 60vw is
+ * comfortably under the ~260px the strip has left after both clusters.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-tab-id] {
+	max-width: 60vw;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-tab-label] {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/*
+ * The close x on a chip is a 12px glyph in an 18px button, the smallest
+ * control on the phone screen and the one a finger misses most. Grow its hit
+ * area without moving anything: a pseudo-element hangs 8px past every edge,
+ * the same trick `.resize-handle::before` uses. The button has no positioned
+ * children, so `position: relative` changes nothing else. Coarse pointer, not
+ * the phone breakpoint, because a touchscreen laptop has the same finger.
+ */
+@media (pointer: coarse) {
+	[data-tab-close] {
+		position: relative;
+	}
+	[data-tab-close]::before {
+		content: '';
+		position: absolute;
+		inset: -8px;
+	}
+}
+
+/*
+ * Bottom sheet chrome, shared by every caller of <PhoneBottomSheet> (the tab
+ * action menu, the composer options sheet). The scrim and the rise animation
+ * belong to the shell; what each caller adds is the styling of its own body.
+ */
+.maestro-phone-sheet {
+	background: rgba(0, 0, 0, 0.45);
+	animation: maestro-fade-in 150ms ease;
+}
+.maestro-phone-sheet__panel {
+	animation: maestro-sheet-up 180ms ease-out;
+}
+@keyframes maestro-sheet-up {
+	from {
+		transform: translateY(24px);
+		opacity: 0.6;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+/*
+ * Tab action sheet body. The menu CONTENT inside is the very same element the
+ * desktop hover popover shows; these rules restyle it for a finger without the
+ * five menu components knowing which shell they are in. `!important` because
+ * the menus set their width, borders, and radius as inline styles for the
+ * anchored shape. Scoped to the TAB sheet on purpose - a sheet whose content
+ * was written for a phone in the first place must not be flattened this way.
+ */
+.maestro-tab-sheet__body > * {
+	min-width: 0 !important;
+	max-width: none !important;
+	width: 100%;
+	border: 0 !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	white-space: normal !important;
+}
+/* Finger-sized action rows; the desktop menu is text-xs / py-1.5 for a mouse. */
+.maestro-tab-sheet__body .p-1 > button {
+	min-height: 44px;
+	font-size: 0.9375rem;
+}
+
+/*
+ * No keyboard on a phone. Every chord badge (⌘K beside a menu row), keycap hint
+ * (the ⌘F in a search box) and arrow-key legend (↑↓ navigate • Enter select)
+ * advertises a key the user does not have, and on a 390px screen they were
+ * also the first things to push a close button off the edge. They all carry
+ * `data-shortcut-hint`, so one rule retires them together. Add the attribute
+ * to any new keyboard-only hint rather than gating it in JSX.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
+	display: none !important;
+}
+
+/*
+ * Readouts leave the main panel header on a phone: the session cost pill, the
+ * context-remaining percentage, and the inert LOCAL badge. The container-query
+ * rungs above drop these too, but only below 350px / 400px, and a phone header
+ * is the full ~390px viewport - so every rung stayed unfired while the row was
+ * already crowded enough to clip the agent name and overlap the badges.
+ *
+ * All three are readouts, not controls, which is what makes them the ones to
+ * drop: cost and context are still on the Usage Dashboard and the context
+ * timeline panel, and the LOCAL badge has no behavior at all (see the pill's
+ * hover handlers in MainPanelHeader). What stays is everything that DOES
+ * something - the sidebar toggle, the git pill's icon and its menu, the tab
+ * strip, and the panel buttons.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-cost-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-context-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-local-badge {
+	display: none;
+}
+
+/*
+ * The pill wrapper keeps its `gap-2` after the badge inside it goes, which
+ * leaves 8px of empty space between the agent name and the next control. It is
+ * only ever empty once its one child is hidden, so `:empty` retires it without
+ * anything having to know which branch rendered.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-git-pill:empty {
+	display: none;
+}
+
+/*
+ * The model and effort pills leave every card on a phone. They are readouts of
+ * what a turn ran under (or what a queued message will run under), and on a
+ * 390px screen they share a footer row with controls that cannot yield: the
+ * queued card's footer is a three-column grid whose outer tracks hold a
+ * `whitespace-nowrap` Force Send button and a cluster of four icon buttons, so
+ * once the row runs out of width the tracks overflow into the centered pills
+ * and the three groups paint on top of each other.
+ *
+ * Dropping the readout is what the other crowded phone rows do (the header's
+ * cost, context and LOCAL badges above). Nothing is lost that the phone can
+ * act on: the pills are static text with a `title` tooltip no touch screen can
+ * open, and every control in those rows stays.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-turn-setting-pill] {
+	display: none;
+}
+
+/*
+ * Modals take the whole screen. Every resizable modal stamps
+ * `data-modal-resize-key` (the palette, Settings, the Usage Dashboard,
+ * Director's Notes, Process Monitor, file search, ...) and sizes itself to a
+ * remembered width and height clamped inside a padded overlay. On a phone that
+ * left a 326px box floating in a 390px viewport with the app peeking around
+ * it, headers wrapping to two lines, and nothing gained by the margin. The
+ * resize grips are hidden too: there is no edge to drag. Small dialogs (confirm,
+ * rename) pass no resize key and keep their natural size.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay,
+html[data-runtime='web-desktop'][data-bp='xs'] :has(> [data-modal-resize-key]) {
+	/*
+	 * The status bar band and the home indicator stay outside the modal.
+	 *
+	 * The second selector is what makes this hold for a modal that draws its
+	 * own overlay instead of going through `<Modal>`: nine of them did, and none
+	 * carried `.modal-overlay`, so the modal below was sized to the visible
+	 * viewport but centred in the layout viewport - a dead band above and below
+	 * it, and its top edge under the iOS status-bar layer, which swallows taps.
+	 * Keying on the resizable modal's PARENT catches every one of them without
+	 * each file having to know the class exists. Direct child only: a
+	 * descendant `:has()` would also pad `#root` and every wrapper up the tree.
+	 */
+	padding: var(--maestro-top-inset, 0px) 0 env(safe-area-inset-bottom, 0px) 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	/*
+	 * Sized to what the user can SEE, not to the layout viewport. On iOS the
+	 * on-screen keyboard slides over the page instead of shrinking it, so
+	 * `100dvh` keeps a full-screen modal at full height with its bottom ~45%
+	 * behind the keys. Both search surfaces autofocus their input, so the
+	 * keyboard is up from the first frame and the results list is born buried:
+	 * typing filters, but the rows the user is trying to scroll through are
+	 * under the keyboard. `--maestro-viewport-height` is `visualViewport.height`,
+	 * republished on every keyboard open and close (standaloneStatusBar.ts);
+	 * `100dvh` is the fallback for a browser with no visualViewport, where the
+	 * two are the same number anyway.
+	 */
+	height: calc(
+		var(--maestro-viewport-height, 100dvh) - var(--maestro-top-inset, 0px) -
+			env(safe-area-inset-bottom, 0px)
+	) !important;
+	max-width: none !important;
+	max-height: none !important;
+	border-radius: 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-resize-handle] {
+	display: none !important;
+}
+
+/*
+ * Panel resize handles (left sidebar, right panel, group-chat panel).
+ *
+ * `touch-action: none` tells the browser NOT to treat a drag on the handle as a
+ * scroll / pan, so the pointer-events drag in useResizablePanel gets the whole
+ * gesture on touch. On coarse pointers the visible handle (a thin ~12px line)
+ * is too small to grab with a finger, so a transparent ::before extends the hit
+ * area outward on both sides without changing the handle's appearance.
+ */
+.resize-handle {
+	touch-action: none;
+}
+@media (pointer: coarse) {
+	.resize-handle::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: -10px;
+		right: -10px;
+	}
 }
 
 /* ============================================================================

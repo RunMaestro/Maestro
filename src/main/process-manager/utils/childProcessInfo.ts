@@ -12,6 +12,28 @@ export interface ChildProcessInfo {
 }
 
 /**
+ * Check whether an OS process with the given PID currently exists.
+ *
+ * Signal 0 performs the permission/existence check without delivering a
+ * signal: it throws ESRCH when no such process exists, and EPERM when the
+ * process exists but belongs to another user. EPERM therefore still means
+ * "alive", so only ESRCH is treated as dead.
+ *
+ * Caveat: PIDs are recycled by the OS, so a stale PID can collide with an
+ * unrelated newer process and report alive. Callers must treat a `true`
+ * result as "cannot prove it is dead" rather than proof of liveness.
+ */
+export function isPidAlive(pid: number | undefined): boolean {
+	if (!pid || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException)?.code === 'EPERM';
+	}
+}
+
+/**
  * Get the direct child processes of a given PID.
  * Returns an array of { pid, command } for each child process.
  * On failure (process exited, permission denied, etc.), returns an empty array.

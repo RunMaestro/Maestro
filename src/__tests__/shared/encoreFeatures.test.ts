@@ -4,11 +4,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_ENCORE_FEATURES, resolveEncoreFeatures } from '../../shared/encoreFeatures';
+import { ENCORE_FEATURE_DEFAULTS, resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 
-describe('DEFAULT_ENCORE_FEATURES', () => {
+describe('ENCORE_FEATURE_DEFAULTS', () => {
 	it('ships every graduated feature on', () => {
-		expect(DEFAULT_ENCORE_FEATURES).toEqual({
+		expect(ENCORE_FEATURE_DEFAULTS).toMatchObject({
 			directorNotes: true,
 			usageStats: true,
 			symphony: true,
@@ -19,14 +19,14 @@ describe('DEFAULT_ENCORE_FEATURES', () => {
 
 describe('resolveEncoreFeatures', () => {
 	it('returns the defaults when nothing is persisted', () => {
-		expect(resolveEncoreFeatures(undefined)).toEqual(DEFAULT_ENCORE_FEATURES);
-		expect(resolveEncoreFeatures(null)).toEqual(DEFAULT_ENCORE_FEATURES);
-		expect(resolveEncoreFeatures({})).toEqual(DEFAULT_ENCORE_FEATURES);
+		expect(resolveEncoreFeatures(undefined)).toEqual(ENCORE_FEATURE_DEFAULTS);
+		expect(resolveEncoreFeatures(null)).toEqual(ENCORE_FEATURE_DEFAULTS);
+		expect(resolveEncoreFeatures({})).toEqual(ENCORE_FEATURE_DEFAULTS);
 	});
 
 	it('honors a flag the user switched off', () => {
 		expect(resolveEncoreFeatures({ maestroCue: false })).toEqual({
-			...DEFAULT_ENCORE_FEATURES,
+			...ENCORE_FEATURE_DEFAULTS,
 			maestroCue: false,
 		});
 	});
@@ -35,7 +35,7 @@ describe('resolveEncoreFeatures', () => {
 		// A settings file written before a flag existed must not read as off.
 		const stored = { symphony: false };
 		expect(resolveEncoreFeatures(stored)).toEqual({
-			...DEFAULT_ENCORE_FEATURES,
+			...ENCORE_FEATURE_DEFAULTS,
 			symphony: false,
 		});
 	});
@@ -46,7 +46,7 @@ describe('resolveEncoreFeatures', () => {
 			usageStats: 0,
 			maestroCue: null,
 		});
-		expect(resolved).toEqual(DEFAULT_ENCORE_FEATURES);
+		expect(resolved).toEqual(ENCORE_FEATURE_DEFAULTS);
 	});
 
 	it('drops keys that are not Encore flags', () => {
@@ -55,12 +55,12 @@ describe('resolveEncoreFeatures', () => {
 			unknown
 		>;
 		expect(resolved.telepathy).toBeUndefined();
-		expect(resolved).toEqual(DEFAULT_ENCORE_FEATURES);
+		expect(resolved).toEqual(ENCORE_FEATURE_DEFAULTS);
 	});
 
 	it('does not mutate the shared default object', () => {
 		const resolved = resolveEncoreFeatures({ symphony: false });
-		expect(resolved).not.toBe(DEFAULT_ENCORE_FEATURES);
-		expect(DEFAULT_ENCORE_FEATURES.symphony).toBe(true);
+		expect(resolved).not.toBe(ENCORE_FEATURE_DEFAULTS);
+		expect(ENCORE_FEATURE_DEFAULTS.symphony).toBe(true);
 	});
 });

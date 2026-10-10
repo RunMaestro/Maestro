@@ -8,6 +8,7 @@ import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWriteImage } from '../utils/clipboard';
 import { logger } from '../utils/logger';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 
 interface LightboxModalProps {
 	image: string;
@@ -241,7 +242,7 @@ export function LightboxModal({
 				</button>
 			)}
 			<img
-				src={image}
+				src={displayImageSrc(image)}
 				alt="Expanded image preview"
 				className="max-w-[90%] max-h-[90%] rounded shadow-2xl"
 				onMouseDown={(e) => e.stopPropagation()}

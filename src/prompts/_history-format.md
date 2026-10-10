@@ -16,7 +16,7 @@ Your session history is stored at `{{AGENT_HISTORY_PATH}}` as a JSON file with t
 Each `entries[]` element has the following fields (optional unless marked required):
 
 - `id` _(required, string)_ - UUID for the entry
-- `type` _(required, `'AUTO' | 'USER' | 'CUE'`)_ - `AUTO` = Auto Run, `USER` = interactive turn, `CUE` = triggered by a Cue subscription
+- `type` _(required, `'AUTO' | 'USER' | 'CUE' | 'AGENT'`)_ - `AUTO` = Auto Run, `USER` = interactive turn, `CUE` = triggered by a Cue subscription, `AGENT` = an ordinary message proxied in from another agent via an `@mention` consult (a normal turn, not automation; see `sourceAgentName` for who asked)
 - `timestamp` _(required, number)_ - Unix milliseconds when the entry was written
 - `summary` _(required, string)_ - short description of the task / response
 - `projectPath` _(required, string)_ - absolute path of the working directory at the time
@@ -24,12 +24,13 @@ Each `entries[]` element has the following fields (optional unless marked requir
 - `agentSessionId` - Maestro agent UUID (the in-app session container)
 - `sessionId` - provider session id (e.g. Claude Code's resume id)
 - `sessionName` - human-readable agent/tab name
+- `sourceAgentName` - on an `AGENT` entry, the display name of the agent that consulted this one
 - `success` - boolean; whether the run completed without error
 - `elapsedTimeMs` - wall-clock duration of the run
 - `contextUsage` - context window usage percentage at completion (0-100)
 - `usageStats` - `{ inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, totalCostUsd }`
-- `tokenSource` - Claude-only, per-turn: `'interactive'` (maestro-p TUI / Max plan quota) or `'api'` (`claude --print` / per-token billing); absent on non-Claude and older entries
-- `tokenSourceReason` - Claude-only, per-turn: `'auto'` (user/usage selected) or `'limit'` (forced API fallback because the Max plan quota was exhausted)
+- `tokenSource` - Claude-only, per-turn: `'interactive'` (maestro-p driving the Claude TUI) or `'api'` (`claude --print`); it names the interface, not the bill (signed in with a Claude plan, both draw from the same plan limits); absent on non-Claude and older entries
+- `tokenSourceReason` - Claude-only, per-turn: `'auto'` (user/usage selected) or `'limit'` (forced `claude --print` fallback because a plan window hit its limit)
 - `validated` - boolean; user marked the entry as reviewed
 - `cueTriggerName`, `cueEventType`, `cueSourceSession` - populated when `type === 'CUE'`; identify the subscription, event, and upstream agent that triggered the run
 - `hostname` - set when history is shared across machines

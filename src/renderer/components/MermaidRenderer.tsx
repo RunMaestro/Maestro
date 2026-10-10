@@ -5,6 +5,7 @@ import type { Theme } from '../types';
 import { logger } from '../utils/logger';
 import { normalizeMermaidSource } from '../../shared/mermaidSource';
 import { expandSvgViewBoxToContent } from '../utils/svgViewBox';
+import { ExpandToViewerButton } from './ZoomViewer/ExpandToViewerButton';
 import {
 	adjustBrightness,
 	blendColors,
@@ -52,6 +53,12 @@ export const MERMAID_SANITIZE_CONFIG = {
 interface MermaidRendererProps {
 	chart: string;
 	theme: Theme;
+	/**
+	 * Show the hover button that opens the diagram in the full-screen pan/zoom
+	 * viewer. Defaults to true. Hosts with their own toolbar (MermaidCodeBlock)
+	 * turn it off and put the button there instead.
+	 */
+	expandable?: boolean;
 }
 
 /**
@@ -385,7 +392,7 @@ const initMermaid = (theme: Theme) => {
 	});
 };
 
-export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
+export function MermaidRenderer({ chart, theme, expandable = true }: MermaidRendererProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
@@ -546,13 +553,24 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 	// appended imperatively and never passes through React's element tree, so it
 	// carries no right-click handler of its own; the app-wide delegated listener
 	// in ImageContextMenuHost resolves it from the click target instead.
+	// The expand button is a sibling, not a child: the effect above clears the
+	// container's children every time it injects a new SVG.
 	return (
-		<div
-			ref={containerRef}
-			className="mermaid-container p-4 rounded-lg overflow-x-auto"
-			style={{
-				backgroundColor: theme.colors.bgActivity,
-			}}
-		/>
+		<div className="relative group">
+			<div
+				ref={containerRef}
+				className="mermaid-container p-4 rounded-lg overflow-x-auto"
+				style={{
+					backgroundColor: theme.colors.bgActivity,
+				}}
+			/>
+			{expandable && svgContent && (
+				<ExpandToViewerButton
+					theme={theme}
+					title="Diagram"
+					resolveTarget={() => containerRef.current?.querySelector('svg')}
+				/>
+			)}
+		</div>
 	);
 }

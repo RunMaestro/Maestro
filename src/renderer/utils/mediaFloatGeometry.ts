@@ -74,6 +74,13 @@ export const MEDIA_FLOAT_MIN_WIDTH = 300;
 export interface Viewport {
 	width: number;
 	height: number;
+	/**
+	 * Pixels at the top of the window the widget must stay below. The custom
+	 * title strip is an OS drag region, and a drag region eats every mouse event
+	 * over it - a player whose header slid under it could no longer be moved,
+	 * minimized, or closed. Defaults to 0 (native title bar, or none).
+	 */
+	top?: number;
 }
 
 /** Everything that decides how tall the frame has to be. */
@@ -125,12 +132,14 @@ export function fitMediaFloatRect(
 	fit: MediaFloatFit,
 	viewport: Viewport
 ): MediaFloatRect {
+	const minTop = Math.max(0, viewport.top ?? 0);
+	const usableHeight = Math.max(1, viewport.height - minTop);
 	const maxWidth = Math.max(1, viewport.width);
 	let width = Math.min(Math.max(desired.width, MEDIA_FLOAT_MIN_WIDTH), maxWidth);
 	let height = mediaFloatHeight(fit, width);
 
-	if (height > viewport.height && fit.kind === 'video') {
-		const stage = Math.max(0, viewport.height - fit.chromeHeight);
+	if (height > usableHeight && fit.kind === 'video') {
+		const stage = Math.max(0, usableHeight - fit.chromeHeight);
 		width = Math.min(
 			width,
 			Math.max(MEDIA_FLOAT_MIN_WIDTH, stage * normalizeMediaAspect(fit.aspect))
@@ -140,13 +149,15 @@ export function fitMediaFloatRect(
 	}
 	// A viewport shorter than the chrome itself wins: a cramped widget beats one
 	// hanging off the screen.
-	height = Math.min(height, Math.max(1, viewport.height));
+	height = Math.min(height, usableHeight);
 
 	return {
 		width: Math.round(width),
 		height: Math.round(height),
 		left: Math.min(Math.max(desired.left, 0), Math.max(0, viewport.width - width)),
-		top: Math.min(Math.max(desired.top, 0), Math.max(0, viewport.height - height)),
+		// Height is capped to the band below `minTop`, so the ceiling can never
+		// drop under the floor and a stored top of 0 is pulled clear of the strip.
+		top: Math.max(minTop, Math.min(desired.top, viewport.height - height)),
 	};
 }
 
@@ -223,4 +234,95 @@ export function sanitizeMediaFloat(value: unknown): PersistedMediaFloat | null {
 		}
 	}
 	return { top: top as number, left: left as number, widths: cleaned };
+}
+
+/**
+ * The player's footprint expressed the way a bottom-right stack is anchored.
+ *
+ * The toast lane and the widget are laid out from opposite corners - toasts
+ * grow upward from `bottom: 0`, the widget is positioned from the top-left - so
+ * comparing them in raw page coordinates means the lane has to know the
+ * viewport. Publishing the footprint in the lane's own terms keeps that
+ * measurement where it is already taken (the widget re-fits itself on every
+ * window resize) instead of making every reader take it again.
+ */
+export interface MediaFloatFootprint {
+	/**
+	 * Distance from the viewport's bottom edge to the widget's TOP edge - how
+	 * tall a bottom-anchored stack has to be before it touches the widget.
+	 */
+	fromBottom: number;
+	/** Distance from the viewport's right edge to the widget's RIGHT edge. */
+	fromRight: number;
+	/** Widget width, so a lane can tell whether it is even in the same column. */
+	width: number;
+	/** Viewport height at the time of measurement, for the lift ceiling. */
+	viewportHeight: number;
+}
+
+/** A bottom-anchored stack that has to share the screen with the widget. */
+export interface MediaFloatBottomLane {
+	/** Distance from the viewport's right edge to the lane's right edge. */
+	fromRight: number;
+	/**
+	 * Lane width. `Infinity` for a stack that spans the viewport (the phone
+	 * toast stack), which always shares a column with the widget.
+	 */
+	width: number;
+	/** Gap left between the lane and the widget when the lane is lifted. */
+	gap: number;
+}
+
+/**
+ * Fraction of the viewport a bottom lane may be lifted by.
+ *
+ * Past this the widget is high enough on screen that raising the lane to clear
+ * it would push the lane into (or off) the top of the window, which costs more
+ * than the overlap does. A big video parked mid-screen is the case this exists
+ * for: nothing can be lifted clear of it, so the lane stays where it is.
+ */
+export const MEDIA_FLOAT_LANE_LIFT_RATIO = 0.5;
+
+/** Footprint of a laid-out widget, in the bottom-right lane's coordinates. */
+export function mediaFloatFootprint(rect: MediaFloatRect, viewport: Viewport): MediaFloatFootprint {
+	return {
+		fromBottom: viewport.height - rect.top,
+		fromRight: viewport.width - (rect.left + rect.width),
+		width: rect.width,
+		viewportHeight: viewport.height,
+	};
+}
+
+/**
+ * How far to raise a bottom-anchored lane so it does not bury the player.
+ *
+ * The floating player and the toast stack both open in the bottom-right corner,
+ * and toasts sit far above the widget in z-order (they have to stay visible over
+ * modals), so an arriving notification simply erased the player - it looked like
+ * the widget had closed itself. Toasts are transient and the widget is where the
+ * user deliberately put it, so the transient one moves.
+ *
+ * Returns 0 when there is nothing to move for: no player, a player in another
+ * column, or a player too high up to clear (see
+ * {@link MEDIA_FLOAT_LANE_LIFT_RATIO}). A partial lift is deliberately not
+ * offered - it would float the lane in mid-air and still overlap.
+ */
+export function mediaFloatLaneLift(
+	footprint: MediaFloatFootprint | null,
+	lane: MediaFloatBottomLane
+): number {
+	if (!footprint) return 0;
+
+	// Same column? Both spans are measured from the right edge, so this is a
+	// plain interval overlap - no viewport width needed.
+	const laneNear = lane.fromRight;
+	const laneFar = lane.fromRight + lane.width;
+	const playerNear = footprint.fromRight;
+	const playerFar = footprint.fromRight + footprint.width;
+	if (playerNear >= laneFar || playerFar <= laneNear) return 0;
+
+	const lift = footprint.fromBottom + lane.gap;
+	if (lift <= 0) return 0;
+	if (lift > footprint.viewportHeight * MEDIA_FLOAT_LANE_LIFT_RATIO) return 0;
+	return Math.round(lift);
 }

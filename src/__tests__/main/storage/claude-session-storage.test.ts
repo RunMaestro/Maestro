@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'fs/promises';
 import { ClaudeSessionStorage } from '../../../main/storage/claude-session-storage';
+import { captureException } from '../../../main/utils/sentry';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
@@ -41,16 +42,22 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock fs/promises
-vi.mock('fs/promises', () => ({
-	default: {
+// Mock fs/promises. Both shapes are needed: the storage imports the default
+// export, while the session-info cache it now lists through uses a namespace
+// import, which only sees the named ones.
+vi.mock('fs/promises', () => {
+	const fsMock = {
 		access: vi.fn(),
 		readdir: vi.fn(),
 		stat: vi.fn(),
 		readFile: vi.fn(),
 		writeFile: vi.fn(),
-	},
-}));
+		mkdir: vi.fn(),
+		rename: vi.fn(),
+		unlink: vi.fn(),
+	};
+	return { default: fsMock, ...fsMock };
+});
 
 // Mock remote-fs utilities
 vi.mock('../../../main/utils/remote-fs', () => ({
@@ -69,6 +76,18 @@ vi.mock('../../../main/utils/statsCache', () => ({
 // Mock pricing
 vi.mock('../../../main/utils/pricing', () => ({
 	calculateClaudeCost: vi.fn(() => 0.05),
+}));
+
+// Mock Sentry so transcript-read noise assertions can inspect the reporter
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
+
+// Listing routes through the shared session-info parse cache, which resolves
+// its directory off `app.getPath` at construction time.
+vi.mock('electron', () => ({
+	app: { getPath: vi.fn().mockReturnValue('/tmp/maestro-test-userdata') },
 }));
 
 describe('ClaudeSessionStorage', () => {
@@ -621,6 +640,75 @@ describe('ClaudeSessionStorage', () => {
 
 			expect(result.messages[0].images).toBeUndefined();
 			expect(result.messages[0].content).toBe('with a url image');
+		});
+	});
+
+	// MAESTRO-YH: transcripts under ~/.claude/projects belong to the Claude CLI.
+	// A tree we can't read (restrictive umask, another user's home) paged one
+	// Sentry event per file per listing. Environmental, so it must stay local.
+	describe('unreadable transcripts are not reported to Sentry', () => {
+		const listOneSessionFile = () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as never);
+			vi.mocked(fs.readdir).mockResolvedValue(['session-1.jsonl'] as never);
+			vi.mocked(fs.stat).mockResolvedValue({
+				size: 1024,
+				mtime: new Date('2026-08-06T02:00:00.000Z'),
+				mtimeMs: Date.parse('2026-08-06T02:00:00.000Z'),
+			} as never);
+		};
+
+		it.each(['EACCES', 'EPERM', 'ENOENT'])(
+			'skips captureException when the read fails with %s',
+			async (code) => {
+				listOneSessionFile();
+				vi.mocked(fs.readFile).mockRejectedValue(
+					Object.assign(new Error(`${code}: permission denied, open 'session-1.jsonl'`), { code })
+				);
+
+				const result = await storage.listSessionsPaginated('/project/path');
+
+				expect(result.sessions).toEqual([]);
+				expect(vi.mocked(captureException)).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected read failure', async () => {
+			listOneSessionFile();
+			vi.mocked(fs.readFile).mockRejectedValue(
+				Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' })
+			);
+
+			const result = await storage.listSessionsPaginated('/project/path');
+
+			expect(result.sessions).toEqual([]);
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
+		});
+
+		// The directory read is the outermost half of the same boundary: a
+		// `~/.claude` tree owned by another user fails here, before any file is
+		// touched. It still throws (reporting it as "zero sessions" would hide
+		// the user's transcripts) but must not page.
+		it.each(['EACCES', 'EPERM'])(
+			'skips captureException when the project directory read fails with %s',
+			async (code) => {
+				vi.mocked(fs.access).mockResolvedValue(undefined as never);
+				vi.mocked(fs.readdir).mockRejectedValue(
+					Object.assign(new Error(`${code}: permission denied, scandir`), { code })
+				);
+
+				await expect(storage.listSessionsPaginated('/project/path')).rejects.toThrow();
+				expect(vi.mocked(captureException)).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected project directory failure', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as never);
+			vi.mocked(fs.readdir).mockRejectedValue(
+				Object.assign(new Error('EIO: i/o error, scandir'), { code: 'EIO' })
+			);
+
+			await expect(storage.listSessionsPaginated('/project/path')).rejects.toThrow();
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
 		});
 	});
 });

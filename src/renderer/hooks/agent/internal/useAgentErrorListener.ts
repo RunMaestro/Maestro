@@ -22,7 +22,7 @@
  */
 
 import { useEffect } from 'react';
-import { useSessionStore } from '../../../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import { useModalStore } from '../../../stores/modalStore';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
 import { notifyToast } from '../../../stores/notificationStore';
@@ -36,13 +36,17 @@ import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
+import { isLimitError } from '../../../../shared/types';
+import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import {
 	scheduleRetryForError,
 	getRetryEntry,
 	failInFlightRetry,
 	persistDispatchSnapshotForAuth,
 } from '../../../stores/retryStore';
+import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
+import { maybeAutoResetCodexUsage } from '../../../services/codexAutoReset';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -56,12 +60,19 @@ export interface UseAgentErrorListenerDeps {
 }
 
 export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
+	const ownedGate = useOwnedSessionGate();
+	const sideEffectGate = useOwnedSideEffectGate();
 	useEffect(() => {
-		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const { openModal } = useModalStore.getState();
 
 		const unsubscribe = window.maestro.process.onAgentError((sessionId: string, error) => {
+			// Window scoping: only the owning window handles the error (and pauses
+			// its batch). Events are broadcast to all windows.
+			if (!ownedGate.current?.(sessionId)) return;
+			// The History entry below is written once app-wide, by the desktop
+			// renderer; a web-desktop client renders the error but never records it.
+			const ownsSideEffects = sideEffectGate.current?.(sessionId) ?? true;
 			const agentError: AgentError = {
 				type: error.type as AgentError['type'],
 				message: error.message,
@@ -72,6 +83,14 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				raw: error.raw,
 				parsedJson: error.parsedJson,
 			};
+
+			// Limit pauses (rate-limit / token-or-credit exhaustion) get auto-resume
+			// bookkeeping seeded here: a zeroed retry counter now, and a best-effort
+			// `limitResetAt` patched in below (asynchronously, never blocking the pause).
+			const isLimit = isLimitError(agentError);
+			if (isLimit) {
+				agentError.resumeAttemptCount = 0;
+			}
 
 			const groupChatParsed = parseGroupChatSessionId(sessionId);
 			if (groupChatParsed.isGroupChat) {
@@ -170,7 +189,15 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			//     loop is parked by pauseBatchOnError further below in this handler.
 			// Skipped for session_not_found (recovered below). Requires a concrete
 			// tab so the retry targets the right turn / countdown.
-			const batchState = deps.getBatchStateRef.current?.(actualSessionId);
+			// A MIRRORED batch belongs to another Maestro client (see
+			// useAutoRunStateMirror). `agent:error` fans out to every client, so
+			// without this the mirroring client would also schedule a batch resume
+			// it cannot perform, and write a second copy of the owner's history
+			// entry. Treat a mirror as no batch at all: the owner handles its own
+			// run, and this client behaves exactly as it did before it could see
+			// the run.
+			const rawBatchState = deps.getBatchStateRef.current?.(actualSessionId);
+			const batchState = rawBatchState?.mirrored === true ? undefined : rawBatchState;
 			const batchOwnsError = !!(batchState?.isRunning && !batchState.errorPaused);
 			const canAutoRetry = !isSessionNotFound && !!tabIdFromSession;
 			const willAutoRetryInteractive =
@@ -216,115 +243,176 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			const batchHandlesErrorUi = isBatchError && batchOwnsError;
 
 			if (!batchHandlesErrorUi) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-
-						// If the error is for a tab the user closed mid-thinking, drop the
-						// orphan entry - there's no tab UI to surface the error on, and the
-						// pill should stop showing this thinking item.
-						const isOrphanError =
-							!!tabIdFromSession &&
-							!!s.orphanedThinkingTabs?.some((tab) => tab.id === tabIdFromSession);
-						if (isOrphanError && s.orphanedThinkingTabs) {
-							const updatedOrphans = s.orphanedThinkingTabs.filter(
-								(tab) => tab.id !== tabIdFromSession
-							);
-							const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-							const stillThinking = anyAiTabStillBusy || updatedOrphans.length > 0;
-							return {
-								...s,
-								orphanedThinkingTabs: updatedOrphans.length > 0 ? updatedOrphans : undefined,
-								state: stillThinking ? s.state : ('idle' as SessionState),
-								busySource: stillThinking ? s.busySource : undefined,
-								thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
-							};
-						}
-
-						const targetTab = tabIdFromSession
-							? s.aiTabs.find((tab) => tab.id === tabIdFromSession)
-							: isBatchError
-								? undefined
-								: getActiveTab(s);
-
-						// For session_not_found, find the most recent user message on the
-						// target tab so the recovery modal can re-send it after grooming.
-						// Without this, the prompt that triggered the dead session is lost.
-						const lastUserPrompt =
-							isSessionNotFound && targetTab
-								? [...targetTab.logs].reverse().find((l) => l.source === 'user')?.text
-								: undefined;
-
-						// Tag the error frame with `renderStyle: 'text-stream'` when the
-						// session is running through maestro-p (interactive TUI) so the
-						// bottom-center pill on the error card reads "TUI" instead of
-						// "API". The same tagger runs on assistant output in
-						// useBatchedSessionUpdates; errors live in their own listener and
-						// need parity here. system-source entries (session_not_found
-						// recovery) stay untagged - they aren't real Claude turns.
-						const isInteractive = s.claudeInteractive?.mode === 'interactive';
-						const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
-						// When auto-retry takes over we log a non-blocking outage marker
-						// instead of an error frame; the marker renders as a live
-						// RetryStatusCard (driven by retryStore) showing attempt count,
-						// elapsed time, next-retry countdown, and Try now / Stop controls.
-						const errorLogEntry: LogEntry = {
-							id: generateId(),
-							timestamp: agentError.timestamp,
-							source: isSessionNotFound || willAutoRetry ? 'system' : 'error',
-							text: canOfferRecovery
-								? 'Session not found, however we can recover it raw or compressed.'
-								: agentError.message,
-							agentError: isSessionNotFound || willAutoRetry ? undefined : agentError,
-							...(willAutoRetry && retryOutageId ? { retryOutageId } : {}),
-							...(isInteractive && !isSessionNotFound && !willAutoRetry
-								? { renderStyle: 'text-stream' as const }
-								: {}),
-							...(canOfferRecovery
-								? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
-								: {}),
-						};
-						// On a continued outage (attempt > 0) the card already lives in the
-						// transcript - just strip the transient progress log, append nothing.
-						const isRetryContinuation = willAutoRetry && !isFirstOutageFailure;
-						const updatedAiTabs = targetTab
-							? s.aiTabs.map((tab) =>
-									tab.id === targetTab.id
-										? {
-												...tab,
-												logs: isRetryContinuation
-													? removeHiddenProgressLog(tab.logs, tab.id)
-													: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
-												agentError: isSessionNotFound ? undefined : agentError,
-												...(isSessionNotFound ? { agentSessionId: null } : {}),
-											}
-										: tab
-								)
-							: s.aiTabs;
-
-						// session_not_found recovers below; auto-retry keeps the session
-						// out of the blocking `error` state (the countdown chip owns the
-						// UI, and the exit listener idles the tab).
-						if (isSessionNotFound || willAutoRetry) {
-							return { ...s, aiTabs: updatedAiTabs };
-						}
-
+				updateSessionWith(actualSessionId, (s) => {
+					// If the error is for a tab the user closed mid-thinking, drop the
+					// orphan entry - there's no tab UI to surface the error on, and the
+					// pill should stop showing this thinking item.
+					const isOrphanError =
+						!!tabIdFromSession &&
+						!!s.orphanedThinkingTabs?.some((tab) => tab.id === tabIdFromSession);
+					if (isOrphanError && s.orphanedThinkingTabs) {
+						const updatedOrphans = s.orphanedThinkingTabs.filter(
+							(tab) => tab.id !== tabIdFromSession
+						);
+						const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+						const stillThinking = anyAiTabStillBusy || updatedOrphans.length > 0;
 						return {
 							...s,
-							agentError,
-							agentErrorTabId: targetTab?.id,
-							agentErrorPaused: true,
-							state: 'error' as SessionState,
-							aiTabs: updatedAiTabs,
+							orphanedThinkingTabs: updatedOrphans.length > 0 ? updatedOrphans : undefined,
+							state: stillThinking ? s.state : ('idle' as SessionState),
+							busySource: stillThinking ? s.busySource : undefined,
+							thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
 						};
-					})
-				);
+					}
+
+					const targetTab = tabIdFromSession
+						? s.aiTabs.find((tab) => tab.id === tabIdFromSession)
+						: isBatchError
+							? undefined
+							: getActiveTab(s);
+
+					// For session_not_found, find the most recent user message on the
+					// target tab so the recovery modal can re-send it after grooming.
+					// Without this, the prompt that triggered the dead session is lost.
+					// Limit pauses reuse the same capture: when the prompt that hit the
+					// limit was a direct send (not a queued item the drainer would replay),
+					// stashing it as `recoveryAction.lastUserPrompt` lets Phase 3 re-fire it.
+					const lastUserPrompt =
+						(isSessionNotFound || isLimit) && targetTab
+							? [...targetTab.logs].reverse().find((l) => l.source === 'user')?.text
+							: undefined;
+
+					// Tag the error frame with `renderStyle: 'text-stream'` when the
+					// session is running through maestro-p (interactive TUI) so the
+					// bottom-center pill on the error card reads "TUI" instead of
+					// "API". The same tagger runs on assistant output in
+					// useBatchedSessionUpdates; errors live in their own listener and
+					// need parity here. system-source entries (session_not_found
+					// recovery) stay untagged - they aren't real Claude turns.
+					const isInteractive = s.claudeInteractive?.mode === 'interactive';
+					const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
+					// Limit pauses keep the normal error log (message + agentError), but
+					// also carry the captured prompt so the auto-resume coordinator can
+					// re-fire a direct send. The `canOfferRecovery` session_not_found flow
+					// owns the special "recover raw or compressed" copy; this only adds data.
+					// When auto-retry takes over (willAutoRetry) we instead log a
+					// non-blocking outage marker; the marker renders as a live
+					// RetryStatusCard (driven by retryStore) showing attempt count,
+					// elapsed time, next-retry countdown, and Try now / Stop controls, and
+					// the early return below keeps the session out of the paused/error
+					// state so this stash stays dormant.
+					const stashLimitPrompt = isLimit && !!lastUserPrompt && !!targetTab;
+					const errorLogEntry: LogEntry = {
+						id: generateId(),
+						timestamp: agentError.timestamp,
+						source: isSessionNotFound || willAutoRetry ? 'system' : 'error',
+						text: canOfferRecovery
+							? 'Session not found, however we can recover it raw or compressed.'
+							: agentError.message,
+						agentError: isSessionNotFound || willAutoRetry ? undefined : agentError,
+						...(willAutoRetry && retryOutageId ? { retryOutageId } : {}),
+						...(isInteractive && !isSessionNotFound && !willAutoRetry
+							? { renderStyle: 'text-stream' as const }
+							: {}),
+						...(canOfferRecovery || stashLimitPrompt
+							? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
+							: {}),
+					};
+					// On a continued outage (attempt > 0) the card already lives in the
+					// transcript - just strip the transient progress log, append nothing.
+					const isRetryContinuation = willAutoRetry && !isFirstOutageFailure;
+					const updatedAiTabs = targetTab
+						? s.aiTabs.map((tab) =>
+								tab.id === targetTab.id
+									? {
+											...tab,
+											logs: isRetryContinuation
+												? removeHiddenProgressLog(tab.logs, tab.id)
+												: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
+											agentError: isSessionNotFound ? undefined : agentError,
+											...(isSessionNotFound ? { agentSessionId: null } : {}),
+										}
+									: tab
+							)
+						: s.aiTabs;
+
+					// session_not_found recovers below; auto-retry keeps the session
+					// out of the blocking `error` state (the countdown chip owns the
+					// UI, and the exit listener idles the tab).
+					if (isSessionNotFound || willAutoRetry) {
+						return { ...s, aiTabs: updatedAiTabs };
+					}
+
+					return {
+						...s,
+						agentError,
+						agentErrorTabId: targetTab?.id,
+						agentErrorPaused: true,
+						state: 'error' as SessionState,
+						aiTabs: updatedAiTabs,
+					};
+				});
+
+				// Best-effort: estimate when the provider limit window reopens and stamp
+				// it onto the paused error so the auto-resume coordinator (Phase 3) can
+				// schedule its probe. Fired AFTER the synchronous pause above so it never
+				// blocks it; a missing bridge / non-Claude provider just leaves it unset.
+				//
+				// Skip SSH-backed sessions: the usage snapshot is sampled on THIS machine
+				// and reflects the local account, not the remote one. Stamping a local
+				// reset time would make isEligibleToProbe defer the probe on the wrong
+				// window; leaving limitResetAt unset routes SSH sessions through the
+				// interval-based fallback that probeAvailability was designed for.
+				const pausedSession = getSessions().find((s) => s.id === actualSessionId);
+				const isSshBacked = !!pausedSession?.sshRemoteId;
+
+				// Automatic Codex usage reset. Gated hard inside the service (Codex
+				// only, opted in only, real limit only, fresh confirmation only, once
+				// per outage), so calling it for every limit error is safe. Fired
+				// after the synchronous pause above and never awaited: a reset that
+				// succeeds is picked up by the existing retry/auto-resume machinery
+				// on its next probe, and one that fails must not disturb the pause.
+				if (pausedSession) {
+					void maybeAutoResetCodexUsage(pausedSession, agentError).catch(() => {
+						// The service reports its own outcome to the user; a throw here
+						// would only mean the attempt never started.
+					});
+				}
+				if (isLimit && !isSshBacked && window.maestro.agents?.getLimitResetAt) {
+					void window.maestro.agents
+						.getLimitResetAt(agentError.agentId)
+						.then((resetAt) => {
+							if (typeof resetAt !== 'number') return;
+							updateSessionWith(actualSessionId, (s) => {
+								// Only patch if THIS error is still the active one (a newer
+								// error would carry a different timestamp).
+								if (s.agentError?.timestamp !== agentError.timestamp) return s;
+								const patchedError: AgentError = { ...s.agentError, limitResetAt: resetAt };
+								return {
+									...s,
+									agentError: patchedError,
+									aiTabs: s.aiTabs.map((tab) =>
+										tab.agentError?.timestamp === agentError.timestamp
+											? { ...tab, agentError: patchedError }
+											: tab
+									),
+								};
+							});
+						})
+						.catch(() => {
+							// Reset estimate is advisory - swallow so a probe failure never
+							// disrupts the pause/notification flow.
+						});
+				}
 			}
 
 			// Pause active Auto Run batch and record history when applicable.
 			if (deps.getBatchStateRef.current && deps.pauseBatchOnErrorRef.current) {
 				const batchState = deps.getBatchStateRef.current(actualSessionId);
-				if (batchState.isRunning && !batchState.errorPaused) {
+				// Mirrored run - the owning client pauses it and writes the history
+				// entry. Doing either here duplicates a persisted record and parks a
+				// loop that does not exist in this client.
+				if (batchState.isRunning && !batchState.errorPaused && batchState.mirrored !== true) {
 					logger.info(
 						'[onAgentError] Pausing active batch run due to error:',
 						undefined,
@@ -338,9 +426,20 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 						currentDoc ? `Processing ${currentDoc}` : undefined
 					);
 
+					// Auto Run auto-resume: the LAST resort, reached only because
+					// `willAutoRetryBatch` above already declined - Agent Resilience did
+					// not recognise this failure, so nothing else is going to un-park
+					// the run. Schedules the run's configured wait and counts the
+					// attempt against its ceiling; when it declines (opted out, a limit
+					// error the limit coordinator owns, or attempts exhausted) the run
+					// stays paused and the ERR badge asks for a human.
+					if (!willAutoRetryBatch) {
+						scheduleAutoResume(actualSessionId, batchState.autoResumePolicy, agentError);
+					}
+
 					const session = getSessions().find((s) => s.id === actualSessionId);
 
-					if (deps.addHistoryEntryRef.current && session) {
+					if (ownsSideEffects && deps.addHistoryEntryRef.current && session) {
 						const errorTitle = getErrorTitleForType(agentError.type);
 						const errorExplanation = [
 							`**Auto Run Error: ${errorTitle}**`,
@@ -438,8 +537,10 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 	}, [
 		deps.activeHiddenToolRef,
 		deps.addHistoryEntryRef,
+		sideEffectGate,
 		deps.getBatchStateRef,
 		deps.pauseBatchOnErrorRef,
+		ownedGate,
 	]);
 
 	// Auth expiry raised outside the streaming path (Cue pipeline runs). Those

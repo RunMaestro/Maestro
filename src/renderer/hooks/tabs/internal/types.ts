@@ -86,15 +86,18 @@ export interface FilePreviewTabHandlersReturn {
 	handleFileTabScrollPositionChange: (tabId: string, scrollTop: number) => void;
 	handleFileTabSearchQueryChange: (tabId: string, searchQuery: string) => void;
 	handleReloadFileTab: (tabId: string) => Promise<void>;
-	handleFileTabNavigateBack: () => Promise<void>;
-	handleFileTabNavigateForward: () => Promise<void>;
-	handleFileTabNavigateToIndex: (index: number) => Promise<void>;
+	// `tabId` defaults to the active file tab. A tiled file pane passes its own id:
+	// focusing a file pane does not set `activeFileTabId`, so the default would
+	// navigate whichever other file tab happens to be active.
+	handleFileTabNavigateBack: (tabId?: string) => Promise<void>;
+	handleFileTabNavigateForward: (tabId?: string) => Promise<void>;
+	handleFileTabNavigateToIndex: (index: number, tabId?: string) => Promise<void>;
 	handleClearFilePreviewHistory: () => void;
 	handleNewFileTab: () => void;
 }
 
 export interface BrowserTabHandlersReturn {
-	handleNewBrowserTab: () => void;
+	handleNewBrowserTab: (options?: { ephemeral?: boolean }) => void;
 	handleOpenBrowserTabAt: (url: string, options?: { title?: string }) => void;
 	handleSelectBrowserTab: (tabId: string) => void;
 	handleCloseBrowserTab: (tabId: string) => void;
@@ -102,7 +105,7 @@ export interface BrowserTabHandlersReturn {
 }
 
 export interface UnifiedTabHandlersReturn {
-	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
+	handleUnifiedTabReorder: (sourceTabId: string, targetTabId: string) => void;
 	handleCloseOtherTabs: (pivotTabId?: string) => void;
 	handleCloseTabsLeft: (pivotTabId?: string) => void;
 	handleCloseTabsRight: (pivotTabId?: string) => void;
@@ -117,7 +120,6 @@ export interface ScrollLogHandlersReturn {
 
 export interface TabHandlersReturn
 	extends
-		TabDerivedState,
 		AITabHandlersReturn,
 		FilePreviewTabHandlersReturn,
 		BrowserTabHandlersReturn,

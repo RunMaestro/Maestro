@@ -10,9 +10,10 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { OverviewTab, type TabFocusHandle } from './OverviewTab';
 import { hasCachedSynopsis } from './AIOverviewTab';
 import { useSettings } from '../../hooks';
-import { useModalStore, selectModalData } from '../../stores/modalStore';
+import { useModalStore, selectModalData, getModalActions } from '../../stores/modalStore';
 import { daysToLookbackHours, formatLookbackSinceDate } from './lookback';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 // Lazy load tab components
 const UnifiedHistoryTab = lazy(() =>
@@ -26,7 +27,7 @@ interface DirectorNotesModalProps {
 	theme: Theme;
 	onClose: () => void;
 	// Session navigation - jumps to an agent's session tab (closes modal first)
-	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
+	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	// File linking props passed through to history detail modal
 	fileTree?: any[];
 	cwd?: string;
@@ -36,10 +37,23 @@ interface DirectorNotesModalProps {
 
 type TabId = 'overview' | 'history' | 'ai-overview';
 
-const TABS: { id: TabId; label: string; icon: React.ElementType; disabledKey?: string }[] = [
-	{ id: 'overview', label: 'Help', icon: HelpCircle },
-	{ id: 'history', label: 'Unified History', icon: History },
-	{ id: 'ai-overview', label: 'AI Overview', icon: Sparkles, disabledKey: 'aiOverview' },
+const TABS: {
+	id: TabId;
+	label: string;
+	/** The label a phone shows, where three full labels do not fit one row. */
+	shortLabel: string;
+	icon: React.ElementType;
+	disabledKey?: string;
+}[] = [
+	{ id: 'overview', label: 'Help', shortLabel: 'Help', icon: HelpCircle },
+	{ id: 'history', label: 'Unified History', shortLabel: 'History', icon: History },
+	{
+		id: 'ai-overview',
+		label: 'AI Overview',
+		shortLabel: 'AI',
+		icon: Sparkles,
+		disabledKey: 'aiOverview',
+	},
 ];
 
 export function DirectorNotesModal({
@@ -63,6 +77,16 @@ export function DirectorNotesModal({
 		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
 	);
 
+	// Settings sits below this modal in the layer stack, so it would open
+	// hidden behind it. Close first, then deep-link to the exact control.
+	const openSetting = useCallback(
+		(settingId: string) => {
+			onClose();
+			getModalActions().openSettings('encore', settingId);
+		},
+		[onClose]
+	);
+
 	// "Director's Notes Since Friday May 8th" - updates live when the
 	// user changes the lookback period in the activity graph. "All time"
 	// suppresses the suffix.
@@ -77,7 +101,7 @@ export function DirectorNotesModal({
 	// Tab content refs for focus management
 	const overviewTabRef = useRef<TabFocusHandle>(null);
 	const historyTabRef = useRef<TabFocusHandle>(null);
-	const aiOverviewContentRef = useRef<HTMLDivElement>(null);
+	const aiOverviewTabRef = useRef<TabFocusHandle>(null);
 
 	// Focus the active tab's content area
 	const focusActiveTab = useCallback(
@@ -87,7 +111,9 @@ export function DirectorNotesModal({
 			requestAnimationFrame(() => {
 				if (target === 'overview') overviewTabRef.current?.focus();
 				else if (target === 'history') historyTabRef.current?.focus();
-				else if (target === 'ai-overview') aiOverviewContentRef.current?.focus();
+				// Focuses the tab's own scroll region, not a wrapper: its table-of-
+				// contents hotkey is handled there, and keys don't travel downward.
+				else if (target === 'ai-overview') aiOverviewTabRef.current?.focus();
 			});
 		},
 		[activeTab]
@@ -112,7 +138,9 @@ export function DirectorNotesModal({
 					? historyTabRef
 					: activeTabRef.current === 'overview'
 						? overviewTabRef
-						: null;
+						: activeTabRef.current === 'ai-overview'
+							? aiOverviewTabRef
+							: null;
 			if (tabRef?.current?.onEscape?.()) return;
 			onCloseRef.current();
 		},
@@ -200,6 +228,11 @@ export function DirectorNotesModal({
 		externalRef: modalRef,
 	});
 
+	// Phone: the title drops its "Since <weekday month day>" tail (it wrapped to
+	// two lines; the activity graph's own axis already shows the window) and the
+	// tabs use their short labels.
+	const phone = usePhoneLayout();
+
 	return createPortal(
 		<div
 			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
@@ -235,14 +268,14 @@ export function DirectorNotesModal({
 					className="flex items-center justify-between px-4 py-3 border-b"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-2">
-						<Clapperboard className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex items-center gap-2 min-w-0">
+						<Clapperboard className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
 						<h2
 							id="director-notes-title"
-							className="text-lg font-semibold"
+							className="text-lg font-semibold truncate"
 							style={{ color: theme.colors.textMain }}
 						>
-							{titleText}
+							{phone ? "Director's Notes" : titleText}
 						</h2>
 					</div>
 
@@ -254,7 +287,7 @@ export function DirectorNotesModal({
 
 				{/* Tab navigation */}
 				<div
-					className="flex items-center gap-1 px-4 py-2 border-b"
+					className="flex items-center gap-1 px-4 py-2 border-b overflow-x-auto no-scrollbar"
 					style={{ borderColor: theme.colors.border }}
 				>
 					{TABS.map((tab) => {
@@ -269,14 +302,14 @@ export function DirectorNotesModal({
 								key={tab.id}
 								onClick={() => !isDisabled && setActiveTab(tab.id)}
 								disabled={isDisabled}
-								title={failure ?? undefined}
-								className={`px-3 py-1.5 rounded text-sm flex items-center gap-2 transition-colors ${isActive ? 'font-semibold' : ''}`}
+								className={`px-3 py-1.5 rounded text-sm flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 ${isActive ? 'font-semibold' : ''}`}
 								style={{
 									backgroundColor: isActive ? theme.colors.accent + '20' : 'transparent',
 									color: isActive ? theme.colors.accent : theme.colors.textDim,
 									opacity: isDisabled ? 0.5 : 1,
 									cursor: isDisabled ? 'default' : 'pointer',
 								}}
+								title={failure ?? tab.label}
 							>
 								{showGenerating ? (
 									<Spinner size={16} />
@@ -285,7 +318,7 @@ export function DirectorNotesModal({
 								) : (
 									<Icon className="w-4 h-4" />
 								)}
-								{tab.label}
+								{phone ? tab.shortLabel : tab.label}
 								{showGenerating && <span className="text-2xs font-normal">generating…</span>}
 								{failure && (
 									<span className="text-2xs font-normal" style={{ color: theme.colors.error }}>
@@ -310,7 +343,13 @@ export function DirectorNotesModal({
 						}
 					>
 						<div className={`h-full ${activeTab === 'overview' ? '' : 'hidden'}`}>
-							<OverviewTab ref={overviewTabRef} theme={theme} shortcuts={shortcuts} />
+							<OverviewTab
+								ref={overviewTabRef}
+								theme={theme}
+								shortcuts={shortcuts}
+								idealEndState={directorNotesSettings.idealEndState}
+								onOpenSetting={openSetting}
+							/>
 						</div>
 						<div className={`h-full ${activeTab === 'history' ? '' : 'hidden'}`}>
 							<UnifiedHistoryTab
@@ -325,12 +364,9 @@ export function DirectorNotesModal({
 								onLookbackChange={setLookbackHours}
 							/>
 						</div>
-						<div
-							ref={aiOverviewContentRef}
-							tabIndex={0}
-							className={`h-full outline-none ${activeTab === 'ai-overview' ? '' : 'hidden'}`}
-						>
+						<div className={`h-full ${activeTab === 'ai-overview' ? '' : 'hidden'}`}>
 							<AIOverviewTab
+								ref={aiOverviewTabRef}
 								theme={theme}
 								onSynopsisReady={handleSynopsisReady}
 								onSynopsisStart={handleSynopsisStart}

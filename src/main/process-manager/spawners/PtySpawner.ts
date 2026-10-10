@@ -141,7 +141,7 @@ export class PtySpawner {
 				ptyProcess,
 				cwd,
 				pid: ptyProcess.pid,
-				isTerminal: true,
+				isTerminal,
 				startTime: Date.now(),
 				command: ptyCommand,
 				args: ptyArgs,
@@ -187,7 +187,7 @@ export class PtySpawner {
 							pid: ptyProcess.pid,
 							dataLength: data.length,
 						});
-						this.bufferManager.emitDataBuffered(sessionId, data);
+						this.bufferManager.emitDataBuffered(sessionId, data, managedProcess);
 					}
 				} else {
 					const managedProc = this.processes.get(sessionId);
@@ -199,7 +199,7 @@ export class PtySpawner {
 					});
 					// Only emit if there's actual content after filtering
 					if (cleanedData.trim()) {
-						this.bufferManager.emitDataBuffered(sessionId, cleanedData);
+						this.bufferManager.emitDataBuffered(sessionId, cleanedData, managedProcess);
 					}
 				}
 			});
@@ -216,7 +216,7 @@ export class PtySpawner {
 				}
 
 				// Flush any remaining buffered data before exit
-				this.bufferManager.flushDataBuffer(sessionId);
+				this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
 				// flushDataBuffer() above synchronously emits 'data', and EventEmitter
 				// runs listeners in-line - a listener that reacts to output by
@@ -241,12 +241,14 @@ export class PtySpawner {
 				});
 				// Forward `signal` so consumers can tell a shell the user exited from
 				// one that was killed out from under them (OOM killer, SIGHUP, crash).
+				// Only settle OUR entry: a successor that already claimed the key must
+				// not be untracked, or the user is left with a process they cannot
+				// stop. Released before the emit so a listener that synchronously
+				// spawns the next process owns the key uncontested.
+				const currentProcess = this.processes.get(sessionId);
+				if (currentProcess && currentProcess !== managedProcess) return;
+				if (currentProcess === managedProcess) this.processes.delete(sessionId);
 				this.emitter.emit('exit', sessionId, exitCode, signal);
-				// Only delete OUR entry - mirrors ExitHandler.handleExit. A successor
-				// that claimed the key during the emit above must not be untracked.
-				if (this.processes.get(sessionId) === managedProcess) {
-					this.processes.delete(sessionId);
-				}
 			});
 
 			logger.debug('[ProcessManager] PTY process created', 'ProcessManager', {

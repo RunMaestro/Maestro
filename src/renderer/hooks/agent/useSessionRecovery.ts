@@ -35,7 +35,10 @@ export interface StartRecoveryOptions {
 
 export interface UseSessionRecoveryDeps {
 	processInputRef: React.MutableRefObject<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+		) => void
 	>;
 }
 
@@ -116,7 +119,7 @@ export function useSessionRecovery(deps: UseSessionRecoveryDeps): UseSessionReco
 				const pendingMergedContext = conversationText
 					? `# Prior Conversation (Session Recovered)
 
-The previous agent session was not found — likely deleted by the provider. Below is the prior conversation on this tab. Use it as context to continue from where things left off.
+The previous agent session was not found - likely deleted by the provider. Below is the prior conversation on this tab. Use it as context to continue from where things left off.
 
 ---
 
@@ -135,7 +138,9 @@ ${conversationText}
 				// Defer one tick so the store update flushes before processInput reads it.
 				await new Promise((resolve) => setTimeout(resolve, 0));
 
-				deps.processInputRef.current(lastUserPrompt);
+				// Pin session/tab from recovery start - the user may have switched focus
+				// during grooming.
+				deps.processInputRef.current(lastUserPrompt, { sessionId, tabId });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Unknown recovery error';
 				setRecoveryError(message);

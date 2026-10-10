@@ -1,0 +1,144 @@
+/**
+ * Web-desktop bootstrap entry.
+ *
+ * 1. Polyfills the few Node/Electron globals the renderer probes at import time
+ *    (process.env, process.versions.electron, process.platform).
+ * 2. Reads server-injected config from window.__MAESTRO_CONFIG__.
+ * 3. Imports the real preload index, which calls contextBridge.exposeInMainWorld
+ *    - our electron-shim contextBridge writes that to window.maestro.
+ * 4. Dynamically imports the real renderer main entry.
+ * 5. Registers the PWA service worker (reusing src/web/utils/serviceWorker.ts).
+ */
+
+import { registerServiceWorker } from '../web/utils/serviceWorker';
+import { detailOf, installLoadFailureHandler, markBooted } from './loadFailure';
+import { installStandaloneStatusBarInset } from '../renderer/utils/standaloneStatusBar';
+
+// Take over the failure policy from index.html's inline listeners as early as
+// possible, so a stale hashed chunk auto-reloads instead of tearing down the
+// page with a network-isolation message. Must run before the renderer mounts.
+installLoadFailureHandler();
+
+declare global {
+	interface Window {
+		process?: {
+			env: Record<string, string | undefined>;
+			versions: Record<string, string>;
+			platform: string;
+			argv?: string[];
+		};
+	}
+}
+
+export function ensureWebProcess(target: Window): void {
+	if (!target.process) {
+		target.process = {
+			env: { NODE_ENV: 'production' },
+			versions: { electron: '0.0.0-web', chrome: '0.0.0', node: '0.0.0' },
+			platform: navigator.userAgent.includes('Mac')
+				? 'darwin'
+				: navigator.userAgent.includes('Win')
+					? 'win32'
+					: 'linux',
+			argv: [],
+		};
+		return;
+	}
+
+	// The shared preload reads process.argv to resolve Electron-only launch
+	// arguments. Browser builds have no argv, so provide the empty Node shape
+	// instead of failing while the preload module evaluates.
+	if (!Array.isArray(target.process.argv)) {
+		target.process.argv = [];
+	}
+}
+
+ensureWebProcess(window);
+
+// Also expose `global` as `window` for legacy code that checks it.
+if (!(globalThis as Record<string, unknown>).global) {
+	(globalThis as Record<string, unknown>).global = globalThis;
+}
+
+// Mark this as the browser (web-desktop) build so CSS can target phone-only
+// rules via html[data-runtime='web-desktop']. The native Electron desktop app
+// loads the same renderer stylesheet but never sets this attribute, so those
+// rules stay inert there. Set before the renderer boots so the very first paint
+// already matches.
+document.documentElement.dataset.runtime = 'web-desktop';
+
+// Home-screen web apps on iOS: publish the status bar height that WebKit stopped
+// reporting through env() so the shell can clear the bar (see the module). Set
+// before the renderer boots for the same reason as the runtime marker above.
+installStandaloneStatusBarInset(window);
+
+interface WebDesktopBootstrapDependencies {
+	preload: () => Promise<unknown>;
+	renderer: () => Promise<unknown>;
+}
+
+export async function bootWebDesktop(
+	target: Window,
+	dependencies: WebDesktopBootstrapDependencies
+): Promise<void> {
+	ensureWebProcess(target);
+	// Run preload first so window.maestro is populated.
+	await dependencies.preload();
+	// Then mount the renderer.
+	await dependencies.renderer();
+}
+
+interface BootFailureWindow {
+	__maestroHandleLoadFailure?: (reason: unknown) => void;
+	__maestroShowBootError?: (title: string, detail: string) => void;
+}
+
+/**
+ * Report a boot that never mounted the renderer.
+ *
+ * It goes through the load-failure policy rather than straight to the error
+ * surface, because the commonest cause is a module fetch that failed for a
+ * moment rather than for good: a Cloudflare quick tunnel answering 429 while
+ * several tabs reload at once, or a stale hashed chunk. The policy reloads once
+ * for those (guarded against looping) - exactly what the user otherwise had to
+ * do by hand - and shows the error for everything else.
+ */
+export function reportBootFailure(target: Window, err: unknown): void {
+	console.error('[bootstrap] boot failed', err);
+	const bootWindow = target as unknown as BootFailureWindow;
+	if (bootWindow.__maestroHandleLoadFailure) {
+		bootWindow.__maestroHandleLoadFailure(err);
+		return;
+	}
+
+	const detail = detailOf(err);
+	// Prefer the shared error surface from index.html (HTML-escaped, styled, and
+	// includes the same-network hint). Fall back to a minimal inline render if
+	// the inline script somehow didn't run.
+	if (bootWindow.__maestroShowBootError) {
+		bootWindow.__maestroShowBootError('Maestro web-desktop failed to load', detail);
+		return;
+	}
+	const root = target.document.getElementById('root');
+	if (root) {
+		root.textContent = `Maestro web-desktop failed to load: ${detail}`;
+	}
+}
+
+void bootWebDesktop(window, {
+	preload: () => import('../main/preload/index'),
+	renderer: () => import('../renderer/main'),
+})
+	.then(() => {
+		// The renderer is mounted. From here on a load failure must not wipe
+		// #root - React's error boundary reports app-level errors in context,
+		// and a stale-chunk failure recovers by reloading instead.
+		markBooted();
+		// Register the PWA service worker once the app is mounted. The server
+		// injects window.__MAESTRO_CONFIG__ inline before any module runs, so the
+		// security token is already available; registerServiceWorker() reads it to
+		// register /<token>/sw.js at scope /<token>/. It swallows its own failures
+		// (unsupported browser, registration error), so this never affects boot.
+		void registerServiceWorker();
+	})
+	.catch((err) => reportBootFailure(window, err));

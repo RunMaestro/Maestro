@@ -19,6 +19,7 @@ import { getConfidenceColor } from '../Wizard/services/wizardPrompts';
 import { formatAgentName } from '../Wizard/shared/wizardHelpers';
 import { Markdown } from '../Markdown';
 import { formatTimestamp } from '../../../shared/formatters';
+import { displayImageSrc } from '../../utils/sessionImageSrc';
 
 /**
  * Message structure for wizard conversations
@@ -146,7 +147,7 @@ export const WizardMessageBubble = React.memo(function WizardMessageBubble({
 						{message.images.map((img, imgIdx) => (
 							<img
 								key={imgIdx}
-								src={img}
+								src={displayImageSrc(img)}
 								alt={`Attached image ${imgIdx + 1}`}
 								className="h-20 rounded border cursor-zoom-in shrink-0"
 								style={{

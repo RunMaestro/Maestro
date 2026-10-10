@@ -10,13 +10,103 @@
 
 /**
  * Normalize a name for use in @mentions.
- * Replaces spaces with hyphens so names can be referenced without quotes.
+ * Replaces spaces with hyphens and drops bracket punctuation so names can be
+ * referenced without quotes.
  *
  * @param name - Original name (may contain spaces)
- * @returns Normalized name with hyphens instead of spaces
+ * @returns Normalized mention-safe name
  */
 export function normalizeMentionName(name: string): string {
-	return name.replace(/\s+/g, '-');
+	return name
+		.normalize('NFKC')
+		.replace(/[()[\]{}]/g, '')
+		.replace(/\s+/g, '-');
+}
+
+/**
+ * Legacy group-chat aliases only replaced whitespace. Keep accepting them so
+ * saved moderator prompts and older chat history can still target agents whose
+ * names contain parentheses.
+ */
+export function normalizeLegacyMentionName(name: string): string {
+	return name.normalize('NFKC').replace(/\s+/g, '-');
+}
+
+const CLOSING_BRACKET_PAIRS: Record<string, string> = {
+	')': '(',
+	']': '[',
+	'}': '{',
+};
+
+const OPENING_BRACKET_PAIRS: Record<string, string> = {
+	'(': ')',
+	'[': ']',
+	'{': '}',
+};
+
+export function stripUnmatchedTrailingClosers(name: string): string {
+	// Determine which brackets are matched by scanning left-to-right with a
+	// per-type opener stack, then drop only trailing closers that have no
+	// matching opener. A positional scan (not global counts) is required so an
+	// unmatched closer earlier in the string can't make a balanced trailing
+	// group look unmatched, e.g. "foo)-bar(1))" must yield "foo)-bar(1)".
+	const matched = new Array<boolean>(name.length).fill(false);
+	const openStacks: Record<string, number[]> = { ')': [], ']': [], '}': [] };
+	for (let i = 0; i < name.length; i++) {
+		const char = name[i];
+		const expectedCloser = OPENING_BRACKET_PAIRS[char];
+		if (expectedCloser) {
+			openStacks[expectedCloser].push(i);
+			continue;
+		}
+		const stack = openStacks[char];
+		if (stack && stack.length > 0) {
+			const openIndex = stack.pop()!;
+			matched[openIndex] = true;
+			matched[i] = true;
+		}
+	}
+
+	let end = name.length;
+	while (end > 0 && CLOSING_BRACKET_PAIRS[name[end - 1]] && !matched[end - 1]) {
+		end--;
+	}
+	return name.slice(0, end);
+}
+
+/**
+ * Drops a trailing Markdown link tail so a mention used as link text resolves.
+ * `[@Client](https://example.com)` is captured as `Client](https` by the mention
+ * scanner (brackets and `(` are allowed for legacy bracketed names); everything
+ * from the `](` link syntax onward can never be part of a real name, so cut it.
+ */
+function stripMarkdownLinkTail(name: string): string {
+	const linkSyntaxIndex = name.indexOf('](');
+	return linkSyntaxIndex === -1 ? name : name.slice(0, linkSyntaxIndex);
+}
+
+export function cleanMentionName(name: string): string {
+	const withoutMarkdown = name.normalize('NFKC').replace(/^[*_`~]+|[*_`~.,;:!?]+$/g, '');
+	return stripUnmatchedTrailingClosers(stripMarkdownLinkTail(withoutMarkdown));
+}
+
+function foldMentionName(name: string): string {
+	return name.toLowerCase();
+}
+
+export function getMentionMatchPriority(mentionedName: string, actualName: string): number {
+	const cleanedMention = cleanMentionName(mentionedName);
+	const foldedMention = foldMentionName(cleanedMention);
+	const foldedActual = foldMentionName(actualName.normalize('NFKC'));
+	const foldedLegacyActual = foldMentionName(normalizeLegacyMentionName(actualName));
+	const foldedSafeActual = foldMentionName(normalizeMentionName(actualName));
+	const foldedSafeMention = foldMentionName(normalizeMentionName(cleanedMention));
+
+	if (foldedMention === foldedActual) return 4;
+	if (foldedMention === foldedLegacyActual) return 3;
+	if (foldedMention === foldedSafeActual) return 2;
+	if (foldedSafeMention === foldedSafeActual) return 1;
+	return 0;
 }
 
 /**
@@ -27,10 +117,76 @@ export function normalizeMentionName(name: string): string {
  * @returns True if they match
  */
 export function mentionMatches(mentionedName: string, actualName: string): boolean {
-	return (
-		mentionedName.toLowerCase() === actualName.toLowerCase() ||
-		mentionedName.toLowerCase() === normalizeMentionName(actualName).toLowerCase()
-	);
+	return getMentionMatchPriority(mentionedName, actualName) > 0;
+}
+
+export function findUniqueMentionMatch<T>(
+	mentionedName: string,
+	items: readonly T[],
+	getName: (item: T) => string
+): T | undefined {
+	let bestPriority = 0;
+	let bestMatches: T[] = [];
+
+	for (const item of items) {
+		const priority = getMentionMatchPriority(mentionedName, getName(item));
+		if (priority === 0) continue;
+
+		if (priority > bestPriority) {
+			bestPriority = priority;
+			bestMatches = [item];
+			continue;
+		}
+
+		if (priority === bestPriority) {
+			bestMatches.push(item);
+		}
+	}
+
+	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+}
+
+/**
+ * Pick the highest-fidelity @mention alias that resolves *uniquely back to this
+ * exact name* among the given peers. Normalized collisions (e.g. "Review Bot
+ * [Linux]" vs "Review Bot (Linux)", which both safe-normalize to
+ * "Review-Bot-Linux") would otherwise advertise an ambiguous alias that
+ * findUniqueMentionMatch refuses to route. Falls back to the safe name when no
+ * single-token alias disambiguates, so the mention safely no-ops instead of
+ * targeting the wrong peer.
+ */
+export function getMentionNameForContext(name: string, peerNames: readonly string[]): string {
+	const candidates = [normalizeMentionName(name), normalizeLegacyMentionName(name)];
+	for (const candidate of candidates) {
+		if (!candidate) continue;
+		if (findUniqueMentionMatch(candidate, peerNames, (peer) => peer) === name) {
+			return candidate;
+		}
+	}
+	return normalizeMentionName(name);
+}
+
+/**
+ * The literal a group row inserts when it is accepted in an `@` picker: every
+ * member's own `@name` token, space-separated, with a trailing space.
+ *
+ * A group is shorthand for the agents inside it, never a message target of its
+ * own, so accepting one EXPANDS it instead of leaving a `@group` token in the
+ * composer. That is what keeps "is this a group or an agent?" from ever
+ * mattering downstream - the sent text only ever names agents. Group Chat, the
+ * Prompt Composer, and the standard AI chat picker all insert through here so
+ * the three cannot drift on the expansion.
+ *
+ * @param memberNames - Names of the group's mentionable members.
+ * @param peerNames - Every mentionable name in the same context, so each member
+ *   gets the alias that resolves uniquely back to it.
+ */
+export function formatGroupMentionExpansion(
+	memberNames: readonly string[],
+	peerNames: readonly string[]
+): string {
+	if (memberNames.length === 0) return '';
+	return memberNames.map((name) => `@${getMentionNameForContext(name, peerNames)}`).join(' ') + ' ';
 }
 
 /**
@@ -40,7 +196,7 @@ export function mentionMatches(mentionedName: string, actualName: string): boole
  * attached to the extracted name and breaks participant matching.
  */
 export function stripMarkdownFormatting(name: string): string {
-	return name.replace(/^[*_`~]+|[*_`~]+$/g, '');
+	return cleanMentionName(name);
 }
 
 /**
@@ -48,16 +204,17 @@ export function stripMarkdownFormatting(name: string): string {
  * Handles markdown-formatted mentions (e.g. **@name**, _@name_).
  *
  * The pattern captures characters after @ excluding whitespace, @, and the
- * punctuation that typically follows a mention (:,;!?()[]{}'"<>). Names with
- * emojis, Unicode, dots, hyphens and underscores survive:
- * @RunMaestro.ai, @my-agent, @✅-autorun-wizard, @日本語.
+ * punctuation that typically follows a mention (:,;!?'"<>). Names with emojis,
+ * Unicode, dots, hyphens, underscores, and the bracket punctuation of legacy
+ * normalized display names survive: @RunMaestro.ai, @my-agent,
+ * @CIA-Agent-(Super-Cool), @日本語.
  *
  * @param text - The text to search for mentions
  * @returns Array of unique names that were mentioned (without @ prefix)
  */
 export function extractAllMentions(text: string): string[] {
 	const mentions: string[] = [];
-	const mentionPattern = /@([^\s@:,;!?()\[\]{}'"<>]+)/g;
+	const mentionPattern = /@([^\s@:,;!?'"<>]+)/g;
 	let match;
 
 	while ((match = mentionPattern.exec(text)) !== null) {
@@ -228,4 +385,53 @@ export interface GroupChatHistoryEntry {
 	cost?: number;
 	/** Full response text (optional, for detail view) */
 	fullResponse?: string;
+}
+
+/**
+ * One message waiting to be delivered to a group chat's moderator.
+ *
+ * Structurally a narrowed `QueuedItem` (the renderer type in
+ * `src/renderer/types/index.ts`), carrying only the fields a group chat send
+ * actually uses. It lives here rather than there because the QUEUE IS OWNED BY
+ * MAIN: the renderer copy was per-client, so a message queued on a phone was
+ * invisible to the desktop and died with the tab that held it. Main cannot
+ * import a renderer module, so the shape has to be shared.
+ *
+ * `failed` is set when a send attempt threw. The item is KEPT rather than
+ * dropped - a queue that silently discards what the user typed is the failure
+ * this whole change exists to end - and the chat is paused so the same failure
+ * is not retried on every subsequent idle.
+ */
+export interface GroupChatQueuedItem {
+	id: string;
+	timestamp: number;
+	text: string;
+	images?: string[];
+	readOnlyMode?: boolean;
+	failed?: boolean;
+	failureReason?: string;
+	/**
+	 * Handed to the moderator and not yet confirmed.
+	 *
+	 * Broadcast so clients can show it, and checked so remove and reorder refuse
+	 * to touch it: an item the moderator already has cannot be un-sent, and
+	 * letting it be deleted mid-flight is how the completion lands on whatever
+	 * item happened to be first instead.
+	 */
+	sending?: boolean;
+}
+
+/**
+ * A group chat's pending sends, as main holds and broadcasts them.
+ *
+ * `paused` is deliberately part of the persisted state rather than a runtime
+ * flag. It is set by Stop All (nobody presses that expecting the room to start
+ * itself again), by a failed send, and by main loading a non-empty queue at
+ * startup (launching the app must not spawn a moderator just to flush a queue
+ * from a previous session). Each of those must survive a restart, or the very
+ * next idle would undo the pause.
+ */
+export interface GroupChatQueueState {
+	items: GroupChatQueuedItem[];
+	paused: boolean;
 }

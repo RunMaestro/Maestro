@@ -29,6 +29,7 @@ import {
 	QuotaAccountPill,
 	QuotaAccountTabs,
 	QuotaAgentCountBadge,
+	QuotaAuthNotice,
 	QuotaBarRow,
 	QuotaPendingRow,
 	QuotaRefreshControls,
@@ -41,6 +42,7 @@ import {
 import { groupAccountKeysByIdentity } from '../../../shared/claudeAccountIdentity';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
+import { useQuotaAccountLogin } from './quota/useQuotaAccountLogin';
 import { buildQuotaSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
 
@@ -84,6 +86,8 @@ interface AccountRowProps {
 	theme: Theme;
 	/** Show this account's agents in the Agents tab. Omit to keep the chip inert. */
 	onShowAgents?: () => void;
+	/** Run the provider login for this account. Offered only while it is logged out. */
+	onLogin?: () => void;
 }
 
 const AccountRow = memo(function AccountRow({
@@ -94,6 +98,7 @@ const AccountRow = memo(function AccountRow({
 	sharedWith,
 	theme,
 	onShowAgents,
+	onLogin,
 }: AccountRowProps) {
 	const shortName = deriveShortName(configDirKey);
 	const isUnauthenticated = snapshot.authState === 'unauthenticated';
@@ -142,21 +147,17 @@ const AccountRow = memo(function AccountRow({
 				// Claude's /usage panel for this CLAUDE_CONFIG_DIR rendered
 				// "Not logged in · Run /login". Surface that as a CTA instead
 				// of bars - the percentages would all be 0 and meaningless.
-				<div
-					className="flex items-center gap-2 px-3 py-2 rounded text-xs"
-					style={{
-						backgroundColor: `${theme.colors.warning ?? theme.colors.accent}15`,
-						color: theme.colors.textMain,
-						border: `1px solid ${theme.colors.warning ?? theme.colors.accent}40`,
-					}}
-					data-testid={`${TEST_ID_PREFIX}-row-${shortName}-unauthenticated`}
-				>
-					<span style={{ color: theme.colors.warning ?? theme.colors.accent }}>●</span>
-					<span>
-						Not logged in. Run <code style={{ color: theme.colors.accent }}>/login</code> in a
-						Claude session that uses this account.
-					</span>
-				</div>
+				<QuotaAuthNotice
+					theme={theme}
+					message={
+						<>
+							Not logged in. Run <code style={{ color: theme.colors.accent }}>/login</code> in a
+							Claude session that uses this account.
+						</>
+					}
+					testId={`${TEST_ID_PREFIX}-row-${shortName}-unauthenticated`}
+					onLogin={onLogin}
+				/>
 			) : (
 				<>
 					<QuotaBarRow
@@ -302,6 +303,8 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		refreshHotkey,
 	});
 
+	const startLogin = useQuotaAccountLogin('claude-code', () => void handleRefresh());
+
 	const renderAccount = useCallback(
 		(configDirKey: string) => {
 			const shortName = deriveShortName(configDirKey);
@@ -317,6 +320,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					sharedWith={sharedAccountNames[configDirKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(configDirKey) : undefined}
+					onLogin={() => startLogin(configDirKey)}
 				/>
 			) : (
 				<QuotaPendingRow
@@ -364,6 +368,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			lastSampledAtMs,
 			sharedAccountNames,
 			onShowAccountAgents,
+			startLogin,
 		]
 	);
 
@@ -379,7 +384,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 						Claude Plan Usage
 					</h3>
 				</div>
-				<div className="flex flex-wrap items-center justify-end gap-2">
+				<div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
 					{showAllAccounts && hiddenVisibleCount > 0 && (
 						<QuotaShowAllToggle
 							theme={theme}
@@ -477,6 +482,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					latestSampledAtMs={lastSampledAtMs}
 					sharedWith={sharedAccountNames[effectiveSelectedKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
+					onLogin={() => startLogin(effectiveSelectedKey)}
 				/>
 			) : effectiveSelectedKey ? (
 				// Account is configured but no snapshot in the store yet - guide

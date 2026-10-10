@@ -45,8 +45,17 @@ vi.mock('../../../renderer/stores/settingsStore', () => ({
 // Mock sessionStore
 const mockSessions: any[] = [];
 
+function mockSessionStoreState() {
+	return { sessions: mockSessions };
+}
+
 vi.mock('../../../renderer/stores/sessionStore', () => ({
-	useSessionStore: vi.fn((selector: (s: any) => any) => selector({ sessions: mockSessions })),
+	useSessionStore: Object.assign(
+		vi.fn((selector: (s: any) => any) => selector(mockSessionStoreState())),
+		{
+			getState: vi.fn(() => mockSessionStoreState()),
+		}
+	),
 }));
 
 // Mock modalStore
@@ -151,8 +160,9 @@ describe('useAutoRunAchievements', () => {
 
 		// Re-wire store mocks to current mockSessions reference
 		(useSessionStore as any).mockImplementation((selector: (s: any) => any) =>
-			selector({ sessions: mockSessions })
+			selector(mockSessionStoreState())
 		);
+		(useSessionStore as any).getState = vi.fn(() => mockSessionStoreState());
 		(useSettingsStore as any).mockImplementation((selector: (s: any) => any) =>
 			selector({ autoRunStats: mockAutoRunStats, settingsLoaded: true })
 		);
@@ -623,11 +633,12 @@ describe('useAutoRunAchievements', () => {
 
 			const callsBefore = mockUpdateUsageStats.mock.calls.length;
 
-			// Mutate sessions and force rerender
+			// Mutate sessions and force rerender (new usagePeaksKey via selector)
 			mockSessions.push(createMockSession({ id: 's1' }));
 			(useSessionStore as any).mockImplementation((selector: (s: any) => any) =>
-				selector({ sessions: [...mockSessions] })
+				selector(mockSessionStoreState())
 			);
+			(useSessionStore as any).getState = vi.fn(() => mockSessionStoreState());
 
 			rerender();
 

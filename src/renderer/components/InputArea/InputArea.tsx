@@ -7,19 +7,27 @@ import {
 	selectTerminalComposerValue,
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
+import { ConcertoCreationPipeline } from '../ConcertoCreationPipeline';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
+import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
+import { getActiveTab } from '../../utils/tabHelpers';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
 import { ExecutionQueueIndicator } from '../ExecutionQueueIndicator';
 import { ContextWarningSash } from '../ContextWarningSash';
 import { SummarizeProgressOverlay } from '../SummarizeProgressOverlay';
 import { WizardInputPanel } from '../InlineWizard';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
-import { useAgentCapabilities, useScrollIntoView } from '../../hooks';
+import { useAgentCapabilities, useScrollIntoView, useVoiceInput } from '../../hooks';
+import { useThinkingItems } from '../../hooks/session/useThinkingItems';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSlashCommands } from '../../utils/search';
 import { InputTextarea } from './components/InputTextarea';
 import { NotificationSendControls } from './components/NotificationSendControls';
+import { PhoneComposerHandle } from './components/PhoneComposerHandle';
 import { StagedImagesStrip } from './components/StagedImagesStrip';
 import { ToolbarControls } from './components/ToolbarControls';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { useInputAreaAutosize } from './hooks/useInputAreaAutosize';
 import { useInputAreaTextChange } from './hooks/useInputAreaTextChange';
 import { useModelEffortMenus } from './hooks/useModelEffortMenus';
@@ -31,6 +39,8 @@ import type { InputAreaProps } from './types';
 import { filterCommandHistory, getCurrentCommandHistory } from './utils/commandHistory';
 import { resolveCommandCwd } from '../../services/shellCommand';
 import { CommandModeBar } from './components/CommandModeBar';
+import { MentionRoutingBar } from './components/MentionRoutingBar';
+import { useMentionRouting } from './hooks/useMentionRouting';
 import { AiCommandProposal } from './components/AiCommandProposal';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
@@ -40,6 +50,9 @@ import {
 	moveStagedImage,
 	renumberScreenshotReferences,
 } from '../../utils/stagedImageOrder';
+
+/** localStorage key for the phone composer fold (see PhoneComposerHandle). */
+export const PHONE_COMPOSER_COLLAPSED_KEY = 'phone.composer.collapsed';
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -85,17 +98,18 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionFilter,
 		atMentionStartIndex = -1,
 		setAtMentionStartIndex,
-		atMentionSuggestions = [],
+		atMentionItems = [],
+		atMentionCounts,
+		atMentionCategory = 'all',
+		setAtMentionCategory,
 		selectedAtMentionIndex = 0,
 		setSelectedAtMentionIndex,
-		thinkingItems = [],
 		namedSessions,
 		onSessionClick,
 		autoRunState,
 		onStopAutoRun,
 		onOpenQueueBrowser,
 		tabReadOnlyMode = false,
-		onToggleTabReadOnlyMode,
 		tabSaveToHistory = false,
 		onToggleTabSaveToHistory,
 		onOpenPromptComposer,
@@ -139,6 +153,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onEffortChange,
 	} = props;
 
+	// Self-source thinking items with a narrow store equality so App/MainPanel
+	// are not re-rendered on every streaming log flush.
+	const ownsSession = useWindowContextOptional()?.ownsSession;
+	const thinkingItems = useThinkingItems(ownsSession);
+
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
 	const {
@@ -179,7 +198,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	}, [isResumingSession, hasCapability, commandMode]);
 
 	// PERF: Memoize mode-related derived state
-	const { isReadOnlyMode, showQueueingBorder, isSteeringDestination } = useMemo(() => {
+	// `isReadOnlyMode` stays off the destructure: rc's ToolbarControls reads the
+	// read-only state itself rather than taking it as a prop, so main's binding
+	// has no consumer here and would only be an unused local.
+	const { showQueueingBorder } = useMemo(() => {
 		// Check if we're in read-only mode (manual toggle only - Claude will be in plan mode)
 		// NOTE: Auto Run no longer forces read-only mode. Instead:
 		// - Yellow border shows during Auto Run to indicate queuing will happen for write messages
@@ -193,10 +215,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		return {
 			isReadOnlyMode: readOnly,
 			showQueueingBorder: readOnly || autoRunActive,
-			// Write-mode message during a run = a steering note for the next task
-			// (see useInputProcessing). Read-only keeps its own meaning: a parallel
-			// question that runs right now, so it is NOT steering.
-			isSteeringDestination: autoRunActive && !readOnly,
 		};
 	}, [tabReadOnlyMode, isAutoModeActive, session.inputMode]);
 
@@ -221,6 +239,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// noise, and a `$` in front of "delete the build output" is a lie.
 	const isAiCommandDraft = !isTerminalMode && commandMode === 'ai';
 	const isShellInput = isTerminalMode || isShellCommandDraft;
+	// How the draft's @agent mentions would run if sent now. Plain AI messages
+	// only: a command-mode draft is a shell line, not a message to route.
+	const mentionRouting = useMentionRouting(
+		inputValue,
+		session.id,
+		session.inputMode === 'ai' && !isTerminalMode && !isShellCommandDraft && !isAiCommandDraft
+	);
 
 	// The in-flight suggestion / proposed command for THIS tab, if any. Parked
 	// per tab, so switching away and back finds the same card waiting.
@@ -236,6 +261,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const aiCommandModel = aiCommandEntry ? aiCommandEntry.model : turnModel;
 	const aiCommandEffort = aiCommandEntry ? aiCommandEntry.effort : turnEffort;
 
+	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
 	// Non-reactive store handles for the change handler below.
 	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
 	const getAiValueAtCallTime = useMemo(() => () => useComposerInputStore.getState().aiValue, []);
@@ -311,7 +337,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
 		atMentionOpen,
 		selectedAtMentionIndex,
-		atMentionSuggestions.length
+		atMentionItems.length
 	);
 
 	const filteredCommandHistory = useMemo(
@@ -338,6 +364,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const handleTextChange = useInputAreaTextChange({
 		isTerminalMode,
 		slashCommandOpen,
+		atMentionOpen,
 		commandMode,
 		setCommandMode: setAiCommandMode,
 		// Read at call time, not from the `inputValue` closure: onChange fires
@@ -352,7 +379,36 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionFilter,
 		setAtMentionStartIndex,
 		setSelectedAtMentionIndex,
+		setAtMentionCategory,
 	});
+
+	// Voice dictation (Web Speech API). Interim results live-update the draft via
+	// setInputValue; the final transcript is appended to the value captured when
+	// listening began. Disabled in terminal mode (the button only renders in AI
+	// mode anyway). The hook is a no-op where the Web Speech API is unavailable.
+	const voice = useVoiceInput({
+		currentValue: inputValue,
+		onTranscriptionChange: setInputValue,
+		focusRef: inputRef,
+		disabled: isTerminalMode,
+	});
+	// toggleVoiceInput's identity changes on every keystroke (it closes over the
+	// live draft value), so wrap it in a stable callback. This keeps the memoized
+	// ToolbarControls from re-rendering on each keystroke - it only re-renders
+	// when isListening actually flips.
+	const voiceToggleRef = useRef(voice.toggleVoiceInput);
+	voiceToggleRef.current = voice.toggleVoiceInput;
+	const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
+
+	// Phone: the whole composer folds away behind a slim handle so the transcript
+	// gets the screen; the user pulls it up to type. Remembered across reloads,
+	// and it starts folded - on a handheld the composer is in the way far more
+	// often than it is in use. The handle keeps a busy dot, since Stop lives in
+	// the folded thinking pill, and a pencil for an unsent draft.
+	const phone = usePhoneLayout();
+	const composerFold = usePersistedToggle(PHONE_COMPOSER_COLLAPSED_KEY, true);
+	const phoneHandleBusy = thinkingItems.length > 0 || !!autoRunState?.isRunning;
+	const phoneHandleHasDraft = inputValue.trim().length > 0 || stagedImages.length > 0;
 
 	// Show summarization progress overlay when active for this tab
 	if (isSummarizing && session.inputMode === 'ai' && onCancelSummarize) {
@@ -417,13 +473,67 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		);
 	}
 
+	// Folded: nothing but the handle. Every hook above has already run, so the
+	// draft, voice, autosize, and menu state all survive the fold.
+	if (phone && composerFold.value) {
+		return (
+			<PhoneComposerHandle
+				theme={theme}
+				collapsed
+				onToggle={composerFold.toggle}
+				busy={phoneHandleBusy}
+				hasDraft={phoneHandleHasDraft}
+			/>
+		);
+	}
+
 	return (
 		<div
-			className="relative p-4 border-t"
+			className={`relative border-t ${phone ? 'px-3 pb-3 pt-0' : 'p-4'}`}
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
+			{phone && (
+				<PhoneComposerHandle
+					theme={theme}
+					collapsed={false}
+					onToggle={composerFold.toggle}
+					busy={phoneHandleBusy}
+				/>
+			)}
+
 			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
 			<QuitWhenIdleIndicator theme={theme} />
+
+			{/* CrossAgentResponseIndicator - "N agents responding…" while consulted
+			    agents stream replies into this tab. Only meaningful in AI mode. */}
+			{session.inputMode === 'ai' && (
+				<CrossAgentResponseIndicator
+					theme={theme}
+					sourceSessionId={session.id}
+					sourceTabId={getActiveTab(session)?.id}
+					onSessionClick={onSessionClick}
+					// A message that LEADS with a mention is answered only by the consulted
+					// agents, so this agent never goes busy and the thinking pill (the usual
+					// home of Stop) never appears - leaving the user with nothing to press
+					// while other agents work on their behalf. Carry Stop here in exactly
+					// that case, and stay out of the way when the thinking pill is already
+					// offering it: both buttons run the same agent-level interrupt, so two
+					// of them on screen is just a second copy of one control.
+					onInterrupt={
+						thinkingItems.length > 0 || autoRunState?.isRunning ? undefined : handleInterrupt
+					}
+				/>
+			)}
+
+			{/* Concerto creation tracks stay separate from the ordinary agent status. */}
+			{session.inputMode === 'ai' && thinkingItems.length > 0 && (
+				<ConcertoCreationPipeline
+					thinkingItems={thinkingItems}
+					theme={theme}
+					activeSessionId={session.id}
+					activeTabId={session.activeTabId}
+				/>
+			)}
 
 			{/* ThinkingStatusPill - AI mode only. It renders nothing when no work is running: it also
 			    watches Auto Runs on OTHER agents, which only it subscribes to. */}
@@ -507,7 +617,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			<AtMentionPopover
 				isOpen={atMentionOpen}
 				isTerminalMode={isTerminalMode}
-				suggestions={atMentionSuggestions}
+				items={atMentionItems}
+				counts={atMentionCounts}
+				category={atMentionCategory}
+				setCategory={setAtMentionCategory}
 				selectedIndex={selectedAtMentionIndex}
 				filter={atMentionFilter}
 				startIndex={atMentionStartIndex}
@@ -522,10 +635,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				inputRef={inputRef}
 			/>
 
-			<div className="flex gap-3">
-				<div className="flex-1 flex flex-col">
+			<div className="flex min-w-0 gap-3">
+				<div className="flex min-w-0 flex-1 flex-col">
 					<div
-						className="chrome-raised flex-1 relative border rounded-lg bg-opacity-50 flex flex-col"
+						className="chrome-raised relative flex min-w-0 flex-1 flex-col rounded-lg border bg-opacity-50"
 						style={{
 							borderColor: showQueueingBorder ? theme.colors.warning : theme.colors.border,
 							backgroundColor: showQueueingBorder
@@ -542,6 +655,14 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								isGitRepo={session.isGitRepo}
 								model={aiCommandModel}
 								effort={aiCommandEffort}
+							/>
+						)}
+
+						{mentionRouting && (
+							<MentionRoutingBar
+								theme={theme}
+								routing={mentionRouting.routing}
+								agentNames={mentionRouting.agentNames}
 							/>
 						)}
 
@@ -569,7 +690,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							isTerminalMode={isTerminalMode}
 							isCommandModeDraft={isShellCommandDraft}
 							isAiCommandDraft={isAiCommandDraft}
-							isSteeringDestination={isSteeringDestination}
 							awaitingAiCommand={!!aiCommandEntry}
 							inputValue={inputValue}
 							spellCheckEnabled={spellCheckEnabled}
@@ -586,18 +706,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							session={session}
 							theme={theme}
 							isTerminalMode={isTerminalMode}
-							isReadOnlyMode={isReadOnlyMode}
 							canAttachImages={canAttachImages}
 							hasReadOnlyCapability={hasCapability('supportsReadOnlyMode')}
+							hasStandardCapability={hasCapability('supportsStandardPermissionMode')}
 							enterToSend={enterToSend}
 							setEnterToSend={setEnterToSend}
 							setStagedImages={setStagedImages}
+							voiceSupported={voice.voiceSupported}
+							isVoiceListening={voice.isListening}
+							onToggleVoiceInput={handleToggleVoiceInput}
 							onOpenPromptComposer={onOpenPromptComposer}
 							shortcuts={shortcuts}
 							showFlashNotification={showFlashNotification}
 							tabSaveToHistory={tabSaveToHistory}
 							onToggleTabSaveToHistory={onToggleTabSaveToHistory}
-							onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
 							tabShowThinking={tabShowThinking}
 							onToggleTabShowThinking={onToggleTabShowThinking}
 							supportsThinking={supportsThinking}
@@ -613,6 +735,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							effortMenuOpen={effortMenuOpen}
 							setEffortMenuOpen={setEffortMenuOpen}
 							effortMenuRef={effortMenuRef}
+							processInput={processInput}
 						/>
 					</div>
 					{/* Context Warning Sash - AI mode only, appears below input when context usage is high */}
@@ -629,11 +752,17 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					)}
 				</div>
 
-				<NotificationSendControls
-					theme={theme}
-					isTerminalMode={isTerminalMode}
-					processInput={processInput}
-				/>
+				{/* Phone: this column is gone. The notification bell opens a settings
+				    popover that has no business on a 390px composer, and send has moved
+				    into the toolbar row (see ToolbarControls' phone branch) so the
+				    composer gets the full width it needs to show what is being typed. */}
+				{!phone && (
+					<NotificationSendControls
+						theme={theme}
+						isTerminalMode={isTerminalMode}
+						processInput={processInput}
+					/>
+				)}
 			</div>
 		</div>
 	);

@@ -68,7 +68,7 @@ function GroupChatContextMenu({
 	);
 
 	// Measure menu and adjust position to stay within viewport
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y);
 
 	return (
 		<div
@@ -77,6 +77,11 @@ function GroupChatContextMenu({
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -325,11 +330,25 @@ function GroupChatListInner({
 
 	return (
 		<div className="border-t mt-4" style={{ borderColor: theme.colors.border }}>
-			{/* Header - Collapsible with count badge and New button.
-			    `gc-header-container` establishes a container-query context so the
-			    right-side controls progressively drop as the sidebar narrows,
-			    keeping everything on a single line instead of wrapping. See the
-			    `@container gcheader` rules in index.css. */}
+			{/* Header - Collapsible, with count badge and New Chat button.
+			    This row must always stay on ONE line as the sidebar narrows; it
+			    used to wrap onto a second row and shove the list down.
+
+			    Two mechanisms keep it single-line:
+			      - Structural: whitespace-nowrap/truncate on the title and
+			        shrink-0 on the controls. This alone prevents wrapping.
+			      - Progressive: `gc-header-container` opens a container-query
+			        context, and the `@container gcheader` rules in index.css
+			        drop the count badge, then the archived count, then the
+			        "New Chat" label as space runs out.
+
+			    IMPORTANT: if you add another control to this row, add a matching
+			    drop rule in index.css - otherwise the row grows wide again with
+			    nothing to shed at the 280px sidebar minimum. The hook class goes
+			    on a label/count *inside* a button, never on the button itself, so
+			    the affordance stays clickable when its text is hidden.
+			    Contract is pinned by GroupChatList.test.tsx and
+			    groupChatHeaderResponsive.regression.test.ts. */}
 			<div
 				ref={headerRowRef}
 				// overflow-hidden is what makes the fit measurable: with nothing in

@@ -40,6 +40,8 @@ function setup(overrides: Record<string, unknown> = {}) {
 const typeInput = () => screen.getByPlaceholderText(/1d, 10h, 2 weeks/i);
 /** The note-to-self textarea. */
 const noteArea = () => screen.getByPlaceholderText(/Why are you coming back/i);
+/** The prompt-on-return textarea (only rendered when the tab can be prompted). */
+const promptArea = () => screen.getByTestId('snooze-wake-prompt');
 
 /** Give the dialog a resolvable time so confirm is enabled. */
 function enterExpression(value = '2 weeks') {
@@ -109,6 +111,64 @@ describe('SnoozeTabModal keyboard commit', () => {
 		enterExpression();
 		fireEvent.change(noteArea(), { target: { value: '  check the deploy  ' } });
 		fireEvent.keyDown(noteArea(), { key: 'Enter', metaKey: true });
-		expect(onConfirm).toHaveBeenCalledWith(expect.any(Number), 'check the deploy');
+		expect(onConfirm).toHaveBeenCalledWith(
+			expect.any(Number),
+			expect.objectContaining({ note: 'check the deploy' })
+		);
+	});
+});
+
+describe('SnoozeTabModal wake prompt', () => {
+	it('is hidden unless the parked tab can actually be prompted', () => {
+		// A file, terminal, or browser tab has no conversation to send to, so
+		// offering the field there would collect a prompt that could never run.
+		setup();
+		expect(screen.queryByTestId('snooze-wake-prompt')).not.toBeInTheDocument();
+	});
+
+	it('passes the trimmed prompt through alongside the note', () => {
+		const { onConfirm } = setup({ canRunWakePrompt: true });
+		enterExpression();
+		fireEvent.change(noteArea(), { target: { value: 'why' } });
+		fireEvent.change(promptArea(), { target: { value: '  run the tests  ' } });
+		fireEvent.keyDown(noteArea(), { key: 'Enter', metaKey: true });
+
+		expect(onConfirm).toHaveBeenCalledWith(expect.any(Number), {
+			note: 'why',
+			wakePrompt: 'run the tests',
+		});
+	});
+
+	it('commits on Cmd+Enter from the prompt textarea too', () => {
+		const { onConfirm } = setup({ canRunWakePrompt: true });
+		enterExpression();
+		fireEvent.keyDown(promptArea(), { key: 'Enter', metaKey: true });
+		expect(onConfirm).toHaveBeenCalledTimes(1);
+	});
+
+	it('opens pre-filled when rescheduling a snooze that already has one', () => {
+		setup({
+			canRunWakePrompt: true,
+			initialWakeAt: Date.now() + 3600_000,
+			initialWakePrompt: 'go on',
+		});
+		expect(promptArea()).toHaveValue('go on');
+	});
+
+	it('sends an empty prompt when the field is cleared, so a reschedule removes it', () => {
+		// An omitted field means "keep what was there", so emptying the box has to
+		// travel as an empty string or the deletion is silently discarded.
+		const { onConfirm } = setup({
+			canRunWakePrompt: true,
+			initialWakeAt: Date.now() + 3600_000,
+			initialWakePrompt: 'go on',
+		});
+		fireEvent.change(promptArea(), { target: { value: '' } });
+		fireEvent.keyDown(noteArea(), { key: 'Enter', metaKey: true });
+
+		expect(onConfirm).toHaveBeenCalledWith(
+			expect.any(Number),
+			expect.objectContaining({ wakePrompt: '' })
+		);
 	});
 });

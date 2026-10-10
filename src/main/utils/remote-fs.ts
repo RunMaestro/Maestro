@@ -12,7 +12,7 @@
 import { spawn } from 'child_process';
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
-import { shellEscape, shellEscapeForDoubleQuotes } from './shell-escape';
+import { shellEscape, shellEscapeRemotePath } from './shell-escape';
 import { sshRemoteManager } from '../ssh-remote-manager';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
@@ -277,26 +277,6 @@ async function execRemoteCommand(
 	} finally {
 		limiter.release();
 	}
-}
-
-function shellEscapeRemotePath(filePath: string): string {
-	if (filePath === '~') {
-		return '"$HOME"';
-	}
-
-	if (filePath.startsWith('~/')) {
-		return `"$HOME/${shellEscapeForDoubleQuotes(filePath.slice(2))}"`;
-	}
-
-	if (filePath === '$HOME') {
-		return '"$HOME"';
-	}
-
-	if (filePath.startsWith('$HOME/')) {
-		return `"$HOME/${shellEscapeForDoubleQuotes(filePath.slice('$HOME/'.length))}"`;
-	}
-
-	return shellEscape(filePath);
 }
 
 /**

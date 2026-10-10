@@ -1,0 +1,122 @@
+{
+	"id": "maestro.e2e.selftest",
+	"name": "Maestro E2E Self-Test",
+	"version": "1.1.0",
+	"tier": 1,
+	"maestro": { "minHostApi": "1.0.0" },
+	"description": "E2E fixture: declares the full plugin capability + contribution surface and runs a self-test that classifies every brokered capability PASS/DENY/INERT, so tests can validate the entire plugin interface end-to-end.",
+	"author": "maestro-e2e",
+	"license": "MIT",
+	"category": "devtools",
+	"entry": "entry.js",
+	"permissions": [
+		{ "capability": "fs:read", "scope": "__FS_SCOPE__", "reason": "e2e self-test read-back" },
+		{ "capability": "fs:write", "scope": "__FS_SCOPE__", "reason": "e2e self-test write" },
+		{ "capability": "fs:watch", "scope": "__FS_SCOPE__", "reason": "e2e self-test watch" },
+		{ "capability": "net:fetch", "scope": "example.com", "reason": "e2e self-test egress" },
+		{ "capability": "agents:read", "reason": "e2e self-test agent listing" },
+		{
+			"capability": "agents:dispatch",
+			"scope": "__SEEDED_SESSION__",
+			"reason": "e2e self-test dispatch"
+		},
+		{ "capability": "notifications:toast", "reason": "e2e self-test toast" },
+		{ "capability": "settings:read", "reason": "e2e self-test settings read" },
+		{ "capability": "settings:write", "reason": "e2e self-test settings write" },
+		{ "capability": "sessions:read", "reason": "e2e self-test session metadata" },
+		{ "capability": "sessions:create", "reason": "e2e self-test session creation" },
+		{ "capability": "sessions:write", "reason": "e2e self-test session update" },
+		{ "capability": "history:read", "reason": "e2e self-test history metadata" },
+		{
+			"capability": "transcripts:read",
+			"scope": "__FS_SCOPE__",
+			"reason": "e2e self-test transcript projection"
+		},
+		{
+			"capability": "transcripts:write",
+			"scope": "__FS_SCOPE__",
+			"reason": "e2e self-test transcript append"
+		},
+		{ "capability": "storage:read", "reason": "e2e self-test storage read" },
+		{ "capability": "storage:write", "reason": "e2e self-test storage write" },
+		{ "capability": "storage:sql", "reason": "e2e self-test private SQL round-trip" },
+		{ "capability": "ui:command", "reason": "e2e self-test palette invoke" },
+		{ "capability": "tabs:manage", "reason": "e2e self-test tab create" },
+		{ "capability": "events:subscribe", "reason": "e2e self-test event subscription" },
+		{
+			"capability": "shell:openExternal",
+			"scope": "example.com",
+			"reason": "e2e self-test OS-open broker path"
+		},
+		{ "capability": "process:spawn", "scope": "e2e-selftest", "reason": "e2e self-test spawn" },
+		{ "capability": "decisions:write", "reason": "e2e self-test decision record" },
+		{ "capability": "power:preventSleep", "reason": "e2e self-test wake-lock round-trip" },
+		{ "capability": "background:service", "reason": "e2e self-test supervised service" },
+		{ "capability": "ui:contribute", "reason": "e2e self-test status-bar item" },
+		{ "capability": "ui:panel", "reason": "e2e self-test demo panel" },
+		{ "capability": "ui:render-unsafe", "reason": "e2e self-test render-unsafe (inert)" }
+	],
+	"contributes": {
+		"themes": [
+			{
+				"id": "demo-theme",
+				"name": "E2E Midnight",
+				"mode": "dark",
+				"colors": { "bg": "#000000", "fg": "#ffffff" }
+			}
+		],
+		"prompts": [
+			{ "id": "demo-prompt", "title": "E2E Prompt", "content": "Summarize the active session." }
+		],
+		"settings": [{ "id": "demo-setting", "key": "demoFlag", "type": "boolean", "default": true }],
+		"commandMacros": [{ "id": "demo-macro", "title": "E2E Macro", "prompt": "Do the demo thing." }],
+		"cueTriggers": [
+			{
+				"id": "demo-trigger",
+				"title": "E2E Trigger",
+				"schedule": { "kind": "interval", "everyMinutes": 60 },
+				"action": "notify",
+				"payload": "e2e tick"
+			},
+			{
+				"id": "e2e-dispatch-trigger",
+				"title": "E2E Dispatch Trigger",
+				"schedule": { "kind": "interval", "everyMinutes": 1 },
+				"action": "dispatch",
+				"agentId": "__SEEDED_SESSION__",
+				"payload": "e2e scheduled status note"
+			}
+		],
+		"commands": [
+			{ "id": "selftest", "title": "E2E: Run self-test" },
+			{ "id": "resubscribe", "title": "E2E: Re-subscribe to events" },
+			{ "id": "keybind-probe", "title": "E2E: Keybinding probe" },
+			{ "id": "panelprobe", "title": "E2E: Panel bridge probe" }
+		],
+		"panels": [
+			{ "id": "demo-panel", "title": "E2E Demo Panel", "entry": "panel.html", "placement": "left" }
+		],
+		"agents": [
+			{
+				"id": "demo-agent",
+				"displayName": "E2E Agent",
+				"binaryName": "echo",
+				"baseArgs": [],
+				"capabilities": {}
+			}
+		],
+		"tools": [{ "id": "demo-tool", "name": "e2e_tool", "description": "An e2e demo tool." }],
+		"keybindings": [
+			{ "id": "demo-key", "key": "Ctrl+Shift+E", "command": "selftest" },
+			{ "id": "keybind-probe-key", "key": "Ctrl+Shift+F9", "command": "keybind-probe" }
+		],
+		"uiItems": [
+			{
+				"id": "selftest-item",
+				"surface": "status-bar",
+				"label": "E2E Self-test",
+				"command": "selftest"
+			}
+		]
+	}
+}

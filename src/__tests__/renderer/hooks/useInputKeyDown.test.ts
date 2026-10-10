@@ -81,7 +81,7 @@ function createMockDeps(
 		getInputValue: () => inputValue,
 		setInputValue: vi.fn(),
 		tabCompletionSuggestions: [],
-		atMentionSuggestions: [],
+		atMentionItems: [],
 		allSlashCommands: [],
 		syncFileTreeToTabCompletion: vi.fn(),
 		processInput: vi.fn(),
@@ -379,15 +379,15 @@ describe('Tab completion navigation', () => {
 describe('@ mention completion', () => {
 	const mentions = [
 		{
-			value: 'src/app.ts',
-			type: 'file' as const,
+			kind: 'file' as const,
+			value: '@src/app.ts ',
 			displayText: 'app.ts',
 			fullPath: 'src/app.ts',
 			score: 1,
 		},
 		{
-			value: 'src/index.ts',
-			type: 'file' as const,
+			kind: 'file' as const,
+			value: '@src/index.ts ',
 			displayText: 'index.ts',
 			fullPath: 'src/index.ts',
 			score: 0.9,
@@ -403,7 +403,7 @@ describe('@ mention completion', () => {
 	});
 
 	it('navigates down with ArrowDown', () => {
-		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const deps = createMockDeps({ atMentionItems: mentions });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('ArrowDown');
 
@@ -416,7 +416,7 @@ describe('@ mention completion', () => {
 	});
 
 	it('navigates up with ArrowUp', () => {
-		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const deps = createMockDeps({ atMentionItems: mentions });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('ArrowUp');
 
@@ -430,7 +430,7 @@ describe('@ mention completion', () => {
 	it('accepts selection on Enter and replaces @filter', () => {
 		const deps = createMockDeps({
 			inputValue: 'hello @app world',
-			atMentionSuggestions: mentions,
+			atMentionItems: mentions,
 		});
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter');
@@ -448,7 +448,7 @@ describe('@ mention completion', () => {
 	it('accepts selection on Tab', () => {
 		const deps = createMockDeps({
 			inputValue: 'hello @app world',
-			atMentionSuggestions: mentions,
+			atMentionItems: mentions,
 		});
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Tab');
@@ -462,7 +462,7 @@ describe('@ mention completion', () => {
 	});
 
 	it('closes on Escape and clears state', () => {
-		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const deps = createMockDeps({ atMentionItems: mentions });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Escape');
 
@@ -478,7 +478,7 @@ describe('@ mention completion', () => {
 
 	it('does not activate in terminal mode', () => {
 		setActiveSession({ inputMode: 'terminal' });
-		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const deps = createMockDeps({ atMentionItems: mentions });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('ArrowDown');
 
@@ -1226,7 +1226,7 @@ describe('Edge cases', () => {
 // Additional coverage - Tab completion navigation
 // ============================================================================
 
-describe('Tab completion navigation — additional', () => {
+describe('Tab completion navigation - additional', () => {
 	const suggestions = [
 		{ value: 'src/', type: 'folder' as const, label: 'src/' },
 		{ value: 'package.json', type: 'file' as const, label: 'package.json' },
@@ -1287,18 +1287,18 @@ describe('Tab completion navigation — additional', () => {
 // Additional coverage - @ mention completion
 // ============================================================================
 
-describe('@ mention completion — additional', () => {
+describe('@ mention completion - additional', () => {
 	const mentions = [
 		{
-			value: 'src/app.ts',
-			type: 'file' as const,
+			kind: 'file' as const,
+			value: '@src/app.ts ',
 			displayText: 'app.ts',
 			fullPath: 'src/app.ts',
 			score: 1,
 		},
 		{
-			value: 'src/index.ts',
-			type: 'file' as const,
+			kind: 'file' as const,
+			value: '@src/index.ts ',
 			displayText: 'index.ts',
 			fullPath: 'src/index.ts',
 			score: 0.9,
@@ -1315,7 +1315,7 @@ describe('@ mention completion — additional', () => {
 		mockInputContext.selectedAtMentionIndex = 10; // out of bounds
 		mockInputContext.atMentionStartIndex = 5;
 		mockInputContext.atMentionFilter = 'xyz';
-		const deps = createMockDeps({ atMentionSuggestions: mentions, inputValue: 'test @xyz' });
+		const deps = createMockDeps({ atMentionItems: mentions, inputValue: 'test @xyz' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter');
 
@@ -1334,7 +1334,7 @@ describe('@ mention completion — additional', () => {
 	it('accept with empty atMentionFilter (just "@" typed)', () => {
 		mockInputContext.atMentionFilter = '';
 		mockInputContext.atMentionStartIndex = 6;
-		const deps = createMockDeps({ atMentionSuggestions: mentions, inputValue: 'hello @ world' });
+		const deps = createMockDeps({ atMentionItems: mentions, inputValue: 'hello @ world' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter');
 
@@ -1349,7 +1349,7 @@ describe('@ mention completion — additional', () => {
 	it('accept when atMentionStartIndex is at start of input (0)', () => {
 		mockInputContext.atMentionFilter = 'app';
 		mockInputContext.atMentionStartIndex = 0;
-		const deps = createMockDeps({ atMentionSuggestions: mentions, inputValue: '@app rest' });
+		const deps = createMockDeps({ atMentionItems: mentions, inputValue: '@app rest' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Tab');
 
@@ -1366,7 +1366,7 @@ describe('@ mention completion — additional', () => {
 // Additional coverage - Slash command autocomplete
 // ============================================================================
 
-describe('Slash command autocomplete — additional', () => {
+describe('Slash command autocomplete - additional', () => {
 	const commands = [
 		{ command: '/help', description: 'Show help' },
 		{ command: '/clear', description: 'Clear output' },
@@ -1454,7 +1454,7 @@ describe('Slash command autocomplete — additional', () => {
 // Additional coverage - Enter-to-send
 // ============================================================================
 
-describe('Enter-to-send — additional', () => {
+describe('Enter-to-send - additional', () => {
 	it('Enter+Meta when enterToSendAI=true also sends', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({ enterToSendAI: true } as any);
@@ -1495,7 +1495,7 @@ describe('Enter-to-send — additional', () => {
 // Additional coverage - Escape key
 // ============================================================================
 
-describe('Escape key — additional', () => {
+describe('Escape key - additional', () => {
 	it('does not crash when terminalOutputRef is null', () => {
 		setActiveSession({ inputMode: 'ai' });
 		const deps = createMockDeps({ terminalOutputRef: { current: null } as any });
@@ -1531,7 +1531,7 @@ describe('Escape key — additional', () => {
 // Additional coverage - Command history
 // ============================================================================
 
-describe('Command history — additional', () => {
+describe('Command history - additional', () => {
 	it('opens with empty filter when inputValue is empty in terminal mode', () => {
 		setActiveSession({ inputMode: 'terminal' });
 		const deps = createMockDeps({ inputValue: '' });
@@ -1552,7 +1552,7 @@ describe('Command history — additional', () => {
 // Additional coverage - General edge cases
 // ============================================================================
 
-describe('General edge cases — additional', () => {
+describe('General edge cases - additional', () => {
 	it('ArrowDown with no active session and no dropdowns open is a no-op', () => {
 		useSessionStore.setState({ sessions: [], activeSessionId: '' } as any);
 		const deps = createMockDeps();

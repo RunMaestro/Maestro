@@ -6,6 +6,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // Mock dependencies before importing the module
 vi.mock('../../../main/utils/execFile', () => ({
@@ -26,6 +28,10 @@ vi.mock('../../../shared/pathUtils', () => ({
 	detectNodeVersionManagerBinPaths: vi.fn(() => []),
 }));
 
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 // Import after mocking
 import {
 	getExpandedEnv,
@@ -38,6 +44,7 @@ import {
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 
 describe('path-prober', () => {
 	beforeEach(() => {
@@ -53,13 +60,23 @@ describe('path-prober', () => {
 
 		it('should include common Unix paths on non-Windows', () => {
 			const originalPlatform = process.platform;
+			const originalPath = process.env.PATH;
 			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			// Pin the inherited PATH: on a dev machine the real PATH already carries
+			// these dirs, which would make the assertions pass even if getExpandedEnv
+			// stopped adding them.
+			process.env.PATH = '/inherited/only';
 
 			try {
 				const env = getExpandedEnv();
 				expect(env.PATH).toContain('/opt/homebrew/bin');
 				expect(env.PATH).toContain('/usr/local/bin');
+				// ~/.bun/bin is where the bun-based omp binary installs; without it
+				// consumers of getExpandedEnv() cannot resolve omp even though the
+				// detection probe finds it there.
+				expect(env.PATH).toContain(`${os.homedir()}/.bun/bin`);
 			} finally {
+				process.env.PATH = originalPath;
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}
 		});
@@ -217,6 +234,135 @@ describe('path-prober', () => {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}
 		});
+
+		it('should recover a rotated Codex Desktop executable path', async () => {
+			const originalPlatform = process.platform;
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+
+			const stalePath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'old-version',
+				'codex.exe'
+			);
+			const olderPath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'older-version',
+				'codex.exe'
+			);
+			const currentPath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'current-version',
+				'codex.exe'
+			);
+
+			try {
+				readdirMock.mockResolvedValue([
+					{ name: 'older-version', isDirectory: () => true },
+					{ name: 'current-version', isDirectory: () => true },
+				] as any);
+				statMock.mockImplementation(async (filePath) => {
+					if (filePath === stalePath) throw new Error('ENOENT');
+					if (filePath === olderPath) {
+						return { isFile: () => true, birthtimeMs: 100, mtimeMs: 300 } as fs.Stats;
+					}
+					if (filePath === currentPath) {
+						return { isFile: () => true, birthtimeMs: 200, mtimeMs: 100 } as fs.Stats;
+					}
+					throw new Error('ENOENT');
+				});
+
+				const result = await checkCustomPath(stalePath);
+				expect(result).toEqual({ exists: true, path: currentPath });
+				expect(logger.info).toHaveBeenCalledWith(
+					'Recovered rotated Codex Desktop path',
+					'PathProber',
+					expect.objectContaining({ original: stalePath, resolved: currentPath })
+				);
+			} finally {
+				readdirMock.mockRestore();
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('should report unexpected errors while discovering Codex Desktop executables', async () => {
+			const originalPlatform = process.platform;
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			const permissionError = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+
+			const stalePath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'old-version',
+				'codex.exe'
+			);
+
+			try {
+				readdirMock.mockResolvedValue([
+					{ name: 'current-version', isDirectory: () => true },
+				] as any);
+				statMock.mockRejectedValue(permissionError);
+
+				expect(await checkCustomPath(stalePath)).toEqual({ exists: false });
+				expect(captureException).toHaveBeenCalledWith(permissionError);
+			} finally {
+				readdirMock.mockRestore();
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('should not redirect an arbitrary missing custom path', async () => {
+			const originalPlatform = process.platform;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+			try {
+				statMock.mockRejectedValue(new Error('ENOENT'));
+
+				expect(await checkCustomPath('C:\\custom\\missing-codex.exe')).toEqual({
+					exists: false,
+				});
+				expect(readdirMock).not.toHaveBeenCalled();
+			} finally {
+				readdirMock.mockRestore();
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
 	});
 
 	describe('probeWindowsPaths', () => {
@@ -247,6 +393,74 @@ describe('path-prober', () => {
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
 		});
+
+		it.each(['hermes', 'pi'])('should probe known Windows paths for %s', async (binaryName) => {
+			accessMock.mockRejectedValue(new Error('ENOENT'));
+
+			expect(await probeWindowsPaths(binaryName)).toBeNull();
+			expect(accessMock).toHaveBeenCalled();
+		});
+
+		it('leads with the WinGet install for copilot, over an npm shim', async () => {
+			// Regression guard for the Windows half of the key fix: this table was
+			// keyed `'copilot-cli'` (the agent id) while it is looked up with
+			// `agentDef.binaryName`, which is `copilot`, so none of its candidates
+			// were reachable. Both paths exist here, so this pins the order too,
+			// not just that the entry can be reached at all.
+			const home = os.homedir();
+			const wingetPath = path.join(
+				process.env.ProgramFiles || 'C:\\Program Files',
+				'GitHub Copilot CLI',
+				'copilot.exe'
+			);
+			const npmShim = path.join(
+				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
+				'npm',
+				'copilot.cmd'
+			);
+			accessMock.mockImplementation(async (probePath) => {
+				const candidate = String(probePath);
+				if (candidate === wingetPath || candidate === npmShim) return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeWindowsPaths('copilot')).toBe(wingetPath);
+		});
+
+		it('should probe the current Codex Desktop executable', async () => {
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			const statMock = vi.spyOn(fs.promises, 'stat');
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+			const currentPath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'current-version',
+				'codex.exe'
+			);
+
+			try {
+				readdirMock.mockResolvedValue([
+					{ name: 'current-version', isDirectory: () => true },
+				] as any);
+				statMock.mockResolvedValue({ isFile: () => true, birthtimeMs: 200 } as fs.Stats);
+				accessMock.mockImplementation(async (filePath) => {
+					if (filePath !== currentPath) throw new Error('ENOENT');
+				});
+
+				expect(await probeWindowsPaths('codex')).toBe(currentPath);
+			} finally {
+				readdirMock.mockRestore();
+				statMock.mockRestore();
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+			}
+		});
 	});
 
 	describe('probeUnixPaths', () => {
@@ -258,6 +472,13 @@ describe('path-prober', () => {
 
 		afterEach(() => {
 			accessMock.mockRestore();
+		});
+
+		it.each(['hermes', 'pi'])('should probe known Unix paths for %s', async (binaryName) => {
+			accessMock.mockRejectedValue(new Error('ENOENT'));
+
+			expect(await probeUnixPaths(binaryName)).toBeNull();
+			expect(accessMock).toHaveBeenCalled();
 		});
 
 		it('should return null for unknown binary', async () => {
@@ -277,22 +498,113 @@ describe('path-prober', () => {
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
 		});
+	});
 
-		it('should check both existence and executability', async () => {
-			const originalPlatform = process.platform;
+	/**
+	 * The known-path table is what finds an agent installed off PATH, and each
+	 * agent's order encodes where its own installer puts things. The tests above
+	 * reject every candidate and assert `null`, which passes whatever the table
+	 * says; these pin the candidates and their order, on a platform where
+	 * Homebrew has two roots and the installers do not agree on one location.
+	 *
+	 * Named for macOS because these are the macOS install locations, not because
+	 * the code branches: `getUnixKnownPaths` never reads `process.platform`. The
+	 * platform stub below only keeps the suite honest if that ever changes.
+	 */
+	describe('probeUnixPaths on macOS', () => {
+		// The real homedir, deliberately: the candidate table builds its paths
+		// with `os.homedir()`, not the `expandTilde` this file mocks to
+		// /Users/testuser (that one only serves `checkCustomPath`).
+		const home = os.homedir();
+		let accessMock: ReturnType<typeof vi.spyOn>;
+		let originalPlatform: NodeJS.Platform;
+
+		/** Resolve only for these paths, as `access(F_OK | X_OK)` would. */
+		const onlyExecutable = (...existing: string[]) => {
+			accessMock.mockImplementation(async (probePath) => {
+				if (existing.includes(String(probePath))) return undefined;
+				throw new Error('ENOENT');
+			});
+		};
+
+		beforeEach(() => {
+			originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			accessMock = vi.spyOn(fs.promises, 'access');
+		});
 
-			try {
-				accessMock.mockRejectedValue(new Error('ENOENT'));
+		afterEach(() => {
+			accessMock.mockRestore();
+			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		});
 
-				const result = await probeUnixPaths('claude');
-				expect(result).toBeNull();
+		it("prefers Claude's own install location over everything else", async () => {
+			onlyExecutable(
+				path.join(home, '.claude', 'local', 'claude'),
+				path.join(home, '.local', 'bin', 'claude'),
+				'/opt/homebrew/bin/claude',
+				'/usr/local/bin/claude'
+			);
 
-				// Verify access was called with F_OK | X_OK
-				expect(accessMock).toHaveBeenCalled();
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
+			expect(await probeUnixPaths('claude')).toBe(path.join(home, '.claude', 'local', 'claude'));
+		});
+
+		it('falls to ~/.local/bin when Claude has no local install', async () => {
+			onlyExecutable(
+				path.join(home, '.local', 'bin', 'claude'),
+				'/opt/homebrew/bin/claude',
+				'/usr/local/bin/claude'
+			);
+
+			expect(await probeUnixPaths('claude')).toBe(path.join(home, '.local', 'bin', 'claude'));
+		});
+
+		it('prefers the Apple Silicon Homebrew root over the Intel one', async () => {
+			onlyExecutable('/opt/homebrew/bin/claude', '/usr/local/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/opt/homebrew/bin/claude');
+		});
+
+		it('still finds an Intel Homebrew install on its own', async () => {
+			onlyExecutable('/usr/local/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/usr/local/bin/claude');
+		});
+
+		it('passes X_OK to access, so a non-executable candidate cannot match', async () => {
+			// Note the limit of this assertion: F_OK is 0, so `F_OK | X_OK` IS
+			// `X_OK`. It catches the probe dropping X_OK; it cannot catch X_OK
+			// being widened. A non-executable file is also indistinguishable from
+			// a missing one through a mocked `access`, so the flags are the only
+			// observable part.
+			onlyExecutable('/opt/homebrew/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/opt/homebrew/bin/claude');
+			expect(accessMock).toHaveBeenCalledWith(
+				path.join(home, '.claude', 'local', 'claude'),
+				fs.constants.X_OK
+			);
+		});
+
+		it('leads with Homebrew for copilot, its primary macOS install', async () => {
+			// Regression guard: this table was keyed `'copilot-cli'` (the agent id)
+			// while it is looked up with `agentDef.binaryName`, which is `copilot`.
+			// Every candidate below was therefore unreachable on both platforms and
+			// only which/where ever found Copilot.
+			onlyExecutable('/opt/homebrew/bin/copilot', path.join(home, '.local', 'bin', 'copilot'));
+
+			expect(await probeUnixPaths('copilot')).toBe('/opt/homebrew/bin/copilot');
+		});
+
+		it("leads with OpenCode's own installer location over a Go install", async () => {
+			onlyExecutable(
+				path.join(home, '.opencode', 'bin', 'opencode'),
+				path.join(home, 'go', 'bin', 'opencode')
+			);
+
+			expect(await probeUnixPaths('opencode')).toBe(
+				path.join(home, '.opencode', 'bin', 'opencode')
+			);
 		});
 	});
 

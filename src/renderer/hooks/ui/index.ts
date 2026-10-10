@@ -29,6 +29,13 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+// Horizontal strip scrolling (edge affordances + wheel-to-horizontal)
+export { useHorizontalScroll } from './useHorizontalScroll';
+export type { HorizontalScrollState } from './useHorizontalScroll';
+
+// Live CSS-grid column count (for arrow navigation over a responsive grid)
+export { useGridColumnCount } from './useGridColumnCount';
+
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
 export { useStickToBottom } from './useStickToBottom';
@@ -74,6 +81,13 @@ export type {
 export { useResizablePanel } from './useResizablePanel';
 export type { UseResizablePanelOptions, UseResizablePanelReturn } from './useResizablePanel';
 
+// Resizable modal drag behavior
+export { useResizableModal } from './useResizableModal';
+export type {
+	ModalResizeDirection,
+	UseResizableModalOptions,
+	UseResizableModalReturn,
+} from './useResizableModal';
 // Remembered height for user-resized textareas
 export { useResizableTextarea } from './useResizableTextarea';
 export type {
@@ -97,9 +111,15 @@ export { useScaleShortcuts } from './useScaleShortcuts';
 export type { UseScaleShortcutsOptions } from './useScaleShortcuts';
 export { useIsTopLayer } from './useIsTopLayer';
 
+// Wheel zoom + drag pan for an image or diagram canvas
+export { usePanZoom } from './usePanZoom';
+export type { UsePanZoomOptions, UsePanZoomReturn, PanZoomView } from './usePanZoom';
+
 // Persisted view toggle (collapsed banners, folded sections)
 export { usePersistedToggle } from './usePersistedToggle';
 export type { UsePersistedToggleReturn } from './usePersistedToggle';
+export { usePersistedChoice } from './usePersistedChoice';
+export type { UsePersistedChoiceReturn } from './usePersistedChoice';
 export { usePersistedPanelWidth } from './usePersistedPanelWidth';
 export type {
 	UsePersistedPanelWidthOptions,
@@ -111,7 +131,7 @@ export { usePagination } from './usePagination';
 export type { UsePaginationResult } from './usePagination';
 
 // ResizeObserver-backed element width, for JS-computed layout
-export { useElementWidth } from './useElementWidth';
+export { useElementWidth, useFreeHeightInFlexColumn } from './useElementWidth';
 
 // Composer rects the toast stack lifts itself above
 export { useToastAvoidZone, useToastAvoidZoneStore, toastBottomInset } from './useToastAvoidZone';
@@ -136,3 +156,11 @@ export { useIdleNotification } from './useIdleNotification';
 
 // Deferred update-restart (installs downloaded update on idle transition)
 export { useRestartWhenIdle } from './useRestartWhenIdle';
+
+// Responsive viewport breakpoint (drives drawer-mode sidebars on narrow widths)
+export { useViewportBreakpoint } from './useViewportBreakpoint';
+export type { Breakpoint } from './useViewportBreakpoint';
+
+// Per-window panel-collapse state (reads/persists left/right panel collapse
+// through window.maestro.windows.*, keyed per-window not as a global setting)
+export { useWindowState } from './useWindowState';

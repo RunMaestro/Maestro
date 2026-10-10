@@ -11,8 +11,9 @@
  */
 
 import { create } from 'zustand';
-import type { FocusArea, RightPanelTab, UsageDashboardViewMode } from '../types';
+import type { FocusArea, RightPanelTab, UnifiedTabRef, UsageDashboardViewMode } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
+import { isNarrowViewportNow } from '../hooks/ui/useViewportBreakpoint';
 
 /**
  * Keyboard-selection cursor for the two Left Bar sections that are NOT plain
@@ -46,13 +47,51 @@ export interface PendingLogJump {
 }
 
 export interface UIStoreState {
-	// Sidebar
+	// Sidebar - tri-state via two booleans: !hidden && open = full panel,
+	// !hidden && !open = collapsed status-dot strip, hidden = no panel at all.
 	leftSidebarOpen: boolean;
+	leftSidebarHidden: boolean;
 	rightPanelOpen: boolean;
 
 	// Focus
 	activeFocus: FocusArea;
 	activeRightTab: RightPanelTab;
+
+	// Tab tiling: id of the pane currently maximized/zoomed to fill the whole
+	// panel (Ctrl+Cmd+Z). Transient and non-persisted, per the spec - toggling
+	// again clears it. null when no pane is zoomed.
+	zoomedPaneId: string | null;
+
+	// Tab tiling: transient state for a pane REARRANGE drag driven by pointer
+	// events (not native HTML5 DnD, which does not reliably start a macOS drag
+	// session inside child Electron windows). Set while a tile header is being
+	// dragged; the drop-zone overlay reads `hover` to paint the target region and
+	// the swap/move badge. null when no pane drag is in flight. See usePaneDrag.
+	paneDrag: {
+		groupId: string;
+		leafId: string;
+		/** Live pointer position in client (viewport) px, for the drag ghost. */
+		pointer: { x: number; y: number };
+		/** The pane + zone under the pointer, or null when over no droppable pane. */
+		hover: { leafId: string; zone: import('../utils/panelLayout').DropZone } | null;
+	} | null;
+
+	// One-shot request to move DOM FOCUS into a tab's real input (the caret into
+	// its terminal / editor / address bar / chat box), consumed and cleared by
+	// MainPanelContent. Addressed EITHER by tiled pane leaf id or by tab ref, since
+	// both routes end at the same place: a keyboard pane command knows the leaf it
+	// moved to, while a plain "new tab" handler only ever knows the tab it minted.
+	// One request slot rather than two so there is a single focus owner and a
+	// single cancel chain - a later request always supersedes an earlier one.
+	//
+	// Fired ONLY by explicit create/move commands - moving the focus ring alone
+	// leaves the user typing into whatever had focus before.
+	//
+	// Deliberately a request rather than an effect keyed on `focusedPaneId`: a mouse
+	// press anywhere in a pane also moves `focusedPaneId`, so a derived effect would
+	// yank the caret into the AI input mid-drag and break text selection in the
+	// conversation. Keeping it explicit ties the steal to user intent.
+	focusRequest: { leafId: string } | { tab: UnifiedTabRef } | null;
 
 	// Sidebar collapse/expand
 	bookmarksCollapsed: boolean;
@@ -62,6 +101,9 @@ export interface UIStoreState {
 	showUnreadAgentsOnly: boolean;
 	preFilterActiveTabId: string | null;
 	preTerminalFileTabId: string | null;
+
+	// Pianola workspace: which pinned view is showing (its chat or the agent dashboard).
+	pianolaView: 'chat' | 'dashboard';
 
 	// Session sidebar selection
 	selectedSidebarIndex: number;
@@ -146,18 +188,75 @@ export interface UIStoreState {
 	// scheduler (usage-refresh-scheduler.ts) reads the same persisted map and is
 	// the sole driver of background sampling on this cadence.
 	usageRefreshIntervals: Record<string, number>;
+
+	// Namespaced ids (`<pluginId>/<panelId>`) of docked plugin panels the user
+	// collapsed to the reopen rail (PluginPanelSlot). Dock-only affordance; the
+	// frame's non-suppressible provenance line is untouched. Persisted via
+	// settings write-through (mirrors hiddenQuotaAccounts) and hydrated by
+	// loadAllSettings on startup.
+	hiddenPluginPanels: string[];
+
+	// Namespaced id (`<pluginId>/<panelId>`) of the ONE `modal`-placement plugin
+	// panel currently open, or null. Deliberately global rather than local to
+	// Settings: the same mount serves the Settings -> Encore -> Plugins launch
+	// path and a plugin summoning its own panel via `ui.openPanel`/`togglePanel`,
+	// so the two can never fight over the panel's webview guest. Transient (not
+	// persisted) - a summoned overlay should not survive a restart.
+	openPluginPanelId: string | null;
 }
 
 export interface UIStoreActions {
 	// Sidebar
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	toggleLeftSidebar: () => void;
+	setLeftSidebarHidden: (hidden: boolean | ((prev: boolean) => boolean)) => void;
+	cycleLeftSidebar: () => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	toggleRightPanel: () => void;
+	/**
+	 * Narrow viewports: the left drawer covers the main panel, so activating
+	 * anything listed in it - an agent row, a group chat, a starred session - is
+	 * a request to LOOK at that thing, and the drawer gets out of the way. No-op
+	 * on a wide viewport, where the Left Bar is a permanent column beside the
+	 * panel and closing it would be a surprise.
+	 *
+	 * Call it AT THE TAP rather than from an effect keyed on what became active:
+	 * tapping the row that is already active (an agent still selected behind an
+	 * open group chat, the chat the user is already in) changes no state at all,
+	 * and a transition-keyed effect reads that as nothing having happened -
+	 * leaving the user staring at the drawer they just tapped through.
+	 */
+	closeLeftSidebarForNavigation: () => void;
+	/**
+	 * The right drawer's half of the same rule, and it fails the same way.
+	 * Opening a file from the Files panel is a request to LOOK at that file, and
+	 * on a phone the drawer covers the whole screen - so it gets out of the way.
+	 *
+	 * Call it AT THE OPEN, for the same reason as its left-hand twin: the
+	 * transition-keyed effect in `App.tsx` watches `activeFileTabId` and friends,
+	 * and re-previewing the file that is ALREADY the active tab moves none of
+	 * them. The effect reads that as nothing having happened, so the file the
+	 * user just tapped Preview on stays behind the tree they tapped it in.
+	 * Media is the permanent case: it never becomes a tab at all, so that key
+	 * can never change for it.
+	 */
+	closeRightPanelForNavigation: () => void;
 
 	// Focus
 	setActiveFocus: (focus: FocusArea | ((prev: FocusArea) => FocusArea)) => void;
 	setActiveRightTab: (tab: RightPanelTab | ((prev: RightPanelTab) => RightPanelTab)) => void;
+
+	// Tab tiling: set/clear the zoomed (maximized) pane id.
+	setZoomedPaneId: (id: string | null) => void;
+
+	// Tab tiling: set/clear the transient pane-rearrange drag state.
+	setPaneDrag: (drag: UIStore['paneDrag']) => void;
+
+	// Ask the panel to put DOM focus inside a pane (by tiled leaf id) or a tab (by
+	// ref), and clear that request once it has been acted on.
+	requestPaneFocus: (leafId: string) => void;
+	requestTabFocus: (tab: UnifiedTabRef) => void;
+	clearFocusRequest: () => void;
 
 	// Sidebar collapse/expand
 	setBookmarksCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
@@ -170,6 +269,7 @@ export interface UIStoreActions {
 	toggleShowUnreadAgentsOnly: () => void;
 	setPreFilterActiveTabId: (id: string | null) => void;
 	setPreTerminalFileTabId: (id: string | null) => void;
+	setPianolaView: (view: 'chat' | 'dashboard') => void;
 
 	// Session sidebar selection
 	setSelectedSidebarIndex: (index: number | ((prev: number) => number)) => void;
@@ -237,6 +337,14 @@ export interface UIStoreActions {
 
 	// Set the auto-refresh interval (ms; 0 = off) for a provider quota panel.
 	setUsageRefreshInterval: (providerId: string, ms: number) => void;
+
+	// Toggle a docked plugin panel between shown and collapsed (reopen rail).
+	toggleHiddenPluginPanel: (panelId: string) => void;
+
+	/** Open (or, with null, close) the single modal plugin-panel mount. */
+	setOpenPluginPanelId: (panelId: string | null) => void;
+	/** Open the panel, or close it if that same panel is already open. */
+	toggleOpenPluginPanelId: (panelId: string) => void;
 }
 
 export type UIStore = UIStoreState & UIStoreActions;
@@ -299,17 +407,31 @@ function persistUsageRefreshIntervals(value: Record<string, number>): void {
 	window.maestro?.settings?.set('usageRefreshIntervals', value);
 }
 
+/**
+ * Persist the collapsed docked-plugin-panel id list so a user's hide choice
+ * survives app restarts. Hydrated back into this store on startup by
+ * loadAllSettings in settingsStore.
+ */
+function persistHiddenPluginPanels(value: string[]): void {
+	window.maestro?.settings?.set('hiddenPluginPanels', value);
+}
+
 export const useUIStore = create<UIStore>()((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
+	leftSidebarHidden: false,
 	rightPanelOpen: true,
 	activeFocus: 'main',
 	activeRightTab: 'files',
+	zoomedPaneId: null,
+	paneDrag: null,
+	focusRequest: null,
 	bookmarksCollapsed: false,
 	showUnreadOnly: false,
 	showUnreadAgentsOnly: false,
 	preFilterActiveTabId: null,
 	preTerminalFileTabId: null,
+	pianolaView: 'dashboard',
 	selectedSidebarIndex: 0,
 	sidebarExtraSelection: null,
 	outputSearchByKey: {},
@@ -329,15 +451,37 @@ export const useUIStore = create<UIStore>()((set) => ({
 	usageDashboardViewMode: 'overview',
 	hiddenQuotaAccounts: {},
 	usageRefreshIntervals: {},
+	hiddenPluginPanels: [],
+	openPluginPanelId: null,
 
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
 	toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
+	setLeftSidebarHidden: (v) => set((s) => ({ leftSidebarHidden: resolve(v, s.leftSidebarHidden) })),
+	// Cycle: full → collapsed → hidden → full. Lets the same control walk
+	// through all three states with a single click.
+	cycleLeftSidebar: () =>
+		set((s) => {
+			if (s.leftSidebarHidden) return { leftSidebarHidden: false, leftSidebarOpen: true };
+			if (s.leftSidebarOpen) return { leftSidebarOpen: false, leftSidebarHidden: false };
+			return { leftSidebarOpen: false, leftSidebarHidden: true };
+		}),
 	setRightPanelOpen: (v) => set((s) => ({ rightPanelOpen: resolve(v, s.rightPanelOpen) })),
 	toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
+	closeLeftSidebarForNavigation: () =>
+		set((s) => (s.leftSidebarOpen && isNarrowViewportNow() ? { leftSidebarOpen: false } : s)),
+	closeRightPanelForNavigation: () =>
+		set((s) => (s.rightPanelOpen && isNarrowViewportNow() ? { rightPanelOpen: false } : s)),
 
 	setActiveFocus: (v) => set((s) => ({ activeFocus: resolve(v, s.activeFocus) })),
 	setActiveRightTab: (v) => set((s) => ({ activeRightTab: resolve(v, s.activeRightTab) })),
+
+	setZoomedPaneId: (id) => set({ zoomedPaneId: id }),
+	setPaneDrag: (drag) => set({ paneDrag: drag }),
+
+	requestPaneFocus: (leafId) => set({ focusRequest: { leafId } }),
+	requestTabFocus: (tab) => set({ focusRequest: { tab } }),
+	clearFocusRequest: () => set({ focusRequest: null }),
 
 	setBookmarksCollapsed: (v) =>
 		set((s) => {
@@ -359,6 +503,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	toggleShowUnreadAgentsOnly: () => set((s) => ({ showUnreadAgentsOnly: !s.showUnreadAgentsOnly })),
 	setPreFilterActiveTabId: (id) => set({ preFilterActiveTabId: id }),
 	setPreTerminalFileTabId: (id) => set({ preTerminalFileTabId: id }),
+	setPianolaView: (view) => set({ pianolaView: view }),
 
 	setSelectedSidebarIndex: (v) =>
 		set((s) => ({ selectedSidebarIndex: resolve(v, s.selectedSidebarIndex) })),
@@ -447,4 +592,21 @@ export const useUIStore = create<UIStore>()((set) => ({
 			persistUsageRefreshIntervals(nextMap);
 			return { usageRefreshIntervals: nextMap };
 		}),
+
+	toggleHiddenPluginPanel: (panelId) =>
+		set((s) => {
+			const next = s.hiddenPluginPanels.includes(panelId)
+				? s.hiddenPluginPanels.filter((id) => id !== panelId)
+				: [...s.hiddenPluginPanels, panelId];
+			persistHiddenPluginPanels(next);
+			return { hiddenPluginPanels: next };
+		}),
+
+	setOpenPluginPanelId: (panelId) => set({ openPluginPanelId: panelId }),
+
+	// Toggle by namespaced id: open it, or close it if that exact panel is already
+	// the open one. A DIFFERENT panel being open swaps to the requested one rather
+	// than closing, since only one modal panel mount exists.
+	toggleOpenPluginPanelId: (panelId) =>
+		set((s) => ({ openPluginPanelId: s.openPluginPanelId === panelId ? null : panelId })),
 }));

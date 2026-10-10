@@ -79,6 +79,7 @@ const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation 
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
+	bySessionLastQuery: {},
 	...overrides,
 });
 
@@ -180,7 +181,9 @@ describe('AgentOverviewCards', () => {
 			screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement;
 
 		const worktreeCard = cardByName('Worktree One');
-		expect(worktreeCard.querySelector('[data-testid="agent-card-wt-badge"]')).not.toBeNull();
+		expect(
+			worktreeCard.querySelector('[data-testid="agent-card-wt-badge"]')?.getAttribute('title')
+		).toBe('Git worktree');
 		expect(worktreeCard.querySelector('[data-testid="agent-card-branch"]')?.textContent).toBe(
 			'feature/awesome'
 		);
@@ -442,6 +445,57 @@ describe('AgentOverviewCards', () => {
 		});
 	});
 
+	describe('Recent / last query', () => {
+		it('sorts cards by last query descending and sinks agents with none', () => {
+			const now = Date.now();
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Stale', createdAt: now }),
+				buildSession({ id: 's2', name: 'Fresh', createdAt: now }),
+				buildSession({ id: 's3', name: 'Never', createdAt: now }),
+			];
+			const data = buildData({
+				bySessionLastQuery: { s1: now - 86_400_000, s2: now - 60_000 },
+			});
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			const cards = screen.getAllByTestId('agent-card');
+			expect(cards[0].textContent).toContain('Fresh');
+			expect(cards[1].textContent).toContain('Stale');
+			expect(cards[2].textContent).toContain('Never');
+		});
+
+		it('swaps the corner badge from age to last query and highlights it', () => {
+			const now = Date.now();
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: now - 3 * 86_400_000 }),
+			];
+			const data = buildData({ bySessionLastQuery: { s1: now - 5 * 60_000 } });
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+			expect(screen.getByTestId('agent-card-age').textContent).toBe('3d');
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			const age = screen.getByTestId('agent-card-age') as HTMLElement;
+			expect(age.textContent).toBe('5m');
+			expect(age.dataset.highlighted).toBe('true');
+		});
+
+		it('drops the corner badge when the agent has no query in range', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: Date.now() - 86_400_000 }),
+			];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			expect(screen.queryByTestId('agent-card-age')).toBeNull();
+		});
+	});
+
 	describe('Auto % column', () => {
 		it('renders the auto-source share for each session from bySessionSource', () => {
 			const sessions: Session[] = [
@@ -471,7 +525,7 @@ describe('AgentOverviewCards', () => {
 
 			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-			expect(screen.getByTestId('agent-card-auto-pct').textContent).toBe('—');
+			expect(screen.getByTestId('agent-card-auto-pct').textContent).toBe('\u2014');
 		});
 
 		it('sorts cards by auto % descending and sinks no-data sessions to the bottom', () => {
@@ -1152,18 +1206,18 @@ describe('AgentOverviewCards', () => {
 		it('ships a column floor wide enough to hold an ordinary agent name', () => {
 			renderGrid();
 
-			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
 		});
 
 		it('widens the tiles on + and narrows them on -', () => {
 			renderGrid();
 
 			fireEvent.keyDown(window, { key: '+' });
-			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
 
 			fireEvent.keyDown(window, { key: '-' });
 			fireEvent.keyDown(window, { key: '-' });
-			expect(columns()).toBe('repeat(auto-fill, minmax(234px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(234px, 100%), 1fr))');
 		});
 
 		it('leaves the tiles alone when the key carries a modifier', () => {
@@ -1171,7 +1225,7 @@ describe('AgentOverviewCards', () => {
 			renderGrid();
 
 			fireEvent.keyDown(window, { key: '+', metaKey: true });
-			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
 		});
 
 		it('remembers the size across a remount, and 0 puts it back', () => {
@@ -1181,10 +1235,10 @@ describe('AgentOverviewCards', () => {
 			unmount();
 
 			renderGrid();
-			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
 
 			fireEvent.keyDown(window, { key: '0' });
-			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
 		});
 
 		it('zooms from the control beside the sort pills as well', () => {
@@ -1192,11 +1246,69 @@ describe('AgentOverviewCards', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
 
-			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
 			// A tile width has no meaningful percentage, so the control shows only
 			// the two buttons; `0` is still the way back.
 			expect(screen.queryByRole('button', { name: 'Reset tile size' })).toBeNull();
 			expect(screen.getByTestId('agent-overview-tile-zoom')).not.toHaveTextContent('%');
 		});
+	});
+});
+
+// The toolbar's two selects, filter box and active-only switch add up to ~780px
+// of fixed width. On a 390px phone they ran off the right edge and took the
+// whole tab into a horizontal scroll; on desktop they already fit, and giving
+// them a shrinkable basis there would rearrange a toolbar nobody asked to move.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('AgentOverviewCards toolbar width', () => {
+	beforeEach(() => {
+		installLocalStorageMock();
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	/** The filter cluster: the selects, the search box and the active-only switch. */
+	function filterCluster(): HTMLElement {
+		const input = screen.getByTestId('agent-overview-filter-input');
+		const cluster = input.closest('div')?.parentElement;
+		if (!cluster) throw new Error('filter cluster not found');
+		return cluster;
+	}
+
+	it('keeps the desktop toolbar on one unwrapped row at its fixed widths', () => {
+		render(
+			<AgentOverviewCards
+				sessions={[buildSession({ id: 's1', name: 'Alpha' })]}
+				data={buildData()}
+				theme={theme}
+			/>
+		);
+
+		expect(filterCluster()).not.toHaveClass('flex-wrap');
+		// A fixed width, not a shrinkable basis - the desktop row already fits.
+		expect(screen.getByTestId('agent-overview-filter-input').parentElement).toHaveStyle({
+			width: '260px',
+		});
+	});
+
+	it('lets the toolbar pack and wrap on a phone', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(
+			<AgentOverviewCards
+				sessions={[buildSession({ id: 's1', name: 'Alpha' })]}
+				data={buildData()}
+				theme={theme}
+			/>
+		);
+
+		expect(filterCluster()).toHaveClass('flex-wrap');
+		// Shrinkable, and capped at the desktop width so it cannot grow past it.
+		const search = screen.getByTestId('agent-overview-filter-input').parentElement;
+		expect(search).toHaveStyle({ minWidth: '0', maxWidth: '260px' });
+		expect(search?.style.flex).toBe('1 1 180px');
 	});
 });

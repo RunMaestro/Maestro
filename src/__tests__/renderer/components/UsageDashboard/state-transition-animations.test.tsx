@@ -18,6 +18,7 @@ import '@testing-library/jest-dom';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
@@ -69,6 +70,11 @@ vi.mock('lucide-react', () => {
 		Flame: createIcon('flame', '🔥'),
 		CalendarCheck: createIcon('calendar-check', '📆'),
 		PenLine: createIcon('pen-line', '✏️'),
+		Coins: createIcon('coins', '🪙'),
+		// Delegation score card + summary ratio card icons
+		Rocket: createIcon('rocket', '🚀'),
+		Info: createIcon('info', 'ℹ️'),
+		Split: createIcon('split', '🔀'),
 	};
 });
 
@@ -134,10 +140,12 @@ class MockResizeObserver {
 // Mock the maestro API
 const mockStats = {
 	getAggregation: vi.fn(),
+	getDelegationTotals: vi.fn(),
+	getDelegationByDay: vi.fn(),
 	getDatabaseSize: vi.fn(),
 	getAutoRunSessions: vi.fn().mockResolvedValue([]),
 	onStatsUpdate: vi.fn(() => () => {}),
-	exportCsv: vi.fn(),
+	exportUsage: vi.fn(),
 };
 
 const mockDialog = {
@@ -153,6 +161,11 @@ beforeEach(() => {
 	// in this file. Reset it so each test starts on 'overview' instead of inheriting
 	// the tab a prior test navigated to (which can mount the Shortcuts panel).
 	useUIStore.setState({ usageDashboardViewMode: 'overview' });
+	// Pin the Encore flags this file was written against. Cue ships on by
+	// default, which adds a Cue tab and a cueStats fetch these tests do not mock.
+	useSettingsStore.setState((s) => ({
+		encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
+	}));
 	(window as any).maestro = {
 		stats: mockStats,
 		dialog: mockDialog,
@@ -216,6 +229,12 @@ beforeEach(() => {
 		bySessionByDay: {},
 		bySessionSource: {},
 	});
+	mockStats.getDelegationTotals.mockResolvedValue({
+		interactive: { count: 0, durationMs: 0 },
+		autoRun: { count: 0, durationMs: 0 },
+		cue: { count: 0, durationMs: 0 },
+	});
+	mockStats.getDelegationByDay.mockResolvedValue([]);
 	mockStats.getDatabaseSize.mockResolvedValue(1024 * 1024); // 1 MB
 });
 
@@ -355,7 +374,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards.length).toBe(12); // 12 metric cards (was 10)
+			expect(cards.length).toBe(14); // 14 metric cards (Tokens + Cost added)
 
 			// Verify each card has incrementing animation delay
 			cards.forEach((card, index) => {
@@ -371,11 +390,11 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(cards[0]).toHaveStyle({ animationDelay: '0ms' });
 		});
 
-		it('last card has 880ms delay (11 * 80ms)', () => {
+		it('last card has 1040ms delay (13 * 80ms)', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards[11]).toHaveStyle({ animationDelay: '880ms' });
+			expect(cards[13]).toHaveStyle({ animationDelay: '1040ms' });
 		});
 	});
 

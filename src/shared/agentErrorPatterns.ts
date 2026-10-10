@@ -444,7 +444,20 @@ const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 
 	session_not_found: [
 		{
-			pattern: /session.*not found/i,
+			// Verified: opencode-ai v1.18.15, run locally against a nonexistent
+			// session ID. `opencode run "hi" --session ses_<bad-id>` exits 1 with
+			// stderr "Error: Session not found" (bare). `opencode export
+			// ses_<bad-id>` exits 1 with stderr "Error: Session not found:
+			// ses_<bad-id>" (ID appended after a colon). Anchored to this literal
+			// phrase so unrelated lines that merely mention both words don't
+			// trigger a discard-and-respawn.
+			//
+			// Note: opencode itself surfaces this exact string for causes other
+			// than a truly deleted session (OPENCODE_SERVER_PASSWORD auth
+			// mismatches, corrupted session JSON) - Maestro can't distinguish
+			// those from a real deletion once opencode has collapsed them into
+			// the same message.
+			pattern: /\bsession not found\b/i,
 			message: 'Session not found. Starting fresh conversation.',
 			recoverable: true,
 		},
@@ -607,6 +620,20 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			pattern: /error running remote compact task/i,
 			message:
 				'Codex could not compact this conversation on its server. The turn was dropped but the session is intact - retry the prompt, and start a new tab if it keeps failing.',
+			recoverable: true,
+		},
+		{
+			// OpenAI closed the response stream mid-turn and Codex's own retries ran
+			// out (#1694): "stream disconnected before completion: websocket closed by
+			// server before response.completed". A transport drop between Codex and
+			// OpenAI, so it is transient. Keyed on the transport cause, not the
+			// prefix alone: Codex also wraps permanent failures in the same prefix
+			// ("stream disconnected before completion: The model ... does not
+			// exist"), and those must not be retried.
+			pattern:
+				/stream disconnected before completion:.*(?:websocket closed|before response\.completed|idle timeout)/i,
+			message:
+				'OpenAI closed the Codex response stream before the turn finished. This is a provider-side drop - retry the prompt.',
 			recoverable: true,
 		},
 		{
@@ -839,6 +866,16 @@ const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 // ============================================================================
 
 /**
+ * Actionable message shown when an SSH remote host answers with a Windows shell.
+ * Maestro builds the remote command for a POSIX shell (see ssh-command-builder.ts:
+ * /bin/bash --norc --noprofile + single-quote escaping), which cmd.exe and
+ * PowerShell cannot run. The fix is on the host: point OpenSSH's DefaultShell at
+ * Git Bash or WSL bash (see src/shared/sshRemoteShell.ts and issue #995).
+ */
+const WINDOWS_REMOTE_SHELL_MESSAGE =
+	"Remote SSH shell is a Windows shell (PowerShell or cmd.exe), which cannot run /bin/bash. Point the remote's OpenSSH DefaultShell at Git Bash or WSL bash.";
+
+/**
  * Error patterns for SSH remote execution errors.
  * These are checked separately from agent-specific patterns because they can
  * occur when ANY agent runs via SSH remote execution.
@@ -942,6 +979,30 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 
 	agent_crashed: [
+		// Windows remote host detection (issue #995).
+		// Maestro builds the remote command for a POSIX shell. When the SSH
+		// remote is Windows, its default shell (cmd.exe or PowerShell) cannot
+		// run /bin/bash and the process dies with a bare exit 1. The phrases
+		// below are emitted ONLY by Windows shells, never by a POSIX shell, so
+		// POSIX remotes are never affected by these patterns.
+		{
+			// cmd.exe: "'/bin/bash' is not recognized as an internal or external command"
+			pattern: /is not recognized as an internal or external command/i,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
+			recoverable: false,
+		},
+		{
+			// PowerShell: "The term '/bin/bash' is not recognized as the name of a cmdlet"
+			pattern: /is not recognized as the name of a cmdlet/i,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
+			recoverable: false,
+		},
+		{
+			// cmd.exe / Windows API: "The system cannot find the path specified"
+			pattern: /the system cannot find the path specified/i,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
+			recoverable: false,
+		},
 		{
 			// Agent command not found (shell reports command not found)
 			// bash/sh format: "bash: claude: command not found"
@@ -1011,8 +1072,7 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			// no amount of retrying or reinstalling the agent will move it.
 			pattern:
 				/['"]?\/bin\/bash['"]?\s+is not recognized|the term ['"]\/bin\/bash['"] is not recognized|is not a valid statement separator in this version/i,
-			message:
-				"Remote SSH shell is a Windows shell (PowerShell or cmd.exe), which cannot run /bin/bash. Point the remote's OpenSSH DefaultShell at Git Bash or WSL bash.",
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
 			recoverable: false,
 		},
 		{
@@ -1159,12 +1219,396 @@ const COPILOT_ERROR_PATTERNS: AgentErrorPatterns = {
 // Pattern Registry
 // ============================================================================
 
+const PI_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /invalid api key|authentication failed|unauthorized|not authenticated/i,
+			message: 'Pi authentication failed. Check the selected provider credentials.',
+			recoverable: true,
+		},
+	],
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|\b429\b|quota exceeded/i,
+			message: 'Pi provider rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+	],
+	token_exhaustion: [
+		{
+			pattern: /context.*(exceeded|too long)|maximum.*tokens|prompt.*too long/i,
+			message: 'Pi context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+	],
+	network_error: [
+		{
+			pattern: /connection (failed|refused|reset)|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Pi could not reach the selected provider. Check your network connection.',
+			recoverable: true,
+		},
+	],
+};
+
+const QWEN_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /invalid api key|authentication failed|unauthorized|not authenticated|401/i,
+			message: 'Qwen Code authentication failed. Re-authenticate your Qwen account or API key.',
+			recoverable: true,
+		},
+	],
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|\b429\b|quota exceeded/i,
+			message: 'Qwen Code rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+	],
+	token_exhaustion: [
+		{
+			pattern: /context.*(exceeded|too long)|maximum.*tokens|prompt.*too long/i,
+			message: 'Qwen Code context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+	],
+	network_error: [
+		{
+			pattern: /connection (failed|refused|reset)|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Qwen Code could not reach the model provider. Check your network connection.',
+			recoverable: true,
+		},
+	],
+	agent_crashed: [
+		{
+			pattern: /\b(fatal|unexpected|internal|unhandled)\s+error\b/i,
+			message: 'An unexpected error occurred in the agent.',
+			recoverable: false,
+		},
+	],
+	session_not_found: [
+		{
+			pattern: /session.*not found|no conversation found with session id/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*session/i,
+			message: 'Invalid session. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
+};
+
+const OMP_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern:
+				/invalid api key|authentication failed|unauthorized|not authenticated|missing api key/i,
+			message: 'Oh My Pi authentication failed. Check the selected provider credentials.',
+			recoverable: true,
+		},
+	],
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|\b429\b|quota exceeded/i,
+			message: 'Oh My Pi provider rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+	],
+	token_exhaustion: [
+		{
+			pattern: /context.*(exceeded|too long)|maximum.*tokens|prompt.*too long/i,
+			message: 'Oh My Pi context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+	],
+	network_error: [
+		{
+			pattern: /connection (failed|refused|reset)|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Oh My Pi could not reach the selected provider. Check your network connection.',
+			recoverable: true,
+		},
+	],
+	agent_crashed: [
+		{
+			pattern: /panic|fatal error|unhandled exception|segmentation fault/i,
+			message: 'Oh My Pi crashed unexpectedly. Check the logs and try again.',
+			recoverable: true,
+		},
+	],
+};
+
+const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not authenticated|authentication failed/i,
+			message: 'Not authenticated. Please run "grok login" to authenticate.',
+			recoverable: true,
+		},
+		{
+			// Prefer multi-token auth phrases over bare "401" / lone "unauthorized"
+			// (those false-positive on non-auth failures and wrong recovery UX).
+			pattern:
+				/unauthorized.*(?:request|access)|(?:request|access).*unauthorized|http\s*401|status(?:\s+code)?\s*401/i,
+			message: 'Unauthorized. Please re-authenticate with "grok login".',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*credential|credential.*(invalid|expired)/i,
+			message: 'Invalid or expired credentials. Please run "grok login" to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /grok\s+login/i,
+			message: 'Login required. Please run "grok login" to authenticate.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate limit/i,
+			message: 'Rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			// Multi-token only; bare \b429\b is too broad for exit/stderr banks.
+			pattern: /too many requests|http\s*429|status(?:\s+code)?\s*429/i,
+			message: 'Too many requests. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'API quota exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context window/i,
+			message: 'Context window exceeded. Please start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /context.*(exceeded|too long)/i,
+			message: 'Context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /maximum context/i,
+			message: 'Maximum context reached. Start a new session to continue.',
+			recoverable: true,
+		},
+		{
+			pattern: /prompt.*too\s+long/i,
+			message: 'Prompt is too long. Try a shorter message or start a new session.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET/,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /fetch failed/i,
+			message: 'Network request failed. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /network error/i,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /connection (failed|refused|reset)/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /timed?\s?out/i,
+			message: 'Request timed out. Please try again.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			// Verified: `grok -p "hi" -m nonexistent-model-xyz` emits
+			// {"type":"error","message":"Couldn't set model '...': Invalid params:
+			// \"unknown model id\". Run 'grok models' to see available models."}
+			pattern: /couldn't set model|unknown model id/i,
+			message:
+				'Invalid model. Run "grok models" to see available models and check the model setting in configuration.',
+			recoverable: true,
+		},
+	],
+
+	session_not_found: [
+		{
+			// Verified: `grok -p "hi" --resume <bad-uuid> --output-format
+			// streaming-json` (grok v0.2.93) prints nothing on stdout and exits 1
+			// with stderr:
+			//   "Session <uuid> not found locally, restoring from remote..."
+			//   "Error: Failed to restore session from remote: fetching session
+			//    record: session get failed: 404 Not Found"
+			// Deliberately NOT matching the bare "Session ... not found locally"
+			// line: it also precedes SUCCESSFUL remote restores, so only the
+			// fatal "Failed to restore session" string identifies a dead session.
+			pattern: /failed to restore session/i,
+			message: 'Session not found. It may have been deleted. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			// The inner cause from the same failure, in case grok surfaces it
+			// standalone in other output modes.
+			pattern: /session get failed/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
+};
+
+/**
+ * Antigravity CLI (`agy`) error patterns.
+ *
+ * Antigravity authenticates against a Google account and shares the Gemini
+ * quota/credit system, so the auth and rate-limit wording below mirrors Google's
+ * API surface. The headless-specific entries cover the two failure modes unique
+ * to `-p` runs: the 5m default print timeout, and tool calls that get soft-denied
+ * because the run was started without --dangerously-skip-permissions.
+ */
+const ANTIGRAVITY_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not (?:signed in|authenticated)/i,
+			message: 'Not signed in. Run "agy" once interactively to complete the Google sign-in.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:authentication|auth) (?:failed|required|expired)/i,
+			message: 'Antigravity authentication failed. Run "agy" interactively to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /credentials.*(?:expired|invalid|not found)/i,
+			message:
+				'Cached Antigravity credentials are no longer valid. Sign in again from an interactive "agy" session.',
+			recoverable: true,
+		},
+		{
+			pattern: /\b401\b|unauthenticated/i,
+			message: 'Unauthorized. Check the Google account signed in to Antigravity.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /resource_exhausted/i,
+			message: 'Antigravity quota exhausted. Wait for the quota to reset and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /rate limit|too many requests|\b429\b/i,
+			message: 'Rate limited by Antigravity. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:quota|credits?).*(?:exceeded|exhausted|depleted)/i,
+			message: 'Out of AI credits. Resume when your Antigravity quota resets.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /print[- ]timeout|deadline exceeded/i,
+			message:
+				'The headless run exceeded its timeout. Raise the "Headless Timeout" option in the agent settings.',
+			recoverable: true,
+		},
+		{
+			pattern: /connection (?:refused|reset|failed)/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /network (?:error|unreachable)/i,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /\btimed? ?out\b/i,
+			message: 'Request timed out. Please try again.',
+			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern: /soft[- ]denied|permission (?:denied|required)|tool.*not allowed/i,
+			message:
+				'A tool call was denied. Headless runs deny shell commands unless permissions are skipped.',
+			recoverable: true,
+		},
+	],
+
+	session_not_found: [
+		{
+			pattern: /conversation.*not found|unknown conversation/i,
+			message: 'Conversation not found. Starting a fresh conversation.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context (?:window|length|limit).*(?:exceeded|too long)/i,
+			message: 'Context window exceeded. Start a new conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:input|prompt).*too (?:long|large)/i,
+			message: 'The prompt is too large for the context window. Try a shorter message.',
+			recoverable: true,
+		},
+		{
+			pattern: /token limit|maximum.*tokens/i,
+			message: 'Token limit reached. Start a new conversation to continue.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /internal (?:error|server error)|\b50[0234]\b/i,
+			message: 'Antigravity returned an internal error. Please try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /panic:|unexpected error/i,
+			message: 'The Antigravity CLI crashed unexpectedly.',
+			recoverable: true,
+		},
+	],
+};
+
 const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['claude-code', CLAUDE_ERROR_PATTERNS],
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
 	['copilot-cli', COPILOT_ERROR_PATTERNS],
+	['pi', PI_ERROR_PATTERNS],
+	['qwen3-coder', QWEN_ERROR_PATTERNS],
+	['omp', OMP_ERROR_PATTERNS],
+	['grok', GROK_ERROR_PATTERNS],
+	['antigravity', ANTIGRAVITY_ERROR_PATTERNS],
 ]);
 
 /**

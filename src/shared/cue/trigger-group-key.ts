@@ -50,6 +50,14 @@ export function triggerGroupKey(sub: CueSubscription): string {
 		gh_labels: sub.gh_labels ?? null,
 		retrigger_on_comments: sub.retrigger_on_comments ?? null,
 		max_notifications: sub.max_notifications ?? null,
+		// Without the webhook block, two `webhook.received` subs on different
+		// paths (or different secrets) collapse into one visual trigger, and the
+		// next save rewrites both to whichever config won - silently breaking a
+		// working endpoint.
+		webhook_path: sub.webhook?.path ?? null,
+		webhook_secret: sub.webhook?.secret ?? null,
+		webhook_secret_env: sub.webhook?.secret_env ?? null,
+		webhook_signature_header: sub.webhook?.signature_header ?? null,
 		label: sub.label ?? null,
 		filter,
 	});

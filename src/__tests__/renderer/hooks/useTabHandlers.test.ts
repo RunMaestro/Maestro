@@ -178,89 +178,17 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// Derived State
+	// Derived state lives in useTabDerivedState / getTabDerivedState (MainPanel)
 	// ========================================================================
 
-	describe('derived state', () => {
-		it('returns undefined activeTab when no session exists', () => {
+	describe('handlers-only return', () => {
+		it('does not expose derived paint fields (moved to MainPanel)', () => {
 			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.activeTab).toBeUndefined();
-		});
-
-		it('returns empty arrays when no session exists', () => {
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.unifiedTabs).toEqual([]);
-			expect(result.current.fileTabBackHistory).toEqual([]);
-			expect(result.current.fileTabForwardHistory).toEqual([]);
-		});
-
-		it('computes activeTab from active session', () => {
-			const tab = createMockAITab({ id: 'tab-1', name: 'Tab 1' });
-			const { result } = renderWithSession([tab]);
-			expect(result.current.activeTab?.id).toBe('tab-1');
-		});
-
-		it('computes unifiedTabs in correct order', () => {
-			const aiTab = createMockAITab({ id: 'ai-1' });
-			const fileTab = createMockFileTab({ id: 'file-1' });
-			setupSessionWithTabs([aiTab], [fileTab]);
-
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.unifiedTabs).toHaveLength(2);
-			expect(result.current.unifiedTabs[0].type).toBe('ai');
-			expect(result.current.unifiedTabs[0].id).toBe('ai-1');
-			expect(result.current.unifiedTabs[1].type).toBe('file');
-			expect(result.current.unifiedTabs[1].id).toBe('file-1');
-		});
-
-		it('returns activeFileTab when file tab is active', () => {
-			const aiTab = createMockAITab({ id: 'ai-1' });
-			const fileTab = createMockFileTab({ id: 'file-1', name: 'myFile' });
-			setupSessionWithTabs([aiTab], [fileTab], 'ai-1', 'file-1');
-
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.activeFileTab?.id).toBe('file-1');
-		});
-
-		it('returns null activeFileTab when no file tab is active', () => {
-			const aiTab = createMockAITab({ id: 'ai-1' });
-			setupSessionWithTabs([aiTab]);
-
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.activeFileTab).toBeNull();
-		});
-
-		it('computes isResumingSession based on agentSessionId', () => {
-			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'agent-123' });
-			const { result } = renderWithSession([tab]);
-			expect(result.current.isResumingSession).toBe(true);
-		});
-
-		it('isResumingSession is false when no agentSessionId', () => {
-			const tab = createMockAITab({ id: 'tab-1', agentSessionId: null });
-			const { result } = renderWithSession([tab]);
-			expect(result.current.isResumingSession).toBe(false);
-		});
-
-		it('computes file tab navigation history', () => {
-			const fileTab = createMockFileTab({
-				id: 'file-1',
-				navigationHistory: [
-					{ path: '/a.ts', name: 'a', scrollTop: 0 },
-					{ path: '/b.ts', name: 'b', scrollTop: 0 },
-					{ path: '/c.ts', name: 'c', scrollTop: 0 },
-				],
-				navigationIndex: 1,
-			});
-			const aiTab = createMockAITab({ id: 'ai-1' });
-			setupSessionWithTabs([aiTab], [fileTab], 'ai-1', 'file-1');
-
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.fileTabCanGoBack).toBe(true);
-			expect(result.current.fileTabCanGoForward).toBe(true);
-			expect(result.current.fileTabBackHistory).toHaveLength(1);
-			expect(result.current.fileTabForwardHistory).toHaveLength(1);
-			expect(result.current.activeFileTabNavIndex).toBe(1);
+			expect(result.current).not.toHaveProperty('activeTab');
+			expect(result.current).not.toHaveProperty('unifiedTabs');
+			expect(result.current).not.toHaveProperty('isResumingSession');
+			expect(typeof result.current.handleNewTab).toBe('function');
+			expect(typeof result.current.handleTabSelect).toBe('function');
 		});
 	});
 
@@ -1178,7 +1106,7 @@ describe('useTabHandlers', () => {
 
 			const { result } = renderHook(() => useTabHandlers());
 			act(() => {
-				result.current.handleUnifiedTabReorder(0, 1);
+				result.current.handleUnifiedTabReorder('ai-1', 'file-1');
 			});
 
 			const session = getSession();
@@ -1186,13 +1114,13 @@ describe('useTabHandlers', () => {
 			expect(session.unifiedTabOrder[1]).toEqual({ type: 'ai', id: 'ai-1' });
 		});
 
-		it('handleUnifiedTabReorder is no-op for invalid indices', () => {
+		it('handleUnifiedTabReorder is no-op for unknown tab ids', () => {
 			const aiTab = createMockAITab({ id: 'ai-1' });
 			setupSessionWithTabs([aiTab]);
 
 			const { result } = renderHook(() => useTabHandlers());
 			act(() => {
-				result.current.handleUnifiedTabReorder(-1, 0);
+				result.current.handleUnifiedTabReorder('gone', 'ai-1');
 			});
 
 			const session = getSession();
@@ -2005,7 +1933,7 @@ describe('useTabHandlers', () => {
 	// ========================================================================
 
 	describe('handleToggleTabShowThinking log clearing', () => {
-		it('clears thinking and tool logs when cycling to off', () => {
+		it('clears thinking logs but keeps tool logs when cycling to off', () => {
 			const tab = createMockAITab({
 				id: 'tab-1',
 				showThinking: 'sticky',
@@ -2025,10 +1953,11 @@ describe('useTabHandlers', () => {
 
 			const session = getSession();
 			expect(session.aiTabs[0].showThinking).toBe('off');
-			// thinking and tool logs should be filtered out
+			// Thinking logs are removed; tool logs are always recorded and render-gated,
+			// so they survive a thinking-off toggle.
 			const logSources = session.aiTabs[0].logs.map((l) => l.source);
 			expect(logSources).not.toContain('thinking');
-			expect(logSources).not.toContain('tool');
+			expect(logSources).toContain('tool');
 			expect(logSources).toContain('user');
 			expect(logSources).toContain('ai');
 		});

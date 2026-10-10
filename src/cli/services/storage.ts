@@ -16,6 +16,7 @@ import {
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
+	normalizeHistoryEntries,
 } from '../../shared/history';
 
 // Get the Maestro config directory path
@@ -168,7 +169,9 @@ function readSessionHistory(sessionId: string): HistoryEntry[] {
 	if (fs.existsSync(jsonlPath)) {
 		try {
 			// File order is oldest-first; callers expect newest-first.
-			return parseHistoryJsonl(fs.readFileSync(jsonlPath, 'utf-8')).entries.reverse();
+			return normalizeHistoryEntries(
+				parseHistoryJsonl(fs.readFileSync(jsonlPath, 'utf-8')).entries.reverse()
+			);
 		} catch {
 			return [];
 		}
@@ -180,7 +183,9 @@ function readSessionHistory(sessionId: string): HistoryEntry[] {
 	}
 	try {
 		const data: HistoryFileData = JSON.parse(fs.readFileSync(legacyPath, 'utf-8'));
-		return data.entries || [];
+		// Re-map legacy cross-agent consults (written as AUTO before the AGENT type
+		// existed), matching HistoryManager.getEntries in the app.
+		return normalizeHistoryEntries(data.entries || []);
 	} catch {
 		return [];
 	}
@@ -502,7 +507,39 @@ export function resolveAgentId(partialId: string): string {
 		throw new Error(`Ambiguous agent name '${partialId}'. Matches:\n${matchList}`);
 	}
 
+	// Last resort: match on the READABLE name, ignoring leading/trailing
+	// decoration. Users prefix agent names with an emoji far more often than not
+	// ("📜 Substrate PedTome"), and both a human and an agent will type the name
+	// they READ, which is the part after the glyph. Without this the exact match
+	// above fails on a name that is on screen, and the caller concludes the agent
+	// does not exist.
+	const readable = readableAgentName(partialId);
+	if (readable) {
+		const byReadable = sessions.filter((s) => readableAgentName(s.name) === readable);
+		if (byReadable.length === 1) {
+			return byReadable[0].id;
+		}
+		if (byReadable.length > 1) {
+			const matchList = byReadable.map((s) => `  ${s.id.slice(0, 8)}  ${s.name}`).join('\n');
+			throw new Error(`Ambiguous agent name '${partialId}'. Matches:\n${matchList}`);
+		}
+	}
+
 	throw new Error(`Agent not found: ${partialId}`);
+}
+
+/**
+ * An agent name reduced to what a person would read aloud: lowercased, with
+ * leading and trailing non-alphanumerics (emoji, symbols, whitespace) removed.
+ * Returns '' for a name that is nothing but decoration, which never matches -
+ * two emoji-only names are not the same agent.
+ */
+function readableAgentName(name: string): string {
+	return name
+		.toLowerCase()
+		.replace(/^[^\p{L}\p{N}]+/u, '')
+		.replace(/[^\p{L}\p{N}]+$/u, '')
+		.trim();
 }
 
 /**

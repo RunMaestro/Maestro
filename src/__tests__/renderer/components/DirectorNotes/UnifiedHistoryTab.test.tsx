@@ -57,7 +57,11 @@ vi.mock('../../../../renderer/hooks/keyboard/useListNavigation', () => ({
 	},
 }));
 
-// Mock @tanstack/react-virtual
+// Mock @tanstack/react-virtual. The options are captured so tests can assert on
+// virtualization config the DOM can't show (jsdom has no layout, so real
+// measurement never runs) - notably `getItemKey`, which controls whether the
+// measurement cache follows an entry or its slot.
+const capturedVirtualizerOpts: any[] = [];
 vi.mock('@tanstack/react-virtual', () => ({
 	useVirtualizer: (opts: any) => ({
 		getVirtualItems: () =>
@@ -70,6 +74,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 		getTotalSize: () => opts.count * 80,
 		scrollToIndex: vi.fn(),
 		measureElement: vi.fn(),
+		__opts: capturedVirtualizerOpts.push(opts),
 	}),
 }));
 
@@ -189,7 +194,7 @@ vi.mock('../../../../renderer/components/History', () => ({
 			if (raw !== null) {
 				const parsed = JSON.parse(raw);
 				if (Array.isArray(parsed)) {
-					const valid = parsed.filter((t) => ['USER', 'AUTO', 'CUE'].includes(t));
+					const valid = parsed.filter((t) => ['USER', 'AGENT', 'AUTO', 'CUE'].includes(t));
 					const set = new Set<string>(valid);
 					if (!maestroCueEnabled) set.delete('CUE');
 					return set;
@@ -198,7 +203,9 @@ vi.mock('../../../../renderer/components/History', () => ({
 		} catch {
 			// fall through to default
 		}
-		return new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO']);
+		return new Set(
+			maestroCueEnabled ? ['USER', 'AGENT', 'AUTO', 'CUE'] : ['USER', 'AGENT', 'AUTO']
+		);
 	},
 	savePersistedHistoryFilters: (key: string, filters: Set<string>) => {
 		try {
@@ -283,14 +290,12 @@ const createPaginatedResponse = (entries: any[], hasMore = false, total?: number
 });
 
 beforeEach(() => {
-	// UnifiedHistoryTab persists its USER/AUTO/CUE filter selection to
-	// localStorage (see historyFilterPersistence.ts). jsdom here has no working
-	// Storage, and a filter toggled in one test would otherwise leak into every
-	// test that follows, silently filtering out entries and shifting
-	// index-based assertions with no visible cause. Installing a fresh mock per
-	// test provides the API and doubles as the reset.
+	// Install a fresh in-memory localStorage mock between tests so a filter
+	// toggle in one test can't leak a restrictive selection (UNIFIED_HISTORY_FILTERS_KEY)
+	// into later tests, which would hide entries and fail their assertions.
+	// jsdom here provides no working Storage, so a mock is required. This
+	// installs a fresh in-memory store, which also serves as the per-test reset.
 	installLocalStorageMock();
-
 	mockDirNotesSettings.defaultLookbackDays = 7;
 	(window as any).maestro = {
 		directorNotes: {
@@ -328,6 +333,45 @@ afterEach(() => {
 });
 
 describe('UnifiedHistoryTab', () => {
+	describe('Row virtualization', () => {
+		// Regression: the virtualizer's measurement cache is keyed by item key, and
+		// the default key is the row INDEX. Filtering/searching swaps which entry
+		// occupies each index, so every row inherited the measured height of
+		// whatever used to sit in its slot - rendering as uneven gaps between cards
+		// until something forced a remeasure. Keying by entry id makes a changed
+		// list a cache miss instead of a wrong hit.
+		it('keys row measurements by entry id, not by row index', async () => {
+			capturedVirtualizerOpts.length = 0;
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => expect(capturedVirtualizerOpts.length).toBeGreaterThan(0));
+			const { getItemKey } = capturedVirtualizerOpts.at(-1)!;
+			expect(getItemKey).toBeTypeOf('function');
+
+			await waitFor(() => {
+				const latest = capturedVirtualizerOpts.at(-1)!;
+				expect(latest.count).toBe(createMockEntries().length);
+			});
+
+			const opts = capturedVirtualizerOpts.at(-1)!;
+			expect(opts.getItemKey(0)).toBe('entry-1');
+			expect(opts.getItemKey(1)).toBe('entry-2');
+			expect(opts.getItemKey(2)).toBe('entry-3');
+		});
+
+		it('falls back to the index when an entry is missing rather than throwing', async () => {
+			capturedVirtualizerOpts.length = 0;
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => expect(capturedVirtualizerOpts.length).toBeGreaterThan(0));
+			const { getItemKey } = capturedVirtualizerOpts.at(-1)!;
+			// An out-of-range index can be requested transiently while the list
+			// shrinks; the key function must stay total.
+			expect(() => getItemKey(9999)).not.toThrow();
+			expect(getItemKey(9999)).toBe(9999);
+		});
+	});
+
 	describe('Loading and Data Fetching', () => {
 		it('shows loading state initially', () => {
 			mockGetUnifiedHistory.mockReturnValue(new Promise(() => {}));
@@ -344,7 +388,7 @@ describe('UnifiedHistoryTab', () => {
 					lookbackDays: 7,
 					// All visible types selected by default; pushed to the server so
 					// pagination spans the filtered dataset (maestroCue disabled here).
-					filter: ['USER', 'AUTO'],
+					filter: ['USER', 'AGENT', 'AUTO'],
 					limit: 100,
 					offset: 0,
 				});
@@ -369,7 +413,7 @@ describe('UnifiedHistoryTab', () => {
 			await waitFor(() => {
 				expect(mockGetUnifiedHistory).toHaveBeenCalledWith({
 					lookbackDays: 0,
-					filter: ['USER', 'AUTO'],
+					filter: ['USER', 'AGENT', 'AUTO'],
 					limit: 100,
 					offset: 0,
 				});
@@ -749,7 +793,11 @@ describe('UnifiedHistoryTab', () => {
 		// must match what clicking the entry's session pill does.
 		it('jumps to the entry session via onSelectAlternate (Cmd+Enter)', async () => {
 			const entries = createMockEntries();
-			entries[0] = { ...entries[0], agentSessionId: 'agent-sess-abc' };
+			entries[0] = {
+				...entries[0],
+				agentSessionId: 'agent-sess-abc',
+				sessionName: 'Named Session',
+			};
 			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(entries));
 
 			const onResumeSession = vi.fn();
@@ -764,8 +812,10 @@ describe('UnifiedHistoryTab', () => {
 				mockOnSelectAlternate!(0);
 			});
 
-			// Both ids travel: the agent to switch to, and the session to open there.
-			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-sess-abc');
+			// Both ids travel: the agent to switch to, and the session to open there -
+			// plus the recorded name, which is the only surviving copy once the tab
+			// that carried it is closed.
+			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-sess-abc', 'Named Session');
 			// The jump replaces the detail modal rather than stacking on top of it.
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
@@ -950,5 +1000,34 @@ describe('UnifiedHistoryTab', () => {
 				expect(screen.getByText(/No history entries in this time range/)).toBeInTheDocument();
 			});
 		});
+	});
+});
+
+// Phone: the activity graph wraps onto its own full-width line. Beside the
+// search button and three filter pills it was squeezed to ~50px and its two
+// axis labels printed on top of each other.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('UnifiedHistoryTab on a phone', () => {
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('gives the activity graph its own full-width row', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<UnifiedHistoryTab theme={mockTheme} />);
+		const graph = await screen.findByTestId('activity-graph');
+		expect(graph.parentElement).toHaveClass('basis-full');
+	});
+
+	it('keeps the graph inline on desktop', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		render(<UnifiedHistoryTab theme={mockTheme} />);
+		const graph = await screen.findByTestId('activity-graph');
+		expect(graph.parentElement).toHaveClass('contents');
 	});
 });

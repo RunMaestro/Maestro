@@ -11,6 +11,7 @@ import type {
 } from '../../types';
 import type { WizardStep } from '../Wizard/WizardContext';
 import type { MainPanelHandle } from '../MainPanel/types';
+import type { ShortcutId, TabShortcutId } from '../../constants/shortcuts';
 
 export type QuickActionMode = 'main' | 'move-to-group' | 'agents';
 
@@ -83,7 +84,7 @@ export interface QuickActionsModalProps {
 	activeSessionId: string;
 	groups: Group[];
 	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
-	shortcuts: Record<string, Shortcut>;
+	shortcuts: Record<ShortcutId, Shortcut>;
 	initialMode?: QuickActionMode;
 	setQuickActionOpen: (open: boolean) => void;
 	setActiveSessionId: (id: string) => void;
@@ -93,6 +94,8 @@ export interface QuickActionsModalProps {
 	setRenameGroupId: (id: string) => void;
 	setRenameGroupValue: (value: string) => void;
 	setRenameGroupEmoji: (emoji: string) => void;
+	setRenameGroupIcon: (icon: string | undefined) => void;
+	setRenameGroupColor: (color: string | undefined) => void;
 	setCreateGroupModalOpen: (open: boolean) => void;
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -116,7 +119,7 @@ export interface QuickActionsModalProps {
 	onToggleTabShowThinking?: () => void;
 	onToggleTabEnterToSend?: () => void;
 	onOpenTabSwitcher?: () => void;
-	tabShortcuts?: Record<string, Shortcut>;
+	tabShortcuts?: Record<TabShortcutId, Shortcut>;
 	isAiMode?: boolean;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onRefreshGitFileState?: () => Promise<void>;
@@ -150,6 +153,8 @@ export interface QuickActionsModalProps {
 	onQuickCreateWorktree?: (session: Session) => void;
 	onOpenCreatePR?: (session: Session) => void;
 	onSummarizeAndContinue?: () => void;
+	/** Send a plugin command-macro's templated prompt to the active agent. */
+	onRunPromptMacro?: (prompt: string) => void;
 	canSummarizeActiveTab?: boolean;
 	autoRunSelectedDocument?: string | null;
 	autoRunCompletedTaskCount?: number;
@@ -185,6 +190,8 @@ export interface QuickActionsModalProps {
 	onOpenSymphony?: () => void;
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
+	onOpenPianola?: () => void;
+	setAgentRunDashboardOpen?: (open: boolean) => void;
 	onConfigureCue?: (session: Session) => void;
 	onOpenQueueBrowser?: () => void;
 	onNewTab?: () => void;

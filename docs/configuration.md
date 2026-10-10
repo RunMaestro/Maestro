@@ -21,7 +21,61 @@ Settings are organized into tabs:
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
 | **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                                                        |
-| **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                                                                                                         |
+| **Plugins**                     | Enable or disable built-in [Encore Features](./encore-features) and community plugins, with per-plugin settings and permissions                                                                                                                                                                      |
+| **WakaTime** _(in Plugins tab)_ | WakaTime integration toggle, API key, detailed file tracking - under the **Usage & Stats** plugin's settings                                                                                                                                                                                         |
+
+## Typography
+
+**Settings → Display → Fonts.** Maestro does not have one font: it has a font per surface, so the places you read and the places you work can use different faces.
+
+![The Display tab's font controls, with a picker per surface](./screenshots/settings-fonts.png)
+
+Two surfaces are the roots that everything else can follow:
+
+- **Interface** - the whole app, and the proportional face other surfaces inherit.
+- **Terminal** - the command terminal, and the fixed-width face other surfaces inherit. A Nerd Font here gets you shell prompt glyphs.
+
+Four more surfaces each pick their own face, or inherit:
+
+| Surface            | What it covers                                                     |
+| ------------------ | ------------------------------------------------------------------ |
+| **AI Chat**        | The AI transcript, in the main panel and in tiled panes            |
+| **File Preview**   | A file being read                                                  |
+| **File Editor**    | A file being edited                                                |
+| **Document Graph** | Node titles and previews in the [Document Graph](./document-graph) |
+
+Each surface has its own size, which can also inherit. Press **Up** / **Down** on any picker to step through the installed faces and preview them live.
+
+### Presets
+
+**Factory Reset Fonts** sets every font and size at once:
+
+- **Default** - proportional to read, monospace to work. The interface, AI chat, and file preview are proportional; the terminal and file editor are monospace.
+- **Hacker** - monospace everywhere. The original Maestro look.
+
+Maestro tells you which preset is active, or that you have customized away from both.
+
+### Save and restore your own setup
+
+A preset overwrites every font and size, so **Save & Restore Customizations** keeps yours. Click **Save Customizations** once you like what you have, then try a preset or keep tinkering, and **Restore Customizations** puts your fonts back in one click.
+
+There is one slot, and saving again replaces it (Maestro asks first). Zoom is not part of a saved setup, so restoring one never changes how big everything is.
+
+### Custom fonts
+
+The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Manage Custom Fonts** and it becomes available in every picker.
+
+<Warning>
+Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.
+</Warning>
+
+### Zoom
+
+**Zoom** scales every surface by the same amount, so the sizes you set relative to each other are preserved. `Cmd+=` / `Cmd+-` adjusts it and `Cmd+Shift+0` resets it.
+
+<Tip>
+You are offered the Default and Hacker presets once, on first run, so you do not have to find this screen to make Maestro readable. Nothing there is permanent - every choice is a setting you can change here later. See [First run](./getting-started#first-run).
+</Tip>
 
 ## Typography
 
@@ -123,6 +177,16 @@ Surfaces that aren't recolored: theme accent itself, file extension labels in pl
 ### Bionify Emphasis (Reading Mode)
 
 Bionify-style emphasis bolds the leading fixation portion of each word to make long-form reading easier. It is opt-in and applies **only** to dedicated readers - File Preview and Auto Run document panes. Terminals, logs, chat input, and AI output stay unchanged so they remain easy to copy/paste.
+
+Off, and on, on the same document:
+
+![File preview without Bionify emphasis](./screenshots/bionify-file-preview-before.png)
+
+![The same file preview with Bionify emphasis on](./screenshots/bionify-file-preview-after.png)
+
+The toggle sits in the reader's own toolbar, so you can turn it on for the document in front of you without opening Settings:
+
+![The Bionify toggle in the file preview toolbar](./screenshots/bionify-file-preview-highlighted.png)
 
 - **Intensity** - Soft / Default / Strong. Controls how aggressive the fixation emphasis is.
 - **Algorithm** - Advanced override of the fixation formula. Format: `[+|-] N1 N2 N3 N4 frac` where `-` skips common English words (`a`, `and`, `the`) and `+` highlights every word. The four integers set how many characters are emphasized for words of length 1-4, and `frac` is the fraction of characters emphasized for longer words (e.g. `0.4` = first 40%). Default: `- 0 1 1 2 0.4`. Click the **info** icon next to the toggle for the in-app reference.
@@ -268,7 +332,7 @@ Set these in **Edit Agent → Environment Variables (optional)** (`Alt+Cmd+,` / 
 | **Claude Code**   | `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` (gateway token) or `ANTHROPIC_API_KEY`. `CLAUDE_CONFIG_DIR` picks a different login. | The endpoint must speak the Anthropic Messages API. See the warning below.       |
 | **Codex**         | `OPENAI_API_KEY`, and `CODEX_HOME` to point at a config directory with its own `base_url`                                             | Codex reads a custom model provider from its own config file.                    |
 | **OpenCode**      | `OPENCODE_CONFIG_DIR`, plus the provider key var for whichever backend you configure (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, and so on) | OpenCode recognizes roughly a hundred `*_API_KEY` vars and stores them together. |
-| **Copilot CLI**   | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` (the CLI's own precedence order)                                                   | Selects which GitHub account is used. The backend itself is not redirectable.    |
+| **Copilot CLI**   | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` (the CLI's own precedence order)                                                   | Consulted only when there is no stored login. The backend is not redirectable.   |
 | **Factory Droid** | Configured in Droid's own settings                                                                                                    | Maestro passes the environment through but does not define the vars.             |
 
 Claude Code also honors `CLAUDE_CODE_USE_BEDROCK=1` and `CLAUDE_CODE_USE_VERTEX=1`, which route it to AWS Bedrock or Google Vertex AI. Those take credentials from the cloud SDK chain rather than from an Anthropic key, and they override the variables above.
@@ -283,8 +347,12 @@ maestro-cli update-agent <agent-id> --env ANTHROPIC_AUTH_TOKEN=sk-gateway-...
 #### What Will Not Work
 
 <Warning>
-An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Requesty, Together, and similar routers expose an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy (LiteLLM, `claude-code-router`, or the router's own Anthropic-compatible route if it publishes one) in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
+An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Together, and similar routers expose an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy (LiteLLM, `claude-code-router`, or the router's own Anthropic-compatible route if it publishes one) in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
 </Warning>
+
+[Requesty](https://docs.requesty.ai/integrations/claude-code) is one router that publishes such a route: it serves the Anthropic Messages API on `https://router.requesty.ai`, so a Claude Code agent can set `ANTHROPIC_BASE_URL=https://router.requesty.ai` (no `/v1` suffix, the CLI appends `/v1/messages`) and `ANTHROPIC_AUTH_TOKEN` to a Requesty key with nothing in between, while Codex and OpenCode point at `https://router.requesty.ai/v1` as usual.
+
+[API Route](https://www.api-route.com/docs/quickstart) also serves the Anthropic Messages API. For a Claude Code agent, set `ANTHROPIC_BASE_URL=https://global.api-route.com` (no `/v1` suffix) and `ANTHROPIC_AUTH_TOKEN` to your API Route key. Set `ANTHROPIC_MODEL` to a Claude model ID available to that key, such as `claude-haiku-4-5`; the authenticated `GET https://global.api-route.com/v1/models` endpoint lists the available IDs. These variables use the same per-agent environment settings above and do not require a translating proxy.
 
 Two more things that surprise people:
 
@@ -407,7 +475,7 @@ In-app toast notifications appear in the corner when events occur. Configure how
 | **5s / 10s / 20s / 30s** | Toast disappears after the specified time |
 | **Never**                | Toast stays until manually dismissed      |
 
-Choose which corner toasts appear in: **Top Left**, **Top Right**, **Bottom Left**, or **Bottom Right** (the default). Toasts in a bottom corner stack upward. Toasts in a top corner stack downward, below the title bar. In both cases the newest toast is nearest the corner. In a bottom corner, the stack rises above the message input when it would otherwise cover it.
+Choose which corner toasts appear in: **Top Left**, **Top Right**, **Bottom Left**, or **Bottom Right** (the default). Toasts in a bottom corner stack upward. Toasts in a top corner stack downward, below the title bar. In both cases the newest toast is nearest the corner. In a bottom corner, the stack rises above the message input when it would otherwise cover it. To switch corners without opening Settings, search **Move Toast Notifications** in Quick Actions (<kbd>Cmd</kbd>+<kbd>K</kbd>), or run `maestro-cli settings set toastPosition top-left` (also `top-right`, `bottom-left`, `bottom-right`).
 
 You can also set how wide toasts render:
 

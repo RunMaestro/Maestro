@@ -11,6 +11,11 @@
  * Values come from the entry's send-time stamp (`LogEntry.turnModel` /
  * `turnEffort`). An unset value means the agent's own default was in force, and
  * that pill is omitted rather than labeled with a guess.
+ *
+ * Both pills carry `data-turn-setting-pill`, which the phone block in
+ * `index.css` hides: they are readouts, and on a 390px screen they were sharing
+ * a row with the Force Send button and the queued card's control cluster, which
+ * has no room to give and overlapped them instead.
  */
 
 import { memo } from 'react';
@@ -44,6 +49,7 @@ export const TurnSettingPills = memo(function TurnSettingPills({
 					}}
 					title={`Model: ${model}`}
 					data-testid="turn-model-pill"
+					data-turn-setting-pill
 				>
 					<Sparkles className="w-2.5 h-2.5 shrink-0" />
 					<span className="truncate">{model}</span>
@@ -59,6 +65,7 @@ export const TurnSettingPills = memo(function TurnSettingPills({
 					}}
 					title={`Effort: ${effort}`}
 					data-testid="turn-effort-pill"
+					data-turn-setting-pill
 				>
 					<Gauge className="w-2.5 h-2.5 shrink-0" />
 					<span className="truncate">{effort}</span>

@@ -3,7 +3,7 @@
  *
  * This hook encapsulates the common pattern of navigating lists with keyboard
  * controls. It handles:
- * - Arrow key navigation (up/down)
+ * - Arrow key navigation (up/down, plus left/right in grid mode)
  * - Vim-style navigation (j/k) when enabled
  * - Page navigation (PageUp/PageDown, Home/End) when enabled
  * - Number hotkey selection (Cmd/Ctrl+1-9, 0) when enabled
@@ -25,6 +25,16 @@
  *   onSelect: handleSelectCommit,
  *   enableVimKeys: true,
  *   enablePageNavigation: true,
+ * });
+ *
+ * // As a 2-D grid (like the Extensions tile grid): left/right step one tile,
+ * // up/down jump a whole row. Passing `columns` at all is what selects grid
+ * // mode; the value is the LIVE column count, so a responsive grid keeps
+ * // jumping by a real row as it reflows.
+ * const { selectedIndex, handleKeyDown } = useListNavigation({
+ *   listLength: tiles.length,
+ *   onSelect: openTile,
+ *   columns,
  * });
  *
  * // With number hotkeys (like TabSwitcherModal)
@@ -70,6 +80,25 @@ export interface UseListNavigationOptions {
 	 * Defaults to false.
 	 */
 	wrap?: boolean;
+
+	/**
+	 * Items per row. PASSING THIS AT ALL selects grid mode, whatever the value:
+	 * ArrowLeft/ArrowRight step one item along the flattened order, and
+	 * ArrowUp/ArrowDown jump a full row. Omit it for a plain vertical list,
+	 * where left/right stay inert because other things own those keys (text
+	 * carets, tree expand/collapse).
+	 *
+	 * Grid mode is keyed on the option's PRESENCE rather than on `columns > 1`
+	 * so a grid that has reflowed down to a single column still answers all four
+	 * arrows - in a one-column grid, left/right simply mean previous/next item.
+	 * Gating on the measured value made the horizontal arrows die exactly when
+	 * the window got narrow, which reads as broken rather than as a narrow grid.
+	 *
+	 * For a responsive grid, pass the measured column count (see
+	 * `useGridColumnCount`) rather than a constant: the row jump has to match
+	 * what the user actually sees after a reflow.
+	 */
+	columns?: number;
 
 	/**
 	 * Enable vim-style navigation (j for down, k for up).
@@ -149,6 +178,18 @@ export interface UseListNavigationReturn {
 	selectCurrent: () => void;
 
 	/**
+	 * Navigate one item forward along the flattened order (grid mode only; a
+	 * no-op when `columns` was not passed).
+	 */
+	navigateNext: () => void;
+
+	/**
+	 * Navigate one item back along the flattened order (grid mode only; a no-op
+	 * when `columns` was not passed).
+	 */
+	navigatePrev: () => void;
+
+	/**
 	 * Run the secondary action on the current item (triggers onSelectAlternate,
 	 * falling back to onSelect when no alternate is configured).
 	 */
@@ -186,6 +227,7 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 		onSelectAlternate,
 		initialIndex = 0,
 		wrap = false,
+		columns,
 		enableVimKeys = false,
 		enablePageNavigation = false,
 		pageSize = 10,
@@ -207,25 +249,44 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 		});
 	}, [listLength]);
 
-	const navigateDown = useCallback(() => {
-		if (listLength === 0) return;
-		setSelectedIndex((prev) => {
-			if (wrap) {
-				return (prev + 1) % listLength;
-			}
-			return Math.min(prev + 1, listLength - 1);
-		});
-	}, [listLength, wrap]);
+	// Grid mode is the option's presence, not its value - see `columns`.
+	const isGrid = columns !== undefined;
+	// A row's worth of movement. One in list mode (the classic one-item step, so
+	// every existing caller is unaffected) and in a single-column grid.
+	const rowStep = Math.max(1, Math.floor(columns ?? 1) || 1);
 
-	const navigateUp = useCallback(() => {
-		if (listLength === 0) return;
-		setSelectedIndex((prev) => {
-			if (wrap) {
-				return (prev - 1 + listLength) % listLength;
-			}
-			return Math.max(prev - 1, 0);
-		});
-	}, [listLength, wrap]);
+	// `step` walks the flattened order by `delta`. Without wrap it clamps, EXCEPT
+	// for a row jump that would run off the end: landing on the last item there
+	// would silently change the column, so the cursor holds its place instead.
+	const step = useCallback(
+		(delta: number) => {
+			if (listLength === 0) return;
+			setSelectedIndex((prev) => {
+				const target = prev + delta;
+				if (wrap) {
+					return ((target % listLength) + listLength) % listLength;
+				}
+				if (target >= 0 && target < listLength) return target;
+				if (Math.abs(delta) === 1) return target < 0 ? 0 : listLength - 1;
+				return prev;
+			});
+		},
+		[listLength, wrap]
+	);
+
+	const navigateDown = useCallback(() => step(rowStep), [step, rowStep]);
+
+	const navigateUp = useCallback(() => step(-rowStep), [step, rowStep]);
+
+	const navigateNext = useCallback(() => {
+		if (!isGrid) return;
+		step(1);
+	}, [step, isGrid]);
+
+	const navigatePrev = useCallback(() => {
+		if (!isGrid) return;
+		step(-1);
+	}, [step, isGrid]);
 
 	const navigatePageDown = useCallback(() => {
 		if (listLength === 0) return;
@@ -301,6 +362,20 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 				return;
 			}
 
+			// Grid mode only - see the `columns` option for why list mode leaves
+			// left/right alone.
+			if (key === 'ArrowRight' && isGrid) {
+				e.preventDefault();
+				navigateNext();
+				return;
+			}
+
+			if (key === 'ArrowLeft' && isGrid) {
+				e.preventDefault();
+				navigatePrev();
+				return;
+			}
+
 			// Vim-style navigation
 			if (enableVimKeys) {
 				if (key === 'j') {
@@ -358,6 +433,9 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 			onSelect,
 			navigateDown,
 			navigateUp,
+			navigateNext,
+			navigatePrev,
+			isGrid,
 			enableVimKeys,
 			enablePageNavigation,
 			navigatePageDown,
@@ -379,6 +457,8 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 			navigateDown,
 			navigateUp,
 			selectCurrent,
+			navigateNext,
+			navigatePrev,
 			selectCurrentAlternate,
 		}),
 		[
@@ -389,6 +469,8 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 			navigateDown,
 			navigateUp,
 			selectCurrent,
+			navigateNext,
+			navigatePrev,
 			selectCurrentAlternate,
 		]
 	);

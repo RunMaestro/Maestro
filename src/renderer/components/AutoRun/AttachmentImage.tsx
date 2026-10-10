@@ -2,8 +2,8 @@ import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { Image, X, Search, PenLine } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { imageCache } from '../../hooks';
-import type { Theme } from '../../types';
 import { safeDecodeURIComponent } from '../../../shared/stringUtils';
+import type { Theme } from '../../types';
 
 // Helper to compute initial image state synchronously from cache
 // This prevents flickering when ReactMarkdown rebuilds the component tree

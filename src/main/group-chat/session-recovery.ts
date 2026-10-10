@@ -49,11 +49,13 @@ export function detectSessionNotFoundError(output: string, agentId?: string): bo
 		}
 	}
 
-	// Also check for raw error message that might not be in JSON format
+	// Also check for raw error message that might not be in JSON format.
+	// Anchored to the literal phrases each agent actually emits, not broad
+	// `.*` wildcards, which would match any line that merely mentions both
+	// words.
 	const sessionNotFoundPatterns = [
 		/no conversation found with session id/i,
-		/session.*not found/i,
-		/invalid.*session.*id/i,
+		/\bsession not found\b/i,
 	];
 
 	for (const pattern of sessionNotFoundPatterns) {

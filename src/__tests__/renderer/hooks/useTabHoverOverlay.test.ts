@@ -1,10 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTabHoverOverlay } from '../../../renderer/hooks/tabs/useTabHoverOverlay';
+import { resetPointerTypeTrackingForTests } from '../../../renderer/utils/touch';
+
+/** What the browser dispatches before the compatibility mouse events of a tap or a hover. */
+function firePointerOver(pointerType: 'touch' | 'mouse' | 'pen') {
+	const event = new Event('pointerover', { bubbles: true });
+	Object.defineProperty(event, 'pointerType', { value: pointerType });
+	document.dispatchEvent(event);
+}
 
 describe('useTabHoverOverlay', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
+		resetPointerTypeTrackingForTests();
 	});
 
 	afterEach(() => {
@@ -128,7 +137,7 @@ describe('useTabHoverOverlay', () => {
 		expect(result.current.isOverOverlayRef.current).toBe(false);
 	});
 
-	it('respects shouldOpen guard — does not open when guard returns false', () => {
+	it('respects shouldOpen guard - does not open when guard returns false', () => {
 		const { result } = renderHook(() => useTabHoverOverlay({ shouldOpen: () => false }));
 
 		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
@@ -384,6 +393,212 @@ describe('useTabHoverOverlay', () => {
 			result.current.overlayMouseLeave();
 		});
 		expect(result.current.positionReady).toBe(false);
+	});
+
+	it('dismisses an open overlay when a native drag begins', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockElement as unknown as HTMLDivElement;
+
+		// Open the overlay, then mark the pointer as over it (as a real hover would).
+		act(() => {
+			result.current.handleMouseEnter();
+		});
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+		act(() => {
+			result.current.overlayMouseEnter();
+		});
+		expect(result.current.overlayOpen).toBe(true);
+
+		// A drag starting anywhere in the window must close the menu so it can't sit
+		// over the panel's tiling drop zones and swallow the drop.
+		act(() => {
+			window.dispatchEvent(new Event('dragstart'));
+		});
+		expect(result.current.overlayOpen).toBe(false);
+		expect(result.current.isHovered).toBe(false);
+		expect(result.current.isOverOverlayRef.current).toBe(false);
+	});
+
+	it('cancels a pending open timer when a native drag begins', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockElement as unknown as HTMLDivElement;
+
+		// Start the 400ms open timer, then begin a drag before it fires.
+		act(() => {
+			result.current.handleMouseEnter();
+		});
+		act(() => {
+			window.dispatchEvent(new Event('dragstart'));
+		});
+
+		// The pending timer must not reopen the overlay after the drag started.
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+		expect(result.current.overlayOpen).toBe(false);
+	});
+
+	// iOS answers a tap with an emulated mouseenter and never a mouseleave, so a
+	// hover timer armed there popped the tab menu 400ms after every tap.
+	describe('touch-emulated mouse events', () => {
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+
+		it('ignores the mouseenter a tap emulates: no hover state, no menu', () => {
+			const { result } = renderHook(() => useTabHoverOverlay());
+			(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+				mockElement as unknown as HTMLDivElement;
+
+			firePointerOver('touch');
+			act(() => {
+				result.current.handleMouseEnter();
+			});
+			act(() => {
+				vi.advanceTimersByTime(1000);
+			});
+
+			expect(result.current.isHovered).toBe(false);
+			expect(result.current.overlayOpen).toBe(false);
+		});
+
+		it('treats a pen tap the same as a finger', () => {
+			const { result } = renderHook(() => useTabHoverOverlay());
+			firePointerOver('pen');
+			act(() => {
+				result.current.handleMouseEnter();
+			});
+			act(() => {
+				vi.advanceTimersByTime(1000);
+			});
+			expect(result.current.overlayOpen).toBe(false);
+		});
+
+		it('still opens on a real mouse hover after a touch, judging each event by its own pointer', () => {
+			// A hybrid device (iPad with a trackpad, touchscreen laptop) has both.
+			const { result } = renderHook(() => useTabHoverOverlay());
+			(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+				mockElement as unknown as HTMLDivElement;
+
+			firePointerOver('touch');
+			act(() => {
+				result.current.handleMouseEnter();
+			});
+			firePointerOver('mouse');
+			act(() => {
+				result.current.handleMouseEnter();
+			});
+			act(() => {
+				vi.advanceTimersByTime(400);
+			});
+
+			expect(result.current.isHovered).toBe(true);
+			expect(result.current.overlayOpen).toBe(true);
+		});
+
+		it('leaves the long-press path (openOverlay) working on touch', () => {
+			const { result } = renderHook(() => useTabHoverOverlay());
+			(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+				mockElement as unknown as HTMLDivElement;
+
+			firePointerOver('touch');
+			act(() => {
+				result.current.openOverlay();
+			});
+
+			expect(result.current.overlayOpen).toBe(true);
+		});
+	});
+
+	it('openOverlay opens immediately (no hover delay), anchored to the tab', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockElement as unknown as HTMLDivElement;
+
+		act(() => {
+			result.current.openOverlay();
+		});
+
+		// No 400ms wait - open right away for the touch tap path.
+		expect(result.current.overlayOpen).toBe(true);
+		expect(result.current.overlayPosition).toEqual({ top: 100, left: 50, tabWidth: 120 });
+	});
+
+	it('openOverlay respects the shouldOpen guard', () => {
+		const { result } = renderHook(() => useTabHoverOverlay({ shouldOpen: () => false }));
+
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockElement as unknown as HTMLDivElement;
+
+		act(() => {
+			result.current.openOverlay();
+		});
+
+		expect(result.current.overlayOpen).toBe(false);
+	});
+
+	it('closes the overlay on a tap/click outside the tab and overlay', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		// Real DOM nodes so useClickOutside's contains() checks resolve.
+		const tabEl = document.createElement('div');
+		document.body.appendChild(tabEl);
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current = tabEl;
+
+		act(() => {
+			result.current.openOverlay();
+		});
+		expect(result.current.overlayOpen).toBe(true);
+
+		// useClickOutside attaches its listener via setTimeout(0) (delay option).
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+
+		const outside = document.createElement('div');
+		document.body.appendChild(outside);
+		act(() => {
+			outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+		});
+
+		expect(result.current.overlayOpen).toBe(false);
+
+		tabEl.remove();
+		outside.remove();
+	});
+
+	it('does NOT close the overlay when the tap is inside the tab', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const tabEl = document.createElement('div');
+		const inner = document.createElement('span');
+		tabEl.appendChild(inner);
+		document.body.appendChild(tabEl);
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current = tabEl;
+
+		act(() => {
+			result.current.openOverlay();
+		});
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+
+		act(() => {
+			inner.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+		});
+
+		expect(result.current.overlayOpen).toBe(true);
+
+		tabEl.remove();
 	});
 
 	it('overlayMouseEnter clears pending close timeout', () => {

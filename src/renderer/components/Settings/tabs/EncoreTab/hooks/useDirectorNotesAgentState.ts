@@ -1,0 +1,119 @@
+import { useAgentConfiguration } from '../../../../../hooks/agent/useAgentConfiguration';
+import { withBlankEnvVarRow } from '../../../../../../shared/envVarCatalog';
+import { AGENT_TILES } from '../../../../Wizard/screens/AgentSelectionScreen';
+import type { AgentConfig, DirectorNotesSettings, ToolType } from '../../../../../types';
+import type { DirectorNotesAgentState, DirectorNotesTile } from '../types';
+
+interface UseDirectorNotesAgentStateOptions {
+	isOpen: boolean;
+	directorNotesEnabled: boolean;
+	directorNotesSettings: DirectorNotesSettings;
+	setDirectorNotesSettings: (settings: DirectorNotesSettings) => void;
+}
+
+export function useDirectorNotesAgentState({
+	isOpen,
+	directorNotesEnabled,
+	directorNotesSettings,
+	setDirectorNotesSettings,
+}: UseDirectorNotesAgentStateOptions): DirectorNotesAgentState {
+	const agentConfiguration = useAgentConfiguration({
+		enabled: isOpen && directorNotesEnabled,
+		autoSelect: false,
+		initialValues: {
+			selectedAgent: directorNotesSettings.provider,
+			customPath: directorNotesSettings.customPath || '',
+			customArgs: directorNotesSettings.customArgs || '',
+			customEnvVars: directorNotesSettings.customEnvVars || {},
+		},
+	});
+
+	const availableTiles = AGENT_TILES.filter((tile) => {
+		if (!tile.supported) return false;
+		return agentConfiguration.detectedAgents.some((agent: AgentConfig) => agent.id === tile.id);
+	}) as DirectorNotesTile[];
+	const selectedAgentConfig = agentConfiguration.detectedAgents.find(
+		(agent) => agent.id === directorNotesSettings.provider
+	);
+	const selectedTile = AGENT_TILES.find((tile) => tile.id === directorNotesSettings.provider) as
+		| DirectorNotesTile
+		| undefined;
+
+	const handleAgentChange = (agentId: ToolType) => {
+		setDirectorNotesSettings({
+			...directorNotesSettings,
+			provider: agentId,
+			customPath: undefined,
+			customArgs: undefined,
+			customEnvVars: undefined,
+		});
+		agentConfiguration.handleAgentChange(agentId);
+	};
+
+	// Shared by onCustomPathBlur/onCustomArgsBlur/onEnvVarsBlur. Optional
+	// `pathValue` is for the path chooser specifically: it calls this in the
+	// same handler as the change that sets customPath, so reading
+	// agentConfiguration.customPath back out of this closure would still see
+	// the path from before that update landed. The args/env-var blur paths call
+	// this with no argument, unaffected, and keep reading current state as
+	// before.
+	const persistCustomConfig = (pathValue?: string) => {
+		setDirectorNotesSettings({
+			...directorNotesSettings,
+			customPath: (pathValue ?? agentConfiguration.customPath) || undefined,
+			customArgs: agentConfiguration.customArgs || undefined,
+			customEnvVars:
+				Object.keys(agentConfiguration.customEnvVars).length > 0
+					? agentConfiguration.customEnvVars
+					: undefined,
+		});
+	};
+
+	const handleEnvVarKeyChange = (oldKey: string, newKey: string, value: string) => {
+		const newVars = { ...agentConfiguration.customEnvVars };
+		delete newVars[oldKey];
+		newVars[newKey] = value;
+		agentConfiguration.setCustomEnvVars(newVars);
+	};
+
+	const handleEnvVarValueChange = (key: string, value: string) => {
+		agentConfiguration.setCustomEnvVars({ ...agentConfiguration.customEnvVars, [key]: value });
+	};
+
+	const handleEnvVarRemove = (key: string) => {
+		const newVars = { ...agentConfiguration.customEnvVars };
+		delete newVars[key];
+		agentConfiguration.setCustomEnvVars(newVars);
+	};
+
+	const handleEnvVarAdd = () => {
+		agentConfiguration.setCustomEnvVars(withBlankEnvVarRow(agentConfiguration.customEnvVars));
+	};
+
+	const handleConfigChange = (key: string, value: unknown) => {
+		const newConfig = { ...agentConfiguration.agentConfig, [key]: value };
+		agentConfiguration.setAgentConfig(newConfig);
+		agentConfiguration.agentConfigRef.current = newConfig;
+	};
+
+	const handleConfigBlur = async () => {
+		if (directorNotesSettings.provider) {
+			await agentConfiguration.saveAgentConfig(directorNotesSettings.provider);
+		}
+	};
+
+	return {
+		agentConfiguration,
+		availableTiles,
+		selectedAgentConfig,
+		selectedTile,
+		handleAgentChange,
+		persistCustomConfig,
+		handleEnvVarKeyChange,
+		handleEnvVarValueChange,
+		handleEnvVarRemove,
+		handleEnvVarAdd,
+		handleConfigChange,
+		handleConfigBlur,
+	};
+}

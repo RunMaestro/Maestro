@@ -42,6 +42,7 @@ const baseRun: WizardRun = {
 	exchanges: 4,
 	documents: 2,
 	tasks: 17,
+	activeMs: 42_000,
 	projectPath: '/Users/pedram/Projects/Maestro',
 };
 
@@ -69,7 +70,8 @@ describe('wizard-runs', () => {
 				4,
 				2,
 				17,
-				'/Users/pedram/Projects/Maestro'
+				'/Users/pedram/Projects/Maestro',
+				42_000
 			);
 		});
 
@@ -93,8 +95,15 @@ describe('wizard-runs', () => {
 				expect.anything(),
 				expect.anything(),
 				expect.anything(),
-				null
+				null,
+				expect.anything()
 			);
+		});
+
+		it('stores a run with no measured active time as NULL, not 0', () => {
+			recordWizardRun(mockDb, { ...baseRun, activeMs: undefined });
+			const args = mockStatement.run.mock.calls[0] as unknown[];
+			expect(args[12]).toBeNull();
 		});
 	});
 
@@ -114,6 +123,7 @@ describe('wizard-runs', () => {
 					documents: 0,
 					tasks: 0,
 					project_path: '/tmp/project',
+					active_ms: 3,
 				},
 			]);
 
@@ -131,6 +141,7 @@ describe('wizard-runs', () => {
 					documents: 0,
 					tasks: 0,
 					projectPath: '/tmp/project',
+					activeMs: 3,
 				},
 			]);
 		});
@@ -150,10 +161,33 @@ describe('wizard-runs', () => {
 					documents: 0,
 					tasks: 0,
 					project_path: null,
+					active_ms: null,
 				},
 			]);
 
 			expect(getWizardRuns(mockDb, 'all')[0].projectPath).toBeUndefined();
+		});
+
+		it('turns a NULL active time into undefined so untimed rows stay distinguishable from 0', () => {
+			mockStatement.all.mockReturnValue([
+				{
+					id: 'run-4',
+					session_id: '',
+					agent_type: 'claude-code',
+					surface: 'inline',
+					mode: 'new',
+					outcome: 'generated',
+					started_at: 1,
+					ended_at: 2,
+					exchanges: 0,
+					documents: 1,
+					tasks: 1,
+					project_path: null,
+					active_ms: null,
+				},
+			]);
+
+			expect(getWizardRuns(mockDb, 'all')[0].activeMs).toBeUndefined();
 		});
 
 		it('filters by start time so the dashboard time range is honored', () => {

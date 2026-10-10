@@ -7,6 +7,7 @@
 
 import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
+import type { MultiWindowState } from '../../shared/window-types';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -83,6 +84,8 @@ export interface MaestroSettings {
 	 * renderer (`PersistedMediaQueue`); the main process only stores it.
 	 */
 	mediaPlayerQueue: unknown;
+	/** Provider profile key of the account that last carried a Send Feedback chat. */
+	feedbackAccountKey: string | null;
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
 	// Web interface authentication
@@ -90,6 +93,8 @@ export interface MaestroSettings {
 	webAuthToken: string | null;
 	// Persistent web link (reuse token across restarts)
 	persistentWebLink: boolean;
+	// Turn on the full web interface automatically when Maestro starts
+	webInterfaceAutoStart: boolean;
 	// Web interface custom port
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
@@ -108,6 +113,9 @@ export interface MaestroSettings {
 	wakatimeDetailedTracking: boolean;
 	// Standalone hands-on time tracker (migrated from globalStats.totalActiveTimeMs)
 	totalActiveTimeMs: number;
+	// Highest delegation milestone ever unlocked (0 | 25 | 50 | 75 | 100).
+	// A high-water mark, not the live score - see src/shared/delegation.ts.
+	delegationMilestone: number;
 	// Last prompt edited in Settings → Maestro Prompts (restored on reopen)
 	lastSelectedPromptId: string | null;
 	// Spell check in input areas
@@ -120,6 +128,11 @@ export interface MaestroSettings {
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.
 	globalShowHotkey: string[];
+	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
+	// the task uses the session's own agent (fully backward compatible).
+	utilityAgentId: string | null;
+	// Optional model override for the utility agent. When null, the agent default model is used.
+	utilityModelId: string | null;
 	// Days of Maestro Cue run history kept in cue.db. Read by the Cue engine's
 	// prune pass at startup; declared explicitly (rather than left to the index
 	// signature) so main-process readers get `number` instead of `any`.
@@ -177,6 +190,15 @@ export interface WindowState {
 	height: number;
 	isMaximized: boolean;
 	isFullScreen: boolean;
+	/**
+	 * Multi-window persistence (see `MultiWindowState` in
+	 * `src/shared/window-types.ts`). Backfilled once by the migration in
+	 * `instances.ts` from the legacy flat fields above. During this phase the
+	 * flat `x/y/width/height/isMaximized/isFullScreen` fields remain the
+	 * single-window source of truth read by `window-manager.ts`; this field
+	 * becomes the source of truth once windows are created through the registry.
+	 */
+	multiWindow?: MultiWindowState;
 }
 
 // ============================================================================

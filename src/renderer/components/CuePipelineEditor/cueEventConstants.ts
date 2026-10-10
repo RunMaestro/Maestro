@@ -15,6 +15,7 @@ import {
 	CheckSquare,
 	Power,
 	Terminal,
+	Webhook,
 } from 'lucide-react';
 import type { CueEventType } from '../../../shared/cue-pipeline-types';
 import { CUE_EVENT_LABELS } from '../../../shared/cue/cue-summary';
@@ -32,6 +33,7 @@ export const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
 	'github.label': Tag,
 	'task.pending': CheckSquare,
 	'cli.trigger': Terminal,
+	'webhook.received': Webhook,
 };
 
 /**
@@ -78,6 +80,9 @@ All labels: {{CUE_GH_LABELS}}
 	'agent.completed': '{{CUE_SOURCE_OUTPUT}}\n\n',
 	'task.pending': 'Pending tasks in {{CUE_TASK_FILE}}:\n{{CUE_TASK_LIST}}\n\n',
 	'cli.trigger': '{{CUE_CLI_PROMPT}}\n\n',
+	'webhook.received': `Webhook: {{CUE_WEBHOOK_PATH}} ({{CUE_WEBHOOK_EVENT}})
+
+{{CUE_WEBHOOK_BODY}}`,
 	'time.heartbeat': '',
 	'time.scheduled': '',
 	'time.once': '',
@@ -106,4 +111,5 @@ export const EVENT_COLORS: Record<CueEventType, string> = {
 	'github.label': '#ec4899',
 	'task.pending': '#06b6d4',
 	'cli.trigger': '#64748b',
+	'webhook.received': '#ec4899',
 };

@@ -1,10 +1,28 @@
 import { formatElapsedTime } from '../../../../shared/formatters';
 import {
+	aggregateAutoRunHistoryTotals,
+	mergeFinalSummaryTotals,
+	type AutoRunHistoryEntry,
+	type AutoRunHistoryTotals,
+	type FinalSummaryTotals,
+} from '../../../../shared/autoRunHistoryReconciliation';
+import {
 	getBadgeForTime,
 	getNextBadge,
 	formatTimeRemaining,
 } from '../../../constants/conductorBadges';
 import type { AutoRunStats } from '../../../types';
+
+// Reconciliation helpers now live in shared/ so the CLI batch processor can
+// reuse the exact same logic. Re-exported here to keep existing importers
+// (useBatchRunner, useBatchKillAction, tests) unchanged.
+export {
+	aggregateAutoRunHistoryTotals,
+	mergeFinalSummaryTotals,
+	type AutoRunHistoryEntry,
+	type AutoRunHistoryTotals,
+	type FinalSummaryTotals,
+};
 
 export interface FinalSummaryParams {
 	wasStopped: boolean;

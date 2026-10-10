@@ -16,7 +16,12 @@ Complete reference for Maestro's agent registration system: agent IDs, definitio
 5. Output Parsers    src/main/parsers/                 JSON output normalization per agent
 6. Error Patterns    src/shared/agentErrorPatterns.ts    Regex patterns for error detection
 7. Session Storage   src/main/storage/                 Per-agent session file reading
+8. Picker Registry   src/shared/agentMetadata.ts       Whether and how the user can choose it
 ```
+
+Steps 1-7 make an agent work. Step 8 is what makes it reachable: an agent that
+is defined, capable, and detected is still invisible in the UI until it has a
+`AGENT_PICKER_META` entry.
 
 ---
 
@@ -34,6 +39,7 @@ export const AGENT_IDS = [
 	'opencode',
 	'factory-droid',
 	'copilot-cli',
+	'grok',
 ] as const;
 
 export type AgentId = (typeof AGENT_IDS)[number];
@@ -44,16 +50,45 @@ export type AgentId = (typeof AGENT_IDS)[number];
 ### Related Metadata (`src/shared/agentMetadata.ts`)
 
 ```typescript
-AGENT_DISPLAY_NAMES: Record<AgentId, string>  // Human-readable names
-BETA_AGENTS: ReadonlySet<AgentId>              // Agents showing "(Beta)" badge
-getAgentDisplayName(agentId): string           // Get name with fallback
-isBetaAgent(agentId): boolean                  // Check beta status
-getAgentLoginCommand(agentId, customPath?)     // Re-auth command, or null
-formatAgentLoginCommand(login, syntax?)        // Render it as a shell line
-loginShellSyntaxFor(shellId, isWindows)        // 'posix' | 'powershell' | 'cmd'
+AGENT_DISPLAY_NAMES: Record<AgentId, string>       // Human-readable names
+BETA_AGENTS: ReadonlySet<AgentId>                  // Agents showing "(Beta)" badge
+AGENT_PICKER_META: Record<AgentId, Meta | null>    // Picker presentation, null = never offered
+PICKABLE_AGENT_IDS: readonly AgentId[]             // Picker order, sorted by display name
+AGENT_AUTOSELECT_ORDER: readonly AgentId[]         // Which provider a picker defaults to
+getAgentDisplayName(agentId): string               // Get name with fallback
+isBetaAgent(agentId): boolean                      // Check beta status
+getAgentPickerMeta(agentId): Meta | null           // Description + brand color, or null
+getAgentLoginCommand(agentId, customPath?)         // Re-auth command, or null
+formatAgentLoginCommand(login, syntax?)            // Render it as a shell line
+loginShellSyntaxFor(shellId, isWindows)            // 'posix' | 'powershell' | 'cmd'
 ```
 
+**Provider pickers** all read `AGENT_PICKER_META`. The New Agent modal's
+`SUPPORTED_AGENTS` re-exports `PICKABLE_AGENT_IDS`; the New Agent Wizard's
+`AGENT_TILES` is derived from the record (name from `getAgentDisplayName`, pitch
+and brand color from the entry); the Group Chat moderator dropdown renders those
+same tiles filtered by what detection found installed. `null` withholds an agent
+from all three - correct for `terminal` (internal) and `gemini-cli` (kept for
+type and back-compat only). Because the record is keyed by `AgentId`, a new id
+does not compile until that decision is made. Do NOT add a fourth hand-written
+list of agent ids for a new picker; the three used to be hand-written, and Grok
+and Qwen3 Coder shipped selectable in one of them and missing from the other two.
+
+`PICKABLE_AGENT_IDS` sorts the record by display name, so all three surfaces show
+the same alphabetical list and the record's key order carries no meaning - add a
+new entry wherever it reads best. A picker that has to choose for the user reads
+`AGENT_AUTOSELECT_ORDER` and takes the first entry that is installed; do NOT
+default to `PICKABLE_AGENT_IDS[0]`, which is only ever "whatever sorts first".
+
+Registering a provider also means drawing it: a `case` in `AgentLogo`
+(`src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`)
+and a glyph in `AGENT_ICONS` (`src/renderer/constants/agentIcons.ts`). Without
+the logo case the tile renders a blank fallback ring, and a test in
+`AgentSelectionScreen/components.test.tsx` fails.
+
 **Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
+
+**The embedded login terminal is `LoginTerminal` (`src/renderer/components/LoginTerminal.tsx`), and every in-app login rides it.** It owns the spawn, typing the command once the shell is alive, the Copy Login URL row, and the exit report; `loginPtySessionId()` builds the routing key and `resolveLoginShell()` applies the never-WSL rule below. `ReauthModal` (providers) and `GitHubLoginModal` (gh, behind Send Feedback) are the two callers. A caller that needs to know when the login FINISHED appends `exitWithCommandStatus()` (`src/shared/agentMetadata.ts`) so the shell exits with the login's own code; cmd.exe gets `&& exit 0 || exit 1` because it expands `%ERRORLEVEL%` before the command runs. Do not copy the spawn effect into a new dialog.
 
 **Five things about the login shell `ReauthModal` spawns are not optional, and every one of them was a bug first.**
 
@@ -251,6 +286,7 @@ interface AgentCapabilities {
 	supportsResultMessages: boolean; // Distinct "done" events
 	supportsModelSelection: boolean; // --model flag
 	supportsStreamJsonInput: boolean; // stdin image input
+	supportsPromptViaStdin: boolean; // CLI reads the prompt from stdin
 	supportsThinkingDisplay: boolean; // Thinking/reasoning content
 	supportsContextMerge: boolean; // Receive transferred context
 	supportsContextExport: boolean; // Export context for transfer
@@ -361,6 +397,8 @@ interface ParsedEvent {
 	sessionId?: string;
 	text?: string;
 	toolName?: string;
+	toolCallId?: string; // Stable id used to merge running -> completed for the same call
+	parentToolUseId?: string; // Set on activity spawned by a parent tool (e.g. Task subagents)
 	toolState?: unknown;
 	usage?: {
 		inputTokens: number;
@@ -450,6 +488,80 @@ construction.
 on exit by spot-checking that thinking cells disappear when
 `showThinking === 'on'` and persist when `showThinking === 'sticky'` -
 covered by `src/__tests__/renderer/hooks/useAgentListeners.test.ts`.
+
+### Tool-Execution Pipeline (end to end)
+
+Tool badges (the "Read", "Bash", "Task" cells with a running/completed/failed
+state) flow through a single pipeline shared by every provider. A parser only
+has to emit the right `ParsedEvent`; the main process dedups and forwards, and
+the renderer merges and draws.
+
+1. **Parse** (`src/main/parsers/agent-output-parser.ts` + each parser). A parser
+   emits `ParsedEvent { type: 'tool_use', toolName, toolCallId?, toolState, parentToolUseId? }`.
+   `toolState` carries `{ status: 'running' | 'completed' | 'failed' | 'error', input?, output? }`.
+   `toolCallId` is the stable id that ties a later `completed`/`failed` event
+   back to the earlier `running` one. `parentToolUseId` is set when the activity
+   was spawned by a parent tool call (claude-code's `Task` subagents; see Phase 2)
+   so the renderer can nest it.
+2. **Dedup + emit** (`src/main/process-manager/handlers/StdoutHandler.ts`). On a
+   `tool_use` event the handler emits a `tool-execution` event on the process
+   manager. It keeps a per-process `emittedToolCallIds` Set so a `running` event
+   is emitted once per `toolCallId`; the id is removed once the call reaches a
+   terminal state, so a reused id is not suppressed. Events without a
+   `toolCallId` (some providers) always emit and are attributed downstream by
+   tool name.
+3. **Forward over IPC** (`src/main/process-listeners/forwarding-listeners.ts`).
+   The `tool-execution` event is sent to the renderer on the
+   `process:tool-execution` channel and, for web-desktop parity, broadcast to
+   connected web clients.
+4. **Merge into tab logs** (`src/renderer/hooks/agent/internal/useAgentToolExecutionListener.ts`).
+   The listener builds a deterministic log id `tool-${toolCallId}` and merges by
+   id, so a `running` cell transitions in place to `completed`/`failed`. Without
+   a `toolCallId` it attributes a finalizing event to the most recent still
+   `running` entry of the same `toolName`, else appends a fresh entry. Tool
+   events are recorded regardless of the `showToolCalls` setting. Visibility is a
+   pure render concern: `TerminalOutput` reads `showToolCalls` alone and hides
+   `source:'tool'` entries when it is off. **`showToolCalls` and the per-tab
+   `showThinking` mode are independent** - the setting was briefly ANDed with
+   `showThinking !== 'off'`, which made it impossible to read a reasoning chain
+   without the tool noise. The two answer different questions: `showToolCalls`
+   decides whether tool cells are DRAWN, `showThinking` decides how long
+   `thinking`/`tool` entries are RETAINED. Do not re-couple them. The Settings UI
+   groups both under Default Thinking Mode, but the switch is never disabled.
+   Storage is governed by the thinking/tool log contract above, so the
+   `showThinking` lifecycle can still drop stored `thinking`/`tool` entries (on
+   exit, and when new assistant text arrives, unless the tab is `'sticky'`)
+   regardless of `showToolCalls`.
+5. **Render** (`src/renderer/components/TerminalOutput/components/LogItem.tsx` +
+   `src/renderer/components/TerminalOutput/utils/toolSummaries.ts`). `LogItem`
+   draws the tool badge and its status; `toolSummaries.ts` turns `toolState.input`
+   into the short human summary (e.g. the path a `Read` opened). Child entries
+   carrying `parentToolUseId` are grouped under their parent by
+   `utils/groupSubagentToolLogs.ts` and collapse behind an expandable
+   "N tool call(s)" toggle.
+
+**Per-provider support matrix** (does the parser emit `tool_use` on the live
+stream?):
+
+| Provider        | Live tool badges | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Yes              | Includes `tool_result` -> terminal state (Phase 1) and `Task` subagent nesting via `parentToolUseId` (Phase 2)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `codex`         | Yes              | Emits `tool_use` from its JSONL stream, keyed by `payload.call_id` (`function_call`) or `item.id` (`command_execution`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `opencode`      | Yes              | `step_start` -> `tool_use` -> `step_finish` per step                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `copilot-cli`   | Yes              | Emits `tool_use` from `--output-format json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `pi`            | Yes              | Emits `tool_use`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `omp`           | Yes              | Emits `tool_use`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `antigravity`   | Yes              | `step_update` steps of type `tool`, keyed by `step_index`; lifecycle word (`ACTIVE`/`DONE`) is mapped onto the `{status,input,output}` badge shape                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `grok`          | Yes (1.x)        | grok 1.x emits `tool_call` / `tool_call_update` keyed by `toolCallId`; 0.2.93 emitted none, and those turns still render as thinking + text only                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `factory-droid` | No               | The `-o stream-json` stream Maestro consumes carries only `system`/`message`/`completion`/`error` objects; tool activity is folded into the assistant `message.text` rather than emitted as distinct events. Structured tool events exist only in droid's separate `debug` (SSE) and `jsonrpc` formats, which are a different transport than the JSONL parser reads. To wire this up: capture real `-o stream-json` lines from a `droid` build that forces a tool call and, if a `tool_call`/`tool_result` object appears, extend `factory-droid-output-parser.ts` to emit `tool_use` ParsedEvents |
+
+**AskUserQuestion (Phase 3).** claude-code's `AskUserQuestion` tool is not
+answered through this display pipeline but through the permission relay
+(`src/main/permission-relay/`): when running interactively in standard
+permission mode, the relay recognizes `AskUserQuestion`, surfaces the question
+options in the permission prompt UI, and returns the user's selection as the
+tool answer. See that directory and the Phase 3 doc for the answer-delivery
+contract.
 
 ### Parser Implementations
 
@@ -588,6 +700,39 @@ getSshErrorPatterns(): AgentErrorPatterns
 
 Per-agent session storage for reading historical conversations.
 
+### Expected transcript-read failures (`src/main/utils/session-read-errors.ts`)
+
+Provider transcripts under `~/.claude/projects`, `~/.codex/sessions`, etc. belong
+to the agent CLI, not to Maestro. Any code that reads a transcript it merely
+_discovered_ on disk must classify environmental failures instead of reporting
+them, or one unreadable tree pages a Sentry event per file per refresh
+(MAESTRO-W9, MAESTRO-YG/YH/YJ):
+
+```typescript
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
+
+try {
+	const content = await fs.readFile(filePath, 'utf-8');
+	// ...
+} catch (error) {
+	if (error instanceof RangeError) {
+		logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
+	} else if (isExpectedSessionReadError(error)) {
+		logger.warn('Session file not readable', LOG_CONTEXT, { filePath, error });
+	} else {
+		captureException(error); // genuine fault, keep reporting
+	}
+	return null;
+}
+```
+
+Covers `EACCES`, `EPERM`, `ENOENT`, `ENOTDIR`, `EISDIR`, `EBUSY`. Do NOT widen it
+to codes that indicate a Maestro bug (`EMFILE` means we leaked descriptors).
+Pair it with the `RangeError` carve-out for oversized files - they are separate
+boundaries. When quieting one call site, grep the whole file for other
+`captureException` calls on the same failure path (an outer `fs.stat` catch
+usually needs the same guard).
+
 ### Storage Interface (`src/main/agents/session-storage.ts`)
 
 ```typescript
@@ -630,6 +775,43 @@ Subclasses implement:
 | `CodexSessionStorage`        | `codex-session-storage.ts`         | `~/.codex/sessions/YYYY/MM/DD/`                                      | JSONL events            |
 | `OpenCodeSessionStorage`     | `opencode-session-storage.ts`      | `~/.local/share/opencode/opencode.db` (v1.2+) or `storage/` (legacy) | SQLite (or legacy JSON) |
 | `FactoryDroidSessionStorage` | `factory-droid-session-storage.ts` | `~/.factory/sessions/`                                               | JSONL + settings.json   |
+
+### Parse Cache (`src/main/storage/session-info-cache.ts`)
+
+`listSessions()` is enumerate-then-parse for every storage, and the parse is the
+expensive half: a heavy Claude user is 5+ GB of JSONL across ~14k transcripts,
+which is why the Cost & Tokens dashboard used to take ~15 seconds to render every
+single time. `SessionInfoCache` caches the parsed `AgentSessionInfo` keyed by a
+`mtimeMs + size` fingerprint, so only new or grown transcripts are re-read.
+Enumerating and stat-ing all 14k files costs under 100ms.
+
+Use it instead of hand-rolling another mtime map (there are already several):
+
+```typescript
+const files = await this.statProjectSessionFiles(projectDir); // readdir + stat
+const sessions = await getSessionInfoCache(this.agentId).resolve(
+	projectDir, // scope: one cache file per project folder
+	files.map((f) => ({ key: f.filePath, fingerprint: fileFingerprint(f.sizeBytes, f.mtimeMs) })),
+	(ref) => parseSessionFile(...), // only called on a miss; null = skip, not cached
+	{ prune: true } // ONLY when refs cover the whole scope (never for one page)
+);
+```
+
+Rules:
+
+- Attach mutable metadata (origin, starred, session name) AFTER `resolve()`. It
+  lives in `originsStore` and changes without the transcript changing, so a
+  fingerprint would never catch it.
+- Returned infos are the cached objects: spread them, never mutate in place.
+- Bump `SESSION_INFO_CACHE_VERSION` when `AgentSessionInfo` gains a field, or
+  cached entries will come back missing it.
+- Tests: `setSessionInfoCacheForTest(agentId, new SessionInfoCache(agentId, tmpDir))`
+  in `beforeEach`, or fixtures that reuse one path + stats while varying content
+  will (correctly) hit the cache.
+
+Wired up for `ClaudeSessionStorage` (local paths). `CodexSessionStorage` predates
+it and still carries its own equivalent cache; the remaining storages parse
+everything on every list and should adopt this when their volume justifies it.
 
 ### Registry Functions
 

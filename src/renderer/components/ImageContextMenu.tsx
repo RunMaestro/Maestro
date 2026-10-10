@@ -1,9 +1,10 @@
 /**
  * ImageContextMenu - right-click menu for any image anywhere in the app: raster
  * `<img>` (markdown embeds, transcript attachments, thumbnails, the lightbox)
- * and inline `<svg>` (agent-authored diagrams, Mermaid charts). Offers "Copy
- * Image", "Save to Project..." (into the project's own folder, via
- * ImageDestinationModal) and "Save As..." (native OS dialog).
+ * and inline `<svg>` (agent-authored diagrams, Mermaid charts). Offers "Expand"
+ * (full-screen pan/zoom viewer), "Copy Image", "Save to Project..." (into the
+ * project's own folder, via ImageDestinationModal) and "Save As..." (native OS
+ * dialog).
  *
  * Mirrors LinkContextMenu / FileContextMenu, but no surface wires this up: one
  * delegated listener in ImageContextMenuHost opens it for every image on screen.
@@ -12,7 +13,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Download, FolderOpen } from 'lucide-react';
+import { Copy, Download, FolderOpen, Maximize2 } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import {
@@ -25,6 +26,7 @@ import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { notifyToast } from '../stores/notificationStore';
 import { getBasename } from '../../shared/formatters';
+import { openZoomViewer, ZOOM_VIEWER_ATTR } from './ZoomViewer/zoomViewerStore';
 
 export interface ImageContextMenuState {
 	x: number;
@@ -50,7 +52,7 @@ export function ImageContextMenu({
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
 	// Dismiss on click outside or Escape. The menu is portaled to document.body,
 	// so a click inside it doesn't reach this listener via the React tree - guard
@@ -113,6 +115,11 @@ export function ImageContextMenu({
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -120,6 +127,20 @@ export function ImageContextMenu({
 			}}
 			onMouseDown={(e) => e.stopPropagation()}
 		>
+			{/* Already in the viewer: expanding the clone again would do nothing. */}
+			{!menu.target.closest(`[${ZOOM_VIEWER_ATTR}]`) && (
+				<button
+					onClick={() => {
+						onDismiss();
+						openZoomViewer(menu.target);
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Maximize2 className="w-3.5 h-3.5" />
+					Expand (Pan and Zoom)
+				</button>
+			)}
 			<button
 				onClick={handleCopy}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"

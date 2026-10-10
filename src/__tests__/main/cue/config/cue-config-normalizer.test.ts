@@ -345,6 +345,41 @@ describe('normalizer - action: notify passthrough', () => {
 	});
 });
 
+describe('normalizer - github re-trigger field passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'issue-replies',
+		event: 'github.issue',
+		prompt: 'Someone replied',
+		enabled: true,
+		repo: 'RunMaestro/Maestro',
+		filter: { is_retrigger: true },
+	};
+
+	it('keeps retrigger_on_comments and max_notifications for the poller', () => {
+		const sub = normalizeSub({ ...base, retrigger_on_comments: true, max_notifications: 25 });
+		expect(sub.retrigger_on_comments).toBe(true);
+		expect(sub.max_notifications).toBe(25);
+		expect(sub.filter).toEqual({ is_retrigger: true });
+	});
+
+	it('keeps max_notifications: 0 (the unlimited sentinel)', () => {
+		expect(normalizeSub({ ...base, max_notifications: 0 }).max_notifications).toBe(0);
+	});
+
+	it('drops malformed values rather than passing them to the poller', () => {
+		const sub = normalizeSub({ ...base, retrigger_on_comments: 'yes', max_notifications: 2.5 });
+		expect(sub.retrigger_on_comments).toBeUndefined();
+		expect(sub.max_notifications).toBeUndefined();
+		expect(normalizeSub({ ...base, max_notifications: -1 }).max_notifications).toBeUndefined();
+	});
+});
+
 describe('normalizer - github.label field passthrough', () => {
 	function normalizeSub(sub: Record<string, unknown>) {
 		const raw = yaml.dump({ subscriptions: [sub] });

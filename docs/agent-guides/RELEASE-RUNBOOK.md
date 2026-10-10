@@ -9,6 +9,10 @@ The process was worked out live during the v0.17.5 / v0.18.6-RC release on
 2026-09-24. Every rule below exists because something went wrong that night or
 in an earlier release.
 
+A security release follows this runbook with the changes in
+[SECURITY-RUNBOOK.md](SECURITY-RUNBOOK.md) (release order, notes that lead with
+the fix, and an advisory published before the announcement).
+
 ## Standing rules
 
 - **No human approval gate.** Draft, dedup, tag, verify, bump, announce. Ask the
@@ -151,9 +155,8 @@ Start only after every release in scope verifies.
 1. Re-read the published notes (`gh release view <tag> -R RunMaestro/Maestro`).
    The copy comes from the published text, never from a draft.
 2. **Do not repeat the last announcement.** Read the previous email template
-   (newest file in `scripts/email-templates/announcements/`) and the previous
-   Discord post (`scripts/announce-drafts/`). Lead with what is new since then;
-   anything the last email already covered gets one short line at most.
+   and Discord post. Lead with what is new since then; anything the last email
+   already covered gets one short line at most.
 3. Discord: `--preview` first, then post one message to #announcements with
    `--everyone`. Report the message ID. CI no longer posts releases to Discord,
    so this is the only announcement.

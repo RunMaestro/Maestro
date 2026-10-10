@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>E2E Demo Panel</title>
+	</head>
+	<body>
+		<p>Maestro E2E demo panel (renders in a locked-down webview guest).</p>
+		<script>
+			// FC6 lockdown probe. Runs inside the plugin-panel:// guest under the
+			// injected CSP (connect-src 'none' kills fetch BEFORE webRequest ever
+			// sees it, so in-guest failure is the only honest fetch assertion) and
+			// the deny-all window-open handler (window.open returns null in-guest).
+			// Findings travel out through the ONE sanctioned channel: the
+			// postMessage bridge -> entry.js 'panelprobe' -> host log. Afterwards a
+			// top-level navigation is attempted so the main process logs its
+			// will-navigate denial.
+			(async function () {
+				var fetchBlocked = false;
+				try {
+					await fetch('https://example.com/panel-egress');
+				} catch (err) {
+					fetchBlocked = true;
+				}
+				var popupBlocked = window.open('https://example.com/panel-popup') === null;
+				parent.postMessage(
+					{
+						type: 'maestro:invokeCommand',
+						commandId: 'panelprobe',
+						args: { fetchBlocked: fetchBlocked, popupBlocked: popupBlocked },
+					},
+					'*'
+				);
+				// Let the bridge message flush before provoking the navigation guard.
+				setTimeout(function () {
+					try {
+						window.location.href = 'https://example.com/panel-nav';
+					} catch (err) {
+						/* blocked */
+					}
+				}, 250);
+			})();
+		</script>
+	</body>
+</html>

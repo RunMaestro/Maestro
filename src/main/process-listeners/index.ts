@@ -12,10 +12,13 @@ import type { ProcessListenerDependencies } from './types';
 // Import individual listener setup functions
 import { setupForwardingListeners } from './forwarding-listeners';
 import { setupDataListener } from './data-listener';
+import { setupGroupChatLivenessListener } from './group-chat-liveness-listener';
 import { setupUsageListener } from './usage-listener';
 import { setupSessionIdListener } from './session-id-listener';
 import { setupErrorListener } from './error-listener';
 import { setupExitListener } from './exit-listener';
+import { setupPluginEventListener } from './plugin-event-listener';
+import { setupDispatchCallbackListener } from './dispatch-callback-listener';
 
 // Re-export types for consumers
 export type { ProcessListenerDependencies, ParticipantInfo } from './types';
@@ -37,6 +40,9 @@ export function setupProcessListeners(
 	// Data output listener (with group chat buffering and web broadcast)
 	setupDataListener(processManager, deps);
 
+	// Re-arms the Group Chat router's per-turn silence budgets on any proof of life.
+	setupGroupChatLivenessListener(processManager);
+
 	// Usage statistics listener (with group chat participant/moderator updates)
 	setupUsageListener(processManager, deps);
 
@@ -48,4 +54,12 @@ export function setupProcessListeners(
 
 	// Exit listener (with group chat routing, recovery, and synthesis)
 	setupExitListener(processManager, deps);
+
+	// Plugin event-bus bridge: forwards metadata-only lifecycle events to plugins
+	// that hold events:subscribe (no-op when the plugin bus is not wired).
+	setupPluginEventListener(processManager, deps);
+
+	// dispatch --notify-on-complete: arm on the dispatched process's spawn, fire
+	// on its exit (no-op when no callbacks are armed).
+	setupDispatchCallbackListener(processManager);
 }

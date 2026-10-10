@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as path from 'path';
 import { ipcMain } from 'electron';
 import {
 	registerProcessHandlers,
@@ -19,11 +20,24 @@ import {
 } from '../../../../main/ipc/handlers/process';
 import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
+import { checkCustomPath } from '../../../../main/agents/path-prober';
+import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
+import {
+	primeOmpModelCatalog,
+	computeOmpCatalogKey,
+} from '../../../../main/agents/omp-model-catalog';
+import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
+import {
+	noteTurnActor,
+	resolveTurnActor,
+	resetTurnActors,
+} from '../../../../main/web-server/auth/turn-attribution';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
+		on: vi.fn(),
 		removeHandler: vi.fn(),
 	},
 }));
@@ -36,6 +50,10 @@ vi.mock('../../../../main/utils/logger', () => ({
 		error: vi.fn(),
 		debug: vi.fn(),
 	},
+}));
+
+vi.mock('../../../../main/agents/path-prober', () => ({
+	checkCustomPath: vi.fn(async (customPath: string) => ({ exists: true, path: customPath })),
 }));
 
 // Mock the agent-args utilities
@@ -195,6 +213,7 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 // Mock cliDetection to provide a resolved SSH path
 vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
+	getExpandedEnv: vi.fn(() => ({ ...process.env })),
 }));
 
 // Mock platformDetection. Default mirrors the host so the existing
@@ -209,6 +228,24 @@ vi.mock('../../../../shared/platformDetection', () => ({
 vi.mock('../../../../main/process-manager/utils/childProcessInfo', () => ({
 	getChildProcesses: vi.fn().mockResolvedValue([]),
 }));
+
+// Mock the omp model catalog so the spawn handler's catalog prime can be
+// asserted at the module boundary without launching a real `omp` subprocess.
+// computeOmpCatalogKey returns a stable sentinel so the prime's third arg is
+// deterministic; primeOmpModelCatalog resolves immediately so the bounded
+// Promise.race in the handler proceeds without waiting on the real cap. The
+// real buildOmpPrimeEnv is retained (it's a pure env builder) so the test can
+// assert the actual PATH the handler hands to the prime.
+vi.mock('../../../../main/agents/omp-model-catalog', async () => {
+	const actual = await vi.importActual<typeof import('../../../../main/agents/omp-model-catalog')>(
+		'../../../../main/agents/omp-model-catalog'
+	);
+	return {
+		...actual,
+		primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
+		computeOmpCatalogKey: vi.fn(() => 'omp-catalog-key'),
+	};
+});
 
 // Mock fs/promises so the new temp-file tests can assert on writeFile/unlink
 // without touching the real filesystem. Other tests in this file don't use
@@ -287,6 +324,10 @@ describe('process IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(checkCustomPath).mockImplementation(async (customPath) => ({
+			exists: true,
+			path: customPath,
+		}));
 
 		// Create mock process manager
 		mockProcessManager = {
@@ -361,8 +402,10 @@ describe('process IPC handlers', () => {
 	describe('registration', () => {
 		it('should register all process handlers', () => {
 			const expectedChannels = [
+				'concerto-html:restore',
 				'process:spawn',
 				'process:write',
+				'process:broadcast-user-input',
 				'process:interrupt',
 				'process:kill',
 				'process:resize',
@@ -370,6 +413,7 @@ describe('process IPC handlers', () => {
 				'process:isTerminalBusy',
 				'process:spawnTerminalTab',
 				'process:runCommand',
+				'permission:respond',
 				'process:cancelCommand',
 			];
 
@@ -377,6 +421,25 @@ describe('process IPC handlers', () => {
 				expect(handlers.has(channel)).toBe(true);
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
+			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
+		});
+	});
+
+	describe('Concerto HTML restore', () => {
+		it('restores a validated recently closed document', async () => {
+			const handler = handlers.get('concerto-html:restore');
+
+			const revision = await handler!({}, 'movement', 'mockup', '<button>Fresh</button>');
+
+			expect(revision).toBeTypeOf('number');
+		});
+
+		it('rejects an invalid restore request', async () => {
+			const handler = handlers.get('concerto-html:restore');
+
+			await expect(handler!({}, 'bogus', '', null)).rejects.toThrow(
+				'Invalid Concerto HTML restore request'
+			);
 		});
 	});
 
@@ -477,6 +540,57 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
 		});
 
+		it('primes the omp model catalog with an expanded env whose PATH lists the binary dir first', async () => {
+			// The bun-based `omp` binary lives next to a co-located `bun` runtime;
+			// in a packaged Electron app the shell PATH is not inherited, so the
+			// prime must run with an expanded env (buildExpandedEnv) and prepend the
+			// binary's own dir. Assert the env handed to primeOmpModelCatalog reflects
+			// both: binary dir first, then the expanded standard entries.
+			const binaryPath = '/opt/tester/.bun/bin/omp';
+			const binDir = path.dirname(binaryPath);
+
+			const mockAgent = {
+				id: 'omp',
+				requiresPty: false,
+				path: binaryPath,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 4242, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-omp',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+			});
+
+			expect(primeOmpModelCatalog).toHaveBeenCalledTimes(1);
+			const [passedBinaryPath, passedEnv, passedKey] =
+				vi.mocked(primeOmpModelCatalog).mock.calls[0];
+			expect(passedBinaryPath).toBe(binaryPath);
+			expect(passedKey).toBe('omp-catalog-key');
+			// The spawn stamps the caller identity into the env overrides; the key must
+			// ignore it, or it never matches the detector's no-override warm-up.
+			expect(computeOmpCatalogKey).toHaveBeenCalledWith(binaryPath, undefined);
+
+			// The prime env's PATH must lead with the binary dir (so the co-located
+			// bun runtime resolves first), followed by the expanded standard entries.
+			expect(typeof passedEnv?.PATH).toBe('string');
+			const pathEntries = (passedEnv!.PATH as string).split(path.delimiter);
+			expect(pathEntries[0]).toBe(binDir);
+			// Expansion added entries beyond just the prepended binary dir, and the
+			// process's own PATH survived the expansion (proving it is the expanded
+			// env, not a bare { PATH: binDir }).
+			expect(pathEntries.length).toBeGreaterThan(1);
+			const currentPathEntries = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+			if (currentPathEntries.length > 0) {
+				expect(pathEntries).toEqual(expect.arrayContaining([currentPathEntries[0]]));
+			}
+		});
+
 		it('should apply readOnlyEnvOverrides when readOnlyMode is true', async () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			const mockApply = vi.mocked(applyAgentConfigOverrides);
@@ -523,6 +637,117 @@ describe('process IPC handlers', () => {
 					}),
 				})
 			);
+		});
+
+		it('stamps the agent and tab identity so a CLI dispatch from its shell can be attributed', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+			mockProcessManager.spawn.mockReturnValue({ pid: 2001, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'agent-identity-ai-tab-7',
+				tabId: 'tab-7',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						MAESTRO_CALLER_AGENT_ID: 'agent-identity',
+						MAESTRO_CALLER_TAB_ID: 'tab-7',
+					}),
+				})
+			);
+		});
+
+		/**
+		 * Web Login turn attribution.
+		 *
+		 * Spawn is the ONLY point where the account that asked for the turn is in
+		 * scope: the History entry and the stats row are written later by the
+		 * DESKTOP renderer's exit listener, where `getActingUser()` is undefined.
+		 * So the spawn notes the actor for the exit-time lookup and stamps the
+		 * username into the agent's environment.
+		 */
+		describe('Web Login turn attribution', () => {
+			afterEach(() => {
+				resetTurnActors();
+			});
+
+			it('notes the acting user and stamps it into the agent env', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2100, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await runAsActingUser({ id: 'u1', username: 'pedram', displayName: 'Pedram A' }, () =>
+					handler!({} as any, {
+						sessionId: 'agent-web-ai-tab-1',
+						tabId: 'tab-1',
+						toolType: 'opencode',
+						cwd: '/test',
+						command: 'opencode',
+						args: [],
+					})
+				);
+
+				expect(resolveTurnActor('agent-web', 'tab-1')).toEqual({
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ MAESTRO_QUERY_USER: 'pedram' }),
+					})
+				);
+			});
+
+			it('adds no query-user var for a desktop spawn', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2101, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'agent-desktop-ai-tab-1',
+					tabId: 'tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+				});
+
+				const spawned = mockProcessManager.spawn.mock.calls[0][0] as {
+					customEnvVars?: Record<string, string>;
+				};
+				expect(spawned.customEnvVars?.MAESTRO_QUERY_USER).toBeUndefined();
+			});
+
+			it('clears a browser actor when the desktop starts the next turn', async () => {
+				// Otherwise a phone's earlier turn is credited to a later one
+				// typed at the keyboard.
+				noteTurnActor('agent-clear', 'tab-1', {
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2102, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'agent-clear-ai-tab-1',
+					tabId: 'tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+				});
+
+				expect(resolveTurnActor('agent-clear', 'tab-1')).toBeUndefined();
+			});
 		});
 
 		it('should NOT apply readOnlyEnvOverrides when readOnlyMode is false', async () => {
@@ -598,6 +823,71 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
 					command: '/home/user/my-claude-wrapper',
+				})
+			);
+		});
+
+		it('should resolve a rotated local custom path before spawning', async () => {
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/detected/codex',
+				requiresPty: false,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			vi.mocked(checkCustomPath).mockResolvedValueOnce({
+				exists: true,
+				path: '/current/codex',
+			});
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-rotated-path',
+				toolType: 'codex',
+				cwd: '/test/project',
+				command: '/detected/codex',
+				args: ['exec'],
+				sessionCustomPath: '/stale/codex',
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: '/current/codex',
+					extraPathDirs: ['/current'],
+					sessionCustomPath: '/current/codex',
+				})
+			);
+		});
+
+		it('should fall back to the detected path when a local custom path is invalid', async () => {
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/detected/codex',
+				requiresPty: false,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			vi.mocked(checkCustomPath).mockResolvedValueOnce({ exists: false });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-invalid-path',
+				toolType: 'codex',
+				cwd: '/test/project',
+				command: 'codex',
+				args: ['exec'],
+				sessionCustomPath: '/missing/codex',
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: '/detected/codex',
+					extraPathDirs: ['/detected'],
+					sessionCustomPath: undefined,
 				})
 			);
 		});
@@ -733,6 +1023,7 @@ describe('process IPC handlers', () => {
 				id: 'claude-code',
 				name: 'Claude Code',
 				command: 'claude',
+				path: '/opt/homebrew/bin/claude',
 				args: ['--print', '--verbose', '--output-format', 'stream-json'],
 				apiCommand: 'claude',
 				interactiveCommand: 'maestro-p',
@@ -759,6 +1050,115 @@ describe('process IPC handlers', () => {
 				expect(spawnCall.args).toContain('--verbose');
 				expect(spawnCall.args).toContain('--output-format');
 				expect(spawnCall.args).toContain('stream-json');
+				expect(spawnCall.customEnvVars?.ELECTRON_RUN_AS_NODE).toBeUndefined();
+			});
+
+			it('passes Electron Node mode env for local interactive maestro-p desktop spawn', async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4243, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') {
+						return [
+							{
+								id: 'session-tui',
+								enableMaestroP: true,
+								maestroPMode: 'interactive',
+								maestroPPath,
+							},
+						];
+					}
+					return defaultValue;
+				});
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-tui-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.command).toBe(process.execPath);
+				expect(spawnCall.args[0]).toBe(maestroPPath);
+				expect(spawnCall.args).toContain('--dangerously-skip-permissions');
+				expect(spawnCall.customEnvVars).toEqual(
+					expect.objectContaining({
+						ELECTRON_RUN_AS_NODE: '1',
+						MAESTRO_CLAUDE_BIN: '/usr/local/bin/claude',
+					})
+				);
+				expect(spawnCall.customEnvVars?.NODE_PATH).toBeUndefined();
+			});
+
+			it('adds packaged NODE_PATH while preserving Electron Node mode env', async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				const resourcesPath = '/Applications/Maestro.app/Contents/Resources';
+				const existingNodePath = '/already/on/node-path';
+				const originalNodePath = process.env.NODE_PATH;
+				const originalResourcesDescriptor = Object.getOwnPropertyDescriptor(
+					process,
+					'resourcesPath'
+				);
+
+				Object.defineProperty(process, 'resourcesPath', {
+					configurable: true,
+					value: resourcesPath,
+				});
+				process.env.NODE_PATH = existingNodePath;
+
+				try {
+					mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+					mockProcessManager.spawn.mockReturnValue({ pid: 4242, success: true });
+					mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+						if (key === 'sessions') {
+							return [
+								{
+									id: 'session-packaged-tui',
+									enableMaestroP: true,
+									maestroPMode: 'interactive',
+									maestroPPath,
+								},
+							];
+						}
+						return defaultValue;
+					});
+
+					const handler = handlers.get('process:spawn');
+					await handler!({} as any, {
+						sessionId: 'session-packaged-tui',
+						toolType: 'claude-code',
+						cwd: '/test',
+						command: 'claude',
+						args: claudeCodeAgent.args,
+						prompt: 'hi',
+					});
+
+					const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+					const expectedAsarModules = path.join(resourcesPath, 'app.asar', 'node_modules');
+					expect(spawnCall.command).toBe(process.execPath);
+					expect(spawnCall.customEnvVars).toEqual(
+						expect.objectContaining({
+							ELECTRON_RUN_AS_NODE: '1',
+							MAESTRO_CLAUDE_BIN: '/opt/homebrew/bin/claude',
+							NODE_PATH: `${expectedAsarModules}${path.delimiter}${existingNodePath}`,
+						})
+					);
+				} finally {
+					if (originalNodePath === undefined) {
+						delete process.env.NODE_PATH;
+					} else {
+						process.env.NODE_PATH = originalNodePath;
+					}
+					if (originalResourcesDescriptor) {
+						Object.defineProperty(process, 'resourcesPath', originalResourcesDescriptor);
+					} else {
+						delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+					}
+				}
 			});
 
 			it('emits interactive resolution when Path is wired directly at maestro-p', async () => {
@@ -801,6 +1201,10 @@ describe('process IPC handlers', () => {
 				expect(sessionId).toBe('session-direct-mp');
 				expect(payload.mode).toBe('interactive');
 				expect(payload.reason).toBe('auto');
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.command).toBe('/Users/x/dist/cli/maestro-p.js');
+				expect(spawnCall.customEnvVars?.ELECTRON_RUN_AS_NODE).toBeUndefined();
 			});
 
 			it('clears stale claudeInteractive=interactive when neither toggle nor maestro-p Path is active', async () => {
@@ -1224,6 +1628,28 @@ describe('process IPC handlers', () => {
 			expect(result).toEqual([]);
 		});
 
+		it('should skip terminal child-process inspection when requested', async () => {
+			mockProcessManager.getAll.mockReturnValue([
+				{
+					sessionId: 'session-2-terminal',
+					toolType: 'terminal',
+					pid: 5678,
+					cwd: '/project2',
+					isTerminal: true,
+					isBatchMode: false,
+					startTime: 1700000001000,
+					command: '/bin/zsh',
+					args: [],
+				},
+			]);
+
+			const handler = handlers.get('process:getActiveProcesses');
+			const result = await handler!({} as any, { includeChildProcesses: false });
+
+			expect(result).toHaveLength(1);
+			expect(getChildProcesses).not.toHaveBeenCalled();
+		});
+
 		it('should strip non-serializable properties from process objects', async () => {
 			const mockProcesses = [
 				{
@@ -1631,7 +2057,7 @@ describe('process IPC handlers', () => {
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
 			// Tilde must expand via $HOME, not be single-quoted (which suppresses expansion)
-			expect(lastArg).toContain('cd "$HOME"/\'project\'');
+			expect(lastArg).toContain('cd "$HOME/project"');
 			expect(lastArg).toContain('exec "$SHELL"');
 		});
 
@@ -2058,6 +2484,7 @@ describe('process IPC handlers', () => {
 			// The sshStdinScript should contain the env var export
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			expect(spawnCall.sshStdinScript).toContain('CUSTOM_API_KEY=');
+			expect(spawnCall.sshStdinScript).not.toContain('ELECTRON_RUN_AS_NODE');
 		});
 
 		it('should run locally when session SSH is explicitly disabled', async () => {
@@ -2408,6 +2835,7 @@ describe('process IPC handlers', () => {
 			// Should use the custom path in the stdin script, not binaryName or local path
 			expect(spawnCall.sshStdinScript).toContain('/usr/local/bin/codex');
 			expect(spawnCall.sshStdinScript).not.toContain('/opt/homebrew/bin/codex');
+			expect(checkCustomPath).not.toHaveBeenCalled();
 		});
 
 		it('should pass images via stream-json stdin for SSH with stream-json agents (regression: images dropped over SSH)', async () => {
@@ -2739,6 +3167,55 @@ describe('process IPC handlers', () => {
 			// Should fall back to config.command when agent.binaryName is unavailable
 			// The stdin script should contain the command
 			expect(spawnCall.sshStdinScript).toContain('custom-agent');
+		});
+
+		it('routes process:ssh-remote through the injected safeSend dep (web-desktop bridge)', async () => {
+			// Migration guard: when a safeSend dep is present it must fan the event
+			// out to the web-desktop bridge instead of the desktop-only webContents.send.
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				requiresPty: false,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 4321, success: true });
+
+			const safeSendSpy = vi.fn();
+			const windowSendSpy = vi.fn();
+			deps = {
+				...deps,
+				safeSend: safeSendSpy,
+				getMainWindow: () =>
+					({
+						isDestroyed: vi.fn().mockReturnValue(false),
+						webContents: {
+							send: windowSendSpy,
+							isDestroyed: vi.fn().mockReturnValue(false),
+						},
+					}) as any,
+			};
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel, h) => {
+				handlers.set(channel, h);
+			});
+			registerProcessHandlers(deps);
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'claude-code',
+				cwd: '/local/project',
+				command: 'claude',
+				args: ['--print'],
+				// No sessionSshRemoteConfig = local execution, sshRemote payload is null
+			});
+
+			const sshCalls = safeSendSpy.mock.calls.filter((c) => c[0] === 'process:ssh-remote');
+			expect(sshCalls.length).toBe(1);
+			expect(sshCalls[0][1]).toBe('session-1');
+			expect(sshCalls[0][2]).toBeNull();
+			// With safeSend wired, the desktop-only path must not double-emit the event.
+			expect(windowSendSpy.mock.calls.filter((c) => c[0] === 'process:ssh-remote')).toHaveLength(0);
 		});
 	});
 
@@ -3344,6 +3821,142 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.prompt).toContain('COPILOT_PREAMBLE_TEXT');
 			expect(spawnCall.prompt).toContain('You are Maestro system prompt content');
 			expect(spawnCall.prompt).toContain('Do work.');
+		});
+	});
+
+	describe('prompt delivery (argv vs stdin)', () => {
+		// Windows hands the prompt to the child over stdin instead of argv to stay
+		// under the ~32K CreateProcess limit. The decision belongs to the HOST and
+		// the agent's CLI - never to the caller, which may be a web-desktop browser
+		// running on a different OS than the machine that spawns the agent.
+
+		const setHostWindows = async (value: boolean) => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			vi.mocked(isWindows).mockReturnValue(value);
+		};
+
+		afterEach(async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			vi.mocked(isWindows).mockReset();
+			vi.mocked(isWindows).mockImplementation(() => process.platform === 'win32');
+		});
+
+		const stdinCapableAgent = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			path: '/usr/local/bin/claude',
+			capabilities: { supportsStreamJsonInput: true, supportsPromptViaStdin: true },
+		};
+
+		// omp takes the prompt as a positional argument only. Handing it stdin makes
+		// it run with no prompt at all: it prints its session line and exits 0.
+		const positionalOnlyAgent = {
+			id: 'omp',
+			name: 'Oh My Pi',
+			path: '/home/user/.bun/bin/omp',
+			capabilities: { supportsStreamJsonInput: false, supportsPromptViaStdin: false },
+		};
+
+		const spawnWith = async (config: Record<string, unknown>) => {
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				cwd: '/home/user/project',
+				args: [],
+				prompt: 'Hello world',
+				...config,
+			});
+			return mockProcessManager.spawn.mock.calls[0][0];
+		};
+
+		it('ignores a caller asking for stdin delivery on a non-Windows host', async () => {
+			// The web-desktop regression: a browser on Windows drove a Linux host and
+			// asked for stdin delivery, so omp spawned with no prompt at all.
+			await setHostWindows(false);
+			mockAgentDetector.getAgent.mockResolvedValue(positionalOnlyAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'omp',
+				command: 'omp',
+				sendPromptViaStdinRaw: true,
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+			expect(spawnCall.prompt).toContain('Hello world');
+		});
+
+		it('keeps the prompt in argv on Windows for agents that never read stdin', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(positionalOnlyAgent);
+
+			const spawnCall = await spawnWith({ toolType: 'omp', command: 'omp' });
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+		});
+
+		it('enables raw stdin delivery on a Windows host even when the caller did not ask', async () => {
+			// Mirror case: a macOS browser driving a Windows host must still get the
+			// argv-length workaround.
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				sendPromptViaStdinRaw: false,
+			});
+
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+		});
+
+		it('uses stream-json stdin on Windows when images accompany the prompt', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				images: ['/tmp/shot.png'],
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(true);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+		});
+
+		it('leaves stdin delivery off for SSH sessions (the SSH script owns stdin)', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+			// The remote must resolve: an unresolvable one is refused outright
+			// rather than falling back to a local spawn.
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') {
+					return [
+						{
+							id: 'remote-1',
+							name: 'Dev Server',
+							host: 'dev.example.com',
+							port: 22,
+							username: 'devuser',
+							privateKeyPath: '',
+							enabled: true,
+						},
+					];
+				}
+				return defaultValue;
+			});
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
 		});
 	});
 });

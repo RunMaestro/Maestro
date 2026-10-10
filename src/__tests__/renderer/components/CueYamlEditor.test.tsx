@@ -109,6 +109,12 @@ vi.mock('../../../renderer/stores/sessionStore', () => ({
 
 // Mock buildSpawnConfigForAgent
 const mockBuildSpawnConfig = vi.fn();
+// The pattern preview acknowledges a copy with the shared clipboard flash.
+const mockFlashCopiedToClipboard = vi.fn();
+vi.mock('../../../renderer/utils/flashCopiedToClipboard', () => ({
+	flashCopiedToClipboard: (...args: unknown[]) => mockFlashCopiedToClipboard(...args),
+}));
+
 vi.mock('../../../renderer/utils/sessionHelpers', () => ({
 	buildSpawnConfigForAgent: (...args: any[]) => mockBuildSpawnConfig(...args),
 }));
@@ -869,7 +875,10 @@ describe('CueYamlEditor', () => {
 				expect(mockWriteText).toHaveBeenCalledWith(expect.stringContaining('time.heartbeat'));
 			});
 
-			expect(screen.getByText('Copied')).toBeInTheDocument();
+			// The acknowledgment is the shared center flash, not an inline label.
+			await waitFor(() => {
+				expect(mockFlashCopiedToClipboard).toHaveBeenCalledWith(undefined, 'Pattern YAML Copied');
+			});
 		});
 
 		it('should close preview modal when close is triggered', async () => {

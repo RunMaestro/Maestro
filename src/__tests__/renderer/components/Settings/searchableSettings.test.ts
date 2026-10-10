@@ -134,13 +134,24 @@ describe('searchableSettings', () => {
 			// General tab
 			['Auto Run Inactivity Timeout', 'general-autorun-inactivity-timeout'],
 			['refactor', 'general-autorun-inactivity-timeout'],
+			['resume paused', 'general-auto-resume'],
+			['rate limit', 'general-auto-resume'],
+			['quota', 'general-auto-resume'],
+			['give up', 'general-auto-resume-interval'],
 			['forced parallel execution', 'general-input-behavior'],
 			['shift+enter', 'general-input-behavior'],
 			['prompt composer', 'general-input-behavior'],
 			['ai interaction mode', 'general-input-behavior'],
+			['cross-agent mentions', 'general-cross-agent-mentions'],
+			['consult or delegate', 'general-cross-agent-mentions'],
+			['delegation', 'general-cross-agent-mentions'],
+			['read-only consult', 'general-cross-agent-mentions'],
 			['custom shell path', 'general-default-shell'],
 			['pwsh', 'general-default-shell'],
 			['worktree', 'general-gh-path'],
+			['web interface', 'general-web-interface-auto-start'],
+			['online at launch', 'general-web-interface-auto-start'],
+			['remote control', 'general-web-interface-auto-start'],
 			['cue pipeline', 'general-power'],
 			['ctrl+click', 'general-browser'],
 			['context menu', 'general-browser'],
@@ -162,10 +173,14 @@ describe('searchableSettings', () => {
 			['bigger', 'display-font-zoom'],
 			['factory reset', 'display-typography-reset'],
 			['hacker', 'display-typography-reset'],
+			// The snapshot section is what makes the two presets above safe to
+			// click, so it has to be findable by the words on its own buttons.
 			['save customizations', 'display-typography-snapshot'],
 			['restore customizations', 'display-typography-snapshot'],
 			['saved fonts', 'display-typography-snapshot'],
 			['manage custom fonts', 'display-custom-fonts'],
+			// The five per-surface pickers are one grouped section now, so every
+			// surface's name has to surface that one entry.
 			['ai chat font', 'display-fonts'],
 			['file preview font', 'display-fonts'],
 			['file editor font', 'display-fonts'],
@@ -206,9 +221,13 @@ describe('searchableSettings', () => {
 			// Encore tab
 			['lookback', 'encore-usage-stats'],
 			['coding activity', 'encore-usage-stats'],
+			['wakatime', 'encore-usage-stats'],
+			['registry sources', 'encore-symphony'],
 			['github pr', 'encore-cue'],
 			['cron', 'encore-cue'],
+			['global cue settings', 'encore-cue'],
 			['playbook registry', 'encore-symphony'],
+			['synopsis provider', 'encore-director-notes'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],

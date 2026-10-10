@@ -12,7 +12,6 @@ import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
-import { getStdinFlags } from '../../../utils/spawnHelpers';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
@@ -1140,14 +1139,6 @@ class PhaseGenerator {
 			// This is critical for packaged Electron apps where PATH may not include agent locations
 			const commandToUse = agent.path || agent.command;
 
-			const isSshSession = Boolean(config.sshRemoteConfig?.enabled);
-			const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
-				getStdinFlags({
-					isSshSession,
-					supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
-					hasImages: false, // Document generation never sends images
-				});
-
 			wizardDebugLogger.log('spawn', 'Calling process.spawn', {
 				sessionId,
 				toolType: config.agentType,
@@ -1170,8 +1161,6 @@ class PhaseGenerator {
 					prompt,
 					// Planning model for this run (see applyAgentConfigOverrides).
 					sessionCustomModel: config.model,
-					sendPromptViaStdin: sendViaStdin,
-					sendPromptViaStdinRaw: sendViaStdinRaw,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
 				})

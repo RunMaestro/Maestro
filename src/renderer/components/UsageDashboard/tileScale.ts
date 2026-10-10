@@ -51,7 +51,15 @@ export const AGENT_TILE_MIN_WIDTH = 260;
  */
 export const GROUP_TILE_MIN_WIDTH = 440;
 
-/** `grid-template-columns` for an auto-fill tile grid at the given zoom. */
+/**
+ * `grid-template-columns` for an auto-fill tile grid at the given zoom.
+ *
+ * The floor is `min(<floor>, 100%)`, never the bare floor: `minmax(440px, 1fr)`
+ * in a container narrower than 440px produces a 440px column that overflows,
+ * so the group grid ran 130px past the edge of a 390px phone and took the whole
+ * tab into a horizontal scroll. `min(...)` lets the single column collapse to
+ * the container instead, and changes nothing at any width that can hold a tile.
+ */
 export function tileGridColumns(minWidth: number, scale: number): string {
-	return `repeat(auto-fill, minmax(${Math.round(minWidth * scale)}px, 1fr))`;
+	return `repeat(auto-fill, minmax(min(${Math.round(minWidth * scale)}px, 100%), 1fr))`;
 }

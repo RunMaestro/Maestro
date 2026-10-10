@@ -5,6 +5,7 @@ import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -192,6 +193,17 @@ vi.mock('../../../shared/gitUtils', () => ({
 	isImageFile: (filename: string) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(filename),
 }));
 
+// Mock runtimeContext so tests can flip the web-desktop build on per-test.
+// Defaults to the Electron desktop (isWebDesktop === false), matching the
+// pre-existing behavior every other test assumes.
+vi.mock('../../../renderer/utils/runtimeContext', () => {
+	const isWebDesktop = vi.fn(() => false);
+	return {
+		isWebDesktop,
+		isElectronDesktop: () => !isWebDesktop(),
+	};
+});
+
 // Mock MarkdownEditor. The real editor wraps CodeMirror, which jsdom can't
 // satisfy `getByRole('textbox')` against. A bare `<textarea>` lets us keep
 // the FilePreview wiring tests (controlled vs. internal editContent, onChange
@@ -216,6 +228,10 @@ const defaultProps = {
 describe('FilePreview', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Default every test to the Electron desktop build; the web-desktop tests
+		// opt in explicitly. (clearAllMocks resets call history, not the return
+		// value, so pin it back to false here.)
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		// `useFontScale` persists the pane's zoom to localStorage, so a test that
 		// zooms hands its scale to the next test. A fresh mock per test is the reset.
 		installLocalStorageMock();
@@ -366,6 +382,45 @@ describe('FilePreview', () => {
 			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
 
 			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+		});
+
+		it('hides the header Open in Default App button in the web-desktop build', () => {
+			// openPath hands the file to the HOST OS opener, which is not the browser
+			// user's device, so the affordance must be gone in web-desktop.
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			render(<FilePreview {...defaultProps} />);
+
+			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+		});
+
+		it('disables the binary-file Open in Default App button in the web-desktop build', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'lib.dll', content: 'MZ binary', path: '/test/lib.dll' }}
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: 'Open in Default App' });
+			expect(button).toBeDisabled();
+			expect(button).toHaveAttribute('title', 'Available in the desktop app');
+			fireEvent.click(button);
+			expect(window.maestro?.shell?.openPath).not.toHaveBeenCalled();
+		});
+
+		it('keeps the binary-file Open in Default App button active on the desktop', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'lib.dll', content: 'MZ binary', path: '/test/lib.dll' }}
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: 'Open in Default App' });
+			expect(button).toBeEnabled();
+			fireEvent.click(button);
+			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/lib.dll');
 		});
 	});
 
@@ -1804,6 +1859,117 @@ print("world")
 
 			vi.useRealTimers();
 		});
+
+		it('keeps the stats bar visible when overflow is too small to hide safely', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.md', content: 'Some content\n'.repeat(20), path: '/test/test.md' }}
+				/>
+			);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+
+			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
+			expect(container).not.toBeNull();
+
+			// Barely overflowing - hiding the stats chrome would clamp scrollTop to 0
+			// and re-show the bar (the jitter loop). Stay visible instead.
+			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 520 });
+			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+			Object.defineProperty(container, 'scrollTop', {
+				configurable: true,
+				writable: true,
+				value: 15,
+			});
+			fireEvent.scroll(container);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+		});
+
+		it('hides the stats bar when scrolled past the chrome height with enough overflow', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.md', content: 'Some content\n'.repeat(20), path: '/test/test.md' }}
+				/>
+			);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+
+			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
+			expect(container).not.toBeNull();
+
+			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 800 });
+			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+			Object.defineProperty(container, 'scrollTop', {
+				configurable: true,
+				writable: true,
+				value: 100,
+			});
+			fireEvent.scroll(container);
+
+			expect(screen.queryByText('Lines:')).not.toBeInTheDocument();
+		});
+
+		it('does not hide the stats bar on a shallow scroll that would bounce after collapse', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.md', content: 'Some content\n'.repeat(20), path: '/test/test.md' }}
+				/>
+			);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+
+			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
+			expect(container).not.toBeNull();
+
+			// Large overflow, but scrollTop is still inside the chrome band. Hiding
+			// here would collapse the header and clamp scrollTop back to "at top".
+			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 800 });
+			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+			Object.defineProperty(container, 'scrollTop', {
+				configurable: true,
+				writable: true,
+				value: 40,
+			});
+			fireEvent.scroll(container);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+		});
+
+		it('resets the stats bar visible when switching to a new file at the top', () => {
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'tall.md', content: 'Some content\n'.repeat(20), path: '/test/tall.md' }}
+				/>
+			);
+
+			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
+			expect(container).not.toBeNull();
+
+			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 800 });
+			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+			Object.defineProperty(container, 'scrollTop', {
+				configurable: true,
+				writable: true,
+				value: 100,
+			});
+			fireEvent.scroll(container);
+			expect(screen.queryByText('Lines:')).not.toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'small.md', content: 'Short\n', path: '/test/small.md' }}
+					initialScrollTop={0}
+				/>
+			);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+		});
 	});
 
 	describe('CSV file rendering', () => {
@@ -1950,6 +2116,16 @@ print("world")
 	});
 
 	describe('bare font-zoom keys', () => {
+		// The scale is a persisted reading preference (`useScalePreference` writes
+		// it to localStorage), so a case that zooms leaves the next one starting
+		// at its value instead of at 100%. Install a fresh in-memory Storage per
+		// case: it resets the key AND makes the environment deterministic, which
+		// is why this only ever went red on CI - a local `vitest run` gets a
+		// Storage-less jsdom where the writes silently no-op and nothing leaks.
+		beforeEach(() => {
+			installLocalStorageMock();
+		});
+
 		// The floating zoom control also answers bare -/+ and 0, so a reader can
 		// resize the pane without reaching for the pill. Guarded on the view
 		// being zoomable and on the event target not being a text input.
