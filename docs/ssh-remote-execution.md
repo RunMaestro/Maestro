@@ -301,11 +301,11 @@ The Command Terminal executes commands on the remote host:
 - Tab completion works with remote file paths
 - Command history is preserved per-session
 
-### Claude Max Plan on Remote Hosts
+### Claude TUI Wrapper on Remote Hosts
 
-Running a Claude Code agent against your Max plan quota (the TUI Wrapper and Dynamic [token sources](/provider-notes#token-source-max-plan-vs-api)) relies on the **maestro-p** helper. It ships bundled with the desktop app for local agents, but over SSH the Claude TUI runs on the remote machine, so maestro-p must be on the **remote host's** PATH. If it is missing, Maestro disables the Max plan options for that agent and falls back to the per-token API source.
+The TUI Wrapper and Dynamic [token sources](/provider-notes#token-source) rely on the **maestro-p** helper. It ships bundled with the desktop app for local agents, but over SSH the Claude TUI runs on the remote machine, so maestro-p must be on the **remote host's** PATH. If it is missing, Maestro disables those options for that agent and falls back to `claude -p`.
 
-To enable Max plan billing on a remote host, install maestro-p from the [maestro-p install page](https://runmaestro.ai/maestro-p/) on that host, then click **Re-check** in the agent's Claude Token Source panel.
+To enable the TUI Wrapper on a remote host, install maestro-p from the [maestro-p install page](https://runmaestro.ai/maestro-p/) on that host, then click **Re-check** in the agent's Claude Token Source panel.
 
 ### Group Chat with Remote Agents
 

@@ -113,7 +113,7 @@ program
 	.description(
 		[
 			'Wrap Claude Code so callers see `claude -p` semantics while the underlying',
-			'session runs through the interactive TUI (Claude Max quota, not API billing).',
+			'session runs through the interactive TUI, on the Claude login it is signed in with.',
 			'',
 			'Argument handling:',
 			'  - Prompt-input flags (consumed): -p, --print, --prompt',

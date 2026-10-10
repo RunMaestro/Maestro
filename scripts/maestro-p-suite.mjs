@@ -23,6 +23,11 @@
 // and an untrusted folder parks the TUI on its "trust this folder?" dialog.
 // T16/T17 test that dialog on purpose, in an untrusted temp folder.
 //
+// T23 runs plain `claude -p` (no maestro-p) on the plan login. It is the
+// tripwire for Anthropic making `--bare` the default for `-p`: bare mode never
+// reads the plan login, so on that release every agent on the `claude -p`
+// token source with no API key starts failing to authenticate.
+//
 // Exit: 0 all pass, 2 only known-issue failures, 1 any unexpected failure.
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -736,6 +741,7 @@ async function serialCases(s, R, want) {
 	}
 
 	if (want('T22')) await caseT22(s);
+	if (want('T23')) await caseT23(s);
 }
 
 /** SIGTERM mid-turn must take claude and the tool it is running down too. */
@@ -824,6 +830,81 @@ async function caseT22(s) {
 		title,
 		r.status === 0 && text.includes('CLI-SEND-OK') && !/node-pty|posix_spawn/.test(text + r.stderr),
 		`rc=${r.status} secs=${Math.round((Date.now() - t0) / 1000)} out=${clip(text, 120)}`
+	);
+}
+
+/**
+ * Plain `claude -p` on the plan login, with every credential that would
+ * outrank it removed. Passing proves `-p` still reads the plan login
+ * (`apiKeySource: none`) and runs against the plan's own windows (the
+ * `rate_limit_event` row). Anthropic has said `--bare` will become the default
+ * for `-p`; on that release this case fails, and so does every Maestro agent
+ * on the `claude -p` token source that has no API key set.
+ */
+async function caseT23(s) {
+	const title = 'claude -p still runs on the plan login (no --bare default yet)';
+	const claudeBin = s.opts.claudeBin || process.env.MAESTRO_CLAUDE_BIN || which('claude');
+	if (!claudeBin) {
+		s.verdict('T23', title, false, 'claude not found on PATH (pass --claude-bin)');
+		return;
+	}
+	const env = { ...s.env };
+	for (const key of [
+		'ANTHROPIC_API_KEY',
+		'ANTHROPIC_AUTH_TOKEN',
+		'ANTHROPIC_BASE_URL',
+		'CLAUDE_CODE_USE_BEDROCK',
+		'CLAUDE_CODE_USE_VERTEX',
+		'CLAUDE_CODE_USE_FOUNDRY',
+		'CLAUDE_CODE_SIMPLE',
+	]) {
+		delete env[key];
+	}
+	const t0 = Date.now();
+	const r = spawnSync(
+		claudeBin,
+		[
+			'-p',
+			'--verbose',
+			'--output-format',
+			'stream-json',
+			'--model',
+			s.opts.model,
+			'Reply with exactly: PLAN-P-OK',
+		],
+		{ cwd: s.mkdir('T23'), env, input: '', encoding: 'utf8', timeout: 180_000 }
+	);
+	const rows = [];
+	for (const line of (r.stdout || '').split('\n')) {
+		try {
+			rows.push(JSON.parse(line));
+		} catch {
+			// one object per line; skip anything else
+		}
+	}
+	const init = rows.find((x) => x?.type === 'system' && x.subtype === 'init');
+	const limit = rows.find((x) => x?.type === 'rate_limit_event')?.rate_limit_info;
+	const res = [...rows].reverse().find((x) => x?.type === 'result') || {};
+	const windows = limit?.unifiedWindows
+		? Object.entries(limit.unifiedWindows)
+				.map(([name, w]) => `${name}=${Math.round((w?.utilization ?? 0) * 100)}%`)
+				.join(',')
+		: 'none';
+	const ok =
+		r.status === 0 &&
+		init?.apiKeySource === 'none' &&
+		res.is_error === false &&
+		String(res.result || '').includes('PLAN-P-OK');
+	s.verdict(
+		'T23',
+		title,
+		ok,
+		`apiKeySource=${init?.apiKeySource ?? 'missing'} plan_windows=${windows} ` +
+			`secs=${Math.round((Date.now() - t0) / 1000)} result=${clip(res.result ?? res.error)}` +
+			(ok
+				? ''
+				: ' | if this reads "Failed to authenticate", --bare is now the -p default: ' +
+					'plan-only agents on the claude -p token source need the TUI Wrapper or an API key')
 	);
 }
 

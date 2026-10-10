@@ -117,6 +117,6 @@ The [Usage Dashboard](/usage-dashboard) (`Cmd+Alt+U` / `Ctrl+Alt+U`) keeps score
 
 ## See also
 
-- [Provider Notes](/provider-notes) - Claude Code token sources, and how Dynamic mode switches from Max plan quota to API when a window runs dry
+- [Provider Notes](/provider-notes) - Claude Code token sources, and what each one draws from when a plan window runs dry
 - [Auto Run & Playbooks](/autorun-playbooks) - the batch runner resilience keeps alive
 - [Troubleshooting](/troubleshooting) - agent errors that resilience deliberately does not handle
