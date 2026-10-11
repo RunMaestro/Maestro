@@ -151,15 +151,36 @@ async function main() {
 		);
 		console.log(`PAC:\n${pac}`);
 		const results = [];
+		const routes = [];
 		for (const [name, config] of [
 			['A: fixed', fixed],
 			['B: fixed + <-loopback>', { ...fixed, proxyBypassRules: '<-loopback>' }],
 			['C: PAC', automatic],
 			['D: PAC + <-loopback>', { ...automatic, proxyBypassRules: '<-loopback>' }],
+			['E: numeric bypass first', { ...fixed, proxyBypassRules: '127.0.0.1;[::1];<-loopback>' }],
+			['F: numeric bypass last', { ...fixed, proxyBypassRules: '<-loopback>;127.0.0.0/8;[::1]' }],
+			['G: selective loopback', { ...fixed, proxyBypassRules: '*;<-loopback>;127.0.0.0/8;[::1]' }],
 		]) {
 			activeCase = name;
 			await partition.closeAllConnections();
 			await partition.setProxy(config);
+			console.log(`[${name}] config: ${JSON.stringify(config)}`);
+			// Resolve only: do not send requests to public or private-network hosts.
+			for (const host of [
+				'localhost',
+				'app.localhost',
+				'127.0.0.1',
+				'127.0.0.2',
+				'[::1]',
+				'10.0.0.1',
+				'172.16.0.1',
+				'192.168.1.1',
+				'example.com',
+			]) {
+				const route = await partition.resolveProxy(`http://${host}:8931/`);
+				routes.push({ case: name, host, route });
+				console.log(`[${name}] resolveProxy ${host}: ${route}`);
+			}
 			results.push({
 				case: name,
 				localhost: await probe(partition, 'localhost'),
@@ -167,6 +188,7 @@ async function main() {
 				'127.0.0.1': await probe(partition, '127.0.0.1'),
 			});
 		}
+		console.table(routes);
 		console.table(results);
 	} catch (error) {
 		console.error('Spike setup failed:', error);

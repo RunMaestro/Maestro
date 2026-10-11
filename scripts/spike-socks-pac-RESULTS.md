@@ -12,14 +12,18 @@ related:
 
 # Electron SOCKS5 and PAC loopback spike results
 
-VERDICT: TWO-STATE ONLY
+VERDICT: THREE-STATE OK
 
-None of the four prescribed configurations separates remote `localhost` from local
-`127.0.0.1`. Case B proxies both; cases A, C, and D bypass the proxy for both.
-This verdict applies to the configurations and runtime tested, not to every possible
-Chromium configuration. The proposed three-state design is not validated. Dropping
-the `loopback` state requires a product decision; the next task in [[SSHREFLECT-01]]
-records this verdict in the pull request and stops the run before implementation.
+The expanded experiment reproduces [Pedram's follow-up](https://github.com/RunMaestro/Maestro/issues/1557#issuecomment-6105941549).
+Case G separates remote `localhost` from local `127.0.0.1`, satisfying the
+playbook's narrow spike criterion. This supersedes the earlier `TWO-STATE ONLY`
+verdict, which covered only cases A-D and was premature as a design conclusion.
+
+This is **not approval of the full feature contract**. Case G routes RFC1918
+literals DIRECT. Phase 04's PAC approach needs revision, and the maintainer must
+choose between dropping RFC1918 from `loopback` (leaving it to `all`) or retaining
+the contract through a SOCKS dispatcher. Implementation remains paused pending
+those decisions and playbook updates.
 
 ## Runtime and reproduction
 
@@ -49,7 +53,7 @@ The local HTTP server on `127.0.0.1:8931` returns `LOCAL`. The synthetic SOCKS5 
 on `127.0.0.1:8930` returns `REMOTE` after a successful CONNECT handshake; it never
 connects to the destination. These labels identify the route, not a real SSH host.
 
-## Four-case outcome
+## Original four-case outcome
 
 Every request targeted port 8931. No request timed out or returned a network error.
 
@@ -70,7 +74,7 @@ function FindProxyForURL(url, host) {
 }
 ```
 
-Only case B generated SOCKS CONNECT requests:
+Among the original four cases, only case B generated SOCKS CONNECT requests:
 
 ```text
 [B: fixed + <-loopback>] SOCKS CONNECT localhost:8931 (ATYP=3)
@@ -82,16 +86,61 @@ Only case B generated SOCKS CONNECT requests:
 resolved address. Chromium also sent the numeric literal as an ATYP=3 string.
 Cases A, C, and D logged no CONNECT requests for either URL.
 
+## Follow-up reproduction (2026-10-11)
+
+The expanded script ran on macOS with Electron **41.10.7**, Chromium
+**146.0.7680.216**. It retains A-D and adds E-G. For all seven cases it prints the
+configuration, `resolveProxy()` for nine hosts, and actual `fetch()` outcomes for
+`localhost` and `127.0.0.1`. All 14 fetches completed without timeout or network
+error. The original eight outcomes remained unchanged.
+
+All rows below use `mode: 'fixed_servers'` and
+`proxyRules: 'socks5://127.0.0.1:8930'`. SOCKS means the exact resolution
+`SOCKS5 127.0.0.1:8930`.
+
+| Case | `proxyBypassRules`                | `localhost` | `app.localhost` | `127.0.0.1` | `127.0.0.2` | `[::1]` | RFC1918 samples | `example.com` |
+| ---- | --------------------------------- | ----------- | --------------- | ----------- | ----------- | ------- | --------------- | ------------- |
+| B    | `<-loopback>`                     | SOCKS       | SOCKS           | SOCKS       | SOCKS       | SOCKS   | SOCKS           | SOCKS         |
+| E    | `127.0.0.1;[::1];<-loopback>`     | SOCKS       | SOCKS           | SOCKS       | SOCKS       | SOCKS   | SOCKS           | SOCKS         |
+| F    | `<-loopback>;127.0.0.0/8;[::1]`   | SOCKS       | SOCKS           | DIRECT      | DIRECT      | DIRECT  | SOCKS           | SOCKS         |
+| G    | `*;<-loopback>;127.0.0.0/8;[::1]` | SOCKS       | SOCKS           | DIRECT      | DIRECT      | DIRECT  | DIRECT          | DIRECT        |
+
+RFC1918 samples are `10.0.0.1`, `172.16.0.1`, and `192.168.1.1`, each resolved
+separately with the same result. This matrix records proxy resolution, not
+successful network requests to those destinations. No requests were sent to the
+private-network or public hosts.
+
+Actual fetch evidence for the new cases:
+
+| Case | `localhost` body | SOCKS CONNECT for `localhost` | `127.0.0.1` body | SOCKS CONNECT for `127.0.0.1` |
+| ---- | ---------------- | ----------------------------- | ---------------- | ----------------------------- |
+| E    | REMOTE           | `localhost:8931 (ATYP=3)`     | REMOTE           | `127.0.0.1:8931 (ATYP=3)`     |
+| F    | REMOTE           | `localhost:8931 (ATYP=3)`     | LOCAL            | None                          |
+| G    | REMOTE           | `localhost:8931 (ATYP=3)`     | LOCAL            | None                          |
+
+The winning selective configuration is:
+
+```js
+{
+  mode: 'fixed_servers',
+  proxyRules: 'socks5://127.0.0.1:8930',
+  proxyBypassRules: '*;<-loopback>;127.0.0.0/8;[::1]',
+}
+```
+
+Numeric bypass rules placed after `<-loopback>` keep the numeric loopback hosts
+DIRECT; case E demonstrates that putting the numeric exceptions first does not.
+Case F separates loopback names and literals but also proxies the public host.
+Case G adds the leading wildcard bypass and keeps that public host DIRECT, at the
+cost of also bypassing the RFC1918 samples. Cases C/D still fail to proxy localhost
+under the prescribed PAC configuration.
+
 ## Interpretation and limits
 
-Case B demonstrates that the implicit loopback bypass can be defeated in fixed
-server mode, so proxying `localhost` is possible. Its proxy rule applies generally,
-however, and the numeric escape route is also proxied. Adding the same bypass rule
-to the prescribed PAC configuration does not produce the required separation.
-
-The four cases support the playbook's two-state outcome, with no winning
-configuration for the requested `loopback` mode. They do not test alternative bypass
-lists, public destinations, wildcard localhost names, RFC1918 addresses, IPv6 URLs,
-remote DNS, SSH transport, or fail-closed behavior after a tunnel dies. The synthetic
-server also does not establish end-to-end remote connectivity. No product proxy
-code is introduced by this report.
+The experiment now supports hostname/numeric-loopback separation. It does not
+validate the original full `loopback` contract or choose a replacement architecture.
+`app.localhost`, `127.0.0.2`, IPv6, RFC1918, and the public hostname have
+`resolveProxy()` evidence only; end-to-end fetch evidence covers only `localhost`
+and `127.0.0.1`. SSH transport, remote DNS, HTTPS/WebSockets, and fail-closed behavior
+after a tunnel dies remain untested. The synthetic SOCKS server never connects to
+an actual remote destination. No product proxy code is introduced.
