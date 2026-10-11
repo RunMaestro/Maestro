@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, cleanup } from '@testing-library/react';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
 	BrowserTabView,
 	type BrowserTabViewHandle,
@@ -68,6 +68,34 @@ describe('BrowserTabView <webview> src (reload-loop regression)', () => {
 		// Same DOM element (not remounted) and src unchanged: the loop driver is gone.
 		expect(container.querySelector('webview')).toBe(webview);
 		expect(webview!.getAttribute('src')).toBe('https://a.test/');
+	});
+
+	it('consumes an explicit navigation request without replaying it on observed URL changes', () => {
+		const onUpdateTab = vi.fn();
+		const tab = createBrowserTab();
+		const { container, rerender } = render(
+			<BrowserTabView tab={tab} theme={mockTheme} onUpdateTab={onUpdateTab} />
+		);
+		const webview = container.querySelector('webview') as HTMLElement & { src: string };
+		rerender(
+			<BrowserTabView
+				tab={{ ...tab, requestedUrl: 'https://docs.runmaestro.ai/cue' }}
+				theme={mockTheme}
+				onUpdateTab={onUpdateTab}
+			/>
+		);
+		expect(webview.src).toBe('https://docs.runmaestro.ai/cue');
+		expect(onUpdateTab).toHaveBeenCalledWith(tab.id, { requestedUrl: undefined });
+		webview.src = 'https://docs.runmaestro.ai/redirected';
+		rerender(
+			<BrowserTabView
+				tab={{ ...tab, url: webview.src }}
+				theme={mockTheme}
+				onUpdateTab={onUpdateTab}
+			/>
+		);
+		expect(webview.src).toBe('https://docs.runmaestro.ai/redirected');
+		expect(onUpdateTab).toHaveBeenCalledTimes(1);
 	});
 
 	it('imperative navigate() assigns webview.src to the resolved URL', () => {

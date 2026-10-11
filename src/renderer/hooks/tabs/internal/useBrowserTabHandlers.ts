@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { openBrowserTabAt } from '../../../services/browserTabs';
 import { updateBrowserTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import type { BrowserTab } from '../../../types';
 import {
@@ -51,32 +52,7 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 		}
 	}, []);
 
-	const handleOpenBrowserTabAt = useCallback((url: string, options?: { title?: string }) => {
-		if (!url) return;
-		const { activeSessionId } = useSessionStore.getState();
-		updateSessionWith(activeSessionId, (s) => {
-			const newBrowserTab = createBrowserTab(s.id, url, {
-				title: options?.title ?? url,
-				isLoading: true,
-			});
-
-			return {
-				...s,
-				browserTabs: [...(s.browserTabs || []), newBrowserTab],
-				activeFileTabId: null,
-				activeBrowserTabId: newBrowserTab.id,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
-				// A programmatically-opened standalone browser tab takes over the
-				// panel, so it must leave any active tiled group.
-				activeGroupId: null,
-				unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
-					type: 'browser',
-					id: newBrowserTab.id,
-				}),
-			};
-		});
-	}, []);
+	const handleOpenBrowserTabAt = useCallback(openBrowserTabAt, []);
 
 	const handleSelectBrowserTab = useCallback((tabId: string) => {
 		const { activeSessionId } = useSessionStore.getState();

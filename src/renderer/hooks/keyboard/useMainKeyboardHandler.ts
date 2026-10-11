@@ -15,6 +15,7 @@ import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
+import { openRandomDidYouKnowTip } from '../../services/didYouKnow';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
@@ -760,6 +761,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useModalStore.getState().openModal('leaderboard');
 				trackShortcut('openLeaderboard');
+			} else if (ctx.isShortcut(e, 'didYouKnow')) {
+				e.preventDefault();
+				openRandomDidYouKnowTip();
+				trackShortcut('didYouKnow');
 			} else if (ctx.isShortcut(e, 'clearAllNotifications')) {
 				e.preventDefault();
 				useNotificationStore.getState().clearToasts();

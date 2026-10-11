@@ -6,7 +6,7 @@
  * and conversational.
  */
 
-import { shuffle } from './shuffle';
+import { shuffle } from '../../../../shared/shuffle';
 
 const FILLER_PHRASES = [
 	'Running the numbers...',

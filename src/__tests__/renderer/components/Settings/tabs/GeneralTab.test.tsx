@@ -121,6 +121,11 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setDisableGpuAcceleration: mockSetDisableGpuAcceleration,
 		disableConfetti: false,
 		setDisableConfetti: mockSetDisableConfetti,
+		// Discovery
+		didYouKnowEnabled: true,
+		setDidYouKnowEnabled: vi.fn(),
+		didYouKnowSeenTipIds: [],
+		setDidYouKnowSeenTipIds: vi.fn(),
 		// Updates
 		checkForUpdatesOnStartup: true,
 		setCheckForUpdatesOnStartup: mockSetCheckForUpdatesOnStartup,
@@ -180,6 +185,12 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('Power')).toBeInTheDocument();
 			expect(screen.getByText('Rendering Options')).toBeInTheDocument();
 			expect(screen.getByText('Updates')).toBeInTheDocument();
+			expect(
+				screen.getByText('Discovery').compareDocumentPosition(screen.getByText('Updates')) &
+					Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+			expect(screen.getByRole('switch', { name: "Show 'Did You Know?' on launch" })).toBeChecked();
+			expect(screen.getByRole('button', { name: 'Show all tips again' })).toBeDisabled();
 			expect(screen.getByText('Privacy')).toBeInTheDocument();
 			expect(screen.getByText('Storage Location')).toBeInTheDocument();
 		});
