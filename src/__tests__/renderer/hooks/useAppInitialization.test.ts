@@ -7,6 +7,7 @@
  */
 
 import { createElement, StrictMode } from 'react';
+import { useOnboardingSeriesStore } from '../../../renderer/stores/onboardingSeriesStore';
 import { useModalStore, type ModalId } from '../../../renderer/stores/modalStore';
 import { renderHook, act } from '@testing-library/react';
 import { useAppInitialization } from '../../../renderer/hooks/ui/useAppInitialization';
@@ -177,7 +178,8 @@ vi.mock('../../../renderer/components/WindowsWarningModal', () => ({
 
 const mockExposeOnboardingSeriesDebug = vi.fn();
 const mockStartOnboardingSeries = vi.fn();
-vi.mock('../../../renderer/stores/onboardingSeriesStore', () => ({
+vi.mock('../../../renderer/stores/onboardingSeriesStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/onboardingSeriesStore')>()),
 	exposeOnboardingSeriesDebug: (...args: unknown[]) => mockExposeOnboardingSeriesDebug(...args),
 	startOnboardingSeries: (...args: unknown[]) => mockStartOnboardingSeries(...args),
 }));
@@ -224,6 +226,7 @@ beforeAll(() => {
 // ============================================================================
 
 function resetStores() {
+	useOnboardingSeriesStore.getState().stop();
 	useModalStore.setState({ modals: new Map() });
 	mockWizardState.isOpen = false;
 	mockSettingsState.didYouKnowEnabled = true;
@@ -470,6 +473,26 @@ describe('useAppInitialization', () => {
 			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
 			act(() => useModalStore.getState().closeModal(id));
 			await act(() => vi.advanceTimersByTimeAsync(1200));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+		});
+
+		it('waits for the entire onboarding series and restarts an interrupted delay', async () => {
+			renderHook(() => useAppInitialization());
+			await act(() => vi.advanceTimersByTimeAsync(600));
+			act(() =>
+				useOnboardingSeriesStore.getState().start({
+					audience: 'returning',
+					queue: ['typography', 'theme', 'updates', 'agentPowers'],
+				})
+			);
+			for (let step = 0; step < 4; step++) {
+				await act(() => vi.advanceTimersByTimeAsync(2000));
+				expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+				act(() => useOnboardingSeriesStore.getState().advance());
+			}
+			await act(() => vi.advanceTimersByTimeAsync(1199));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+			await act(() => vi.advanceTimersByTimeAsync(1));
 			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
 		});
 
