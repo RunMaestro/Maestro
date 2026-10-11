@@ -115,3 +115,52 @@ before merge. The earlier mocked group-chat failures were not rerun in this
 rebase pass; their September 19 baseline remains documented separately.
 The renderer build emitted dynamic-import/chunking warnings outside this
 feature. No dependency or lockfile changes were made.
+
+## Review preparation (2026-10-11)
+
+Rebased onto upstream `rc` at `a73a8bdf64abd33045835f22d571f80f18e646fc`.
+Preserved the original tip on `backup/issue-1555-before-rebase-20261011`.
+The only rebase conflict was the reorganized canonical utility index in
+`CLAUDE.md`; retained the current index format and both discovery utilities.
+Reviewed the range-diff after replaying all 56 commits.
+
+Two readiness checks identified fixes included in this update:
+
+- Subscribe to the existing onboarding series store so discovery tips wait
+  for all four setup screens. Added a regression test covering an interrupted
+  launch delay, every onboarding step, and the full delay after completion.
+- Let footer rows grow with text, scale action columns with the interface
+  font, and stack actions on narrow cards. The previous fixed-height rows let
+  the primary action overlap Next at the maximum font scale.
+
+Validation:
+
+- All 2,488 tests in the existing 49-file regression manifest passed, with
+  zero failed files, failed tests, or pending tests.
+- TypeScript, ESLint, repository-wide Prettier, main/preload builds, and
+  renderer build passed. Documentation checks passed: 679 paths, 250 index
+  entries matched to their full entries, and references across 41 documents.
+- A hidden Electron instance used an isolated demo profile under the
+  workspace. Confirmed that the card stays absent through all four onboarding
+  screens, opens after dismissal and splash removal, and opens a docs tab
+  while docking the card. No test window was shown or live Maestro data used.
+- Browser component checks exercised all 21 cards across 20 themes. Inspected
+  light/dark screenshots and checked font scales 0.6, 1.0, and 2.4 at widths
+  390, 600, and 1000. The narrow maximum-font case reproduced the footer
+  overlap before the fix and passed afterward.
+
+Remaining limitations:
+
+- The external docs page did not finish loading in the hidden Electron guest;
+  its DOM check timed out, including with background throttling disabled.
+  Real docs-page clicking and keyboard scrolling remain unverified. Component
+  tests establish docking and navigation behavior, not that desktop check.
+- Full Linux/Windows CI still requires maintainer approval. The full local
+  suite and live-provider scenarios remain outside the playbook's validation
+  scope. Earlier unrelated mocked group-chat failures were not rerun here.
+- Optional representative feature screenshots are still not included. Theme
+  geometry checks and inspected examples do not replace an editorial review
+  of all artwork and copy.
+
+Keep the PR in draft until the remaining desktop interaction check and CI
+are satisfied. The previous dated validation sections are historical results.
