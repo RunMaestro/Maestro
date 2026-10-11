@@ -72,8 +72,8 @@
 }
 
 .dyk-footer {
-	grid-template-columns: minmax(0, 1fr) 96px 36px 36px 230px;
-	grid-template-rows: 40px;
+	grid-template-columns: minmax(0, 1fr) 6rem 2.25rem 2.25rem 14.375rem;
+	grid-template-rows: minmax(2.5rem, auto);
 }
 
 .dyk-docs {
@@ -97,14 +97,45 @@
 	justify-self: end;
 }
 
-@container dyk-card (max-width: 620px) {
+@container dyk-card (max-width: 38.75rem) {
 	.dyk-footer {
-		grid-template-columns: minmax(0, 1fr) 96px 36px 36px;
-		grid-template-rows: 40px 40px;
+		grid-template-columns: minmax(0, 1fr) 6rem 2.25rem 2.25rem;
+		grid-template-rows: repeat(2, minmax(2.5rem, auto));
 	}
 	.dyk-action {
 		grid-column: 1 / -1;
 		grid-row: 2;
+	}
+}
+
+/* Large type on a narrow card needs its own rows, not overlapping controls. */
+@container dyk-card (max-width: 24rem) {
+	.dyk-overlay[data-reading='false'] .dyk-footer {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-rows: repeat(4, minmax(2.5rem, auto));
+	}
+	.dyk-overlay[data-reading='false'] .dyk-footer > button:first-child:not(.dyk-show-me) {
+		grid-column: 1 / -1;
+		grid-row: 1;
+	}
+	.dyk-overlay[data-reading='false'] .dyk-docs {
+		grid-column: 1 / -1;
+		grid-row: 2;
+	}
+	.dyk-overlay[data-reading='false'] .dyk-back {
+		grid-column: 1;
+		grid-row: 3;
+	}
+	.dyk-overlay[data-reading='false'] .dyk-next {
+		grid-column: 2;
+		grid-row: 3;
+	}
+	.dyk-overlay[data-reading='false'] .dyk-action {
+		grid-column: 1 / -1;
+		grid-row: 4;
+	}
+	.dyk-overlay[data-reading='false'] .dyk-show-me {
+		grid-row: 5;
 	}
 }
 
@@ -144,8 +175,8 @@
 
 .dyk-overlay[data-reading='true'] .dyk-footer {
 	margin-top: 0;
-	grid-template-columns: minmax(0, 1fr) 36px 36px;
-	grid-template-rows: 40px;
+	grid-template-columns: minmax(0, 1fr) 2.25rem 2.25rem;
+	grid-template-rows: minmax(2.5rem, auto);
 }
 
 .dyk-overlay[data-reading='true'] .dyk-docs {

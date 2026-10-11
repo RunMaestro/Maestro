@@ -37,6 +37,7 @@ import type { GistInfo } from '../../components/GistPublishModal';
 import {
 	exposeOnboardingSeriesDebug,
 	startOnboardingSeries,
+	useOnboardingSeriesStore,
 } from '../../stores/onboardingSeriesStore';
 import {
 	flushLeaderboardOutbox,
@@ -181,6 +182,7 @@ export function useAppInitialization(): AppInitializationReturn {
 	}, [settingsLoaded, suppressWindowsWarning]);
 
 	// --- Did You Know launch tip ---
+	const onboardingSeriesActive = useOnboardingSeriesStore((s) => s.queue.length > 0);
 	const didYouKnowEnabled = useSettingsStore((s) => s.didYouKnowEnabled);
 	// The wizard owns its visibility in context; the other surfaces use modalStore.
 	const { state: wizardState } = useWizard();
@@ -198,7 +200,7 @@ export function useAppInitialization(): AppInitializationReturn {
 	useEffect(() => {
 		if (!settingsLoaded || !sessionsLoaded || !initialFileTreeReady) return;
 		if (!didYouKnowEnabled || didYouKnowShownRef.current) return;
-		if (wizardState.isOpen || didYouKnowBlocked) return;
+		if (wizardState.isOpen || onboardingSeriesActive || didYouKnowBlocked) return;
 
 		didYouKnowShownRef.current = true;
 		let opened = false;
@@ -218,6 +220,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		initialFileTreeReady,
 		didYouKnowEnabled,
 		wizardState.isOpen,
+		onboardingSeriesActive,
 		didYouKnowBlocked,
 	]);
 
