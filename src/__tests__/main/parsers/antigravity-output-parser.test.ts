@@ -352,3 +352,299 @@ describe('AntigravityOutputParser', () => {
 		expect(parser.detectErrorFromExit(0, '', '')).toBeNull();
 	});
 });
+
+// Lines below are shaped like a live agy 1.2.16 `--output-format stream-json`
+// run. The stream carries thinking only as `thinking_tokens` and settles every
+// tool step DONE with no exit code, so the parser reads both from agy's
+// conversation store; a fake store stands in for it here.
+describe('AntigravityOutputParser with the conversation store', () => {
+	const CONV = 'd4bfb7b1-38c0-4d39-b66a-700cd78e0b2f';
+	const step = (fields: Record<string, unknown>) => ({
+		event: 'step_update',
+		step_update: { conversation_id: CONV, ...fields },
+	});
+
+	function parserWith(store: {
+		thinking?: Record<number, string>;
+		results?: Record<number, string>;
+	}) {
+		const reads: string[] = [];
+		const parser = new AntigravityOutputParser({
+			readThinking: (conversationId, index) => {
+				reads.push(`thinking:${conversationId}:${index}`);
+				return store.thinking?.[index] ?? '';
+			},
+			readToolResult: (conversationId, index) => {
+				reads.push(`result:${conversationId}:${index}`);
+				return store.results?.[index] ?? '';
+			},
+		});
+		return { parser, reads };
+	}
+
+	it("attaches a tool-calling model step's thinking to its DONE usage tick", () => {
+		const { parser } = parserWith({ thinking: { 1: 'List first, then read.' } });
+
+		const event = parser.parseJsonObject(
+			step({
+				step_index: 1,
+				state: 'DONE',
+				step_type: 'agent_response',
+				usage: { input_tokens: 10, output_tokens: 400, thinking_tokens: 380 },
+			})
+		);
+
+		expect(event).toMatchObject({
+			type: 'system',
+			reasoningText: 'List first, then read.\n\n',
+		});
+		// Per-step usage is not reported: the result carries the turn's totals.
+		expect(event?.usage).toBeUndefined();
+	});
+
+	// Captured agy 1.3.0 numbers: two model calls, and a result that is their sum.
+	// Every usage event Maestro sees is ADDED to the session totals, so the old
+	// per-step usage plus the result counted the turn twice, and the context
+	// gauge read the 32k sum instead of the last call's 16k.
+	it('reports usage once, on the result, with the last model call as occupancy', () => {
+		const { parser } = parserWith({});
+		const steps = [
+			step({
+				step_index: 1,
+				state: 'DONE',
+				step_type: 'agent_response',
+				usage: {
+					input_tokens: 15800,
+					output_tokens: 194,
+					thinking_tokens: 86,
+					cache_read_tokens: 0,
+				},
+			}),
+			step({
+				step_index: 2,
+				state: 'DONE',
+				step_type: 'tool',
+				tool_name: 'run_command',
+				tool_info: { name: 'run_command', parameters: { CommandLine: 'ls' }, output: 'hello.txt' },
+			}),
+			step({
+				step_index: 4,
+				state: 'DONE',
+				step_type: 'agent_response',
+				text_delta: '\n',
+				usage: {
+					input_tokens: 16275,
+					output_tokens: 231,
+					thinking_tokens: 195,
+					cache_read_tokens: 0,
+				},
+			}),
+		].map((line) => parser.parseJsonObject(line));
+		expect(steps.map((event) => event?.usage)).toEqual([undefined, undefined, undefined]);
+
+		const result = {
+			event: 'result',
+			result: {
+				conversation_id: CONV,
+				status: 'SUCCESS',
+				response: 'ok',
+				usage: {
+					input_tokens: 32075,
+					output_tokens: 425,
+					thinking_tokens: 281,
+					cache_read_tokens: 0,
+				},
+			},
+		};
+		const expected = {
+			inputTokens: 32075,
+			outputTokens: 425,
+			cacheReadTokens: 0,
+			reasoningTokens: 281,
+			absoluteUsage: {
+				inputTokens: 16275,
+				outputTokens: 231,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 195,
+			},
+		};
+		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
+		// StdoutHandler can parse the same result line twice; both must agree.
+		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
+	});
+
+	it('falls back to the last model call when the result carries no usage', () => {
+		const { parser } = parserWith({});
+		parser.parseJsonObject(
+			step({
+				step_index: 1,
+				state: 'DONE',
+				step_type: 'agent_response',
+				usage: {
+					input_tokens: 900,
+					output_tokens: 40,
+					thinking_tokens: 12,
+					cache_read_tokens: 300,
+				},
+			})
+		);
+		const result = {
+			event: 'result',
+			result: { conversation_id: CONV, status: 'SUCCESS', response: 'ok' },
+		};
+		const expected = {
+			inputTokens: 900,
+			outputTokens: 40,
+			cacheReadTokens: 300,
+			reasoningTokens: 12,
+		};
+		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
+		// Read, never consumed: a second parse of the same line agrees.
+		expect(parser.parseJsonObject(result)?.usage).toEqual(expected);
+	});
+
+	it('reads an answer step once, on its first delta, so thinking precedes the text', () => {
+		const { parser, reads } = parserWith({ thinking: { 5: 'Uppercasing keeps the order.' } });
+
+		const first = parser.parseJsonObject(
+			step({ step_index: 5, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'Yes, ' })
+		);
+		const second = parser.parseJsonObject(
+			step({ step_index: 5, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'it does.' })
+		);
+		const done = parser.parseJsonObject(
+			step({ step_index: 5, state: 'DONE', step_type: 'agent_response', text_delta: '\n' })
+		);
+
+		expect(first).toMatchObject({
+			type: 'text',
+			text: 'Yes, ',
+			reasoningText: 'Uppercasing keeps the order.\n\n',
+		});
+		expect(second?.reasoningText).toBeUndefined();
+		expect(done?.reasoningText).toBeUndefined();
+		expect(reads).toEqual([`thinking:${CONV}:5`]);
+	});
+
+	it('looks again at DONE when the first line found no thinking yet', () => {
+		const thinking: Record<number, string> = {};
+		const { parser, reads } = parserWith({ thinking });
+
+		parser.parseJsonObject(
+			step({ step_index: 3, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'a' })
+		);
+		parser.parseJsonObject(
+			step({ step_index: 3, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'b' })
+		);
+		thinking[3] = 'Late summary.';
+		const done = parser.parseJsonObject(
+			step({ step_index: 3, state: 'DONE', step_type: 'agent_response' })
+		);
+
+		expect(done?.reasoningText).toBe('Late summary.\n\n');
+		expect(reads).toEqual([`thinking:${CONV}:3`, `thinking:${CONV}:3`]);
+	});
+
+	it('marks a command that agy settled DONE failed when its stored exit code is non-zero', () => {
+		const { parser } = parserWith({
+			results: { 6: '\nThe command exited with code 1.\nStdout:\n\nStderr:\n\n' },
+		});
+
+		const active = parser.parseJsonObject(
+			step({
+				step_index: 6,
+				state: 'ACTIVE',
+				step_type: 'tool',
+				tool_name: 'run_command',
+				tool_info: { name: 'run_command', parameters: { CommandLine: 'false' } },
+			})
+		);
+		const done = parser.parseJsonObject(
+			step({
+				step_index: 6,
+				state: 'DONE',
+				step_type: 'tool',
+				tool_name: 'run_command',
+				tool_info: { name: 'run_command', parameters: { CommandLine: 'false' } },
+			})
+		);
+
+		expect(active?.toolState).toEqual({ status: 'running', input: { CommandLine: 'false' } });
+		expect(done?.toolState).toEqual({
+			status: 'failed',
+			input: { CommandLine: 'false' },
+			output: 'The command exited with code 1.',
+			exitCode: 1,
+		});
+	});
+
+	it("keeps the stream's own output, cleaned of CRLF, for a successful command", () => {
+		const { parser } = parserWith({
+			results: { 2: '\nThe command exited with code 0.\nOutput:\ntotal 8\r\n' },
+		});
+
+		const done = parser.parseJsonObject(
+			step({
+				step_index: 2,
+				state: 'DONE',
+				step_type: 'tool',
+				tool_name: 'run_command',
+				tool_info: {
+					name: 'run_command',
+					parameters: { CommandLine: 'ls -la' },
+					output: 'total 8\r\n-rw-r--r--@  1 ron  wheel   20 Oct  6 07:04 hello.txt\r\n',
+				},
+			})
+		);
+
+		expect(done?.toolState).toEqual({
+			status: 'completed',
+			input: { CommandLine: 'ls -la' },
+			output: 'total 8\n-rw-r--r--@  1 ron  wheel   20 Oct  6 07:04 hello.txt',
+			exitCode: 0,
+		});
+	});
+
+	it('shows the diff an edit applied, from the stored result', () => {
+		const { parser } = parserWith({
+			results: {
+				8: "The following changes were made by the replace_file_content tool to: /w/hello.txt. Don't ask for permission.\n[diff_block_start]\n@@ -1,4 +1,4 @@\n alpha\n-bravo\n+BRAVO\n charlie\n[diff_block_end]\n\nPlease note that the above snippet only shows the MODIFIED lines.",
+			},
+		});
+
+		const done = parser.parseJsonObject(
+			step({
+				step_index: 8,
+				state: 'DONE',
+				step_type: 'tool',
+				tool_name: 'replace_file_content',
+				tool_info: { name: 'replace_file_content', parameters: { TargetFile: '/w/hello.txt' } },
+			})
+		);
+
+		expect(done?.toolState).toMatchObject({
+			status: 'completed',
+			output: '@@ -1,4 +1,4 @@\n alpha\n-bravo\n+BRAVO\n charlie',
+		});
+	});
+
+	it('does not read the store while a tool is still running, and forgets a finished conversation', () => {
+		const { parser, reads } = parserWith({ thinking: { 1: 'x' } });
+
+		parser.parseJsonObject(
+			step({ step_index: 2, state: 'ACTIVE', step_type: 'tool', tool_name: 'view_file' })
+		);
+		expect(reads).toEqual([]);
+
+		parser.parseJsonObject(step({ step_index: 1, state: 'DONE', step_type: 'agent_response' }));
+		parser.parseJsonObject({
+			event: 'result',
+			result: { conversation_id: CONV, status: 'SUCCESS', response: 'ok' },
+		});
+		// The result dropped the conversation's entry, so nothing is held for it:
+		// seeing the same step again reads it afresh.
+		parser.parseJsonObject(step({ step_index: 1, state: 'DONE', step_type: 'agent_response' }));
+		expect(reads).toEqual([`thinking:${CONV}:1`, `thinking:${CONV}:1`]);
+	});
+});

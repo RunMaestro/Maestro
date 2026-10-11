@@ -36,8 +36,10 @@ const LOG_CONTEXT = '[TokenUsageCache]';
  * Codex token accounting (its cumulative `total_token_usage` was being summed)
  * and added OpenAI pricing, neither of which touches a transcript's mtime or
  * size, so the fingerprint alone would keep serving the old numbers forever.
+ * v5 reads Grok session totals from usage.json; every Grok session cached
+ * before that holds zeros under an unchanged fingerprint.
  */
-export const TOKEN_USAGE_CACHE_VERSION = 4;
+export const TOKEN_USAGE_CACHE_VERSION = 5;
 
 /** One cached session: the fingerprint it was derived at plus the derived breakdown. */
 interface CachedSession {

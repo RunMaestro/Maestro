@@ -22,6 +22,7 @@
  * `cue-db.test.ts` is still the lighter tool.
  */
 
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 /**
@@ -46,8 +47,22 @@ export function canLoadNodeSqlite(): boolean {
 class NodeSqliteDatabaseShim {
 	private readonly db: DatabaseSync;
 
-	constructor(filename: string) {
-		this.db = new DatabaseSync(filename);
+	/**
+	 * Honors the better-sqlite3 options whose behavior a caller can depend on:
+	 * `readonly` (a read-only open of a WAL store is observably different, it
+	 * can create sidecar files it cannot remove), `fileMustExist`, and
+	 * `timeout` as the busy timeout.
+	 */
+	constructor(
+		filename: string,
+		options: { readonly?: boolean; fileMustExist?: boolean; timeout?: number } = {}
+	) {
+		const inMemory = filename === '' || filename === ':memory:';
+		if (options.fileMustExist && !inMemory && !existsSync(filename)) {
+			throw Object.assign(new Error('unable to open database file'), { code: 'SQLITE_CANTOPEN' });
+		}
+		this.db = new DatabaseSync(filename, { readOnly: options.readonly === true });
+		if (options.timeout !== undefined) this.db.exec(`PRAGMA busy_timeout = ${options.timeout}`);
 	}
 
 	/**

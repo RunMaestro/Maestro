@@ -11,6 +11,9 @@ import type {
 	UsageStats,
 } from '../../shared/types';
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
+// Registers agy's conversation-store reader with maestro-lib (see host.ts), so
+// an Antigravity run spawned here keeps its thinking text and command status.
+import '../../main/parsers/antigravity-step-store';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
