@@ -209,6 +209,7 @@ maestro-cli pianola supervise disable <id>
 ```
 
 A supervised watcher retires itself, and its target is removed, when its tab has been closed or deleted for two minutes (a snoozed tab still counts as present), or when the tab has had no activity for six hours with nothing waiting on Pianola. Change the idle limit with `--idle-hours <hours>` (`0` keeps the watcher forever). The next `supervise watch` on that tab registers it again.
+Automatic agent-watch registration, retirement, and startup pruning use asynchronous, locked registry updates. Concurrent CLI and desktop updates preserve each other's targets; session creation and deletion wait for the automatic-watch update before acknowledging completion.
 
 Full flag-level reference for every verb is in the [CLI reference](/cli-reference).
 

@@ -2585,7 +2585,7 @@ app
 			setPluginSessionsRaw([...previousSessions, session]);
 			if (!previousSessions.some((existing) => existing.id === sessionId)) {
 				try {
-					pianolaSupervisor?.autoWatchNewSessions(
+					await pianolaSupervisor?.autoWatchNewSessions(
 						[session],
 						[...previousSessions, session] as AutoWatchSession[],
 						store.get('pianolaAutoWatchNewAgents', false) === true
@@ -2632,7 +2632,7 @@ app
 			const remaining = sessions.filter((s) => s.id !== sessionId);
 			setPluginSessionsRaw(remaining);
 			try {
-				pianolaSupervisor?.autoWatchNewSessions(
+				await pianolaSupervisor?.autoWatchNewSessions(
 					[],
 					remaining as unknown as AutoWatchSession[],
 					store.get('pianolaAutoWatchNewAgents', false) === true,
