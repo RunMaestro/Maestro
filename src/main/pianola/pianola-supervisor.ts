@@ -28,7 +28,7 @@ import {
 } from '../../shared/maestro-lib/control/termination';
 import {
 	readSupervisorTargets,
-	writeSupervisorTargets,
+	updateSupervisorTargetsAsync,
 	readPrograms,
 	readPlans,
 	supervisorFilePath,
@@ -170,12 +170,12 @@ export class PianolaSupervisor {
 	}
 
 	/** Register future top-level agents and retire their watches when they close. */
-	autoWatchNewSessions(
+	async autoWatchNewSessions(
 		added: readonly AutoWatchSession[],
 		current: readonly AutoWatchSession[],
 		autoWatchEnabled: boolean,
 		removedIds: readonly string[] = []
-	): void {
+	): Promise<void> {
 		const canAdd = autoWatchEnabled && this.deps.isEnabled();
 		if (!canAdd) {
 			this.pendingAutoWatchIds.clear();
@@ -189,47 +189,49 @@ export class PianolaSupervisor {
 		if (this.pendingAutoWatchIds.size === 0 && removedIds.length === 0) return;
 
 		const sessionsById = new Map(current.map((session) => [session.id, session]));
-		const targets = readSupervisorTargets();
 		const removed = new Set(removedIds.filter((id) => !sessionsById.has(id)));
-		const next = targets.filter(
-			(target) =>
-				!(target.kind === 'watch' && target.autoCreated && removed.has(target.agentId ?? ''))
-		);
-		const changed = next.length !== targets.length;
-		const watchedIds = new Set(
-			next.filter((target) => target.kind === 'watch').map((target) => target.agentId)
-		);
+		const pendingIds = [...this.pendingAutoWatchIds];
 		const registered: string[] = [];
-		for (const id of this.pendingAutoWatchIds) {
-			const session = sessionsById.get(id);
-			if (!session || session.isPianola || session.parentSessionId || watchedIds.has(id)) {
-				this.pendingAutoWatchIds.delete(id);
-				continue;
+		let changed = false;
+		await updateSupervisorTargetsAsync((targets) => {
+			const next = targets.filter(
+				(target) =>
+					!(target.kind === 'watch' && target.autoCreated && removed.has(target.agentId ?? ''))
+			);
+			changed = next.length !== targets.length;
+			const watchedIds = new Set(
+				next.filter((target) => target.kind === 'watch').map((target) => target.agentId)
+			);
+			for (const id of pendingIds) {
+				const session = sessionsById.get(id);
+				if (!session || session.isPianola || session.parentSessionId || watchedIds.has(id)) {
+					this.pendingAutoWatchIds.delete(id);
+					continue;
+				}
+				const aiTabIds = Array.isArray(session.aiTabs)
+					? session.aiTabs.flatMap((tab) => (typeof tab?.id === 'string' && tab.id ? [tab.id] : []))
+					: [];
+				const tabId =
+					session.activeTabId && aiTabIds.includes(session.activeTabId)
+						? session.activeTabId
+						: aiTabIds[0];
+				if (!tabId) continue;
+				next.push({
+					id: generateUUID(),
+					kind: 'watch',
+					agentId: id,
+					tabId,
+					enabled: true,
+					createdAt: Date.now(),
+					autoCreated: true,
+				});
+				watchedIds.add(id);
+				registered.push(id);
 			}
-			const aiTabIds = Array.isArray(session.aiTabs)
-				? session.aiTabs.flatMap((tab) => (typeof tab?.id === 'string' && tab.id ? [tab.id] : []))
-				: [];
-			const tabId =
-				session.activeTabId && aiTabIds.includes(session.activeTabId)
-					? session.activeTabId
-					: aiTabIds[0];
-			if (!tabId) continue;
-			next.push({
-				id: generateUUID(),
-				kind: 'watch',
-				agentId: id,
-				tabId,
-				enabled: true,
-				createdAt: Date.now(),
-				autoCreated: true,
-			});
-			watchedIds.add(id);
-			registered.push(id);
-		}
-		if (!changed && registered.length === 0) return;
-		writeSupervisorTargets(next);
+			return next;
+		});
 		for (const id of registered) this.pendingAutoWatchIds.delete(id);
-		this.reconcile();
+		if (changed || registered.length > 0) this.reconcile();
 	}
 
 	private hasUnfinishedPlan(target: PianolaSupervisedTarget): boolean {
@@ -240,23 +242,28 @@ export class PianolaSupervisor {
 	}
 
 	/** Begin watching the store file and reconcile immediately. Idempotent. */
-	start(): void {
+	async start(): Promise<void> {
 		if (this.started) return;
+		this.started = true;
 		if (this.deps.getStoredSessions) {
 			try {
 				const storedIds = new Set(this.deps.getStoredSessions().map((session) => session.id));
-				const targets = readSupervisorTargets();
-				const retained = targets.filter(
-					(target) =>
-						!(target.kind === 'watch' && target.autoCreated && !storedIds.has(target.agentId ?? ''))
+				await updateSupervisorTargetsAsync((targets) =>
+					targets.filter(
+						(target) =>
+							!(
+								target.kind === 'watch' &&
+								target.autoCreated &&
+								!storedIds.has(target.agentId ?? '')
+							)
+					)
 				);
-				if (retained.length !== targets.length) writeSupervisorTargets(retained);
 			} catch (error) {
 				// Cleanup must not prevent retained/manual targets from starting.
 				void captureException(error, { operation: 'pianola:supervisor:pruneAutoWatches' });
 			}
 		}
-		this.started = true;
+		if (!this.started) return;
 		this.startWatching();
 		this.reconcile();
 	}

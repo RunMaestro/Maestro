@@ -182,8 +182,10 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 					try {
 						await fs.stat(path.join(dir, '.git'));
 						return true;
-					} catch {
-						return false;
+					} catch (error) {
+						const code = (error as NodeJS.ErrnoException).code;
+						if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+						throw error;
 					}
 				};
 

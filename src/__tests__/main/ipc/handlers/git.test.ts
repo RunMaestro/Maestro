@@ -5218,7 +5218,7 @@ branch refs/heads/bugfix-123
 					return { stdout: 'true\n', stderr: '', exitCode: 0 };
 				}
 				if (args?.includes('--show-toplevel')) {
-					return { stdout: '/parent/repo', stderr: '', exitCode: 0 };
+					return { stdout: path.join('/parent', 'repo'), stderr: '', exitCode: 0 };
 				}
 				if (args?.includes('--abbrev-ref')) {
 					return { stdout: 'main\n', stderr: '', exitCode: 0 };

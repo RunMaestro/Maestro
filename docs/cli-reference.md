@@ -277,6 +277,7 @@ Ask another agent a question and print its answer (background consult - never to
 ```bash
 maestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"
 ```
+
 ## `maestro-cli queue`
 
 Inspect and manage the desktop execution queue (from dispatch --queue)
@@ -1331,6 +1332,7 @@ maestro-cli create-ssh-remote "Tunnelled box" \
   --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
   --ssh-option ConnectTimeout=45
 ```
+
 ## `maestro-cli update-ssh-remote <remote-id>`
 
 Update an existing SSH remote configuration

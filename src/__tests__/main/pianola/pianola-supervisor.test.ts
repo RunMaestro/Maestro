@@ -19,7 +19,7 @@ import type { ChildProcess } from 'child_process';
 // target list without touching electron, fs, or a real watcher.
 vi.mock('../../../main/pianola/pianola-store-main', () => ({
 	readSupervisorTargets: vi.fn(() => []),
-	writeSupervisorTargets: vi.fn(),
+	updateSupervisorTargetsAsync: vi.fn(),
 	supervisorFilePath: vi.fn(() => '/fake/maestro-pianola-supervisor.json'),
 	readPrograms: vi.fn(() => []),
 	readPlans: vi.fn(() => []),
@@ -46,12 +46,11 @@ vi.mock('../../../shared/platformDetection', () => ({
 import { PianolaSupervisor, type AutoWatchSession } from '../../../main/pianola/pianola-supervisor';
 import {
 	readSupervisorTargets,
-	writeSupervisorTargets,
+	updateSupervisorTargetsAsync,
 	readPrograms,
 	readPlans,
 } from '../../../main/pianola/pianola-store-main';
 import { captureException } from '../../../main/utils/sentry';
-import * as fs from 'fs';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 
 // Mirror the (unexported) source constants so timing assertions stay in sync.
@@ -143,6 +142,11 @@ beforeEach(() => {
 	vi.mocked(readSupervisorTargets).mockReturnValue([]);
 	vi.mocked(readPrograms).mockReturnValue([]);
 	vi.mocked(readPlans).mockReturnValue([]);
+	vi.mocked(updateSupervisorTargetsAsync).mockImplementation(async (update) => {
+		const targets = update(readSupervisorTargets());
+		setTargets(targets);
+		return targets;
+	});
 	sup = makeSupervisor();
 });
 
@@ -151,18 +155,15 @@ afterEach(() => {
 });
 
 describe('PianolaSupervisor automatic watches', () => {
-	it('starts manual watches when startup pruning cannot be persisted', () => {
+	it('starts manual watches when startup pruning cannot be persisted', async () => {
 		const error = new Error('read-only store');
 		setTargets([
 			{ ...watchTarget('orphan'), agentId: 'gone', autoCreated: true },
 			watchTarget('manual'),
 		]);
-		vi.mocked(writeSupervisorTargets).mockImplementationOnce(() => {
-			throw error;
-		});
+		vi.mocked(updateSupervisorTargetsAsync).mockRejectedValueOnce(error);
 		sup = makeSupervisor([{ id: 'a1', aiTabs: [{ id: 't1' }] }]);
-		expect(() => sup.start()).not.toThrow();
-		expect(fs.watch).toHaveBeenCalled();
+		await sup.start();
 		expect(sup.getHealth()).toContainEqual(
 			expect.objectContaining({ id: 'manual', state: 'running' })
 		);
@@ -172,7 +173,7 @@ describe('PianolaSupervisor automatic watches', () => {
 		sup.stopAll();
 	});
 
-	it('prunes orphaned automatic watches before starting children, preserving manual targets', () => {
+	it('prunes orphaned automatic watches before starting children, preserving manual targets', async () => {
 		const orphan = { ...watchTarget('orphan'), agentId: 'gone', autoCreated: true };
 		const retained = [
 			{ ...watchTarget('existing'), autoCreated: true },
@@ -180,13 +181,9 @@ describe('PianolaSupervisor automatic watches', () => {
 			orchestrateTarget(),
 		];
 		setTargets([orphan, ...retained]);
-		vi.mocked(writeSupervisorTargets).mockImplementation((targets) => {
-			setTargets(targets);
-			return targets;
-		});
 		sup = makeSupervisor([{ id: 'a1', aiTabs: [{ id: 't1' }] }]);
-		sup.start();
-		expect(writeSupervisorTargets).toHaveBeenCalledWith(retained);
+		await sup.start();
+		expect(readSupervisorTargets()).toEqual(retained);
 		expect(
 			sup
 				.getHealth()
@@ -196,51 +193,75 @@ describe('PianolaSupervisor automatic watches', () => {
 		sup.stopAll();
 	});
 
-	it('registers only new top-level agents and waits for an AI tab', () => {
-		vi.mocked(writeSupervisorTargets).mockImplementation((targets) => {
-			setTargets(targets);
-			return targets;
-		});
+	it('registers only new top-level agents and waits for an AI tab', async () => {
 		const newAgent = { id: 'new', aiTabs: [] as Array<{ id: string }>, activeTabId: 'file' };
 		const pianola = { id: 'manager', isPianola: true, aiTabs: [{ id: 'manager-tab' }] };
 		const child = { id: 'child', parentSessionId: 'new', aiTabs: [{ id: 'child-tab' }] };
-		sup.autoWatchNewSessions([newAgent, pianola, child], [newAgent, pianola, child], true);
-		expect(writeSupervisorTargets).not.toHaveBeenCalled();
-
+		await sup.autoWatchNewSessions([newAgent, pianola, child], [newAgent, pianola, child], true);
+		expect(readSupervisorTargets()).toEqual([]);
 		const ready = { ...newAgent, aiTabs: [{ id: 'ai-tab' }] };
-		sup.autoWatchNewSessions([], [ready, pianola, child], true);
-		expect(writeSupervisorTargets).toHaveBeenCalledOnce();
-		expect(vi.mocked(writeSupervisorTargets).mock.calls[0][0]).toEqual([
+		await sup.autoWatchNewSessions([], [ready, pianola, child], true);
+		const targets = readSupervisorTargets();
+		expect(targets).toEqual([
 			expect.objectContaining({ kind: 'watch', agentId: 'new', tabId: 'ai-tab', enabled: true }),
 		]);
-		expect(spawned).toHaveLength(1);
-		sup.autoWatchNewSessions([], [ready], true);
-		expect(writeSupervisorTargets).toHaveBeenCalledOnce();
+		expect(sup.getHealth()[0]).toMatchObject({ id: targets[0].id, state: 'running' });
+		await sup.autoWatchNewSessions([], [ready], true);
+		expect(readSupervisorTargets()).toEqual(targets);
+	});
+	it('preserves both new agents when registrations wait behind the same store lock', async () => {
+		let release!: () => void;
+		let first = true;
+		let previous: Promise<unknown> = Promise.resolve();
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		vi.mocked(updateSupervisorTargetsAsync).mockImplementation((update) => {
+			const ready = first ? gate : previous;
+			first = false;
+			const operation = ready.then(() => {
+				const targets = update(readSupervisorTargets());
+				setTargets(targets);
+				return targets;
+			});
+			previous = operation;
+			return operation;
+		});
+		const a = { id: 'a', aiTabs: [{ id: 'a-tab' }] };
+		const b = { id: 'b', aiTabs: [{ id: 'b-tab' }] };
+		const registrationA = sup.autoWatchNewSessions([a], [a], true);
+		const registrationB = sup.autoWatchNewSessions([b], [a, b], true);
+		release();
+		await Promise.all([registrationA, registrationB]);
+		expect(
+			readSupervisorTargets()
+				.map((target) => target.agentId)
+				.sort()
+		).toEqual(['a', 'b']);
+		expect(sup.getHealth().map((target) => target.state)).toEqual(['running', 'running']);
 	});
 
-	it('respects the option, Encore gate, and existing disabled watches', () => {
+	it('respects the option, Encore gate, and existing disabled watches', async () => {
 		const fresh = { id: 'fresh', aiTabs: [{ id: 'tab' }] };
-		sup.autoWatchNewSessions([fresh], [fresh], false);
-		expect(writeSupervisorTargets).not.toHaveBeenCalled();
+		await sup.autoWatchNewSessions([fresh], [fresh], false);
+		expect(readSupervisorTargets()).toEqual([]);
 		enabled = false;
-		sup.autoWatchNewSessions([fresh], [fresh], true);
-		expect(writeSupervisorTargets).not.toHaveBeenCalled();
+		await sup.autoWatchNewSessions([fresh], [fresh], true);
+		expect(readSupervisorTargets()).toEqual([]);
 		enabled = true;
-		setTargets([{ ...watchTarget(), agentId: 'fresh', enabled: false }]);
-		sup.autoWatchNewSessions([fresh], [fresh], true);
-		expect(writeSupervisorTargets).not.toHaveBeenCalled();
+		const disabled = { ...watchTarget(), agentId: 'fresh', enabled: false };
+		setTargets([disabled]);
+		await sup.autoWatchNewSessions([fresh], [fresh], true);
+		expect(readSupervisorTargets()).toEqual([disabled]);
+		expect(sup.getHealth()).toEqual([]);
 	});
 
-	it('retires only automatically created watches when agents close', () => {
+	it('retires only automatically created watches when agents close', async () => {
 		const automatic = { ...watchTarget('auto'), agentId: 'closed', autoCreated: true };
 		const manual = { ...watchTarget('manual'), agentId: 'closed' };
 		setTargets([automatic, manual]);
-		vi.mocked(writeSupervisorTargets).mockImplementation((targets) => {
-			setTargets(targets);
-			return targets;
-		});
-		sup.autoWatchNewSessions([], [], false, ['closed']);
-		expect(writeSupervisorTargets).toHaveBeenCalledWith([manual]);
+		await sup.autoWatchNewSessions([], [], false, ['closed']);
+		expect(readSupervisorTargets()).toEqual([manual]);
 	});
 });
 

@@ -181,6 +181,8 @@ maestro-cli pianola supervise watch <tab-id>
 maestro-cli pianola supervise disable <id>
 ```
 
+Automatic agent-watch registration, retirement, and startup pruning use asynchronous, locked registry updates. Concurrent CLI and desktop updates preserve each other's targets; session creation and deletion wait for the automatic-watch update before acknowledging completion.
+
 Full flag-level reference for every verb is in the [CLI reference](/cli-reference).
 
 ## Turning it off

@@ -824,7 +824,7 @@ describe('ChildProcessSpawner', () => {
 						([event]: [string]) => event === 'close'
 					)[1];
 					close(0);
-					expect(wait).toHaveBeenCalledOnce();
+					await vi.waitFor(() => expect(wait).toHaveBeenCalledOnce());
 					if (route === 'kill') expect(manager.kill('test-session')).toBe(true);
 					manager.spawn(createBaseConfig({ prompt: 'second turn' }));
 					const successor = manager.get('test-session')!;
@@ -841,7 +841,7 @@ describe('ChildProcessSpawner', () => {
 			}
 		);
 
-		it('cleans only predecessor files on a superseded close, only once', () => {
+		it('cleans only predecessor files on a superseded close, only once', async () => {
 			const ctx = createTestContext();
 			ctx.spawner.spawn(createBaseConfig({ prompt: 'first turn' }));
 			const predecessor = ctx.processes.get('test-session')!;
@@ -856,6 +856,7 @@ describe('ChildProcessSpawner', () => {
 
 			close(143);
 			close(143);
+			await vi.waitFor(() => expect(predecessor.tempImageFiles).toBeUndefined());
 
 			expect(cleanupTempFiles).toHaveBeenCalledExactlyOnceWith([
 				'/tmp/old-image.png',
