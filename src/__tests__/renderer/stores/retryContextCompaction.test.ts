@@ -18,6 +18,7 @@ import {
 	noteFailedTurnExited,
 	clearRetryIfSettled,
 	cancelContextCompaction,
+	cancelRecoveryForTab,
 	hasPendingRetry,
 	isAwaitingContextCompaction,
 	getRetryEntry,
@@ -244,6 +245,22 @@ describe('automatic context compaction', () => {
 		// The resend comes back with the same refusal.
 		expect(scheduleRetryForError(SESSION, TAB, contextLimitError())).toBe(false);
 		expect(spawner).toHaveBeenCalledTimes(1);
+	});
+
+	it('can be ended for one tab, leaving a compaction on another tab running', () => {
+		deferredCompaction();
+		failOnContextLimit();
+		noteFailedTurnExited(SESSION, TAB);
+
+		// Someone stopped a turn on a different tab of this agent.
+		cancelContextCompaction(SESSION, 'some-other-tab');
+		expect(hasPendingRetry(SESSION, TAB)).toBe(true);
+
+		// And the same call, as Quick Chat's Stop makes it for this tab.
+		cancelRecoveryForTab(SESSION, TAB);
+		expect(hasPendingRetry(SESSION, TAB)).toBe(false);
+		expect(pill()).toEqual({ status: 'canceled' });
+		expect(session().executionQueue).toEqual([]);
 	});
 
 	it('ends quietly when the user presses Stop mid-compaction', async () => {

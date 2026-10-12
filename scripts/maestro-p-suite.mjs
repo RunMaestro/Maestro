@@ -386,6 +386,10 @@ async function parallelCases(s, want) {
 		T02: {
 			prompt: 'Use the Bash tool to run: echo tuitest-$((6*7))  Then reply with only its output.',
 		},
+		T24: {
+			prompt:
+				"Use the Task tool with subagent_type general-purpose and this exact prompt for it: 'First write the sentence: starting now. Then run the Bash command echo sub-$((6*7)). Then write: finished.' Then reply with exactly: done",
+		},
 		T04: {
 			prompt: `Repeat the text between <x> and </x> verbatim inside a fenced code block, nothing else.\n<x>${HOSTILE}</x>`,
 		},
@@ -449,9 +453,16 @@ function judge(s, R, want) {
 		const r = R.T01;
 		const types = r.rows.map((x) => x?.type);
 		const init = r.rows.find((x) => x?.type === 'system');
-		const missing = ['subtype', 'is_error', 'duration_ms', 'result', 'session_id', 'usage'].filter(
-			(k) => !(k in r.res)
-		);
+		const missing = [
+			'subtype',
+			'is_error',
+			'duration_ms',
+			'result',
+			'session_id',
+			'usage',
+			'modelUsage',
+			'total_cost_usd',
+		].filter((k) => !(k in r.res));
 		const ok =
 			r.rc === EXIT.ok &&
 			types[0] === 'system' &&
@@ -462,12 +473,40 @@ function judge(s, R, want) {
 			missing.length === 0 &&
 			r.sid &&
 			init?.session_id === r.sid &&
+			typeof init?.model === 'string' &&
+			r.res.total_cost_usd > 0 &&
 			r.text.includes('PONG-7731');
 		s.verdict(
 			'T01',
 			'basic run, envelope shape matches claude -p',
 			ok,
-			`types=${[...new Set(types)].sort()} missing=${missing} text=${clip(r.text)}`,
+			`types=${[...new Set(types)].sort()} missing=${missing} model=${init?.model} cost=${r.res.total_cost_usd} text=${clip(r.text)}`,
+			[r]
+		);
+	}
+	if (R.T24) {
+		// `claude -p` streams a subagent's prompt, tool calls, and tool results
+		// tagged with the Task call's id, and none of its text.
+		const r = R.T24;
+		const sub = r.rows.filter((x) => x?.parent_tool_use_id);
+		const blocks = sub.flatMap((x) =>
+			(x.message?.content || []).map((c) => `${x.type}:${c?.type}`)
+		);
+		const task = r.rows
+			.flatMap((x) => (x?.parent_tool_use_id ? [] : x?.message?.content || []))
+			.find((c) => c?.type === 'tool_use' && (c.name === 'Task' || c.name === 'Agent'));
+		s.verdict(
+			'T24',
+			'subagent work streams tagged with its Task call, as claude -p does',
+			r.rc === EXIT.ok &&
+				!!task &&
+				sub.every((x) => x.parent_tool_use_id === task.id) &&
+				blocks.includes('user:text') &&
+				blocks.includes('assistant:tool_use') &&
+				blocks.includes('user:tool_result') &&
+				!blocks.includes('assistant:text') &&
+				/done/i.test(r.text),
+			`blocks=${[...new Set(blocks)]} text=${clip(r.text)}`,
 			[r]
 		);
 	}
@@ -526,11 +565,14 @@ function judge(s, R, want) {
 	}
 	if (R.T08) {
 		const r = R.T08;
+		// `claude -p` has no idle timeout, so a silent tool call must not trip
+		// --max-wait: an open call with permissions bypassed (maestro-p always
+		// bypasses) holds the watchdog off. It used to fail this turn with exit 3.
 		s.verdict(
 			'T08',
-			'--max-wait 15 aborts a 45s turn with exit 3',
-			r.rc === EXIT.timeout && r.error === 'timeout' && r.secs < 40,
-			`error=${r.error}`,
+			'--max-wait 15 rides out a 45s silent tool call, as claude -p does',
+			r.rc === EXIT.ok && r.error === null && r.secs >= 40 && /done/i.test(r.text || ''),
+			`rc=${r.rc} error=${r.error} secs=${r.secs}`,
 			[r]
 		);
 	}

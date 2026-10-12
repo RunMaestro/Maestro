@@ -279,8 +279,8 @@ jobs:
       # the freshly written signature.json - into the packaged resources.
       # Runs on every matrix leg; signing is deterministic given the same files
       # and key, so per-leg signing is safe. Looping over examples/plugins/*/
-      # signs future bundled plugins for free (only agent-flow is shipped via
-      # extraResources, so signing the sibling example dirs is harmless).
+      # signs future bundled plugins for free; extraResources selects which
+      # signed examples actually ship in the package.
       - name: Sign bundled plugins
         env:
           MAESTRO_PLUGIN_SIGNING_KEY: ${{ secrets.MAESTRO_PLUGIN_SIGNING_KEY }}
@@ -311,7 +311,7 @@ jobs:
           # plugins. This branch is reachable only by removing or renaming
           # MAESTRO_PLUGIN_SIGNING_KEY after a key was baked - at which point the
           # anchor promises a trust guarantee the artifact cannot honour, and
-          # Agent Flow would silently stop being seeded in a shipped build.
+          # bundled plugins would silently stop being seeded in a shipped build.
           # Grouped with the drift guard below: both exist so a key/secret
           # mismatch fails at release time rather than in users' hands.
           if [ -z "${MAESTRO_PLUGIN_SIGNING_KEY:-}" ]; then
@@ -327,18 +327,15 @@ jobs:
           for dir in examples/plugins/*/; do
             [ -f "$dir/plugin.json" ] || continue
             node dist/cli/maestro-cli.js plugin sign "$dir" --key "$KEYFILE" --json
+            # Anchor/secret drift guard: each freshly written signature must
+            # resolve "trusted" against the baked publisher anchor. Fail here
+            # if the signing secret and publisher-keys.ts have drifted.
+            VALIDATION=$(node dist/cli/maestro-cli.js plugin validate "$dir" --trusted-key "$ANCHOR" --json)
+            if ! grep -q '"status":"trusted"' <<< "$VALIDATION"; then
+              echo "::error::$dir signature does not resolve 'trusted' against the baked MAESTRO_PUBLISHER_KEYS anchor. The CI signing key (MAESTRO_PLUGIN_SIGNING_KEY) and the baked public key have drifted." >&2
+              exit 1
+            fi
           done
-
-          # Anchor/secret drift guard: the freshly written signature must resolve
-          # "trusted" against the baked MAESTRO_PUBLISHER_KEYS anchor. If the CI
-          # secret was rotated without re-baking publisher-keys.ts (or vice
-          # versa), the produced signature would be seed-skipped at runtime and
-          # ship a permanently non-runnable plugin. Fail the release here instead.
-          VALIDATION=$(node dist/cli/maestro-cli.js plugin validate examples/plugins/agent-flow --trusted-key "$ANCHOR" --json)
-          if ! grep -q '"status":"trusted"' <<< "$VALIDATION"; then
-            echo "::error::agent-flow signature does not resolve 'trusted' against the baked MAESTRO_PUBLISHER_KEYS anchor. The CI signing key (MAESTRO_PLUGIN_SIGNING_KEY) and the baked public key have drifted." >&2
-            exit 1
-          fi
 
       # Computer History helper. Not part of `npm run build` (contributors
       # without Rust must still be able to build), so it is built here, after

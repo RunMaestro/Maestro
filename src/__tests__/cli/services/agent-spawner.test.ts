@@ -2829,6 +2829,70 @@ Some text with [x] in it that's not a checkbox
 			expect(args).not.toContain('--agent-level');
 		});
 
+		it.each(['claude-code', 'codex'] as const)(
+			'uses desktop blank-unset and path expansion for a live %s environment',
+			async (toolType) => {
+				vi.stubEnv('MAESTRO_TEST_BLANK', 'inherited');
+				try {
+					const p = spawnAgent(toolType, '/p', 'hi', undefined, {
+						globalEnvVars: {
+							MAESTRO_TEST_BLANK: '  ',
+							CLAUDE_CONFIG_DIR: '',
+							MAESTRO_TEST_PATH: '~/relay-fixture',
+							MAESTRO_TEST_CANCEL: 'global',
+							MAESTRO_TEST_RESTORE: '',
+							'': 'unfinished row',
+						},
+						customEnvVars: { MAESTRO_TEST_CANCEL: '', MAESTRO_TEST_RESTORE: 'session' },
+					});
+					await driveSpawnToCompletion(
+						p,
+						0,
+						toolType === 'claude-code' ? CLAUDE_OK() : CODEX_INIT()
+					);
+					const {
+						options: { env },
+					} = spawnCall();
+					expect(env.MAESTRO_TEST_BLANK).toBeUndefined();
+					expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+					expect(env.MAESTRO_TEST_CANCEL).toBeUndefined();
+					expect(env.MAESTRO_TEST_RESTORE).toBe('session');
+					expect(env.MAESTRO_TEST_PATH).toBe(path.join(os.homedir(), 'relay-fixture'));
+					expect(env['']).toBeUndefined();
+				} finally {
+					vi.unstubAllEnvs();
+				}
+			}
+		);
+
+		it('retains standalone CLI explicit blank values without live desktop settings', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				customEnvVars: { MAESTRO_TEST_STANDALONE: '' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			expect(spawnCall().options.env.MAESTRO_TEST_STANDALONE).toBe('');
+		});
+
+		it('uses live desktop config and command with global env below session env', async () => {
+			mockReadAgentConfig.mockReturnValue({ customArgs: '--wrong-disk-config' });
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				agentConfigValues: { customArgs: '--live-desktop-config' },
+				agentCommand: '/desktop/claude',
+				globalEnvVars: { MAESTRO_TEST_GLOBAL: 'global', MAESTRO_TEST_LAYER: 'global' },
+				customEnvVars: { MAESTRO_TEST_LAYER: 'session' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			const {
+				args,
+				options: { env },
+			} = spawnCall();
+			expect(args).toContain('--live-desktop-config');
+			expect(args).not.toContain('--wrong-disk-config');
+			expect(mockSpawn.mock.calls[0][0]).toBe('/desktop/claude');
+			expect(env.MAESTRO_TEST_GLOBAL).toBe('global');
+			expect(env.MAESTRO_TEST_LAYER).toBe('session');
+		});
+
 		it('applies session customEnvVars to local spawn env (wins over shell env)', async () => {
 			const prev = process.env.MAESTRO_TEST_ENV;
 			process.env.MAESTRO_TEST_ENV = 'from-shell';

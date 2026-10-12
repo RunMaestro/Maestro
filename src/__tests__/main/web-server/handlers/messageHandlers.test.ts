@@ -1,3 +1,5 @@
+import { MAESTRO_PUBLISHER_KEYS } from '../../../../shared/plugins/publisher-keys';
+import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
 /**
  * Tests for WebSocketMessageHandler
  *
@@ -5047,6 +5049,228 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
 		} finally {
 			pluginToolRunIdentity.revoke(token);
+		}
+	});
+
+	it('delivers authenticated trusted Relay reply text unchanged through the MCP host boundary', async () => {
+		const relayTool = {
+			...tool,
+			id: 'sh.maestro.relay/send',
+			pluginId: 'sh.maestro.relay',
+			localId: 'send',
+			name: 'Send reply',
+			description: 'Send a message',
+		};
+		vi.mocked(getActivePluginManager).mockReturnValue({
+			getContributions: () => ({ tools: [relayTool] }),
+			getActiveRecords: () => [
+				{
+					id: 'sh.maestro.relay',
+					signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+				},
+			],
+			invokeTool,
+		} as unknown as PluginManager);
+		const runToken = pluginToolRunIdentity.issue('agent-a');
+		const args = {
+			text: 'Ein Release kann alle Plugins enthalten. Discuss deployment and secrets.',
+			threadId: '30',
+		};
+		invokeTool.mockResolvedValue({ messageIds: ['100'] });
+		try {
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: relayTool.id,
+				args,
+				runToken,
+			});
+			await vi.waitFor(() => expect(lastResult().ok).toBe(true));
+			expect(invokeTool).toHaveBeenCalledWith(relayTool.id, args, { callerAgentId: 'agent-a' });
+			expect(lastResult().result).toEqual({ messageIds: ['100'] });
+		} finally {
+			pluginToolRunIdentity.revoke(runToken);
+		}
+	});
+
+	it.each(['missing', 'forged', 'expired', 'revoked'])(
+		'denies a Relay reply with a %s run proof despite forged identity arguments',
+		async (proof) => {
+			const relayTool = {
+				...tool,
+				id: 'sh.maestro.relay/send',
+				pluginId: 'sh.maestro.relay',
+				localId: 'send',
+			};
+			vi.mocked(getActivePluginManager).mockReturnValue({
+				getContributions: () => ({ tools: [relayTool] }),
+				getActiveRecords: () => [
+					{
+						id: 'sh.maestro.relay',
+						signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+					},
+				],
+				invokeTool,
+			} as unknown as PluginManager);
+			let runToken: string | undefined;
+			if (proof === 'forged') runToken = 'f'.repeat(64);
+			if (proof === 'expired') {
+				const now = vi.spyOn(Date, 'now').mockReturnValue(1);
+				runToken = pluginToolRunIdentity.issue('agent-a', 1);
+				now.mockReturnValue(3);
+			} else if (proof === 'revoked') {
+				runToken = pluginToolRunIdentity.issue('agent-a');
+				pluginToolRunIdentity.revoke(runToken);
+			}
+			try {
+				handler.handleMessage(client, {
+					type: 'plugins_call_tool',
+					toolId: relayTool.id,
+					args: { text: 'Release discussion', callerAgentId: 'agent-a', skipRisk: true },
+					tabId: 'agent-a',
+					runToken,
+				});
+				await vi.waitFor(() => expect(lastResult().error).toBe('Verified caller required'));
+				expect(invokeTool).not.toHaveBeenCalled();
+			} finally {
+				if (runToken) pluginToolRunIdentity.revoke(runToken);
+				vi.restoreAllMocks();
+			}
+		}
+	);
+
+	it.each([undefined, MAESTRO_PUBLISHER_KEYS[0], 'user-trusted-other-publisher'])(
+		'rejects exact Relay replies signed by an unpinned trusted publisher: %s',
+		async (signerKey) => {
+			const relayTool = {
+				...tool,
+				id: 'sh.maestro.relay/send',
+				pluginId: 'sh.maestro.relay',
+				localId: 'send',
+			};
+			vi.mocked(getActivePluginManager).mockReturnValue({
+				getContributions: () => ({ tools: [relayTool] }),
+				getActiveRecords: () => [
+					{ id: 'sh.maestro.relay', signature: { status: 'trusted', signerKey } },
+				],
+				invokeTool,
+			} as unknown as PluginManager);
+			const runToken = pluginToolRunIdentity.issue('agent-a');
+			try {
+				handler.handleMessage(client, {
+					type: 'plugins_call_tool',
+					toolId: relayTool.id,
+					args: { text: 'Release discussion' },
+					runToken,
+				});
+				await vi.waitFor(() =>
+					expect(String(lastResult().error)).toContain('pinned Relay publisher')
+				);
+				expect(invokeTool).not.toHaveBeenCalled();
+			} finally {
+				pluginToolRunIdentity.revoke(runToken);
+			}
+		}
+	);
+
+	it.each(['unsigned', 'untrusted', 'invalid', undefined])(
+		'denies a Relay reply without live trusted signature status: %s',
+		async (status) => {
+			const relayTool = {
+				...tool,
+				id: 'sh.maestro.relay/send',
+				pluginId: 'sh.maestro.relay',
+				localId: 'send',
+			};
+			vi.mocked(getActivePluginManager).mockReturnValue({
+				getContributions: () => ({ tools: [relayTool] }),
+				getActiveRecords: () => [
+					{ id: 'sh.maestro.relay', signature: status ? { status } : undefined },
+				],
+				invokeTool,
+			} as unknown as PluginManager);
+			const runToken = pluginToolRunIdentity.issue('agent-a');
+			try {
+				handler.handleMessage(client, {
+					type: 'plugins_call_tool',
+					toolId: relayTool.id,
+					args: { text: 'Release discussion' },
+					runToken,
+				});
+				await vi.waitFor(() =>
+					expect(String(lastResult().error)).toContain('trusted signed plugin')
+				);
+				expect(invokeTool).not.toHaveBeenCalled();
+			} finally {
+				pluginToolRunIdentity.revoke(runToken);
+			}
+		}
+	);
+
+	it.each([
+		{ id: 'sh.maestro.relay/admin', pluginId: 'sh.maestro.relay', localId: 'admin' },
+		{ id: 'other.plugin/send', pluginId: 'other.plugin', localId: 'send' },
+		{ id: 'sh.maestro.relay/send', pluginId: 'other.plugin', localId: 'send' },
+		{ id: 'sh.maestro.relay/send', pluginId: 'sh.maestro.relay', localId: 'admin' },
+	])(
+		'retains the risk ceiling for other tools or mismatched declared identities: %j',
+		async (identity) => {
+			const declared = { ...tool, ...identity };
+			vi.mocked(getActivePluginManager).mockReturnValue({
+				getContributions: () => ({ tools: [declared] }),
+				getActiveRecords: () => [
+					{
+						id: 'sh.maestro.relay',
+						signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+					},
+				],
+				invokeTool,
+			} as unknown as PluginManager);
+			const runToken = pluginToolRunIdentity.issue('agent-a');
+			try {
+				handler.handleMessage(client, {
+					type: 'plugins_call_tool',
+					toolId: declared.id,
+					args: { text: 'Release', force: true },
+					runToken,
+				});
+				await vi.waitFor(() => expect(lastResult().blocked).toBe(true));
+				expect(invokeTool).not.toHaveBeenCalled();
+			} finally {
+				pluginToolRunIdentity.revoke(runToken);
+			}
+		}
+	);
+
+	it('propagates Relay destination authorization refusal instead of claiming a sent reply', async () => {
+		const relayTool = {
+			...tool,
+			id: 'sh.maestro.relay/send',
+			pluginId: 'sh.maestro.relay',
+			localId: 'send',
+		};
+		vi.mocked(getActivePluginManager).mockReturnValue({
+			getContributions: () => ({ tools: [relayTool] }),
+			getActiveRecords: () => [
+				{
+					id: 'sh.maestro.relay',
+					signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+				},
+			],
+			invokeTool,
+		} as unknown as PluginManager);
+		invokeTool.mockRejectedValue(new Error('Thread is not bound to caller'));
+		const runToken = pluginToolRunIdentity.issue('agent-a');
+		try {
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: relayTool.id,
+				args: { text: 'Release', threadId: 'foreign' },
+				runToken,
+			});
+			await vi.waitFor(() => expect(lastResult().error).toBe('Thread is not bound to caller'));
+			expect(lastResult().ok).toBe(false);
+		} finally {
+			pluginToolRunIdentity.revoke(runToken);
 		}
 	});
 

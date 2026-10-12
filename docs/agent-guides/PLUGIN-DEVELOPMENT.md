@@ -298,7 +298,13 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 ```
 
 ```json
-{ "id": "flow", "title": "Agent Flow", "entry": "panel.html", "placement": "modal", "size": "full" }
+{
+	"id": "vet-overlay",
+	"title": "Vet Overlay",
+	"entry": "panel.html",
+	"placement": "modal",
+	"size": "full"
+}
 ```
 
 ### hostViews (tier 0 static; tier 1 updates)
@@ -377,7 +383,7 @@ host controls the frame, icon mapping, tooltip, and non-suppressible plugin prov
 
 ### tools (tier 1)
 
-`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response and returns the handler's result. The handler receives `(args, context)`, where `context.callerAgentId` is a host-verified agent ID or `null`. Never use `args.agentId` as caller identity. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points local Claude and Codex runs at `maestro-cli mcp serve`, and every model-initiated call is risk-gated. See [Relay host contract](../relay-host-contract.md).
+`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response and returns the handler's result. The handler receives `(args, context)`, where `context.callerAgentId` is a host-verified agent ID or `null`. Never use `args.agentId` as caller identity. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points local Claude and Codex runs at `maestro-cli mcp serve`, and model-initiated calls are risk-gated except the exact declared `sh.maestro.relay/send` reply tool with a valid host-issued caller proof and live trusted Relay identity. See [Relay host contract](../relay-host-contract.md).
 
 ### keybindings (tier 1)
 
@@ -632,7 +638,7 @@ await maestro.ui.panelPost('my-panel', { nodes });
 A `modal` panel normally opens from Settings -> Encore -> Plugins. To open it yourself - e.g. bind a `keybindings` chord to a command that pops a full-window overlay - call `maestro.ui.openPanel(panelId)`, `maestro.ui.closePanel(panelId)`, or `maestro.ui.togglePanel(panelId)`. All three take the LOCAL panel id and require `ui:panel` (no extra consent). `ui.openPanel` also opens your own `settings` card from Host API 1.23.0. Close and toggle stay modal-only. Other docked (`left`/`right`/`main`) panels are rejected, since they are always mounted and have their own hide control. `closePanel` is a no-op unless that exact panel is the one currently open, so you can never dismiss another plugin's surface. Escape, the backdrop, and the close button dismiss the panel too. Requires `minHostApi: '1.16.0'`.
 
 ```js
-maestro.commands.register('overlay', () => maestro.ui.togglePanel('flow'));
+maestro.commands.register('overlay', () => maestro.ui.togglePanel('vet-overlay'));
 ```
 
 ---

@@ -1504,6 +1504,7 @@ describe('agents IPC handlers', () => {
 					'--output-format',
 					'stream-json',
 					'--dangerously-skip-permissions',
+					'--no-session-persistence',
 					'--',
 					'/help',
 				],

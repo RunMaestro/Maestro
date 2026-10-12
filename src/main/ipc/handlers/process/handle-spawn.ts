@@ -48,6 +48,8 @@ import {
 import { requireProcessManager, requireDependency } from '../../../utils/ipcHandler';
 import { getPrompt } from '../../../prompt-manager';
 import { getWindowsShellForAgentExecution } from '../../../process-manager/utils/shellEscape';
+import { buildChildProcessEnv } from '../../../process-manager/utils/envBuilder';
+import { probeClaudeSlashCommandsCached } from '../../../agents/claude-slash-command-probe';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { powerManager } from '../../../power-manager';
@@ -697,14 +699,16 @@ async function handleProcessSpawnImpl(
 	let sshRemoteUsed: SshRemoteConfig | null = null;
 	let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
 
-	({ commandToSpawn, argsToSpawn, customEnvVarsToPass } = applyLocalInteractiveSpawnDecision({
+	const interactiveSpawn = applyLocalInteractiveSpawnDecision({
 		config,
 		agent,
 		claudeContext,
 		commandToSpawn,
 		argsToSpawn,
 		customEnvVarsToPass,
-	}));
+	});
+	({ commandToSpawn, argsToSpawn, customEnvVarsToPass } = interactiveSpawn);
+	const interactiveClaudeBinPath = interactiveSpawn.claudeBinPath;
 
 	persistClaudeInteractiveMode(config, claudeContext, {
 		sessionsStore: deps.sessionsStore,
@@ -1026,6 +1030,25 @@ async function handleProcessSpawnImpl(
 			}),
 		}
 	);
+
+	// A `claude --print` turn names the folder's slash commands in its init
+	// event; a maestro-p turn drives the TUI, which names none. Probe for them
+	// (cached, so once per folder in a while, not once per turn) and hand them
+	// to the renderer on the same channel the init event uses. Local only: the
+	// probe would run this machine's claude, not the remote host's.
+	if (interactiveClaudeBinPath && !sshRemoteUsed && safeSend) {
+		const probeEnvVars = { ...(customEnvVarsToPass ?? {}) };
+		delete probeEnvVars.MAESTRO_CLAUDE_BIN;
+		void probeClaudeSlashCommandsCached(
+			interactiveClaudeBinPath,
+			config.cwd,
+			buildChildProcessEnv(probeEnvVars, false, globalShellEnvVars)
+		).then((commands) => {
+			if (commands && commands.length > 0) {
+				safeSend('process:slash-commands', config.sessionId, commands);
+			}
+		});
+	}
 
 	// Arm the interactive-mode replay controller when this turn ran
 	// through maestro-p. If the wrapper exits with code 2 (Max-plan

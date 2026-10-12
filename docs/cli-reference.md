@@ -2219,6 +2219,14 @@ Float the window above other windows ("off" lets it fall behind them)
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat font [size]`
+
+Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat agent <agent-id>`
 
 Switch Quick Chat to another agent and start a new chat there
@@ -2227,9 +2235,17 @@ Switch Quick Chat to another agent and start a new chat there
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat reveal`
+## `maestro-cli quick-chat reveal [message-id]`
 
-Open the current chat as a tab in the main Maestro window
+Open a tab of the chat in the main Maestro window: the tab a message went to, or the latest
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat new-tab [message-id]`
+
+Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2237,7 +2253,7 @@ Open the current chat as a tab in the main Maestro window
 
 ## `maestro-cli quick-chat stop`
 
-Stop the reply the agent is writing
+Stop the replies in progress and withdraw the messages still queued
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2459,6 +2475,14 @@ List the provider accounts the Feedback chat can run as, in the order it tries t
 | `--use <key>` | Make this account (a key from the list) the one the next chat tries first | -       |
 | `--clear`     | Forget the remembered account and pick automatically again                | -       |
 | `--json`      | Output as JSON (for scripting)                                            | -       |
+
+## `maestro-cli feedback diagnose`
+
+Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli feedback search <query>`
 

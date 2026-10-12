@@ -11,6 +11,7 @@ import { ipcRenderer } from 'electron';
 import type {
 	QuickChatCommand,
 	QuickChatCommandResult,
+	QuickChatFontScaleRequest,
 	QuickChatLayout,
 	QuickChatSnapshot,
 	QuickChatStatus,
@@ -44,6 +45,20 @@ export function createQuickChatApi() {
 		/** Float the window above other windows, or let it fall behind them. Resolves with the new state. */
 		setPinned: (pinned: boolean): Promise<boolean> =>
 			ipcRenderer.invoke('quickChat:setPinned', pinned),
+
+		/** The conversation's text zoom (1 = normal). */
+		getFontScale: (): Promise<number> => ipcRenderer.invoke('quickChat:getFontScale'),
+
+		/** Step, set, or reset the conversation's text zoom. Resolves with the new zoom. */
+		setFontScale: (request: QuickChatFontScaleRequest): Promise<number> =>
+			ipcRenderer.invoke('quickChat:setFontScale', request),
+
+		/** Fired when the text zoom changes, including from `maestro-cli quick-chat font`. */
+		onFontScale: (callback: (fontScale: number) => void): (() => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, fontScale: number) => callback(fontScale);
+			ipcRenderer.on('quickChat:fontScale', handler);
+			return () => ipcRenderer.removeListener('quickChat:fontScale', handler);
+		},
 
 		/** Fired when the pin changes from outside the window (`maestro-cli quick-chat pin`). */
 		onPinned: (callback: (pinned: boolean) => void): (() => void) => {

@@ -24,9 +24,16 @@ import {
 	QUICK_CHAT_MIN_EXPANDED_HEIGHT as MIN_EXPANDED_HEIGHT,
 	QUICK_CHAT_MIN_WIDTH as MIN_WIDTH,
 	type QuickChatBoundsRequest,
+	type QuickChatFontScaleRequest,
 	type QuickChatLayout,
 	type QuickChatWindowBounds,
 } from '../../shared/quickChat';
+import {
+	clampFontScale,
+	FONT_SCALE_DEFAULT,
+	FONT_SCALE_RANGE,
+	stepScale,
+} from '../../shared/scaleRange';
 import { resolveVisibleWindowPosition } from '../app-lifecycle/window-position';
 import { debounce, type DebouncedFunction } from '../utils/debounce';
 import { logger } from '../utils/logger';
@@ -114,6 +121,10 @@ function loadSaved(deps: QuickChatWindowDeps): QuickChatWindowBounds {
 		width: positive(raw.width),
 		expandedHeight: positive(raw.expandedHeight),
 		pinned: typeof raw.pinned === 'boolean' ? raw.pinned : undefined,
+		fontScale:
+			typeof raw.fontScale === 'number' && Number.isFinite(raw.fontScale)
+				? clampFontScale(raw.fontScale)
+				: undefined,
 	};
 	if (saved.x !== undefined && saved.y !== undefined) userPlaced = true;
 	return saved;
@@ -498,6 +509,36 @@ export function setQuickChatWindowPinned(next: boolean, deps: QuickChatWindowDep
 	if (!win) return;
 	win.setAlwaysOnTop(next, 'floating');
 	win.webContents.send('quickChat:pinned', next);
+}
+
+/** The conversation's text zoom (1 = normal). */
+export function getQuickChatFontScale(deps: QuickChatWindowDeps): number {
+	return loadSaved(deps).fontScale ?? FONT_SCALE_DEFAULT;
+}
+
+/**
+ * Change the conversation's text zoom and remember it with the window's other
+ * per-device state, so it survives a hide, a close, and a restart. The window's
+ * buttons and chords and `maestro-cli quick-chat font` all land here; the window
+ * is told so its text follows a CLI change. Returns the new zoom.
+ */
+export function setQuickChatFontScale(
+	request: QuickChatFontScaleRequest,
+	deps: QuickChatWindowDeps
+): number {
+	const current = getQuickChatFontScale(deps);
+	const next =
+		'reset' in request
+			? FONT_SCALE_DEFAULT
+			: 'step' in request
+				? stepScale(current, request.step, FONT_SCALE_RANGE)
+				: clampFontScale(request.scale);
+	if (next === current) return current;
+	pendingSave?.flush();
+	saved = { ...loadSaved(deps), fontScale: next };
+	deps.boundsStore.set(saved);
+	getQuickChatWindow()?.webContents.send('quickChat:fontScale', next);
+	return next;
 }
 
 /** The window's current bounds, for `quick-chat status`. */

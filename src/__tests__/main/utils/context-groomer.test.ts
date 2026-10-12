@@ -730,6 +730,25 @@ describe('groomContext', () => {
 		).rejects.toThrow('Grooming timed out with no response');
 	});
 
+	it('kills the process it gave up on, so a short deadline does not leak one', async () => {
+		const detector = createMockAgentDetector(agent);
+		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
+			(mockPM as any)._lastSpawnConfig = config;
+			return { pid: 12345, success: true };
+		});
+
+		await expect(
+			groomContext(
+				{ projectRoot: '/project', agentType: 'claude-code', prompt: 'pick one', timeoutMs: 50 },
+				mockPM,
+				detector
+			)
+		).rejects.toThrow('Grooming timed out with no response');
+
+		const sessionId = (mockPM as any)._lastSpawnConfig.sessionId;
+		expect(mockPM.kill).toHaveBeenCalledWith(sessionId);
+	});
+
 	it('resolves with content on timeout when response buffer has data', async () => {
 		const detector = createMockAgentDetector(agent);
 

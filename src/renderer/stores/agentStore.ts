@@ -51,7 +51,13 @@ import {
 	type CrossAgentMentionDispatch,
 } from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
-import { applyQueuedItemDispatchFailure, applyQueuedItemRelease } from '../utils/executionQueue';
+import {
+	applyQueuedItemDispatchFailure,
+	applyQueuedItemRelease,
+	clearSpawnCollision,
+	noteSpawnCollision,
+	SPAWN_COLLISION_MAX_ATTEMPTS,
+} from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
 
@@ -698,6 +704,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					return false;
 				}
 			}
+			clearSpawnCollision(item.id);
 			return true;
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
@@ -721,7 +728,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			// retry card already explaining the wait. Any other failure would repeat
 			// identically on the next tick, so the item comes back HELD: preserved,
 			// visible, one click from Force Send, and unable to spin the queue.
+			//
+			// "Self-corrects" assumes the old process actually goes away. When its
+			// entry never clears, the runnable item re-triggers the drain that just
+			// failed, so collisions are counted: the drain backs off between them
+			// (see noteSpawnCollision), and past the cap the item is held with an
+			// error frame like any other failure rather than spinning forever.
 			const isSpawnCollision = isAgentAlreadyRunningError(error);
+			const isTransientCollision =
+				isSpawnCollision && noteSpawnCollision(item.id) < SPAWN_COLLISION_MAX_ATTEMPTS;
+			if (!isTransientCollision) clearSpawnCollision(item.id);
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
@@ -731,8 +747,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const recovered = applyQueuedItemDispatchFailure(s, item, { hold: !isSpawnCollision });
-					if (isSpawnCollision) return recovered;
+					const recovered = applyQueuedItemDispatchFailure(s, item, {
+						hold: !isTransientCollision,
+					});
+					if (isTransientCollision) return recovered;
 
 					const resolvedTabId = item.tabId ?? s.activeTabId;
 					const targetTabExists = recovered.aiTabs?.some((tab) => tab.id === resolvedTabId);

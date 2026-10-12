@@ -372,6 +372,11 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 				...(logEntry.images && { images: logEntry.images }),
 				...(logEntry.delivered !== undefined && { delivered: logEntry.delivered }),
 				...('aiCommand' in logEntry && logEntry.aiCommand && { aiCommand: logEntry.aiCommand }),
+				// A queued command's card is written here (see agentStore). Its
+				// stamps have to survive, or a failed dispatch cannot take the card
+				// back out and nothing can tell which queued item the card is.
+				...(logEntry.queuedItemId && { queuedItemId: logEntry.queuedItemId }),
+				...(logEntry.forceParallel && { forceParallel: true }),
 			};
 
 			const newSessions = s.sessions.map((session) => {

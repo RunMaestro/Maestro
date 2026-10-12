@@ -219,7 +219,8 @@ const CONSULT_HEADER_NO_TRANSCRIPT =
  * directory. The consult runs in the TARGET agent's own cwd, so this is the only
  * pointer it has to the user's project.
  *
- * Two modes, gated by the `crossAgentMentionsWritable` setting (default off).
+ * Consults only; a hand-off uses `handoffGrant`. Two modes, gated by the
+ * `crossAgentMentionsWritable` setting (default off).
  * The user-facing names for them are CONSULT and DELEGATION, so the grant text
  * uses those words rather than only "read-only" / "read/write":
  * - Consult (read-only, default): grant read but not write. This is advisory text
@@ -249,6 +250,33 @@ function cwdGrant(sourceCwd: string, writable: boolean): string {
 		'you to make changes directly, tell them cross-agent mentions are consults (read-only) by ' +
 		'default and they can turn them into delegations in Settings > General > Cross-Agent ' +
 		'Mentions (set Consult or Delegate to Read/Write).'
+	);
+}
+
+/**
+ * Access grant for a HAND-OFF. Not `cwdGrant`: that text calls the request a
+ * consultation and points at the SOURCE directory as the place to change, while
+ * a hand-off asks the target to act on a result in its OWN workspace (where it
+ * runs). Gated by `crossAgentHandoffsWritable` (default on), separately from
+ * consults, because passing work on is the point of a hand-off. Same contract as
+ * `cwdGrant`: the text must agree with `permissionMode` on the spawn below.
+ */
+function handoffGrant(sourceCwd: string | undefined, writable: boolean): string {
+	const source = sourceCwd
+		? `The source agent worked in \`${sourceCwd}\`; you may READ files there for context. `
+		: '';
+	if (writable) {
+		return (
+			source +
+			'You may READ and MODIFY files in your own workspace to act on the result: save what ' +
+			"you learn, update notes, apply changes. Do not modify the source agent's files."
+		);
+	}
+	return (
+		source +
+		'This hand-off is READ-ONLY: do not modify or create files. Describe what you would ' +
+		'change, and tell the user hand-offs can write when Settings > General > Cross-Agent ' +
+		'Mentions > Hand-offs is set to Read/Write.'
 	);
 }
 
@@ -317,9 +345,7 @@ export function buildCrossAgentPrompt(request: CrossAgentRequest, writable = fal
 	const transcriptBlock = serializeTranscript(request.transcript);
 	if (request.handoffAnswer !== undefined) {
 		const intro = handoffHeader(request.sourceAgentName, !!transcriptBlock);
-		const header = request.sourceCwd
-			? `${intro}\n\n${cwdGrant(request.sourceCwd, writable)}`
-			: intro;
+		const header = `${intro}\n\n${handoffGrant(request.sourceCwd, writable)}`;
 		return [
 			header,
 			...(transcriptBlock ? [transcriptBlock] : []),

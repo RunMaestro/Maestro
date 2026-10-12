@@ -486,6 +486,91 @@ describe('FeedbackChatView', () => {
 		expect(window.maestro.feedback.submitConversation).toHaveBeenCalledTimes(2);
 	});
 
+	it('lets the user submit early with what has been gathered, and keeps the account row last', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.searchIssues.mockResolvedValue({ issues: [] });
+		window.maestro.feedback.submitConversation.mockResolvedValue({
+			success: true,
+			issueUrl: 'https://github.com/x/y/issues/9',
+		});
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			available: true,
+			command: 'claude',
+			args: [],
+		});
+		let onExit: ((sid: string, code: number) => void) | undefined;
+		let onData: ((sid: string, data: string) => void) | undefined;
+		window.maestro.process.onExit.mockImplementation((cb: typeof onExit) => {
+			onExit = cb;
+			return () => {};
+		});
+		(window.maestro.process as unknown as { onData: unknown }).onData = vi.fn(
+			(cb: typeof onData) => {
+				onData = cb;
+				return () => {};
+			}
+		);
+		// The agent is nowhere near ready and has filled nothing in.
+		window.maestro.process.spawn.mockImplementation((config: { sessionId: string }) => {
+			queueMicrotask(() => {
+				onData?.(
+					config.sessionId,
+					JSON.stringify({
+						confidence: 30,
+						ready: false,
+						message: 'Which agent was it?',
+						category: 'bug_report',
+						summary: '',
+						structured: {},
+					})
+				);
+				onExit?.(config.sessionId, 0);
+			});
+			return Promise.resolve({ pid: 1, success: true });
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+		// Nothing said yet: nothing to file.
+		expect(screen.queryByTestId('feedback-submit')).toBeNull();
+
+		// The account row sits below the composer, at the very bottom.
+		const runningAs = screen.getByTestId('feedback-running-as');
+		expect(
+			input.compareDocumentPosition(runningAs) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+
+		fireEvent.change(input, { target: { value: 'Auto Run did not resume after the limit reset' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+		await screen.findByText('Which agent was it?');
+
+		const submit = screen.getByTestId('feedback-submit');
+		expect(submit.textContent).toContain('Submit now');
+		fireEvent.click(submit);
+
+		expect(await screen.findByText('Feedback Submitted')).toBeTruthy();
+		const payload = window.maestro.feedback.submitConversation.mock.calls[0][0];
+		expect(payload.category).toBe('bug_report');
+		expect(payload.summary).toBe('Auto Run did not resume after the limit reset');
+		expect(payload.actualBehavior).toBe('Auto Run did not resume after the limit reset');
+		expect(payload.expectedBehavior).toMatch(/submitted before the interview finished/i);
+		expect(payload.additionalContext).toContain('understanding 30%');
+	});
+
 	it('calls onCancel when Close button is clicked on GH error', async () => {
 		const onCancel = vi.fn();
 		window.maestro.feedback.checkGhAuth.mockResolvedValue({

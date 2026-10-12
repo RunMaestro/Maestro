@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PluginSchedulerHost } from '../../../main/plugins/plugin-scheduler-host';
+import relayRelease from '../../shared/plugins/fixtures/relay-release-question.json';
 import { schedulerNowFromDate } from '../../../shared/plugins/plugin-scheduler';
 import { evaluateScheduledDispatch } from '../../../shared/plugins/plugin-dispatch-gate';
 import type { CueTriggerContribution } from '../../../shared/plugins/contributions';
@@ -36,6 +37,26 @@ const gate = (
 ) => evaluateScheduledDispatch(t.payload, ctx);
 
 describe('PluginSchedulerHost dispatch gating', () => {
+	it('still notifies rather than dispatching the Relay release discussion', () => {
+		const notify = vi.fn();
+		const dispatch = vi.fn();
+		const trigger = dueTrigger({
+			id: 'sh.maestro.relay/t',
+			pluginId: 'sh.maestro.relay',
+			payload: relayRelease.fullPrompt,
+		});
+		const h = new PluginSchedulerHost({
+			isEnabled: () => true,
+			getTriggers: () => [trigger],
+			notify,
+			dispatch,
+			evaluateDispatch: gate,
+		});
+		h.tick();
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(notify).toHaveBeenCalledWith(trigger);
+	});
+
 	it('auto-dispatches an eligible (non-high-risk) trigger when a sink is wired', () => {
 		const notify = vi.fn();
 		const dispatch = vi.fn();

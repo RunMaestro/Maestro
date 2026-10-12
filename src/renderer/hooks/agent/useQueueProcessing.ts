@@ -32,6 +32,7 @@ import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/t
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
+	spawnCollisionCooldownMs,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import {
@@ -175,6 +176,13 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			// held, there's nothing to do.
 			const firstItem = nextRunnableQueueItem(session.executionQueue);
 			if (!firstItem) return false;
+
+			// The last dispatch of this item was refused because its tab's previous
+			// process still owned the key. A refused dispatch restores exactly the
+			// state this poll fires on, so without a wait it re-dispatches into the
+			// same refusal on every render. The real exit (or Stop, or Force Send)
+			// dispatches without this wait; the poll looks back once it has passed.
+			if (spawnCollisionCooldownMs(firstItem.id) > 0) return false;
 
 			// Agent Resilience owns the queue while a retry counts down. The exit path
 			// already holds it (chooseNextQueuedItem returns 'wait'), which leaves the

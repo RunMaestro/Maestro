@@ -619,6 +619,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 											? {
 													...tab,
 													state: 'busy' as const,
+													// Per-tab, like a composer send: a tab's elapsed timer (Quick
+													// Chat's "Working for", parallel tabs) reads the tab's own start.
+													thinkingStartTime: Date.now(),
 													logs: [...tab.logs, userLogEntry],
 													...codifyTurnSettings(tab, s),
 												}

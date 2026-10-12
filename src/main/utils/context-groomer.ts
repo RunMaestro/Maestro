@@ -553,6 +553,14 @@ export async function groomContext(
 				if (responseBuffer.length > 0) {
 					finishWithResponse('overall timeout with content');
 				} else {
+					// Nobody is waiting for this process anymore. Left running it
+					// keeps its provider session open until it finishes on its own,
+					// which a caller with a short deadline (tab routing) would stack up.
+					try {
+						processManager.kill(groomerSessionId);
+					} catch {
+						// Process may have already exited
+					}
 					cleanup();
 					resolved = true;
 					reject(new Error('Grooming timed out with no response'));

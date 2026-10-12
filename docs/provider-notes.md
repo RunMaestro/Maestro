@@ -84,6 +84,8 @@ When a window does run dry, [Agent Resilience](/agent-resilience) takes the turn
 
 The TUI Wrapper and Dynamic modes are powered by **maestro-p**, a small standalone helper that drives Claude Code's interactive TUI and hands Maestro the same output `claude -p` would. It ships bundled with the desktop app, so local agents work out of the box.
 
+Like `claude -p`, maestro-p never stops on a permission prompt: it runs Claude with permissions bypassed, unless the agent is in read-only (plan) mode. A Task subagent's tool calls show up under the Task card as they run, and each turn reports its cost and per-model usage from Claude's own tracker.
+
 <Note>
 For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on the **remote host's** PATH, since the TUI runs there rather than on your machine. If it is missing, Maestro disables the TUI Wrapper and Dynamic options and falls back to `claude -p`. Install it from the [maestro-p install page](https://runmaestro.ai/maestro-p/), then click **Re-check** in the agent's Claude Token Source panel.
 </Note>

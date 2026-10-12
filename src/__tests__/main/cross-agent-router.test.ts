@@ -142,6 +142,34 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt).toContain('**Result from the source agent:**\ndone');
 	});
 
+	it('never calls a hand-off a consultation, in either write mode', () => {
+		// The consult grant ("one-shot READ-ONLY consultation", "change files in the
+		// user's directory") contradicts a hand-off, which acts in its OWN workspace.
+		const handoff = request({
+			sourceCwd: '/work/l30d',
+			userPrompt: 'feed it to @Kensho',
+			handoffAnswer: 'findings',
+		});
+
+		const writable = buildCrossAgentPrompt(handoff, true);
+		expect(writable).not.toMatch(/consult/i);
+		expect(writable).toContain('you may READ files there for context');
+		expect(writable).toContain('MODIFY files in your own workspace');
+		expect(writable).toContain("Do not modify the source agent's files");
+
+		const readOnly = buildCrossAgentPrompt(handoff, false);
+		expect(readOnly).not.toMatch(/consult/i);
+		expect(readOnly).toContain('This hand-off is READ-ONLY');
+		expect(readOnly).toContain('Cross-Agent Mentions > Hand-offs');
+	});
+
+	it('omits the source-directory line for a hand-off with no cwd', () => {
+		const prompt = buildCrossAgentPrompt(request({ handoffAnswer: 'x' }), true);
+
+		expect(prompt).not.toContain('The source agent worked in');
+		expect(prompt).toContain('MODIFY files in your own workspace');
+	});
+
 	it('omits the transcript block entirely when there is nothing to forward', () => {
 		const prompt = buildCrossAgentPrompt(request({ transcript: [], userPrompt: 'Just this' }));
 		expect(prompt).toContain('You are being consulted');

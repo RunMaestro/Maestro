@@ -15,14 +15,10 @@ import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { steerQueuedItem } from '../../services/chatSteering';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
-import {
-	applyQueuedItemDispatch,
-	applyQueuedItemEdit,
-	getQueueBusyContext,
-} from '../../utils/executionQueue';
+import { applyQueuedItemEdit } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
-import { logger } from '../../utils/logger';
+import { sendQueuedItemNow } from '../../services/queuedPrompt';
 
 // ============================================================================
 // Dependencies interface
@@ -165,33 +161,11 @@ export function useQueueHandlers({
 	// Force Send: run this exact item now instead of waiting for its turn. Used by
 	// the Execution Queue browser (any agent, any tab) and by the inline chat
 	// list's Force Send button, so both surfaces share one dispatch path.
+	// The rules (never over an in-flight turn, forceParallel beside another tab's,
+	// who owns a failed dispatch) live in `sendQueuedItemNow`.
 	const handleForceSendQueueItem = useCallback(
 		(sessionId: string, itemId: string) => {
-			const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-			const item = session?.executionQueue?.find((i) => i.id === itemId);
-			if (!session || !item) return;
-
-			// A tab runs one turn at a time - never spawn over an in-flight one.
-			const { targetTabBusy, otherBusyTabs } = getQueueBusyContext(session, item);
-			if (targetTabBusy) return;
-
-			// Stamp forceParallel when another tab is mid-turn: it badges the chat log
-			// entry and tells the on-exit dequeue guard this turn was a deliberate
-			// override rather than a normal sequential dispatch.
-			const dispatchItem: QueuedItem =
-				otherBusyTabs.length > 0 ? { ...item, forceParallel: true } : item;
-
-			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? applyQueuedItemDispatch(s, dispatchItem) : s))
-			);
-
-			// Recovery (release the tab, take the card back, re-queue the prompt) is
-			// owned by `agentStore.processQueuedItem`'s catch, which is the only place
-			// that knows WHY the dispatch failed. This rejection still needs an owner
-			// so it does not surface as an unhandled promise crash report.
-			processQueuedItem(sessionId, dispatchItem).catch((err) => {
-				logger.error('[ForceSend] Dispatch failed, item returned to queue', undefined, err);
-			});
+			sendQueuedItemNow(sessionId, itemId, processQueuedItem);
 		},
 		[processQueuedItem]
 	);

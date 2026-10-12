@@ -32,7 +32,8 @@ export type HeadlessAgentRunner = (
 	signal?: AbortSignal,
 	origin?: 'user' | 'auto' | 'relay',
 	onProgress?: (event: AgentSendProgressEvent) => void,
-	receiptToolId?: string
+	receiptToolId?: string,
+	requirePluginTools?: boolean
 ) => Promise<HeadlessAgentReply>;
 let headlessAgentRunner: HeadlessAgentRunner | null = null;
 

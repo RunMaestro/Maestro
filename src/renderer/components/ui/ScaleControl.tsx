@@ -7,10 +7,12 @@
  * with A-arrows while a thumbnail zoom reads "Decrease thumbnail size" with
  * magnifiers. `FontScaleControl` is the font preset over it.
  *
- * Two looks:
+ * Three looks:
  *   - `inline`   bordered square buttons for a toolbar or stats bar
  *   - `floating` opaque pill for overlaying a scrolling pane, matching the
  *                floating Table of Contents button in the file preview
+ *   - `ghost`    borderless icons for a row of other borderless icon buttons
+ *                (the Quick Chat composer), so the zoom reads as one of them
  *
  * The floating pill is fully opaque on purpose: it sits directly over running
  * text, and any transparency lets the words underneath read straight through
@@ -32,6 +34,7 @@ import React from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { UseScalePreferenceReturn } from '../../hooks/ui/useScalePreference';
+import { HoverTooltip } from './HoverTooltip';
 
 export interface ScaleControlProps {
 	theme: Theme;
@@ -53,7 +56,14 @@ export interface ScaleControlProps {
 	 */
 	shortcutHint?: { decrease?: string; increase?: string; reset?: string };
 	/** Visual treatment. Defaults to `inline`. */
-	variant?: 'inline' | 'floating';
+	variant?: 'inline' | 'floating' | 'ghost';
+	/**
+	 * How the buttons explain themselves. `native` (the default) is the
+	 * browser's `title`. `overlay` is a `HoverTooltip` with the shortcut drawn
+	 * as a key hint, for a surface where a native title does not show (a
+	 * non-activating panel such as Quick Chat) or that styles its own.
+	 */
+	tooltips?: 'native' | 'overlay';
 	/**
 	 * Button size. `sm` is for a dense button row whose own controls are
 	 * `text-xs` - the default squares stand a couple of pixels taller than such
@@ -85,6 +95,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 	subject,
 	shortcutHint,
 	variant = 'inline',
+	tooltips = 'native',
 	size = 'md',
 	collapsible = false,
 	collapsedIcon: CollapsedIcon,
@@ -94,6 +105,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 }: ScaleControlProps) {
 	const { scale, adjustScale, resetScale, canDecrease, canIncrease } = control;
 	const floating = variant === 'floating';
+	const ghost = variant === 'ghost';
 	const collapsed = floating && collapsible && !!CollapsedIcon;
 	const percent = Math.round(scale * 100);
 	const withKey = (label: string, key?: string) => (key ? `${label} (${key})` : label);
@@ -102,15 +114,30 @@ export const ScaleControl = React.memo(function ScaleControl({
 	const boxClass = small ? 'w-6 h-6' : 'w-7 h-7';
 	const iconClass = small ? 'w-3.5 h-3.5' : 'w-4 h-4';
 	const buttonClass = `focus-ring flex items-center justify-center ${boxClass} shrink-0 ${
-		floating ? 'rounded-full' : 'rounded'
+		floating ? 'rounded-full' : ghost ? 'rounded-md' : 'rounded'
 	} transition-colors`;
 
 	const buttonStyle = (enabled: boolean): React.CSSProperties => ({
-		color: theme.colors.textDim,
-		border: floating ? 'none' : `1px solid ${theme.colors.border}`,
-		opacity: enabled ? 0.8 : 0.4,
+		// A ghost button matches the icon buttons beside it: the main text color,
+		// dimmed at rest, full on hover (the hover class).
+		color: ghost ? theme.colors.textMain : theme.colors.textDim,
+		border: floating || ghost ? 'none' : `1px solid ${theme.colors.border}`,
+		opacity: enabled ? (ghost ? 0.7 : 0.8) : ghost ? 0.3 : 0.4,
 		cursor: enabled ? 'pointer' : 'default',
 	});
+
+	// One label per button, drawn either as a native title or as an overlay with
+	// the key as a hint. `aria-label` stays the plain action in both.
+	const overlay = tooltips === 'overlay';
+	const tip = (label: string, key: string | undefined, button: React.ReactElement) =>
+		overlay ? (
+			<HoverTooltip theme={theme} label={label} shortcut={key}>
+				{button}
+			</HoverTooltip>
+		) : (
+			button
+		);
+	const titleFor = (label: string, key?: string) => (overlay ? undefined : withKey(label, key));
 
 	// Collapsed rests as a circle and opens on hover or keyboard focus. The
 	// buttons are clipped rather than unmounted so a Tab into them expands the
@@ -153,40 +180,52 @@ export const ScaleControl = React.memo(function ScaleControl({
 				</span>
 			)}
 			<div className={collapsed ? revealClass : 'contents'}>
-				<button
-					type="button"
-					onClick={() => adjustScale(-1)}
-					disabled={!canDecrease}
-					aria-label={`Decrease ${subject}`}
-					title={withKey(`Decrease ${subject}`, shortcutHint?.decrease)}
-					className={`${buttonClass} hover:opacity-100`}
-					style={buttonStyle(canDecrease)}
-				>
-					<DecreaseIcon className={iconClass} />
-				</button>
-				{showReset && scale !== 1 && (
+				{tip(
+					`Decrease ${subject}`,
+					shortcutHint?.decrease,
 					<button
 						type="button"
-						onClick={resetScale}
-						aria-label={`Reset ${subject}`}
-						title={withKey(`Reset ${subject} to 100%`, shortcutHint?.reset)}
-						className="focus-ring px-1 text-2xs font-medium tabular-nums rounded transition-colors hover:opacity-100"
-						style={{ color: theme.colors.textDim, opacity: 0.8 }}
+						onClick={() => adjustScale(-1)}
+						disabled={!canDecrease}
+						aria-label={`Decrease ${subject}`}
+						title={titleFor(`Decrease ${subject}`, shortcutHint?.decrease)}
+						className={`${buttonClass} hover:opacity-100`}
+						style={buttonStyle(canDecrease)}
 					>
-						{percent}%
+						<DecreaseIcon className={iconClass} />
 					</button>
 				)}
-				<button
-					type="button"
-					onClick={() => adjustScale(1)}
-					disabled={!canIncrease}
-					aria-label={`Increase ${subject}`}
-					title={withKey(`Increase ${subject}`, shortcutHint?.increase)}
-					className={`${buttonClass} hover:opacity-100`}
-					style={buttonStyle(canIncrease)}
-				>
-					<IncreaseIcon className={iconClass} />
-				</button>
+				{showReset &&
+					scale !== 1 &&
+					tip(
+						`Reset ${subject} to 100%`,
+						shortcutHint?.reset,
+						<button
+							type="button"
+							onClick={resetScale}
+							aria-label={`Reset ${subject}`}
+							title={titleFor(`Reset ${subject} to 100%`, shortcutHint?.reset)}
+							className="focus-ring px-1 text-2xs font-medium tabular-nums rounded transition-colors hover:opacity-100"
+							style={{ color: theme.colors.textDim, opacity: 0.8 }}
+						>
+							{percent}%
+						</button>
+					)}
+				{tip(
+					`Increase ${subject}`,
+					shortcutHint?.increase,
+					<button
+						type="button"
+						onClick={() => adjustScale(1)}
+						disabled={!canIncrease}
+						aria-label={`Increase ${subject}`}
+						title={titleFor(`Increase ${subject}`, shortcutHint?.increase)}
+						className={`${buttonClass} hover:opacity-100`}
+						style={buttonStyle(canIncrease)}
+					>
+						<IncreaseIcon className={iconClass} />
+					</button>
+				)}
 			</div>
 		</div>
 	);

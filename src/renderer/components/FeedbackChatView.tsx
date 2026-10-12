@@ -42,6 +42,7 @@ import type { Theme, Session } from '../types';
 import {
 	FeedbackConversationManager,
 	getConfidenceColor,
+	resolveFeedbackSubmission,
 	type FeedbackDiagnostic,
 	type FeedbackMessage,
 	type FeedbackParsedResponse,
@@ -412,6 +413,12 @@ export function FeedbackChatView({
 		}
 	}, [lastResponse, runIssueSearch]);
 
+	// What a submit files right now, at any point in the interview.
+	const submission = useMemo(
+		() => resolveFeedbackSubmission(lastResponse, messages, isReady, confidence),
+		[lastResponse, messages, isReady, confidence]
+	);
+
 	const usableAccounts = useMemo(() => accounts.filter(isFeedbackAccountUsable), [accounts]);
 	const activeAccount = useMemo(
 		() => accounts.find((account) => account.key === activeAccountKey),
@@ -584,19 +591,19 @@ export function FeedbackChatView({
 
 	// --- Create new issue (skipping or after matching) ---
 	const createNewIssue = useCallback(async () => {
-		if (!lastResponse) return;
+		if (!submission) return;
 		setStep('submitting');
 		setSubmitError('');
 		setGhLoginRetry(null);
 
 		try {
 			const result = await window.maestro.feedback.submitConversation({
-				category: lastResponse.category,
-				summary: lastResponse.summary,
-				expectedBehavior: lastResponse.structured.expectedBehavior,
-				actualBehavior: lastResponse.structured.actualBehavior,
-				reproductionSteps: lastResponse.structured.reproductionSteps || undefined,
-				additionalContext: lastResponse.structured.additionalContext || undefined,
+				category: submission.category,
+				summary: submission.summary,
+				expectedBehavior: submission.structured.expectedBehavior,
+				actualBehavior: submission.structured.actualBehavior,
+				reproductionSteps: submission.structured.reproductionSteps || undefined,
+				additionalContext: submission.structured.additionalContext || undefined,
 				attachments: attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
 				includeDebugPackage,
 				performanceTracePath: tracePath ?? undefined,
@@ -618,13 +625,14 @@ export function FeedbackChatView({
 			setSubmitError(error instanceof Error ? error.message : 'Submission failed.');
 			setStep('chat');
 		}
-	}, [lastResponse, attachments, includeDebugPackage, tracePath]);
+	}, [submission, attachments, includeDebugPackage, tracePath]);
 	const createNewIssueRef = useRef<typeof createNewIssue | null>(null);
 	createNewIssueRef.current = createNewIssue;
 
-	// --- Submit: always search first, then show matches or create ---
+	// --- Submit: always search first, then show matches or create. Never gated
+	//     on the agent's understanding - "Submit now" files whatever is gathered.
 	const searchAndSubmit = useCallback(async () => {
-		if (!lastResponse || !isReady) return;
+		if (!submission) return;
 		setSubmitError('');
 		setStep('matching');
 
@@ -640,7 +648,7 @@ export function FeedbackChatView({
 		}
 
 		// Search hasn't run yet (race condition) - run it now
-		const query = lastResponse.summary || lastResponse.structured.expectedBehavior;
+		const query = submission.summary || submission.structured.expectedBehavior;
 		if (query) {
 			await runIssueSearch(query);
 			// After search: if matches were found, the matching UI is already showing them.
@@ -649,7 +657,7 @@ export function FeedbackChatView({
 			// No query available - create directly
 			await createNewIssue();
 		}
-	}, [lastResponse, isReady, matchingIssues, searchingIssues, runIssueSearch, createNewIssue]);
+	}, [submission, matchingIssues, searchingIssues, runIssueSearch, createNewIssue]);
 
 	// --- Auto-proceed from matching step when search completes with no results ---
 	useEffect(() => {
@@ -663,7 +671,7 @@ export function FeedbackChatView({
 	// --- Subscribe to an existing issue ---
 	const subscribeToIssue = useCallback(
 		async (issue: ExistingIssue) => {
-			if (!lastResponse) return;
+			if (!submission) return;
 			setSubscribingTo(issue.number);
 			setSubmitError('');
 			setGhLoginRetry(null);
@@ -673,14 +681,14 @@ export function FeedbackChatView({
 				const comment = [
 					`**Related feedback from Maestro in-app:**`,
 					'',
-					lastResponse.structured.expectedBehavior
-						? `**${lastResponse.category === 'bug_report' ? 'Expected' : 'Desired outcome'}:** ${lastResponse.structured.expectedBehavior}`
+					submission.structured.expectedBehavior
+						? `**${submission.category === 'bug_report' ? 'Expected' : 'Desired outcome'}:** ${submission.structured.expectedBehavior}`
 						: null,
-					lastResponse.structured.actualBehavior
-						? `**${lastResponse.category === 'bug_report' ? 'Actual behavior' : 'Details'}:** ${lastResponse.structured.actualBehavior}`
+					submission.structured.actualBehavior
+						? `**${submission.category === 'bug_report' ? 'Actual behavior' : 'Details'}:** ${submission.structured.actualBehavior}`
 						: null,
-					lastResponse.structured.additionalContext
-						? `**Context:** ${lastResponse.structured.additionalContext}`
+					submission.structured.additionalContext
+						? `**Context:** ${submission.structured.additionalContext}`
 						: null,
 				]
 					.filter(Boolean)
@@ -701,7 +709,7 @@ export function FeedbackChatView({
 				setSubscribingTo(null);
 			}
 		},
-		[lastResponse]
+		[submission]
 	);
 	const subscribeToIssueRef = useRef<typeof subscribeToIssue | null>(null);
 	subscribeToIssueRef.current = subscribeToIssue;
@@ -1395,16 +1403,37 @@ export function FeedbackChatView({
 							{isSavingDraft ? <Spinner size={12} /> : <Save className="w-3 h-3" />}
 							{draftSaved ? 'Saved' : 'Save draft'}
 						</button>
-						{isReady && (
+						{/* Submitting is never gated on understanding: once the user has said
+						    anything, "Submit now" files what has been gathered so far, even
+						    while the agent is still mid-turn. */}
+						{submission && (
 							<button
 								type="button"
 								onClick={searchAndSubmit}
-								disabled={isLoading || step === 'submitting'}
-								className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
-								style={{ backgroundColor: theme.colors.success, color: '#000' }}
+								disabled={step === 'submitting'}
+								data-testid="feedback-submit"
+								className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0 border"
+								style={
+									isReady
+										? {
+												backgroundColor: theme.colors.success,
+												borderColor: theme.colors.success,
+												color: '#000',
+											}
+										: {
+												backgroundColor: 'transparent',
+												borderColor: theme.colors.accent,
+												color: theme.colors.accent,
+											}
+								}
+								title={
+									isReady
+										? 'File this as a GitHub issue'
+										: 'File the issue now with what has been gathered so far. You do not have to answer every question.'
+								}
 							>
 								{step === 'submitting' ? <Spinner size={12} /> : <Check className="w-3 h-3" />}
-								Submit Feedback
+								{isReady ? 'Submit Feedback' : 'Submit now'}
 							</button>
 						)}
 					</div>
@@ -1429,53 +1458,6 @@ export function FeedbackChatView({
 							}}
 						/>
 					</div>
-					{/* Which account answers, with an override. Built from the user's own
-				    agents, so someone who switches accounts per agent can see and
-				    change which login this chat uses. */}
-					{accounts.length > 0 && (
-						<div
-							className="flex items-center gap-2 mt-2 text-2xs min-w-0"
-							style={{ color: theme.colors.textDim }}
-						>
-							<span className="shrink-0">Running as</span>
-							<select
-								value={activeAccountKey ?? ''}
-								onChange={(e) => selectAccount(e.target.value)}
-								disabled={isLoading || step === 'submitting'}
-								data-testid="feedback-account-picker"
-								aria-label="Account the feedback chat runs as"
-								className="min-w-0 max-w-[60%] px-1.5 py-0.5 rounded border bg-transparent outline-none cursor-pointer disabled:opacity-60"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							>
-								{accounts.map((account) => (
-									<option
-										key={account.key}
-										value={account.key}
-										disabled={!isFeedbackAccountUsable(account)}
-										style={{ backgroundColor: theme.colors.bgSidebar }}
-									>
-										{account.label} -{' '}
-										{failedAccounts.has(account.key)
-											? 'failed'
-											: describeFeedbackAccountStatus(account)}
-										{account.agentNames.length > 0
-											? ` (${account.agentNames.length} agent${account.agentNames.length === 1 ? '' : 's'})`
-											: ''}
-									</option>
-								))}
-							</select>
-							{activeAccount && (
-								<span
-									className="truncate"
-									title={failedAccounts.get(activeAccount.key) ?? activeAccount.statusDetail}
-								>
-									{failedAccounts.has(activeAccount.key)
-										? 'last turn failed'
-										: activeAccount.statusDetail}
-								</span>
-							)}
-						</div>
-					)}
 				</div>
 
 				{/* ── MIDDLE: Scrollable messages ── */}
@@ -1835,7 +1817,9 @@ export function FeedbackChatView({
 								placeholder={
 									isReady
 										? 'Add more details, or click Submit...'
-										: 'Describe your issue or idea...'
+										: submission
+											? 'Answer, or click Submit now to file what you have...'
+											: 'Describe your issue or idea...'
 								}
 								disabled={step === 'submitting'}
 								rows={1}
@@ -1856,12 +1840,13 @@ export function FeedbackChatView({
 							>
 								{isLoading ? <Spinner size={16} /> : <Send className="w-4 h-4" />}
 							</button>
-							{/* Submit button - appears when ready */}
+							{/* Submit button - only once the agent has enough; "Submit now" in
+							    the header covers every point before that. */}
 							{isReady && (
 								<button
 									type="button"
 									onClick={searchAndSubmit}
-									disabled={isLoading || step === 'submitting'}
+									disabled={step === 'submitting'}
 									className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
 									style={{ backgroundColor: theme.colors.success, color: '#000' }}
 									title="Submit feedback as GitHub issue"
@@ -1876,6 +1861,54 @@ export function FeedbackChatView({
 							)}
 						</div>
 					</div>
+					{/* Which account answers, with an override. Built from the user's own
+				    agents, so someone who switches accounts per agent can see and
+				    change which login this chat uses. */}
+					{accounts.length > 0 && (
+						<div
+							className="flex items-center gap-2 mt-2 text-2xs min-w-0"
+							data-testid="feedback-running-as"
+							style={{ color: theme.colors.textDim }}
+						>
+							<span className="shrink-0">Running as</span>
+							<select
+								value={activeAccountKey ?? ''}
+								onChange={(e) => selectAccount(e.target.value)}
+								disabled={isLoading || step === 'submitting'}
+								data-testid="feedback-account-picker"
+								aria-label="Account the feedback chat runs as"
+								className="min-w-0 max-w-[60%] px-1.5 py-0.5 rounded border bg-transparent outline-none cursor-pointer disabled:opacity-60"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								{accounts.map((account) => (
+									<option
+										key={account.key}
+										value={account.key}
+										disabled={!isFeedbackAccountUsable(account)}
+										style={{ backgroundColor: theme.colors.bgSidebar }}
+									>
+										{account.label} -{' '}
+										{failedAccounts.has(account.key)
+											? 'failed'
+											: describeFeedbackAccountStatus(account)}
+										{account.agentNames.length > 0
+											? ` (${account.agentNames.length} agent${account.agentNames.length === 1 ? '' : 's'})`
+											: ''}
+									</option>
+								))}
+							</select>
+							{activeAccount && (
+								<span
+									className="truncate"
+									title={failedAccounts.get(activeAccount.key) ?? activeAccount.statusDetail}
+								>
+									{failedAccounts.has(activeAccount.key)
+										? 'last turn failed'
+										: activeAccount.statusDetail}
+								</span>
+							)}
+						</div>
+					)}
 				</div>
 			</div>
 		);

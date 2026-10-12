@@ -92,6 +92,16 @@ function makeDeps() {
 		getBatchStateRef: { current: null },
 		pauseBatchOnErrorRef: { current: null },
 		addHistoryEntryRef: { current: null },
+		batchedUpdater: {
+			appendLog: vi.fn(),
+			markDelivered: vi.fn(),
+			markUnread: vi.fn(),
+			updateUsage: vi.fn(),
+			updateContextUsage: vi.fn(),
+			updateCycleBytes: vi.fn(),
+			updateCycleTokens: vi.fn(),
+			flushNow: vi.fn(),
+		},
 		activeHiddenToolRef: makeRef(),
 	};
 }
@@ -114,6 +124,27 @@ describe('useAgentErrorListener', () => {
 		const agentErrorEntry = modal.modals.get('agentError');
 		expect(agentErrorEntry).toBeDefined();
 		expect(agentErrorEntry?.data).toEqual({ sessionId: 'sess-1' });
+	});
+
+	// Main sends a failed turn's last output ahead of its error. That output is
+	// still in the renderer's batch when the error lands, so it has to be flushed
+	// first or the card is appended above the text it ends.
+	it('flushes batched output before appending the error card', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const deps = makeDeps();
+		let logsAtFlush: number | undefined;
+		deps.batchedUpdater.flushNow.mockImplementation(() => {
+			logsAtFlush = useSessionStore.getState().sessions[0].aiTabs[0].logs.length;
+		});
+		renderHook(() => useAgentErrorListener(deps));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'agent_crashed' });
+
+		expect(deps.batchedUpdater.flushNow).toHaveBeenCalledTimes(1);
+		expect(logsAtFlush).toBe(0);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(1);
 	});
 
 	// An expired token downs every agent and pipeline on the provider at once,

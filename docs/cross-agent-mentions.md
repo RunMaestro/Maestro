@@ -88,6 +88,8 @@ A leading `@file` reference (`@src/app.ts what does this do?`) is a question for
 
 <Note>
   A mentioned agent is told your **working directory** and may **read** files there to answer with real context. By default a mention is a **consult**: read-only, so the agent will not write or modify files, and if changes are needed it describes them in its reply so you can apply them yourself. To turn mentions into **delegations**, where the agent applies changes directly, switch **Consult or Delegate** to **Read/Write** under **Settings > General > Cross-Agent Mentions**. Leave it on Read-Only (the default and safest choice) unless you trust the mentioned agent to edit its workspace unattended.
+
+A **hand-off** has its own switch, **Hand-offs**, in the same section, and it defaults to **Read/Write**: the point of "feed what we learn to @Kensho" is usually that Kensho saves it. The receiving agent may change files in its own workspace, and may read the sending agent's directory but is told not to change it. A hand-off forwards another agent's output, which can include text from the web, so set **Hand-offs** to **Read-Only** if you would rather the receiving agent only reply.
 </Note>
 
 ## Controlling How Much Context You Share

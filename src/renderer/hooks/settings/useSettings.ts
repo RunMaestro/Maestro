@@ -472,6 +472,8 @@ export interface UseSettingsReturn {
 	setForcedParallelAlways: (value: boolean) => void;
 	crossAgentMentionsWritable: boolean;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	crossAgentHandoffsWritable: boolean;
+	setCrossAgentHandoffsWritable: (value: boolean) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;

@@ -30,6 +30,7 @@ import {
 	resolveSystemPromptDelivery,
 	type SystemPromptDelivery,
 } from '../../shared/maestro-lib/launch/prompt-delivery';
+import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
 import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
@@ -170,6 +171,9 @@ type SpawnOverrides = Pick<
 	| 'customEffort'
 	| 'customArgs'
 	| 'customEnvVars'
+	| 'globalEnvVars'
+	| 'agentConfigValues'
+	| 'agentCommand'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
@@ -378,7 +382,7 @@ function resolveAgentOverrides(
 	userCustomEnvVars?: Record<string, string>;
 	agentCustomEnvVars?: Record<string, string>;
 } {
-	const agentConfigValues = readAgentConfig(toolType);
+	const agentConfigValues = overrides.agentConfigValues ?? readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
 		agentConfigValues,
 		sessionCustomModel: overrides.customModel,
@@ -398,7 +402,9 @@ function resolveAgentOverrides(
  * exported in the shell that runs the command survives; the user's own vars
  * override it; and the prompt goes on the command line on every host. The
  * CLI's own inputs: SSH remotes read from disk, and batch-mode vars always on
- * (every CLI spawn is a batch spawn).
+ * (every CLI spawn is a batch spawn). A desktop-backed local turn with live
+ * global settings uses the canonical desktop environment rules, including
+ * blank-value unsets; its prompt delivery and standalone CLI behavior remain unchanged.
  */
 function planCliLaunch(
 	toolType: ToolType,
@@ -410,13 +416,14 @@ function planCliLaunch(
 		prompt: string;
 		readOnlyMode?: boolean;
 		agentCustomEnvVars?: Record<string, string>;
+		globalEnvVars?: Record<string, string>;
 		sessionCustomEnvVars?: Record<string, string>;
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
 		sshRemoteConfig?: AgentSshRemoteConfig;
 	}
 ): AgentLaunchPlanResult {
-	return buildAgentLaunchPlan({
+	const result = buildAgentLaunchPlan({
 		surface: 'cli',
 		agent: def ? { ...def, capabilities: getAgentCapabilities(toolType) } : null,
 		command: input.command,
@@ -432,6 +439,19 @@ function planCliLaunch(
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
 	});
+	// Desktop-backed local turns use the same blank-unset, path expansion and
+	// environment layering as desktop spawns. The prompt still follows the CLI
+	// wire format, and standalone/remote launches keep their existing rules.
+	if (result.ok && result.plan.target.kind === 'local' && input.globalEnvVars !== undefined) {
+		result.plan.env = buildChildProcessEnv(
+			result.plan.envVars,
+			input.isResuming,
+			input.globalEnvVars,
+			undefined,
+			input.querySource
+		);
+	}
+	return result;
 }
 
 /**
@@ -793,7 +813,7 @@ async function spawnClaudeAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const claudeCommand = sshRemoteConfig?.enabled
 		? getAgentCommand('claude-code')
-		: await resolveLocalAgentCommand('claude-code');
+		: (overrides.agentCommand ?? (await resolveLocalAgentCommand('claude-code')));
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 
 	// Target, environment and prompt delivery come from the shared launch plan,
@@ -806,6 +826,7 @@ async function spawnClaudeAgent(
 		prompt,
 		readOnlyMode,
 		agentCustomEnvVars,
+		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
@@ -1274,7 +1295,7 @@ async function spawnJsonLineAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
-		: await resolveLocalAgentCommand(toolType);
+		: (overrides.agentCommand ?? (await resolveLocalAgentCommand(toolType)));
 
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
@@ -1288,6 +1309,7 @@ async function spawnJsonLineAgent(
 		prompt: effectivePrompt,
 		readOnlyMode,
 		agentCustomEnvVars,
+		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: isResume,
 		querySource: overrides.querySource,
@@ -1552,6 +1574,10 @@ export interface SpawnAgentOptions {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/** Live desktop values; omitted by standalone CLI callers. */
+	globalEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
+	agentCommand?: string;
 	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
@@ -1625,6 +1651,9 @@ export async function spawnAgent(
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		globalEnvVars: options?.globalEnvVars,
+		agentConfigValues: options?.agentConfigValues,
+		agentCommand: options?.agentCommand,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,

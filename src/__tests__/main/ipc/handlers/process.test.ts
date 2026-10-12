@@ -23,6 +23,7 @@ import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 import { checkCustomPath } from '../../../../shared/maestro-lib/launch/path-prober';
 import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
+import { probeClaudeSlashCommandsCached } from '../../../../main/agents/claude-slash-command-probe';
 import {
 	primeOmpModelCatalog,
 	computeOmpCatalogKey,
@@ -280,6 +281,11 @@ vi.mock('../../../../main/agents/claude-transcript-sanitizer', () => ({
 // and time the test out. `undefined` is the probe's own "could not determine".
 vi.mock('../../../../main/agents/probeRemoteMaestroP', () => ({
 	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
+}));
+
+// The slash-command probe would run a real claude; tests assert on the call.
+vi.mock('../../../../main/agents/claude-slash-command-probe', () => ({
+	probeClaudeSlashCommandsCached: vi.fn().mockResolvedValue(null),
 }));
 
 // Mock the prompt manager so the copilot-preamble injection has deterministic
@@ -1225,6 +1231,57 @@ describe('process IPC handlers', () => {
 					})
 				);
 				expect(spawnCall.customEnvVars?.NODE_PATH).toBeUndefined();
+			});
+
+			// The TUI announces no slash commands, so a maestro-p turn probes for
+			// them and sends them on the channel a `--print` init event uses.
+			it('sends the probed slash commands for a local maestro-p spawn', async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4244, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') {
+						return [
+							{
+								id: 'session-tui',
+								enableMaestroP: true,
+								maestroPMode: 'interactive',
+								maestroPPath,
+							},
+						];
+					}
+					return defaultValue;
+				});
+				vi.mocked(probeClaudeSlashCommandsCached).mockResolvedValueOnce(['/help', '/compact']);
+				const safeSendSpy = vi.fn();
+				deps = { ...deps, safeSend: safeSendSpy };
+				handlers.clear();
+				vi.mocked(ipcMain.handle).mockImplementation((channel, h) => {
+					handlers.set(channel, h);
+				});
+				registerProcessHandlers(deps);
+
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'session-tui-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+				await vi.waitFor(() =>
+					expect(safeSendSpy).toHaveBeenCalledWith(
+						'process:slash-commands',
+						'session-tui-ai-tab-1',
+						['/help', '/compact']
+					)
+				);
+
+				const [binPath, cwd, env] = vi.mocked(probeClaudeSlashCommandsCached).mock.calls[0];
+				expect(binPath).toBe('/usr/local/bin/claude');
+				expect(cwd).toBe('/test');
+				// The probe runs claude itself, never maestro-p driving claude.
+				expect(env.MAESTRO_CLAUDE_BIN).toBeUndefined();
 			});
 
 			it('adds packaged NODE_PATH while preserving Electron Node mode env', async () => {

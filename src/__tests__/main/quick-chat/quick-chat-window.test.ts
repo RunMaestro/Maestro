@@ -115,6 +115,7 @@ type SavedBounds = {
 	width?: number;
 	expandedHeight?: number;
 	pinned?: boolean;
+	fontScale?: number;
 };
 
 /** An in-memory bounds store, standing in for the window-state store. */
@@ -565,5 +566,64 @@ describe('Quick Chat window full view (diagram viewer)', () => {
 		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
 		mod.setQuickChatFullView(false);
 		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
+	});
+});
+
+describe('Quick Chat text zoom', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('defaults to 100%, steps, sets, resets, and clamps', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		expect(mod.getQuickChatFontScale(d)).toBe(1);
+		expect(mod.setQuickChatFontScale({ step: 1 }, d)).toBe(1.1);
+		expect(mod.setQuickChatFontScale({ step: -1 }, d)).toBe(1);
+		expect(mod.setQuickChatFontScale({ scale: 1.5 }, d)).toBe(1.5);
+		expect(mod.setQuickChatFontScale({ scale: 9 }, d)).toBe(2);
+		expect(mod.setQuickChatFontScale({ reset: true }, d)).toBe(1);
+	});
+
+	it('remembers the zoom with the window state, beside the pin and the size', async () => {
+		const { deps: d, store } = makeDeps({ width: 700, pinned: false });
+		const mod = await freshModule();
+		mod.setQuickChatFontScale({ scale: 1.3 }, d);
+		expect(store.value).toEqual({ width: 700, pinned: false, fontScale: 1.3 });
+
+		// A fresh module is a restart: it reads the zoom back.
+		const restarted = await freshModule();
+		expect(restarted.getQuickChatFontScale(d)).toBe(1.3);
+	});
+
+	it('clamps a hand-edited stored zoom on load', async () => {
+		const { deps: d } = makeDeps({ fontScale: 40 });
+		const mod = await freshModule();
+		expect(mod.getQuickChatFontScale(d)).toBe(2);
+	});
+
+	it('tells the open window so its text follows a CLI change', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFontScale({ step: 1 }, d);
+		expect(win.webContents.send).toHaveBeenCalledWith('quickChat:fontScale', 1.1);
+	});
+
+	it('keeps the zoom when the user then resizes the window', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFontScale({ scale: 1.2 }, d);
+		win.setBounds({ ...win.getBounds(), width: 720 });
+		vi.advanceTimersByTime(1000);
+		expect(store.value).toMatchObject({ width: 720, fontScale: 1.2 });
 	});
 });

@@ -1185,20 +1185,27 @@ export const QUICK_CHAT_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	usage: {
 		overview: [
 			'Press the Quick Chat hotkey (Option+Space on macOS, Alt+Space on Windows and Linux, by default) anywhere on your computer. A small window opens on top of whatever you are doing, ready to type. Press the hotkey again, or Escape, to put it away. Your conversation is still there the next time you open it.',
-			"Every chat runs as a real AI tab on the agent you choose, so it uses that agent's provider, model, working directory, and history rules. Pick the agent below, or switch it from the window itself.",
-			'An ephemeral chat lives in a hidden tab and is deleted when you start a new chat. A kept chat is an ordinary tab on the agent that stays after you move on. Flip between the two with the pin in the window; the setting below picks the default.',
+			"Every message runs in a real AI tab on the agent you choose, so it uses that agent's provider, model, working directory, and history rules. Pick the agent below, or switch it from the window itself.",
+			'Each message finds its own tab. One about a subject an open tab already holds goes to that tab, one that picks up a conversation you closed in the last two weeks reopens it, and a new subject starts a new tab. A pill under the message names the tab; click it to open that tab in Maestro. You can send the next message before the last is answered.',
+			'A message for a tab that is mid-reply waits in the queue and shows Queued. Click "Send to a new tab" beside it to run it in a new tab now instead.',
+			'A tab the chat creates is ephemeral by default: hidden, and deleted when you start a new chat. A kept chat leaves its tabs on the agent after you move on. Flip between the two with the bookmark in the window; the setting below picks the default. Tabs you already had are never hidden or deleted.',
 		],
 		access: [
 			{ label: 'Open or close Quick Chat', menu: 'the Quick Chat hotkey, from any app' },
 			{ label: 'Start a new chat', menu: 'the pencil in the Quick Chat window' },
 			{ label: 'Open the chat as a tab in Maestro', menu: 'the arrow in the Quick Chat window' },
+			{ label: 'Open the tab a message went to', menu: 'the pill under the message' },
 		],
 		agentCommands: [
 			{ label: 'Open, close, or toggle the window', command: 'maestro-cli quick-chat toggle' },
 			{ label: 'Send a message', command: 'maestro-cli quick-chat send "<message>"' },
 			{
-				label: 'Read the current chat (--json for scripting)',
+				label: 'Read the current chat and where each message went (--json for scripting)',
 				command: 'maestro-cli quick-chat status',
+			},
+			{
+				label: 'Send a queued message to a new tab instead of waiting',
+				command: 'maestro-cli quick-chat new-tab',
 			},
 		],
 		notes: [

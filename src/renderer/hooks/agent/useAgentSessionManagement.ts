@@ -1,25 +1,14 @@
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
-import {
-	aiTabFocusFields,
-	createTab,
-	getActiveTab,
-	isSessionIdLabel,
-} from '../../utils/tabHelpers';
+import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import type { RightPanelHandle } from '../../components/RightPanel';
-import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { logger } from '../../utils/logger';
-import {
-	TRANSCRIPT_RESUME_READ_LIMIT,
-	isSynopsisRequest,
-	stripSynopsisTurns,
-	transcriptMessagesToLogEntries,
-	type TranscriptMessage,
-} from '../../utils/transcriptMessages';
+import { isSynopsisRequest } from '../../utils/transcriptMessages';
+import { loadResumableSession } from '../../services/resumableSession';
 
 // Re-exported from its shared home so existing importers keep working; the
 // scroll-to-top history backfill needs the same filter.
@@ -333,33 +322,21 @@ export function useAgentSessionManagement(
 			}
 
 			try {
-				// Use provided messages or fetch them
-				let messages: LogEntry[];
-				if (providedMessages && providedMessages.length > 0) {
-					messages = providedMessages;
-				} else {
-					// Load the session messages using the generic agentSessions API
-					// Use projectRoot (not cwd) for consistent session storage access
-					// Pass sshRemoteId so SSH-remote sessions read from the correct host
-					const agentId = targetSession.toolType || 'claude-code';
-					const result = await window.maestro.agentSessions.read(
-						agentId,
-						resolvedProjectRoot,
-						agentSessionId,
-						{ offset: 0, limit: TRANSCRIPT_RESUME_READ_LIMIT },
-						sshRemoteId
-					);
+				// The transcript read, the synopsis stripping, and the name / starred /
+				// context lookup are shared with every other way a conversation is
+				// reopened (see loadResumableSession).
+				const resumable = await loadResumableSession({
+					toolType: targetSession.toolType,
+					projectRoot: resolvedProjectRoot,
+					sshRemoteId,
+					agentSessionId,
+					providedMessages,
+					sessionName,
+					starred,
+					usageStats,
+				});
 
-					// Strip the Auto Run synopsis turns, then convert. Shared with the
-					// scroll-to-top backfill (issue #1407), which matches what it reads
-					// against these entries to find where to splice older history in -
-					// so both paths must build entries the same way.
-					messages = transcriptMessagesToLogEntries(
-						stripSynopsisTurns(result.messages as TranscriptMessage[])
-					);
-				}
-
-				if (messages.length === 0) {
+				if (!resumable) {
 					// No messages came back: the session is empty or has aged out / been
 					// removed from disk. Treat as unavailable so callers can recover.
 					if (!opts?.suppressUnavailableFlash) {
@@ -367,61 +344,7 @@ export function useAgentSessionManagement(
 					}
 					return false;
 				}
-
-				// Look up starred status, session name, and context usage from stores if not provided
-				let isStarred = starred ?? false;
-				// A caller's `sessionName` is a RECORDED display name (a history entry's
-				// pill, a starred session's label), so an unnamed tab recorded its own id
-				// fallback. Writing that back as `tab.name` would look identical while
-				// permanently opting the tab out of auto-naming, so drop it and let the
-				// tab stay genuinely unnamed.
-				let name =
-					sessionName && !isSessionIdLabel(sessionName, agentSessionId) ? sessionName : null;
-				let storedContextUsage: number | undefined;
-				let finalUsageStats = usageStats;
-
-				// Always look up origins for Claude sessions to get contextUsage (and name/starred if not provided)
-				if (targetSession.toolType === 'claude-code') {
-					try {
-						// Look up session metadata from session origins (name, starred, contextUsage)
-						// Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
-						const origins = await window.maestro.claude.getSessionOrigins(resolvedProjectRoot);
-						const originData = origins[agentSessionId];
-						if (originData && typeof originData === 'object') {
-							if (sessionName === undefined && originData.sessionName) {
-								name = originData.sessionName;
-							}
-							if (starred === undefined && originData.starred !== undefined) {
-								isStarred = originData.starred;
-							}
-							if (originData.contextUsage !== undefined) {
-								storedContextUsage = originData.contextUsage;
-							}
-						}
-					} catch (error) {
-						logger.warn(
-							'[handleResumeSession] Failed to lookup session metadata:',
-							undefined,
-							error
-						);
-					}
-				}
-
-				// If we have stored contextUsage, set token values to reproduce that percentage
-				// The context calculation is: (inputTokens + cacheRead + cacheCreation) / contextWindow * 100
-				// So we set inputTokens = contextUsage * contextWindow / 100 to get the correct percentage
-				if (storedContextUsage !== undefined && storedContextUsage > 0) {
-					const contextWindow = finalUsageStats?.contextWindow || FALLBACK_CONTEXT_WINDOW;
-					finalUsageStats = {
-						inputTokens: Math.round((storedContextUsage * contextWindow) / 100),
-						outputTokens: finalUsageStats?.outputTokens || 0,
-						cacheReadInputTokens: 0,
-						cacheCreationInputTokens: 0,
-						totalCostUsd: finalUsageStats?.totalCostUsd || 0,
-						contextWindow,
-						reasoningTokens: finalUsageStats?.reasoningTokens,
-					};
-				}
+				const { messages, name, starred: isStarred, usageStats: finalUsageStats } = resumable;
 
 				// Update the session and switch to AI mode
 				// IMPORTANT: Use functional update to get fresh session state and avoid race conditions

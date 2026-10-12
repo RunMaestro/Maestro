@@ -2731,6 +2731,34 @@ describe('settingsStore', () => {
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
 		});
 
+		it('does not re-persist a map the migration leaves unchanged (settings:set ping-pong)', async () => {
+			// nextUnreadTab at its own default used to match a stale remap onto the
+			// reserved Cmd+Shift+Down, which the guard reverted: the output equalled
+			// the input but the flag stayed raised, so every load wrote and notified
+			// the peer window, which did the same. A no-op migration must not write.
+			vi.mocked(window.maestro.settings.set).mockClear();
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Alt', 'Meta', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'shortcuts')
+			).toHaveLength(0);
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+		});
+
 		it('strips a persisted Cmd+Shift+Down binding and restores the bundled default', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				shortcuts: {

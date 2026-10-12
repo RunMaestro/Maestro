@@ -24,6 +24,13 @@ import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { isPowerShellShell } from '../utils/shellEscape';
 import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { argsResumeSession } from '../utils/resumeArgs';
+import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
+import {
+	newRemotePidFilePath,
+	signalRemoteAgent,
+	sshConnectionArgs,
+	withRemotePidRecord,
+} from '../../utils/ssh-remote-signal';
 import { isWindows } from '../../../shared/platformDetection';
 import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
@@ -371,9 +378,16 @@ export class ChildProcessSpawner {
 			//   agent it starts both wait for the end of input.
 			// - Batch mode with nothing to write closes stdin at once; interactive
 			//   mode with nothing to write leaves it open for `ProcessManager.write()`.
+			// A stdin-script SSH spawn records the remote agent's pid so Stop can
+			// reach it: signalling only the local ssh client leaves it running.
+			const sshRemotePidFile =
+				config.sshStdinScript && sshConnectionArgs(finalArgs) ? newRemotePidFilePath() : undefined;
+
 			let stdinText: string | undefined;
 			if (config.sshStdinScript) {
-				stdinText = config.sshStdinScript;
+				stdinText = sshRemotePidFile
+					? withRemotePidRecord(config.sshStdinScript, sshRemotePidFile)
+					: config.sshStdinScript;
 				logger.debug('[ProcessManager] Sending SSH stdin script', 'ProcessManager', {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
@@ -534,6 +548,7 @@ export class ChildProcessSpawner {
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
 				sshRemoteCommand: config.sshRemoteCommand,
+				sshRemotePidFile,
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream
@@ -603,11 +618,45 @@ export class ChildProcessSpawner {
 				return this.exitHandler
 					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
 					.catch((err) => {
+						void captureException(err);
 						logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 							sessionId,
 							error: String(err),
 						});
+						// handleExit releases the entry immediately before emitting `exit`,
+						// so an entry that is still ours means it threw before getting there.
+						// Left alone, that entry owns the tab forever: every later spawn is
+						// refused as "already running" and the renderer never learns the turn
+						// ended. Release it and report the exit so the turn settles.
+						if (this.processes.get(sessionId) === managedProcess) {
+							this.processes.delete(sessionId);
+							this.emitter.emit('exit', sessionId, exit.exitCode || 0);
+						}
 					});
+			});
+
+			// The run layer settles on `close`, which waits on every holder of the
+			// stdio pipes, and an SSH ControlMaster or a stray grandchild can hold
+			// them long after the child itself is dead. Without this, a stopped SSH
+			// turn left its entry behind and the tab's queue hot-looped against the
+			// spawn refusal.
+			armStdioCloseWatchdog(childProcess, {
+				onForceClose: () => {
+					logger.warn(
+						'[ProcessManager] stdio still open after exit, forcing close',
+						'ProcessManager',
+						{ sessionId, pid: childProcess.pid }
+					);
+					// For SSH the open stdio usually means the remote agent is still
+					// running behind a ControlMaster. Settling the turn while it keeps
+					// working would put a second writer on the session next turn.
+					if (sshRemotePidFile) {
+						signalRemoteAgent(
+							{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+							'terminate'
+						);
+					}
+				},
 			});
 
 			return { pid: childProcess.pid || -1, success: true };

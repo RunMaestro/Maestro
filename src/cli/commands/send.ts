@@ -249,6 +249,10 @@ function buildResponse(
 	};
 }
 
+/** Run one prompt for the resolved stored agent and emit its provider result as JSON.
+ * Prefer the authenticated desktop runner; required plugin tools/receipts prohibit
+ * standalone fallback so success cannot silently omit the requested MCP boundary.
+ */
 export async function send(
 	agentIdArg: string,
 	message: string,
@@ -375,6 +379,7 @@ export async function send(
 						reply = await desktop.sendCommand<DesktopSendAgentReply>(
 							{
 								type: 'plugins_send_agent',
+								...(requirePluginHost ? { requirePluginTools: true } : {}),
 								agentId,
 								prompt: message,
 								providerSessionId: agentSessionId || undefined,

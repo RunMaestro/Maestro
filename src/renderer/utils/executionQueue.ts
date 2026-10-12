@@ -252,7 +252,9 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
  * `hold` decides whether the item comes back runnable. A spawn collision (the
  * tab's previous process has not exited yet) is transient and self-correcting,
  * so the item stays runnable and the next drain trigger sends it a moment
- * later. Any OTHER failure would fail again the same way on the next tick, so
+ * later (bounded by {@link noteSpawnCollision}, since an old process that never
+ * releases its key would otherwise collide forever). Any OTHER failure would
+ * fail again the same way on the next tick, so
  * the item comes back `paused`: still there, still editable, still one click
  * from Force Send, but not spinning the queue against a wall.
  */
@@ -288,6 +290,65 @@ export function applyQueuedItemDispatchFailure(
 		...(orphans && { orphanedThinkingTabs: orphans }),
 		executionQueue,
 	};
+}
+
+/**
+ * How many spawn collisions a queued item may hit before it is treated as a
+ * real failure (held, with an error frame) instead of a transient one.
+ */
+export const SPAWN_COLLISION_MAX_ATTEMPTS = 6;
+
+/** First back-off after a collision; doubles per attempt (1s, 2s, 4s, ...). */
+export const SPAWN_COLLISION_BASE_DELAY_MS = 1000;
+
+/**
+ * Spawn collisions per queued item id. Module state on purpose: it is timing
+ * bookkeeping for a retry in flight, not part of the item, so it must not be
+ * persisted with the queue or survive a restart (a restart frees every key).
+ */
+const spawnCollisions = new Map<string, { count: number; retryAt: number }>();
+
+/**
+ * Record that dispatching `itemId` was refused because its tab's previous
+ * process still owns the process key, and return how many times that has now
+ * happened.
+ *
+ * {@link applyQueuedItemDispatchFailure} treats a collision as transient and
+ * returns the item runnable, which is right when the old process is a moment
+ * from exiting (Stop dispatches the next item before the interrupted child is
+ * gone). It is wrong when the old entry never clears: the refused dispatch
+ * restores the very queue state that triggers the next drain, so the queue
+ * re-dispatched into the same refusal on every render, about 14 times a second,
+ * and the tab sat on "Thinking... 0m 0s" forever. Counting bounds that: the
+ * drain waits out a doubling back-off, and after
+ * {@link SPAWN_COLLISION_MAX_ATTEMPTS} the caller holds the item instead.
+ */
+export function noteSpawnCollision(itemId: string, now: number = Date.now()): number {
+	const count = (spawnCollisions.get(itemId)?.count ?? 0) + 1;
+	const delay = SPAWN_COLLISION_BASE_DELAY_MS * 2 ** (count - 1);
+	spawnCollisions.set(itemId, { count, retryAt: now + delay });
+	return count;
+}
+
+/**
+ * Milliseconds until a collided item may be dispatched again by the drain
+ * poll, or 0 when it is free to go. Only the poll honours this: a real process
+ * exit, Stop, and Force Send are edges that prove (or override) the old owner
+ * being gone, so they dispatch regardless.
+ */
+export function spawnCollisionCooldownMs(itemId: string, now: number = Date.now()): number {
+	const entry = spawnCollisions.get(itemId);
+	return entry ? Math.max(0, entry.retryAt - now) : 0;
+}
+
+/** Forget an item's collisions: it dispatched, or it was held for the user. */
+export function clearSpawnCollision(itemId: string): void {
+	spawnCollisions.delete(itemId);
+}
+
+/** Test-only: drop all collision bookkeeping. */
+export function resetSpawnCollisionsForTest(): void {
+	spawnCollisions.clear();
 }
 
 /**

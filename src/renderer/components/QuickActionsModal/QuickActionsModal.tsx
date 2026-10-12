@@ -401,8 +401,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}
 	}, [setProfilingActive, setProfilingBufferPercent]);
 	// Stopping is slow (flush + zip compression can take tens of seconds), so we
-	// hand off to the ProfilingCaptureModal, which owns the whole stop-and-bundle
-	// flow, shows live progress, and clears the wand indicator when it finishes.
+	// hand off to the profilingCapture service, which owns the stop-and-bundle
+	// flow and clears the wand indicator when it finishes. The modal only shows it.
 	const handleStopProfiling = useCallback(() => {
 		openModal('profilingCapture');
 	}, [openModal]);

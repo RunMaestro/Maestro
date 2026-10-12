@@ -243,6 +243,94 @@ describe('Tab Naming IPC Handlers', () => {
 		expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
 	});
 
+	it.each([null, 'missing', 'disabled'])(
+		'refuses an enabled unresolved SSH title target before a local spawn: %s',
+		async (remoteId) => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+			const result = await generateTabName(
+				{
+					getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+					getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+					agentConfigsStore: mockAgentConfigsStore as any,
+					settingsStore: mockSettingsStore as any,
+				},
+				{
+					userMessage: 'remote private text',
+					agentType: 'codex',
+					cwd: '/remote',
+					sessionSshRemoteConfig: { enabled: true, remoteId },
+					useUtilityAgent: false,
+				}
+			);
+			expect(result).toBeNull();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each([
+		['claude-code', 'detection'],
+		['codex', 'detection'],
+		['claude-code', 'probe'],
+	])('keeps %s naming on the resolved SSH target across %s', async (agentType, stage) => {
+		const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+		const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+		const { ensureRemoteMaestroPProbed } =
+			await import('../../../../main/agents/probeRemoteMaestroP');
+		const remote = { id: 'r1', host: 'remote.example.com', port: 22 };
+		vi.mocked(getSshRemoteConfig).mockReturnValue({ config: remote as any, source: 'session' });
+		vi.mocked(buildSshCommand).mockResolvedValue({
+			command: 'ssh',
+			args: ['remote.example.com'],
+		} as any);
+		mockAgentDetector.getAgent.mockImplementation(async () => {
+			if (stage === 'detection') {
+				vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+			}
+			return {
+				...mockClaudeAgent,
+				id: agentType,
+				command: agentType === 'codex' ? 'codex' : 'claude',
+			};
+		});
+		if (stage === 'probe') {
+			vi.mocked(ensureRemoteMaestroPProbed).mockImplementationOnce(async () => {
+				vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+				return true;
+			});
+		}
+		const controller = new AbortController();
+		const pending = generateTabName(
+			{
+				getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+				getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+				agentConfigsStore: mockAgentConfigsStore as any,
+				settingsStore: mockSettingsStore as any,
+			},
+			{
+				userMessage: 'remote private text',
+				agentType,
+				cwd: '/remote',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				useUtilityAgent: false,
+				enableMaestroP: false,
+			},
+			controller.signal
+		);
+		try {
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ command: 'ssh' })
+			);
+			expect(buildSshCommand).toHaveBeenCalledWith(remote, expect.anything());
+			expect(getSshRemoteConfig).toHaveBeenCalledOnce();
+		} finally {
+			controller.abort();
+			await pending;
+		}
+	});
+
 	describe('tabNaming:generateTabName', () => {
 		it('returns null when agent is not found', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(null);

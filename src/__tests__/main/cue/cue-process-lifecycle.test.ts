@@ -93,6 +93,12 @@ vi.mock('child_process', async (importOriginal) => {
 	};
 });
 
+const { mockSignalRemoteAgent } = vi.hoisted(() => ({ mockSignalRemoteAgent: vi.fn() }));
+vi.mock('../../../main/utils/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/utils/ssh-remote-signal')>()),
+	signalRemoteAgent: mockSignalRemoteAgent,
+}));
+
 // Must import after mocks
 import {
 	runProcess,
@@ -382,6 +388,34 @@ describe('cue-process-lifecycle', () => {
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			// Killing the local ssh client alone leaves the remote agent running, so a
+			// stop must also reach the remote host.
+			it('records the remote pid and terminates the remote agent on stop', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh',
+					spec,
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const written = mockChild.stdin.write.mock.calls[0][0] as string;
+				const pidFile = getActiveProcessMap().get('run-ssh')?.sshRemotePidFile;
+				expect(pidFile).toMatch(/^\/tmp\/maestro-agent-/);
+				expect(written).toContain(pidFile);
+				expect(written.endsWith('exec claude\n')).toBe(true);
+
+				expect(stopProcess('run-ssh')).toBe(true);
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh' },
+					'terminate'
+				);
+
+				mockChild.emit('close', 143);
 				await resultPromise;
 			});
 

@@ -138,6 +138,15 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					 * apart - it only receives a prompt string - so the caller decides.
 					 */
 					cheapTurn?: boolean;
+					/**
+					 * For a turn that only ANSWERS (a classification, a one-word
+					 * decision): no tool may run, nothing may be written, and the call
+					 * gives up after `timeoutMs` instead of the grooming default. Quick
+					 * Chat's tab routing sets all three.
+					 */
+					readOnly?: boolean;
+					disableTools?: boolean;
+					timeoutMs?: number;
 				}
 			): Promise<string> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
@@ -197,6 +206,9 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						sessionCustomModel: cheapTurn?.model,
 						sessionCustomEffort: cheapTurn?.effort,
 						agentConfigValues,
+						readOnlyMode: options?.readOnly,
+						disableTools: options?.disableTools,
+						timeoutMs: options?.timeoutMs,
 					},
 					processManager,
 					agentDetector

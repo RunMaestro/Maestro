@@ -117,7 +117,11 @@ export interface TabNamingConfig {
 	useUtilityAgent?: boolean;
 }
 
-/** Shared isolated naming turn for UI tabs and brokered plugin titles. */
+/** Shared isolated naming turn for UI tabs and brokered plugin titles.
+ * Resolve an enabled SSH target once before awaiting provider detection and retain it
+ * for probing and command construction. An unresolved target returns null; remote
+ * settings changes must never send the remote message to a local provider.
+ */
 export async function generateTabName(
 	deps: TabNamingHandlerDependencies,
 	config: TabNamingConfig,
@@ -138,6 +142,15 @@ export async function generateTabName(
 	});
 
 	try {
+		const sshRemote = config.sessionSshRemoteConfig?.enabled
+			? getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
+					sessionSshConfig: config.sessionSshRemoteConfig,
+				}).config
+			: null;
+		if (config.sessionSshRemoteConfig?.enabled && !sshRemote) {
+			logger.warn('Configured SSH remote unavailable for tab naming', LOG_CONTEXT);
+			return null;
+		}
 		// Resolve the agent: use the utility agent if configured, otherwise the
 		// session agent. Null/empty leaves behavior unchanged (session agent).
 		const utilityAgentId =
@@ -248,8 +261,8 @@ export async function generateTabName(
 		// That's the correct behavior when the user picked TUI/Dynamic.
 		let claudeSpawnDecision: ClaudeSpawnDecision | null = null;
 		if (agent.id === 'claude-code') {
-			const sshEnabled = !!config.sessionSshRemoteConfig?.enabled;
-			const sshRemoteId = config.sessionSshRemoteConfig?.remoteId ?? undefined;
+			const sshEnabled = !!sshRemote;
+			const sshRemoteId = sshRemote?.id;
 
 			// Mirror the chat spawn (process.ts) EXACTLY so the naming turn spends
 			// the same provider the chat would. Over SSH that means probing whether
@@ -259,13 +272,8 @@ export async function generateTabName(
 			// fell back to API (or vice-versa) - the token-source mismatch we must
 			// never produce. Local (non-SSH) spawns skip the probe entirely.
 			let sshMaestroPAvailable: boolean | undefined;
-			if (sshEnabled && sshRemoteId) {
-				const sshRemote = getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
-					sessionSshConfig: config.sessionSshRemoteConfig,
-				}).config;
-				if (sshRemote) {
-					sshMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
-				}
+			if (sshRemote) {
+				sshMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
 			}
 
 			const tokenMode = getClaudeTokenMode(
@@ -297,94 +305,87 @@ export async function generateTabName(
 		// of shell escaping (local spawn -> SSH -> remote zsh -> bash -c).
 		let shouldSendPromptViaStdin = false;
 		let promptAlreadyInArgs = false;
-		if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig.remoteId) {
-			const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
-			const sshResult = getSshRemoteConfig(sshStoreAdapter, {
-				sessionSshConfig: config.sessionSshRemoteConfig,
-			});
+		if (sshRemote) {
+			// Use the agent's command (not path) for remote execution
+			// since the path is local and remote host has its own binary location
+			let remoteCommand = agent.command;
+			const remoteCwd = config.sessionSshRemoteConfig?.workingDirOverride || config.cwd;
 
-			if (sshResult.config) {
-				// Use the agent's command (not path) for remote execution
-				// since the path is local and remote host has its own binary location
-				let remoteCommand = agent.command;
-				const remoteCwd = config.sessionSshRemoteConfig.workingDirOverride || config.cwd;
-
-				// For agents that support stream-json input, use stdin for the prompt
-				// This completely avoids shell escaping issues with multi-layer SSH commands
-				const agentSupportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
-				if (agentSupportsStreamJson) {
-					// Add --input-format stream-json to args so agent reads from stdin
-					const hasStreamJsonInput =
-						finalArgs.includes('--input-format') && finalArgs.includes('stream-json');
-					if (!hasStreamJsonInput) {
-						finalArgs = [...finalArgs, '--input-format', 'stream-json'];
-					}
-					shouldSendPromptViaStdin = true;
-					logger.debug('Using stdin for tab naming prompt in SSH remote execution', LOG_CONTEXT, {
-						sessionId,
-						promptLength: fullPrompt.length,
-						agentSupportsStreamJson,
-					});
-				} else {
-					// Non-stream-json agents (copilot-cli, factory-droid, etc.) need the
-					// prompt embedded inside the bash -c '<...>' wrapper. If we let
-					// ChildProcessSpawner append `-p <prompt>` after buildSshCommand wraps
-					// the agent invocation, those args land OUTSIDE the wrapper and get
-					// swallowed as positional params to the remote bash, never reaching
-					// the agent. Build the prompt into args here so it's quoted as part
-					// of the wrapped command.
-					if (agent.promptArgs) {
-						finalArgs = [...finalArgs, ...agent.promptArgs(fullPrompt)];
-					} else if (agent.noPromptSeparator) {
-						finalArgs = [...finalArgs, fullPrompt];
-					} else {
-						finalArgs = [...finalArgs, '--', fullPrompt];
-					}
-					promptAlreadyInArgs = true;
-					logger.debug('Embedded tab naming prompt inside SSH wrapper args', LOG_CONTEXT, {
-						sessionId,
-						promptLength: fullPrompt.length,
-					});
+			// For agents that support stream-json input, use stdin for the prompt
+			// This completely avoids shell escaping issues with multi-layer SSH commands
+			const agentSupportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
+			if (agentSupportsStreamJson) {
+				// Add --input-format stream-json to args so agent reads from stdin
+				const hasStreamJsonInput =
+					finalArgs.includes('--input-format') && finalArgs.includes('stream-json');
+				if (!hasStreamJsonInput) {
+					finalArgs = [...finalArgs, '--input-format', 'stream-json'];
 				}
-
-				// Claude TUI/dynamic over SSH runs maestro-p on the REMOTE host
-				// (must be on its PATH) to drive the remote claude TUI on the Max
-				// subscription. Returns null for the API path and non-claude
-				// agents, leaving the spawn on the plain claude binary. The
-				// interactive flags are prepended ahead of the existing arg list
-				// (incl. `--input-format stream-json`): maestro-p strips the
-				// headless-only flags, parses the stream-json prompt from stdin,
-				// and drives the TUI. We do NOT pre-probe the remote FS for
-				// maestro-p; if it's absent this throwaway naming turn just fails
-				// and the tab keeps its default name.
-				const remoteInteractive = claudeSpawnDecision
-					? buildRemoteInteractiveSpawn({
-							decision: claudeSpawnDecision,
-							interactiveModeArgs: agent.interactiveModeArgs,
-							remoteClaudeBin: claudeSpawnDecision.claudeRealBinPath,
-						})
-					: null;
-				if (remoteInteractive) {
-					remoteCommand = remoteInteractive.command;
-					finalArgs = [...remoteInteractive.prependArgs, ...finalArgs];
-					customEnvVars = { ...(customEnvVars ?? {}), ...remoteInteractive.env };
-					logger.debug('Tab naming resolved to remote maestro-p TUI over SSH', LOG_CONTEXT, {
-						sessionId,
-					});
-				}
-
-				const sshCommand = await buildSshCommand(sshResult.config, {
-					command: remoteCommand,
-					args: finalArgs,
-					cwd: remoteCwd,
-					env: customEnvVars,
-					useStdin: shouldSendPromptViaStdin,
+				shouldSendPromptViaStdin = true;
+				logger.debug('Using stdin for tab naming prompt in SSH remote execution', LOG_CONTEXT, {
+					sessionId,
+					promptLength: fullPrompt.length,
+					agentSupportsStreamJson,
 				});
-				command = sshCommand.command;
-				finalArgs = sshCommand.args;
-				// Local cwd is not used for SSH commands - the command runs on remote
-				cwd = process.cwd();
+			} else {
+				// Non-stream-json agents (copilot-cli, factory-droid, etc.) need the
+				// prompt embedded inside the bash -c '<...>' wrapper. If we let
+				// ChildProcessSpawner append `-p <prompt>` after buildSshCommand wraps
+				// the agent invocation, those args land OUTSIDE the wrapper and get
+				// swallowed as positional params to the remote bash, never reaching
+				// the agent. Build the prompt into args here so it's quoted as part
+				// of the wrapped command.
+				if (agent.promptArgs) {
+					finalArgs = [...finalArgs, ...agent.promptArgs(fullPrompt)];
+				} else if (agent.noPromptSeparator) {
+					finalArgs = [...finalArgs, fullPrompt];
+				} else {
+					finalArgs = [...finalArgs, '--', fullPrompt];
+				}
+				promptAlreadyInArgs = true;
+				logger.debug('Embedded tab naming prompt inside SSH wrapper args', LOG_CONTEXT, {
+					sessionId,
+					promptLength: fullPrompt.length,
+				});
 			}
+
+			// Claude TUI/dynamic over SSH runs maestro-p on the REMOTE host
+			// (must be on its PATH) to drive the remote claude TUI on the Max
+			// subscription. Returns null for the API path and non-claude
+			// agents, leaving the spawn on the plain claude binary. The
+			// interactive flags are prepended ahead of the existing arg list
+			// (incl. `--input-format stream-json`): maestro-p strips the
+			// headless-only flags, parses the stream-json prompt from stdin,
+			// and drives the TUI. We do NOT pre-probe the remote FS for
+			// maestro-p; if it's absent this throwaway naming turn just fails
+			// and the tab keeps its default name.
+			const remoteInteractive = claudeSpawnDecision
+				? buildRemoteInteractiveSpawn({
+						decision: claudeSpawnDecision,
+						interactiveModeArgs: agent.interactiveModeArgs,
+						remoteClaudeBin: claudeSpawnDecision.claudeRealBinPath,
+					})
+				: null;
+			if (remoteInteractive) {
+				remoteCommand = remoteInteractive.command;
+				finalArgs = [...remoteInteractive.prependArgs, ...finalArgs];
+				customEnvVars = { ...(customEnvVars ?? {}), ...remoteInteractive.env };
+				logger.debug('Tab naming resolved to remote maestro-p TUI over SSH', LOG_CONTEXT, {
+					sessionId,
+				});
+			}
+
+			const sshCommand = await buildSshCommand(sshRemote, {
+				command: remoteCommand,
+				args: finalArgs,
+				cwd: remoteCwd,
+				env: customEnvVars,
+				useStdin: shouldSendPromptViaStdin,
+			});
+			command = sshCommand.command;
+			finalArgs = sshCommand.args;
+			// Local cwd is not used for SSH commands - the command runs on remote
+			cwd = process.cwd();
 		}
 
 		// Realize a LOCAL interactive (maestro-p) decision by wrapping the

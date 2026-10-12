@@ -48,6 +48,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	crossAgentHandoffsWritable: {
+		description:
+			'When true (default), a hand-off ("then send what you find to @agent") may modify files in the receiving agent\'s workspace. When false, hand-offs run read-only like consults.',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 	defaultSaveToHistory: {
 		description: 'Whether completed tasks are saved to history by default.',
 		type: 'boolean',

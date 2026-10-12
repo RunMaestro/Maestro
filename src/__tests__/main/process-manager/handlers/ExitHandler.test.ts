@@ -735,6 +735,29 @@ describe('ExitHandler', () => {
 			expect(proc.provisionalError).toBeUndefined();
 		});
 
+		// Output that reaches the renderer after an error reads as recovery and
+		// deletes the error card, so the partial answer has to go out first.
+		it('emits the partial answer before the held notice', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				provisionalError: heldError,
+				streamedText: 'partial answer',
+			});
+			processes.set('test-session', proc);
+
+			const order: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => order.push(`data:${data}`));
+			emitter.on('agent-error', (_sid: string, error: AgentError) =>
+				order.push(`agent-error:${error.message}`)
+			);
+			emitter.on('exit', () => order.push('exit'));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(order).toEqual(['data:partial answer', 'agent-error:server_error', 'exit']);
+		});
+
 		it('drops a held notice when the user interrupted the turn', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
@@ -1007,6 +1030,37 @@ describe('ExitHandler', () => {
 			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).toContain('Partial response text');
+		});
+
+		// The fallback text is batched for 50ms while the exit error is not, so
+		// without a flush the error overtook it and the text then erased the error.
+		it('emits the fallback text before an error detected from the exit code', async () => {
+			const exitError: AgentError = {
+				type: 'agent_crashed',
+				message: 'Agent exited with code 3',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 1,
+			};
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				resultEmitted: false,
+				streamedText: 'Partial response text',
+				outputParser: createMockOutputParser({
+					detectErrorFromExit: vi.fn(() => exitError),
+				}),
+			});
+			processes.set('test-session', proc);
+
+			const order: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => order.push(`data:${data}`));
+			emitter.on('agent-error', (_sid: string, error: AgentError) =>
+				order.push(`agent-error:${error.message}`)
+			);
+
+			await exitHandler.handleExit('test-session', 3);
+
+			expect(order).toEqual(['data:Partial response text', 'agent-error:Agent exited with code 3']);
 		});
 
 		it('should not emit streamedText when result was already emitted', async () => {

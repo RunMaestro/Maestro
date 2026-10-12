@@ -174,6 +174,10 @@ export interface ManagedProcess {
 	/** Human-readable remote command line for SSH spawns (the agent invocation that
 	 *  runs on the remote host). Shown in Process Details above the local SSH command. */
 	sshRemoteCommand?: string;
+	/** Remote file the launch script writes the agent's pid to, so Stop and kill
+	 *  can signal the agent on its host rather than only the local ssh client.
+	 *  See utils/ssh-remote-signal.ts. Set only for stdin-script SSH spawns. */
+	sshRemotePidFile?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),

@@ -12,13 +12,17 @@
  * the authoritative terminal state (saved / cancelled / error).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { Loader2, CheckCircle2, XCircle, AlertTriangle, Gauge, Copy } from 'lucide-react';
 import type { Theme } from '../types';
 import { Modal } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { useUIStore } from '../stores/uiStore';
-import { captureException } from '../utils/sentry';
+import {
+	resetProfilingCapture,
+	runProfilingCaptureInBackground,
+	startProfilingCapture,
+	useProfilingCaptureStore,
+} from '../services/profilingCapture';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { formatSize } from '../../shared/formatters';
@@ -40,84 +44,35 @@ const PHASE_LABEL: Record<Phase, string> = {
 };
 
 export function ProfilingCaptureModal({ theme, onClose }: ProfilingCaptureModalProps) {
-	const setProfilingActive = useUIStore((s) => s.setProfilingActive);
-
-	const [phase, setPhase] = useState<Phase>('stopping');
-	const [percent, setPercent] = useState(0);
-	const [bytesProcessed, setBytesProcessed] = useState(0);
-	const [totalBytes, setTotalBytes] = useState(0);
-	const [savedPath, setSavedPath] = useState<string | null>(null);
-	const [bundleSize, setBundleSize] = useState(0);
-	const [errorMessage, setErrorMessage] = useState<string | null>(null);
-	// Whether the saved trace covers the whole recording, or only whatever fit in
-	// Chromium's buffer before it started dropping events. Reported because there
-	// is no way to tell from the file itself, and a reader who does not know is a
-	// reader who will draw conclusions about a session from a fragment of it.
-	const [bufferExhausted, setBufferExhausted] = useState(false);
-	const [peakBufferPercent, setPeakBufferPercent] = useState(0);
-	const startedRef = useRef(false);
+	const capture = useProfilingCaptureStore();
+	// 'idle' only exists before the first render's effect runs.
+	const phase: Phase = capture.phase === 'idle' ? 'stopping' : capture.phase;
+	const {
+		percent,
+		bytesProcessed,
+		totalBytes,
+		savedPath,
+		bundleSize,
+		bufferExhausted,
+		peakBufferPercent,
+		errorMessage,
+	} = capture;
 
 	const isTerminal = phase === 'done' || phase === 'cancelled' || phase === 'error';
 	const isIndeterminate = phase === 'stopping' || phase === 'awaiting-save';
 
-	// Live intermediate progress from the main process. Terminal states are driven
-	// by the awaited stopProfiling() result below (it carries the full payload), so
-	// ignore terminal phases here to avoid flashing "saved" before the path lands.
+	// Opening the modal starts the flow (idempotent: reopening from the toast of a
+	// backgrounded run finds it already running or finished).
 	useEffect(() => {
-		const unsub = window.maestro?.debug?.onProfilingProgress?.((event) => {
-			if (
-				event.phase === 'stopping' ||
-				event.phase === 'awaiting-save' ||
-				event.phase === 'compressing'
-			) {
-				setPhase(event.phase);
-				if (typeof event.percent === 'number') setPercent(event.percent);
-				if (typeof event.bytesProcessed === 'number') setBytesProcessed(event.bytesProcessed);
-				if (typeof event.totalBytes === 'number') setTotalBytes(event.totalBytes);
-			}
-		});
-		return () => {
-			unsub?.();
-		};
+		startProfilingCapture();
 	}, []);
 
-	// Kick off the stop-and-bundle exactly once when the modal opens.
-	useEffect(() => {
-		if (startedRef.current) return;
-		startedRef.current = true;
-		(async () => {
-			try {
-				const res = await window.maestro.debug.stopProfiling();
-				// Recording has ended regardless of outcome; drop the wand indicator.
-				setProfilingActive(false);
-				if (!res?.success) {
-					setPhase('error');
-					setErrorMessage(res?.error || 'Failed to save profile');
-					return;
-				}
-				if (res.cancelled) {
-					setPhase('cancelled');
-					return;
-				}
-				setSavedPath(res.path);
-				setBundleSize(res.bundleSizeBytes);
-				setBufferExhausted(Boolean(res.bufferExhausted));
-				setPeakBufferPercent(res.peakBufferPercent ?? 0);
-				setPercent(100);
-				setPhase('done');
-			} catch (err) {
-				setProfilingActive(false);
-				setPhase('error');
-				setErrorMessage('Failed to save profile');
-				captureException(err);
-			}
-		})();
-	}, [setProfilingActive]);
-
-	// Escape / close is a no-op until the operation finishes so the user can't
-	// dismiss a modal whose backend work is still running.
+	// Closing never waits on the backend. Mid-run it hands the capture to the
+	// background (toast + default save location); once finished it clears the run.
 	const handleClose = useCallback(() => {
-		if (isTerminal) onClose();
+		if (isTerminal) resetProfilingCapture();
+		else runProfilingCaptureInBackground();
+		onClose();
 	}, [isTerminal, onClose]);
 
 	const handleCopyPath = useCallback(async () => {
@@ -161,20 +116,34 @@ export function ProfilingCaptureModal({ theme, onClose }: ProfilingCaptureModalP
 			onClose={handleClose}
 			headerIcon={<Gauge size={18} style={{ color: theme.colors.accent }} />}
 			width={620}
-			showCloseButton={isTerminal}
+			showCloseButton
 			footer={
 				isTerminal ? (
 					<div className="flex justify-end">
 						<button
 							type="button"
-							onClick={onClose}
+							onClick={handleClose}
 							className="px-4 py-2 rounded-md text-sm font-medium"
 							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 						>
 							Done
 						</button>
 					</div>
-				) : undefined
+				) : (
+					<div className="flex items-center justify-between gap-3">
+						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+							Long captures can take minutes. You can keep working.
+						</span>
+						<button
+							type="button"
+							onClick={handleClose}
+							className="px-4 py-2 rounded-md text-sm font-medium"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
+						>
+							Run in background
+						</button>
+					</div>
+				)
 			}
 			layerOptions={{ focusTrap: 'strict' }}
 		>

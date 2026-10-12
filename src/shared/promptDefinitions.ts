@@ -264,6 +264,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'system',
 	},
 	{
+		id: 'quick-chat-route',
+		filename: 'quick-chat-route.md',
+		description:
+			'Quick Chat routing: picks which existing conversation a new message continues, or that it starts a new one',
+		category: 'system',
+		encoreFlag: 'quickChat',
+	},
+	{
 		id: 'director-notes',
 		filename: 'director-notes.md',
 		description: "Director's Notes prompt",
@@ -426,6 +434,7 @@ export const PROMPT_IDS = {
 	CROSS_AGENT_HANDOFF_PENDING: 'cross-agent-handoff-pending',
 	// System
 	TAB_NAMING: 'tab-naming',
+	QUICK_CHAT_ROUTE: 'quick-chat-route',
 	DIRECTOR_NOTES: 'director-notes',
 	FEEDBACK: 'feedback',
 	FEEDBACK_CONVERSATION: 'feedback-conversation',

@@ -24,7 +24,11 @@ export interface FontScaleControlProps {
 	/** State from `useFontScale`. */
 	control: UseFontScaleReturn;
 	/** Visual treatment. Defaults to `inline`. */
-	variant?: 'inline' | 'floating';
+	variant?: 'inline' | 'floating' | 'ghost';
+	/** `native` titles (the default) or `overlay` hover tooltips; see `ScaleControl`. */
+	tooltips?: 'native' | 'overlay';
+	/** Keys the surface binds to this control, named in the tooltips. */
+	shortcutHint?: { decrease?: string; increase?: string; reset?: string };
 	/** Button size - `sm` for a dense `text-xs` button row. Defaults to `md`. */
 	size?: 'sm' | 'md';
 	/**
@@ -46,6 +50,8 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 	theme,
 	control,
 	variant = 'inline',
+	tooltips,
+	shortcutHint,
 	size = 'md',
 	collapsible = false,
 	target,
@@ -75,6 +81,8 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 			collapsedIcon={ALargeSmall}
 			subject={target ? `${target} font size` : 'font size'}
 			variant={variant}
+			tooltips={tooltips}
+			shortcutHint={shortcutHint}
 			size={size}
 			className={className}
 			testId={testId}

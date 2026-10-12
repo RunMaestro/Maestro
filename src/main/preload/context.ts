@@ -66,6 +66,11 @@ export function createContextApi() {
 				// silently. The caller decides because only the caller knows which of
 				// the three it is - the handler just sees a prompt string.
 				cheapTurn?: boolean;
+				// For a turn that only answers (a classification): no tools, no
+				// writes, and a deadline shorter than the grooming default.
+				readOnly?: boolean;
+				disableTools?: boolean;
+				timeoutMs?: number;
 			}
 		): Promise<string> =>
 			ipcRenderer.invoke('context:groomContext', projectRoot, agentType, prompt, options),

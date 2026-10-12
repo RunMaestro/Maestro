@@ -49,6 +49,7 @@ import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
+import { RELAY_PLUGIN_ID } from '../shared/plugins/relay-identity';
 import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
 import { seedBundledPlugins } from './plugins/bundled-plugins';
 import { SpawnBinaryRegistry } from './plugins/spawn-binary-registry';
@@ -119,7 +120,7 @@ import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { beginCueRunCapture, recordCommandLineRuns } from './cot-export/runtime';
 import { executeCueShell } from './cue/cue-shell-executor';
 import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
-import { spawnAgent, detectAgent } from '../cli/services/agent-spawner';
+import { spawnAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
 import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
 import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
@@ -2593,7 +2594,12 @@ app
 				(sessionsStore.get('sessions', []) as SessionInfo[]).find(
 					(session) => session.id === agentId
 				),
-			detectAgent,
+			detectAgent: async (type) => {
+				const detected = await agentDetector?.getAgent(type);
+				return { available: detected?.available === true, path: detected?.path };
+			},
+			getAgentConfig: getAgentConfigForAgent,
+			getGlobalEnvVars: () => store.get('shellEnvVars', {}),
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
 			prepareSystemPrompt: prepareMaestroSystemPromptCli,
@@ -2782,6 +2788,8 @@ app
 				isPluginTrusted: (pluginId) =>
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
 					'trusted',
+				getPluginSignature: (pluginId) =>
+					pluginManager?.getRegistry().records.find((record) => record.id === pluginId)?.signature,
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
 				sendAgent: runHeadlessAgent,
 				generateTitle: async (agentId, firstMessage, signal) => {
@@ -3315,7 +3323,7 @@ app
 		// Older Relay turns predate origin recording. The private host binding is
 		// the proof: only a session owned by this exact plugin and agent qualifies.
 		// A real CLI session has no such binding, so it is never relabeled.
-		if (pluginProviderSessions.hasBindings('sh.maestro.relay')) {
+		if (pluginProviderSessions.hasBindings(RELAY_PLUGIN_ID)) {
 			void (async () => {
 				for (const agent of sessionsStore.get('sessions', []) as SessionInfo[]) {
 					const storage = getSessionStorage(agent.toolType);
@@ -3334,9 +3342,7 @@ app
 							profileEnvVar ? agent.customEnvVars?.[profileEnvVar] : undefined
 						);
 						for (const session of sessions) {
-							if (
-								!pluginProviderSessions.isOwned('sh.maestro.relay', agent.id, session.sessionId)
-							) {
+							if (!pluginProviderSessions.isOwned(RELAY_PLUGIN_ID, agent.id, session.sessionId)) {
 								continue;
 							}
 							markRelaySession(agent, session.sessionId, true);

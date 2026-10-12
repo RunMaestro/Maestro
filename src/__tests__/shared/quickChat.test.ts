@@ -6,10 +6,12 @@
 import { describe, it, expect } from 'vitest';
 import {
 	DEFAULT_QUICK_CHAT_SETTINGS,
+	describeQuickChatRoute,
 	QUICK_CHAT_MAX_MESSAGES,
 	QUICK_CHAT_MIN_EXPANDED_HEIGHT,
 	QUICK_CHAT_MIN_WIDTH,
 	logsToQuickChatMessages,
+	parseQuickChatFontScaleRequest,
 	resolveQuickChatSettings,
 	validateQuickChatBoundsRequest,
 } from '../../shared/quickChat';
@@ -133,5 +135,51 @@ describe('validateQuickChatBoundsRequest', () => {
 		expect(validateQuickChatBoundsRequest({ height: QUICK_CHAT_MIN_EXPANDED_HEIGHT - 1 })).toMatch(
 			/Height/
 		);
+	});
+});
+
+describe('parseQuickChatFontScaleRequest', () => {
+	it('accepts a step, an exact scale, or a reset', () => {
+		expect(parseQuickChatFontScaleRequest({ step: 1 })).toEqual({ step: 1 });
+		expect(parseQuickChatFontScaleRequest({ step: -1 })).toEqual({ step: -1 });
+		expect(parseQuickChatFontScaleRequest({ scale: 1.4 })).toEqual({ scale: 1.4 });
+		expect(parseQuickChatFontScaleRequest({ reset: true })).toEqual({ reset: true });
+	});
+
+	it('rejects anything else off the wire', () => {
+		for (const raw of [null, 'in', {}, { step: 2 }, { scale: 0 }, { scale: NaN }, { reset: 1 }]) {
+			expect(parseQuickChatFontScaleRequest(raw)).toBeNull();
+		}
+	});
+});
+
+describe('describeQuickChatRoute', () => {
+	const route = {
+		status: 'done' as const,
+		tabId: 't1',
+		tabName: 'CI Build',
+		origin: 'open' as const,
+		tabOpen: true,
+		since: null,
+	};
+
+	it('says where a message went and how the tab came to be', () => {
+		expect(describeQuickChatRoute(route)).toBe('sent to open tab "CI Build"');
+		expect(describeQuickChatRoute({ ...route, origin: 'reopened', status: 'running' })).toBe(
+			'running in reopened tab "CI Build"'
+		);
+		expect(describeQuickChatRoute({ ...route, origin: 'new', status: 'queued' })).toBe(
+			'queued for new tab "CI Build"'
+		);
+		expect(describeQuickChatRoute({ ...route, status: 'cancelled' })).toBe(
+			'cancelled, was for open tab "CI Build"'
+		);
+	});
+
+	it('covers a message with no tab yet, or none at all', () => {
+		const none = { ...route, tabId: null, tabName: null, origin: null };
+		expect(describeQuickChatRoute({ ...none, status: 'searching' })).toBe('searching for a tab');
+		expect(describeQuickChatRoute({ ...none, status: 'failed' })).toBe('failed');
+		expect(describeQuickChatRoute({ ...none, status: 'cancelled' })).toBe('cancelled');
 	});
 });

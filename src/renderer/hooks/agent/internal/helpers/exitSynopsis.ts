@@ -229,9 +229,15 @@ function persistTabNameAfterSynopsis(synopsisData: SynopsisData): void {
 /**
  * Pure eligibility check used by callers BEFORE invoking `runExitSynopsis`.
  *
- * The session must have an empty execution queue, an `agentSessionId`
- * (either on the completed tab or on the session), AND either the tab opted
- * in via `saveToHistory` OR a `pendingAICommandForSynopsis` is set.
+ * The completed tab must have no queued work of its own, there must be an
+ * `agentSessionId` (either on the completed tab or on the session), AND either
+ * the tab opted in via `saveToHistory` OR a `pendingAICommandForSynopsis` is set.
+ *
+ * Only the completed tab's queue items defer the synopsis. The queue is
+ * agent-wide, and a synopsis resumes ONE provider session, so work queued for
+ * another tab is no conflict. Checking the whole queue silently dropped the
+ * History entry of every turn that finished while any other tab had a message
+ * waiting, and nothing retries a skipped synopsis.
  */
 export function shouldRunSynopsisOnExit(
 	session: {
@@ -241,19 +247,26 @@ export function shouldRunSynopsisOnExit(
 	},
 	completedTab:
 		| {
+				id?: string;
 				agentSessionId?: NonNullable<Session['aiTabs']>[number]['agentSessionId'];
 				saveToHistory?: NonNullable<Session['aiTabs']>[number]['saveToHistory'];
 		  }
 		| undefined
 ): boolean {
+	// Without a tab id there is no way to tell whose work is queued, so the
+	// whole queue counts.
+	const tabId = completedTab?.id;
+	const tabQueue = tabId
+		? session.executionQueue.filter((item) => item.tabId === tabId)
+		: session.executionQueue;
 	// Paused items won't auto-run, so a queue with only held items still counts
 	// as "done" for synopsis purposes.
-	if (hasRunnableQueueItem(session.executionQueue)) return false;
+	if (hasRunnableQueueItem(tabQueue)) return false;
 	// A consult hold is NOT paused work: its continuation is coming as soon as
 	// the consulted agent replies, and it resumes this same provider session. A
 	// synopsis started now would be a second writer on that session when it
 	// lands. The synopsis runs after the continuation's turn instead.
-	if (session.executionQueue.some((item) => item.awaitingConsult)) return false;
+	if (tabQueue.some((item) => item.awaitingConsult)) return false;
 	const hasAgentSessionId = !!(completedTab?.agentSessionId || session.agentSessionId);
 	if (!hasAgentSessionId) return false;
 	const optedIn = !!(completedTab?.saveToHistory || session.pendingAICommandForSynopsis);

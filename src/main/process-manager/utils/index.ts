@@ -1,6 +1,7 @@
 export { appendToBuffer } from './bufferUtils';
 export { getChildProcesses, isPidAlive, type ChildProcessInfo } from './childProcessInfo';
 export { settleProvisionalAgentError } from './provisionalAgentError';
+export { emitAgentErrorAfterOutput, type EmitAgentErrorOptions } from './agentErrorEmit';
 export { parseDataUrl, saveImageToTempFile, cleanupTempFiles } from './imageUtils';
 export { buildStreamJsonMessage } from './streamJsonBuilder';
 export { buildUnixBasePath, buildPtyTerminalEnv, buildChildProcessEnv } from './envBuilder';

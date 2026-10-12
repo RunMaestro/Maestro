@@ -57,7 +57,7 @@ describe('AgentDispatchAllowlist search', () => {
 		expect(screen.queryByText('Alpha Worker')).not.toBeInTheDocument();
 		fireEvent.change(search, { target: { value: 'missing' } });
 		expect(screen.getByTestId('agent-dispatch-allowlist-no-results')).toBeInTheDocument();
-		fireEvent.click(screen.getByRole('button', { name: 'Clear agent search' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
 		expect(screen.getAllByTestId('agent-dispatch-allowlist-row')).toHaveLength(3);
 		expect(search).toHaveValue('');
 	});

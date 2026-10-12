@@ -20,6 +20,7 @@ import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { execFileNoThrow } from '../../utils/execFile';
+import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
 import {
@@ -1776,75 +1777,31 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						return null;
 					}
 
-					// Spawn Claude with /help which immediately exits and costs no tokens
-					// The init message contains all available slash commands
-					const args = [
-						'--print',
-						'--verbose',
-						'--output-format',
-						'stream-json',
-						'--dangerously-skip-permissions',
-						'--',
-						'/help',
-					];
-
-					logger.debug(
-						`Spawning for slash command discovery: ${commandPath} ${args.join(' ')}`,
-						LOG_CONTEXT
-					);
-
-					const result = await execFileNoThrow(commandPath, args, cwd);
-
-					if (result.exitCode !== 0 && !result.stdout) {
+					// The init message of a `/help` probe names every command; see
+					// claude-slash-command-probe.ts.
+					const names = await probeClaudeSlashCommands(commandPath, cwd);
+					if (!names) return null;
+					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
+					// Description enrichment is best-effort: a permission/IO
+					// error on the skills dir shouldn't lose the user's
+					// entire slash-command list. Capture the exception for
+					// Sentry and fall back to names-only.
+					let skillDescriptions = new Map<string, string>();
+					try {
+						skillDescriptions = await readClaudeSkillDescriptions(cwd);
+					} catch (err) {
+						void captureException(err);
 						logger.warn(
-							`Slash command discovery failed with exit code ${result.exitCode}`,
+							`Skill description enrichment failed; returning slash commands without descriptions`,
 							LOG_CONTEXT,
-							{
-								stderr: result.stderr?.substring(0, 500),
-							}
+							{ error: String(err) }
 						);
-						return null;
 					}
-
-					// Parse the first JSON line to get the init message
-					const lines = result.stdout.split('\n');
-					for (const line of lines) {
-						if (!line.trim()) continue;
-						try {
-							const msg = JSON.parse(line);
-							if (msg.type === 'system' && msg.subtype === 'init' && msg.slash_commands) {
-								logger.info(
-									`Discovered ${msg.slash_commands.length} slash commands for ${agentId}`,
-									LOG_CONTEXT
-								);
-								// Description enrichment is best-effort: a permission/IO
-								// error on the skills dir shouldn't lose the user's
-								// entire slash-command list. Capture the exception for
-								// Sentry and fall back to names-only.
-								let skillDescriptions = new Map<string, string>();
-								try {
-									skillDescriptions = await readClaudeSkillDescriptions(cwd);
-								} catch (err) {
-									void captureException(err);
-									logger.warn(
-										`Skill description enrichment failed; returning slash commands without descriptions`,
-										LOG_CONTEXT,
-										{ error: String(err) }
-									);
-								}
-								return (msg.slash_commands as string[]).map((name: string) => {
-									const lookupKey = name.startsWith('/') ? name.slice(1) : name;
-									const description = skillDescriptions.get(lookupKey);
-									return description ? { name, description } : { name };
-								});
-							}
-						} catch {
-							// Not valid JSON, skip
-						}
-					}
-
-					logger.warn(`No init message found in slash command discovery output`, LOG_CONTEXT);
-					return null;
+					return names.map((name: string) => {
+						const lookupKey = name.startsWith('/') ? name.slice(1) : name;
+						const description = skillDescriptions.get(lookupKey);
+						return description ? { name, description } : { name };
+					});
 				} catch (error) {
 					void captureException(error);
 					logger.error(`Error discovering slash commands for ${agentId}`, LOG_CONTEXT, {

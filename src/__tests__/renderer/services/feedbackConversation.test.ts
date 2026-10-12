@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FeedbackConversationManager } from '../../../renderer/services/feedbackConversation';
+import {
+	FeedbackConversationManager,
+	resolveFeedbackSubmission,
+	type FeedbackMessage,
+	type FeedbackParsedResponse,
+} from '../../../renderer/services/feedbackConversation';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -277,5 +282,80 @@ describe('FeedbackConversationManager provider startup errors', () => {
 		const exitCallback = processMock.onExit.mock.calls[0][0];
 		exitCallback(sessionId, 0);
 		await responsePromise;
+	});
+});
+
+describe('resolveFeedbackSubmission', () => {
+	const user = (content: string): FeedbackMessage => ({ role: 'user', content, timestamp: 1 });
+	const assistant = (content: string): FeedbackMessage => ({
+		role: 'assistant',
+		content,
+		timestamp: 2,
+	});
+	const response = (overrides: Partial<FeedbackParsedResponse> = {}): FeedbackParsedResponse => ({
+		confidence: 90,
+		ready: true,
+		message: 'ok',
+		category: 'bug_report',
+		summary: 'Auto Run stuck after limit',
+		structured: {
+			expectedBehavior: 'resumes',
+			actualBehavior: 'stays paused',
+			reproductionSteps: '1. hit limit',
+			additionalContext: 'v1.2',
+		},
+		...overrides,
+	});
+
+	it('returns null until the user has said something', () => {
+		expect(resolveFeedbackSubmission(null, [], false, 0)).toBeNull();
+		expect(resolveFeedbackSubmission(null, [assistant('hi')], false, 0)).toBeNull();
+	});
+
+	it('files the agent fields untouched once the interview is ready', () => {
+		const result = resolveFeedbackSubmission(response(), [user('it broke')], true, 90)!;
+		expect(result.early).toBe(false);
+		expect(result.summary).toBe('Auto Run stuck after limit');
+		expect(result.structured).toEqual(response().structured);
+	});
+
+	it('backs every empty required field with the user words when submitted early', () => {
+		const result = resolveFeedbackSubmission(
+			null,
+			[
+				user('Auto Run never resumed\nafter the limit'),
+				assistant('Which agent?'),
+				user('the main one'),
+			],
+			false,
+			20
+		)!;
+		expect(result.early).toBe(true);
+		expect(result.category).toBe('general_feedback');
+		expect(result.summary).toBe('Auto Run never resumed');
+		expect(result.structured.actualBehavior).toBe(
+			'Auto Run never resumed\nafter the limit\n\nthe main one'
+		);
+		expect(result.structured.expectedBehavior).toMatch(/submitted before the interview finished/i);
+		expect(result.structured.additionalContext).toContain('understanding 20%');
+	});
+
+	it('keeps the agent fields and quotes the user when the agent has partial answers', () => {
+		const result = resolveFeedbackSubmission(
+			response({ ready: false, structured: { ...response().structured, additionalContext: '' } }),
+			[user('stuck again')],
+			false,
+			45
+		)!;
+		expect(result.early).toBe(true);
+		expect(result.structured.actualBehavior).toBe('stays paused');
+		expect(result.structured.additionalContext).toContain('> stuck again');
+	});
+
+	it('clips a long first line into a title', () => {
+		const long = 'x'.repeat(200);
+		const result = resolveFeedbackSubmission(null, [user(long)], false, 0)!;
+		expect(result.summary.length).toBeLessThanOrEqual(72);
+		expect(result.summary.endsWith('...')).toBe(true);
 	});
 });

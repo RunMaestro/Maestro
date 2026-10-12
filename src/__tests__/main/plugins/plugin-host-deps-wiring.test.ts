@@ -27,6 +27,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
+import { RELAY_PLUGIN_ID } from '../../../shared/plugins/relay-identity';
 import { getProviderProfileConfig } from '../../../shared/providerProfiles';
 
 vi.mock('../../../main/utils/logger', () => ({ logger: { warn: vi.fn() } }));
@@ -234,10 +235,11 @@ describe('production Relay origin backfill', () => {
 	it('respects provider account roots and skips missing or disabled SSH remotes', async () => {
 		let withinBackfill = false;
 		let callback: ts.ArrowFunction | undefined;
+		/** Locate the production backfill using the shared host Relay identity. */
 		const visit = (node: ts.Node): void => {
 			if (
 				ts.isIfStatement(node) &&
-				node.expression.getText(sf) === "pluginProviderSessions.hasBindings('sh.maestro.relay')"
+				node.expression.getText(sf) === 'pluginProviderSessions.hasBindings(RELAY_PLUGIN_ID)'
 			) {
 				withinBackfill = true;
 			}
@@ -281,7 +283,8 @@ describe('production Relay origin backfill', () => {
 		const listSessions = vi.fn(async () => [{ sessionId: 'owned' }, { sessionId: 'ordinary-cli' }]);
 		const markRelaySession = vi.fn();
 		const isOwned = vi.fn(
-			(_plugin: string, _agent: string, session: string) => session === 'owned'
+			(plugin: string, _agent: string, session: string) =>
+				plugin === RELAY_PLUGIN_ID && session === 'owned'
 		);
 		const js = ts.transpileModule(`const backfill = ${callback!.getText(sf)}`, {
 			compilerOptions: { target: ts.ScriptTarget.ES2024 },
@@ -295,6 +298,7 @@ describe('production Relay origin backfill', () => {
 			'pluginProviderSessions',
 			'markRelaySession',
 			'logger',
+			'RELAY_PLUGIN_ID',
 			`${js}\nreturn backfill;`
 		)(
 			{ get: () => agents },
@@ -304,7 +308,8 @@ describe('production Relay origin backfill', () => {
 			getProviderProfileConfig,
 			{ isOwned },
 			markRelaySession,
-			{ warn: vi.fn() }
+			{ warn: vi.fn() },
+			RELAY_PLUGIN_ID
 		);
 		await backfill();
 		expect(listSessions.mock.calls).toEqual([

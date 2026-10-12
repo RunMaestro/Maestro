@@ -15,6 +15,8 @@ import {
 	QUICK_CHAT_SETTINGS_KEY,
 	resolveQuickChatSettings,
 	type QuickChatBoundsRequest,
+	type QuickChatFontScaleRequest,
+	parseQuickChatFontScaleRequest,
 	type QuickChatCommand,
 	type QuickChatCommandResult,
 	type QuickChatLayout,
@@ -29,10 +31,12 @@ import { requestFromRenderer } from '../web-server/callbacks/remoteRequest';
 import {
 	closeQuickChatWindow,
 	getQuickChatWindow,
+	getQuickChatFontScale,
 	getQuickChatWindowBounds,
 	hideQuickChatWindow,
 	isQuickChatWindowPinned,
 	isQuickChatWindowVisible,
+	setQuickChatFontScale,
 	setQuickChatFullView,
 	setQuickChatLayout,
 	setQuickChatWindowPinned,
@@ -69,6 +73,8 @@ export interface QuickChatController {
 	setBounds(request: QuickChatBoundsRequest): QuickChatStatus;
 	/** Float the window above other windows, or let it fall behind them. */
 	setPinned(pinned: boolean): QuickChatStatus;
+	/** Change the conversation's text zoom. */
+	setFontScale(request: QuickChatFontScaleRequest): QuickChatStatus;
 	getStatus(): QuickChatStatus;
 }
 
@@ -105,6 +111,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		hotkeyRegistered,
 		bounds: getQuickChatWindowBounds(),
 		pinned: isQuickChatWindowPinned(windowDeps),
+		fontScale: getQuickChatFontScale(windowDeps),
 		snapshot,
 	});
 
@@ -160,6 +167,11 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		return getStatus();
 	};
 
+	const setFontScale = (request: QuickChatFontScaleRequest): QuickChatStatus => {
+		setQuickChatFontScale(request, windowDeps);
+		return getStatus();
+	};
+
 	const syncHotkey = () => {
 		const keys = isEnabled() ? readSettings().hotkey : [];
 		hotkeyRegistered = setNamedGlobalHotkey(HOTKEY_ID, keys, () => windowAction('toggle'));
@@ -183,6 +195,12 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		ipcMain.handle('quickChat:setPinned', (_event, pinned: boolean) => {
 			setPinned(pinned === true);
 			return isQuickChatWindowPinned(windowDeps);
+		});
+		ipcMain.handle('quickChat:getFontScale', () => getQuickChatFontScale(windowDeps));
+		ipcMain.handle('quickChat:setFontScale', (_event, request: unknown) => {
+			const parsed = parseQuickChatFontScaleRequest(request);
+			if (!parsed) throw new Error('Invalid text zoom request');
+			return setQuickChatFontScale(parsed, windowDeps);
 		});
 		ipcMain.on('quickChat:setLayout', (event, next: QuickChatLayout) => {
 			if (event.sender !== getQuickChatWindow()?.webContents) return;
@@ -213,6 +231,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		windowAction,
 		setBounds,
 		setPinned,
+		setFontScale,
 		getStatus,
 	};
 	activeController = controller;

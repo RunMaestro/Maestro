@@ -6,6 +6,7 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
+import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import { emitParsedEvent } from '../utils/parsedEvent';
 import type { ManagedProcess, AgentError, TurnSettlement } from '../types';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
@@ -141,7 +142,9 @@ export class ExitHandler {
 		if (managedProcess.interrupted) {
 			managedProcess.provisionalError = undefined;
 		}
-		settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
+		settleProvisionalAgentError(this.emitter, this.bufferManager, sessionId, managedProcess, {
+			flushStreamedText: isStreamJsonMode,
+		});
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
@@ -214,12 +217,18 @@ export class ExitHandler {
 			if (event?.type === 'error' || flushedError) {
 				const agentError = flushedError;
 				if (agentError) {
-					managedProcess.errorEmitted = true;
 					agentError.sessionId = sessionId;
 					if (managedProcess.sshRemoteId) {
 						agentError.sshRemoteId = managedProcess.sshRemoteId;
 					}
-					this.emitter.emit('agent-error', sessionId, agentError);
+					emitAgentErrorAfterOutput(
+						this.emitter,
+						this.bufferManager,
+						sessionId,
+						managedProcess,
+						agentError,
+						{ flushStreamedText: true }
+					);
 				}
 			} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 				managedProcess.resultEmitted = true;
@@ -428,12 +437,17 @@ export class ExitHandler {
 				}
 
 				if (agentError) {
-					managedProcess.errorEmitted = true;
 					agentError.sessionId = sessionId;
 					if (managedProcess.sshRemoteId) {
 						agentError.sshRemoteId = managedProcess.sshRemoteId;
 					}
-					this.emitter.emit('agent-error', sessionId, agentError);
+					emitAgentErrorAfterOutput(
+						this.emitter,
+						this.bufferManager,
+						sessionId,
+						managedProcess,
+						agentError
+					);
 				}
 			}
 		}

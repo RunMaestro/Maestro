@@ -1672,6 +1672,30 @@ describe('useRemoteHandlers', () => {
 			expect(updated?.busySource).toBe('ai');
 		});
 
+		it('stamps the target tab with its own start time, not just the agent', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+			const before = Date.now();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'analyze code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			// Quick Chat's "Working for" timer reads the tab: without this it sat at 0s.
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			const tab = updated?.aiTabs.find((t) => t.id === updated.activeTabId);
+			expect(tab?.state).toBe('busy');
+			expect(tab?.thinkingStartTime).toBeGreaterThanOrEqual(before);
+		});
+
 		it('adds user log entry to the active tab for AI commands', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);

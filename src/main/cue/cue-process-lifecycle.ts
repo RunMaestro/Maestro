@@ -30,6 +30,12 @@ import {
 	type StopHandle,
 } from '../../shared/maestro-lib/control/termination';
 import { startTurn, type TurnHandle } from '../../shared/maestro-lib/run/start-turn';
+import {
+	newRemotePidFilePath,
+	signalRemoteAgent,
+	sshConnectionArgs,
+	withRemotePidRecord,
+} from '../utils/ssh-remote-signal';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -43,6 +49,9 @@ export interface CueActiveProcess {
 	startTime: number;
 	/** For SSH spawns: the agent invocation running on the remote host. */
 	sshRemoteCommand?: string;
+	/** For stdin-script SSH spawns: where the remote agent's pid is recorded, so
+	 *  a stop or timeout reaches the agent and not only the local ssh client. */
+	sshRemotePidFile?: string;
 	/** Live ref to the accumulating stdout buffer - filled by the runProcess
 	 *  closure as chunks arrive. Exposed via `getActiveProcessOutput` so the
 	 *  renderer can poll for in-flight logs without a separate subscription
@@ -371,6 +380,23 @@ export function killCueProcess(child: ChildProcess, sync = false): StopHandle {
 }
 
 /**
+ * Terminate the agent an SSH Cue run started on its remote host. Killing the
+ * local ssh client alone leaves that agent running (see ssh-remote-signal.ts).
+ */
+function terminateRemoteCueAgent(runId: string, entry: CueActiveProcess): void {
+	if (!entry.sshRemotePidFile) return;
+	signalRemoteAgent(
+		{
+			sshCommand: entry.command,
+			sshArgs: entry.args,
+			pidFile: entry.sshRemotePidFile,
+			sessionId: runId,
+		},
+		'terminate'
+	);
+}
+
+/**
  * Register a running Cue child process. Every Cue spawn path registers here -
  * agent prompts ({@link runProcess}), `action: command` shell commands, and
  * maestro-cli calls - because this map is what the Process Monitor lists and
@@ -421,7 +447,18 @@ export async function runProcess(
 	// What travels on stdin: the full bash script for an SSH run, else a prompt
 	// the launch plan moved off the command line (SSH small-prompt mode, or a
 	// local run on a Windows host; see resolvePromptDelivery).
-	const stdin = sshStdinScript && sshRemoteEnabled ? sshStdinScript : stdinPrompt;
+	// A stdin-script SSH run records the remote agent's pid so Stop and the
+	// timeout can reach it: killing only the local ssh client leaves it running.
+	const sshRemotePidFile =
+		sshStdinScript && sshRemoteEnabled && sshConnectionArgs(spec.args)
+			? newRemotePidFilePath()
+			: undefined;
+	const stdin =
+		sshStdinScript && sshRemoteEnabled
+			? sshRemotePidFile
+				? withRemotePidRecord(sshStdinScript, sshRemotePidFile)
+				: sshStdinScript
+			: stdinPrompt;
 
 	let turn: TurnHandle;
 	try {
@@ -479,7 +516,7 @@ export async function runProcess(
 	// same instant as the timeout would otherwise have its exit re-routed.
 	let timedOut = false;
 
-	const untrack = trackCueProcess(runId, {
+	const entry: CueActiveProcess = {
 		child: turn.child,
 		command: spec.command,
 		args: spec.args,
@@ -487,12 +524,14 @@ export async function runProcess(
 		toolType,
 		startTime: Date.now(),
 		sshRemoteCommand: spec.sshRemoteCommand,
+		sshRemotePidFile,
 		getStdout: () => stdout,
 		getStderr: () => stderr,
 		requestStop: () => {
 			stopRequested = true;
 		},
-	});
+	};
+	const untrack = trackCueProcess(runId, entry);
 
 	// Enforce timeout - use platform-appropriate kill
 	const timeoutTimer =
@@ -501,6 +540,7 @@ export async function runProcess(
 					if (settled) return;
 					onLog('cue', `[CUE] Run ${runId} timed out after ${timeoutMs}ms, killing process`);
 					timedOut = true;
+					terminateRemoteCueAgent(runId, entry);
 					killCueProcess(turn.child);
 				}, timeoutMs)
 			: undefined;
@@ -597,6 +637,7 @@ export function stopProcess(runId: string): boolean {
 
 	// Mark before killing, so the exit reads as an interrupt.
 	entry.requestStop?.();
+	terminateRemoteCueAgent(runId, entry);
 	killCueProcess(entry.child);
 	return true;
 }
@@ -609,6 +650,7 @@ export function stopAllProcesses(): void {
 	for (const [runId, entry] of activeProcesses) {
 		// Use sync kills so process trees are dead before the app exits.
 		entry.requestStop?.();
+		terminateRemoteCueAgent(runId, entry);
 		killCueProcess(entry.child, true);
 		activeProcesses.delete(runId);
 	}

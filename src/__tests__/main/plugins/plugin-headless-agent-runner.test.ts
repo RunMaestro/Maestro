@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
 import type { SessionInfo } from '../../../shared/types';
 import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
@@ -13,6 +14,108 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it.each([true, false])(
+		'validates the selected agent binary before dispatch (valid: %s)',
+		async (valid) => {
+			const probe = vi
+				.spyOn(pathProber, 'checkCustomPath')
+				.mockResolvedValueOnce({ exists: valid, path: valid ? '/resolved/codex' : undefined });
+			try {
+				const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+				const detectAgent = vi.fn(async () => ({ available: true, path: '/default/codex' }));
+				const issueRunToken = vi.fn();
+				const run = createPluginHeadlessAgentRunner({
+					getAgent: () => ({ ...agent, customPath: '~/selected/codex' }),
+					detectAgent,
+					hasPluginTools: () => false,
+					spawn,
+					prepareSystemPrompt: async () => undefined,
+					issueRunToken,
+					revokeRunToken: vi.fn(),
+					cliScriptPath: () => '/cli.js',
+					audit: vi.fn(),
+				});
+				const result = await run('agent-a', 'hello');
+				expect(probe).toHaveBeenCalledWith('~/selected/codex');
+				expect(detectAgent).not.toHaveBeenCalled();
+				if (valid) {
+					expect(result.success).toBe(true);
+					expect(spawn).toHaveBeenCalledWith(
+						'codex',
+						'/project',
+						'hello',
+						undefined,
+						expect.objectContaining({ agentCommand: '/resolved/codex' })
+					);
+				} else {
+					expect(result).toMatchObject({ success: false, error: 'Agent CLI unavailable: codex' });
+					expect(spawn).not.toHaveBeenCalled();
+					expect(issueRunToken).not.toHaveBeenCalled();
+				}
+			} finally {
+				probe.mockRestore();
+			}
+		}
+	);
+
+	it('forwards live desktop config, binary and global environment independently of session overrides', async () => {
+		const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+		const config = { reasoningSummary: 'detailed', customEnvVars: { SHARED: 'agent' } };
+		const global = { SHARED: 'global', GLOBAL_ONLY: 'global' };
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => ({ ...agent, customEnvVars: { SHARED: 'session' } }),
+			detectAgent: async () => ({ available: true, path: '/desktop/codex' }),
+			getAgentConfig: () => config,
+			getGlobalEnvVars: () => global,
+			hasPluginTools: () => false,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		await run('agent-a', 'hello');
+		expect(spawn).toHaveBeenCalledWith(
+			'codex',
+			'/project',
+			'hello',
+			undefined,
+			expect.objectContaining({
+				agentConfigValues: config,
+				globalEnvVars: global,
+				agentCommand: '/desktop/codex',
+				customEnvVars: { SHARED: 'session' },
+			})
+		);
+	});
+
+	it.each([
+		{ ...agent, toolType: 'opencode' },
+		{ ...agent, sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' } },
+		{ ...agent, toolType: 'claude-code', enableMaestroP: true, maestroPMode: 'interactive' },
+		{ ...agent, toolType: 'claude-code', enableMaestroP: true, maestroPMode: 'dynamic' },
+	])('refuses required plugin tools before spawning an unsupported mode: %j', async (target) => {
+		const spawn = vi.fn();
+		const issueRunToken = vi.fn();
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => target as SessionInfo,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => true,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken,
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		expect(
+			await run('agent-a', 'hello', undefined, undefined, 'user', undefined, undefined, true)
+		).toMatchObject({ success: false, error: 'Authenticated plugin tools unavailable' });
+		expect(spawn).not.toHaveBeenCalled();
+		expect(issueRunToken).not.toHaveBeenCalled();
+	});
+
 	it('returns only receipts tied to its issued proof, independent of final prose', async () => {
 		const identity = new runIdentity.PluginToolRunIdentity();
 		const run = createPluginHeadlessAgentRunner({
@@ -154,6 +257,50 @@ describe('plugin headless agent runner', () => {
 			expect.objectContaining({ querySource: 'auto' })
 		);
 	});
+	it('retains the configured execution options for a Relay conversation', async () => {
+		const configured = {
+			...agent,
+			customArgs: '--configured-mode',
+			customEnvVars: { USER_MODE: 'configured' },
+			additionalDirectories: ['/additional'],
+			customModel: 'configured-model',
+			customEffort: 'high',
+		} as SessionInfo;
+		const spawn = vi.fn(async () => ({
+			success: true,
+			response: 'Release discussion',
+			agentSessionId: 'provider',
+		}));
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => configured,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => false,
+			spawn,
+			prepareSystemPrompt: async () => 'configured context',
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		await run('agent-a', 'How does a Release work?', 'provider', undefined, 'relay');
+		expect(spawn).toHaveBeenCalledWith(
+			'codex',
+			'/project',
+			'How does a Release work?',
+			'provider',
+			expect.objectContaining({
+				customArgs: configured.customArgs,
+				customEnvVars: configured.customEnvVars,
+				additionalDirectories: configured.additionalDirectories,
+				customModel: configured.customModel,
+				customEffort: configured.customEffort,
+				appendSystemPrompt: 'configured context',
+				querySource: 'auto',
+			})
+		);
+		expect(spawn.mock.calls[0][4]).not.toHaveProperty('readOnlyMode');
+	});
+
 	it('reports no successful response when a provider exits without final text', async () => {
 		const onProgress = vi.fn();
 		const run = createPluginHeadlessAgentRunner({

@@ -1218,7 +1218,9 @@ describe('StdoutHandler', () => {
 			expect(proc.provisionalError?.message).toBe('server_error');
 		});
 
-		it('emits the notice once, ahead of the result, when the turn ends on it', () => {
+		// The renderer reads output that arrives after an error as recovery and
+		// deletes the error card, so the result has to land first.
+		it('emits the notice once, after the result, when the turn ends on it', () => {
 			const { handler, sessionId, proc, errorSpy, bufferManager } = claudeContext();
 
 			sendJsonLine(handler, sessionId, connectionLost);
@@ -1237,8 +1239,11 @@ describe('StdoutHandler', () => {
 			);
 			expect(proc.errorEmitted).toBe(true);
 			expect(proc.provisionalError).toBeUndefined();
-			expect(errorSpy.mock.invocationCallOrder[0]).toBeLessThan(
-				bufferManager.emitDataBuffered.mock.invocationCallOrder[0]
+			expect(bufferManager.emitDataBuffered.mock.invocationCallOrder[0]).toBeLessThan(
+				errorSpy.mock.invocationCallOrder[0]
+			);
+			expect(bufferManager.flushDataBuffer.mock.invocationCallOrder[0]).toBeLessThan(
+				errorSpy.mock.invocationCallOrder[0]
 			);
 		});
 
@@ -1303,6 +1308,52 @@ describe('StdoutHandler', () => {
 
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(proc.errorEmitted).toBe(false);
+		});
+
+		// maestro-p's idle watchdog ends a turn with this envelope (exit 3). The
+		// assistant text before it is the turn's last output; emitted after the
+		// error, it read as recovery and erased the error card, so a timed-out
+		// turn looked like it had simply finished.
+		it('emits a failed result envelope after the partial answer it ends', () => {
+			const { handler, sessionId, proc, errorSpy, bufferManager } = claudeContext();
+			proc.streamedText = 'Checking the Wayback Machine for each.';
+
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'error_during_execution',
+				session_id: 'claude-session',
+				is_error: true,
+				error: 'timeout',
+			});
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'Checking the Wayback Machine for each.',
+				proc
+			);
+			expect(bufferManager.emitDataBuffered.mock.invocationCallOrder[0]).toBeLessThan(
+				bufferManager.flushDataBuffer.mock.invocationCallOrder[0]
+			);
+			expect(bufferManager.flushDataBuffer.mock.invocationCallOrder[0]).toBeLessThan(
+				errorSpy.mock.invocationCallOrder[0]
+			);
+			expect(proc.resultEmitted).toBe(true);
+			expect(proc.errorEmitted).toBe(true);
+		});
+
+		it('flushes pending output before a mid-stream error without ending the answer', () => {
+			const { handler, sessionId, proc, errorSpy, bufferManager } = claudeContext();
+			proc.streamedText = 'partial';
+
+			sendJsonLine(handler, sessionId, { type: 'error', message: 'Invalid API key' });
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(bufferManager.flushDataBuffer.mock.invocationCallOrder[0]).toBeLessThan(
+				errorSpy.mock.invocationCallOrder[0]
+			);
+			expect(proc.resultEmitted).toBe(false);
 		});
 
 		it('emits an ordinary error at once and clears any held notice', () => {

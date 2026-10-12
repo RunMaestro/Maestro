@@ -37,6 +37,10 @@ import {
 	isFeedbackAccountUsable,
 	type FeedbackAccountsResponse,
 } from '../../shared/feedbackAccounts';
+import {
+	formatLiveDiagnosisForPrompt,
+	type FeedbackLiveDiagnosis,
+} from '../../shared/feedbackLiveState';
 
 /**
  * Filing uploads screenshots, may build and upload a support package, and runs
@@ -322,6 +326,29 @@ export async function feedbackAccounts(options: AccountsOptions): Promise<void> 
 		console.log(`    key: ${account.key}`);
 	}
 	if (!pick) exitWith(ExitCode.GeneralError);
+}
+
+/**
+ * `feedback diagnose` - the live app state the Feedback chat opens with, read
+ * now: agents that are busy, errored, limit-paused, retrying, or running Auto
+ * Run, plus recent warnings and errors (redacted). Read-only.
+ */
+export async function feedbackDiagnose(options: JsonOption): Promise<void> {
+	let result: { success: boolean; error?: string; diagnosis?: FeedbackLiveDiagnosis };
+	try {
+		result = await withMaestroClient((client) =>
+			client.sendCommand({ type: 'feedback_diagnose' }, 'feedback_diagnose_result')
+		);
+	} catch (error) {
+		failFromError(error, options);
+	}
+	if (!result.success || !result.diagnosis)
+		fail(result.error || 'Reading the live app state failed', options, ExitCode.GeneralError);
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, diagnosis: result.diagnosis }));
+		return;
+	}
+	console.log(formatLiveDiagnosisForPrompt(result.diagnosis));
 }
 
 /** `feedback search <query>` - possible duplicates on RunMaestro/Maestro. */

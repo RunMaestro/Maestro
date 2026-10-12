@@ -124,6 +124,7 @@ import { supportPackage } from './commands/support-package';
 import {
 	feedbackAccounts,
 	feedbackAuth,
+	feedbackDiagnose,
 	feedbackLogin,
 	feedbackSearch,
 	feedbackSubmit,
@@ -2592,20 +2593,38 @@ quickChatCmd
 	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
 
 quickChatCmd
+	.command('font [size]')
+	.description(
+		'Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((size: string | undefined, options) => quickChat('font', { state: size }, options));
+
+quickChatCmd
 	.command('agent <agent-id>')
 	.description('Switch Quick Chat to another agent and start a new chat there')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agent: string, options) => quickChat('agent', { agent }, options));
 
 quickChatCmd
-	.command('reveal')
-	.description('Open the current chat as a tab in the main Maestro window')
+	.command('reveal [message-id]')
+	.description(
+		'Open a tab of the chat in the main Maestro window: the tab a message went to, or the latest'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) => quickChat('reveal', {}, options));
+	.action((messageId: string | undefined, options) => quickChat('reveal', { messageId }, options));
+
+quickChatCmd
+	.command('new-tab [message-id]')
+	.description(
+		'Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
 
 quickChatCmd
 	.command('stop')
-	.description('Stop the reply the agent is writing')
+	.description('Stop the replies in progress and withdraw the messages still queued')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('stop', {}, options));
 
@@ -2841,6 +2860,14 @@ feedback
 	.option('--clear', 'Forget the remembered account and pick automatically again')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackAccounts);
+
+feedback
+	.command('diagnose')
+	.description(
+		'Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackDiagnose);
 
 feedback
 	.command('search <query>')

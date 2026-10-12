@@ -55,6 +55,7 @@ export interface UseAgentErrorListenerDeps {
 	getBatchStateRef: UseAgentListenersDeps['getBatchStateRef'];
 	pauseBatchOnErrorRef: UseAgentListenersDeps['pauseBatchOnErrorRef'];
 	addHistoryEntryRef: UseAgentListenersDeps['addHistoryEntryRef'];
+	batchedUpdater: UseAgentListenersDeps['batchedUpdater'];
 	activeHiddenToolRef: React.RefObject<
 		Map<string, { toolName: string; toolState?: ToolProgressState }>
 	>;
@@ -252,6 +253,10 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			const batchHandlesErrorUi = isBatchError && batchOwnsError;
 
 			if (!batchHandlesErrorUi) {
+				// Main sends a failed turn's last output ahead of its error, but the
+				// renderer still holds that output in the batch. Land it first, or the
+				// error card is appended above the text it ends.
+				deps.batchedUpdater.flushNow();
 				updateSessionWith(actualSessionId, (s) => {
 					// If the error is for a tab the user closed mid-thinking, drop the
 					// orphan entry - there's no tab UI to surface the error on, and the

@@ -11,7 +11,7 @@
  * composer before the first message, then the conversation above it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ArrowUp,
 	Bookmark,
@@ -28,13 +28,16 @@ import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
 	type QuickChatCommand,
 	type QuickChatMessage,
+	type QuickChatRoute,
 	type QuickChatSnapshot,
 } from '../../shared/quickChat';
-import { formatDurationHuman } from '../../shared/duration';
 import { useWindowSettingsSync } from '../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { FontScaleControl } from '../components/ui/FontScaleControl';
+import type { UseFontScaleReturn } from '../hooks/ui/useFontScale';
+import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared/scaleRange';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -44,6 +47,7 @@ import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../compone
 import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
 import { QuickChatAgentPicker } from './QuickChatAgentPicker';
+import { QuickChatRouteLine, QuickChatWorkingLine } from './QuickChatRouteLine';
 
 const COMPOSER_MAX_HEIGHT = 120;
 /** `-webkit-app-region` lets the frameless window be dragged by its header. */
@@ -58,6 +62,15 @@ const QUICK_CHAT_KEYS = {
 	pin: 'p',
 	openTab: 't',
 } as const;
+
+/**
+ * Text zoom for the conversation, like a browser: Cmd+= / Cmd+- step it and
+ * Cmd+0 resets. `+` and `_` are the same keys with Shift, so either hand works.
+ */
+const FONT_ZOOM_KEYS: Record<string, 1 | -1 | 0> = { '=': 1, '+': 1, '-': -1, _: -1, '0': 0 };
+
+/** The conversation's base size (`prose-sm`), which the zoom multiplies. */
+const MESSAGES_BASE_REM = 0.875;
 
 /**
  * The grip the whole window is dragged by. The composer-only shape is all
@@ -79,15 +92,26 @@ function DragHandle({ theme }: { theme: Theme }) {
 	);
 }
 
-function useElapsedSeconds(since: number | null): number {
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		if (since === null) return;
-		setNow(Date.now());
-		const id = setInterval(() => setNow(Date.now()), 1000);
-		return () => clearInterval(id);
-	}, [since]);
-	return since === null ? 0 : Math.max(0, Math.floor((now - since) / 1000));
+/**
+ * Follow a value the main process owns: read it once, then take every change
+ * it announces. The read and the announcements are separate IPC messages with
+ * no ordering between them, so a change announced while the read is in flight
+ * wins: the read's answer may predate it.
+ */
+function followMainValue<T>(
+	read: () => Promise<T>,
+	subscribe: (callback: (value: T) => void) => () => void,
+	apply: (value: T) => void
+): () => void {
+	let announced = false;
+	const off = subscribe((value) => {
+		announced = true;
+		apply(value);
+	});
+	void read().then((value) => {
+		if (!announced) apply(value);
+	});
+	return off;
 }
 
 /** Widest a hover overlay gets before its explanation wraps. */
@@ -170,25 +194,50 @@ function IconButton({
 	);
 }
 
-function MessageView({ message, theme }: { message: QuickChatMessage; theme: Theme }) {
+/** The route of the turn a message belongs to: its own, or the user message above it. */
+function turnRoute(messages: QuickChatMessage[], index: number): QuickChatRoute | undefined {
+	for (let i = index; i >= 0; i--) {
+		if (messages[i].role === 'user') return messages[i].route;
+	}
+	return undefined;
+}
+
+function MessageView({
+	message,
+	theme,
+	onOpenTab,
+	onMoveToNewTab,
+}: {
+	message: QuickChatMessage;
+	theme: Theme;
+	onOpenTab: (messageId: string) => void;
+	onMoveToNewTab: (messageId: string) => void;
+}) {
 	if (message.role === 'user') {
 		return (
-			<div className="flex justify-end">
-				<div
-					className="max-w-[85%] rounded-2xl px-4 py-2 whitespace-pre-wrap break-words select-text"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
-				>
-					{message.text}
+			<div className="flex flex-col gap-1.5">
+				<div className="flex justify-end">
+					<div
+						className="max-w-[85%] rounded-2xl px-4 py-2 whitespace-pre-wrap break-words select-text"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
+					>
+						{message.text}
+					</div>
 				</div>
+				{message.route && (
+					<QuickChatRouteLine
+						route={message.route}
+						theme={theme}
+						onOpenTab={() => onOpenTab(message.id)}
+						onMoveToNewTab={() => onMoveToNewTab(message.id)}
+					/>
+				)}
 			</div>
 		);
 	}
 	if (message.role === 'error') {
 		return (
-			<div
-				className="text-sm whitespace-pre-wrap select-text"
-				style={{ color: theme.colors.error }}
-			>
+			<div className="whitespace-pre-wrap select-text" style={{ color: theme.colors.error }}>
 				{message.text}
 			</div>
 		);
@@ -225,6 +274,7 @@ function QuickChatWindow() {
 	const [error, setError] = useState<string | null>(null);
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [pinned, setPinned] = useState(true);
+	const [fontScaleValue, setFontScaleValue] = useState(FONT_SCALE_DEFAULT);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// This window boots its own renderer and never runs useSettings: load the
@@ -242,13 +292,22 @@ function QuickChatWindow() {
 			}
 			textareaRef.current?.focus();
 		});
-		const offPinned = window.maestro.quickChat.onPinned(setPinned);
+		const offPinned = followMainValue(
+			window.maestro.quickChat.getPinned,
+			window.maestro.quickChat.onPinned,
+			setPinned
+		);
+		const offFontScale = followMainValue(
+			window.maestro.quickChat.getFontScale,
+			window.maestro.quickChat.onFontScale,
+			setFontScaleValue
+		);
 		void window.maestro.quickChat.getSnapshot().then(setSnapshot);
-		void window.maestro.quickChat.getPinned().then(setPinned);
 		return () => {
 			offSnapshot();
 			offFocus();
 			offPinned();
+			offFontScale();
 		};
 	}, []);
 
@@ -267,20 +326,34 @@ function QuickChatWindow() {
 		window.maestro.quickChat.setLayout(expanded ? 'expanded' : 'compact');
 	}, [expanded]);
 
-	const lastMessage = snapshot.messages[snapshot.messages.length - 1];
+	// Replies arrive under their own messages, so any message can be the one
+	// that grew: the key is the whole thread's length and where each one stands.
+	// The text zoom is in it too: growing the text pushes the latest reply down,
+	// and a reader at the bottom should stay there.
+	const threadSize = snapshot.messages.reduce((n, m) => n + m.text.length, 0);
+	const threadStatus = snapshot.messages.map((m) => m.route?.status ?? '').join('');
 	const stickRef = useStickToBottom<HTMLDivElement>(
-		`${snapshot.messages.length}:${lastMessage?.text.length ?? 0}:${snapshot.busy}`
+		`${snapshot.messages.length}:${threadSize}:${threadStatus}:${fontScaleValue}`
 	);
 	useAutosizeTextarea({ textareaRef, value: draft, maxHeight: COMPOSER_MAX_HEIGHT });
-	const elapsed = useElapsedSeconds(snapshot.busySince);
 
+	// Sending does not wait for a reply in progress: each message finds its own
+	// tab, so the next one can go out while the last is still being answered.
 	const send = useCallback(async () => {
 		const text = draft.trim();
-		if (!text || snapshot.busy) return;
+		if (!text) return;
 		setDraft('');
 		const ok = await run({ type: 'send', text });
 		if (!ok) setDraft(text);
-	}, [draft, snapshot.busy, run]);
+	}, [draft, run]);
+	const openMessageTab = useCallback(
+		(messageId: string) => void run({ type: 'reveal', messageId }),
+		[run]
+	);
+	const moveMessageToNewTab = useCallback(
+		(messageId: string) => void run({ type: 'moveToNewTab', messageId }),
+		[run]
+	);
 
 	const hide = useCallback(() => void window.maestro.quickChat.window('hide'), []);
 	const togglePinned = useCallback(() => {
@@ -326,6 +399,28 @@ function QuickChatWindow() {
 		if (snapshot.tabId) void run({ type: 'reveal' });
 	}, [run, snapshot.tabId]);
 	const zoomOpen = useZoomViewerStore((s) => s.request !== null);
+	// The zoom is owned by the main process (so `maestro-cli quick-chat font`
+	// reaches it, and it is saved with the window's other per-device state);
+	// this is the control the shared FontScaleControl draws.
+	const fontScale = useMemo<UseFontScaleReturn>(() => {
+		const change = (request: Parameters<typeof window.maestro.quickChat.setFontScale>[0]) =>
+			void window.maestro.quickChat
+				.setFontScale(request)
+				.then(setFontScaleValue)
+				.catch((err: unknown) =>
+					setError(
+						`Could not change the text size: ${err instanceof Error ? err.message : String(err)}`
+					)
+				);
+		return {
+			fontScale: fontScaleValue,
+			adjustFontScale: (direction) => change({ step: direction }),
+			resetFontScale: () => change({ reset: true }),
+			canDecrease: fontScaleValue > FONT_SCALE_MIN,
+			canIncrease: fontScaleValue < FONT_SCALE_MAX,
+		};
+	}, [fontScaleValue]);
+	const { adjustFontScale, resetFontScale } = fontScale;
 
 	// A diagram opened full screen needs the whole display, not the chat-sized window.
 	useEffect(() => {
@@ -352,7 +447,16 @@ function QuickChatWindow() {
 				else hide();
 				return;
 			}
-			if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+			if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+			// Text zoom first: it takes Shift (`+`), and a held key keeps stepping.
+			const zoom = FONT_ZOOM_KEYS[e.key];
+			if (zoom !== undefined) {
+				e.preventDefault();
+				if (zoom === 0) resetFontScale();
+				else adjustFontScale(zoom);
+				return;
+			}
+			if (e.shiftKey) return;
 			const action = chords[e.key.toLowerCase()];
 			if (!action) return;
 			e.preventDefault();
@@ -372,10 +476,17 @@ function QuickChatWindow() {
 		togglePinned,
 		openInMaestro,
 		zoomOpen,
+		adjustFontScale,
+		resetFontScale,
 	]);
 
+	// The zoom sets the conversation's size once; the bubbles and status lines
+	// inherit it, and the markdown (whose own sizes are all em) follows.
+	const messagesFontSize = `${Math.round(MESSAGES_BASE_REM * fontScale.fontScale * 1000) / 1000}rem`;
 	const proseStyles = useMemo(
-		() => generateTerminalProseStyles(theme, '.quick-chat-messages'),
+		() =>
+			`${generateTerminalProseStyles(theme, '.quick-chat-messages')}
+.quick-chat-messages .prose { font-size: inherit !important; }`,
 		[theme]
 	);
 	const agentName = snapshot.agentName ?? 'your agent';
@@ -445,6 +556,21 @@ function QuickChatWindow() {
 				style={{ color: c.textMain }}
 			/>
 			<div className="flex items-center gap-2">
+				{hasConversation && (
+					<FontScaleControl
+						theme={theme}
+						control={fontScale}
+						variant="ghost"
+						tooltips="overlay"
+						target="text"
+						shortcutHint={{
+							decrease: formatShortcutKeys(['Meta', '-']),
+							increase: formatShortcutKeys(['Meta', '=']),
+							reset: formatShortcutKeys(['Meta', '0']),
+						}}
+						testId="quick-chat-font-scale"
+					/>
+				)}
 				<div className="flex-1" />
 				<IconButton
 					theme={theme}
@@ -480,11 +606,17 @@ function QuickChatWindow() {
 						<PinOff className="w-4 h-4" />
 					)}
 				</IconButton>
-				{snapshot.busy ? (
-					<QuickChatTooltip label="Stop the reply" theme={theme}>
+				{/* Stop sits BESIDE Send while something is in motion, not in its
+				    place: the next message can go out before the last is answered. */}
+				{snapshot.busy && (
+					<QuickChatTooltip
+						label="Stop"
+						hint="Stops replies in progress and withdraws messages still waiting."
+						theme={theme}
+					>
 						<button
 							type="button"
-							aria-label="Stop the reply"
+							aria-label="Stop"
 							onClick={() => void run({ type: 'stop' })}
 							className="w-9 h-9 rounded-full flex items-center justify-center"
 							style={{ backgroundColor: c.textMain, color: c.bgMain }}
@@ -492,20 +624,19 @@ function QuickChatWindow() {
 							<Square className="w-3.5 h-3.5" fill="currentColor" />
 						</button>
 					</QuickChatTooltip>
-				) : (
-					<QuickChatTooltip label="Send" shortcut="Enter" theme={theme}>
-						<button
-							type="button"
-							aria-label="Send"
-							onClick={() => void send()}
-							disabled={!draft.trim()}
-							className="w-9 h-9 rounded-full flex items-center justify-center disabled:opacity-40"
-							style={{ backgroundColor: c.accent, color: c.accentForeground }}
-						>
-							<ArrowUp className="w-4 h-4" />
-						</button>
-					</QuickChatTooltip>
 				)}
+				<QuickChatTooltip label="Send" shortcut="Enter" theme={theme}>
+					<button
+						type="button"
+						aria-label="Send"
+						onClick={() => void send()}
+						disabled={!draft.trim()}
+						className="w-9 h-9 rounded-full flex items-center justify-center disabled:opacity-40"
+						style={{ backgroundColor: c.accent, color: c.accentForeground }}
+					>
+						<ArrowUp className="w-4 h-4" />
+					</button>
+				</QuickChatTooltip>
 			</div>
 		</div>
 	);
@@ -571,16 +702,28 @@ function QuickChatWindow() {
 				<div
 					ref={stickRef}
 					className="quick-chat-messages flex-1 overflow-y-auto px-5 pb-3 flex flex-col gap-4"
-					style={NO_DRAG_REGION}
+					style={{ ...NO_DRAG_REGION, fontSize: messagesFontSize }}
 				>
-					{snapshot.messages.map((message) => (
-						<MessageView key={message.id} message={message} theme={theme} />
-					))}
-					{snapshot.busy && (
-						<div className="text-sm" style={{ color: c.textDim }}>
-							Working for {formatDurationHuman(elapsed * 1000)}
-						</div>
-					)}
+					{snapshot.messages.map((message, index) => {
+						// A reply being written gets its counter at the end of its own
+						// turn: after its last message, before the next one the user sent.
+						const next = snapshot.messages[index + 1];
+						const endsTurn = !next || next.role === 'user';
+						const turn = endsTurn ? turnRoute(snapshot.messages, index) : undefined;
+						return (
+							<Fragment key={message.id}>
+								<MessageView
+									message={message}
+									theme={theme}
+									onOpenTab={openMessageTab}
+									onMoveToNewTab={moveMessageToNewTab}
+								/>
+								{turn?.status === 'running' && (
+									<QuickChatWorkingLine since={turn.since} theme={theme} />
+								)}
+							</Fragment>
+						);
+					})}
 				</div>
 			)}
 			{shownError && (

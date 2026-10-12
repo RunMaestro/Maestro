@@ -44,6 +44,7 @@ import {
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
 import { cleanupTempFiles } from './utils/imageUtils';
+import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -507,6 +508,11 @@ export class ProcessManager extends EventEmitter {
 						label: 'interrupt',
 					}
 				);
+				// The local child of an SSH spawn is only the ssh client; the agent on
+				// the remote host never sees its signals. Ask the host to deliver them:
+				// SIGINT now, SIGTERM if the turn is still running after the grace.
+				this.signalRemote(sessionId, process, 'interrupt');
+				this.scheduleRemoteTerminate(sessionId, process, process.childProcess);
 				return true;
 			}
 			return false;
@@ -589,6 +595,7 @@ export class ProcessManager extends EventEmitter {
 					}
 				);
 			} else if (proc.childProcess) {
+				this.signalRemote(sessionId, proc, 'terminate');
 				stopProcess(
 					{ child: proc.childProcess },
 					{
@@ -613,6 +620,43 @@ export class ProcessManager extends EventEmitter {
 			});
 			return false;
 		}
+	}
+
+	/**
+	 * Deliver a signal to an SSH-hosted agent on its remote host. A no-op for
+	 * local processes and for SSH spawns that recorded no remote pid.
+	 */
+	private signalRemote(sessionId: string, proc: ManagedProcess, mode: RemoteSignalMode): void {
+		if (!proc.sshRemotePidFile || !proc.command || !proc.args) return;
+		signalRemoteAgent(
+			{
+				sshCommand: proc.command,
+				sshArgs: proc.args,
+				pidFile: proc.sshRemotePidFile,
+				sessionId,
+			},
+			mode
+		);
+	}
+
+	/**
+	 * The stop ladder escalates only the local ssh client. When an interrupted
+	 * SSH agent has not exited after the grace period, ask its host for SIGTERM
+	 * too. Test for an observed exit, never `.killed`, which is set as soon as a
+	 * signal is delivered.
+	 */
+	private scheduleRemoteTerminate(
+		sessionId: string,
+		proc: ManagedProcess,
+		child: NonNullable<ManagedProcess['childProcess']>
+	): void {
+		if (!proc.sshRemotePidFile) return;
+		const timer = setTimeout(() => {
+			if (child.exitCode === null && child.signalCode === null) {
+				this.signalRemote(sessionId, proc, 'terminate');
+			}
+		}, INTERACTIVE_STOP_GRACE_MS);
+		child.once('exit', () => clearTimeout(timer));
 	}
 
 	/**

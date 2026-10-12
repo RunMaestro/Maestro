@@ -88,6 +88,7 @@ An earlier build step compiled these templates into `src/generated/prompts.ts`. 
 | -------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `maestro-system-prompt.md` | `maestroSystemPrompt` | Base system prompt injected into all agent sessions. Provides agent name, tool type, conductor profile, and Maestro context. |
 | `tab-naming.md`            | `tabNamingPrompt`     | Prompt for automatic tab naming based on conversation content                                                                |
+| `quick-chat-route.md`      | (loaded by id)        | Quick Chat routing: picks which existing conversation a new message continues, or NEW. Answer is one token, read by code     |
 | `director-notes.md`        | `directorNotesPrompt` | Prompt for Director's Notes (unified history + synopsis generation)                                                          |
 
 <!-- prettier-ignore -->

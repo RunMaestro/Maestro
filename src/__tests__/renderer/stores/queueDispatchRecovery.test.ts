@@ -33,6 +33,9 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
 import {
 	applyQueuedItemDispatch,
+	resetSpawnCollisionsForTest,
+	spawnCollisionCooldownMs,
+	SPAWN_COLLISION_MAX_ATTEMPTS,
 	takeNextRunnableQueueItem,
 } from '../../../renderer/utils/executionQueue';
 import { createMockSession } from '../../helpers/mockSession';
@@ -128,6 +131,7 @@ async function drainOnce(): Promise<QueuedItem | null> {
 
 beforeEach(() => {
 	resetStores(useAgentStore, useSessionStore);
+	resetSpawnCollisionsForTest();
 	vi.clearAllMocks();
 	mockGetAgent.mockResolvedValue(AGENT);
 	mockSpawn.mockResolvedValue({ pid: 1, success: true });
@@ -206,6 +210,43 @@ describe('a queue drain that races a dying process', () => {
 		// Every message is still queued, still in order, still exactly one copy.
 		expect(session().executionQueue.map((i) => i.id)).toEqual(['q1', 'q2', 'q3']);
 		expect(session().aiTabs[0].logs).toHaveLength(0);
+	});
+
+	// 2026-10-12, rc, SSH agent: Stop on a turn whose ssh client exited without
+	// its stdio ever closing left the process entry in place for good. Every
+	// refused dispatch came back runnable, which re-fired the drain, about 14
+	// times a second, and the tab sat on "Thinking... 0m 0s" indefinitely.
+	it('backs off between collisions, then holds the prompt and says why', async () => {
+		setSession({ ...session(), executionQueue: [queued('q1', 'hello')] });
+		mockSpawn.mockRejectedValue(new Error(agentAlreadyRunningMessage(`${SESSION}-ai-${TAB}`)));
+
+		await drainOnce();
+		// The drain poll is told to wait before trying this item again.
+		expect(spawnCollisionCooldownMs('q1')).toBeGreaterThan(0);
+		expect(session().executionQueue[0].paused).toBeFalsy();
+
+		for (let i = 1; i < SPAWN_COLLISION_MAX_ATTEMPTS; i++) await drainOnce();
+
+		const queue = session().executionQueue;
+		expect(queue.map((i) => i.id)).toEqual(['q1']);
+		expect(queue[0].paused).toBe(true);
+		const errors = session().aiTabs[0].logs.filter((l) => l.source === 'error');
+		expect(errors).toHaveLength(1);
+		expect(errors[0].text).toContain('held in the queue');
+		// Held for the user now, so the poll has nothing left to wait out.
+		expect(spawnCollisionCooldownMs('q1')).toBe(0);
+	});
+
+	it('forgets earlier collisions once the item finally sends', async () => {
+		setSession({ ...session(), executionQueue: [queued('q1', 'hello')] });
+		mockSpawn.mockRejectedValueOnce(new Error(agentAlreadyRunningMessage(`${SESSION}-ai-${TAB}`)));
+
+		await drainOnce();
+		expect(spawnCollisionCooldownMs('q1')).toBeGreaterThan(0);
+		await drainOnce();
+
+		expect(spawnCollisionCooldownMs('q1')).toBe(0);
+		expect(session().executionQueue).toHaveLength(0);
 	});
 });
 
