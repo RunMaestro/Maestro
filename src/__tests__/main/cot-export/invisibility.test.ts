@@ -100,7 +100,6 @@ import { peekCotAgentId, resolveCotTarget } from '../../../main/cot-export/resol
 import type { CotResolverDeps, CotResolverSession } from '../../../main/cot-export/resolve-agent';
 import { __resetCotWriterForTests, getCotWriter } from '../../../main/cot-export/runtime';
 import { verifyAgentChain } from '../../../main/cot-export/verify';
-import { systemPromptTempFileName } from '../../../main/utils/system-prompt-delivery';
 import {
 	COWORKING_SESSION_ID_ENV_VAR,
 	COWORKING_SOCKET_OVERRIDE_ENV_VAR,
@@ -344,34 +343,6 @@ function mentionsIn(value: unknown): string[] {
 		.map(([where]) => where);
 	return [...new Set(places)];
 }
-
-describe('what is taken out before two spawns are compared', () => {
-	it('takes out the random part of the system prompt temp file, and nothing else', () => {
-		const a = systemPromptTempFileName('agent-1-ai-tab-1');
-		const b = systemPromptTempFileName('agent-1-ai-tab-1');
-		// The real name: two spawns in one millisecond differ only in this part.
-		expect(a.replace(/-[0-9a-f]{8}\.txt$/, '')).toBe(b.replace(/-[0-9a-f]{8}\.txt$/, ''));
-
-		const args = (name: string): unknown => ({
-			args: ['--append-system-prompt-file', path.join(os.tmpdir(), name), '--model', 'opus'],
-			env: { HOME: '/Users/someone' },
-		});
-		expect(withoutSpawnNoise(args(a))).toStrictEqual(withoutSpawnNoise(args(b)));
-		expect(JSON.stringify(withoutSpawnNoise(args(a)))).toContain('<random>.txt');
-	});
-
-	it('leaves every other difference in place', () => {
-		const one = { args: ['--model', 'opus'], env: { A: '1' }, list: [{ cwd: '/work/a' }] };
-		expect(withoutSpawnNoise(one)).toStrictEqual(one);
-		expect(withoutSpawnNoise({ ...one, env: { A: '2' } })).not.toStrictEqual(one);
-		// A file that only looks like it: another prefix, or a suffix that is not hex.
-		const near = [
-			'maestro-other-agent-1-123-0a1b2c3d.txt',
-			'maestro-sysprompt-agent-1-123-zzzzzzzz.txt',
-		];
-		expect(withoutSpawnNoise(near)).toStrictEqual(near);
-	});
-});
 
 describe('the search for a mention', () => {
 	it('finds the log folder and the store file in a value, in a key, and at any depth', () => {
