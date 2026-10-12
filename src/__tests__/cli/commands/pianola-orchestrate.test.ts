@@ -1075,7 +1075,7 @@ describe('pianola plan revise', () => {
 });
 
 describe.runIf(process.platform === 'win32')('real WSL oracle argument boundary', () => {
-	it.each([
+	it.for([
 		{ mode: 'exec', prefix: ['--exec'] },
 		{ mode: 'short exec', prefix: ['-e'] },
 		{ mode: 'no shell', prefix: ['--shell-type', 'none'] },
