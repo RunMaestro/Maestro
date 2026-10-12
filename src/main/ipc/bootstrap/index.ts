@@ -250,9 +250,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
-		onSessionsPersisted: (added, current, removedIds) => {
+		onSessionsPersisted: async (added, current, removedIds) => {
 			try {
-				deps
+				await deps
 					.getPianolaSupervisor()
 					?.autoWatchNewSessions(
 						added,

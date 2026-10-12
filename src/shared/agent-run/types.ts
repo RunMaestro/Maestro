@@ -41,6 +41,7 @@ export const AGENT_RUN_CHECK_STATUSES = [
 	'running',
 	'passed',
 	'failed',
+	'error',
 	'skipped',
 ] as const;
 

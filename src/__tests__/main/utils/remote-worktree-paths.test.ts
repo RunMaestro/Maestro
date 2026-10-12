@@ -147,10 +147,11 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 				env: fixtureEnv(),
 			});
 			return {
-				// Git for Windows prints drive paths; the remote fixture uses its POSIX shell paths.
+				// Git for Windows prints drive paths; use the fixture's actual POSIX root alias.
 				stdout: (result.stdout ?? '').replace(
-					/^worktree ([A-Za-z]):\//gm,
-					(_match, drive: string) => `worktree /${drive.toLowerCase()}/`
+					/^worktree ([A-Za-z]:\/.*)$/gm,
+					(_match, worktreePath: string) =>
+						`worktree ${shellPath(...path.win32.relative(fixtureRoot, worktreePath).split(path.win32.sep))}`
 				),
 				stderr: result.stderr ?? result.error?.message ?? '',
 				exitCode: result.status ?? result.error?.code ?? 1,

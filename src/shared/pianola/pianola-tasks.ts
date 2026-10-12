@@ -25,6 +25,12 @@ export type PianolaTaskStatus =
 	| 'failed'
 	| 'blocked'
 	| 'skipped';
+export interface PianolaTaskValidation {
+	command: string[];
+	target: string;
+	artifacts?: string[];
+	timeoutSeconds?: number;
+}
 
 /** One unit of work in a plan, with its dependency edges and runtime binding. */
 export interface PianolaTask {
@@ -49,12 +55,23 @@ export interface PianolaTask {
 	runId?: string;
 	/** Count of bounded auto-fix attempts (F8 / ISC-8.8). Escalates when capped. */
 	fixAttempts?: number;
+	/** Transcript length when the current run (dispatch or fix) was sent, so a run that
+	 *  finishes between two polls is still recognised by the reply that follows it. */
+	dispatchedMessageCount?: number;
+	/** Id of the last transcript message captured on the target tab BEFORE the
+	 * current dispatch or fix; `null` when that transcript was empty. Id boundaries
+	 * remain valid when a capped history tail would hide a length offset. */
+	dispatchedMessageId?: string | null;
+	validation?: PianolaTaskValidation;
+	/** Consecutive infrastructure-unknown verdicts for the current completed run. */
+	validationUnknownAttempts?: number;
 }
 
 /** A full plan: an ordered set of tasks forming a DAG. */
 export interface PianolaPlan {
 	id: string;
 	title: string;
+	programId?: string;
 	/** Epoch ms the plan was created. */
 	createdAt: number;
 	tasks: PianolaTask[];
@@ -181,6 +198,48 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 			ok = false;
 		}
 	}
+	if (raw.validation !== undefined) {
+		const v = raw.validation;
+		if (
+			!isRecord(v) ||
+			!isStringArray(v.command) ||
+			!v.command.length ||
+			v.command.some((arg) => !arg) ||
+			typeof v.target !== 'string' ||
+			!v.target.trim() ||
+			(v.artifacts !== undefined && !isStringArray(v.artifacts)) ||
+			(v.timeoutSeconds !== undefined &&
+				(typeof v.timeoutSeconds !== 'number' ||
+					!Number.isFinite(v.timeoutSeconds) ||
+					v.timeoutSeconds <= 0))
+		) {
+			errors.push('Task ' + label + ' has invalid validation (command and target required).');
+			ok = false;
+		}
+	}
+	if (
+		raw.validationUnknownAttempts !== undefined &&
+		(!Number.isInteger(raw.validationUnknownAttempts) ||
+			(raw.validationUnknownAttempts as number) < 0)
+	) {
+		errors.push('Task ' + label + ' has invalid validationUnknownAttempts.');
+		ok = false;
+	}
+	if (
+		raw.fixAttempts !== undefined &&
+		(!Number.isInteger(raw.fixAttempts) || (raw.fixAttempts as number) < 0)
+	) {
+		errors.push('Task ' + label + ' has invalid fixAttempts.');
+		ok = false;
+	}
+	if (
+		raw.dispatchedMessageId !== undefined &&
+		raw.dispatchedMessageId !== null &&
+		typeof raw.dispatchedMessageId !== 'string'
+	) {
+		errors.push('Task ' + label + ' has invalid dispatchedMessageId.');
+		ok = false;
+	}
 
 	if (!ok) return null;
 
@@ -194,6 +253,16 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 	for (const field of OPTIONAL_STRING_FIELDS) {
 		if (typeof raw[field] === 'string') task[field] = raw[field] as string;
 	}
+	if (raw.validation !== undefined)
+		task.validation = raw.validation as unknown as PianolaTaskValidation;
+	if (raw.validationUnknownAttempts !== undefined)
+		task.validationUnknownAttempts = raw.validationUnknownAttempts as number;
+	if (typeof raw.runId === 'string') task.runId = raw.runId;
+	if (Number.isInteger(raw.fixAttempts)) task.fixAttempts = raw.fixAttempts as number;
+	if (Number.isInteger(raw.dispatchedMessageCount))
+		task.dispatchedMessageCount = raw.dispatchedMessageCount as number;
+	if (raw.dispatchedMessageId === null || typeof raw.dispatchedMessageId === 'string')
+		task.dispatchedMessageId = raw.dispatchedMessageId;
 	return task;
 }
 
@@ -217,6 +286,9 @@ export function validatePlan(raw: unknown): { plan: PianolaPlan | null; errors: 
 	}
 	if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) {
 		errors.push('Plan createdAt must be a finite number.');
+	}
+	if (raw.programId !== undefined && (typeof raw.programId !== 'string' || !raw.programId)) {
+		errors.push('Plan programId must be a non-empty string when provided.');
 	}
 	if (!Array.isArray(raw.tasks)) {
 		errors.push('Plan tasks must be an array.');
@@ -257,6 +329,7 @@ export function validatePlan(raw: unknown): { plan: PianolaPlan | null; errors: 
 	const plan: PianolaPlan = {
 		id: raw.id as string,
 		title: raw.title as string,
+		...(raw.programId !== undefined ? { programId: raw.programId as string } : {}),
 		createdAt: raw.createdAt as number,
 		tasks,
 	};
@@ -287,7 +360,18 @@ export function markTaskStatus(
 	taskId: string,
 	status: PianolaTaskStatus,
 	patch?: Partial<
-		Pick<PianolaTask, 'tabId' | 'agentId' | 'agentType' | 'error' | 'runId' | 'fixAttempts'>
+		Pick<
+			PianolaTask,
+			| 'tabId'
+			| 'agentId'
+			| 'agentType'
+			| 'error'
+			| 'runId'
+			| 'fixAttempts'
+			| 'dispatchedMessageCount'
+			| 'dispatchedMessageId'
+			| 'validationUnknownAttempts'
+		>
 	>
 ): PianolaPlan {
 	const tasks = plan.tasks.map((task) => {
@@ -300,10 +384,57 @@ export function markTaskStatus(
 			if (patch.error !== undefined) next.error = patch.error;
 			if (patch.runId !== undefined) next.runId = patch.runId;
 			if (patch.fixAttempts !== undefined) next.fixAttempts = patch.fixAttempts;
+			if (patch.validationUnknownAttempts !== undefined)
+				next.validationUnknownAttempts = patch.validationUnknownAttempts;
+			if (patch.dispatchedMessageCount !== undefined)
+				next.dispatchedMessageCount = patch.dispatchedMessageCount;
+			if (patch.dispatchedMessageId !== undefined)
+				next.dispatchedMessageId = patch.dispatchedMessageId;
 		}
 		return next;
 	});
 	return { ...plan, tasks };
+}
+
+/** Requeue reviewed work while preserving its oracle, role agent, and completed dependencies. */
+export function revisePlanTask(plan: PianolaPlan, taskId: string, prompt: string): PianolaPlan {
+	if (!prompt.trim()) throw new Error('A revised task requires a non-empty prompt.');
+	const task = plan.tasks.find((entry) => entry.id === taskId);
+	if (!task) throw new Error(`No task with id "${taskId}" in plan "${plan.id}".`);
+	if (task.status !== 'needs_review' && task.status !== 'failed')
+		throw new Error(`Task "${taskId}" must be awaiting review or failed before revision.`);
+	const revised: PianolaTask = { ...task, prompt, status: 'pending' };
+	delete revised.tabId;
+	delete revised.runId;
+	delete revised.error;
+	delete revised.fixAttempts;
+	delete revised.validationUnknownAttempts;
+	delete revised.dispatchedMessageCount;
+	delete revised.dispatchedMessageId;
+	const byId = new Map(plan.tasks.map((entry) => [entry.id, entry]));
+	byId.set(taskId, revised);
+	const reopened = new Set([taskId]);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const original of plan.tasks) {
+			const entry = byId.get(original.id)!;
+			if (entry.status !== 'blocked' || !entry.dependsOn.some((id) => reopened.has(id))) continue;
+			if (
+				entry.dependsOn.some((id) => {
+					const status = byId.get(id)?.status;
+					return status === 'failed' || status === 'skipped' || status === 'blocked';
+				})
+			)
+				continue;
+			const next: PianolaTask = { ...entry, status: 'pending' };
+			delete next.error;
+			byId.set(entry.id, next);
+			reopened.add(entry.id);
+			changed = true;
+		}
+	}
+	return { ...plan, tasks: plan.tasks.map((entry) => byId.get(entry.id)!) };
 }
 
 /**

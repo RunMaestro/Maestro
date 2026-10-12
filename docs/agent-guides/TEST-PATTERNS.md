@@ -36,6 +36,12 @@ npm run test          # Unit tests (excludes integration/e2e/performance)
 npm run test:watch    # Watch mode
 ```
 
+For parameterized tests that need `TestContext` (for example, runtime `skip()` when a prerequisite is unavailable), use `it.for(cases)(name, (row, context) => ...)`. `it.each` supplies row arguments, not a separate test-context argument.
+
+For real POSIX-shell fixtures under Git for Windows, translate Git drive paths relative to the native fixture root and join them to the shell's `pwd -P` root. Do not assume `/c/...`: temporary directories can appear under `/tmp`.
+
+For spawn-parity checks, freeze only `Date` across compared launches; generated temp-file timestamps are not stable across real-clock calls. Compare observable spawn payloads, not incidental filename formats.
+
 ### maestro-p Live Suite
 
 The maestro-p unit tests (`src/__tests__/maestro-p/`) mock the PTY. The behavior that breaks in the field (envelopes, exit codes, slash commands, trust dialogs, `--continue`, process cleanup) only shows against a real `claude` TUI, so `scripts/maestro-p-suite.mjs` runs the binary end to end. Each case runs a real turn on the account it runs as. Run it after any change to `src/maestro-p/`, and add a case when you fix a bug only a live run can see.

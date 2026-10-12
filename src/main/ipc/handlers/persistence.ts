@@ -193,7 +193,7 @@ export interface PersistenceHandlerDependencies {
 		added: StoredSession[],
 		current: StoredSession[],
 		removedIds: string[]
-	) => void;
+	) => void | Promise<void>;
 }
 
 /**
@@ -710,7 +710,7 @@ export function registerPersistenceHandlers(
 			// left, so an agent created or closed in one of them stops being
 			// invisible to - and resurrectable by - the rest.
 			const removedIds = removeIds.filter((id) => previousMap.has(id));
-			onSessionsPersisted?.(
+			await onSessionsPersisted?.(
 				merged.filter((s) => !previousMap.has(s.id)),
 				merged,
 				removedIds
@@ -834,7 +834,7 @@ export function registerPersistenceHandlers(
 			}
 
 			// Tell the other clients about agents this bootstrap flush introduced.
-			onSessionsPersisted?.(
+			await onSessionsPersisted?.(
 				sessions.filter((s) => !previousSessionMap.has(s.id)),
 				sessions,
 				[]

@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { deriveDashboard } from '../../../../renderer/components/PianolaDashboard/usePianolaDashboardData';
 import type { Session, SessionState } from '../../../../renderer/types';
 import type { PianolaDecisionRecord } from '../../../../shared/pianola/storage';
+import type { PianolaProgram } from '../../../../shared/pianola/pianola-programs';
 
 function session(overrides: Partial<Session> & { id: string; state: SessionState }): Session {
 	return {
@@ -186,5 +187,72 @@ describe('deriveDashboard', () => {
 		const { activity } = deriveDashboard([], decisions);
 		expect(activity[0].sessionId).toBeUndefined();
 		expect(activity[0].agentName).toContain('ghost'.slice(0, 6));
+	});
+
+	describe('program-loop records', () => {
+		const programs = [
+			{ id: 'alpha', title: 'Alpha App', root: '/repos/alpha' },
+			{ id: 'beta', title: 'Beta App', root: '/repos/beta' },
+		] as PianolaProgram[];
+		const loopTick = (reason: string, projectPath?: string): PianolaDecisionRecord =>
+			decision('lead', '', {
+				...(projectPath ? { projectPath } : {}),
+				classification: {
+					kind: 'none',
+					risk: 'low',
+					topic: '',
+					confidence: 'high',
+					evidence: { messageId: null, reason: 'program loop', structured: false },
+				},
+				decision: { action: 'ignore', matchedRuleId: null, reason },
+			});
+
+		it('names the program from projectPath, else the id in the reason, and keeps the action', () => {
+			const { activity } = deriveDashboard(
+				[],
+				[
+					loopTick('program-loop: alpha woke lead (idle)', '/repos/alpha'),
+					loopTick('program-loop: beta no-op (busy lead)'),
+					loopTick('program-loop: gamma woke lead (plan finished)'),
+				],
+				programs
+			);
+			expect(activity.map((r) => r.loop)).toEqual([
+				{ programTitle: 'gamma', action: 'woke lead (plan finished)' },
+				{ programTitle: 'Beta App', action: 'no-op (busy lead)' },
+				{ programTitle: 'Alpha App', action: 'woke lead (idle)' },
+			]);
+		});
+
+		it('collapses a run of the same loop action for one program to its newest line', () => {
+			const { activity } = deriveDashboard(
+				[],
+				[
+					loopTick('program-loop: alpha no-op (busy lead)'),
+					loopTick('program-loop: alpha no-op (busy lead)'),
+					loopTick('program-loop: alpha woke lead (idle)'),
+					loopTick('program-loop: beta no-op (busy lead)'),
+					loopTick('program-loop: alpha no-op (busy lead)'),
+				],
+				programs
+			);
+			expect(activity.map((r) => `${r.loop?.programTitle}: ${r.loop?.action}`)).toEqual([
+				'Alpha App: no-op (busy lead)',
+				'Beta App: no-op (busy lead)',
+				'Alpha App: woke lead (idle)',
+				'Alpha App: no-op (busy lead)',
+			]);
+		});
+
+		it("never lets a loop tick stand in for the lead agent's own latest work", () => {
+			const sessions = [session({ id: 'lead', state: 'idle' })];
+			const { recentlyDone, activity } = deriveDashboard(
+				sessions,
+				[loopTick('program-loop: alpha no-op (busy lead)')],
+				programs
+			);
+			expect(recentlyDone).toHaveLength(0);
+			expect(activity).toHaveLength(1);
+		});
 	});
 });

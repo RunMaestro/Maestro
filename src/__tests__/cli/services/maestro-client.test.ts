@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 
+const mockWsConstructor = vi.fn();
 // Track WebSocket instances created
 let mockWsInstance: EventEmitter & {
 	close: ReturnType<typeof vi.fn>;
@@ -28,8 +29,14 @@ vi.mock('ws', async () => {
 		send = vi.fn();
 		readyState = WS_OPEN;
 		static OPEN = WS_OPEN;
-		constructor() {
+		constructor(url: string, options?: unknown) {
 			super();
+			mockWsConstructor(url, options);
+			try {
+				new URL(url);
+			} catch {
+				throw new SyntaxError(`Invalid URL: ${url}`);
+			}
 			// eslint-disable-next-line @typescript-eslint/no-use-before-define
 			mockWsInstance = this as unknown as typeof mockWsInstance;
 		}
@@ -59,10 +66,12 @@ describe('MaestroClient', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+		vi.stubEnv('MAESTRO_CLI_HOST', undefined);
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.unstubAllEnvs();
 	});
 
 	describe('connect()', () => {
@@ -106,6 +115,87 @@ describe('MaestroClient', () => {
 			// Verify connection was established (mockWsInstance is set)
 			expect(mockWsInstance).toBeDefined();
 		});
+
+		it.each([
+			['maestro.local', 'maestro.local:3000'],
+			['192.0.2.1', '192.0.2.1:3000'],
+			['maestro.local:4444', 'maestro.local:4444'],
+			['maestro.local:80', 'maestro.local:80'],
+			['[::1]', '[::1]:3000'],
+			['::1', '[::1]:3000'],
+		])('uses remote host %s and skips only its local PID probe', async (host, authority) => {
+			vi.stubEnv('MAESTRO_CLI_HOST', host);
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(false);
+			const client = new MaestroClient();
+			const promise = client.connect();
+			mockWsInstance.emit('open');
+			await promise;
+			expect(mockWsConstructor.mock.calls[0][0]).toBe(`ws://${authority}/test-token/ws`);
+			expect(isCliServerRunning).not.toHaveBeenCalled();
+			client.disconnect();
+		});
+
+		it.each([
+			'bad host',
+			'user:pass@host',
+			'host/path',
+			'host?query',
+			'host#fragment',
+			'ws://host',
+			'host:99999',
+			'host\\path',
+			'h!ost',
+			'-host',
+			'host:',
+			'[::1]:',
+		])('rejects invalid host %s without exposing credentials', async (host) => {
+			vi.stubEnv('MAESTRO_CLI_HOST', host);
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'PRIVATE_TOKEN',
+				cliSecret: 'PRIVATE_SECRET',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			const promise = new MaestroClient().connect().catch((error: Error) => error);
+			if (mockWsConstructor.mock.calls.length) mockWsInstance.emit('open');
+			const error = await promise;
+			expect(error).toBeInstanceOf(Error);
+			expect((error as Error).message).toBe(
+				'Invalid MAESTRO_CLI_HOST: expected a hostname or IP address, optionally with a port'
+			);
+			expect(String(error)).not.toContain('PRIVATE_TOKEN');
+			expect(String(error)).not.toContain('PRIVATE_SECRET');
+			expect(mockWsConstructor).not.toHaveBeenCalled();
+		});
+
+		it.each([undefined, '', '   '])(
+			'keeps the original loopback URL for unset or empty host %s',
+			async (host) => {
+				vi.stubEnv('MAESTRO_CLI_HOST', host);
+				vi.mocked(readCliServerInfo).mockReturnValue({
+					port: 3000,
+					token: 'test-token',
+					cliSecret: 'test-secret',
+					pid: 12345,
+					startedAt: Date.now(),
+				});
+				vi.mocked(isCliServerRunning).mockReturnValue(true);
+				const client = new MaestroClient();
+				const promise = client.connect();
+				mockWsInstance.emit('open');
+				await promise;
+				expect(mockWsConstructor.mock.calls[0][0]).toBe('ws://127.0.0.1:3000/test-token/ws');
+				expect(isCliServerRunning).toHaveBeenCalledOnce();
+				client.disconnect();
+			}
+		);
 
 		it('should reject on WebSocket error', async () => {
 			vi.mocked(readCliServerInfo).mockReturnValue({

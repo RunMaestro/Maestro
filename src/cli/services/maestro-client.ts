@@ -2,6 +2,7 @@
 // Uses the discovery file from cli-server-discovery to find the server.
 
 import WebSocket from 'ws';
+import { isIP } from 'net';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
 import { CLI_SECRET_HEADER } from '../../shared/webLogin';
 import { readSessions, resolveAgentId } from './storage';
@@ -65,14 +66,38 @@ export class MaestroClient {
 			throw new Error('Maestro desktop app is not running');
 		}
 
-		if (!isCliServerRunning()) {
+		const remoteHost = process.env.MAESTRO_CLI_HOST?.trim();
+		// The discovery PID belongs to the desktop host, not an SSH remote.
+		if (!remoteHost && !isCliServerRunning()) {
 			throw new Error('Maestro discovery file is stale (app may have crashed)');
 		}
 
-		// Use 127.0.0.1 instead of `localhost` - Node 18's default DNS resolution
-		// resolves `localhost` to IPv6 (::1) first, but the desktop app binds to
-		// 0.0.0.0 (IPv4 only), so `localhost` yields ECONNREFUSED on ::1.
-		const url = `ws://127.0.0.1:${info.port}/${info.token}/ws`;
+		// Validate before adding the token: ws includes invalid URLs in its errors.
+		let host = remoteHost || '127.0.0.1';
+		if (remoteHost) {
+			try {
+				if (/[\s/@?#\\%]/.test(host)) throw new Error('Not a bare host');
+				if (isIP(host) === 6) host = `[${host}]`;
+				const parsed = new URL(`ws://${host}`);
+				const hostname = parsed.hostname;
+				const isIpv6 = hostname.startsWith('[') && isIP(hostname.slice(1, -1)) === 6;
+				const isHostname =
+					/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.?$/i.test(
+						hostname
+					);
+				if ((!isIpv6 && !isHostname) || parsed.pathname !== '/' || host.endsWith(':')) {
+					throw new Error('Not a bare host');
+				}
+			} catch {
+				throw new Error(
+					'Invalid MAESTRO_CLI_HOST: expected a hostname or IP address, optionally with a port'
+				);
+			}
+		}
+		// Keep the original IPv4 loopback URL when no override is configured.
+		const hasPort = host.startsWith('[') ? host.includes(']:') : host.includes(':');
+		const authority = hasPort ? host : `${host}:${info.port}`;
+		const url = `ws://${authority}/${info.token}/ws`;
 
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;

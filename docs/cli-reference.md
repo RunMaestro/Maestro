@@ -1374,7 +1374,7 @@ Test an SSH remote connection and report what the remote answered
 | Option                  | Description                                          | Default |
 | ----------------------- | ---------------------------------------------------- | ------- |
 | `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
-| `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
+| `--timeout <seconds>`   | Give up after this many seconds (default: 60)        | -       |
 | `--json`                | Output as JSON (for scripting)                       | -       |
 
 `test-ssh-remote` uses the same connection options as agent spawning and prints the remote hostname, so tunnel and `ProxyCommand` errors can be caught during setup. It also works while the desktop is closed.
@@ -1828,6 +1828,81 @@ Show recent Pianola decisions from the audit log
 | `--limit <n>` | Maximum number of records to show (default 20) | -       |
 | `--json`      | Output as JSON (for scripting)                 | -       |
 
+## `maestro-cli pianola program`
+
+Manage product programs
+
+## `maestro-cli pianola program apply`
+
+| Option          | Description                   | Default |
+| --------------- | ----------------------------- | ------- |
+| `--file <path>` | YAML or JSON program manifest | -       |
+| `--json`        | Output as JSON                | -       |
+
+## `maestro-cli pianola program list`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program show <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program pause <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola program resume <id>`
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli pianola escalate`
+
+| Option                      | Description | Default |
+| --------------------------- | ----------- | ------- |
+| `--title <text>`            | -           | -       |
+| `--detail <text>`           | -           | -       |
+| `--program <id>`            | -           | -       |
+| `--agent <id>`              | -           | -       |
+| `--tab <id>`                | -           | -       |
+| `--severity <level>`        | -           | -       |
+| `--requested-action <text>` | -           | -       |
+| `--distinct`                | -           | -       |
+| `--json`                    | -           | -       |
+
+## `maestro-cli pianola needs-me`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
+
+## `maestro-cli pianola resolve <askId>`
+
+| Option            | Description | Default |
+| ----------------- | ----------- | ------- |
+| `--option <text>` | -           | -       |
+| `--note <text>`   | -           | -       |
+| `--json`          | -           | -       |
+
+## `maestro-cli pianola dismiss <askId>`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
+
+## `maestro-cli pianola brief`
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | -           | -       |
+
 ## `maestro-cli pianola plan`
 
 Author and inspect Pianola task plans (DAGs)
@@ -1868,6 +1943,22 @@ Run a saved plan to completion, dispatching tasks as their dependencies finish
 | `--once`               | Run a single iteration instead of looping | -       |
 | `--json`               | Output as JSON (for scripting)            | -       |
 
+## `maestro-cli pianola validate <planId> <taskId>`
+
+Run the task validation oracle in the sandbox and append its Agent Run check
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola program-loop <programId>`
+
+| Option                 | Description                    | Default |
+| ---------------------- | ------------------------------ | ------- |
+| `--interval <seconds>` | Polling interval (default 120) | -       |
+| `--once`               | Perform one tick and exit      | -       |
+| `--json`               | Output as JSON                 | -       |
+
 ## `maestro-cli pianola supervise`
 
 Register desktop-supervised watchers and orchestrations (survive crashes/restarts)
@@ -1891,6 +1982,13 @@ Register a supervised plan orchestration the desktop keeps alive
 | `--concurrency <n>`    | Max tasks running at once (default 3)   | -       |
 | `--interval <seconds>` | Polling interval in seconds (default 5) | -       |
 | `--json`               | Output as JSON (for scripting)          | -       |
+
+## `maestro-cli pianola supervise program <programId>`
+
+| Option                 | Description                    | Default |
+| ---------------------- | ------------------------------ | ------- |
+| `--interval <seconds>` | Polling interval (default 120) | -       |
+| `--json`               | Output as JSON                 | -       |
 
 ## `maestro-cli pianola supervise list`
 

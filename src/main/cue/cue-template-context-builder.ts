@@ -12,6 +12,22 @@ import type { CueEventType } from '../../shared/cue/contracts';
 import type { TemplateContext } from '../../shared/templateVariables';
 import { sanitizeVarName } from '../../shared/cue-pipeline-types';
 import { formatNewCommentsForTemplate, type GitHubComment } from './cue-github-poller';
+import { remoteVisiblePath, type HostMountedRemote } from '../../shared/hostVisibleProjectRoot';
+
+/** Keep host I/O payloads separate from paths delivered to the SSH executor. */
+export function projectCueEventPaths(event: CueEvent, remote: HostMountedRemote): CueEvent {
+	if (!remote.hostMountRoot || (event.type !== 'task.pending' && event.type !== 'file.changed')) {
+		return event;
+	}
+	return {
+		...event,
+		payload: {
+			...event.payload,
+			path: remoteVisiblePath(String(event.payload.path ?? ''), remote),
+			directory: remoteVisiblePath(String(event.payload.directory ?? ''), remote),
+		},
+	};
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
