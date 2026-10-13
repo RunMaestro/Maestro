@@ -78,6 +78,8 @@ import {
 // Group chat router imports
 import {
 	routeUserMessage,
+	abortActiveWorkflowRun,
+	announceToChat,
 	clearPendingParticipants,
 	routeAgentResponse,
 	markParticipantResponded,
@@ -94,6 +96,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
+import type { GroupChatWorkflowRun } from '../../../shared/group-chat-workflow-types';
+import {
+	abortWorkflowRun,
+	clearWorkflowRun,
+	cleanupWorkflowRunArtifacts,
+	getWorkflowRun,
+	setWorkflowRunChangedEmitter,
+} from '../../group-chat/workflow-run-registry';
 
 const LOG_CONTEXT = '[GroupChat]';
 
@@ -138,6 +148,7 @@ export const groupChatEmitters: {
 	emitModeratorSessionIdChanged?: (groupChatId: string, sessionId: string) => void;
 	emitParticipantLiveOutput?: (groupChatId: string, participantName: string, chunk: string) => void;
 	emitAutoRunTriggered?: (groupChatId: string, participantName: string, filename?: string) => void;
+	emitWorkflowRunChanged?: (groupChatId: string, run: GroupChatWorkflowRun | null) => void;
 	/** Tells the renderer to force-complete the batch run for a participant (clears stuck AUTO badge). */
 	emitAutoRunBatchComplete?: (groupChatId: string, participantName: string) => void;
 } = {};
@@ -266,6 +277,36 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		deps;
 	const safeSend = createSafeSend(getMainWindow);
 
+	const routeMessageToModerator = async (
+		id: string,
+		message: string,
+		images?: string[],
+		readOnly?: boolean
+	): Promise<void> => {
+		assertGroupChatProviderProcessesEnabled();
+		const processManager = getProcessManager();
+		const agentDetector = getAgentDetector();
+
+		// A moderator batch process exits after each turn, so both typed messages
+		// and workflow-strip actions must revive it through this same path.
+		if (!isModeratorActive(id) && processManager) {
+			const chat = await loadGroupChat(id);
+			if (!chat) {
+				throw new Error(`Group chat not found: ${id}`);
+			}
+			await spawnModerator(chat, processManager);
+		}
+
+		await routeUserMessage(
+			id,
+			message,
+			processManager ?? undefined,
+			agentDetector ?? undefined,
+			readOnly,
+			images
+		);
+	};
+
 	// ========== Storage Handlers ==========
 
 	// Create a new group chat (also initializes the moderator so it's ready immediately)
@@ -349,6 +390,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			await killModerator(id, processManager ?? undefined);
 			await clearAllParticipantSessions(id, processManager ?? undefined);
 			clearPendingParticipants(id);
+			await clearWorkflowRun(id);
 
 			// Delete the group chat data
 			await deleteGroupChat(id);
@@ -370,6 +412,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					const processManager = getProcessManager();
 					await killModerator(id, processManager ?? undefined);
 					await clearAllParticipantSessions(id, processManager ?? undefined);
+					await clearWorkflowRun(id);
 				}
 
 				const updated = await updateGroupChat(id, { archived });
@@ -540,6 +583,40 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	);
 
 	// ========== Moderator Handlers ==========
+
+	// Return the active or most recently completed workflow run for this chat.
+	ipcMain.handle(
+		'groupChat:getWorkflowRun',
+		withIpcErrorLogging(
+			handlerOpts('getWorkflowRun'),
+			async (id: string): Promise<GroupChatWorkflowRun | null> => getWorkflowRun(id) ?? null
+		)
+	);
+
+	// A button click is deliberately routed as the same "go" message handled by
+	// the composer, keeping approval, announcements, and stage startup unified.
+	ipcMain.handle(
+		'groupChat:approveWorkflowPlan',
+		withIpcErrorLogging(handlerOpts('approveWorkflowPlan'), async (id: string): Promise<void> => {
+			await routeMessageToModerator(id, 'go');
+		})
+	);
+
+	ipcMain.handle(
+		'groupChat:cancelWorkflowRun',
+		withIpcErrorLogging(
+			handlerOpts('cancelWorkflowRun'),
+			async (id: string): Promise<GroupChatWorkflowRun | null> => {
+				const abortedRun = abortWorkflowRun(id, 'user-cancelled');
+				clearPendingParticipants(id);
+				if (abortedRun) {
+					await cleanupWorkflowRunArtifacts(id, abortedRun);
+				}
+				settleGroupChatToIdle(id);
+				return abortedRun ?? null;
+			}
+		)
+	);
 
 	// Start the moderator for a group chat
 	ipcMain.handle(
@@ -716,6 +793,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(handlerOpts('stopModerator'), async (id: string): Promise<void> => {
 			const processManager = getProcessManager();
 			await killModerator(id, processManager ?? undefined);
+			await abortActiveWorkflowRun(id, 'moderator-stopped');
 			logger.info(`Stopped moderator for group chat: ${id}`, LOG_CONTEXT);
 		})
 	);
@@ -730,11 +808,12 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			// Kill moderator and all participant sessions
 			await killModerator(id, processManager ?? undefined);
 			await clearAllParticipantSessions(id, processManager ?? undefined);
+			const abortedRun = await abortActiveWorkflowRun(id, 'moderator-stopped');
 
 			// Clear pending participant tracking so next round starts clean.
 			// Without this, a subsequent user message would inherit the old pending Set
 			// and trigger synthesis prematurely when those (now-dead) processes "respond".
-			clearPendingParticipants(id);
+			if (!abortedRun) clearPendingParticipants(id);
 
 			// Load participants to emit idle states for each
 			const chat = await loadGroupChat(id);
@@ -744,13 +823,15 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				}
 			}
 
-			// Emit idle state for the group chat
-			// D8: Stop All holds the queue. Nobody presses it expecting the room to
+			// Stop All holds the queue. Nobody presses it expecting the room to
 			// start again, and the send path auto-restarts a moderator that is not
 			// running - so without this the next queued item respawns what was just
 			// killed.
 			await pauseQueueFor(id);
-			groupChatEmitters.emitStateChange?.(id, 'idle');
+
+			// Emit idle state for the group chat when the workflow abort path did not
+			// already reconcile its lifecycle state.
+			if (!abortedRun) settleGroupChatToIdle(id);
 
 			logger.info(`Stopped all activity in group chat: ${id}`, LOG_CONTEXT);
 		})
@@ -907,6 +988,25 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				if (removal) {
 					if (removal.removed) {
 						groupChatEmitters.emitParticipantsChanged?.(id, removal.chat.participants);
+						const run = getWorkflowRun(id);
+						if (run?.status === 'running') {
+							const affectedStages = run.plan.stages
+								.slice(run.currentStageIndex + 1)
+								.filter(
+									(stage) =>
+										stage.agents.some((agent) => mentionMatches(agent, name)) ||
+										(stage.autoRun?.participantName !== undefined &&
+											mentionMatches(stage.autoRun.participantName, name))
+								)
+								.map((stage) => stage.name);
+							if (affectedStages.length > 0) {
+								await announceToChat(
+									id,
+									removal.chat.logPath,
+									`Warning: ${name} was removed but is assigned to later workflow stages: ${affectedStages.join(', ')}. The workflow will continue so the moderator can redirect those stages.`
+								);
+							}
+						}
 					}
 					logger.info(
 						removal.removed
@@ -1233,6 +1333,16 @@ Respond with ONLY the summary text, no additional commentary.`;
 		safeSend('groupChat:stateChange', groupChatId, state);
 		onModeratorStateChanged(groupChatId, state === 'idle');
 	};
+
+	groupChatEmitters.emitWorkflowRunChanged = (
+		groupChatId: string,
+		run: GroupChatWorkflowRun | null
+	): void => {
+		safeSend('groupChat:workflowRunChanged', groupChatId, run);
+	};
+	setWorkflowRunChangedEmitter((groupChatId, run) => {
+		groupChatEmitters.emitWorkflowRunChanged?.(groupChatId, run);
+	});
 
 	/**
 	 * Emit a participants changed event to the renderer.

@@ -83,6 +83,7 @@ import { tunnelManager } from '../../tunnel-manager';
 import { captureException } from '../../utils/sentry';
 import { logger } from '../../utils/logger';
 import { MAX_ENTRIES_PER_SESSION, resolveHistoryEntryLimit } from '../../../shared/history';
+import { sweepWorkflowRunDirs } from '../../group-chat/workflow-artifacts';
 import {
 	setGetSessionsCallback,
 	setGetCustomEnvVarsCallback,
@@ -306,6 +307,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		getCustomEnvVars: deps.getCustomEnvVarsForAgent,
 		getAgentConfig: deps.getAgentConfigForAgent,
+	});
+	void sweepWorkflowRunDirs().catch((error) => {
+		logger.warn('Failed to sweep orphaned workflow run directories', 'Startup', { error });
 	});
 
 	// Register Debug Package handlers

@@ -1750,6 +1750,7 @@ export function useBatchRunner({
 					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
 					kind: 'spec-driven',
+					result: finalDetails,
 				});
 			}
 

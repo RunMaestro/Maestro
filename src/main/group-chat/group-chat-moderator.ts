@@ -99,6 +99,22 @@ export function getModeratorSystemPrompt(): string {
 }
 
 /**
+ * Gets the workflow planning prompt for the moderator.
+ * Loaded from src/prompts/group-chat-workflow-planning.md
+ */
+export function getWorkflowPlanningPrompt(): string {
+	return getPrompt('group-chat-workflow-planning');
+}
+
+/**
+ * Gets the workflow stage execution prompt for the moderator.
+ * Loaded from src/prompts/group-chat-workflow-stage.md
+ */
+export function getWorkflowStagePrompt(): string {
+	return getPrompt('group-chat-workflow-stage');
+}
+
+/**
  * Gets the synthesis prompt for the moderator when reviewing agent responses.
  * The moderator decides whether to continue with agents or return to the user.
  * Loaded from src/prompts/group-chat-moderator-synthesis.md

@@ -66,6 +66,7 @@ describe('Exit Listener', () => {
 				respawnParticipantWithRecovery: vi.fn().mockResolvedValue(undefined),
 				clearActiveParticipantTaskSession: vi.fn(),
 				clearModeratorResponseTimeout: vi.fn(),
+				failActiveWorkflowStage: vi.fn().mockResolvedValue(undefined),
 			},
 			groupChatStorage: {
 				loadGroupChat: vi.fn().mockResolvedValue(createMockGroupChat()),
@@ -385,6 +386,25 @@ describe('Exit Listener', () => {
 
 			expect(mockDeps.groupChatRouter.routeAgentResponse).not.toHaveBeenCalled();
 		});
+
+		it('fails an active workflow instead of routing a participant error exit', async () => {
+			(
+				mockDeps.groupChatRouter.failActiveWorkflowStage as ReturnType<typeof vi.fn>
+			).mockResolvedValue({ status: 'aborted' });
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('group-chat-test-chat-123-participant-TestAgent-abc123', 1);
+
+			await vi.waitFor(() => {
+				expect(mockDeps.groupChatRouter.failActiveWorkflowStage).toHaveBeenCalledWith(
+					'test-chat-123',
+					'Participant @TestAgent process exited with code 1.'
+				);
+			});
+			expect(mockDeps.groupChatRouter.routeAgentResponse).not.toHaveBeenCalled();
+			expect(mockDeps.groupChatRouter.markParticipantResponded).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Session Recovery', () => {
@@ -452,6 +472,28 @@ describe('Exit Listener', () => {
 
 			// When recovery succeeds, markParticipantResponded should NOT be called
 			// because the recovery spawn will handle that
+			expect(mockDeps.groupChatRouter.markParticipantResponded).not.toHaveBeenCalled();
+			expect(mockDeps.groupChatRouter.failActiveWorkflowStage).not.toHaveBeenCalled();
+		});
+
+		it('fails an active workflow only after recovery respawn gives up', async () => {
+			mockDeps.groupChatRouter.respawnParticipantWithRecovery = vi
+				.fn()
+				.mockRejectedValue(new Error('Recovery failed'));
+			(
+				mockDeps.groupChatRouter.failActiveWorkflowStage as ReturnType<typeof vi.fn>
+			).mockResolvedValue({ status: 'aborted' });
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('group-chat-test-chat-123-participant-TestAgent-abc123', 1);
+
+			await vi.waitFor(() => {
+				expect(mockDeps.groupChatRouter.failActiveWorkflowStage).toHaveBeenCalledWith(
+					'test-chat-123',
+					expect.stringContaining('could not be recovered')
+				);
+			});
 			expect(mockDeps.groupChatRouter.markParticipantResponded).not.toHaveBeenCalled();
 		});
 

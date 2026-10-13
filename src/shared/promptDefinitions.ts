@@ -185,6 +185,18 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'group-chat',
 	},
 	{
+		id: 'group-chat-workflow-planning',
+		filename: 'group-chat-workflow-planning.md',
+		description: 'Group chat workflow planning prompt',
+		category: 'group-chat',
+	},
+	{
+		id: 'group-chat-workflow-stage',
+		filename: 'group-chat-workflow-stage.md',
+		description: 'Group chat workflow stage execution prompt',
+		category: 'group-chat',
+	},
+	{
 		id: 'group-chat-moderator-synthesis',
 		filename: 'group-chat-moderator-synthesis.md',
 		description: 'Group chat synthesis prompt',
@@ -420,6 +432,8 @@ export const PROMPT_IDS = {
 	CONCERTO_SYSTEM: 'concerto-system',
 	// Group Chat
 	GROUP_CHAT_MODERATOR_SYSTEM: 'group-chat-moderator-system',
+	GROUP_CHAT_WORKFLOW_PLANNING: 'group-chat-workflow-planning',
+	GROUP_CHAT_WORKFLOW_STAGE: 'group-chat-workflow-stage',
 	GROUP_CHAT_MODERATOR_SYNTHESIS: 'group-chat-moderator-synthesis',
 	GROUP_CHAT_PARTICIPANT: 'group-chat-participant',
 	GROUP_CHAT_PARTICIPANT_REQUEST: 'group-chat-participant-request',

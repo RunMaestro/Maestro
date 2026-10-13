@@ -141,6 +141,7 @@ describe('useBatchKillAction', () => {
 			outputTokens: 50,
 			totalCostUsd: 0.01,
 			documentsProcessed: 1,
+			result: 'Auto Run stopped: completed 3 of 5 tasks across 1 document(s).',
 		});
 	});
 

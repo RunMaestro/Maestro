@@ -130,7 +130,7 @@ function getConfigDir(): string {
 /**
  * Get the group chats directory path
  */
-function getGroupChatsDir(): string {
+export function getGroupChatsDir(): string {
 	return path.join(getConfigDir(), 'group-chats');
 }
 
@@ -171,13 +171,35 @@ function getImagesDir(id: string): string {
  * @param name - Raw chat name
  * @returns Normalized chat name
  */
-function sanitizeChatName(name: string): string {
+function normalizeGroupChatName(name: string, fallback: string): string {
 	return (
 		name
 			.replace(/[\x00-\x1f]/g, '') // Strip control chars only; keep printable special chars
 			.trim()
-			.slice(0, 255) || 'Untitled Chat'
+			.slice(0, 255) || fallback
 	); // Limit length, fallback if empty
+}
+
+function sanitizeChatName(name: string): string {
+	return normalizeGroupChatName(name, 'Untitled Chat');
+}
+
+/**
+ * Normalizes a group-chat-owned filename while preserving readable spaces and
+ * Unicode participant names. Unlike chat display names, path separators and
+ * characters forbidden by Windows/macOS filesystems are replaced.
+ */
+export function sanitizeGroupChatFileName(name: string): string {
+	const sanitized = normalizeGroupChatName(name, 'participant')
+		.replace(/[<>:"/\\|?*]/g, '-')
+		.replace(/[. ]+$/g, '')
+		.slice(0, 240);
+	const safeName = sanitized || 'participant';
+
+	// Appending an extension does not make these Windows device names safe.
+	return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(safeName)
+		? `_${safeName}`
+		: safeName;
 }
 
 /**

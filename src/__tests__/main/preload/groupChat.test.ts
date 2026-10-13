@@ -4,7 +4,7 @@
  * Coverage:
  * - createGroupChatApi: Storage, chat log, moderator, participant, history, export operations
  * - Event subscriptions: onMessage, onStateChange, onParticipantsChanged, onModeratorUsage,
- *   onHistoryEntry, onParticipantState, onModeratorSessionIdChanged
+ *   onHistoryEntry, onParticipantState, onModeratorSessionIdChanged, onWorkflowRunChanged
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -236,6 +236,22 @@ describe('GroupChat Preload API', () => {
 
 				expect(mockInvoke).toHaveBeenCalledWith('groupChat:getModeratorSessionId', 'gc-123');
 				expect(result).toBe('mod-session-456');
+			});
+		});
+
+		describe('workflow runs', () => {
+			it.each([
+				['getWorkflowRun', 'groupChat:getWorkflowRun'],
+				['approveWorkflowPlan', 'groupChat:approveWorkflowPlan'],
+				['cancelWorkflowRun', 'groupChat:cancelWorkflowRun'],
+			] as const)('should route %s through its IPC channel', async (method, channel) => {
+				const response = { status: 'running' };
+				mockInvoke.mockResolvedValue(response);
+
+				const result = await api[method]('gc-123');
+
+				expect(mockInvoke).toHaveBeenCalledWith(channel, 'gc-123');
+				expect(result).toBe(response);
 			});
 		});
 	});
@@ -737,6 +753,29 @@ describe('GroupChat Preload API', () => {
 
 				expect(mockRemoveListener).toHaveBeenCalledWith(
 					'groupChat:moderatorSessionIdChanged',
+					registeredHandler!
+				);
+			});
+		});
+
+		describe('onWorkflowRunChanged', () => {
+			it('should forward workflow run changes and remove the listener on cleanup', () => {
+				const callback = vi.fn();
+				let registeredHandler: (event: unknown, groupChatId: string, run: unknown) => void;
+				mockOn.mockImplementation((_channel: string, handler: typeof registeredHandler) => {
+					registeredHandler = handler;
+				});
+
+				const cleanup = api.onWorkflowRunChanged(callback);
+				const run = { status: 'running', currentStageIndex: 1 };
+				registeredHandler!({}, 'gc-123', run);
+
+				expect(mockOn).toHaveBeenCalledWith('groupChat:workflowRunChanged', registeredHandler!);
+				expect(callback).toHaveBeenCalledWith('gc-123', run);
+
+				cleanup();
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'groupChat:workflowRunChanged',
 					registeredHandler!
 				);
 			});
