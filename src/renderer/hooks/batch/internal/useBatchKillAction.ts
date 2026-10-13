@@ -195,12 +195,12 @@ export function useBatchKillAction({
 							elapsedTimeMs: finalTotals.totalElapsedMs,
 							inputTokens: finalTotals.totalInputTokens,
 							outputTokens: finalTotals.totalOutputTokens,
-						totalCostUsd: finalTotals.totalCost,
-						documentsProcessed: flushState.getDocumentsProcessed(),
-						// Left undefined when a registration predates the field; the
-						// handler counts a missing kind as spec-driven.
-						kind: flushState.kind,
-						result: `Auto Run stopped: completed ${finalTotals.totalCompletedTasks} of ${Math.max(flushState.getTotalTasks(), finalTotals.totalCompletedTasks)} tasks across ${flushState.getDocumentsProcessed()} document(s).`,
+							totalCostUsd: finalTotals.totalCost,
+							documentsProcessed: flushState.getDocumentsProcessed(),
+							// Left undefined when a registration predates the field; the
+							// handler counts a missing kind as spec-driven.
+							kind: flushState.kind,
+							result: `Auto Run stopped: completed ${finalTotals.totalCompletedTasks} of ${Math.max(flushState.getTotalTasks(), finalTotals.totalCompletedTasks)} tasks across ${flushState.getDocumentsProcessed()} document(s).`,
 						});
 					} catch (completeError) {
 						logger.error(
