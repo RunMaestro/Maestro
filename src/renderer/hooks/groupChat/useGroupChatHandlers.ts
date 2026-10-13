@@ -455,7 +455,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setWorkflowRun(null);
 			const [messages, workflowRun] = await Promise.all([
 				window.maestro.groupChat.getMessages(id),
-				window.maestro.groupChat.getWorkflowRun(id),
+				window.maestro.groupChat.getWorkflowRun?.(id) ?? Promise.resolve(null),
 			]);
 			setGroupChatMessages(messages);
 			setWorkflowRun(workflowRun);

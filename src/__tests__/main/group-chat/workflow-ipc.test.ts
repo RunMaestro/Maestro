@@ -56,6 +56,11 @@ vi.mock('../../../main/group-chat/group-chat-log', () => ({
 	saveImage: vi.fn(),
 }));
 
+vi.mock('../../../main/group-chat/group-chat-queue', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/group-chat/group-chat-queue')>()),
+	pauseQueueFor: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../../../main/group-chat/group-chat-moderator', () => ({
 	spawnModerator: vi.fn(),
 	sendToModerator: vi.fn(),
