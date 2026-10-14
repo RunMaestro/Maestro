@@ -88,6 +88,62 @@ describe('resolveUserDataDir', () => {
 			resolveUserDataDir({ env: {}, platform: 'linux', homedir: home, isPackaged: true })
 		).toBe(path.join(home, '.config', 'Maestro'));
 	});
+
+	describe('checks the guessed spelling against the disk', () => {
+		const scratch: string[] = [];
+
+		afterEach(() => {
+			while (scratch.length) fs.rmSync(scratch.pop() as string, { recursive: true, force: true });
+		});
+
+		function linuxRoot(...existing: string[]): string {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-xdg-'));
+			scratch.push(root);
+			for (const name of existing) fs.mkdirSync(path.join(root, name));
+			return root;
+		}
+
+		function resolveIn(root: string, isPackaged: boolean): string {
+			return resolveUserDataDir({
+				env: { XDG_CONFIG_HOME: root },
+				platform: 'linux',
+				homedir: home,
+				isPackaged,
+				isDevelopment: false,
+			});
+		}
+
+		// A case-insensitive volume (macOS, Windows) answers for both spellings, so
+		// compare what the result opens on disk rather than the string.
+		const onDisk = (candidate: string) => fs.realpathSync.native(candidate);
+
+		it('takes the lowercase directory a packaged Linux app actually wrote (#1813)', () => {
+			const root = linuxRoot('maestro');
+			expect(onDisk(resolveIn(root, true))).toBe(onDisk(path.join(root, 'maestro')));
+		});
+
+		it('takes the capitalized directory when only that one exists', () => {
+			const root = linuxRoot('Maestro');
+			expect(onDisk(resolveIn(root, false))).toBe(onDisk(path.join(root, 'Maestro')));
+		});
+
+		it('keeps the guessed spelling when it exists', () => {
+			// A case-insensitive volume folds the two names into one directory, so
+			// only create both where the filesystem can tell them apart.
+			const root = linuxRoot('Maestro');
+			const caseSensitive = !fs.existsSync(path.join(root, 'maestro'));
+			if (caseSensitive) fs.mkdirSync(path.join(root, 'maestro'));
+			expect(resolveIn(root, true)).toBe(path.join(root, 'Maestro'));
+		});
+
+		it('ignores a regular file with the other spelling', () => {
+			const root = linuxRoot();
+			fs.writeFileSync(path.join(root, 'maestro'), '');
+			if (!fs.existsSync(path.join(root, 'Maestro'))) {
+				expect(resolveIn(root, true)).toBe(path.join(root, 'Maestro'));
+			}
+		});
+	});
 });
 
 describe('assertUserDataDirExists', () => {

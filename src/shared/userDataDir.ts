@@ -14,7 +14,8 @@
  *      NOT constant: Electron uses `package.json` `name` ("maestro") when
  *      running unpackaged and the bundle's `productName` ("Maestro") once
  *      packaged. Both spellings exist in the wild, which is why the fallbacks
- *      scattered around this repo disagree with each other.
+ *      scattered around this repo disagreed with each other. The guess is
+ *      checked against the disk: when only the other spelling exists, it wins.
  *   3. Development adds one more hop: the app redirects to a sibling
  *      `maestro-dev` directory unless `USE_PROD_DATA` is set.
  *
@@ -103,7 +104,23 @@ export function resolveUserDataDir(options: UserDataDirOptions = {}): string {
 	if (!isPackaged && isDevelopment && !env.USE_PROD_DATA) {
 		return path.join(root, DEV_APP_NAME);
 	}
-	return path.join(root, isPackaged ? PACKAGED_APP_NAME : UNPACKAGED_APP_NAME);
+	const preferred = path.join(root, isPackaged ? PACKAGED_APP_NAME : UNPACKAGED_APP_NAME);
+	const other = path.join(root, isPackaged ? UNPACKAGED_APP_NAME : PACKAGED_APP_NAME);
+	// The guessed spelling is only a guess: installed apps have been seen writing
+	// the lowercase name (a Linux AppImage keeps `~/.config/maestro`, #1813). On a
+	// case-sensitive filesystem the wrong guess is a different, empty directory,
+	// so take the other spelling when it is the only one that exists.
+	if (!isExistingDirectory(preferred) && isExistingDirectory(other)) return other;
+	return preferred;
+}
+
+/** `isDirectory` for a probe: an unreadable candidate is not one to pick. */
+function isExistingDirectory(candidate: string): boolean {
+	try {
+		return isDirectory(candidate);
+	} catch {
+		return false;
+	}
 }
 
 /**
