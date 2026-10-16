@@ -31,9 +31,11 @@ vi.mock('../../../shared/maestro-lib/launch/getShellPath', () => ({
 // transitive ssh-command-builder → execFile chain, which would try to wrap
 // the mocked `child_process` and break at module load. The failure message is
 // a stand-in; its real wording is covered by the ssh-spawn-wrapper suite.
-const mockWrapSpawnWithSsh = vi.fn();
+const { mockWrapSpawnWithSsh } = vi.hoisted(() => ({
+	mockWrapSpawnWithSsh: vi.fn(),
+}));
 vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
-	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	wrapSpawnWithSsh: mockWrapSpawnWithSsh,
 	sshUnresolvedRemoteMessage: (cfg: { remoteId: string | null }) =>
 		`remote "${cfg.remoteId}" could not be resolved`,
 }));
@@ -98,6 +100,7 @@ vi.mock('child_process', async (importOriginal) => {
 
 import { executeCueShell } from '../../../main/cue/cue-shell-executor';
 import { getProcessList, stopProcess } from '../../../main/cue/cue-process-lifecycle';
+import { wrapSpawnWithSsh } from '../../../shared/maestro-lib/launch/ssh-spawn-wrapper';
 
 function createSession(): SessionInfo {
 	return {
@@ -165,6 +168,55 @@ describe('cue-shell-executor', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	it('spawns nothing when stopped while the PATH probe is awaited', async () => {
+		let finishProbe!: (value: string) => void;
+		mockGetShellPath.mockImplementationOnce(
+			() =>
+				new Promise<string>((resolve) => {
+					finishProbe = resolve;
+				})
+		);
+		const controller = new AbortController();
+		const promise = executeCueShell(createConfig({ signal: controller.signal }) as any);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mockGetShellPath).toHaveBeenCalledTimes(1);
+
+		controller.abort();
+		finishProbe('/usr/bin:/bin');
+		const result = await promise;
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ status: 'stopped', exitCode: null, stderr: '' });
+	});
+
+	it('spawns nothing when stopped while the SSH wrap is awaited', async () => {
+		let finishWrap!: (value: unknown) => void;
+		mockWrapSpawnWithSsh.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishWrap = resolve;
+				}) as ReturnType<typeof wrapSpawnWithSsh>
+		);
+		const controller = new AbortController();
+		const promise = executeCueShell(
+			createConfig({
+				signal: controller.signal,
+				sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				sshStore: { getSshRemotes: () => [] },
+			}) as any
+		);
+		await vi.advanceTimersByTimeAsync(0);
+		controller.abort();
+		finishWrap({
+			command: 'ssh',
+			args: ['host', 'bash -c echo'],
+			cwd: '/projects/test',
+			sshRemoteUsed: { id: 'remote-1', name: 'r', host: 'h' },
+		});
+		const result = await promise;
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(result.status).toBe('stopped');
 	});
 
 	it('spawns the command through the shell so PATH is honored', async () => {

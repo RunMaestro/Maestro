@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { redactPrompt } from '../../../shared/agent-run/redact';
+import {
+	containsCredentialToken,
+	redactCredentialTokens,
+	redactPrompt,
+} from '../../../shared/agent-run/redact';
 
 /**
  * redactPrompt scrubs secret-shaped substrings to [redacted] and caps length
@@ -98,5 +102,40 @@ describe('redactPrompt - absent input', () => {
 
 	it('returns undefined for an empty string', () => {
 		expect(redactPrompt('')).toBeUndefined();
+	});
+});
+
+/**
+ * The precise tier, which also runs over prose (bundle memory files and
+ * skills), so it must not eat ordinary words, commit SHAs or `key: value` text.
+ */
+describe('redactCredentialTokens', () => {
+	const ANTHROPIC = 'sk-ant-api03-' + 'Ab1_'.repeat(12);
+	const OPENAI_PROJECT = 'sk-proj-' + 'x9Y-'.repeat(8) + 'Q7';
+	const GITHUB_OAUTH = 'gho_' + 'Z'.repeat(36);
+
+	it.each([
+		['an Anthropic key', ANTHROPIC],
+		['an OpenAI project key', OPENAI_PROJECT],
+		['a GitHub OAuth token', GITHUB_OAUTH],
+		['a GitHub classic token', 'ghp_wxyzWXYZ0123456789abcd'],
+		['an AWS access key id', 'AKIAIOSFODNN7EXAMPLE'],
+	])('redacts %s and counts it', (_name, secret) => {
+		expect(redactCredentialTokens(`key is ${secret}.`)).toEqual({
+			text: `key is ${PLACEHOLDER}.`,
+			redacted: 1,
+		});
+		expect(containsCredentialToken(secret)).toBe(true);
+	});
+
+	it('leaves prose, commit SHAs and key: value lines alone', () => {
+		const prose =
+			'We use sk-learn and sk-learn-compatible-estimators; deploy a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0; token: see GH_TOKEN.';
+		expect(redactCredentialTokens(prose)).toEqual({ text: prose, redacted: 0 });
+		expect(containsCredentialToken(prose)).toBe(false);
+	});
+
+	it('is what redactPrompt applies first, so prompts now lose Anthropic keys too', () => {
+		expect(redactPrompt(`use ${ANTHROPIC} here`)).toBe(`use ${PLACEHOLDER} here`);
 	});
 });

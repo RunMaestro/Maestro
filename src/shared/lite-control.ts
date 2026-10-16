@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as os from 'os';
-import { getConfigDir } from './cli-server-discovery';
+import { resolveUserDataDir } from './userDataDir';
 import { expandTilde } from './pathUtils';
 import type { SshRemoteConfig } from './types';
 import type { DiscoveryPairingState } from './lite-discovery';
@@ -102,8 +102,11 @@ export function resolveLiteDataDirectory(explicit?: string, baseDirectory?: stri
 		if (!explicit.trim()) throw new Error('Lite user-data path must not be empty.');
 		return path.resolve(expandTilde(explicit.trim()));
 	}
+	// Without an explicit base (the CLI), Maestro's data directory comes from
+	// the one resolver every Electron-free process shares, so the CLI looks in
+	// the same place the desktop writes (`app.getPath('userData')/Lite`).
 	return path.join(
-		process.env.MAESTRO_USER_DATA ? getConfigDir() : (baseDirectory ?? getConfigDir()),
+		process.env.MAESTRO_USER_DATA ? resolveUserDataDir() : (baseDirectory ?? resolveUserDataDir()),
 		'Lite'
 	);
 }

@@ -49,6 +49,7 @@ import type {
 	PianolaRisk,
 	PianolaSignalKind,
 } from '../../shared/pianola/types';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const POLL_TAIL = 40;
@@ -238,6 +239,7 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 	try {
 		await client.connect();
 	} catch (error) {
+		exitIfMaestroNotRunning(error, {});
 		process.off('SIGINT', onSignal);
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`[pianola] could not connect to Maestro: ${message}`);

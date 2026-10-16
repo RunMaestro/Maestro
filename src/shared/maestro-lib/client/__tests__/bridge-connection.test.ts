@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_MESSAGE } from '../not-running';
 
 // Track WebSocket instances created
 let mockWsInstance: EventEmitter & {
@@ -114,16 +115,26 @@ describe('BridgeConnection', () => {
 		it('names the headless host as the other way to get a peer when nothing is running', async () => {
 			vi.mocked(readCliServerInfo).mockReturnValue(null);
 
-			const client = new BridgeConnection();
-			await expect(client.connect()).rejects.toThrow('maestro-cli host start');
+			const error = await new BridgeConnection().connect().catch((e: unknown) => e);
+			expect(error).toBeInstanceOf(MaestroNotRunningError);
+			expect(error).toMatchObject({
+				message: MAESTRO_NOT_RUNNING_MESSAGE,
+				code: 'MAESTRO_NOT_RUNNING',
+				reason: 'no-discovery-file',
+			});
+			expect((error as MaestroNotRunningError).hint).toContain('maestro-cli host start');
 		});
 
 		it('should throw when PID is stale', async () => {
 			vi.mocked(readCliServerInfo).mockReturnValue(RUNNING_SERVER);
 			vi.mocked(isCliServerRunning).mockReturnValue(false);
 
-			const client = new BridgeConnection();
-			await expect(client.connect()).rejects.toThrow('Maestro discovery file is stale');
+			const error = await new BridgeConnection().connect().catch((e: unknown) => e);
+			expect(error).toBeInstanceOf(MaestroNotRunningError);
+			expect(error).toMatchObject({
+				message: MAESTRO_NOT_RUNNING_MESSAGE,
+				reason: 'stale-discovery-file',
+			});
 		});
 
 		it('should connect successfully when server is running', async () => {
@@ -178,11 +189,32 @@ describe('BridgeConnection', () => {
 			const client = new BridgeConnection();
 			const connectPromise = client.connect();
 
-			// Simulate WebSocket error
-			mockWsInstance.emit('error', new Error('Connection refused'));
+			// A socket-level failure carries an errno: nothing is listening.
+			mockWsInstance.emit(
+				'error',
+				Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:3000'), { code: 'ECONNREFUSED' })
+			);
 
-			await expect(connectPromise).rejects.toThrow(
-				'Failed to connect to Maestro: Connection refused'
+			const error = await connectPromise.catch((e: unknown) => e);
+			expect(error).toBeInstanceOf(MaestroNotRunningError);
+			expect(error).toMatchObject({
+				message: MAESTRO_NOT_RUNNING_MESSAGE,
+				reason: 'connect-failed',
+				detail: 'connect ECONNREFUSED 127.0.0.1:3000',
+			});
+		});
+
+		it('keeps an HTTP rejection of the upgrade as an ordinary error (the app is running)', async () => {
+			mockRunningServer();
+
+			const connectPromise = new BridgeConnection().connect();
+			// What ws emits when the Web Login gate answers 401: no errno.
+			mockWsInstance.emit('error', new Error('Unexpected server response: 401'));
+
+			const error = await connectPromise.catch((e: unknown) => e);
+			expect(error).not.toBeInstanceOf(MaestroNotRunningError);
+			expect((error as Error).message).toBe(
+				'Failed to connect to Maestro: Unexpected server response: 401'
 			);
 		});
 
@@ -195,7 +227,9 @@ describe('BridgeConnection', () => {
 			// Advance past timeout
 			vi.advanceTimersByTime(5001);
 
-			await expect(connectPromise).rejects.toThrow('Connection to Maestro timed out');
+			const error = await connectPromise.catch((e: unknown) => e);
+			expect(error).toBeInstanceOf(MaestroNotRunningError);
+			expect(error).toMatchObject({ reason: 'connect-timeout' });
 		});
 	});
 
@@ -392,8 +426,11 @@ describe('BridgeConnection', () => {
 
 			vi.mocked(readCliServerInfoFrom).mockReturnValue(RUNNING_SERVER);
 			vi.mocked(isPidAlive).mockReturnValue(false);
-			await expect(new BridgeConnection({ userDataDir: '/stale' }).connect()).rejects.toThrow(
-				'Maestro discovery file is stale'
+			await expect(new BridgeConnection({ userDataDir: '/stale' }).connect()).rejects.toMatchObject(
+				{
+					name: 'MaestroNotRunningError',
+					reason: 'stale-discovery-file',
+				}
 			);
 		});
 

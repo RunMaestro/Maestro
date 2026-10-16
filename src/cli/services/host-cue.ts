@@ -16,7 +16,11 @@
  */
 
 import type { CueAutoRunLaunchParams } from '../../main/cue/cue-autorun-executor';
-import { readCueEngineLock, type CueEngineLockInfo } from '../../main/cue/cue-engine-lock';
+import {
+	isCueEngineLockOwnedByThisProcess,
+	readCueEngineLock,
+	type CueEngineLockInfo,
+} from '../../main/cue/cue-engine-lock';
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import type { HostCueState } from '../../shared/maestro-lib/client/host-control';
 import type {
@@ -73,6 +77,12 @@ export interface HostCueDeps {
 	/** Settles once the child of every stopped run has exited. */
 	waitForRunsToEnd(): Promise<unknown>;
 	pid: number;
+	/**
+	 * Is this live lock this process's own? Default: the lock's token, which only the process that
+	 * wrote it holds (`isCueEngineLockOwnedByThisProcess`). A lock from a build before tokens is
+	 * judged by `pid`, the rule such a lock always had.
+	 */
+	ownsLock?(lock: CueEngineLockInfo): boolean;
 }
 
 export interface HostCue {
@@ -284,6 +294,12 @@ export async function startHostCue(
 	overrides: Partial<HostCueDeps> = {}
 ): Promise<HostCue> {
 	const deps = { ...defaultDeps, ...overrides };
+	// Ownership is the token, not the pid: two containers sharing a data directory both run their
+	// engine as pid 1, so a pid match would read another container's lock as this one's.
+	const ownsLock =
+		deps.ownsLock ??
+		((lock: CueEngineLockInfo) =>
+			lock.token !== undefined ? isCueEngineLockOwnedByThisProcess(lock) : lock.pid === deps.pid);
 	const { runtime } = host;
 	let current: HostCueState = { state: 'disabled' };
 	let live: LiveEngine | undefined;
@@ -300,7 +316,7 @@ export async function startHostCue(
 				return;
 			}
 			const holder = deps.readLock(host.userDataDir);
-			if (holder && holder.pid !== deps.pid) {
+			if (holder && !ownsLock(holder)) {
 				current = { state: 'held', mode: holder.mode, pid: holder.pid };
 				return;
 			}
@@ -317,7 +333,7 @@ export async function startHostCue(
 			engine.start('system-boot');
 			starting = false;
 			const after = deps.readLock(host.userDataDir);
-			if (after?.pid !== deps.pid) {
+			if (!after || !ownsLock(after)) {
 				unfollowAgents();
 				engine.stop();
 				current = after

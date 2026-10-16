@@ -121,6 +121,7 @@ filter:
 ```yaml
 - name: pr-review
   event: github.pull_request
+  repo: owner/name
   filter:
     draft: false
     base_branch: main

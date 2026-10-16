@@ -18,6 +18,7 @@ import {
 	createCueHeartbeat,
 	HEARTBEAT_INTERVAL_MS,
 	HEARTBEAT_FAILURE_REPORT_THRESHOLD,
+	SLEEP_THRESHOLD_MS,
 } from '../../../main/cue/cue-heartbeat';
 
 describe('cue-heartbeat', () => {
@@ -155,5 +156,106 @@ describe('cue-heartbeat', () => {
 		mockUpdateHeartbeat.mockClear();
 		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
 		expect(mockUpdateHeartbeat).not.toHaveBeenCalled();
+	});
+
+	describe('wall-clock gap (sleep or pause) detection', () => {
+		/** Move the wall clock without firing timers, as a suspend does to Date.now(). */
+		function jumpWallClock(ms: number): void {
+			vi.setSystemTime(Date.now() + ms);
+		}
+
+		it('calls onWallClockGap before the tick writes, with the measured gap', () => {
+			const order: string[] = [];
+			mockUpdateHeartbeat.mockImplementation(() => order.push('write'));
+			const onWallClockGap = vi.fn(() => order.push('gap'));
+			const hb = createCueHeartbeat({ onWallClockGap });
+			hb.start();
+			order.length = 0;
+
+			jumpWallClock(10 * 60_000);
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+			expect(onWallClockGap).toHaveBeenCalledTimes(1);
+			expect(onWallClockGap).toHaveBeenCalledWith(10 * 60_000 + HEARTBEAT_INTERVAL_MS);
+			expect(order).toEqual(['gap', 'write']);
+			hb.stop();
+		});
+
+		it('does not fire for a gap below the threshold', () => {
+			const onWallClockGap = vi.fn();
+			const hb = createCueHeartbeat({ onWallClockGap });
+			hb.start();
+
+			jumpWallClock(SLEEP_THRESHOLD_MS - HEARTBEAT_INTERVAL_MS - 1);
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+			expect(onWallClockGap).not.toHaveBeenCalled();
+			hb.stop();
+		});
+
+		it('does not fire when the clock moved backward', () => {
+			const onWallClockGap = vi.fn();
+			const hb = createCueHeartbeat({ onWallClockGap });
+			hb.start();
+
+			jumpWallClock(-60 * 60_000);
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+			expect(onWallClockGap).not.toHaveBeenCalled();
+			hb.stop();
+		});
+
+		it('fires once per gap, not again on the ticks after it', () => {
+			const onWallClockGap = vi.fn();
+			const hb = createCueHeartbeat({ onWallClockGap });
+			hb.start();
+
+			jumpWallClock(10 * 60_000);
+			for (let i = 0; i < 5; i++) vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+			expect(onWallClockGap).toHaveBeenCalledTimes(1);
+			hb.stop();
+		});
+
+		it('ends the stale tick when the hook restarts the heartbeat (no second write)', () => {
+			let hb: ReturnType<typeof createCueHeartbeat>;
+			const onTick = vi.fn();
+			const onWallClockGap = vi.fn(() => {
+				hb.stop();
+				hb.start();
+			});
+			hb = createCueHeartbeat({ onTick, onWallClockGap });
+			hb.start();
+			mockUpdateHeartbeat.mockClear();
+
+			jumpWallClock(10 * 60_000);
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+			// Only the restart's immediate write.
+			expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
+			expect(onTick).not.toHaveBeenCalled();
+
+			// The restarted interval measures from its own start.
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+			expect(onWallClockGap).toHaveBeenCalledTimes(1);
+			expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(2);
+			hb.stop();
+		});
+
+		it('without the hook a jump only writes, as before', () => {
+			const onTick = vi.fn();
+			const hb = createCueHeartbeat({ onTick });
+			hb.start();
+			mockUpdateHeartbeat.mockClear();
+
+			jumpWallClock(10 * 60_000);
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+			expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
+			expect(onTick).toHaveBeenCalledTimes(1);
+			hb.stop();
+		});
 	});
 });

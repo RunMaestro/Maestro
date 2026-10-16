@@ -8,9 +8,9 @@
  * in `cue-integration-test-helpers.ts`), which means no test has ever run a
  * real WHERE clause against the real schema.
  *
- * Node 22+ bundles SQLite as `node:sqlite`. This shim maps the three
- * better-sqlite3 methods `cue-db.ts` uses (`pragma`, `prepare`, `close`) onto
- * it, so a test can do:
+ * Node 22+ bundles SQLite as `node:sqlite`. This shim maps the four
+ * better-sqlite3 methods `cue-db.ts` uses (`pragma`, `prepare`, `transaction`,
+ * `close`) onto it, so a test can do:
  *
  *   vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
  *
@@ -66,6 +66,26 @@ class NodeSqliteDatabaseShim {
 
 	prepare(sql: string): ReturnType<DatabaseSync['prepare']> {
 		return this.db.prepare(sql);
+	}
+
+	/**
+	 * better-sqlite3's `transaction(fn)` returns a wrapper that runs `fn`
+	 * between BEGIN and COMMIT, rolling back and rethrowing if it throws.
+	 */
+	transaction<Args extends unknown[], Result>(
+		fn: (...args: Args) => Result
+	): (...args: Args) => Result {
+		return (...args) => {
+			this.db.exec('BEGIN');
+			try {
+				const result = fn(...args);
+				this.db.exec('COMMIT');
+				return result;
+			} catch (err) {
+				this.db.exec('ROLLBACK');
+				throw err;
+			}
+		};
 	}
 
 	close(): void {

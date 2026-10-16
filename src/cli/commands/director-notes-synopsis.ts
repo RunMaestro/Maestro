@@ -3,6 +3,7 @@
 // Requires the Maestro desktop app to be running
 
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { readSettings } from '../services/storage';
 import { formatError } from '../output/formatter';
 import {
@@ -191,6 +192,7 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 			}
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: format === 'json', stderrJson: true });
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		if (format === 'json') {
 			console.error(JSON.stringify({ error: message }));

@@ -134,9 +134,14 @@ import { executeCueNotify } from './cue/cue-notify-executor';
 import { executeCueAutoRun } from './cue/cue-autorun-executor';
 import { launchCueAutoRun } from './cue-autorun-launcher';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
+import type { ToolType } from '../shared/types';
+import {
+	executeCueRunAction,
+	type CueRunActionDeps,
+	type CueRunSessionRecord,
+} from './cue/cue-run-router';
 import { setSusFactorNotifier } from './cue/cue-susfactor';
 import { emitCueNotifyToast } from './cue/cue-notify-bridge';
-import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
@@ -144,8 +149,6 @@ import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
-import { resolveCueTurnSettings } from '../shared/cue/turn-settings';
-import { describeTurnSettings } from '../shared/autorunTurnSettings';
 import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
 	initializeStores,
@@ -236,7 +239,6 @@ import { rememberQuotaAccounts } from './stores/quotaAccountsStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
-import type { TemplateContext } from '../shared/templateVariables';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -1317,6 +1319,67 @@ app
 			});
 		});
 
+		// Routing from a fired subscription to its executor is shared with the
+		// standalone runner (cue-run-router.ts); only the desktop's own sources
+		// and sinks are wired here.
+		const cueRunLog = (level: string, message: string) => {
+			if (level === 'error') logger.error(message, 'Cue');
+			else if (level === 'warn') logger.warn(message, 'Cue');
+			else if (level === 'debug') logger.debug(message, 'Cue');
+			else logger.cue(message, 'Cue');
+		};
+		const cueRunDeps: CueRunActionDeps = {
+			executeCuePrompt,
+			executeCueShell,
+			executeCueCli,
+			stopCueRun,
+			findSession: (sessionId) =>
+				(sessionsStore.get('sessions', []) as Array<Record<string, any>>).find(
+					(s) => s.id === sessionId
+				) as CueRunSessionRecord | undefined,
+			resolveAgentBinary: async ({ session, agentConfigValues }) => {
+				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
+				return resolveCueAgentBinary({
+					sessionCustomPath: session.customPath,
+					providerCustomPath: agentConfigValues.customPath as string | undefined,
+					sshEnabled: !!session.sessionSshRemoteConfig?.enabled,
+					getDetectedPath: async () => {
+						const detectedAgent = await agentDetector?.getAgent(session.toolType);
+						return detectedAgent?.available ? detectedAgent.path : undefined;
+					},
+					onWarn: (message) => logger.warn(message, 'Cue', { sessionId: session.id }),
+				});
+			},
+			sshStore: createSshRemoteStoreAdapter(store),
+			getAgentConfigValues: (toolType) => getAgentConfigForAgent(toolType),
+			onLog: cueRunLog,
+			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
+			onNotify: (params) => executeCueNotify({ ...params, mainWindow }),
+			onAutoRun: (params) => {
+				const autoRunLog = (level: string, message: string) => {
+					if (level === 'error') logger.error(message, 'Cue');
+					else if (level === 'warn') logger.warn(message, 'Cue');
+					else if (level === 'debug') logger.debug(message, 'Cue');
+					else logger.cue(message, 'Cue');
+				};
+				return executeCueAutoRun({
+					...params,
+					autoRun: params.autoRun!,
+					launch: (launchParams) => launchCueAutoRun(mainWindow, launchParams),
+					onLog: autoRunLog,
+				});
+			},
+			getAppendSystemPrompt: async (sessionId) => {
+				const { buildMaestroSystemPromptForSession } =
+					await import('./utils/maestro-system-prompt');
+				return buildMaestroSystemPromptForSession(sessionId);
+			},
+			getOnRunTranscript: (sessionId) => beginCueRunCapture(sessionId),
+			reportAuthFailure: async (result, toolType, sshRemoteId) => {
+				reportCueAuthFailure(mainWindow, result, toolType as ToolType, sshRemoteId);
+			},
+		};
+
 		// Initialize Cue Engine for event-driven automation
 		const cueHealthToastAt = new Map<string, number>();
 		cueEngine = new CueEngine({
@@ -1330,345 +1393,8 @@ app
 					projectRoot: s.projectRoot || s.cwd || s.fullPath || os.homedir(),
 				}));
 			},
-			onCueRun: async ({
-				runId,
-				sessionId,
-				prompt,
-				subscriptionName,
-				event,
-				timeoutMs,
-				action,
-				command,
-				notify,
-				autoRun,
-				turnSettings,
-			}) => {
-				const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
-				const storedSession = storedSessions.find((s) => s.id === sessionId);
-				if (!storedSession) {
-					throw new Error(`Cue target session not found: ${sessionId}`);
-				}
-
-				const projectRoot =
-					storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
-				const templateContext: TemplateContext = {
-					session: {
-						id: storedSession.id,
-						name: storedSession.name,
-						toolType: storedSession.toolType,
-						cwd: projectRoot,
-						projectRoot,
-						fullPath: storedSession.fullPath,
-						autoRunFolderPath: storedSession.autoRunFolderPath,
-					},
-					conductorProfile: (store.get('conductorProfile', '') as string) || undefined,
-				};
-
-				// `action: autorun` launches an Auto Run in the owning agent. Handled
-				// before notify/command/prompt for the same reason they are: it never
-				// spawns an agent process here, so the agent-path resolution, SSH
-				// wrapping, and prompt plumbing below do not apply. The document list
-				// travels on the subscription rather than being re-read from the
-				// agent's Auto Run folder, so repointing that folder between
-				// scheduling and firing cannot swap the run out from under the user.
-				if (action === 'autorun') {
-					const sessionInfo = {
-						id: storedSession.id,
-						name: storedSession.name,
-						toolType: storedSession.toolType,
-						cwd: projectRoot,
-						projectRoot,
-						autoRunFolderPath: storedSession.autoRunFolderPath,
-					};
-					const subscription = {
-						name: subscriptionName,
-						event: event.type,
-						enabled: true,
-						prompt,
-						action,
-						auto_run: autoRun,
-						agent_id: storedSession.id,
-					};
-					const autoRunLog = (level: string, message: string) => {
-						if (level === 'error') logger.error(message, 'Cue');
-						else if (level === 'warn') logger.warn(message, 'Cue');
-						else if (level === 'debug') logger.debug(message, 'Cue');
-						else logger.cue(message, 'Cue');
-					};
-					if (!autoRun || autoRun.documents.length === 0) {
-						// Reachable for a queued run restored from a row that was
-						// persisted before the queue table carried the payload
-						// (`auto_run_json`), which comes back undefined. Report a failure
-						// rather than throwing - a `time.once` autorun task is written
-						// with `self_destruct_on_failure: false`, so failing here keeps
-						// the subscription on disk instead of consuming it silently.
-						const reason =
-							'no documents on the run - the captured Auto Run payload did not survive the queue';
-						autoRunLog('error', `[CUE] Auto Run "${subscriptionName}" did not start: ${reason}`);
-						const startedAt = new Date().toISOString();
-						const failed = {
-							runId,
-							sessionId: storedSession.id,
-							sessionName: storedSession.name,
-							subscriptionName,
-							event,
-							status: 'failed' as const,
-							stdout: '',
-							stderr: `Auto Run launch failed: ${reason}`,
-							exitCode: 1,
-							durationMs: 0,
-							startedAt,
-							endedAt: startedAt,
-						};
-						return failed;
-					}
-					const autoRunResult = await executeCueAutoRun({
-						runId,
-						session: sessionInfo,
-						subscription,
-						event,
-						autoRun,
-						launch: (params) => launchCueAutoRun(mainWindow, params),
-						onLog: autoRunLog,
-					});
-					return autoRunResult;
-				}
-
-				// `action: notify` surfaces a toast through the owning agent instead of
-				// spawning anything - handled before command/prompt so the spawn config,
-				// SSH wrap, and history-recording paths below stay agent-only. The
-				// notify message is pre-resolved by the dispatch service via the
-				// fallback chain (notify.message → label → prompt → name); falling
-				// back here to `prompt` (which the dispatcher uses as the carrier)
-				// covers a queue row restored from before the queue table carried
-				// the notify config (`notify_json`), where only the message survived,
-				// in the persisted `prompt` slot.
-				if (action === 'notify') {
-					const sessionInfo = {
-						id: storedSession.id,
-						name: storedSession.name,
-						toolType: storedSession.toolType,
-						cwd: projectRoot,
-						projectRoot,
-						autoRunFolderPath: storedSession.autoRunFolderPath,
-					};
-					const subscription = {
-						name: subscriptionName,
-						event: event.type,
-						enabled: true,
-						prompt,
-						action,
-						notify,
-						agent_id: storedSession.id,
-					};
-					const notifyLog = (level: string, message: string) => {
-						if (level === 'error') logger.error(message, 'Cue');
-						else if (level === 'warn') logger.warn(message, 'Cue');
-						else if (level === 'debug') logger.debug(message, 'Cue');
-						else logger.cue(message, 'Cue');
-					};
-					const message = notify?.message?.trim() || prompt;
-					const notifyResult = await executeCueNotify({
-						runId,
-						session: sessionInfo,
-						subscription,
-						event,
-						agentId: storedSession.id,
-						message,
-						sticky: notify?.sticky === true,
-						title: storedSession.name || getAgentDisplayName(storedSession.toolType),
-						mainWindow,
-						onLog: notifyLog,
-					});
-					// No History write here: Cue runs are served to History from
-					// `cue_events` (see `getCueHistoryEntries`), so the agent's JSONL
-					// file keeps only USER/AUTO entries and CUE rows can no longer
-					// evict them.
-					return notifyResult;
-				}
-
-				// `action: command` runs a shell command or maestro-cli call instead of an
-				// AI prompt - skip agent path resolution and SSH wrapping.
-				if (action === 'command') {
-					if (!command) {
-						// Should be unreachable post-validator, but guard anyway so a
-						// misconfigured subscription fails loudly instead of silently
-						// executing `prompt` (a shell/cli sentinel) as an AI prompt.
-						throw new Error(
-							`Cue subscription "${subscriptionName}" has action='command' but no command payload`
-						);
-					}
-					const sessionInfo = {
-						id: storedSession.id,
-						name: storedSession.name,
-						toolType: storedSession.toolType,
-						cwd: projectRoot,
-						projectRoot,
-						autoRunFolderPath: storedSession.autoRunFolderPath,
-					};
-					const subscription = {
-						name: subscriptionName,
-						event: event.type,
-						enabled: true,
-						prompt,
-						action,
-						command,
-					};
-					const cmdLog = (level: string, message: string) => {
-						if (level === 'error') logger.error(message, 'Cue');
-						else if (level === 'warn') logger.warn(message, 'Cue');
-						else if (level === 'debug') logger.debug(message, 'Cue');
-						else logger.cue(message, 'Cue');
-					};
-					const cmdResult =
-						command.mode === 'shell'
-							? await executeCueShell({
-									runId,
-									session: sessionInfo,
-									subscription,
-									event,
-									shellCommand: command.shell,
-									projectRoot,
-									templateContext,
-									timeoutMs,
-									onLog: cmdLog,
-									// Forward SSH config so shell commands run on the remote
-									// host when the owning session is SSH-remote-enabled.
-									sshRemoteConfig: storedSession.sessionSshRemoteConfig,
-									sshStore: createSshRemoteStoreAdapter(store),
-								})
-							: await executeCueCli({
-									runId,
-									session: sessionInfo,
-									subscription,
-									event,
-									cli: command.cli,
-									templateContext,
-									timeoutMs,
-									onLog: cmdLog,
-									// CLI mode intentionally stays local: `maestro-cli send`
-									// targets the local Maestro daemon (routing messages to
-									// sessions managed by this app), so SSH wrapping would
-									// point at the wrong daemon and `maestro-cli.js` may not
-									// exist on the remote host.
-								});
-					// History reads Cue runs from `cue_events`, not the JSONL file -
-					// see the note on the notify path above.
-					return cmdResult;
-				}
-
-				const agentConfigValues = getAgentConfigForAgent(storedSession.toolType);
-
-				// Resolve the agent's binary the way a tab spawn does: the agent's
-				// own custom path, then the provider's, then the detector's. Without
-				// the last rung Cue falls back to the bare command name (e.g.
-				// 'claude'), which fails with ENOENT when spawn() can't find it on PATH.
-				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
-				const resolvedAgentPath = await resolveCueAgentBinary({
-					sessionCustomPath: storedSession.customPath,
-					providerCustomPath: agentConfigValues.customPath as string | undefined,
-					sshEnabled: !!storedSession.sessionSshRemoteConfig?.enabled,
-					getDetectedPath: async () => {
-						const detectedAgent = await agentDetector?.getAgent(storedSession.toolType);
-						return detectedAgent?.available ? detectedAgent.path : undefined;
-					},
-					onWarn: (message) => logger.warn(message, 'Cue', { sessionId: storedSession.id }),
-				});
-
-				// The same Maestro system prompt a tab spawn gets, built from the
-				// stored agent (an SSH agent gets it without localOnly sections).
-				const { buildMaestroSystemPromptForSession } =
-					await import('./utils/maestro-system-prompt');
-				const appendSystemPrompt = await buildMaestroSystemPromptForSession(storedSession.id);
-
-				// The subscription's tier / model / effort outranks the agent's own
-				// config for this run only. A tier or effort the provider cannot
-				// honor falls back to the agent's value and is logged as a warning,
-				// so a run never silently lands on a different model than asked.
-				const turn = resolveCueTurnSettings(
-					storedSession.toolType,
-					turnSettings,
-					storedSession.customModel,
-					storedSession.customEffort
-				);
-				const turnNote = describeTurnSettings(turn);
-				if (turnNote) {
-					const line = `[CUE] "${subscriptionName}" model: ${turnNote}`;
-					if (turn.warnings.length > 0) logger.warn(line, 'Cue');
-					else logger.cue(line, 'Cue');
-				}
-
-				const result = await executeCuePrompt({
-					runId,
-					session: {
-						id: storedSession.id,
-						name: storedSession.name,
-						toolType: storedSession.toolType,
-						cwd: projectRoot,
-						projectRoot,
-						autoRunFolderPath: storedSession.autoRunFolderPath,
-						newSessionMessage: storedSession.newSessionMessage,
-					},
-					subscription: {
-						name: subscriptionName,
-						event: event.type,
-						enabled: true,
-						prompt,
-					},
-					event,
-					promptPath: prompt,
-					toolType: storedSession.toolType,
-					projectRoot,
-					templateContext,
-					timeoutMs,
-					sshRemoteConfig: storedSession.sessionSshRemoteConfig,
-					customPath: resolvedAgentPath,
-					customArgs: storedSession.customArgs,
-					customEnvVars: storedSession.customEnvVars,
-					customModel: turn.model,
-					customEffort: turn.effort,
-					// Claude token-source selection (TUI / API / dynamic), read from
-					// the same persisted session record the model fallback above
-					// reads, so Cue runs honor the triggering agent's choice.
-					enableMaestroP: storedSession.enableMaestroP,
-					maestroPMode: storedSession.maestroPMode,
-					maestroPPath: storedSession.maestroPPath,
-					onLog: (level, message) => {
-						if (level === 'error') {
-							logger.error(message, 'Cue');
-						} else if (level === 'warn') {
-							logger.warn(message, 'Cue');
-						} else if (level === 'debug') {
-							logger.debug(message, 'Cue');
-						} else {
-							logger.cue(message, 'Cue');
-						}
-					},
-					sshStore: createSshRemoteStoreAdapter(store),
-					agentConfigValues,
-					// Decided here, at dispatch, and never throws: a run is not affected
-					// by what happens to its record.
-					onRunTranscript: beginCueRunCapture(storedSession.id),
-					appendSystemPrompt,
-				});
-
-				// Cue spawns agents outside the ProcessManager, so a failed run is the
-				// only place an expired token can surface for a pipeline. Without this
-				// the whole board goes quietly red until someone types a message.
-				reportCueAuthFailure(
-					mainWindow,
-					result,
-					storedSession.toolType,
-					storedSession.sessionSshRemoteConfig?.enabled
-						? (storedSession.sessionSshRemoteConfig.remoteId ?? undefined)
-						: undefined
-				);
-
-				// History reads Cue runs from `cue_events`, not the JSONL file -
-				// see the note on the notify path above.
-				return result;
-			},
-			onStopCueRun: (runId) => stopCueRun(runId),
+			onCueRun: (params) => executeCueRunAction(cueRunDeps, params),
+			onStopCueRun: (runId) => cueRunDeps.stopCueRun(runId),
 			onLog: (_level, message, data) => {
 				logger.cue(message, 'Cue', data);
 				const payload = data as import('../shared/cue-log-types').CueLogPayload | undefined;

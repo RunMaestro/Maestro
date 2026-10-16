@@ -21,6 +21,7 @@ import {
 	surfaceTabIds,
 	type UiSurface,
 } from '../../shared/uiSurfaces';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenModalOptions {
 	tab?: string;
@@ -143,6 +144,7 @@ export async function openModal(
 		console.log(`Opened ${surface.label}${tabSuffix} in Maestro.`);
 		if (hint) console.log(hint);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options);
 	}
 }

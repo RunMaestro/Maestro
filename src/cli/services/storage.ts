@@ -4,6 +4,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveUserDataDir } from '../../shared/userDataDir';
+import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
+import { readAgentConfigsStoreFile } from '../../main/stores/agent-configs-store-file';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_JSONL_EXT,
@@ -87,12 +89,6 @@ function writeStoreFile<T>(filename: string, data: T): void {
 }
 
 // Store file structures (as used by Electron Store)
-interface SessionsStore {
-	sessions: SessionInfo[];
-	/** Agent the desktop UI currently has selected (400ms-debounced write). */
-	activeSessionId?: string;
-}
-
 interface GroupsStore {
 	groups: Group[];
 }
@@ -114,8 +110,7 @@ interface AgentConfigsStore {
  * Read all sessions from storage
  */
 export function readSessions(): SessionInfo[] {
-	const data = readStoreFile<SessionsStore>('maestro-sessions.json');
-	return data?.sessions || [];
+	return readSessionsStoreFile(getSyncDir()).sessions;
 }
 
 /**
@@ -124,8 +119,7 @@ export function readSessions(): SessionInfo[] {
  * themselves, so this is the same read `readSessions` already does.
  */
 export function readActiveAgentId(): string | null {
-	const data = readStoreFile<SessionsStore>('maestro-sessions.json');
-	const id = data?.activeSessionId;
+	const id = readSessionsStoreFile(getSyncDir()).data?.activeSessionId;
 	return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
@@ -390,8 +384,7 @@ function deleteNestedValue(obj: Record<string, unknown>, path: string): boolean 
  * This includes custom paths set by the user in the desktop app
  */
 export function readAgentConfigs(): Record<string, Record<string, unknown>> {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json');
-	return data?.configs || {};
+	return readAgentConfigsStoreFile(getConfigDir()).configs;
 }
 
 /**
@@ -428,7 +421,8 @@ export function readAgentConfigValue(agentId: string, key: string): unknown {
  * Write a single agent config value.
  */
 export function writeAgentConfigValue(agentId: string, key: string, value: unknown): boolean {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json') || { configs: {} };
+	const file = readAgentConfigsStoreFile(getConfigDir());
+	const data: AgentConfigsStore = { ...file.data, configs: file.configs };
 	if (!data.configs[agentId]) {
 		data.configs[agentId] = {};
 	}
@@ -442,8 +436,9 @@ export function writeAgentConfigValue(agentId: string, key: string, value: unkno
  * Returns true if the key existed and was removed.
  */
 export function deleteAgentConfigValue(agentId: string, key: string): boolean {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json');
-	if (!data?.configs?.[agentId] || !(key in data.configs[agentId])) {
+	const file = readAgentConfigsStoreFile(getConfigDir());
+	const data: AgentConfigsStore = { ...file.data, configs: file.configs };
+	if (!data.configs[agentId] || !(key in data.configs[agentId])) {
 		return false;
 	}
 	delete data.configs[agentId][key];
@@ -490,9 +485,14 @@ function resolveId(partialId: string, allIds: string[]): IdResolution {
 /**
  * Resolve an agent ID (partial or full)
  * Throws if ambiguous or not found
+ *
+ * `sessions` defaults to the agents in Maestro's data directory; pass a list
+ * read from somewhere else (`bundle export --data-dir`) to resolve against it.
  */
-export function resolveAgentId(partialId: string): string {
-	const sessions = readSessions();
+export function resolveAgentId(
+	partialId: string,
+	sessions: SessionInfo[] = readSessions()
+): string {
 	const allIds = sessions.map((s) => s.id);
 	const resolution = resolveId(partialId, allIds);
 

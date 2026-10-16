@@ -8,6 +8,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveGroupId, getSessionsByGroup, readGroups } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface RemoveGroupOptions {
 	force?: boolean;
@@ -77,6 +78,7 @@ export async function removeGroup(groupId: string, options: RemoveGroupOptions):
 			emitError(result.error || 'Failed to remove group', options);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		emitError(error instanceof Error ? error.message : String(error), options);
 	}
 }

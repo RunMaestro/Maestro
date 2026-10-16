@@ -26,6 +26,7 @@ import {
 	getProcessList,
 } from './cue-process-lifecycle';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
+import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 import { logger } from '../utils/logger';
 import {
 	pluginToolRunIdentity,
@@ -74,6 +75,8 @@ export interface CueExecutionConfig {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	/** Secret names this agent needs; resolved into this run's env only (see `buildAgentLaunchPlan`). */
+	requiredSecrets?: string[];
 	customModel?: string;
 	customEffort?: string;
 	/** Legacy Adaptive Mode opt-in (maestro-p TUI). Off/absent means pure API. */
@@ -87,6 +90,10 @@ export interface CueExecutionConfig {
 	sshStore?: SshRemoteSettingsStore;
 	/** Optional agent-level config values (from agent config store) */
 	agentConfigValues?: Record<string, unknown>;
+	/** Inherit only the server-mode env allowlist (see `filterServerProcessEnv`). */
+	isServerMode?: boolean;
+	/** Aborted when the run is stopped: a launch not yet spawned returns `stopped` (see cue-launch-cancel.ts). */
+	signal?: AbortSignal;
 	/**
 	 * Called once with the run's raw transcript after an agent process has run
 	 * and the result is built. It has no way to change the result, the cleaned
@@ -200,6 +207,18 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 
 	// 3. Build spawn spec (agent args, SSH wrapping, etc.)
 	const buildResult = await buildSpawnSpec(config, finalPrompt);
+	// Stopped while the spec was being built (SSH resolution, spawn-mode probe).
+	if (isLaunchCancelled(config.signal)) {
+		return stoppedBeforeLaunchResult({
+			runId,
+			sessionId: session.id,
+			sessionName: session.name,
+			subscriptionName: subscription.name,
+			pipelineName: subscription.pipeline_name,
+			event,
+			startedAt,
+		});
+	}
 	if (!buildResult.ok) {
 		onLog('error', buildResult.message);
 		return failedResult(buildResult.message);
@@ -242,6 +261,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 			stdinPrompt: spec.stdinPrompt,
 			onLog,
 			onActivity: wakaHeartbeat,
+			signal: config.signal,
 			...(config.onRunTranscript
 				? {
 						onRawStdout: (raw: string) => {

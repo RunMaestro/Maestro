@@ -399,7 +399,13 @@ describe('CueEngine session lifecycle', () => {
 		// Heartbeat fires immediately -> 1 active run
 		expect(onCueRun).toHaveBeenCalledTimes(1);
 
-		// Refresh the session (tears down old timers, re-inits)
+		// Refresh the session with a changed interval (tears down old timers,
+		// re-inits). A changed heartbeat fires on load; an unchanged one would
+		// keep its schedule and not fire (cue-heartbeat-reload.test.ts).
+		mockLoadCueConfig.mockReturnValue({
+			...config,
+			subscriptions: [{ ...config.subscriptions[0], interval_minutes: 30 }],
+		});
 		engine.refreshSession('session-1', '/projects/test');
 
 		// The orphaned in-flight 'heartbeat' run is still active, so the
@@ -474,9 +480,15 @@ describe('CueEngine session lifecycle', () => {
 		expect(engine.getQueueStatus().get('session-1')).toBe(2);
 
 		// Call the onChange callback (simulates config file change -> refreshSession internally).
-		// refreshSession calls teardownSession which clears the queue, then initSession
+		// The change alters the heartbeat's interval, so it is a changed heartbeat:
+		// the reload drops its waiting ticks (superseded), then initSession
 		// re-creates the session and fires the immediate heartbeat. Since the old in-flight
 		// run still occupies the slot (activeRunCount=1), the new immediate fire is queued.
+		// (An unchanged heartbeat keeps its queued runs: cue-heartbeat-reload.test.ts.)
+		mockLoadCueConfig.mockReturnValue({
+			...config,
+			subscriptions: [{ ...config.subscriptions[0], interval_minutes: 2 }],
+		});
 		expect(yamlOnChange).not.toBeNull();
 		yamlOnChange!();
 
@@ -640,6 +652,7 @@ describe('CueEngine session lifecycle', () => {
 				registry,
 				dispatchSubscription: vi.fn(),
 				clearQueue,
+				retainQueue: vi.fn(() => 0),
 				clearFanInState,
 			});
 
@@ -700,6 +713,7 @@ describe('CueEngine session lifecycle', () => {
 				registry,
 				dispatchSubscription: vi.fn(),
 				clearQueue: vi.fn(),
+				retainQueue: vi.fn(() => 0),
 				clearFanInState: vi.fn(),
 				selfDestruct,
 			});
@@ -730,6 +744,7 @@ describe('CueEngine session lifecycle', () => {
 				registry,
 				dispatchSubscription: vi.fn(),
 				clearQueue: vi.fn(),
+				retainQueue: vi.fn(() => 0),
 				clearFanInState: vi.fn(),
 			});
 

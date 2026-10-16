@@ -47,6 +47,15 @@ export interface PersistableQueueEntry {
 	 *  for root events (and for any entry queued while usageStats is off). */
 	chainRootId?: string;
 	parentEventId?: string;
+	/**
+	 * Set when a drain (`CueEngine.drain`) deferred this entry to the next
+	 * start: the epoch ms the engine stopped. Restore then measures staleness
+	 * as the time the entry waited while an engine was UP (`drainedAt -
+	 * queuedAt`), so a server that was down longer than the session timeout
+	 * does not throw away work it acknowledged. Unset for every other row (a
+	 * crash leftover), which keeps the wall-clock rule.
+	 */
+	drainedAt?: number;
 	/** Captured Auto Run payload for `action: autorun`. The run launches from
 	 *  THIS, not from the subscription, so it has to survive a restart with the
 	 *  row or the restored run has no documents. */
@@ -61,6 +70,13 @@ export interface PersistableQueueEntry {
 export interface RestoredQueueEntry extends PersistableQueueEntry {
 	persistId: string;
 }
+
+/**
+ * Where the drain stamp lives: a reserved key inside the stored `event_json`.
+ * `cue_event_queue` itself is unchanged; this module owns the row's JSON shape
+ * and strips the key before the event reaches anything else.
+ */
+const DRAINED_AT_KEY = 'maestroDrainedAt';
 
 export interface CueQueuePersistence {
 	persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void;
@@ -84,6 +100,16 @@ export interface CueQueuePersistenceDeps {
 	getSessionTimeoutMs: (sessionId: string) => number;
 	/** Membership check: drop persisted entries whose session is no longer registered. */
 	knownSessionIds: () => Set<string>;
+	/**
+	 * Every subscription name in a registered agent's current config. A row
+	 * whose subscription is in none of them was removed (a re-import, a yaml
+	 * edit while the engine was down) and is dropped instead of running a
+	 * prompt the config no longer has. Checked across ALL agents, not the
+	 * row's own: a fan-out row runs on a target agent whose config does not
+	 * carry the owner's subscription. Omit (tests, older call sites) to skip
+	 * the check.
+	 */
+	knownSubscriptionNames?: () => Set<string>;
 	/** Override for testing - defaults to Date.now. */
 	now?: () => number;
 }
@@ -96,7 +122,11 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			id: persistId,
 			sessionId,
 			subscriptionName: entry.subscriptionName,
-			eventJson: JSON.stringify(entry.event),
+			eventJson: JSON.stringify(
+				entry.drainedAt !== undefined
+					? { ...entry.event, [DRAINED_AT_KEY]: entry.drainedAt }
+					: entry.event
+			),
 			prompt: entry.prompt,
 			outputPrompt: entry.outputPrompt ?? null,
 			cliOutputJson: entry.cliOutput ? JSON.stringify(entry.cliOutput) : null,
@@ -170,10 +200,12 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 		const currentTime = now();
 		const knownSessions = deps.knownSessionIds();
+		const knownSubscriptions = deps.knownSubscriptionNames?.();
 		const restored = new Map<string, RestoredQueueEntry[]>();
 		let droppedStale = 0;
 		let droppedMalformed = 0;
 		let droppedMissingSession = 0;
+		let droppedMissingSubscription = 0;
 
 		/**
 		 * Record a restore-path drop in `cue_events` so users see WHY a
@@ -188,7 +220,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		 */
 		function recordRestoredDrop(
 			row: CueQueuedEventRecord,
-			reason: 'stale' | 'malformed' | 'session-missing',
+			reason: 'stale' | 'malformed' | 'session-missing' | 'subscription-missing',
 			extraPayload: Record<string, unknown> = {}
 		): void {
 			try {
@@ -218,13 +250,10 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				continue;
 			}
 
-			// Staleness check (mirrors cue-run-manager's runtime drainQueue check).
-			const ageMs = currentTime - row.queuedAt;
-			const timeoutMs = deps.getSessionTimeoutMs(row.sessionId);
-			if (timeoutMs > 0 && ageMs > timeoutMs) {
-				recordRestoredDrop(row, 'stale', { queuedForMs: ageMs });
+			if (knownSubscriptions && !knownSubscriptions.has(row.subscriptionName)) {
+				recordRestoredDrop(row, 'subscription-missing');
 				safeRemoveQueuedEvent(row.id);
-				droppedStale++;
+				droppedMissingSubscription++;
 				continue;
 			}
 
@@ -233,11 +262,15 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			let event: CueEvent;
 			let cliOutput: { target: string } | undefined;
 			let command: CueCommand | undefined;
+			let drainedAt: number | undefined;
 			let autoRun: CueAutoRunConfig | undefined;
 			let notify: CueNotifyConfig | undefined;
 			let turnSettings: CueTurnSettings | undefined;
 			try {
-				event = JSON.parse(row.eventJson);
+				const parsed = JSON.parse(row.eventJson) as CueEvent & { [DRAINED_AT_KEY]?: unknown };
+				if (typeof parsed[DRAINED_AT_KEY] === 'number') drainedAt = parsed[DRAINED_AT_KEY];
+				delete parsed[DRAINED_AT_KEY];
+				event = parsed;
 				cliOutput = row.cliOutputJson ? JSON.parse(row.cliOutputJson) : undefined;
 				command = row.commandJson ? JSON.parse(row.commandJson) : undefined;
 				autoRun = row.autoRunJson ? JSON.parse(row.autoRunJson) : undefined;
@@ -257,6 +290,21 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				continue;
 			}
 
+			// Staleness check (mirrors cue-run-manager's runtime drainQueue check).
+			// A drained row's age is the time it waited while an engine was up:
+			// downtime does not count against work a drain deferred.
+			const ageMs =
+				drainedAt !== undefined
+					? Math.max(0, drainedAt - row.queuedAt)
+					: currentTime - row.queuedAt;
+			const timeoutMs = deps.getSessionTimeoutMs(row.sessionId);
+			if (timeoutMs > 0 && ageMs > timeoutMs) {
+				recordRestoredDrop(row, 'stale', { queuedForMs: ageMs });
+				safeRemoveQueuedEvent(row.id);
+				droppedStale++;
+				continue;
+			}
+
 			const entry: RestoredQueueEntry = {
 				persistId: row.id,
 				event,
@@ -267,12 +315,15 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				action: (row.action as CueSubscription['action']) ?? undefined,
 				command,
 				chainDepth: row.chainDepth,
-				queuedAt: row.queuedAt,
+				// Rebased for a drained row, so the run manager's runtime stale
+				// check sees the same age restore just judged, not the downtime.
+				queuedAt: drainedAt !== undefined ? currentTime - ageMs : row.queuedAt,
 				chainRootId: row.chainRootId ?? undefined,
 				parentEventId: row.parentEventId ?? undefined,
 				autoRun,
 				notify,
 				turnSettings,
+				...(drainedAt !== undefined ? { drainedAt } : {}),
 			};
 			if (!restored.has(row.sessionId)) restored.set(row.sessionId, []);
 			restored.get(row.sessionId)!.push(entry);
@@ -290,6 +341,17 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 					type: 'queueDropped',
 					count: droppedMissingSession,
 					reason: 'session-missing',
+				} satisfies CueLogPayload
+			);
+		}
+		if (droppedMissingSubscription > 0) {
+			deps.onLog(
+				'warn',
+				`[CUE] Dropped ${droppedMissingSubscription} persisted queue row(s) whose subscription is no longer in any agent's config`,
+				{
+					type: 'queueDropped',
+					count: droppedMissingSubscription,
+					reason: 'subscription-missing',
 				} satisfies CueLogPayload
 			);
 		}

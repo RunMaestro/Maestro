@@ -1,9 +1,10 @@
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
-import type { CueSubscriptionInfo, CueActivityEntry } from '../types';
+import type { CueSubscriptionInfo } from '../types';
 import { composeCueSubscriptionId } from '../../../shared/cue/subscription-id';
 import { cueTurnSettingsOf } from '../../../shared/cue/turn-settings';
+import { toCueActivityEntries } from '../../cue/cue-activity-entries';
 
 /** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
  *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
@@ -113,55 +114,14 @@ export function registerCueCallbacks(
 	// Get Cue activity log - calls engine directly in the main process.
 	// Previously forwarded to the renderer with no listener registered -
 	// the 30 s timeout fired every time and the web UI's activity tab
-	// always rendered empty. Maps `CueRunResult[]` from the engine into
-	// the web-facing `CueActivityEntry[]` shape and applies the same
-	// optional `sessionId` filter the IPC bounce used to apply renderer-side.
+	// always rendered empty. The mapping, agent filter and limit live in
+	// `toCueActivityEntries`, which the CLI's headless `cue.db` read shares.
 	server.setGetCueActivityCallback(async (sessionId?: string, limit?: number) => {
 		if (!deps.getCueActivityLog) {
 			logger.warn('getCueActivityLog dependency not available', 'WebServer');
 			return [];
 		}
-		const runs = deps.getCueActivityLog();
-		const filteredBySession =
-			typeof sessionId === 'string' && sessionId.length > 0
-				? runs.filter((r) => r.sessionId === sessionId)
-				: runs;
-		// `limit` is applied after sessionId filtering so the caller gets
-		// `N` matching entries rather than `N` total of which some may be
-		// filtered out - mirroring how `cueEngine.getActivityLog(limit)`
-		// would behave without the per-session filter.
-		const limited =
-			typeof limit === 'number' && limit > 0
-				? filteredBySession.slice(0, limit)
-				: filteredBySession;
-		const entries: CueActivityEntry[] = limited.map((r) => ({
-			id: r.runId,
-			// Same identity contract as the subscriptions list - the
-			// pipeline discriminator falls back to base-name stripping
-			// when the run record has no `pipelineName`, matching how
-			// `getCueGraphData`'s flatten emits ids.
-			subscriptionId: composeCueSubscriptionId(r.sessionId, {
-				name: r.subscriptionName,
-				pipeline_name: r.pipelineName,
-			}),
-			subscriptionName: r.subscriptionName,
-			eventType: r.event.type,
-			sessionId: r.sessionId,
-			timestamp: Date.parse(r.startedAt) || 0,
-			// Map engine-side status (`timeout` / `stopped` are terminal
-			// failure variants) onto the web-facing four-state enum.
-			status:
-				r.status === 'completed'
-					? 'completed'
-					: r.status === 'running'
-						? 'running'
-						: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
-							? 'failed'
-							: 'triggered',
-			result: r.status === 'completed' ? r.stdout || undefined : r.stderr || undefined,
-			duration: r.durationMs,
-		}));
-		return entries;
+		return toCueActivityEntries(deps.getCueActivityLog(), { sessionId, limit });
 	});
 
 	// Trigger a Cue subscription by name - calls engine directly in the main process.

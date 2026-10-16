@@ -92,6 +92,7 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			onLog,
 			dispatchSubscription: dispatch,
 			clearQueue: vi.fn(),
+			retainQueue: vi.fn(() => 0),
 			clearFanInState: vi.fn(),
 		});
 		vi.spyOn(console, 'log').mockImplementation(() => {});

@@ -52,6 +52,20 @@ Commands exit with a standardized code so scripts and CI can branch on the failu
 | `4`  | The running app does not support the command (older build) |
 | `5`  | The app was reachable but did not respond in time          |
 
+Almost every verb that needs the desktop app reports its absence the same way: the message `Maestro desktop app is not running or not reachable`, exit code `3`, and with `--json` (or on verbs that always print JSON) the code `MAESTRO_NOT_RUNNING`:
+
+```json
+{
+	"success": false,
+	"error": "Maestro desktop app is not running or not reachable",
+	"code": "MAESTRO_NOT_RUNNING"
+}
+```
+
+This covers a missing or stale discovery file, a connection that never opens, and one refused at the network level. An app that answers but refuses the connection (for example the Web Login gate) is running, so it reports its own error instead.
+
+A few verbs do not follow this yet: `steer-auto-run`, `quick-chat`, `window`, `maestro-run` and `plugin list|update` print the same message but exit `1` with no `code`, and the `computer-history` writes exit `1` with the message wrapped in `Could not reach the Maestro app (...)`. In a script, treat exit `1` from these as possibly meaning the app is not running.
+
 ### Who Moves the View (`--background` / `--focus`)
 
 Focus belongs to whoever is at the keyboard. An agent may create a surface; it should not decide you ought to be looking at it. Every verb that can move the Maestro view or raise a notice therefore accepts `--background`, which means exactly two things: the active agent does not change, and the active tab inside any agent does not change. The surface is still created and still addressable - it lands in the tab bar the way a browser opens a background tab.
@@ -330,7 +344,7 @@ Currently supported for `claude-code` agents.
 
 Inspect open AI tabs across the running Maestro desktop app and read their conversation history. Pair `dispatch --new-tab` (writes, returns a `tabId`) with `session show <tabId>` (reads, supports `--since` and `--tail`) to build a stateless poll loop without owning a persistent connection - used by Maestro-Discord and Cue follow-ups.
 
-Both verbs talk to the running desktop over the same WebSocket as `dispatch`. There is no on-disk fallback: if the app is not running, the CLI exits with code `MAESTRO_NOT_RUNNING`.
+Both verbs talk to the running desktop over the same WebSocket as `dispatch`. There is no on-disk fallback: if the app is not running, the CLI reports `MAESTRO_NOT_RUNNING` and exits `3`.
 
 #### List Open Tabs
 
@@ -431,7 +445,7 @@ JSON shape:
 
 `role` is a coarse classification (`user` | `assistant` | `system` | `tool` | `thinking` | `error` | `unknown`) so conversational consumers can branch on intent; the raw `source` is preserved alongside for callers that need to discriminate further. ISO timestamps are emitted verbatim so a `messages[-1].timestamp` from one call can be fed directly back into `--since` on the next.
 
-Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`.
+Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`, except `MAESTRO_NOT_RUNNING`, which exits `3`.
 
 ### Pasted Images (`image list` / `image save`)
 
@@ -931,8 +945,8 @@ prints a `maestro://session/<agent-id>/tab/<tab-id>` deep link that reopens it.
 Use it when an orchestrating agent needs to launch a worker the user can watch;
 use the headless default for CI and scripting.
 
-`--visible` **fails closed**. If the desktop app is not reachable it exits with
-`MAESTRO_NOT_RUNNING` rather than quietly running headlessly, because a silent
+`--visible` **fails closed**. If the desktop app is not reachable it reports
+`MAESTRO_NOT_RUNNING` and exits `3` rather than quietly running headlessly, because a silent
 fallback is invisible in exactly the surface you were pointing at. Other stable
 failure codes: `AGENT_BUSY` (the agent already has an Auto Run going - pass
 `--wait` to queue instead), `AUTO_RUN_DISABLED`, `SESSION_NOT_FOUND`,
@@ -2192,18 +2206,20 @@ maestro-cli cue model triage --model gpt-5.5-codex
 maestro-cli cue model nightly-review --clear-model --clear-effort
 ```
 
-| Flag                       | Description                                                      |
-| -------------------------- | ---------------------------------------------------------------- |
-| `--tier <level>`           | Model tier: `low`, `medium`, `high`, mapped per provider         |
-| `--model <id>`             | Exact model id, passed to the agent as-is                        |
-| `--effort <level>`         | Effort: `low`, `medium`, `high`, mapped to the provider's ladder |
-| `--clear-model`            | Remove the tier or model and use the agent's own model           |
-| `--clear-effort`           | Remove the effort and use the agent's own effort                 |
-| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)        |
-| `--json`                   | Output as JSON (for scripting)                                   |
+| Flag                       | Description                                                       |
+| -------------------------- | ----------------------------------------------------------------- |
+| `--tier <level>`           | Model tier: `low`, `medium`, `high`, mapped per provider          |
+| `--model <id>`             | Exact model id, passed to the agent as-is                         |
+| `--effort <level>`         | Effort: `low`, `medium`, `high`, mapped to the provider's ladder  |
+| `--clear-model`            | Remove the tier or model and use the agent's own model            |
+| `--clear-effort`           | Remove the effort and use the agent's own effort                  |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)         |
+| `--json`                   | Output as JSON (for scripting)                                    |
+| `--data-dir <path>`        | Read agents from this Maestro data directory (must already exist) |
 
 Notes:
 
+- On a server, pass `--data-dir` (or set `MAESTRO_USER_DATA`) so the command reads the same agents the Cue engine runs. A running engine picks the edited `cue.yaml` up on its own.
 - With no setting flag the command only reads. Its output names the stored choice and the model and effort the run resolves to.
 - `--tier` and `--model` are two spellings of one choice. Setting one removes the other.
 - When the agent's provider cannot honor a tier or an effort, the command still saves it and prints a warning. The run then uses the agent's own value.
@@ -2211,7 +2227,9 @@ Notes:
 
 ### Triggering a Subscription
 
-Manually trigger a Cue subscription by name, bypassing its normal event conditions:
+Manually trigger a Cue subscription by name, bypassing its normal event conditions.
+
+A subscription in a pipeline fires together with its siblings: every subscription in the same pipeline whose trigger settings (event, schedule, interval, filter, and so on) are identical to its own. That is what a real tick does, since the pipeline editor writes a fan-out to several targets as one subscription per target, each repeating the trigger. To fire one subscription alone, give it a pipeline of its own or trigger settings that differ from the others'. A chain step (`agent.completed`), a subscription with no pipeline, and a trigger with `--prompt` fire only the named subscription.
 
 ```bash
 # Trigger a subscription

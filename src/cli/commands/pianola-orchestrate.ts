@@ -50,6 +50,7 @@ import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
 import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -495,6 +496,7 @@ export async function pianolaOrchestrate(
 	try {
 		await client.connect();
 	} catch (error) {
+		exitIfMaestroNotRunning(error, {});
 		process.off('SIGINT', onSignal);
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`[orchestrator] could not connect to Maestro: ${message}`);

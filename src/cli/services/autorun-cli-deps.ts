@@ -39,6 +39,7 @@ function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		customArgs: session.customArgs,
 		additionalDirectories: session.additionalDirectories,
 		customEnvVars: session.customEnvVars,
+		requiredSecrets: session.requiredSecrets,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
 		// This is Auto Run, not someone typing. Marks the turn so delegation
 		// reporting downstream of the spawn does not count it as hands-on work.
@@ -54,6 +55,7 @@ function goalTurnOptions(session: SessionInfo): SpawnAgentOptions {
 	return {
 		customArgs: session.customArgs,
 		customEnvVars: session.customEnvVars,
+		requiredSecrets: session.requiredSecrets,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
 	};
 }

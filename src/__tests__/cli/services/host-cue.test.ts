@@ -111,6 +111,17 @@ describe('startHostCue', () => {
 		expect(engine.start).not.toHaveBeenCalled();
 	});
 
+	it('reads a lock under another token as held, even when its pid is this process', async () => {
+		// Two containers on one data directory: both engines run as pid 1, so only the token tells
+		// another container's lock from this process's own.
+		const { all, engine } = deps({
+			readLock: () => ({ ...lock(PID), token: 'another-container' }),
+		});
+		const cue = await startHostCue(PATHS, all);
+		expect(cue.state()).toEqual({ state: 'held', mode: 'standalone', pid: PID });
+		expect(engine.start).not.toHaveBeenCalled();
+	});
+
 	it('runs the engine, serves the trigger inbox, and stops both', async () => {
 		const { all, engine, stopInbox } = deps();
 		const cue = await startHostCue(PATHS, all);

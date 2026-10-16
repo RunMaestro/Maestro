@@ -439,6 +439,9 @@ describe('cue-spawn-builder', () => {
 					expect.objectContaining({
 						command: 'claude',
 						agentBinaryName: 'claude',
+						// Every Cue SSH run launches through the stdin script so it records
+						// the remote pid that Stop, the timeout and shutdown signal.
+						launchViaStdinScript: true,
 					}),
 					{ enabled: true, remoteId: 'remote-1' },
 					mockSshStore

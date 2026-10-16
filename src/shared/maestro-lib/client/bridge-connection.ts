@@ -17,6 +17,7 @@ import {
 	type CliServerInfo,
 } from './discovery';
 import { CLI_SECRET_HEADER } from '../../webLogin';
+import { MaestroNotRunningError } from './not-running';
 
 const CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
@@ -137,17 +138,14 @@ export class BridgeConnection {
 
 	/**
 	 * Connect to the running Maestro app.
-	 * Throws if the app is not running or connection fails.
+	 * Throws `MaestroNotRunningError` when no host is running or reachable.
 	 */
 	async connect(): Promise<void> {
 		const info: CliServerInfo | null = this.options.userDataDir
 			? readCliServerInfoFrom(this.options.userDataDir)
 			: readCliServerInfo();
 		if (!info) {
-			// Callers match on the first sentence, so it stays as it was.
-			throw new Error(
-				'Maestro desktop app is not running. Start it, or run `maestro-cli host start` for a headless host.'
-			);
+			throw new MaestroNotRunningError('no-discovery-file');
 		}
 		this.hostKind = info.hostKind;
 
@@ -155,7 +153,10 @@ export class BridgeConnection {
 		// reachability check; this only says the recorded process still exists.
 		const alive = this.options.userDataDir ? isPidAlive(info.pid) : isCliServerRunning();
 		if (!alive) {
-			throw new Error('Maestro discovery file is stale (app may have crashed)');
+			throw new MaestroNotRunningError(
+				'stale-discovery-file',
+				`pid ${info.pid} is gone (app may have crashed)`
+			);
 		}
 
 		// Use 127.0.0.1 instead of `localhost` - Node 18's default DNS resolution
@@ -186,7 +187,7 @@ export class BridgeConnection {
 				if (!settled) {
 					settled = true;
 					ws.close();
-					reject(new Error('Connection to Maestro timed out'));
+					reject(new MaestroNotRunningError('connect-timeout'));
 				}
 			}, CONNECT_TIMEOUT_MS);
 
@@ -206,7 +207,14 @@ export class BridgeConnection {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timeout);
-				reject(new Error(`Failed to connect to Maestro: ${err.message}`));
+				// A socket-level failure carries an errno (ECONNREFUSED, ...): nothing
+				// is listening. An HTTP rejection of the upgrade has none - the app
+				// answered and said no, so it is running and keeps its own error.
+				if ((err as NodeJS.ErrnoException).code) {
+					reject(new MaestroNotRunningError('connect-failed', err.message));
+				} else {
+					reject(new Error(`Failed to connect to Maestro: ${err.message}`));
+				}
 			});
 		});
 	}

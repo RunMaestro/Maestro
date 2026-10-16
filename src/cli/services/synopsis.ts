@@ -78,6 +78,7 @@ export async function requestCliSynopsis(
 					customArgs: session.customArgs,
 					additionalDirectories: session.additionalDirectories,
 					customEnvVars: session.customEnvVars,
+					requiredSecrets: session.requiredSecrets,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
 					// A synopsis is never someone typing, whatever turn it summarizes.
 					querySource: 'auto',

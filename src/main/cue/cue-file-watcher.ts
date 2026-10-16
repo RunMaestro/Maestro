@@ -5,8 +5,11 @@
  * and produces CueEvent instances for the engine.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import * as chokidar from 'chokidar';
+import picomatch from 'picomatch';
+import { isMacOS, isWindows } from '../../shared/platformDetection';
 import { createCueEvent, type CueEvent } from './cue-types';
 
 export interface CueFileWatcherConfig {
@@ -28,6 +31,20 @@ export interface CueFileWatcherConfig {
 }
 
 /**
+ * The static folder a watch glob is rooted at, relative to the project root
+ * and in POSIX form (`inbox/*.txt` -> `inbox`, `a/b/*.md` -> `a/b`). Empty
+ * when the glob starts with a magic segment (`**\/*.md`, `{a,b}/*.md`): the
+ * glob is then rooted at the project root, which always exists. A literal
+ * path (`docs/readme.md`) is rooted at its parent folder.
+ */
+export function staticWatchBase(watchGlob: string): string {
+	const scan = picomatch.scan(watchGlob);
+	const base = scan.isGlob ? scan.base : path.posix.dirname(watchGlob);
+	const trimmed = base.replace(/^\.\/+/, '').replace(/\/+$/, '');
+	return trimmed === '.' ? '' : trimmed;
+}
+
+/**
  * Creates a chokidar file watcher for a Cue file.changed subscription.
  * Returns a cleanup function to stop watching.
  */
@@ -35,12 +52,6 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 	const { watchGlob, projectRoot, debounceMs, onEvent, triggerName } = config;
 	const isActive = config.isActive ?? (() => true);
 	const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-	const watcher = chokidar.watch(watchGlob, {
-		cwd: projectRoot,
-		ignoreInitial: true,
-		persistent: true,
-	});
 
 	// Pre-compute the normalized project root (with trailing separator) so the
 	// per-event guard below can do a cheap prefix check. `path.resolve` does not
@@ -95,24 +106,112 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 		);
 	};
 
-	watcher.on('change', handleEvent('change'));
-	watcher.on('add', handleEvent('add'));
-	watcher.on('unlink', handleEvent('unlink'));
-
-	watcher.on('error', (error) => {
+	const handleError = (error: unknown) => {
 		const message = `[CUE] File watcher error for "${triggerName}": ${error}`;
 		if (config.onLog) {
 			config.onLog('error', message);
 		} else {
 			console.error(message);
 		}
-	});
+	};
+
+	const attachGlobWatcher = (ignoreInitial: boolean): chokidar.FSWatcher => {
+		const globWatcher = chokidar.watch(watchGlob, {
+			cwd: projectRoot,
+			ignoreInitial,
+			persistent: true,
+		});
+		globWatcher.on('change', handleEvent('change'));
+		globWatcher.on('add', handleEvent('add'));
+		globWatcher.on('unlink', handleEvent('unlink'));
+		globWatcher.on('error', handleError);
+		return globWatcher;
+	};
+
+	let watcher: chokidar.FSWatcher | null = attachGlobWatcher(true);
+	const baseWatcher = watchStaticBase();
+
+	/**
+	 * chokidar 3 watches a glob from its static folder (`inbox` for
+	 * `inbox/*.txt`). When that folder is missing it falls back to watching the
+	 * parent for an entry literally named `*.txt`, so a folder created later is
+	 * never picked up, and nothing above the folder notices it being deleted
+	 * and created again. This watches only the chain of folders from the
+	 * project root down to the static folder, one level each (never the tree
+	 * below), and re-attaches the glob watcher whenever the folder appears.
+	 */
+	function watchStaticBase(): chokidar.FSWatcher | null {
+		const base = staticWatchBase(watchGlob);
+		if (!base) return null;
+
+		// Windows and default macOS volumes are case-insensitive, so a glob
+		// written `Inbox/*.txt` names a folder created as `inbox`, while
+		// chokidar reports the folder in its on-disk case. Compare chain paths
+		// case-folded there; every match is confirmed with fs.existsSync on the
+		// glob's own spelling before the glob watcher is re-attached.
+		const foldCase = isWindows() || isMacOS();
+		const chainKey = (p: string) => {
+			const resolved = path.resolve(p);
+			return foldCase ? resolved.toLowerCase() : resolved;
+		};
+
+		const rootAbs = path.resolve(projectRoot);
+		const segments = base.split('/').filter(Boolean);
+		const chain = new Set<string>([chainKey(rootAbs)]);
+		for (let i = 1; i <= segments.length; i++) {
+			chain.add(chainKey(path.resolve(rootAbs, ...segments.slice(0, i))));
+		}
+		const baseAbs = path.resolve(rootAbs, ...segments);
+		const baseKey = chainKey(baseAbs);
+
+		// Whether the glob watcher currently sits on an existing base folder.
+		// Recorded synchronously, so a folder created before this watcher's
+		// initial scan finishes is caught by the re-check on `ready`.
+		let basePresent = fs.existsSync(baseAbs);
+		let ready = false;
+
+		const onBaseAppeared = () => {
+			if (basePresent) return;
+			basePresent = true;
+			// Everything in a folder that appeared after start is new, so files
+			// already written into it (`mkdir -p inbox && echo > inbox/a.txt`)
+			// report `add` rather than being skipped as initial.
+			watcher?.close();
+			watcher = attachGlobWatcher(false);
+		};
+
+		const chainWatcher = chokidar.watch(rootAbs, {
+			ignoreInitial: true,
+			persistent: true,
+			depth: segments.length - 1,
+			ignored: (candidate: string) => !chain.has(chainKey(candidate)),
+		});
+		chainWatcher.on('addDir', (dirPath: string) => {
+			if (ready && chainKey(dirPath) === baseKey && fs.existsSync(baseAbs)) onBaseAppeared();
+		});
+		chainWatcher.on('unlinkDir', (dirPath: string) => {
+			if (chainKey(dirPath) !== baseKey || !basePresent) return;
+			basePresent = false;
+			// Release the handle on the deleted folder (Windows keeps a watched
+			// folder pending-delete) and wait for it to come back.
+			watcher?.close();
+			watcher = null;
+		});
+		chainWatcher.on('ready', () => {
+			ready = true;
+			if (!basePresent && fs.existsSync(baseAbs)) onBaseAppeared();
+		});
+		chainWatcher.on('error', handleError);
+		return chainWatcher;
+	}
 
 	return () => {
 		for (const timer of debounceTimers.values()) {
 			clearTimeout(timer);
 		}
 		debounceTimers.clear();
-		watcher.close();
+		watcher?.close();
+		watcher = null;
+		baseWatcher?.close();
 	};
 }

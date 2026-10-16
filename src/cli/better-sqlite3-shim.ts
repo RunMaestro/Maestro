@@ -13,7 +13,7 @@
 
 import { loadBetterSqlite3 } from './utils/native-sqlite';
 
-function Database(filename: string, options?: object): unknown {
+function Database(filename: string | Buffer, options?: object): unknown {
 	const RealDatabase = loadBetterSqlite3();
 	return new RealDatabase(filename, options);
 }

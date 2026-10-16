@@ -58,7 +58,7 @@ subscriptions:
     fan_out: list # Optional. Target agent display names for fan-out
     fan_out_ids: list # Optional companion to fan_out - agent UUIDs (parallel array). Preferred at runtime; survives renames
     filter: object # Optional. Payload field conditions
-    repo: string # Optional for github.* (auto-detected if omitted)
+    repo: string # Required for github.* (never detected; the trigger does not run without it)
     poll_minutes: number # Optional for github.*, task.pending
     gh_label_target: string # Optional for github.label. "pr" | "issue" | "both" (default "both")
     gh_labels: list # Optional for github.label. Labels to watch (omit to fire on any label)
@@ -150,7 +150,7 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 | `fan_out`                  | list of strings   | -        | Target agent display names to fan out to                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `fan_out_ids`              | list of strings   | -        | Companion UUID array for `fan_out` (one entry per fan-out target). Preferred by the dispatcher at lookup time; falls back to `fan_out` names when absent. Set this alongside `fan_out` for rename stability                                                                                                                                                                                                                                                                                                                     |
 | `filter`                   | object            | -        | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `repo`                     | string            | -        | GitHub repo (`owner/repo`). Auto-detected from git remote                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `repo`                     | string            | -        | GitHub repo (`owner/repo`). Required for `github.*`: without it the trigger never runs (it is not detected from the git remote)                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `poll_minutes`             | number            | varies   | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `gh_label_target`          | string            | `both`   | `github.label` only. Which kind of item to watch: `pr`, `issue`, or `both`                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `gh_labels`                | list of strings   | -        | `github.label` only. Labels that fire the trigger, matched case-insensitively. Omit to fire on any label                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -225,6 +225,7 @@ By default a subscription runs on the agent's own configured model and effort. S
 subscriptions:
   - name: triage-issues
     event: github.issue
+    repo: owner/name
     tier: low # cheap, fast model for sorting
     effort: low
     prompt: Label and prioritize {{CUE_GH_URL}}.
@@ -343,6 +344,7 @@ subscriptions:
   - name: pr-review
     label: 'PR Review Bot'
     event: github.pull_request
+    repo: owner/name
     prompt: Review the PR at {{CUE_GH_URL}}.
 ```
 
@@ -412,6 +414,8 @@ settings:
   queue_size: 1024 # Buffer up to 1024 events
 ```
 
+Saving `cue.yaml` while events wait (by hand, from the Pipeline Graph, or with `maestro-cli cue model`) keeps every queued event whose subscription is still in the file and switched on. It runs with the prompt and settings it was fired with. A queued event for a subscription the save removed, renamed or switched off is dropped, logged, and shown in the activity log as never run. A save that fails to parse keeps the queue until the next good save. A heartbeat whose timing changed fires on load, so its waiting tick is dropped the same way.
+
 ## Validation
 
 The engine validates your YAML on every load. Common validation errors:
@@ -473,6 +477,7 @@ subscriptions:
   - name: DevOps-chain-2
     label: PR Review
     event: github.pull_request
+    repo: owner/name
     poll_minutes: 3
     filter:
       draft: false
