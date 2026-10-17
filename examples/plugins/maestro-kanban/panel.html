@@ -791,7 +791,9 @@
 				cursor: not-allowed;
 				opacity: 0.5;
 			}
-			#conductor-open {
+			#conductor-create,
+			#conductor-open,
+			#conductor-allow-access {
 				flex: 0 0 auto;
 				padding: 3px 10px;
 				font: inherit;
@@ -801,6 +803,10 @@
 				border: 1px solid var(--maestro-border, #3c3c3c);
 				border-radius: 6px;
 				cursor: pointer;
+			}
+			#conductor-create:disabled {
+				cursor: not-allowed;
+				opacity: 0.5;
 			}
 			#conductor-reach ul {
 				margin: 0;
@@ -1140,7 +1146,9 @@
 				agent in Maestro's own agent settings, not here.
 			</p>
 			<div class="board-settings-row">
+				<button id="conductor-create" type="button" hidden>Create Conductor</button>
 				<button id="conductor-open" type="button" disabled>Open Conductor</button>
+				<button id="conductor-allow-access" type="button" hidden>Allow Access</button>
 				<span id="conductor-status" class="board-settings-note"></span>
 			</div>
 			<div id="conductor-reach">
@@ -2597,7 +2605,9 @@
 						effort: effort,
 						toggle: toggle,
 						scope: document.getElementById('conductor-settings-scope'),
+						create: document.getElementById('conductor-create'),
 						open: document.getElementById('conductor-open'),
+						allowAccess: document.getElementById('conductor-allow-access'),
 						status: document.getElementById('conductor-status'),
 						grantedList: document.getElementById('conductor-reach-granted'),
 						grantedEmpty: document.getElementById('conductor-reach-granted-empty'),
@@ -2606,23 +2616,39 @@
 					};
 				}
 
-				/** Posts one or more changed conductor fields, carrying the id of
-				 * the board the surface was drawn on - the same echo
-				 * postBoardSettings() carries, so a post aimed at a board the user
-				 * has since switched away from is refused rather than landing on
-				 * the wrong one. */
-				function postConductorConfig(patch) {
+				/** The board id a conductor post should echo back: the surface's own
+				 * snapshot when it has one, the general snapshot's board otherwise -
+				 * shared by every command this surface posts, so a post aimed at a
+				 * board the user has since switched away from is refused rather than
+				 * landing on the wrong one. */
+				function conductorPostBoardId() {
 					var conductor = conductorOf(currentSnapshot);
-					var boardId =
-						conductor && typeof conductor.boardId === 'string' && conductor.boardId
-							? conductor.boardId
-							: boardIdOf(currentSnapshot);
-					var args = { boardId: boardId };
+					return conductor && typeof conductor.boardId === 'string' && conductor.boardId
+						? conductor.boardId
+						: boardIdOf(currentSnapshot);
+				}
+
+				/** Posts one or more changed conductor fields, carrying the board id
+				 * above - the same echo postBoardSettings() carries. */
+				function postConductorConfig(patch) {
+					var args = { boardId: conductorPostBoardId() };
 					Object.keys(patch).forEach(function (field) {
 						args[field] = patch[field];
 					});
 					parent.postMessage(
 						{ type: 'maestro:invokeCommand', commandId: 'conductor-config', args: args },
+						'*'
+					);
+				}
+
+				/** Invoked by the Create Conductor button. */
+				function postCreateConductor() {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'create-conductor',
+							args: { boardId: conductorPostBoardId() },
+						},
 						'*'
 					);
 				}
@@ -2643,9 +2669,24 @@
 					);
 				}
 
+				/** Invoked by the Allow Access button next to the conductor's own
+				 * status, for a conductor session that exists but is not connected
+				 * (a restart, or a revoke in Settings) - the exact same command as
+				 * requestConductorReachAccess() above, aimed at the conductor's own
+				 * session id instead of a project's representative card. */
+				function requestConductorOwnAccess(conductor) {
+					if (!conductor || typeof conductor.conductorId !== 'string' || !conductor.conductorId) {
+						return;
+					}
+					requestConductorReachAccess(conductor.conductorId);
+				}
+
 				function conductorStatusText(conductor) {
 					if (!conductor) return '';
-					return conductor.conductorExists === true ? 'Conductor connected.' : 'No conductor yet.';
+					if (conductor.conductorExists !== true) return 'No conductor yet.';
+					return conductor.conductorConnected === true
+						? 'Conductor connected.'
+						: 'Conductor not connected.';
 				}
 
 				/** Paints one reach list: the granted list is read-only, the
@@ -2749,7 +2790,14 @@
 						nodes.scope.textContent =
 							conductor && typeof conductor.boardName === 'string' ? conductor.boardName : '';
 					}
-					if (nodes.open) nodes.open.disabled = !(conductor && conductor.conductorExists === true);
+					var conductorExists = !!conductor && conductor.conductorExists === true;
+					var conductorConnected = conductorExists && conductor.conductorConnected === true;
+					if (nodes.create) {
+						nodes.create.hidden = conductorExists;
+						nodes.create.disabled = !configurable;
+					}
+					if (nodes.open) nodes.open.disabled = !conductorExists;
+					if (nodes.allowAccess) nodes.allowAccess.hidden = !conductorExists || conductorConnected;
 					if (nodes.status) nodes.status.textContent = conductorStatusText(conductor);
 
 					var reach = (conductor && conductor.reach) || {};
@@ -3861,6 +3909,16 @@
 						if (event.key !== 'Enter') return;
 						event.preventDefault();
 						flushConductorEffort();
+					});
+				}
+
+				var conductorCreateEl = document.getElementById('conductor-create');
+				if (conductorCreateEl) conductorCreateEl.addEventListener('click', postCreateConductor);
+
+				var conductorAllowAccessEl = document.getElementById('conductor-allow-access');
+				if (conductorAllowAccessEl) {
+					conductorAllowAccessEl.addEventListener('click', function () {
+						requestConductorOwnAccess(conductorOf(currentSnapshot));
 					});
 				}
 

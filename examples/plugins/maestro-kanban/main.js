@@ -3819,12 +3819,10 @@ async function setConductorConfig(boardId, patch) {
 // pick the configuration above, see this board's resolved reach, and learn
 // where the conductor's binary path, CLI args, env vars, SSH remote, and
 // Claude token mode actually live (Maestro's own agent settings - a plugin
-// must never set those). Nothing here calls maestro.sessions: turning this
-// configuration into a running conductor agent, and keeping its reach in
-// sync, is Phase 06's later tasks. Since no conductor can exist without that
-// work, `conductorExists` on the snapshot below is honestly always false for
-// now - it is here so the later task that starts storing a conductor session
-// id only has to start setting it, not invent the read path too.
+// must never set those). `conductorExists` and `conductorConnected` on the
+// snapshot below read the real session this plugin created - see the
+// "conductor session creation" section further down, which is the only
+// place that calls maestro.sessions.create/update for it.
 // ===========================================================================
 
 /**
@@ -3888,16 +3886,20 @@ const CONDUCTOR_REACH_LIMIT = 64;
 
 /**
  * This board's project roots, split by whether Phase 04 access has already
- * been granted to at least one of its cards' sessions. A project needs only
- * one granted session to be reachable: `sessions.update()` only requires
- * that SOME granted session resolve to the path it is given, not a specific
- * one, so approving any single card for a project grants that project's
- * whole reach. `sessionId` on an ungranted entry names one representative
- * card to request access through - approving it is enough even when the
- * project has several cards.
- * @returns {{ granted: { projectPath: string, name: string }[], grantedHidden: number, ungranted: { projectPath: string, name: string, sessionId: string }[], ungrantedHidden: number }}
+ * been granted to at least one of its cards' sessions - the full,
+ * UNCAPPED lists. A project needs only one granted session to be reachable:
+ * `sessions.update()` only requires that SOME granted session resolve to the
+ * path it is given, not a specific one, so approving any single card for a
+ * project grants that project's whole reach. `sessionId` on an ungranted
+ * entry names one representative card to request access through -
+ * approving it is enough even when the project has several cards.
+ *
+ * Shared by conductorReachForBoard() below, which caps this for the panel's
+ * byte budget, and by the conductor session creation/reach-sync code, which
+ * needs the true set - a display cap must never quietly become a reach cap.
+ * @returns {{ granted: { projectPath: string, name: string }[], ungranted: { projectPath: string, name: string, sessionId: string }[] }}
  */
-function conductorReachForBoard() {
+function boardReachLists() {
 	const view = resolveBoardView();
 	const granted = new Set();
 	const ungrantedRepresentative = new Map();
@@ -3924,11 +3926,22 @@ function conductorReachForBoard() {
 			return { projectPath: entry[0], name: projectDisplayName(entry[0]), sessionId: entry[1] };
 		})
 		.sort(byName);
+	return { granted: grantedList, ungranted: ungrantedList };
+}
+
+/**
+ * The display view of boardReachLists(): the same two lists, capped to
+ * CONDUCTOR_REACH_LIMIT per side with a hidden-count, for the settings
+ * surface to paint.
+ * @returns {{ granted: { projectPath: string, name: string }[], grantedHidden: number, ungranted: { projectPath: string, name: string, sessionId: string }[], ungrantedHidden: number }}
+ */
+function conductorReachForBoard() {
+	const lists = boardReachLists();
 	return {
-		granted: grantedList.slice(0, CONDUCTOR_REACH_LIMIT),
-		grantedHidden: Math.max(0, grantedList.length - CONDUCTOR_REACH_LIMIT),
-		ungranted: ungrantedList.slice(0, CONDUCTOR_REACH_LIMIT),
-		ungrantedHidden: Math.max(0, ungrantedList.length - CONDUCTOR_REACH_LIMIT),
+		granted: lists.granted.slice(0, CONDUCTOR_REACH_LIMIT),
+		grantedHidden: Math.max(0, lists.granted.length - CONDUCTOR_REACH_LIMIT),
+		ungranted: lists.ungranted.slice(0, CONDUCTOR_REACH_LIMIT),
+		ungrantedHidden: Math.max(0, lists.ungranted.length - CONDUCTOR_REACH_LIMIT),
 	};
 }
 
@@ -3936,21 +3949,27 @@ function conductorReachForBoard() {
  * Everything the settings surface paints, rebuilt fresh on every snapshot
  * the same way boardSettingsSnapshot() is - it is cheap enough, and a
  * provider picked in another window or a grant just approved from a card
- * must show up here without a dedicated round trip.
+ * must show up here without a dedicated round trip. `conductorId` and
+ * `conductorExists` come from resolveConductorSessionId() (see "conductor
+ * session creation" below), which also clears a stored id whose session is
+ * gone. `conductorConnected` is false for a conductor that exists but whose
+ * grant this plugin no longer holds (a restart, or a revoke in Settings) -
+ * the panel's cue to show "conductor not connected" with an Allow Access
+ * action, the same one a card's ungranted project already offers.
  * @returns {Promise<object>}
  */
 async function conductorSettingsSnapshot() {
 	const boardId = currentBoardId();
+	const conductorId = await resolveConductorSessionId(boardId);
 	return {
 		boardId: boardId,
 		boardName: currentBoardName(),
 		config: conductorConfigForBoard(boardId),
 		providers: await conductorProviderOptions(),
 		reach: conductorReachForBoard(),
-		// No conductor session id is stored anywhere yet (see the banner
-		// comment above); the moment a later task starts writing one, this
-		// becomes a real lookup instead of a constant.
-		conductorExists: false,
+		conductorId: conductorId,
+		conductorExists: conductorId !== null,
+		conductorConnected: conductorId !== null && isSessionAccessGranted(conductorId),
 	};
 }
 
@@ -3991,6 +4010,265 @@ async function applyConductorConfig(args) {
 
 // ===========================================================================
 // End of Phase 06 conductor settings surface.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 06 conductor session creation: turning the configuration above into
+// a running agent. A board's conductor lives in a scratch folder this
+// plugin owns, never a project folder - the ONLY way it ever sees a card's
+// files is the additionalDirectories grant below.
+//
+// Grant state mirrors a card's: `sessions.create()` grants the new session
+// to this plugin on the HOST side the instant it exists (see
+// pluginSessionsCreate's comment in src/main/index.ts), and this section
+// mirrors that into the local `grantedSessions` set the moment creation
+// succeeds, so `isSessionAccessGranted()` reads true for it without a round
+// trip. That local mirror is cleared on every restart (deactivate(), same
+// as a card's), and the host's own grant can also be revoked independently
+// of this plugin, in Settings' existing agent-dispatch allowlist editor.
+// Either way the next snapshot reads `conductorConnected: false` - "conductor
+// not connected" - and the fix is the SAME `request-access` command a card's
+// ungranted project already uses, aimed at the conductor's session id
+// instead: sessions.requestAccess() answers instantly with no re-prompt when
+// the host still holds the grant, and only raises a real confirmation when
+// it genuinely does not.
+// ===========================================================================
+
+/** Scratch space this plugin keeps every board conductor's working directory
+ * under - never a project folder. */
+const CONDUCTOR_SCRATCH_DIR = '~/.maestro/kanban-conductor';
+
+/** Basename of the Global board's conductor scratch folder. Mirrors
+ * GLOBAL_ARCHIVE_BASENAME's reasoning: the Global board's id is the reserved
+ * GLOBAL_BOARD_ID rather than a path, so it gets a reserved basename too. */
+const GLOBAL_CONDUCTOR_SCRATCH_BASENAME = 'global';
+
+const CONDUCTOR_ID_STORAGE_KEY = 'conductor-ids';
+
+/** @type {Map<string, string>} board id -> that board's conductor session id */
+let conductorIds = new Map();
+
+/**
+ * The scratch directory one board's conductor runs in, under
+ * CONDUCTOR_SCRATCH_DIR. Every other board slugs through the same
+ * projectBoardSlug() its board YAML and archive file already do, so the
+ * three files for one project are recognizably a set. The leading `~` is
+ * left for the host to expand. Throws on anything but GLOBAL_BOARD_ID or a
+ * non-empty project path.
+ * @param {string} boardId
+ */
+function conductorScratchDir(boardId) {
+	if (boardId === GLOBAL_BOARD_ID) {
+		return CONDUCTOR_SCRATCH_DIR + '/' + GLOBAL_CONDUCTOR_SCRATCH_BASENAME;
+	}
+	if (typeof boardId !== 'string' || boardId === '') {
+		throw new Error('conductorScratchDir requires a board id: a project path, or GLOBAL_BOARD_ID');
+	}
+	return CONDUCTOR_SCRATCH_DIR + '/' + projectBoardSlug(boardId);
+}
+
+/** Restores every board's conductor session id from storage. Called once,
+ * alongside loadConductorConfigs(), before activate()'s first seed(). A
+ * storage failure degrades to "no board has a conductor yet" rather than
+ * throwing the activation. */
+async function loadConductorIds() {
+	conductorIds = new Map();
+	try {
+		const raw = await sdk.storage.get(CONDUCTOR_ID_STORAGE_KEY);
+		if (typeof raw === 'string' && raw !== '') {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const key of Object.keys(parsed)) {
+					if (typeof parsed[key] === 'string' && parsed[key] !== '') {
+						conductorIds.set(key, parsed[key]);
+					}
+				}
+			}
+		}
+	} catch (err) {
+		console.error('maestro-kanban: failed to read stored conductor ids: ' + String(err));
+	}
+}
+
+/** Writes every board's conductor session id in one call. A failed write
+ * logs and moves on, the same best-effort persistence persistConductorConfigs()
+ * uses: the in-memory map stays authoritative for this session. */
+async function persistConductorIds() {
+	const obj = {};
+	for (const [boardId, sessionId] of conductorIds) {
+		obj[boardId] = sessionId;
+	}
+	try {
+		await sdk.storage.set(CONDUCTOR_ID_STORAGE_KEY, JSON.stringify(obj));
+	} catch (err) {
+		console.error('maestro-kanban: failed to persist conductor ids: ' + String(err));
+	}
+}
+
+/** One board's stored conductor session id, or null when it has never had
+ * one (or its stored id was just cleared by resolveConductorSessionId()
+ * below, because the session it named is gone).
+ * @param {string|null} boardId */
+function storedConductorId(boardId) {
+	if (typeof boardId !== 'string' || boardId === '') return null;
+	return conductorIds.get(boardId) || null;
+}
+
+/** Records (or, with `sessionId: null`, clears) one board's conductor id and
+ * persists the whole map. A no-op, with no write, when the stored value
+ * already matches - so resolveConductorSessionId() does not write on every
+ * snapshot it is asked for.
+ * @param {string} boardId @param {string|null} sessionId */
+async function setConductorId(boardId, sessionId) {
+	const existing = conductorIds.get(boardId) || null;
+	if (existing === sessionId) return;
+	if (sessionId === null) conductorIds.delete(boardId);
+	else conductorIds.set(boardId, sessionId);
+	await persistConductorIds();
+}
+
+/**
+ * The board's conductor session id, or null when it has none. Treats a
+ * stored id whose session no longer exists as "no conductor" rather than an
+ * error, clearing the stale id (and this plugin's local grant mirror for it)
+ * so neither keeps answering for a session that is gone for good. A
+ * transient `sessions.get()` failure degrades to "no conductor for this
+ * render" WITHOUT touching storage, so a passing glitch cannot make the
+ * plugin forget a conductor that is actually still there.
+ * @param {string|null} boardId
+ * @returns {Promise<string|null>}
+ */
+async function resolveConductorSessionId(boardId) {
+	const id = storedConductorId(boardId);
+	if (!id) return null;
+	let session;
+	try {
+		session = await sdk.sessions.get(id);
+	} catch (err) {
+		console.error('maestro-kanban: sessions.get (conductor) failed: ' + String(err));
+		return null;
+	}
+	if (!session) {
+		await setConductorId(boardId, null);
+		grantedSessions.delete(id);
+		return null;
+	}
+	return id;
+}
+
+/** The additionalDirectories entries this board's conductor should hold
+ * right now: one read-only entry per granted project root. Deliberately
+ * uncapped, unlike conductorReachForBoard()'s display lists - a panel byte
+ * budget must never become a reach limit.
+ * @returns {{ path: string, read: true, write: false }[]} */
+function conductorDirectoryGrants() {
+	return boardReachLists().granted.map(function (entry) {
+		return { path: entry.projectPath, read: true, write: false };
+	});
+}
+
+/** Writes the one file this plugin ever puts in a conductor's scratch folder
+ * directly - `maestro.fs.write` creates the folder itself, so there is
+ * nothing to create first.
+ * @param {string} boardId */
+async function writeConductorReadme(boardId) {
+	const text =
+		"# Kanban Conductor Scratch Space\n\nThis folder is this board's Kanban conductor working " +
+		"directory. It holds only the conductor's own scratch space and plan files - the Kanban " +
+		'Board plugin never writes anything else here.\n';
+	await sdk.fs.write(conductorScratchDir(boardId) + '/README.md', text);
+}
+
+/**
+ * Backs the panel's `create-conductor` command. Refuses the same way
+ * applyConductorConfig() does: no board on screen, or a stale board id (the
+ * user switched boards before the post landed). A conductor that already
+ * resolves for this board is left alone rather than recreated. Otherwise:
+ * writes the scratch folder's README, creates the session with this board's
+ * configured provider (and model/effort when set), mirrors the host's grant
+ * locally, stores the new id, and hands the session this board's granted
+ * project roots as read-only added directories. A failure after the README
+ * is written (sessions.create rejecting, say) leaves that README in place -
+ * harmless scratch content in an unused folder - rather than attempting a
+ * cleanup that could itself fail.
+ * @param {unknown} args
+ */
+async function createConductor(args) {
+	const source = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+	const boardId =
+		typeof source.boardId === 'string' && source.boardId !== '' ? source.boardId : null;
+	if (boardId === null) {
+		const reason = 'there is no board on screen to create a conductor for yet';
+		console.warn('maestro-kanban: refused create-conductor: ' + reason);
+		await safeToast('Could not create a conductor: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	if (boardId !== currentBoardId()) {
+		const reason = 'the board changed before the conductor could be created; try again';
+		console.warn('maestro-kanban: refused create-conductor: ' + reason);
+		await safeToast('Could not create a conductor: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const existingId = await resolveConductorSessionId(boardId);
+	if (existingId) {
+		await pushSnapshotNow();
+		return { ok: true, conductorId: existingId };
+	}
+	const config = conductorConfigForBoard(boardId);
+	if (!config.agentId) {
+		const reason = "pick a provider for this board's conductor first";
+		console.warn('maestro-kanban: refused create-conductor: ' + reason);
+		await safeToast('Could not create a conductor: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	try {
+		await writeConductorReadme(boardId);
+	} catch (err) {
+		console.error('maestro-kanban: writing the conductor README failed: ' + String(err));
+		await safeToast('Could not create a conductor: could not write its scratch folder.');
+		return { ok: false, reason: errorMessage(err) };
+	}
+	const createParams = {
+		agentId: config.agentId,
+		title: 'Conductor: ' + currentBoardName(),
+		cwd: conductorScratchDir(boardId),
+	};
+	if (config.customModel) createParams.customModel = config.customModel;
+	if (config.customEffort) createParams.customEffort = config.customEffort;
+	let created;
+	try {
+		created = await sdk.sessions.create(createParams);
+	} catch (err) {
+		console.error('maestro-kanban: sessions.create (conductor) failed: ' + String(err));
+		await safeToast('Could not create the conductor agent.');
+		return { ok: false, reason: errorMessage(err) };
+	}
+	const conductorId = created && typeof created.id === 'string' ? created.id : null;
+	if (!conductorId) {
+		console.error('maestro-kanban: sessions.create (conductor) returned no id');
+		await safeToast('Could not create the conductor agent.');
+		return { ok: false, reason: 'sessions.create returned no id' };
+	}
+	// The host already granted this plugin the session it just made (see
+	// pluginSessionsCreate); mirror that locally so isSessionAccessGranted()
+	// reads true for it without a round trip.
+	grantedSessions.add(conductorId);
+	await setConductorId(boardId, conductorId);
+	const directories = conductorDirectoryGrants();
+	if (directories.length > 0) {
+		try {
+			await sdk.sessions.update(conductorId, { additionalDirectories: directories });
+		} catch (err) {
+			console.error('maestro-kanban: sessions.update (conductor reach) failed: ' + String(err));
+			await safeToast("Conductor created, but could not grant it this board's projects yet.");
+		}
+	}
+	await pushSnapshotNow();
+	return { ok: true, conductorId: conductorId };
+}
+
+// ===========================================================================
+// End of Phase 06 conductor session creation.
 // ===========================================================================
 
 // ===========================================================================
@@ -5249,6 +5527,23 @@ function registerCommands(maestro) {
 		})
 	);
 
+	// Invoked by the panel's conductor settings surface's Create Conductor
+	// button; no manifest `commands` entry for the same reason
+	// `conductor-config` has none - the palette has no board in hand to
+	// create one for. createConductor() already catches its own failures and
+	// returns `{ ok: false, reason }`; this outer catch only guards against
+	// something it did not anticipate, the same belt-and-suspenders the
+	// other board-scoped commands above keep.
+	maestro.commands.register('create-conductor', (args) =>
+		createConductor(args).catch((err) => {
+			console.error('maestro-kanban: create-conductor failed: ' + String(err));
+			return safeToast('Could not create the conductor agent.').then(() => ({
+				ok: false,
+				error: errorMessage(err),
+			}));
+		})
+	);
+
 	// Invoked by the panel when a drag ends in a drop (and, later, by its
 	// keyboard move); no manifest `commands` entry is needed since it is never
 	// surfaced in the command palette.
@@ -5600,6 +5895,20 @@ module.exports = {
 	conductorSettingsSnapshot: conductorSettingsSnapshot,
 	applyConductorConfig: applyConductorConfig,
 
+	// Phase 06 conductor session creation, exported for direct unit testing
+	// (see src/__tests__/plugins/kanban-conductor.test.ts, written once
+	// Phase 06's remaining tasks land). conductorScratchDir() is pure;
+	// resolveConductorSessionId() and conductorDirectoryGrants() read live
+	// session/card state and call sdk.sessions.get(); createConductor()
+	// writes the README, creates the session, and syncs its initial reach -
+	// a test calls it after activate() with a stub SDK, normally through
+	// the `create-conductor` command the panel posts.
+	CONDUCTOR_SCRATCH_DIR: CONDUCTOR_SCRATCH_DIR,
+	conductorScratchDir: conductorScratchDir,
+	resolveConductorSessionId: resolveConductorSessionId,
+	conductorDirectoryGrants: conductorDirectoryGrants,
+	createConductor: createConductor,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -5627,6 +5936,7 @@ module.exports = {
 		await loadCardNotes();
 		await loadBoardSettings();
 		await loadConductorConfigs();
+		await loadConductorIds();
 		await loadArchiveBoardIndex();
 		await seed();
 		await prunePlacements();
@@ -5657,6 +5967,7 @@ module.exports = {
 		cardNotes = new Map();
 		boardSettings = new Map();
 		conductorConfigs = new Map();
+		conductorIds = new Map();
 		agingByCard = new Map();
 		stopRetirementTicks();
 		cardColumnTrail.clear();

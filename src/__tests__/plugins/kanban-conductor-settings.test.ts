@@ -6,10 +6,13 @@
  * this board's resolved reach (which granted project roots a conductor would
  * receive, and which of its projects still need an "Allow Access" click).
  *
- * This is still the stored choice plus a read-only view of live state -
- * nothing here calls `sessions.create`/`sessions.update` for the conductor
- * itself, so `conductorExists` on every snapshot is honestly always false.
- * That plumbing is covered separately, once it exists, by
+ * This is still the stored choice plus a read-only view of live state - none
+ * of these tests ever call the `create-conductor` command, so no board here
+ * has a stored conductor id and `conductorExists`/`conductorConnected` read
+ * false on every snapshot the same way they would for a board nobody has
+ * created a conductor for yet. Actually creating one (writing the README,
+ * `sessions.create`, the initial `sessions.update` reach grant, and the
+ * "conductor not connected" state after a revoke) is covered separately by
  * `kanban-conductor.test.ts`.
  *
  * `conductorConfigPatchFrom()` is a pure export, called straight through.
@@ -55,7 +58,9 @@ interface ConductorPayload {
 		ungranted: ConductorReachEntry[];
 		ungrantedHidden: number;
 	};
+	conductorId: string | null;
 	conductorExists: boolean;
+	conductorConnected: boolean;
 }
 
 interface KanbanConductorSettings {
@@ -226,9 +231,11 @@ describe('maestro-kanban conductor settings surface', () => {
 				ungranted: [{ projectPath, name: 'widgets', sessionId: 'session-1' }],
 				ungrantedHidden: 0,
 			},
-			// No session id is stored anywhere yet - nothing in this phase can
-			// create a conductor, so this is honestly always false for now.
+			// No `create-conductor` call happened in this test, so this board
+			// has no stored conductor id at all.
+			conductorId: null,
 			conductorExists: false,
+			conductorConnected: false,
 		});
 	});
 

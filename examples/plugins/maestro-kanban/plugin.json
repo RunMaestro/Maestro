@@ -20,6 +20,14 @@
 		},
 		{ "capability": "sessions:focus", "reason": "Jump Maestro to the tab behind a clicked card." },
 		{
+			"capability": "sessions:create",
+			"reason": "Create exactly one conductor agent per board, in its own scratch folder, when you ask for one. Never spawns anything else."
+		},
+		{
+			"capability": "sessions:write",
+			"reason": "Hand a board's conductor the project roots you have granted, as read-only added directories, and keep that in sync. Never widens reach beyond what you have already approved."
+		},
+		{
 			"capability": "events:subscribe",
 			"reason": "Keep the board live as agents and tabs change."
 		},
@@ -63,6 +71,16 @@
 			"capability": "fs:write",
 			"scope": "~/.maestro/kanban-archive",
 			"reason": "Write the archive of cards retired from Done. The plugin keeps retired cards here and nowhere else, under ~/.maestro, and never touches a project folder."
+		},
+		{
+			"capability": "fs:read",
+			"scope": "~/.maestro/kanban-conductor",
+			"reason": "Read a board conductor's own scratch folder. Holds only the conductor's scratch space and plan files, under ~/.maestro, and never touches a project folder."
+		},
+		{
+			"capability": "fs:write",
+			"scope": "~/.maestro/kanban-conductor",
+			"reason": "Write a board conductor's own scratch folder, starting with its README. Holds only the conductor's scratch space and plan files, under ~/.maestro, and never touches a project folder."
 		},
 		{
 			"capability": "transcripts:read",
