@@ -2270,6 +2270,42 @@ async function appendToArchive(boardId, additions) {
 	return saveArchive(boardId, Array.from(byKey.values()));
 }
 
+/**
+ * Takes records back out of one board's archive and writes it back. The
+ * inverse of appendToArchive() and the only one there is: Restore is the
+ * only thing that ever un-archives a card, which is why nothing else in
+ * this plugin calls it. Throws through saveArchive() when the existing file
+ * is unreadable, so a restore never destroys the archive it is reading from.
+ * Resolves to the records removed, which is empty when none of the keys was
+ * in the file (a record someone else already restored).
+ * @param {string} boardId
+ * @param {string[]} keys
+ * @returns {Promise<ArchiveRecord[]>}
+ */
+async function removeFromArchive(boardId, keys) {
+	const wanted = new Set(Array.isArray(keys) ? keys : []);
+	const existing = await loadArchive(boardId);
+	if (existing.error) {
+		throw new Error(
+			'Refusing to rewrite an unreadable archive at ' +
+				archiveFilePath(boardId) +
+				': ' +
+				existing.error.message
+		);
+	}
+	const removed = existing.records.filter(function (record) {
+		return wanted.has(record.key);
+	});
+	if (removed.length === 0) return [];
+	await saveArchive(
+		boardId,
+		existing.records.filter(function (record) {
+			return !wanted.has(record.key);
+		})
+	);
+	return removed;
+}
+
 // ===========================================================================
 // End of Phase 05 archive storage.
 // ===========================================================================
@@ -2551,6 +2587,9 @@ async function retireCards(targets, reason, now) {
 			for (const card of group) failed.push(card.key);
 			continue;
 		}
+		// That board now has an archive file, which is how the Global board's
+		// archive view finds it again once this project's tabs are all closed.
+		await noteArchiveBoard(boardId);
 		const archivedKeys = await archivedKeysForBoard(boardId);
 		const boardPath = boardFilePath(boardId);
 		for (const card of group) {
@@ -2971,6 +3010,405 @@ async function archiveCardNow(cardKey) {
 
 // ===========================================================================
 // End of Phase 05 manual Done maintenance.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 05 archive view: the half of "aging is never destructive" the user
+// can actually see. Retirement writes a record; this is what reads it back,
+// as a second mode of the same panel (there is one panel in plugin.json, and
+// a board that opens a second window to show its own archive would be a
+// worse board).
+//
+// Six properties worth knowing:
+//
+//   1. The payload rides in the snapshot, and ONLY while the view is open.
+//      The panel posts `archive-view` to open, close, and re-filter; the
+//      sandbox holds that state and `buildSnapshot()` attaches
+//      `archive: null` the rest of the time. Same shape as the Phase 04
+//      History excerpt, and for the same reason: the bridge carries no reply
+//      to a post, so the only way an answer reaches the panel is the next
+//      snapshot.
+//   2. The FILTER runs here, not in the panel. The alternative - shipping
+//      every record and filtering in the DOM - would put 500 records with
+//      their comment threads through a 56 KB snapshot budget. Filtering in
+//      the sandbox means the text search covers the whole archive while only
+//      the newest ARCHIVE_VIEW_LIMIT matches ride out, each one trimmed to
+//      what the view draws.
+//   3. "Which archived cards still have a live tab" is read from
+//      `tabs.list()` on every build, never from the record's own `tabId`: a
+//      record is a ledger entry written days ago and the tab behind it may
+//      well be gone. A read the host refuses is reported as `tabsUnknown`
+//      rather than guessed either way.
+//   4. Restore is the inverse of retirement and nothing more: the record
+//      comes out of the archive file, the card's key comes out of the
+//      archived-key set, and the next rebuild finds its tab in `tabs.list()`
+//      and draws the card again. It lands in whichever column
+//      deriveColumn() puts it (its placement was removed when it retired),
+//      and it keeps its description and comment thread, because retirement
+//      never deleted them.
+//   5. A card whose tab is gone CANNOT be restored, because there would be
+//      nothing to restore it from - a card is a projection of a live AI tab
+//      (see rebuildCardsFromTabs). So that record stays in the archive as a
+//      read-only entry, the view says so on the row, and the sandbox refuses
+//      the post as well rather than trusting the panel's reading of it.
+//   6. Which boards the view lists is the board selection's answer, not a
+//      directory listing: this plugin has no capability to enumerate
+//      `~/.maestro/kanban-archive`, so a project board shows its own archive
+//      and the Global board merges the archives of every board it knows
+//      about - the projects with live cards, plus the ones remembered in the
+//      `archive-boards` index that retirement maintains. Without that index
+//      a project whose tabs are all closed would have an invisible archive.
+// ===========================================================================
+
+/** Storage key for the set of board ids that have an archive file. */
+const ARCHIVE_BOARDS_STORAGE_KEY = 'archive-boards';
+
+/** How many archived records ride in one snapshot. The filter runs over
+ * every record (see buildArchiveView), so this caps the PAYLOAD and not the
+ * search: the newest matches are the ones a person is looking for, and the
+ * view says how many older ones it is not showing. */
+const ARCHIVE_VIEW_LIMIT = 50;
+
+/** How many of a record's comments ride out with it, newest last, and how
+ * long a piece of its text may be. The archive view is a list, not a reader:
+ * it shows enough of a record to recognize the card, and the full thread
+ * comes back with the card itself when it is restored. */
+const ARCHIVE_VIEW_COMMENT_CAP = 2;
+const ARCHIVE_VIEW_TEXT_CAP = 160;
+
+/** Whether the panel is showing the archive instead of the board. False
+ * means `buildSnapshot()` sends no archive payload at all, so a board nobody
+ * is browsing the archive of costs no fs reads. */
+let archiveViewOpen = false;
+
+/** The text the archive view is filtered by, as the panel last posted it. */
+let archiveViewFilter = '';
+
+/** @type {Set<string>} every board id known to have an archive file.
+ * Retirement adds to it; the Global board's archive view reads it, so a
+ * project whose tabs are all closed still has a findable archive. Union'd
+ * with the live cards' projects on every build, which is what makes an
+ * archive written before this index existed show up anyway. */
+const archiveBoardIndex = new Set();
+
+/** Restores the remembered archive-board index. Called once from activate(),
+ * beside loadBoardSettings(). A storage failure degrades to "only the boards
+ * with live cards", which is a smaller archive view and not a broken one. */
+async function loadArchiveBoardIndex() {
+	try {
+		const raw = await sdk.storage.get(ARCHIVE_BOARDS_STORAGE_KEY);
+		const parsed = typeof raw === 'string' && raw !== '' ? JSON.parse(raw) : [];
+		if (Array.isArray(parsed)) {
+			for (const id of parsed) {
+				if (typeof id === 'string' && id !== '') archiveBoardIndex.add(id);
+			}
+		}
+	} catch (err) {
+		console.error('maestro-kanban: failed to read the archive board index: ' + String(err));
+	}
+	return archiveBoardIndex;
+}
+
+/** Remembers that a board now has an archive file. Called by retirement
+ * after a successful archive write, and best-effort: losing the index costs
+ * the Global board's archive view a project with no open tabs, which is not
+ * worth failing a retirement over.
+ * @param {string} boardId
+ */
+async function noteArchiveBoard(boardId) {
+	if (typeof boardId !== 'string' || boardId === '') return;
+	if (archiveBoardIndex.has(boardId)) return;
+	archiveBoardIndex.add(boardId);
+	try {
+		await sdk.storage.set(
+			ARCHIVE_BOARDS_STORAGE_KEY,
+			JSON.stringify(Array.from(archiveBoardIndex))
+		);
+	} catch (err) {
+		console.error('maestro-kanban: failed to remember the archive board index: ' + String(err));
+	}
+}
+
+/**
+ * Whose archives the view lists: one project board shows its own, and the
+ * Global board (or the unnamed pre-activation board, which also shows
+ * everything) merges every archive this plugin knows a path to - the
+ * remembered index, plus every project a live card or a live SESSION names.
+ * The sessions matter on their own: a project whose cards have all been
+ * retired has no cards left to name it, and its archive is exactly the one a
+ * user goes looking for. Sorted, so the merged read order is stable between
+ * pushes.
+ * @returns {string[]}
+ */
+function archiveViewBoardIds() {
+	const view = resolveBoardView();
+	if (view.kind === 'project' && view.projectPath !== null) return [view.projectPath];
+	/** @type {Set<string>} */
+	const ids = new Set(archiveBoardIndex);
+	for (const card of cards.values()) {
+		if (typeof card.projectPath === 'string' && card.projectPath !== '') ids.add(card.projectPath);
+	}
+	for (const projectPath of sessionProjectPath.values()) {
+		if (typeof projectPath === 'string' && projectPath !== '') ids.add(projectPath);
+	}
+	return Array.from(ids).sort();
+}
+
+/**
+ * The card keys a rebuild would produce from the tabs that exist right now -
+ * ai tabs only, keyed exactly as rebuildCardsFromTabs() keys them, so
+ * "has a live tab" and "would come back as a card" are the same question
+ * asked once. Null when the host refused the read, which is never read as
+ * "the tab is gone".
+ * @returns {Promise<Set<string>|null>}
+ */
+async function liveCardKeys() {
+	try {
+		const tabs = await sdk.tabs.list();
+		/** @type {Set<string>} */
+		const keys = new Set();
+		for (const tab of Array.isArray(tabs) ? tabs : []) {
+			if (!tab || typeof tab !== 'object') continue;
+			if (tab.type !== 'ai') continue;
+			if (typeof tab.sessionId !== 'string' || typeof tab.id !== 'string') continue;
+			keys.add(cardKey(tab.sessionId, tab.id));
+		}
+		return keys;
+	} catch (err) {
+		console.error(
+			'maestro-kanban: tabs.list failed while checking which archived cards still have a tab, ' +
+				'so none is offered for restore: ' +
+				errorMessage(err)
+		);
+		return null;
+	}
+}
+
+/** Pure: does this record match the archive view's text filter? The filter
+ * covers the card's TITLE and its COMMENTS, which is what a person
+ * remembers about a card they retired; it is case-insensitive and a plain
+ * substring match, never a pattern, so a filter typed with a `.` in it
+ * means a `.`.
+ * @param {ArchiveRecord} record
+ * @param {string} needle lowercased already
+ */
+function archiveRecordMatches(record, needle) {
+	if (needle === '') return true;
+	if (archiveString(record.title).toLowerCase().indexOf(needle) !== -1) return true;
+	for (const comment of Array.isArray(record.comments) ? record.comments : []) {
+		if (
+			comment &&
+			String(comment.body || '')
+				.toLowerCase()
+				.indexOf(needle) !== -1
+		)
+			return true;
+	}
+	return false;
+}
+
+/** One piece of a record's text, trimmed to what the view draws. Marked with
+ * a trailing ellipsis so a truncated comment never reads as the whole thing.
+ * @param {unknown} value
+ */
+function archiveViewText(value) {
+	const text = archiveString(value);
+	if (text.length <= ARCHIVE_VIEW_TEXT_CAP) return text;
+	return text.slice(0, ARCHIVE_VIEW_TEXT_CAP) + '...';
+}
+
+/**
+ * One stored record as the view's row: its identity, what it was called,
+ * where it came from, when and why it retired, and whether the tab behind it
+ * is still open. `boardId` is its own project path, echoed back by a
+ * `restore-card` post so the sandbox reads the right archive file.
+ * @param {ArchiveRecord} record
+ * @param {Set<string>|null} liveKeys
+ */
+function archiveViewRow(record, liveKeys) {
+	const comments = Array.isArray(record.comments) ? record.comments : [];
+	return {
+		key: record.key,
+		boardId: record.projectPath,
+		title: archiveString(record.title),
+		projectPath: record.projectPath,
+		projectName: record.projectPath === null ? null : projectDisplayName(record.projectPath),
+		agentName: record.agentName,
+		retiredAt: record.retiredAt,
+		reason: archiveString(record.reason),
+		columnHistory: record.columnHistory,
+		description: archiveViewText(record.description),
+		commentCount: comments.length,
+		comments: comments.slice(-ARCHIVE_VIEW_COMMENT_CAP).map(function (comment) {
+			return { id: comment.id, body: archiveViewText(comment.body), createdAt: comment.createdAt };
+		}),
+		// null, not false: "we could not ask" is a third answer, and the row
+		// says so rather than claiming the tab is gone.
+		hasLiveTab: liveKeys === null ? null : liveKeys.has(record.key),
+	};
+}
+
+/**
+ * The archive payload for the next snapshot, or null when the view is
+ * closed. Reads every scoped archive file fresh (the archive is deliberately
+ * uncached - see the archive storage section), filters over the whole set,
+ * sorts newest first, and sends the newest ARCHIVE_VIEW_LIMIT matches.
+ *
+ * An archive file that does not parse is REPORTED, never skipped silently
+ * and never written over: its `errors` entry is what the view shows, and it
+ * is the same read `saveArchive()` refuses on.
+ * @returns {Promise<object|null>}
+ */
+async function buildArchiveView() {
+	if (!archiveViewOpen) return null;
+	const boardIds = archiveViewBoardIds();
+	const needle = archiveViewFilter.trim().toLowerCase();
+	/** @type {ArchiveRecord[]} */
+	const matched = [];
+	/** @type {{ path: string, message: string }[]} */
+	const errors = [];
+	let archivedTotal = 0;
+	for (const boardId of boardIds) {
+		const read = await loadArchive(boardId);
+		if (read.error) {
+			errors.push({ path: read.error.path, message: read.error.message });
+			continue;
+		}
+		archivedTotal += read.records.length;
+		for (const record of read.records) {
+			if (archiveRecordMatches(record, needle)) matched.push(record);
+		}
+	}
+	matched.sort(compareArchiveRecords);
+	const liveKeys = matched.length > 0 ? await liveCardKeys() : new Set();
+	const shown = matched.slice(0, ARCHIVE_VIEW_LIMIT);
+	return {
+		open: true,
+		filter: archiveViewFilter,
+		boardName: currentBoardName(),
+		boardCount: boardIds.length,
+		records: shown.map(function (record) {
+			return archiveViewRow(record, liveKeys);
+		}),
+		total: matched.length,
+		hidden: matched.length - shown.length,
+		archivedTotal: archivedTotal,
+		errors: errors,
+		tabsUnknown: liveKeys === null,
+	};
+}
+
+/**
+ * Backs the panel's `archive-view` command: opens, closes, and re-filters
+ * the archive view. The panel is the only caller (there is no palette entry:
+ * "open the archive" is a mode of a panel that has to be open to have a
+ * mode), and it debounces its own typing, so every post here is one the user
+ * meant.
+ * @param {unknown} args
+ */
+async function setArchiveView(args) {
+	const open = !!(args && args.open === true);
+	// Bounded on the way in: a filter is a substring search over every record,
+	// and nothing a person types to find a card is longer than a card's text.
+	const filter =
+		args && typeof args.filter === 'string' ? args.filter.slice(0, ARCHIVE_VIEW_TEXT_CAP) : '';
+	archiveViewOpen = open;
+	// A closed view forgets its filter, so reopening it starts on the whole
+	// archive rather than on a search the user typed days ago.
+	archiveViewFilter = open ? filter : '';
+	await pushSnapshotNow();
+	return { ok: true, open: archiveViewOpen, filter: archiveViewFilter };
+}
+
+/**
+ * Backs the archive view's Restore action: takes one record back out of the
+ * archive so the next rebuild draws its card again. The inverse of
+ * retirement, and ordered the same way round - the archive file is written
+ * first and the board rebuilt second, so a write that fails leaves the card
+ * archived rather than leaving it on a board it is still archived from.
+ *
+ * Refused, with a toast naming which, when the record is gone, when the
+ * host will not say whether the tab is still open, or when it is not: a card
+ * is a projection of a live AI tab, so a record whose tab has closed has
+ * nothing to restore TO and stays in the archive as a read-only entry.
+ * @param {unknown} cardKeyArg
+ * @param {unknown} boardIdArg
+ */
+async function restoreArchivedCard(cardKeyArg, boardIdArg) {
+	const key = typeof cardKeyArg === 'string' ? cardKeyArg : '';
+	if (key === '') return { ok: false, reason: 'cardKey is required' };
+	const boardIds =
+		typeof boardIdArg === 'string' && boardIdArg !== '' ? [boardIdArg] : archiveViewBoardIds();
+	/** @type {{ boardId: string, record: ArchiveRecord }|null} */
+	let found = null;
+	/** @type {{ message: string, path: string }|null} */
+	let readError = null;
+	for (const boardId of boardIds) {
+		const read = await loadArchive(boardId);
+		if (read.error) {
+			readError = readError || read.error;
+			continue;
+		}
+		const record = read.records.find(function (entry) {
+			return entry.key === key;
+		});
+		if (record) {
+			found = { boardId: boardId, record: record };
+			break;
+		}
+	}
+	if (!found) {
+		// A file that would not parse is a different story from a record that
+		// is genuinely gone, and the difference is the whole of what the user
+		// has to go fix.
+		const reason = readError
+			? 'the archive at ' + readError.path + ' could not be read: ' + readError.message
+			: 'that record is no longer in the archive';
+		console.warn('maestro-kanban: refused Restore for "' + key + '": ' + reason);
+		await safeToast('Could not restore that card: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const title = archiveString(found.record.title) || key;
+
+	const liveKeys = await liveCardKeys();
+	if (liveKeys === null) {
+		const reason = 'Maestro did not say whether that tab is still open; try again';
+		await safeToast('Could not restore "' + title + '": ' + reason);
+		return { ok: false, reason: reason };
+	}
+	if (!liveKeys.has(key)) {
+		// Nothing to restore TO: a card only exists while its AI tab does.
+		const reason = 'its tab is gone, so it stays in the archive as a read-only record';
+		console.log('maestro-kanban: cannot restore archived card ' + key + ': ' + reason);
+		await safeToast('"' + title + '" cannot come back: ' + reason + '.');
+		return { ok: false, reason: reason, readOnly: true };
+	}
+
+	await removeFromArchive(found.boardId, [key]);
+	const archivedKeys = archivedCardKeys.get(found.boardId);
+	if (archivedKeys) archivedKeys.delete(key);
+	console.log(
+		'maestro-kanban: restored card ' +
+			key +
+			' ("' +
+			title +
+			'") from ' +
+			archiveFilePath(found.boardId) +
+			' to its board'
+	);
+	// A full rebuild rather than a hand-built card: the tab is the source of
+	// truth for everything on it, and the card has no placement any more, so
+	// it lands wherever deriveColumn() puts it. seed() pushes the snapshot.
+	await seed();
+	const restored = cards.get(key);
+	return {
+		ok: true,
+		columnId: restored && typeof restored.columnId === 'string' ? restored.columnId : null,
+	};
+}
+
+// ===========================================================================
+// End of Phase 05 archive view.
 // ===========================================================================
 
 // ===========================================================================
@@ -3835,6 +4273,10 @@ async function buildGlobalBoardColumns(active) {
  * and it can only reach the panel this way: the bridge carries no reply to a
  * post, so a count the panel asked for would arrive after the click it was
  * meant to describe.
+ *
+ * `archive` is the archive view's own payload, and is null unless the panel
+ * has that view open (see buildArchiveView): a board nobody is browsing the
+ * archive of reads no archive file on a repaint.
  */
 async function buildSnapshot() {
 	const active = await resolveActiveBoard();
@@ -3862,6 +4304,7 @@ async function buildSnapshot() {
 		moveRejection: moveRejection,
 		historyExcerpt: historyExcerptSnapshot(),
 		doneCardCount: doneCards.length,
+		archive: await buildArchiveView(),
 	};
 }
 
@@ -3902,6 +4345,18 @@ function trimToBudget(snapshot) {
 			// leave the composer waiting forever on a send that already resolved.
 			messageOutcome: c.messageOutcome,
 		}));
+	}
+	// Then the oldest archived records, before any card: the archive view
+	// already tells the user how many older records it is not showing (see
+	// buildArchiveView's `hidden`), so dropping one costs a line in a list
+	// that says it is capped, where dropping a card costs an agent off the
+	// board with nothing saying why.
+	const archive = snapshot.archive;
+	if (archive && Array.isArray(archive.records)) {
+		while (serializedSize(snapshot) > PANEL_BUDGET_BYTES && archive.records.length > 0) {
+			archive.records.pop();
+			archive.hidden = (typeof archive.hidden === 'number' ? archive.hidden : 0) + 1;
+		}
 	}
 	let guard = 0;
 	while (serializedSize(snapshot) > PANEL_BUDGET_BYTES && guard < 10000) {
@@ -4124,6 +4579,39 @@ function registerCommands(maestro) {
 		return archiveCardNow(cardKey).catch((err) => {
 			console.error('maestro-kanban: archive-card failed: ' + String(err));
 			return safeToast('Could not archive that card: ' + errorMessage(err)).then(() => ({
+				ok: false,
+				error: errorMessage(err),
+			}));
+		});
+	});
+
+	// Invoked by the panel's Archive toggle and its filter box (which
+	// debounces its own typing); no manifest `commands` entry is needed since
+	// the archive is a MODE of a panel that has to already be open to have
+	// one. Holding the open/filter state in the sandbox is what lets
+	// buildSnapshot() attach the archive payload - the bridge carries no
+	// reply to a post, so the view can only ever arrive on a snapshot.
+	maestro.commands.register('archive-view', (args) =>
+		setArchiveView(args).catch((err) => {
+			console.error('maestro-kanban: archive-view failed: ' + String(err));
+			return safeToast('Could not open the archive: ' + errorMessage(err)).then(() => ({
+				ok: false,
+				error: errorMessage(err),
+			}));
+		})
+	);
+
+	// Invoked by an archive row's Restore button; no manifest `commands` entry
+	// is needed since the palette has no record in hand to restore. `boardId`
+	// is the record's own project path, echoed back from the row so the
+	// sandbox reads the right archive file, and the record is re-read here
+	// rather than trusted from the post.
+	maestro.commands.register('restore-card', (args) => {
+		const cardKey = args && typeof args.cardKey === 'string' ? args.cardKey : undefined;
+		if (!cardKey) return Promise.resolve({ ok: false, error: 'cardKey is required' });
+		return restoreArchivedCard(cardKey, args && args.boardId).catch((err) => {
+			console.error('maestro-kanban: restore-card failed: ' + String(err));
+			return safeToast('Could not restore that card: ' + errorMessage(err)).then(() => ({
 				ok: false,
 				error: errorMessage(err),
 			}));
@@ -4395,6 +4883,7 @@ module.exports = {
 	loadArchive: loadArchive,
 	saveArchive: saveArchive,
 	appendToArchive: appendToArchive,
+	removeFromArchive: removeFromArchive,
 
 	// Phase 05 retirement, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-aging.test.ts). runRetirementSweep() and
@@ -4426,6 +4915,18 @@ module.exports = {
 	clearDoneColumn: clearDoneColumn,
 	archiveCardNow: archiveCardNow,
 
+	// Phase 05 archive view, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-aging.test.ts). archiveRecordMatches() is
+	// pure; buildArchiveView() and restoreArchivedCard() read the archive
+	// files and the live tab list, so a test calls them after activate() with
+	// a stub SDK - normally through the `archive-view` / `restore-card`
+	// commands the panel posts, which is the only way a user reaches them.
+	ARCHIVE_VIEW_LIMIT: ARCHIVE_VIEW_LIMIT,
+	archiveRecordMatches: archiveRecordMatches,
+	buildArchiveView: buildArchiveView,
+	setArchiveView: setArchiveView,
+	restoreArchivedCard: restoreArchivedCard,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -4452,6 +4953,7 @@ module.exports = {
 		await loadSelectedBoard();
 		await loadCardNotes();
 		await loadBoardSettings();
+		await loadArchiveBoardIndex();
 		await seed();
 		await prunePlacements();
 		// Retirement runs at activate and then on its own low-frequency tick,
@@ -4483,6 +4985,9 @@ module.exports = {
 		stopRetirementTicks();
 		cardColumnTrail.clear();
 		archivedCardKeys.clear();
+		archiveViewOpen = false;
+		archiveViewFilter = '';
+		archiveBoardIndex.clear();
 		// The host clears its own grant bookkeeping when the sandbox stops; this
 		// mirrors that so a reactivated plugin never assumes a grant it has not
 		// seen confirmed again.

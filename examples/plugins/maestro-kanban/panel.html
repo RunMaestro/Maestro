@@ -84,6 +84,12 @@
 				overflow-x: auto;
 				user-select: none;
 			}
+			/* #board is display:flex, so the `hidden` attribute alone would
+			   not hide it: the archive view takes its place by setting it
+			   (see applyViewMode in the script below). */
+			#board[hidden] {
+				display: none;
+			}
 			/* The card detail pane. It opens beside the board, never over it,
 			   so the board stays visible and the drag/keyboard affordances
 			   above keep working unmodified while a card is being read. */
@@ -559,6 +565,157 @@
 			#detail-archive-now:hover {
 				border-color: var(--maestro-text-dim, #9d9d9d);
 			}
+			/* Phase 05 archive view. It is a MODE of this one panel, not a
+			   second window: #archive takes #board's place inside #main, so
+			   the header, the switcher and the detail pane all stay exactly
+			   where they were and Escape still backs out one level at a
+			   time. */
+			#archive-toggle {
+				flex: 0 0 auto;
+				padding: 3px 8px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			#archive-toggle:hover {
+				border-color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#archive-toggle[aria-pressed='true'] {
+				border-color: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-accent, #4a9eff);
+			}
+			#archive {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				padding: 12px;
+				flex: 1;
+				min-height: 0;
+				overflow: hidden;
+			}
+			#archive[hidden] {
+				display: none;
+			}
+			#archive-head {
+				flex: 0 0 auto;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			#archive-filter {
+				flex: 1 1 auto;
+				max-width: 320px;
+				padding: 4px 8px;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+			}
+			#archive-count {
+				flex: 0 0 auto;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#archive-error {
+				flex: 0 0 auto;
+				padding: 8px 10px;
+				border-radius: 6px;
+				font-size: 12px;
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-error, #e06c75);
+				user-select: text;
+			}
+			#archive-error[hidden] {
+				display: none;
+			}
+			#archive-list {
+				flex: 1 1 auto;
+				min-height: 0;
+				overflow-y: auto;
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+			#archive-empty[hidden] {
+				display: none;
+			}
+			.archive-row {
+				padding: 8px 10px;
+				border-radius: 6px;
+				background: var(--maestro-bg-sidebar, #252526);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				user-select: text;
+			}
+			.archive-row-title {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				font-size: 13px;
+				font-weight: 500;
+			}
+			.archive-row-name {
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			/* The live/gone marker is the point of the row, not decoration:
+			   a record whose tab is still open can come back, and one whose
+			   tab is gone is read-only forever. It is drawn as a labeled
+			   chip rather than a color alone so it does not depend on
+			   distinguishing two dots. */
+			.archive-row-live,
+			.archive-row-gone {
+				flex: 0 0 auto;
+				padding: 1px 6px;
+				border-radius: 999px;
+				font-size: 10px;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.04em;
+			}
+			.archive-row-live {
+				color: var(--maestro-bg-main, #1e1e1e);
+				background: var(--maestro-success, #98c379);
+			}
+			.archive-row-gone {
+				color: var(--maestro-text-dim, #9d9d9d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+			}
+			.archive-row-restore {
+				margin-left: auto;
+				flex: 0 0 auto;
+				padding: 3px 10px;
+				font: inherit;
+				font-size: 11px;
+				font-weight: 600;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			.archive-row-restore:disabled {
+				opacity: 0.45;
+				cursor: default;
+			}
+			.archive-row-meta {
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			.archive-row-comment {
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
 			#banner {
 				margin: 12px 12px 0 12px;
 				padding: 8px 10px;
@@ -605,6 +762,14 @@
 			<span id="board-name">Kanban Board</span>
 			<span id="board-count"></span>
 			<button id="clear-done" type="button" hidden>Clear Done</button>
+			<button
+				id="archive-toggle"
+				type="button"
+				aria-pressed="false"
+				title="Show the cards retired from this board. Nothing is deleted: a card whose tab is still open can be restored."
+			>
+				Archive
+			</button>
 			<select id="board-switcher" aria-label="Board"></select>
 		</div>
 		<div
@@ -624,6 +789,20 @@
 				<div class="empty-state">
 					Waiting for the board to load. Open an AI tab in Maestro to see it appear here.
 				</div>
+			</div>
+			<div id="archive" hidden>
+				<div id="archive-head">
+					<input
+						id="archive-filter"
+						type="search"
+						placeholder="Filter by title or comment..."
+						aria-label="Filter archived cards"
+					/>
+					<span id="archive-count"></span>
+				</div>
+				<div id="archive-error" hidden></div>
+				<div id="archive-list"></div>
+				<div id="archive-empty" class="empty-state">Loading the archive...</div>
 			</div>
 			<div id="detail" hidden>
 				<div id="detail-header">
@@ -1276,6 +1455,15 @@
 					// a drag, a board switch): the question no longer has an answer,
 					// so it is withdrawn rather than left naming a stale count.
 					if (count === 0) clearDoneConfirming = false;
+					// Clear Done acts on the board, so it is not offered while the
+					// archive is the thing on screen.
+					if (archiveOpen) {
+						clearDoneConfirming = false;
+						button.hidden = true;
+						confirmRow.hidden = true;
+						messageEl.textContent = '';
+						return;
+					}
 					button.hidden = count === 0;
 					button.textContent = 'Clear Done (' + count + ')';
 					button.title =
@@ -1341,6 +1529,313 @@
 						},
 						'*'
 					);
+				}
+
+				// -------------------------------------------------------------
+				// Phase 05 archive view. A second MODE of this panel rather than
+				// a second panel: #archive takes #board's place inside #main, so
+				// the header, the switcher and the detail pane stay put.
+				//
+				// The records come from the sandbox on the snapshot (the bridge
+				// carries no reply to a post, so there is no other way for them
+				// to arrive), and so does the FILTERING: the panel posts what was
+				// typed and renders what comes back, which is what lets the
+				// search cover a whole 500-record archive while only the newest
+				// matches ride through the snapshot budget. Typing is debounced
+				// so a held key is one post, not twenty.
+				//
+				// Restore only ever POSTS. Whether a record can come back is the
+				// sandbox's answer (it reads the live tab list), and the panel's
+				// disabled button is advisory in exactly the way a dimmed drop
+				// column is: the sandbox re-checks and refuses.
+				// -------------------------------------------------------------
+
+				var ARCHIVE_FILTER_DEBOUNCE_MS = 200;
+
+				/** Whether the archive is on screen instead of the board. The
+				 * sandbox holds the authoritative copy (it decides whether to
+				 * attach a payload at all); this is the local half, so the mode
+				 * flips on the click rather than a round trip later. */
+				var archiveOpen = false;
+				var archiveFilterTimer = null;
+
+				function archiveOf(snapshot) {
+					var archive = snapshot && snapshot.archive;
+					return archive && typeof archive === 'object' ? archive : null;
+				}
+
+				function archiveRecordsOf(archive) {
+					return archive && Array.isArray(archive.records) ? archive.records : [];
+				}
+
+				function postArchiveView(open, filter) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'archive-view',
+							args: { open: open, filter: filter },
+						},
+						'*'
+					);
+				}
+
+				function archiveFilterInput() {
+					var el = document.getElementById('archive-filter');
+					return el && typeof el.value === 'string' ? el : null;
+				}
+
+				/** Paints which of the two modes is on screen. Kept separate from
+				 * render() so toggling the archive does not rebuild the board
+				 * underneath it. */
+				function applyViewMode() {
+					var boardEl = document.getElementById('board');
+					var archiveEl = document.getElementById('archive');
+					var toggle = document.getElementById('archive-toggle');
+					if (boardEl) boardEl.hidden = archiveOpen;
+					if (archiveEl) archiveEl.hidden = !archiveOpen;
+					if (toggle) {
+						toggle.setAttribute('aria-pressed', archiveOpen ? 'true' : 'false');
+						toggle.textContent = archiveOpen ? 'Board' : 'Archive';
+						toggle.title = archiveOpen
+							? 'Back to the board.'
+							: 'Show the cards retired from this board. Nothing is deleted: a card whose tab is still open can be restored.';
+					}
+				}
+
+				function openArchiveView() {
+					if (archiveOpen) return;
+					archiveOpen = true;
+					// Two things to be looking at, one at a time: a detail pane open
+					// on a card of the board behind this would be reading a board
+					// nobody can see, and a Clear Done confirm would be asking about
+					// one.
+					closeCardDetail();
+					cancelClearDoneConfirm();
+					applyViewMode();
+					renderClearDone(currentSnapshot);
+					renderArchive(currentSnapshot);
+					postArchiveView(true, '');
+					var input = archiveFilterInput();
+					if (input && typeof input.focus === 'function') input.focus();
+				}
+
+				function closeArchiveView() {
+					if (!archiveOpen) return;
+					archiveOpen = false;
+					if (archiveFilterTimer) {
+						clearTimeout(archiveFilterTimer);
+						archiveFilterTimer = null;
+					}
+					var input = archiveFilterInput();
+					if (input) input.value = '';
+					// Emptied on the way out, so reopening it does not flash the
+					// list as it was before whatever happened in between.
+					var list = document.getElementById('archive-list');
+					if (list) list.textContent = '';
+					var empty = document.getElementById('archive-empty');
+					if (empty) {
+						empty.hidden = false;
+						empty.textContent = 'Loading the archive...';
+					}
+					applyViewMode();
+					renderClearDone(currentSnapshot);
+					postArchiveView(false, '');
+				}
+
+				function toggleArchiveView() {
+					if (archiveOpen) closeArchiveView();
+					else openArchiveView();
+				}
+
+				/** Posts the typed filter, debounced: the sandbox re-reads the
+				 * archive files to answer one, so a held key must not be twenty
+				 * reads. */
+				function onArchiveFilterInput() {
+					if (!archiveOpen) return;
+					if (archiveFilterTimer) clearTimeout(archiveFilterTimer);
+					archiveFilterTimer = setTimeout(function () {
+						archiveFilterTimer = null;
+						var input = archiveFilterInput();
+						postArchiveView(true, input ? input.value : '');
+					}, ARCHIVE_FILTER_DEBOUNCE_MS);
+				}
+
+				/** The retirement date as an ISO day. Deliberately not
+				 * toLocaleDateString(): a panel renders in whatever locale the
+				 * host's webview reports, and `2026-03-14` is the one format that
+				 * is never read as a different day than it says. */
+				function archiveDate(ms) {
+					if (typeof ms !== 'number' || !isFinite(ms)) return '';
+					var date = new Date(ms);
+					if (isNaN(date.getTime())) return '';
+					return date.toISOString().slice(0, 10);
+				}
+
+				function restoreArchivedRow(record) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'restore-card',
+							args: { cardKey: record.key, boardId: record.boardId || null },
+						},
+						'*'
+					);
+				}
+
+				/** Why this record can or cannot come back, in one sentence, used
+				 * both as the marker's tooltip and as the disabled Restore
+				 * button's. */
+				function archiveLiveTabTitle(record) {
+					if (record.hasLiveTab === true) {
+						return 'The tab behind this card is still open, so it can be restored to the board.';
+					}
+					if (record.hasLiveTab === null) {
+						return 'Maestro did not say whether this tab is still open, so this record cannot be restored right now.';
+					}
+					return "This card's tab has been closed, so the record is read-only: there is no tab left to restore it to.";
+				}
+
+				function archiveRowElement(record) {
+					var row = document.createElement('div');
+					row.className = 'archive-row';
+					row.setAttribute('data-card-key', typeof record.key === 'string' ? record.key : '');
+
+					var titleRow = document.createElement('div');
+					titleRow.className = 'archive-row-title';
+					var name = document.createElement('span');
+					name.className = 'archive-row-name';
+					name.textContent = record.title || 'Untitled';
+					titleRow.appendChild(name);
+
+					var live = record.hasLiveTab === true;
+					var marker = document.createElement('span');
+					marker.className = live ? 'archive-row-live' : 'archive-row-gone';
+					marker.textContent = live
+						? 'Tab open'
+						: record.hasLiveTab === null
+							? 'Tab unknown'
+							: 'No tab';
+					marker.title = archiveLiveTabTitle(record);
+					titleRow.appendChild(marker);
+
+					var restore = document.createElement('button');
+					restore.type = 'button';
+					restore.className = 'archive-row-restore';
+					restore.textContent = 'Restore';
+					restore.disabled = !live;
+					restore.title = live
+						? 'Put this card back on its board. Its description and comments come back with it.'
+						: archiveLiveTabTitle(record);
+					if (live) {
+						restore.addEventListener('click', function () {
+							restoreArchivedRow(record);
+						});
+					}
+					titleRow.appendChild(restore);
+					row.appendChild(titleRow);
+
+					var meta = document.createElement('div');
+					meta.className = 'archive-row-meta';
+					var date = archiveDate(record.retiredAt);
+					var relative = relativeTime(record.retiredAt);
+					meta.textContent = [
+						record.projectName || 'No project',
+						record.agentName,
+						date ? 'retired ' + date + (relative ? ' (' + relative + ')' : '') : '',
+						record.reason,
+					]
+						.filter(Boolean)
+						.join(' | ');
+					if (typeof record.projectPath === 'string' && record.projectPath) {
+						meta.title = record.projectPath;
+					}
+					row.appendChild(meta);
+
+					if (record.description) {
+						var description = document.createElement('div');
+						description.className = 'archive-row-comment';
+						description.textContent = record.description;
+						row.appendChild(description);
+					}
+					var comments = Array.isArray(record.comments) ? record.comments : [];
+					comments.forEach(function (comment) {
+						if (!comment || !comment.body) return;
+						var el = document.createElement('div');
+						el.className = 'archive-row-comment';
+						el.textContent = '"' + comment.body + '"';
+						row.appendChild(el);
+					});
+					var total = typeof record.commentCount === 'number' ? record.commentCount : 0;
+					if (total > comments.length) {
+						var more = document.createElement('div');
+						more.className = 'archive-row-comment';
+						var extra = total - comments.length;
+						more.textContent =
+							extra + ' earlier comment' + (extra === 1 ? '' : 's') + ' came with this card.';
+						row.appendChild(more);
+					}
+					return row;
+				}
+
+				/** Paints the archive list off the snapshot's payload. Never
+				 * writes the filter box's value: the user may still be typing
+				 * into it while the answer to the previous keystroke arrives. */
+				function renderArchive(snapshot) {
+					var list = document.getElementById('archive-list');
+					var empty = document.getElementById('archive-empty');
+					var countEl = document.getElementById('archive-count');
+					var errorEl = document.getElementById('archive-error');
+					if (!list || !empty || !countEl || !errorEl) return;
+					if (!archiveOpen) return;
+
+					var archive = archiveOf(snapshot);
+					var records = archiveRecordsOf(archive);
+					list.textContent = '';
+					records.forEach(function (record) {
+						if (!record || typeof record.key !== 'string') return;
+						list.appendChild(archiveRowElement(record));
+					});
+
+					var errors = archive && Array.isArray(archive.errors) ? archive.errors : [];
+					errorEl.textContent = '';
+					errorEl.hidden = errors.length === 0;
+					errors.forEach(function (error) {
+						var line = document.createElement('div');
+						line.textContent =
+							'Could not read ' +
+							error.path +
+							': ' +
+							error.message +
+							'. Nothing is written to it until it parses again, so the records in it are safe.';
+						errorEl.appendChild(line);
+					});
+
+					var filter = archive && typeof archive.filter === 'string' ? archive.filter.trim() : '';
+					if (!archive) {
+						// The open post has not come back yet.
+						empty.hidden = false;
+						empty.textContent = 'Loading the archive...';
+						countEl.textContent = '';
+						return;
+					}
+					var total = typeof archive.total === 'number' ? archive.total : records.length;
+					var hidden = typeof archive.hidden === 'number' ? archive.hidden : 0;
+					countEl.textContent =
+						total === 0
+							? ''
+							: 'Newest first: ' +
+								records.length +
+								' of ' +
+								total +
+								(filter ? ' matching' : '') +
+								(total === 1 ? ' retired card' : ' retired cards') +
+								(hidden > 0 ? ' (' + hidden + ' older not shown)' : '');
+					empty.hidden = records.length > 0;
+					if (records.length === 0) {
+						empty.textContent = filter
+							? 'No retired card matches "' + filter + '".'
+							: 'Nothing has been retired from this board yet. Cards you clear out of Done, and cards that age out of it, land here - and nothing is ever deleted.';
+					}
 				}
 
 				// -------------------------------------------------------------
@@ -2057,6 +2552,12 @@
 					currentSnapshot = snapshot || null;
 					renderHeader(snapshot);
 					renderClearDone(snapshot);
+					// The archive is a mode of this panel, so every snapshot paints
+					// it too: a restored card leaving the archive, or a sweep adding
+					// to it, shows up without a re-open. applyViewMode() keeps the
+					// board hidden underneath while it is up.
+					applyViewMode();
+					renderArchive(snapshot);
 					renderBanner(snapshot);
 
 					var board = document.getElementById('board');
@@ -2172,16 +2673,22 @@
 						// stays open, so one key press never does both. Then the
 						// Clear Done confirm, which is a question on screen waiting
 						// for an answer and must be answerable with the key that
-						// means "no"; then the detail pane. Only once none of those
-						// is up does Escape reach the panel itself.
+						// means "no"; then the detail pane; then the archive view,
+						// which Escape backs out of to the board. Only once none of
+						// those is up does Escape reach the panel itself.
 						if (dragState) cancelDrag();
 						else if (clearDoneConfirming) cancelClearDoneConfirm();
 						else if (detailCardKey !== null) closeCardDetail();
+						else if (archiveOpen) closeArchiveView();
 						else requestClosePanel();
 						return;
 					}
 					// Mid-drag the pointer owns the board; only Escape applies.
 					if (dragState) return;
+					// The archive is on screen, so the board's own keys (arrowing
+					// between cards, Enter to open a tab, Alt+arrow to move one)
+					// would be acting on a board nobody can see.
+					if (archiveOpen) return;
 					if (ownsItsOwnKeys(event.target)) return;
 					// Cmd/Ctrl combinations belong to the OS and the engine.
 					if (event.metaKey || event.ctrlKey) return;
@@ -2246,6 +2753,27 @@
 
 				var detailArchiveEl = document.getElementById('detail-archive-now');
 				if (detailArchiveEl) detailArchiveEl.addEventListener('click', archiveOpenCard);
+
+				// Phase 05 archive view: the toggle and the filter box are static
+				// markup as well. The filter's `input` event covers typing, a
+				// paste and the search box's own clear button; Enter skips the
+				// debounce for someone who types and expects an answer now.
+				var archiveToggleEl = document.getElementById('archive-toggle');
+				if (archiveToggleEl) archiveToggleEl.addEventListener('click', toggleArchiveView);
+
+				var archiveFilterEl = document.getElementById('archive-filter');
+				if (archiveFilterEl) {
+					archiveFilterEl.addEventListener('input', onArchiveFilterInput);
+					archiveFilterEl.addEventListener('keydown', function (event) {
+						if (event.key !== 'Enter') return;
+						event.preventDefault();
+						if (archiveFilterTimer) {
+							clearTimeout(archiveFilterTimer);
+							archiveFilterTimer = null;
+						}
+						postArchiveView(true, archiveFilterEl.value);
+					});
+				}
 
 				// The <select> is static markup, never replaced by a render, so the
 				// listener is bound once here rather than per snapshot.

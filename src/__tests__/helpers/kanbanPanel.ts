@@ -91,6 +91,41 @@ export interface SnapshotMoveRejection {
  * `read-history` about, and what main.js's cache holds for it - see
  * `historyExcerptSnapshot()`. Null when no pane has asked (or the session it
  * asked about is no longer granted). */
+/** One row of the Phase 05 archive view, matching `archiveViewRow()` in
+ * main.js. `hasLiveTab` is a THIRD state: true the tab is still open (so the
+ * record can be restored), false it is gone (so the record is read-only), and
+ * null the host would not say. */
+export interface SnapshotArchiveRecord {
+	key: string;
+	boardId: string | null;
+	title: string;
+	projectPath: string | null;
+	projectName: string | null;
+	agentName: string | null;
+	retiredAt: number;
+	reason: string;
+	columnHistory?: string[];
+	description?: string;
+	commentCount?: number;
+	comments?: { id: string; body: string; createdAt: number }[];
+	hasLiveTab: boolean | null;
+}
+
+/** The Phase 05 archive payload, which rides on the snapshot only while the
+ * panel has that view open - see `buildArchiveView()` in main.js. */
+export interface SnapshotArchive {
+	open: true;
+	filter: string;
+	boardName?: string;
+	boardCount?: number;
+	records: SnapshotArchiveRecord[];
+	total: number;
+	hidden: number;
+	archivedTotal?: number;
+	errors: { path: string; message: string }[];
+	tabsUnknown: boolean;
+}
+
 export interface SnapshotHistoryExcerpt {
 	sessionId: string;
 	status: 'loading' | 'loaded' | 'error';
@@ -135,6 +170,11 @@ export function snapshotWith(
 		 * derived from the columns above - on the Global board the two are
 		 * deliberately different things. */
 		doneCardCount?: number;
+		/** Phase 05: the archive view's payload, present ONLY while the panel
+		 * has that view open (the sandbox attaches null the rest of the time,
+		 * which is also what a snapshot pushed before the open post came back
+		 * looks like). */
+		archive?: SnapshotArchive | null;
 	} = {}
 ) {
 	return {
@@ -157,6 +197,50 @@ export function snapshotWith(
 		moveRejection: opts.moveRejection ?? null,
 		historyExcerpt: opts.historyExcerpt ?? null,
 		doneCardCount: opts.doneCardCount ?? 0,
+		archive: opts.archive ?? null,
+	};
+}
+
+/** One archive row shaped like `archiveViewRow()`'s output, with a live tab
+ * behind it unless the test says otherwise. */
+export function makeArchiveRecord(
+	overrides: Partial<SnapshotArchiveRecord> = {}
+): SnapshotArchiveRecord {
+	return {
+		key: 'session-1::tab-1',
+		boardId: '/Users/dev/projects/maestro',
+		title: 'Retired Tab',
+		projectPath: '/Users/dev/projects/maestro',
+		projectName: 'maestro',
+		agentName: 'Widget Agent',
+		retiredAt: Date.UTC(2026, 2, 14, 12, 0, 0),
+		reason: 'aged out of Done',
+		columnHistory: ['backlog', 'done'],
+		description: '',
+		commentCount: 0,
+		comments: [],
+		hasLiveTab: true,
+		...overrides,
+	};
+}
+
+/** The archive payload wrapped around a set of rows, with the counts the view
+ * reads already consistent with them. */
+export function archiveSnapshotPayload(
+	records: SnapshotArchiveRecord[],
+	opts: Partial<Omit<SnapshotArchive, 'records'>> = {}
+): SnapshotArchive {
+	return {
+		open: true,
+		filter: opts.filter ?? '',
+		boardName: opts.boardName ?? 'maestro',
+		boardCount: opts.boardCount ?? 1,
+		records,
+		total: opts.total ?? records.length,
+		hidden: opts.hidden ?? 0,
+		archivedTotal: opts.archivedTotal ?? records.length,
+		errors: opts.errors ?? [],
+		tabsUnknown: opts.tabsUnknown ?? false,
 	};
 }
 
@@ -296,6 +380,65 @@ export function clearDoneConfirm(): { row: HTMLElement; message: string; hidden:
 		row,
 		message: document.getElementById('clear-done-confirm-message')?.textContent ?? '',
 		hidden: (row as HTMLElement).hidden,
+	};
+}
+
+/** The header's Phase 05 Archive toggle. */
+export function archiveToggle(): HTMLButtonElement {
+	const el = document.getElementById('archive-toggle');
+	if (!(el instanceof HTMLButtonElement)) throw new Error('panel.html has no #archive-toggle');
+	return el;
+}
+
+/** The archive view's filter box. */
+export function archiveFilter(): HTMLInputElement {
+	const el = document.getElementById('archive-filter');
+	if (!(el instanceof HTMLInputElement)) throw new Error('panel.html has no #archive-filter');
+	return el;
+}
+
+/** One rendered archive row, read the way a person reads it: the title, the
+ * live-tab marker's label, the meta line, and whether Restore is offered. */
+export interface RenderedArchiveRow {
+	key: string;
+	title: string;
+	marker: string;
+	meta: string;
+	restoreDisabled: boolean;
+	restore: HTMLButtonElement;
+	element: HTMLElement;
+}
+
+export function archiveRows(): RenderedArchiveRow[] {
+	const list = document.getElementById('archive-list');
+	if (!list) throw new Error('panel.html has no #archive-list');
+	return Array.from(list.querySelectorAll<HTMLElement>('.archive-row')).map((row) => {
+		const restore = row.querySelector<HTMLButtonElement>('.archive-row-restore');
+		if (!restore) throw new Error('an archive row was rendered with no Restore control');
+		return {
+			key: row.getAttribute('data-card-key') ?? '',
+			title: row.querySelector('.archive-row-name')?.textContent ?? '',
+			marker:
+				row.querySelector('.archive-row-live')?.textContent ??
+				row.querySelector('.archive-row-gone')?.textContent ??
+				'',
+			meta: row.querySelector('.archive-row-meta')?.textContent ?? '',
+			restoreDisabled: restore.disabled,
+			restore,
+			element: row,
+		};
+	});
+}
+
+/** What the archive view says about itself: its count line, its empty state
+ * (when one is shown), and the unreadable-file notice. */
+export function archiveStatus(): { count: string; empty: string | null; error: string | null } {
+	const empty = document.getElementById('archive-empty');
+	const error = document.getElementById('archive-error');
+	return {
+		count: document.getElementById('archive-count')?.textContent ?? '',
+		empty: empty && !empty.hidden ? (empty.textContent ?? '') : null,
+		error: error && !error.hidden ? (error.textContent ?? '') : null,
 	};
 }
 

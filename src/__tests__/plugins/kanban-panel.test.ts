@@ -31,6 +31,12 @@ import {
 	teardownPanel,
 	clearDoneButton,
 	clearDoneConfirm,
+	archiveToggle,
+	archiveFilter,
+	archiveRows,
+	archiveStatus,
+	archiveSnapshotPayload,
+	makeArchiveRecord,
 } from '../helpers/kanbanPanel';
 
 describe('maestro-kanban panel.html', () => {
@@ -1560,6 +1566,249 @@ describe('maestro-kanban panel.html', () => {
 
 		pushSnapshot(snapshotWith({}, { doneCardCount: 0 }));
 		expect(document.getElementById('detail')?.hidden).toBe(true);
+		postMessageSpy.mockRestore();
+	});
+
+	// ---------------------------------------------------------------------
+	// Phase 05 archive view. A second mode of the same panel: the board is
+	// hidden, the retired records are listed newest first, and the only
+	// action on a row is one POST - whether a card can come back is the
+	// sandbox's answer, read off the row's `hasLiveTab`.
+	// ---------------------------------------------------------------------
+
+	it('toggles into the archive and back, posting archive-view each way and hiding the board', () => {
+		pushSnapshot(
+			snapshotWith({ done: [makeCard({ key: 'session-1::tab-1' })] }, { doneCardCount: 1 })
+		);
+		expect(archiveToggle().textContent).toBe('Archive');
+		expect(board().hidden).toBe(false);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		archiveToggle().click();
+
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'archive-view',
+			args: { open: true, filter: '' },
+		});
+		expect(board().hidden).toBe(true);
+		expect(document.getElementById('archive')?.hidden).toBe(false);
+		expect(archiveToggle().textContent).toBe('Board');
+		expect(archiveToggle().getAttribute('aria-pressed')).toBe('true');
+		// Clear Done acts on the board, so it is not offered over the archive.
+		expect(clearDoneButton().hidden).toBe(true);
+		// Nothing has come back yet, so the view says so rather than claiming
+		// the archive is empty.
+		expect(archiveStatus().empty).toBe('Loading the archive...');
+
+		archiveToggle().click();
+		expect(postMessageSpy.mock.calls[1]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'archive-view',
+			args: { open: false, filter: '' },
+		});
+		expect(board().hidden).toBe(false);
+		expect(document.getElementById('archive')?.hidden).toBe(true);
+		expect(clearDoneButton().hidden).toBe(false);
+		postMessageSpy.mockRestore();
+	});
+
+	it('lists retired records newest first with their project, date and reason, and marks the live tabs', () => {
+		archiveToggle().click();
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					archive: archiveSnapshotPayload([
+						makeArchiveRecord({
+							key: 'session-1::tab-9',
+							title: 'Newest',
+							retiredAt: Date.UTC(2026, 2, 14, 12, 0, 0),
+							reason: 'aged out of Done',
+							projectName: 'widgets',
+							projectPath: '/Users/dev/projects/widgets',
+							agentName: 'Widget Agent',
+						}),
+						makeArchiveRecord({
+							key: 'session-2::tab-8',
+							title: 'Older',
+							retiredAt: Date.UTC(2026, 1, 1, 9, 0, 0),
+							reason: 'cleared out of Done by hand',
+							hasLiveTab: false,
+						}),
+					]),
+				}
+			)
+		);
+
+		const rows = archiveRows();
+		expect(rows.map((row) => row.title)).toEqual(['Newest', 'Older']);
+		expect(rows[0]!.meta).toContain('widgets');
+		expect(rows[0]!.meta).toContain('Widget Agent');
+		// An ISO day, so it never reads as a different date than it says.
+		expect(rows[0]!.meta).toContain('retired 2026-03-14');
+		expect(rows[0]!.meta).toContain('aged out of Done');
+		expect(rows[1]!.meta).toContain('cleared out of Done by hand');
+		// The thing the task asks to be obvious: which records still have a
+		// tab behind them.
+		expect(rows[0]!.marker).toBe('Tab open');
+		expect(rows[1]!.marker).toBe('No tab');
+		expect(archiveStatus().count).toContain('2 retired cards');
+	});
+
+	it("offers Restore only for a record whose tab is still open, and posts that record's own board", () => {
+		archiveToggle().click();
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					archive: archiveSnapshotPayload([
+						makeArchiveRecord({
+							key: 'session-1::tab-1',
+							title: 'Can Come Back',
+							boardId: '/Users/dev/projects/widgets',
+						}),
+						makeArchiveRecord({
+							key: 'session-2::tab-2',
+							title: 'Tab Is Gone',
+							hasLiveTab: false,
+						}),
+						makeArchiveRecord({
+							key: 'session-3::tab-3',
+							title: 'Cannot Tell',
+							hasLiveTab: null,
+						}),
+					]),
+				}
+			)
+		);
+
+		const rows = archiveRows();
+		expect(rows.map((row) => row.restoreDisabled)).toEqual([false, true, true]);
+		// A read-only row says why, rather than offering a dead button.
+		expect(rows[1]!.restore.title).toContain('no tab left to restore it to');
+		expect(rows[2]!.marker).toBe('Tab unknown');
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		rows[1]!.restore.click();
+		rows[2]!.restore.click();
+		// A disabled control is wired to nothing at all, not merely dimmed.
+		expect(postMessageSpy).not.toHaveBeenCalled();
+
+		rows[0]!.restore.click();
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'restore-card',
+			args: { cardKey: 'session-1::tab-1', boardId: '/Users/dev/projects/widgets' },
+		});
+		postMessageSpy.mockRestore();
+	});
+
+	it('debounces the filter into one post, and renders what the sandbox filtered', () => {
+		vi.useFakeTimers();
+		try {
+			archiveToggle().click();
+			const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+			const input = archiveFilter();
+			input.value = 'shi';
+			input.dispatchEvent(new Event('input', { bubbles: true }));
+			input.value = 'ship';
+			input.dispatchEvent(new Event('input', { bubbles: true }));
+			// Still inside the debounce: the sandbox re-reads the archive files
+			// to answer one of these, so a held key must not be a read per key.
+			expect(postMessageSpy).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(200);
+			expect(postMessageSpy).toHaveBeenCalledTimes(1);
+			expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+				type: 'maestro:invokeCommand',
+				commandId: 'archive-view',
+				args: { open: true, filter: 'ship' },
+			});
+
+			pushSnapshot(
+				snapshotWith(
+					{},
+					{
+						archive: archiveSnapshotPayload(
+							[makeArchiveRecord({ key: 'session-1::tab-1', title: 'Ship the thing' })],
+							{ filter: 'ship', total: 1, archivedTotal: 4 }
+						),
+					}
+				)
+			);
+			expect(archiveRows().map((row) => row.title)).toEqual(['Ship the thing']);
+			expect(archiveStatus().count).toContain('matching');
+			// The box is never written from a snapshot: the user may still be
+			// typing into it while the previous keystroke's answer arrives.
+			expect(archiveFilter().value).toBe('ship');
+			postMessageSpy.mockRestore();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('says an empty archive is empty, a filter found nothing, and an unreadable file is safe', () => {
+		archiveToggle().click();
+		pushSnapshot(snapshotWith({}, { archive: archiveSnapshotPayload([]) }));
+		expect(archiveRows()).toHaveLength(0);
+		expect(archiveStatus().empty).toContain('Nothing has been retired');
+		expect(archiveStatus().count).toBe('');
+
+		pushSnapshot(
+			snapshotWith({}, { archive: archiveSnapshotPayload([], { filter: 'nope', total: 0 }) })
+		);
+		expect(archiveStatus().empty).toBe('No retired card matches "nope".');
+
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					archive: archiveSnapshotPayload([], {
+						errors: [
+							{ path: '~/.maestro/kanban-archive/widgets-1a2b3c4d.json', message: 'bad JSON' },
+						],
+					}),
+				}
+			)
+		);
+		const error = archiveStatus().error ?? '';
+		expect(error).toContain('~/.maestro/kanban-archive/widgets-1a2b3c4d.json');
+		// The one thing a person needs to be told about a broken archive file.
+		expect(error).toContain('Nothing is written to it until it parses again');
+	});
+
+	it('backs out of the archive on Escape before it closes the panel, and leaves the board keys alone while it is up', () => {
+		pushSnapshot(
+			snapshotWith({ backlog: [makeCard({ key: 'session-1::tab-1', title: 'On The Board' })] })
+		);
+		archiveToggle().click();
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [makeCard({ key: 'session-1::tab-1', title: 'On The Board' })] },
+				{ archive: archiveSnapshotPayload([makeArchiveRecord()]) }
+			)
+		);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		// The board is hidden, so arrowing around it would be navigating
+		// something nobody can see.
+		press('ArrowDown');
+		expect(selectedCardTitle()).toBeNull();
+
+		press('Escape');
+		expect(board().hidden).toBe(false);
+		expect(
+			postMessageSpy.mock.calls.map((call) => (call[0] as { commandId: string }).commandId)
+		).toEqual(['archive-view']);
+
+		// With the archive closed, Escape reaches the panel again.
+		press('Escape');
+		expect(
+			postMessageSpy.mock.calls.map((call) => (call[0] as { commandId: string }).commandId)
+		).toEqual(['archive-view', 'close-panel']);
 		postMessageSpy.mockRestore();
 	});
 });

@@ -77,6 +77,32 @@ interface ArchiveRead {
 	exists: boolean;
 }
 
+/** The archive view's snapshot payload, per `buildArchiveView()`. */
+interface ArchiveView {
+	open: true;
+	filter: string;
+	boardName: string;
+	boardCount: number;
+	records: {
+		key: string;
+		boardId: string | null;
+		title: string;
+		projectName: string | null;
+		agentName: string | null;
+		retiredAt: number;
+		reason: string;
+		description: string;
+		commentCount: number;
+		comments: { id: string; body: string; createdAt: number }[];
+		hasLiveTab: boolean | null;
+	}[];
+	total: number;
+	hidden: number;
+	archivedTotal: number;
+	errors: { path: string; message: string }[];
+	tabsUnknown: boolean;
+}
+
 interface KanbanAging {
 	agingState: (card: AgingCard, settings: unknown, now: number) => AgingState;
 	normalizeAgingSettings: (raw: unknown) => AgingSettings;
@@ -120,6 +146,15 @@ interface KanbanAging {
 	archiveCardNow: (cardKey: string) => Promise<{ ok: boolean; retired?: number; reason?: string }>;
 	saveArchive: (boardId: string, records: ArchiveRecord[]) => Promise<ArchiveRecord[]>;
 	appendToArchive: (boardId: string, additions: ArchiveRecord[]) => Promise<ArchiveRecord[]>;
+	removeFromArchive: (boardId: string, keys: string[]) => Promise<ArchiveRecord[]>;
+	ARCHIVE_VIEW_LIMIT: number;
+	archiveRecordMatches: (record: ArchiveRecord, needle: string) => boolean;
+	buildArchiveView: () => Promise<ArchiveView | null>;
+	setArchiveView: (args: unknown) => Promise<{ ok: boolean; open: boolean; filter: string }>;
+	restoreArchivedCard: (
+		cardKey: unknown,
+		boardId?: unknown
+	) => Promise<{ ok: boolean; reason?: string; readOnly?: boolean; columnId?: string | null }>;
 	GLOBAL_BOARD_ID: string;
 	activate: (maestro: unknown) => Promise<void>;
 }
@@ -1558,5 +1593,408 @@ describe('maestro-kanban manual Done maintenance', () => {
 
 		expect(snapshotKeys(next.maestro.ui.panelPost)).toEqual([inProgress]);
 		expect((await second.loadArchive(projectPath)).records).toHaveLength(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 05 archive view: the half of "aging is never destructive" a person
+// can see. These tests are about what the view REPORTS (newest first, which
+// records still have a tab behind them, what the filter covers, what an
+// unreadable file does) and about Restore being the exact inverse of
+// retirement - back on the board when its tab is still there, refused and
+// left read-only when it is not.
+// ---------------------------------------------------------------------------
+
+/** The `archive` payload off the last panel push, or null when none rode. */
+function lastArchive(panelPost: { mock: { calls: unknown[][] } }) {
+	const calls = panelPost.mock.calls;
+	if (calls.length === 0) return null;
+	return (calls[calls.length - 1]![1] as { archive?: ArchiveView | null }).archive ?? null;
+}
+
+describe('maestro-kanban archive view', () => {
+	const projectPath = '/Users/dev/projects/widgets';
+	const otherProject = '/Users/dev/projects/gadgets';
+	const key = 'session-1::tab-1';
+	const goneKey = 'session-1::tab-2';
+
+	/** A board with two records already archived: one whose tab is still
+	 * open (so it can come back) and one whose tab is long closed (so it is
+	 * read-only). Aging is off, so nothing retires during the test and the
+	 * archive is exactly what the test wrote. */
+	function archiveViewStub(plugin: KanbanAging, extra: StubOptions = {}) {
+		return createStubMaestro({
+			storage: {
+				'selected-board': projectPath,
+				...(extra.storage ?? {}),
+			},
+			files: {
+				[plugin.archiveFilePath(projectPath)]: JSON.stringify({
+					version: 1,
+					records: [
+						archiveRecord({
+							key: key,
+							title: 'Ship the thing',
+							retiredAt: NOW - DAY,
+							reason: plugin.RETIREMENT_REASON_AGED,
+							comments: [{ id: 'c1', body: 'shipped on Friday', createdAt: NOW - 2 * DAY }],
+						}),
+						archiveRecord({
+							key: goneKey,
+							tabId: 'tab-2',
+							title: 'Old experiment',
+							retiredAt: NOW - 30 * DAY,
+							reason: plugin.RETIREMENT_REASON_CLEARED,
+							comments: [],
+						}),
+					],
+				}),
+				...(extra.files ?? {}),
+			},
+			sessionsList:
+				extra.sessionsList ??
+				(() =>
+					Promise.resolve([
+						{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
+					])),
+			// Only tab-1 still exists; tab-2's record has no tab behind it.
+			tabsList:
+				extra.tabsList ??
+				(() => Promise.resolve([aiTab({ id: 'tab-1', projectPath, title: 'Ship the thing' })])),
+		});
+	}
+
+	it('sends no archive payload at all until the panel opens the view', async () => {
+		const plugin = loadMain();
+		const { maestro } = archiveViewStub(plugin);
+
+		await plugin.activate(maestro);
+
+		expect(lastArchive(maestro.ui.panelPost)).toBeNull();
+		// The two archived cards are off the board, which is the state the
+		// view exists to explain.
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([]);
+	});
+
+	it("lists a board's records newest first and says which still have a live tab", async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = archiveViewStub(plugin);
+		await plugin.activate(maestro);
+
+		await commandHandlers.get('archive-view')!({ open: true });
+
+		const archive = lastArchive(maestro.ui.panelPost);
+		expect(archive).not.toBeNull();
+		expect(archive!.records.map((record) => record.key)).toEqual([key, goneKey]);
+		expect(archive!.records[0]).toMatchObject({
+			title: 'Ship the thing',
+			boardId: projectPath,
+			projectName: 'widgets',
+			agentName: 'claude-code',
+			reason: plugin.RETIREMENT_REASON_AGED,
+			commentCount: 1,
+			// Its tab is still open, so this one can be restored.
+			hasLiveTab: true,
+		});
+		// Its tab was closed, so it is a read-only record from here on.
+		expect(archive!.records[1]!.hasLiveTab).toBe(false);
+		expect(archive!.total).toBe(2);
+		expect(archive!.hidden).toBe(0);
+		expect(archive!.errors).toEqual([]);
+		expect(archive!.tabsUnknown).toBe(false);
+
+		// Closing it takes the payload back off the snapshot.
+		await commandHandlers.get('archive-view')!({ open: false });
+		expect(lastArchive(maestro.ui.panelPost)).toBeNull();
+	});
+
+	it('filters over titles and comments, case-insensitively, across the whole archive', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = archiveViewStub(plugin);
+		await plugin.activate(maestro);
+		const view = commandHandlers.get('archive-view')!;
+
+		await view({ open: true, filter: 'SHIP THE' });
+		expect(lastArchive(maestro.ui.panelPost)!.records.map((record) => record.key)).toEqual([key]);
+
+		// A word that appears only in a comment, never in a title.
+		await view({ open: true, filter: 'friday' });
+		const byComment = lastArchive(maestro.ui.panelPost)!;
+		expect(byComment.records.map((record) => record.key)).toEqual([key]);
+		expect(byComment.filter).toBe('friday');
+		expect(byComment.total).toBe(1);
+		// The whole archive is still counted, so the view can say what the
+		// filter is hiding rather than looking like the archive shrank.
+		expect(byComment.archivedTotal).toBe(2);
+
+		await view({ open: true, filter: 'nothing matches this' });
+		expect(lastArchive(maestro.ui.panelPost)!.records).toEqual([]);
+
+		// Pure, and the same answer the payload was built from.
+		expect(plugin.archiveRecordMatches(archiveRecord({ title: 'Ship' }), 'ship')).toBe(true);
+		expect(plugin.archiveRecordMatches(archiveRecord({ title: 'Ship' }), 'barge')).toBe(false);
+		expect(plugin.archiveRecordMatches(archiveRecord({ comments: [] }), '')).toBe(true);
+	});
+
+	it('merges every board it knows about on the Global board, including a project with no open tabs', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = archiveViewStub(plugin, {
+			storage: { 'selected-board': plugin.GLOBAL_BOARD_ID },
+			// gadgets has no live tab at all, so only the remembered index can
+			// make its archive findable.
+			files: {
+				[plugin.archiveFilePath(otherProject)]: JSON.stringify({
+					version: 1,
+					records: [
+						archiveRecord({
+							key: 'session-9::tab-9',
+							sessionId: 'session-9',
+							tabId: 'tab-9',
+							projectPath: otherProject,
+							title: 'A gadget card',
+							retiredAt: NOW - 5 * DAY,
+						}),
+					],
+				}),
+			},
+		});
+		await plugin.activate(maestro);
+
+		await commandHandlers.get('archive-view')!({ open: true });
+		const withoutIndex = lastArchive(maestro.ui.panelPost)!;
+		// Nothing has retired in this session and the index was never written,
+		// so the only archive the Global board can find is the live project's.
+		expect(withoutIndex.records.map((record) => record.key)).toEqual([key, goneKey]);
+
+		// Now with the index that retirement maintains.
+		const indexed = loadMain();
+		const second = archiveViewStub(indexed, {
+			storage: {
+				'selected-board': indexed.GLOBAL_BOARD_ID,
+				'archive-boards': JSON.stringify([otherProject]),
+			},
+			files: {
+				[indexed.archiveFilePath(otherProject)]: JSON.stringify({
+					version: 1,
+					records: [
+						archiveRecord({
+							key: 'session-9::tab-9',
+							projectPath: otherProject,
+							title: 'A gadget card',
+							retiredAt: NOW - 5 * DAY,
+						}),
+					],
+				}),
+			},
+		});
+		await indexed.activate(second.maestro);
+		await second.commandHandlers.get('archive-view')!({ open: true });
+		const merged = lastArchive(second.maestro.ui.panelPost)!;
+		expect(merged.records.map((record) => record.key)).toEqual([key, 'session-9::tab-9', goneKey]);
+		expect(merged.records.map((record) => record.projectName)).toEqual([
+			'widgets',
+			'gadgets',
+			'widgets',
+		]);
+		expect(merged.boardCount).toBe(2);
+	});
+
+	it('remembers a board in the archive index when retirement writes its first record', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, storageStore } = createStubMaestro({
+			storage: {
+				['placements:' + boardPath]: JSON.stringify({
+					[key]: { columnId: 'done', order: 0, enteredDoneAt: Date.now() - 30 * DAY },
+				}),
+				'board-settings': JSON.stringify({
+					[projectPath]: { agingEnabled: true, horizonDays: 14, closeTabsOnRetire: false },
+				}),
+			},
+			tabsList: () => Promise.resolve([aiTab({ projectPath })]),
+		});
+
+		await plugin.activate(maestro);
+
+		expect((await plugin.loadArchive(projectPath)).records).toHaveLength(1);
+		expect(JSON.parse(storageStore.get('archive-boards') as string)).toEqual([projectPath]);
+	});
+
+	it('surfaces an unreadable archive file instead of reporting an empty archive', async () => {
+		const plugin = loadMain();
+		const { maestro, files, commandHandlers } = archiveViewStub(plugin, {
+			files: { [plugin.archiveFilePath(projectPath)]: '{ not json' },
+		});
+		await plugin.activate(maestro);
+		const before = files.get(plugin.archiveFilePath(projectPath));
+
+		await commandHandlers.get('archive-view')!({ open: true });
+
+		const archive = lastArchive(maestro.ui.panelPost)!;
+		expect(archive.records).toEqual([]);
+		expect(archive.errors).toHaveLength(1);
+		expect(archive.errors[0]!.path).toBe(plugin.archiveFilePath(projectPath));
+		// And reading it never rewrote it.
+		expect(files.get(plugin.archiveFilePath(projectPath))).toBe(before);
+	});
+
+	it('reports a tab list the host refused as unknown rather than guessing the tab is gone', async () => {
+		const plugin = loadMain();
+		let failTabs = false;
+		const { maestro, commandHandlers } = archiveViewStub(plugin, {
+			tabsList: () =>
+				failTabs
+					? Promise.reject(new Error('tabs.list denied'))
+					: Promise.resolve([aiTab({ id: 'tab-1', projectPath })]),
+		});
+		await plugin.activate(maestro);
+		failTabs = true;
+
+		await commandHandlers.get('archive-view')!({ open: true });
+
+		const archive = lastArchive(maestro.ui.panelPost)!;
+		expect(archive.tabsUnknown).toBe(true);
+		expect(archive.records.map((record) => record.hasLiveTab)).toEqual([null, null]);
+		// And a restore asked for anyway is refused rather than acted on.
+		expect(await plugin.restoreArchivedCard(key, projectPath)).toMatchObject({ ok: false });
+		expect((await plugin.loadArchive(projectPath)).records).toHaveLength(2);
+	});
+
+	it('caps the payload at ARCHIVE_VIEW_LIMIT records and says how many it is not showing', async () => {
+		const plugin = loadMain();
+		const many: ArchiveRecord[] = [];
+		for (let i = 0; i < plugin.ARCHIVE_VIEW_LIMIT + 7; i++) {
+			many.push(
+				archiveRecord({
+					key: 'session-1::tab-' + i,
+					tabId: 'tab-' + i,
+					title: 'Card ' + i,
+					retiredAt: NOW - i * 1000,
+				})
+			);
+		}
+		const { maestro, commandHandlers } = archiveViewStub(plugin, {
+			files: {
+				[plugin.archiveFilePath(projectPath)]: JSON.stringify({ version: 1, records: many }),
+			},
+		});
+		await plugin.activate(maestro);
+
+		await commandHandlers.get('archive-view')!({ open: true });
+
+		const archive = lastArchive(maestro.ui.panelPost)!;
+		expect(archive.records).toHaveLength(plugin.ARCHIVE_VIEW_LIMIT);
+		// Newest first, so what rides out is what a person is looking for.
+		expect(archive.records[0]!.title).toBe('Card 0');
+		expect(archive.total).toBe(plugin.ARCHIVE_VIEW_LIMIT + 7);
+		expect(archive.hidden).toBe(7);
+	});
+
+	it('restores a card whose tab is still open, record out of the archive and card back on the board', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = archiveViewStub(plugin);
+		await plugin.activate(maestro);
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([]);
+
+		const result = await commandHandlers.get('restore-card')!({
+			cardKey: key,
+			boardId: projectPath,
+		});
+
+		expect(result).toEqual({ ok: true, columnId: 'backlog' });
+		// The record is gone from the archive, and only that record.
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.records.map((record) => record.key)).toEqual([goneKey]);
+		// And the card is drawn again, with its stored note still on it: the
+		// thread was never deleted, so Restore gets the live one back.
+		const snapshot = lastSnapshot(maestro.ui.panelPost)!;
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+		const restored = (
+			snapshot.columns.flatMap((column) => column.cards) as { key: string; title?: string }[]
+		).find((card) => card.key === key);
+		expect(restored!.title).toBe('Ship the thing');
+		// Restoring is bookkeeping too: no tab is touched by it either.
+		expect(maestro.tabs.close).not.toHaveBeenCalled();
+	});
+
+	it('refuses to restore a record whose tab is gone, and leaves it in the archive read-only', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = archiveViewStub(plugin);
+		await plugin.activate(maestro);
+
+		const result = await commandHandlers.get('restore-card')!({
+			cardKey: goneKey,
+			boardId: projectPath,
+		});
+
+		expect(result).toMatchObject({ ok: false, readOnly: true });
+		expect((result as { reason: string }).reason).toContain('its tab is gone');
+		// Still archived, still both records, nothing on the board.
+		expect((await plugin.loadArchive(projectPath)).records.map((record) => record.key)).toEqual([
+			key,
+			goneKey,
+		]);
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([]);
+		// The user is told, rather than left with a button that did nothing.
+		expect(maestro.notifications.toast).toHaveBeenCalledWith(
+			expect.stringContaining('cannot come back')
+		);
+	});
+
+	it('refuses a restore for a record that is no longer in the archive', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = archiveViewStub(plugin);
+		await plugin.activate(maestro);
+
+		const result = await commandHandlers.get('restore-card')!({
+			cardKey: 'session-7::tab-7',
+			boardId: projectPath,
+		});
+
+		expect(result).toMatchObject({ ok: false });
+		expect((result as { reason: string }).reason).toContain('no longer in the archive');
+	});
+
+	it('never rewrites an unreadable archive on a restore either', async () => {
+		const plugin = loadMain();
+		const path = plugin.archiveFilePath(projectPath);
+		const { maestro, files } = archiveViewStub(plugin);
+		await plugin.activate(maestro);
+		// Hand-edited into nonsense between the view opening and the click.
+		files.set(path, '{ not json');
+
+		const result = await plugin.restoreArchivedCard(key, projectPath);
+
+		// No record can be found in a file that does not parse, so the restore
+		// is refused - naming the file rather than claiming the record is gone -
+		// and the file is left exactly as it was.
+		expect(result).toMatchObject({ ok: false });
+		expect((result as { reason: string }).reason).toContain('could not be read');
+		expect((result as { reason: string }).reason).toContain(path);
+		expect(files.get(path)).toBe('{ not json');
+	});
+
+	it('keeps a restored card on the board across a restart', async () => {
+		const plugin = loadMain();
+		const first = archiveViewStub(plugin);
+		await plugin.activate(first.maestro);
+		await first.commandHandlers.get('restore-card')!({ cardKey: key, boardId: projectPath });
+
+		// Same files and storage, fresh module state: the archive no longer
+		// holds the card, so nothing hides it on the way back in.
+		const next = loadMain();
+		const second = createStubMaestro({
+			storage: Object.fromEntries(first.storageStore),
+			files: Object.fromEntries(first.files),
+			sessionsList: () =>
+				Promise.resolve([
+					{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
+				]),
+			tabsList: () =>
+				Promise.resolve([aiTab({ id: 'tab-1', projectPath, title: 'Ship the thing' })]),
+		});
+		await next.activate(second.maestro);
+
+		expect(snapshotKeys(second.maestro.ui.panelPost)).toEqual([key]);
 	});
 });
