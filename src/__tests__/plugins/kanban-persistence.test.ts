@@ -96,7 +96,9 @@ function createStubMaestro(options: StubOptions = {}) {
 			list: vi.fn(options.tabsList ?? (() => Promise.resolve([]))),
 		},
 		ui: {
-			panelPost: vi.fn(() => Promise.resolve({ ok: true })),
+			// Typed args, so `panelPost.mock.calls[n][1]` is the snapshot a test can
+			// cast rather than an element of a zero-length tuple.
+			panelPost: vi.fn((_panelId: string, _message: unknown) => Promise.resolve({ ok: true })),
 			togglePanel: vi.fn(() => Promise.resolve({ ok: true })),
 			closePanel: vi.fn(() => Promise.resolve({ ok: true })),
 		},
