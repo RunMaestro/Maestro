@@ -48,6 +48,9 @@ export interface SnapshotCard {
 	/** Stamped by the sandbox for the global board; the panel dims every
 	 * column outside this list and refuses its drops and keyboard moves. */
 	legalColumnIds?: string[];
+	/** Phase 04 access state: whether this plugin may message this card's
+	 * session or read its History right now. */
+	accessGranted?: boolean;
 }
 
 export interface SnapshotColumn {
@@ -143,6 +146,10 @@ export function makeCard(overrides: Partial<SnapshotCard> = {}): SnapshotCard {
 		status: 'idle',
 		createdAt: 1,
 		lastActivityAt: Date.now(),
+		// Granted by default so every test written before Phase 04's access
+		// gate landed keeps seeing the pane's ordinary History/composer
+		// sections; a test exercising the ungranted state sets this false.
+		accessGranted: true,
 		...overrides,
 	};
 }
@@ -216,10 +223,13 @@ export function press(key: string, init: KeyboardEventInit = {}, target: EventTa
 	);
 }
 
-/** Title of the card the keyboard is pointing at, or null when nothing is. */
+/** Title of the card the keyboard is pointing at, or null when nothing is.
+ * Reads only the title text node, not the whole `.card-title` row, so the
+ * Phase 04 "not connected" access marker sitting beside it never bleeds into
+ * the answer. */
 export function selectedCardTitle(): string | null {
 	const selected = board().querySelector<HTMLElement>('.card.selected');
-	return selected ? (selected.querySelector('.card-title')?.textContent ?? null) : null;
+	return selected ? (selected.querySelector('.card-title-text')?.textContent ?? null) : null;
 }
 
 /** The column ids in rendered order, so a test can say which column a card
@@ -279,11 +289,14 @@ export function columnElement(columnId: string, columnIds: string[]): HTMLElemen
 }
 
 /** Titles of the cards drawn in a column, top to bottom, so a test can assert
- * an insertion POSITION rather than just which column a card landed in. */
+ * an insertion POSITION rather than just which column a card landed in.
+ * Reads only the title text node, not the whole `.card-title` row, so the
+ * Phase 04 "not connected" access marker sitting beside it never bleeds into
+ * the answer. */
 export function cardTitlesIn(columnId: string, columnIds: string[]): string[] {
 	const body = columnElement(columnId, columnIds).querySelector<HTMLElement>('.column-body');
 	if (!body) return [];
 	return Array.from(body.querySelectorAll<HTMLElement>('.card')).map(
-		(card) => card.querySelector('.card-title')?.textContent ?? ''
+		(card) => card.querySelector('.card-title-text')?.textContent ?? ''
 	);
 }

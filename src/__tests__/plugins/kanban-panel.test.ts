@@ -601,6 +601,113 @@ describe('maestro-kanban panel.html', () => {
 	});
 
 	// ---------------------------------------------------------------------
+	// Phase 04 access state. A card whose session this plugin cannot message
+	// or read History for yet carries a "not connected" marker, and its
+	// detail pane swaps the History/composer sections for an explanation and
+	// an Allow Access button that runs the sandbox's `request-access`
+	// command.
+	// ---------------------------------------------------------------------
+
+	it('shows a "not connected" marker on a card whose session is not access-granted', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'No Access Yet', accessGranted: false })],
+			})
+		);
+
+		const card = findCardElement('No Access Yet');
+		expect(card.querySelector('.card-access-marker')?.textContent).toBe('Not connected');
+	});
+
+	it('shows no marker on a card whose session is access-granted', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Connected', accessGranted: true })],
+			})
+		);
+
+		const card = findCardElement('Connected');
+		expect(card.querySelector('.card-access-marker')).toBeNull();
+	});
+
+	it('replaces the History and Message sections with the access gate on an ungranted card', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Ungranted Card', accessGranted: false })],
+			})
+		);
+
+		findCardElement('Ungranted Card').click();
+
+		expect(document.getElementById('detail-access-gate')?.hidden).toBe(false);
+		expect(document.getElementById('detail-history-section')?.hidden).toBe(true);
+		expect(document.getElementById('detail-composer-section')?.hidden).toBe(true);
+		expect(document.getElementById('detail-access-message')?.textContent).toBe(
+			'Kanban Board needs your OK before it can message this agent or read its History.'
+		);
+	});
+
+	it('shows the History and Message sections and hides the access gate on a granted card', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Granted Card', accessGranted: true })],
+			})
+		);
+
+		findCardElement('Granted Card').click();
+
+		expect(document.getElementById('detail-access-gate')?.hidden).toBe(true);
+		expect(document.getElementById('detail-history-section')?.hidden).toBe(false);
+		expect(document.getElementById('detail-composer-section')?.hidden).toBe(false);
+	});
+
+	it('posts request-access for the card session when Allow Access is clicked', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [
+					makeCard({
+						key: 'session-5::tab-5',
+						sessionId: 'session-5',
+						tabId: 'tab-5',
+						title: 'Ask For Access',
+						accessGranted: false,
+					}),
+				],
+			})
+		);
+
+		findCardElement('Ask For Access').click();
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		document.getElementById('detail-allow-access')?.click();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'request-access',
+			args: { sessionId: 'session-5' },
+		});
+	});
+
+	it('switches the open detail pane to the granted state once the next snapshot reports it', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Pending Approval', accessGranted: false })],
+			})
+		);
+		findCardElement('Pending Approval').click();
+		expect(document.getElementById('detail-access-gate')?.hidden).toBe(false);
+
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Pending Approval', accessGranted: true })],
+			})
+		);
+
+		expect(document.getElementById('detail-access-gate')?.hidden).toBe(true);
+		expect(document.getElementById('detail-history-section')?.hidden).toBe(false);
+	});
+
+	// ---------------------------------------------------------------------
 	// Phase 03 keyboard access. The board has to be usable without a mouse,
 	// and the keyboard move has to be the SAME move a drag makes - same
 	// legality check, same `move` payload - or one of the two will rot.

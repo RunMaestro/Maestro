@@ -722,6 +722,31 @@ const sessionLastActivity = new Map();
 /** @type {Set<string>} sessions touched since the last tabs.list() re-read */
 const dirtySessions = new Set();
 
+// ===========================================================================
+// Phase 04 access state. The host, not this plugin, decides which sessions
+// this board may message or read History of (see plugin-session-grants.ts):
+// a session it created itself, or one the user approved through a one-time
+// Maestro confirmation. This plugin never creates sessions, so every card's
+// session starts OUTSIDE grantedSessions and only enters it when
+// sessions.requestAccess() resolves { granted: true } - never assumed from
+// the session merely existing on the board. A dispatch or History read the
+// host later denies for a revoked grant must drop the session back out of
+// this set so the card returns to its "not connected" state; neither call
+// exists in this plugin yet (they land in later tasks of this phase), so
+// nothing does that yet.
+// ===========================================================================
+
+/** @type {Set<string>} sessionId -> granted to message or read History for */
+const grantedSessions = new Set();
+
+/** Whether this plugin may message `sessionId` or read its History right
+ * now. Drives the card's "not connected" marker and the detail pane's
+ * access gate; never optimistic, so an unrecognized or never-asked session
+ * reads as not granted rather than assuming the best. */
+function isSessionAccessGranted(sessionId) {
+	return typeof sessionId === 'string' && grantedSessions.has(sessionId);
+}
+
 /** Project path of the session the host most recently reported as activated
  * via session.activated - what buildSnapshot() below treats as "the active
  * board" whose resolveColumns() output renders in the panel. null before any
@@ -1883,6 +1908,7 @@ function cardToJson(card, legalColumnIds) {
 		status: card.status,
 		createdAt: card.createdAt,
 		lastActivityAt: card.lastActivityAt,
+		accessGranted: isSessionAccessGranted(card.sessionId),
 		legalColumnIds: Array.isArray(legalColumnIds) ? legalColumnIds : undefined,
 	};
 }
@@ -2041,6 +2067,10 @@ function trimToBudget(snapshot) {
 			// Global board, so a trimmed board would start offering drops the
 			// sandbox refuses. A handful of column ids is worth that.
 			legalColumnIds: c.legalColumnIds,
+			// Kept: dropping it would make a trimmed card read as "not connected"
+			// regardless of its real access state, which is the opposite of the
+			// honesty this field exists for.
+			accessGranted: c.accessGranted,
 		}));
 	}
 	let guard = 0;
@@ -2258,6 +2288,32 @@ function registerCommands(maestro) {
 			})
 	);
 
+	// Invoked by the panel's detail-pane "Allow Access" button via
+	// parent.postMessage; no manifest `commands` entry is needed since the
+	// palette has no session in hand to ask about. Asks the host for the
+	// ONE-TIME confirmation sessions.requestAccess() owns; this plugin never
+	// shows its own dialog and never assumes a grant the host has not
+	// confirmed. Pushes a fresh snapshot either way so an approval clears the
+	// card's "not connected" marker without waiting for the next poll.
+	maestro.commands.register('request-access', (args) => {
+		const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : undefined;
+		if (!sessionId) return Promise.resolve({ ok: false, granted: false });
+		return maestro.sessions
+			.requestAccess(sessionId)
+			.then((result) => {
+				const granted = !!(result && result.granted === true);
+				if (granted) grantedSessions.add(sessionId);
+				return pushSnapshotNow().then(() => ({ ok: true, granted: granted }));
+			})
+			.catch((err) => {
+				console.error('maestro-kanban: sessions.requestAccess failed: ' + String(err));
+				return safeToast('Could not request access to that agent.').then(() => ({
+					ok: false,
+					granted: false,
+				}));
+			});
+	});
+
 	// Invoked by the panel via parent.postMessage; no manifest `commands`
 	// entry is needed since it is never surfaced in the command palette.
 	maestro.commands.register('focus', (args) => {
@@ -2350,6 +2406,10 @@ module.exports = {
 		placementCache.clear();
 		dirtyPlacementBoards.clear();
 		pendingMoveRejection = null;
+		// The host clears its own grant bookkeeping when the sandbox stops; this
+		// mirrors that so a reactivated plugin never assumes a grant it has not
+		// seen confirmed again.
+		grantedSessions.clear();
 		if (sdk) {
 			return sdk.events.unsubscribe().catch(() => {});
 		}

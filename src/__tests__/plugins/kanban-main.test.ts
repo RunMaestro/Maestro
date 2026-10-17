@@ -30,6 +30,7 @@ interface StubOverrides {
 	sessionsList?: () => Promise<unknown>;
 	tabsList?: () => Promise<unknown>;
 	sessionsFocus?: (sessionId: string, tabId?: string) => Promise<unknown>;
+	sessionsRequestAccess?: (sessionId: string) => Promise<unknown>;
 }
 
 function createStubMaestro(overrides: StubOverrides = {}) {
@@ -57,6 +58,9 @@ function createStubMaestro(overrides: StubOverrides = {}) {
 		sessions: {
 			list: vi.fn(overrides.sessionsList ?? (() => Promise.resolve([]))),
 			focus: vi.fn(overrides.sessionsFocus ?? (() => Promise.resolve({ ok: true }))),
+			requestAccess: vi.fn(
+				overrides.sessionsRequestAccess ?? (() => Promise.resolve({ granted: true }))
+			),
 		},
 		tabs: {
 			list: vi.fn(overrides.tabsList ?? (() => Promise.resolve([]))),
@@ -246,6 +250,96 @@ describe('maestro-kanban main.js', () => {
 		await focus!({ sessionId: 'session-9', tabId: 'tab-9' });
 
 		expect(maestro.sessions.focus).toHaveBeenCalledWith('session-9', 'tab-9');
+	});
+
+	it('every card starts out not access-granted, before anything asks for access', async () => {
+		const plugin = loadMain();
+		const { maestro } = createStubMaestro({
+			tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+		});
+
+		await plugin.activate(maestro);
+
+		const snapshot = maestro.ui.panelPost.mock.calls[0]![1] as {
+			columns: { id: string; cards: { key: string; accessGranted: boolean }[] }[];
+		};
+		expect(findCard(snapshot, 'session-1::tab-1')?.card.accessGranted).toBe(false);
+	});
+
+	it('an approved request-access grants the session and the next snapshot reflects it', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = createStubMaestro({
+			tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			sessionsRequestAccess: () => Promise.resolve({ granted: true }),
+		});
+
+		await plugin.activate(maestro);
+		maestro.ui.panelPost.mockClear();
+
+		const requestAccess = commandHandlers.get('request-access');
+		expect(requestAccess).toBeTypeOf('function');
+		const result = await requestAccess!({ sessionId: 'session-1' });
+
+		expect(maestro.sessions.requestAccess).toHaveBeenCalledWith('session-1');
+		expect(result).toEqual({ ok: true, granted: true });
+		// A fresh snapshot is pushed off the back of the approval, with no
+		// re-click needed to clear the card's "not connected" marker.
+		expect(maestro.ui.panelPost).toHaveBeenCalledTimes(1);
+		const snapshot = maestro.ui.panelPost.mock.calls[0]![1] as {
+			columns: { id: string; cards: { key: string; accessGranted: boolean }[] }[];
+		};
+		expect(findCard(snapshot, 'session-1::tab-1')?.card.accessGranted).toBe(true);
+	});
+
+	it('a declined request-access leaves the card ungranted and pushes no false grant', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = createStubMaestro({
+			tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			sessionsRequestAccess: () => Promise.resolve({ granted: false }),
+		});
+
+		await plugin.activate(maestro);
+
+		const requestAccess = commandHandlers.get('request-access');
+		const result = await requestAccess!({ sessionId: 'session-1' });
+
+		expect(result).toEqual({ ok: true, granted: false });
+		const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+			columns: { id: string; cards: { key: string; accessGranted: boolean }[] }[];
+		};
+		expect(findCard(snapshot, 'session-1::tab-1')?.card.accessGranted).toBe(false);
+	});
+
+	it('a rejected sessions.requestAccess call is reported rather than thrown, and grants nothing', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = createStubMaestro({
+			tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			sessionsRequestAccess: () => Promise.reject(new Error('rate limited')),
+		});
+
+		await plugin.activate(maestro);
+
+		const requestAccess = commandHandlers.get('request-access');
+		const result = await requestAccess!({ sessionId: 'session-1' });
+
+		expect(result).toEqual({ ok: false, granted: false });
+		const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+			columns: { id: string; cards: { key: string; accessGranted: boolean }[] }[];
+		};
+		expect(findCard(snapshot, 'session-1::tab-1')?.card.accessGranted).toBe(false);
+	});
+
+	it('request-access with no sessionId is a no-op', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = createStubMaestro();
+
+		await plugin.activate(maestro);
+
+		const requestAccess = commandHandlers.get('request-access');
+		const result = await requestAccess!({});
+
+		expect(result).toEqual({ ok: false, granted: false });
+		expect(maestro.sessions.requestAccess).not.toHaveBeenCalled();
 	});
 
 	it('does not throw out of activate when tabs.list is rejected', async () => {

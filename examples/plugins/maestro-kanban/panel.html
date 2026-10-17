@@ -205,6 +205,64 @@
 				border-radius: 6px;
 				padding: 6px 8px;
 			}
+			/* Phase 04 access state. The marker sits on every card whose session
+			   this board cannot message or read History for yet; the detail
+			   pane's gate replaces the sections that need that access with one
+			   line and a button to ask for it. */
+			.card-access-marker {
+				flex: 0 0 auto;
+				margin-left: auto;
+				font-size: 10px;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.02em;
+				color: var(--maestro-text-dim, #9d9d9d);
+				background: var(--maestro-bg-main, #1e1e1e);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 4px;
+				padding: 1px 5px;
+			}
+			#detail-allow-access {
+				margin-top: 8px;
+				padding: 5px 12px;
+				border: none;
+				border-radius: 6px;
+				background: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-size: 12px;
+				font-weight: 600;
+				cursor: pointer;
+			}
+			#detail-allow-access:hover {
+				opacity: 0.9;
+			}
+			#detail-composer-input {
+				width: 100%;
+				min-height: 48px;
+				resize: vertical;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				padding: 6px 8px;
+				margin-bottom: 6px;
+			}
+			#detail-composer-send {
+				padding: 5px 12px;
+				border: none;
+				border-radius: 6px;
+				background: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-size: 12px;
+				font-weight: 600;
+				cursor: pointer;
+			}
+			#detail-composer-send:disabled {
+				opacity: 0.5;
+				cursor: default;
+			}
 			.column {
 				flex: 0 0 240px;
 				display: flex;
@@ -424,11 +482,25 @@
 							placeholder="Description editing arrives in a later task."
 						></textarea>
 					</div>
-					<div class="detail-section">
+					<div class="detail-section" id="detail-access-gate" hidden>
+						<h3>Access</h3>
+						<p class="detail-placeholder" id="detail-access-message"></p>
+						<button id="detail-allow-access" type="button">Allow Access</button>
+					</div>
+					<div class="detail-section" id="detail-history-section">
 						<h3>Recent History</h3>
 						<div id="detail-history-body" class="detail-placeholder">
 							History excerpt arrives in a later task.
 						</div>
+					</div>
+					<div class="detail-section" id="detail-composer-section">
+						<h3>Message</h3>
+						<textarea
+							id="detail-composer-input"
+							disabled
+							placeholder="Messaging arrives in a later task."
+						></textarea>
+						<button id="detail-composer-send" type="button" disabled>Send</button>
 					</div>
 					<div class="detail-section">
 						<h3>Comments</h3>
@@ -910,8 +982,16 @@
 					dot.style.background = statusColor(card.status);
 					title.appendChild(dot);
 					var titleText = document.createElement('span');
+					titleText.className = 'card-title-text';
 					titleText.textContent = card.title || 'Untitled';
 					title.appendChild(titleText);
+					if (card.accessGranted !== true) {
+						var accessMarker = document.createElement('span');
+						accessMarker.className = 'card-access-marker';
+						accessMarker.textContent = 'Not connected';
+						accessMarker.title = accessGateMessage();
+						title.appendChild(accessMarker);
+					}
 					el.appendChild(title);
 
 					var meta = document.createElement('div');
@@ -1236,6 +1316,29 @@
 					);
 				}
 
+				/** The one line shown on a card's "not connected" tooltip and in
+				 * the detail pane's access gate - kept in one place so the two
+				 * never say something different about the same state. */
+				function accessGateMessage() {
+					return 'Kanban Board needs your OK before it can message this agent or read its History.';
+				}
+
+				/** Asks the sandbox to run sessions.requestAccess() for `card`'s
+				 * session. The sandbox shows the host's own one-time confirmation
+				 * (never a dialog this panel draws) and, on approval, pushes a
+				 * fresh snapshot with the session granted - there is nothing for
+				 * this call to wait on here. */
+				function requestCardAccess(card) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'request-access',
+							args: { sessionId: card.sessionId },
+						},
+						'*'
+					);
+				}
+
 				// -------------------------------------------------------------
 				// Phase 04 card detail pane. Opens beside the board on a card
 				// click, showing the title/agent/project/status this plugin
@@ -1301,6 +1404,30 @@
 						openTabButton.onclick = function () {
 							focusCard(card);
 						};
+					}
+
+					// Access gate: an ungranted card loses the History excerpt and the
+					// composer to one explanation and an Allow Access button, in their
+					// shared slot in the pane; a granted card gets the ordinary
+					// sections back. Both sections already read "arrives in a later
+					// task" for every card today - the gate only decides which one of
+					// the three is shown, not what a granted card's sections say yet.
+					var accessGranted = card.accessGranted === true;
+					var accessGateEl = document.getElementById('detail-access-gate');
+					if (accessGateEl) accessGateEl.hidden = accessGranted;
+					var historySectionEl = document.getElementById('detail-history-section');
+					if (historySectionEl) historySectionEl.hidden = !accessGranted;
+					var composerSectionEl = document.getElementById('detail-composer-section');
+					if (composerSectionEl) composerSectionEl.hidden = !accessGranted;
+					if (!accessGranted) {
+						var accessMessageEl = document.getElementById('detail-access-message');
+						if (accessMessageEl) accessMessageEl.textContent = accessGateMessage();
+						var allowAccessButton = document.getElementById('detail-allow-access');
+						if (allowAccessButton) {
+							allowAccessButton.onclick = function () {
+								requestCardAccess(card);
+							};
+						}
 					}
 				}
 
