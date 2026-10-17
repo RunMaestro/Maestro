@@ -15,8 +15,13 @@
  *     observable end to end, through `activate()` plus the `move` command
  *     and the stub `maestro.storage` they write to.
  *
- * Retirement, the archive, and the opt-in tab close are later tasks in this
- * phase and are not covered here yet.
+ *   - The archive file underneath retirement (`archiveFilePath()`,
+ *     `loadArchive()`, `saveArchive()`, `appendToArchive()`) is exercised
+ *     through the same stub `maestro.fs` the Phase 02 board files use, so a
+ *     test can read back exactly what landed on disk.
+ *
+ * Retirement itself and the opt-in tab close are later tasks in this phase
+ * and are not covered here yet.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -49,6 +54,26 @@ interface AgingCard {
 	lastMessageAt?: number | null;
 }
 
+interface ArchiveRecord {
+	key: string;
+	retiredAt: number;
+	reason: string;
+	title: string;
+	sessionId: string | null;
+	tabId: string | null;
+	agentName: string | null;
+	projectPath: string | null;
+	columnHistory: string[];
+	description: string;
+	comments: { id: string; body: string; createdAt: number }[];
+}
+
+interface ArchiveRead {
+	records: ArchiveRecord[];
+	error: { message: string; path: string } | null;
+	exists: boolean;
+}
+
 interface KanbanAging {
 	agingState: (card: AgingCard, settings: unknown, now: number) => AgingState;
 	normalizeAgingSettings: (raw: unknown) => AgingSettings;
@@ -62,6 +87,14 @@ interface KanbanAging {
 		terminalColumnId: string | null,
 		now?: number
 	) => AgingState;
+	ARCHIVE_RECORD_CAP: number;
+	archiveFilePath: (boardId: string | null | undefined) => string;
+	readStoredArchiveRecord: (value: unknown) => ArchiveRecord | null;
+	pruneArchiveRecords: (records: ArchiveRecord[], path: string) => ArchiveRecord[];
+	loadArchive: (boardId: string) => Promise<ArchiveRead>;
+	saveArchive: (boardId: string, records: ArchiveRecord[]) => Promise<ArchiveRecord[]>;
+	appendToArchive: (boardId: string, additions: ArchiveRecord[]) => Promise<ArchiveRecord[]>;
+	GLOBAL_BOARD_ID: string;
 	activate: (maestro: unknown) => Promise<void>;
 }
 
@@ -283,6 +316,7 @@ describe('maestro-kanban aging model', () => {
 
 interface StubOptions {
 	storage?: Record<string, string>;
+	files?: Record<string, string>;
 	tabsList?: () => Promise<unknown>;
 }
 
@@ -290,7 +324,7 @@ interface StubOptions {
  * test can inspect what main.js ultimately persisted. Mirrors
  * kanban-persistence.test.ts's stub, trimmed to what aging reads. */
 function createStubMaestro(options: StubOptions = {}) {
-	const files = new Map<string, string>();
+	const files = new Map<string, string>(Object.entries(options.files ?? {}));
 	const storageStore = new Map<string, string>(Object.entries(options.storage ?? {}));
 	const commandHandlers = new Map<string, (args?: unknown) => unknown>();
 
@@ -345,7 +379,7 @@ function createStubMaestro(options: StubOptions = {}) {
 		},
 	};
 
-	return { maestro, storageStore, commandHandlers };
+	return { maestro, files, storageStore, commandHandlers };
 }
 
 function aiTab(overrides: Record<string, unknown> = {}) {
@@ -546,5 +580,230 @@ describe('maestro-kanban board aging settings', () => {
 			horizonDays: 7,
 			closeTabsOnRetire: false,
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Archive storage: ~/.maestro/kanban-archive/<board>.json. Retirement itself
+// is a later task in this phase; what is covered here is the file underneath
+// it - the one path helper, the missing/unparseable cases, and the cap.
+// ---------------------------------------------------------------------------
+
+function archiveRecord(overrides: Partial<ArchiveRecord> = {}): ArchiveRecord {
+	return {
+		key: 'session-1::tab-1',
+		retiredAt: NOW,
+		reason: 'aged out of Done',
+		title: 'Ship the thing',
+		sessionId: 'session-1',
+		tabId: 'tab-1',
+		agentName: 'claude-code',
+		projectPath: '/Users/dev/projects/widgets',
+		columnHistory: ['backlog', 'in-progress', 'done'],
+		description: 'A card that reached its horizon.',
+		comments: [{ id: 'c1', body: 'nice', createdAt: NOW - DAY }],
+		...overrides,
+	};
+}
+
+describe('maestro-kanban archive storage', () => {
+	const projectPath = '/Users/dev/projects/widgets';
+
+	describe('archiveFilePath', () => {
+		it("names a project's archive beside the slug its board YAML already uses", () => {
+			const plugin = loadMain();
+			const path = plugin.archiveFilePath(projectPath);
+			expect(path).toBe(
+				'~/.maestro/kanban-archive/' +
+					plugin
+						.boardFilePath(projectPath)
+						.replace('~/.maestro/kanban-boards/', '')
+						.replace('.yaml', '') +
+					'.json'
+			);
+			expect(path.startsWith('~/.maestro/kanban-archive/')).toBe(true);
+		});
+
+		it('gives the Global board its own reserved basename', () => {
+			const plugin = loadMain();
+			expect(plugin.archiveFilePath(plugin.GLOBAL_BOARD_ID)).toBe(
+				'~/.maestro/kanban-archive/global.json'
+			);
+		});
+
+		it('refuses anything that is not a board id, so no caller can smuggle a path through it', () => {
+			const plugin = loadMain();
+			expect(() => plugin.archiveFilePath('')).toThrow(/board id/);
+			expect(() => plugin.archiveFilePath(null)).toThrow(/board id/);
+			expect(() => plugin.archiveFilePath(undefined)).toThrow(/board id/);
+		});
+	});
+
+	describe('readStoredArchiveRecord', () => {
+		it('keeps a record with a key and a date even when the rest is missing', () => {
+			const plugin = loadMain();
+			const record = plugin.readStoredArchiveRecord({ key: 'a::b', retiredAt: NOW });
+			expect(record).toEqual({
+				key: 'a::b',
+				retiredAt: NOW,
+				reason: '',
+				title: '',
+				sessionId: null,
+				tabId: null,
+				agentName: null,
+				projectPath: null,
+				columnHistory: [],
+				description: '',
+				comments: [],
+			});
+		});
+
+		it('drops an entry with no key or no retirement date', () => {
+			const plugin = loadMain();
+			expect(plugin.readStoredArchiveRecord({ retiredAt: NOW })).toBeNull();
+			expect(plugin.readStoredArchiveRecord({ key: 'a::b' })).toBeNull();
+			expect(plugin.readStoredArchiveRecord({ key: 'a::b', retiredAt: 'yesterday' })).toBeNull();
+			expect(plugin.readStoredArchiveRecord(null)).toBeNull();
+			expect(plugin.readStoredArchiveRecord([])).toBeNull();
+		});
+	});
+
+	it('reads a board that has never retired anything as an empty archive, not an error', async () => {
+		const plugin = loadMain();
+		const { maestro } = createStubMaestro();
+		await plugin.activate(maestro);
+
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive).toEqual({ records: [], error: null, exists: false });
+	});
+
+	it('round-trips records through the file and lists them newest first', async () => {
+		const plugin = loadMain();
+		const { maestro, files } = createStubMaestro();
+		await plugin.activate(maestro);
+
+		await plugin.saveArchive(projectPath, [
+			archiveRecord({ key: 'older', retiredAt: NOW - 3 * DAY }),
+			archiveRecord({ key: 'newer', retiredAt: NOW }),
+		]);
+
+		expect(files.has(plugin.archiveFilePath(projectPath))).toBe(true);
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.error).toBeNull();
+		expect(archive.exists).toBe(true);
+		expect(archive.records.map((record) => record.key)).toEqual(['newer', 'older']);
+		expect(archive.records[0]).toEqual(archiveRecord({ key: 'newer' }));
+	});
+
+	it('surfaces an unparseable archive and never writes over it', async () => {
+		const plugin = loadMain();
+		const { maestro, files } = createStubMaestro();
+		await plugin.activate(maestro);
+		const path = plugin.archiveFilePath(projectPath);
+		const handEdited = '{ this is not JSON';
+		files.set(path, handEdited);
+
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.exists).toBe(true);
+		expect(archive.records).toEqual([]);
+		expect(archive.error?.path).toBe(path);
+		expect(archive.error?.message).toBeTruthy();
+
+		await expect(plugin.saveArchive(projectPath, [archiveRecord()])).rejects.toThrow(
+			/Refusing to overwrite an unreadable archive/
+		);
+		await expect(plugin.appendToArchive(projectPath, [archiveRecord()])).rejects.toThrow(
+			/Refusing to overwrite an unreadable archive/
+		);
+		expect(files.get(path)).toBe(handEdited);
+	});
+
+	it('treats a JSON file that is not a record array as unreadable rather than empty', async () => {
+		const plugin = loadMain();
+		const { maestro, files } = createStubMaestro();
+		await plugin.activate(maestro);
+		files.set(plugin.archiveFilePath(projectPath), JSON.stringify({ version: 1 }));
+
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.error?.message).toMatch(/not a record array/);
+	});
+
+	it('appends without doubling a key that is already archived', async () => {
+		const plugin = loadMain();
+		const { maestro } = createStubMaestro();
+		await plugin.activate(maestro);
+
+		await plugin.appendToArchive(projectPath, [archiveRecord({ key: 'a::b', retiredAt: NOW })]);
+		await plugin.appendToArchive(projectPath, [
+			archiveRecord({ key: 'c::d', retiredAt: NOW + DAY }),
+			archiveRecord({ key: 'a::b', retiredAt: NOW + 2 * DAY, reason: 'archived by hand' }),
+		]);
+
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.records.map((record) => record.key)).toEqual(['a::b', 'c::d']);
+		expect(archive.records[0]!.reason).toBe('archived by hand');
+	});
+
+	it('prunes the oldest records past the cap and logs every one it drops', () => {
+		const plugin = loadMain();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			const overflow = 3;
+			const records = Array.from({ length: plugin.ARCHIVE_RECORD_CAP + overflow }, (_, index) =>
+				archiveRecord({ key: 'card-' + index, retiredAt: NOW - index * 1000 })
+			);
+
+			const kept = plugin.pruneArchiveRecords(records, '~/.maestro/kanban-archive/x.json');
+
+			expect(kept).toHaveLength(plugin.ARCHIVE_RECORD_CAP);
+			// Newest survive; the `overflow` oldest are the ones dropped.
+			expect(kept[0]!.key).toBe('card-0');
+			expect(kept[kept.length - 1]!.key).toBe('card-' + (plugin.ARCHIVE_RECORD_CAP - 1));
+			expect(warn).toHaveBeenCalledTimes(overflow);
+			// One line per dropped record, naming it, so the one destructive
+			// act in this phase is never silent.
+			const logged = warn.mock.calls.map((call) => String(call[0])).join('\n');
+			for (let index = 0; index < overflow; index++) {
+				expect(logged).toContain('card-' + (plugin.ARCHIVE_RECORD_CAP + index));
+			}
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it('applies the cap on the way to disk, so the file never grows past it', async () => {
+		const plugin = loadMain();
+		const { maestro } = createStubMaestro();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			await plugin.activate(maestro);
+			await plugin.saveArchive(
+				projectPath,
+				Array.from({ length: plugin.ARCHIVE_RECORD_CAP + 2 }, (_, index) =>
+					archiveRecord({ key: 'card-' + index, retiredAt: NOW - index * 1000 })
+				)
+			);
+
+			const archive = await plugin.loadArchive(projectPath);
+			expect(archive.records).toHaveLength(plugin.ARCHIVE_RECORD_CAP);
+			expect(archive.records.some((record) => record.key === 'card-500')).toBe(false);
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it('keeps each board in its own file', async () => {
+		const plugin = loadMain();
+		const other = '/Users/dev/projects/gadgets';
+		const { maestro } = createStubMaestro();
+		await plugin.activate(maestro);
+
+		await plugin.saveArchive(projectPath, [archiveRecord({ key: 'widgets::1' })]);
+		await plugin.saveArchive(other, [archiveRecord({ key: 'gadgets::1', projectPath: other })]);
+
+		expect((await plugin.loadArchive(projectPath)).records.map((r) => r.key)).toEqual([
+			'widgets::1',
+		]);
+		expect((await plugin.loadArchive(other)).records.map((r) => r.key)).toEqual(['gadgets::1']);
 	});
 });

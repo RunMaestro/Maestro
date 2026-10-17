@@ -1992,6 +1992,272 @@ function agingStateForCard(card, terminalColumnId, now) {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 05 archive storage: where a retired card goes. Aging is only ever
+// allowed to be non-destructive, so a card that ages out of Done is not
+// deleted - it is written to a per-board JSON file under
+// `~/.maestro/kanban-archive`, inside the same `~/.maestro/kanban*` area
+// Phase 02 confined this plugin to, and stays browsable from the panel.
+//
+// Four rules, all of them about not losing anything:
+//
+//   1. One function builds the path. archiveFilePath() is the only producer
+//      of a string ever handed to maestro.fs.* for the archive, the same
+//      discipline boardFilePath() holds for board YAML, so no caller can
+//      smuggle an arbitrary path through it.
+//   2. A missing file is an empty archive, not an error. Nothing has ever
+//      been retired on that board yet.
+//   3. A file that exists but does not parse is surfaced (the archive view
+//      renders the error) and NEVER overwritten. maestro.fs.write replaces
+//      a whole file, so writing over an archive we could not read would
+//      destroy every record in it; saveArchive() re-reads and aborts
+//      instead, exactly as saveProjectBoard() does for a board file.
+//   4. The file is capped. Past ARCHIVE_RECORD_CAP records the oldest are
+//      pruned first, and each prune is logged with the card key it dropped
+//      so the one destructive act in this whole phase leaves a trail.
+//
+// Deliberately uncached, unlike boardCache above: the archive is read when
+// the archive view opens and when the retirement tick runs (hours apart),
+// and a stale cache here would mean showing a card as archived that was
+// already restored. One fs.read per read is the cheaper trade.
+// ===========================================================================
+
+const ARCHIVE_DIR = '~/.maestro/kanban-archive';
+
+/** Basename of the Global board's archive file. The Global board's id is
+ * the reserved GLOBAL_BOARD_ID rather than a path, so it gets a reserved
+ * basename too; every project path slugs through projectBoardSlug(), whose
+ * output always ends in `-<fnv1a8>` and can therefore never collide with
+ * this literal. */
+const GLOBAL_ARCHIVE_BASENAME = 'global';
+
+/** How many records one board's archive keeps. Past this the oldest are
+ * pruned on write. Chosen to be far more than a board will retire in normal
+ * use while still bounding the file: 500 records of a card's title,
+ * description and comments stays comfortably small to read and re-write as
+ * one JSON document. */
+const ARCHIVE_RECORD_CAP = 500;
+
+/** @typedef {{ key: string, retiredAt: number, reason: string, title: string, sessionId: string|null, tabId: string|null, agentName: string|null, projectPath: string|null, columnHistory: string[], description: string, comments: CardComment[] }} ArchiveRecord */
+
+/**
+ * The one place an archive file path is produced. `GLOBAL_BOARD_ID` names
+ * the Global board's archive; any other value must be a non-empty project
+ * path, which maps to that project's archive file under the same
+ * `<basename>-<fnv1a8>` slug its board YAML already uses, so the two files
+ * for one project are recognizably a pair. The leading `~` is left for the
+ * host to expand (see plugin-home-path.ts). Throws on anything else.
+ * @param {string|null|undefined} boardId
+ */
+function archiveFilePath(boardId) {
+	if (boardId === GLOBAL_BOARD_ID) {
+		return ARCHIVE_DIR + '/' + GLOBAL_ARCHIVE_BASENAME + '.json';
+	}
+	if (typeof boardId !== 'string' || boardId === '') {
+		throw new Error(
+			'archiveFilePath requires a board id: a non-empty project path, or GLOBAL_BOARD_ID'
+		);
+	}
+	return ARCHIVE_DIR + '/' + projectBoardSlug(boardId) + '.json';
+}
+
+/** A string field of a stored record, or '' - an archive is read by a
+ * person, so a missing title is an empty line and not a dropped record.
+ * @param {unknown} value */
+function archiveString(value) {
+	return typeof value === 'string' ? value : '';
+}
+
+/** A string field that is allowed to be genuinely absent (a card with no
+ * project, a tab that was never known), as `null` rather than ''.
+ * @param {unknown} value */
+function archiveNullableString(value) {
+	return typeof value === 'string' && value !== '' ? value : null;
+}
+
+/**
+ * Reads one stored entry into an `ArchiveRecord`, or null when it is
+ * missing the two fields this plugin never writes a record without - the
+ * card key it is a record OF, and when it was retired, which is what the
+ * cap prunes and the archive view sorts on. Everything else degrades to an
+ * empty value: same reasoning as readStoredComment() above, except
+ * inverted, because an archive IS a ledger - a record with a readable key
+ * and date is kept even if the rest of it was hand-edited into nonsense,
+ * rather than silently vanishing.
+ * @param {unknown} value
+ * @returns {ArchiveRecord|null}
+ */
+function readStoredArchiveRecord(value) {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	const entry = /** @type {Record<string, unknown>} */ (value);
+	if (typeof entry.key !== 'string' || entry.key === '') return null;
+	const retiredAt = finiteTimestamp(entry.retiredAt);
+	if (retiredAt === null) return null;
+	const comments = Array.isArray(entry.comments)
+		? /** @type {CardComment[]} */ (entry.comments.map(readStoredComment).filter(Boolean))
+		: [];
+	const columnHistory = Array.isArray(entry.columnHistory)
+		? entry.columnHistory.filter(function (id) {
+				return typeof id === 'string' && id !== '';
+			})
+		: [];
+	return {
+		key: entry.key,
+		retiredAt: retiredAt,
+		reason: archiveString(entry.reason),
+		title: archiveString(entry.title),
+		sessionId: archiveNullableString(entry.sessionId),
+		tabId: archiveNullableString(entry.tabId),
+		agentName: archiveNullableString(entry.agentName),
+		projectPath: archiveNullableString(entry.projectPath),
+		columnHistory: /** @type {string[]} */ (columnHistory),
+		description: archiveString(entry.description),
+		comments: comments,
+	};
+}
+
+/** Newest retirement first, which is both the order the archive view lists
+ * in and the order the cap prunes from the end of.
+ * @param {ArchiveRecord} a @param {ArchiveRecord} b */
+function compareArchiveRecords(a, b) {
+	if (b.retiredAt !== a.retiredAt) return b.retiredAt - a.retiredAt;
+	return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+/**
+ * Reads one board's archive. Never rejects, so neither the retirement tick
+ * nor the archive view has to guard it:
+ *   - missing file -> `{ records: [], error: null, exists: false }`
+ *   - unreadable or unparseable -> `{ records: [], error, exists: true }`,
+ *     which the archive view renders and saveArchive() refuses to write
+ *     over.
+ * Records come back normalized and newest first; an entry too broken to
+ * read is dropped from the returned list but, because a dropped entry does
+ * not make the FILE unparseable, is also dropped from the next write. That
+ * is the one lossy path here and it only reaches entries missing a card key
+ * or a retirement date.
+ * @param {string} boardId
+ * @returns {Promise<{ records: ArchiveRecord[], error: { message: string, path: string }|null, exists: boolean }>}
+ */
+async function loadArchive(boardId) {
+	const path = archiveFilePath(boardId);
+	let text;
+	try {
+		text = await sdk.fs.read(path);
+	} catch (err) {
+		if (isFileNotFoundError(err)) return { records: [], error: null, exists: false };
+		return { records: [], error: { message: errorMessage(err), path: path }, exists: true };
+	}
+	try {
+		const parsed = JSON.parse(String(text));
+		const list = Array.isArray(parsed)
+			? parsed
+			: parsed && typeof parsed === 'object' && Array.isArray(parsed.records)
+				? parsed.records
+				: null;
+		if (list === null) {
+			throw new Error('archive file is not a record array');
+		}
+		const records = /** @type {ArchiveRecord[]} */ (
+			list.map(readStoredArchiveRecord).filter(Boolean)
+		);
+		records.sort(compareArchiveRecords);
+		return { records: records, error: null, exists: true };
+	} catch (err) {
+		return { records: [], error: { message: errorMessage(err), path: path }, exists: true };
+	}
+}
+
+/**
+ * Applies the cap, pruning the oldest records first. Pure, and separated
+ * from the write so a test can read the prune without a filesystem. Logs
+ * every dropped record by key: this is the only place the plugin discards
+ * something a user might want back, so it is never silent.
+ * @param {ArchiveRecord[]} records
+ * @param {string} path
+ * @returns {ArchiveRecord[]}
+ */
+function pruneArchiveRecords(records, path) {
+	const sorted = records.slice().sort(compareArchiveRecords);
+	if (sorted.length <= ARCHIVE_RECORD_CAP) return sorted;
+	const dropped = sorted.slice(ARCHIVE_RECORD_CAP);
+	for (const record of dropped) {
+		console.warn(
+			'maestro-kanban: archive ' +
+				path +
+				' is at its ' +
+				ARCHIVE_RECORD_CAP +
+				'-record cap; pruning oldest record ' +
+				record.key +
+				' retired ' +
+				new Date(record.retiredAt).toISOString()
+		);
+	}
+	return sorted.slice(0, ARCHIVE_RECORD_CAP);
+}
+
+/**
+ * Writes one board's archive as a whole JSON document (maestro.fs.write
+ * replaces a file, so there is no append). Re-reads first and REFUSES the
+ * write when what is already there does not parse, so a hand-edit or a
+ * half-written file is never destroyed by the next retirement - the same
+ * guard saveProjectBoard() holds over a board file, and the reason the
+ * archive is worth having at all.
+ *
+ * Resolves to the records actually written. Throws, naming the path, when
+ * the existing file is unreadable; the caller leaves the card on the board
+ * and tries again on the next tick rather than dropping it on the floor.
+ * @param {string} boardId
+ * @param {ArchiveRecord[]} records
+ * @returns {Promise<ArchiveRecord[]>}
+ */
+async function saveArchive(boardId, records) {
+	const path = archiveFilePath(boardId);
+	const existing = await loadArchive(boardId);
+	if (existing.error) {
+		throw new Error(
+			'Refusing to overwrite an unreadable archive at ' + path + ': ' + existing.error.message
+		);
+	}
+	const kept = pruneArchiveRecords(Array.isArray(records) ? records : [], path);
+	await sdk.fs.write(path, JSON.stringify({ version: 1, records: kept }, null, '\t') + '\n');
+	return kept;
+}
+
+/**
+ * Adds records to one board's archive and writes it back, newest first and
+ * capped. A record whose key is already archived replaces the stored one
+ * rather than doubling it, so retiring a card that was restored and retired
+ * again leaves one entry and not two. Resolves to the written list; throws
+ * through saveArchive() when the existing file is unreadable.
+ * @param {string} boardId
+ * @param {ArchiveRecord[]} additions
+ * @returns {Promise<ArchiveRecord[]>}
+ */
+async function appendToArchive(boardId, additions) {
+	const existing = await loadArchive(boardId);
+	if (existing.error) {
+		throw new Error(
+			'Refusing to overwrite an unreadable archive at ' +
+				archiveFilePath(boardId) +
+				': ' +
+				existing.error.message
+		);
+	}
+	const incoming = (Array.isArray(additions) ? additions : [])
+		.map(readStoredArchiveRecord)
+		.filter(Boolean);
+	/** @type {Map<string, ArchiveRecord>} */
+	const byKey = new Map();
+	for (const record of existing.records) byKey.set(record.key, record);
+	for (const record of /** @type {ArchiveRecord[]} */ (incoming)) byKey.set(record.key, record);
+	return saveArchive(boardId, Array.from(byKey.values()));
+}
+
+// ===========================================================================
+// End of Phase 05 archive storage.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -3346,6 +3612,19 @@ module.exports = {
 	setBoardAgingSettings: setBoardAgingSettings,
 	agingSettingsForBoard: agingSettingsForBoard,
 	agingStateForCard: agingStateForCard,
+
+	// Phase 05 archive storage, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-aging.test.ts). archiveFilePath(),
+	// readStoredArchiveRecord() and pruneArchiveRecords() are pure; the rest
+	// call sdk.fs.read/write, so a test must call activate() with a stub SDK
+	// first.
+	ARCHIVE_RECORD_CAP: ARCHIVE_RECORD_CAP,
+	archiveFilePath: archiveFilePath,
+	readStoredArchiveRecord: readStoredArchiveRecord,
+	pruneArchiveRecords: pruneArchiveRecords,
+	loadArchive: loadArchive,
+	saveArchive: saveArchive,
+	appendToArchive: appendToArchive,
 
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
