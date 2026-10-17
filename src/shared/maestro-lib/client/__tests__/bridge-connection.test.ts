@@ -63,6 +63,7 @@ import {
 	isPidAlive,
 	type CliServerInfo,
 } from '../discovery';
+import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../../plugins/headless-agent-timeouts';
 import { CLI_SECRET_HEADER } from '../../../webLogin';
 
 const RUNNING_SERVER: CliServerInfo = {
@@ -101,6 +102,41 @@ describe('BridgeConnection', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	it('holds a headless reply past sixty-one minutes but polls cannot extend the six-hour authority', async () => {
+		const client = await createConnectedClient();
+		try {
+			const reply = client.sendCommand(
+				{ type: 'plugins_send_agent' },
+				'plugins_send_agent_result',
+				HEADLESS_RUN_COMPLETION_TIMEOUT_MS
+			);
+			const { requestId } = lastSentPayload();
+			await vi.advanceTimersByTimeAsync(61 * 60_000);
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({ type: 'plugins_send_agent_result', requestId, success: true })
+			);
+			expect(await reply).toMatchObject({ success: true });
+			const pending = client.sendCommand(
+				{ type: 'plugins_send_agent' },
+				'plugins_send_agent_result',
+				HEADLESS_RUN_COMPLETION_TIMEOUT_MS
+			);
+			const rejected = expect(pending).rejects.toBeInstanceOf(CommandTimeoutError);
+			for (let n = 0; n < 6; n++) {
+				await vi.advanceTimersByTimeAsync(60 * 60_000);
+				mockWsInstance.emit(
+					'message',
+					JSON.stringify({ type: 'bridge.event', channel: 'poll', args: [] })
+				);
+			}
+			await vi.advanceTimersByTimeAsync(60_000);
+			await rejected;
+		} finally {
+			client.disconnect();
+		}
 	});
 
 	describe('connect()', () => {

@@ -35,7 +35,7 @@ import {
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
 } from '../../shared/maestro-lib/run/start-turn';
-import { TurnCapture } from '../../shared/maestro-lib/run/turn-capture';
+import { TurnCapture, usageReportingFor } from '../../shared/maestro-lib/run/turn-capture';
 import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
@@ -55,7 +55,10 @@ import {
 	buildAdditionalDirArgs,
 } from '../../shared/maestro-lib/launch/agent-args';
 import { superviseAgentProcess } from './agent-process-supervisor';
-import { CODEX_STARTUP_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
+import {
+	CODEX_STARTUP_TIMEOUT_MS,
+	type HeadlessIdleProfile,
+} from '../../shared/plugins/headless-agent-timeouts';
 import {
 	buildMcpInjection,
 	mergeMcpInjectionArgs,
@@ -162,10 +165,11 @@ type SpawnOverrides = Pick<
 	| 'pluginRunProofFile'
 	| 'mcpCliScriptPath'
 	| 'timeoutMs'
+	| 'idle'
 	| 'onProgress'
 	| 'onProcessStarted'
 	| 'maestroPMaxWaitSeconds'
->;
+> & { deadlineAt?: number };
 
 /** Derive an action only from known tool names and narrow public metadata fields. */
 function publicToolSummary(tool: string, input: unknown): string | undefined {
@@ -1033,6 +1037,9 @@ async function spawnClaudeAgent(
 		}
 	};
 
+	if (overrides.signal?.aborted) return interruptedResult();
+	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
+		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
 	const turn = startTurn(
 		{
 			command: spawnCommand,
@@ -1044,7 +1051,11 @@ async function spawnClaudeAgent(
 		{
 			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
-			onLine: processLine,
+			onLine: (line) => {
+				const event = claudeParser?.parseJsonLine(line);
+				if (event) supervision.observe(event);
+				processLine(line);
+			},
 			onOversizedLine: warnOversizedLineBuffer,
 		},
 		cliTurnOptions(undefined)
@@ -1054,7 +1065,18 @@ async function spawnClaudeAgent(
 		forcedStop = () => resolve(undefined);
 	});
 	const supervision = superviseAgentProcess(turn.child, {
-		timeoutMs: overrides.timeoutMs,
+		timeoutMs:
+			overrides.deadlineAt === undefined
+				? overrides.timeoutMs
+				: Math.max(1, overrides.deadlineAt - Date.now()),
+		idle: overrides.idle,
+		usageReporting: usageReportingFor('claude-code'),
+		onStatus: (text) =>
+			emitAgentProgress(overrides.onProgress, {
+				type: 'activity',
+				text,
+				at: new Date().toISOString(),
+			}),
 		signal: overrides.signal,
 		onStop: (reason) => {
 			stopped = true;
@@ -1353,6 +1375,9 @@ async function spawnJsonLineAgent(
 		});
 	};
 
+	if (overrides.signal?.aborted) return interruptedResult();
+	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
+		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
 	const turn = startTurn(
 		{
 			command: spawnCommand,
@@ -1370,16 +1395,7 @@ async function spawnJsonLineAgent(
 					return;
 				}
 				capture.handleEvent(event);
-				if (
-					toolType === 'codex' &&
-					!event.isRetryNotice &&
-					event.raw &&
-					typeof event.raw === 'object' &&
-					((['text', 'result'].includes(event.type) && Boolean(event.text)) ||
-						event.type === 'tool_use' ||
-						event.type === 'usage')
-				)
-					supervision.modelActivity();
+				supervision.observe(event);
 				if (event.type === 'tool_use') {
 					const tool =
 						typeof event.toolName === 'string' &&
@@ -1451,7 +1467,18 @@ async function spawnJsonLineAgent(
 		forcedStop = () => resolve(undefined);
 	});
 	const supervision = superviseAgentProcess(turn.child, {
-		timeoutMs: overrides.timeoutMs,
+		timeoutMs:
+			overrides.deadlineAt === undefined
+				? overrides.timeoutMs
+				: Math.max(1, overrides.deadlineAt - Date.now()),
+		idle: overrides.idle,
+		usageReporting: usageReportingFor(toolType),
+		onStatus: (text) =>
+			emitAgentProgress(overrides.onProgress, {
+				type: 'activity',
+				text,
+				at: new Date().toISOString(),
+			}),
 		signal: overrides.signal,
 		startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
 		onStop: (reason) => {
@@ -1519,6 +1546,8 @@ export interface SpawnAgentOptions {
 	pluginRunProofFile?: string;
 	mcpCliScriptPath?: string;
 	timeoutMs?: number;
+	/** Host-owned semantic inactivity policy; no public CLI flag. */
+	idle?: Readonly<HeadlessIdleProfile>;
 	onProgress?: (event: AgentSendProgressEvent) => void;
 	/** Resume an existing agent session */
 	agentSessionId?: string;
@@ -1609,7 +1638,9 @@ export async function spawnAgent(
 	agentSessionId?: string,
 	options?: SpawnAgentOptions
 ): Promise<AgentResult> {
-	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options);
+	// Effort fallback and asynchronous launch planning share one absolute ceiling.
+	const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
+	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options, deadlineAt);
 	if (result.success || !options?.customEffort) return result;
 
 	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
@@ -1619,10 +1650,17 @@ export async function spawnAgent(
 	console.error(
 		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
 	);
-	return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, {
-		...options,
-		customEffort: undefined,
-	});
+	return spawnAgentOnce(
+		toolType,
+		cwd,
+		prompt,
+		agentSessionId,
+		{
+			...options,
+			customEffort: undefined,
+		},
+		deadlineAt
+	);
 }
 
 async function spawnAgentOnce(
@@ -1630,7 +1668,8 @@ async function spawnAgentOnce(
 	cwd: string,
 	prompt: string,
 	agentSessionId?: string,
-	options?: SpawnAgentOptions
+	options?: SpawnAgentOptions,
+	deadlineAt?: number
 ): Promise<AgentResult> {
 	if (options?.signal?.aborted) return interruptedResult();
 
@@ -1641,6 +1680,8 @@ async function spawnAgentOnce(
 		pluginRunProofFile: options?.pluginRunProofFile,
 		mcpCliScriptPath: options?.mcpCliScriptPath,
 		timeoutMs: options?.timeoutMs,
+		deadlineAt,
+		idle: options?.idle,
 		onProgress: options?.onProgress,
 		onProcessStarted: options?.onProcessStarted,
 		customModel: options?.customModel,

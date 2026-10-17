@@ -158,6 +158,7 @@ export class OmpOutputParser implements AgentOutputParser {
 					return {
 						type: 'usage',
 						sessionId,
+						...(event.id ? { usageEventId: event.id } : {}),
 						usage: this.extractUsageFromMessage(event.message),
 						raw: event,
 					};

@@ -376,7 +376,7 @@ describe('plugin headless agent runner', () => {
 		expect(fs.existsSync(secondProofFile)).toBe(false);
 	});
 
-	it('keeps authenticated tool delivery available through the full 60-minute run', async () => {
+	it('keeps authenticated tool delivery available through the full six-hour run', async () => {
 		vi.useFakeTimers();
 		const identity = new runIdentity.PluginToolRunIdentity();
 		const issueRunToken = vi.fn((id: string, ttl: number, toolId?: string) =>
@@ -388,17 +388,20 @@ describe('plugin headless agent runner', () => {
 			detectAgent: async () => ({ available: true }),
 			hasPluginTools: () => true,
 			spawn: async (_type, _cwd, _prompt, _session, options) => {
-				expect(options!.timeoutMs).toBe(60 * 60_000);
+				expect(options!.timeoutMs).toBe(358 * 60_000);
 				proofFile = options!.pluginRunProofFile!;
 				// Cross the old process/CLI deadlines and approach the new deadline.
-				vi.advanceTimersByTime(60 * 60_000 - 1);
+				vi.advanceTimersByTime(358 * 60_000 - 1);
 				expect(fs.existsSync(proofFile)).toBe(true);
 				const token = fs.readFileSync(proofFile, 'utf8');
 				expect(identity.resolve(token)).toEqual({ callerAgentId: 'agent-a' });
 				identity.recordReceipt(token, 'sh.maestro.relay/send', { messageIds: ['123'] });
 				return { success: true, response: 'delivered' };
 			},
-			prepareSystemPrompt: async () => undefined,
+			prepareSystemPrompt: async () => {
+				vi.advanceTimersByTime(120_000);
+				return undefined;
+			},
 			issueRunToken,
 			getRunReceipts: (token) => identity.getReceipts(token),
 			hasRunReceiptOverflow: (token) => identity.hasReceiptOverflowed(token),
@@ -421,7 +424,7 @@ describe('plugin headless agent runner', () => {
 				success: true,
 				toolReceipts: [{ agentId: 'agent-a', messageIds: ['123'] }],
 			});
-			expect(issueRunToken).toHaveBeenCalledWith('agent-a', 61 * 60_000, 'sh.maestro.relay/send');
+			expect(issueRunToken).toHaveBeenCalledWith('agent-a', 359 * 60_000, 'sh.maestro.relay/send');
 			expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
 				callerAgentId: null,
 			});
@@ -454,7 +457,8 @@ describe('plugin headless agent runner', () => {
 			usageStats: undefined,
 			error,
 		});
-		expect(spawn.mock.calls[0][4].timeoutMs).toBe(60 * 60_000);
+		expect(spawn.mock.calls[0][4].timeoutMs).toBeLessThanOrEqual(6 * 60 * 60_000);
+		expect(spawn.mock.calls[0][4].timeoutMs).toBeGreaterThan(359 * 60_000);
 		expect(revokeRunToken).toHaveBeenCalledWith('proof');
 	});
 
@@ -781,12 +785,17 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 			}
 			// Reporting is still pending: it must not hold the turn or its authority open.
 			expect(isAgentBusy(agent, undefined)).toBe(false);
-			expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
-				callerAgentId: null,
-			});
-			expect(removeProof).toHaveBeenCalledOnce();
-			proofFile = removeProof.mock.calls[0][0];
-			expect(fs.existsSync(proofFile)).toBe(false);
+			if (outcome === 'cancel-before-spawn') {
+				expect(issueRunToken).not.toHaveBeenCalled();
+				expect(removeProof).not.toHaveBeenCalled();
+			} else {
+				expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
+					callerAgentId: null,
+				});
+				expect(removeProof).toHaveBeenCalledOnce();
+				proofFile = removeProof.mock.calls[0][0];
+				expect(fs.existsSync(proofFile)).toBe(false);
+			}
 			expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'conversation');
 			expect(reporter).toHaveBeenCalledExactlyOnceWith(provenanceError, {
 				operation: 'plugin-headless.recordRelayOrigin',
