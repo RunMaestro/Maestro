@@ -1,9 +1,12 @@
 /** @import { MaestroSdk } from '@maestro/plugin-sdk' */
 /* global module, console, setTimeout, clearTimeout */
 
-// Fixed column ladder for Phase 01. Placement is DERIVED from live tab status
-// every refresh, never stored; Phase 02 replaces deriveColumn's policy but
-// keeps its (card) -> columnId shape.
+// Fixed column ladder for Phase 01, still the shape buildSnapshot() renders
+// today (resolving it against a project's own YAML columns is a later task
+// in this phase). Card placement itself is no longer derived fresh every
+// refresh: see the "Phase 02 placement persistence" section below, which
+// remembers where a card was put and only falls back to deriveColumn() for a
+// card that has never been placed.
 const COLUMN_IDS = ['backlog', 'in-progress', 'review', 'blocked', 'done'];
 
 // Metadata-only topics this board needs to stay live. All ten are confirmed
@@ -605,7 +608,8 @@ function cardKey(sessionId, tabId) {
  * meaningful today - everything else (idle, unknown, undefined) is backlog.
  * Kept generic (not limited to the 'idle'/'busy' values tabs.list() actually
  * emits) so a richer status string is handled correctly if the host ever
- * reports one.
+ * reports one. Only consulted for a card with no remembered placement yet -
+ * resolveCardColumnId() below is what every live card actually goes through.
  * @param {{ status?: string }} card
  */
 function deriveColumn(card) {
@@ -614,6 +618,175 @@ function deriveColumn(card) {
 	if (status === 'busy' || status === 'connecting') return 'in-progress';
 	return 'backlog';
 }
+
+// ===========================================================================
+// Phase 02 placement persistence: remembers which column a card sits in
+// instead of re-deriving it from live tab status on every refresh (Phase
+// 01's deriveColumn() above is now only the landing spot for a card that has
+// never been placed). Placements are grouped per board - keyed by the same
+// boardFilePath() string this plugin already uses for board YAML - so a
+// project board and the global board (Phase 03) never share one map and
+// fight over the same keys. Stored through maestro.storage as a JSON object
+// of { [cardKey]: columnId }, cached in memory the same way boardCache is;
+// nothing polls.
+// ===========================================================================
+
+/** @type {Map<string, Map<string, string>>} boardFilePath() -> (cardKey -> columnId) */
+const placementCache = new Map();
+/** @type {Set<string>} board paths whose in-memory placement map changed and
+ * still needs a maestro.storage.set to catch up. */
+const dirtyPlacementBoards = new Set();
+
+function placementStorageKey(boardPath) {
+	return 'placements:' + boardPath;
+}
+
+/** Loads one board's placement map, from cache when present. Corrupt or
+ * unexpected stored JSON (not a plain object of strings) is treated the same
+ * as "nothing stored yet" rather than thrown, since a placement map is
+ * disposable - the worst case is deriveColumn() picking a landing spot again.
+ * @param {string} boardPath */
+async function loadPlacements(boardPath) {
+	if (placementCache.has(boardPath)) return placementCache.get(boardPath);
+	const map = new Map();
+	try {
+		const raw = await sdk.storage.get(placementStorageKey(boardPath));
+		if (typeof raw === 'string' && raw !== '') {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const key of Object.keys(parsed)) {
+					if (typeof parsed[key] === 'string') map.set(key, parsed[key]);
+				}
+			}
+		}
+	} catch (err) {
+		console.error(
+			'maestro-kanban: failed to read stored placements for ' + boardPath + ': ' + String(err)
+		);
+	}
+	placementCache.set(boardPath, map);
+	return map;
+}
+
+/** Records a card's placement in the in-memory cache and marks its board for
+ * a write on the next flushDirtyPlacements(). A no-op when the placement is
+ * already exactly what is cached, so an unchanged refresh never schedules a
+ * redundant storage.set. */
+function setPlacement(boardPath, key, columnId) {
+	const map = placementCache.get(boardPath) || new Map();
+	if (map.get(key) === columnId) return;
+	map.set(key, columnId);
+	placementCache.set(boardPath, map);
+	dirtyPlacementBoards.add(boardPath);
+}
+
+/** Writes every board whose placement map changed since the last flush, one
+ * maestro.storage.set per board, then clears the dirty set. A failed write
+ * logs and moves on - the in-memory cache stays authoritative for this
+ * session either way, so a transient storage failure degrades to "forgets on
+ * restart" rather than losing the current board. */
+async function flushDirtyPlacements() {
+	const boardPaths = Array.from(dirtyPlacementBoards);
+	dirtyPlacementBoards.clear();
+	for (const boardPath of boardPaths) {
+		const map = placementCache.get(boardPath) || new Map();
+		const obj = {};
+		for (const [key, columnId] of map) obj[key] = columnId;
+		try {
+			await sdk.storage.set(placementStorageKey(boardPath), JSON.stringify(obj));
+		} catch (err) {
+			console.error(
+				'maestro-kanban: failed to persist placements for ' + boardPath + ': ' + String(err)
+			);
+		}
+	}
+}
+
+/**
+ * The column a card belongs in: its remembered placement when one is stored
+ * and still legal on its project's current columns; a repair to that
+ * project's first column, logged and re-persisted, when the stored column no
+ * longer exists (the user edited the YAML out from under it); or
+ * deriveColumn()'s landing spot for a card that has never been placed. A
+ * card with no projectPath has nowhere to key a placement under, so it
+ * always falls back to deriveColumn(), same as Phase 01.
+ * @param {{ key: string, projectPath?: string, status?: string }} card
+ */
+async function resolveCardColumnId(card) {
+	if (typeof card.projectPath !== 'string' || card.projectPath === '') {
+		return deriveColumn(card);
+	}
+	const boardPath = boardFilePath(card.projectPath);
+	const [placements, projectBoardResult] = await Promise.all([
+		loadPlacements(boardPath),
+		loadProjectBoard(card.projectPath),
+	]);
+	const legalIds = resolveColumns(projectBoardResult.board, null).map((column) => column.id);
+	const stored = placements.get(card.key);
+	if (typeof stored === 'string') {
+		if (legalIds.indexOf(stored) !== -1) return stored;
+		const fallback = legalIds[0];
+		console.warn(
+			'maestro-kanban: card ' +
+				card.key +
+				' was on column "' +
+				stored +
+				'", which no longer exists on its board; repaired to "' +
+				fallback +
+				'"'
+		);
+		setPlacement(boardPath, card.key, fallback);
+		return fallback;
+	}
+	const derived = deriveColumn(card);
+	setPlacement(boardPath, card.key, derived);
+	return derived;
+}
+
+/** Prunes every board's placement map down to the card keys that currently
+ * exist, so storage does not grow without bound as tabs come and go. Only
+ * ever called once, right after activate()'s first seed() - never from
+ * doRefresh() or the 'refresh' command - since pruning is long-term storage
+ * hygiene, not something the live board needs on every event. */
+async function prunePlacements() {
+	const liveKeys = new Set(cards.keys());
+	for (const [boardPath, map] of placementCache) {
+		for (const key of Array.from(map.keys())) {
+			if (!liveKeys.has(key)) {
+				map.delete(key);
+				dirtyPlacementBoards.add(boardPath);
+			}
+		}
+	}
+	await flushDirtyPlacements();
+}
+
+/** Deletes every board's stored placement map, in storage and in memory, so
+ * the next seed() re-derives every live card's landing spot from scratch via
+ * deriveColumn(). Backs the 'clear-placements' command. */
+async function clearAllPlacements() {
+	const boardPaths = new Set(placementCache.keys());
+	for (const card of cards.values()) {
+		if (typeof card.projectPath === 'string' && card.projectPath !== '') {
+			boardPaths.add(boardFilePath(card.projectPath));
+		}
+	}
+	placementCache.clear();
+	dirtyPlacementBoards.clear();
+	for (const boardPath of boardPaths) {
+		try {
+			await sdk.storage.delete(placementStorageKey(boardPath));
+		} catch (err) {
+			console.error(
+				'maestro-kanban: failed to clear placements for ' + boardPath + ': ' + String(err)
+			);
+		}
+	}
+}
+
+// ===========================================================================
+// End of Phase 02 placement persistence.
+// ===========================================================================
 
 function fallbackTitle(sessionId, ordinal) {
 	const base = sessionTitle.get(sessionId) || sessionAgentId.get(sessionId) || 'Agent';
@@ -650,9 +823,12 @@ function rebuildSessionMeta(sessions) {
 /** Full rebuild of the card model from one maestro.tabs.list() response.
  * tabs.list() always returns every tab (it takes no session filter), so a
  * full rebuild keeps every session in sync in one pass rather than patching
- * just the sessions that triggered this refresh. */
-function rebuildCardsFromTabs(tabs) {
-	const next = new Map();
+ * just the sessions that triggered this refresh. Column assignment is async
+ * (it may read a board file and the placement store), so cards are built in
+ * a first pass and their columns resolved in a second, and `cards` is only
+ * swapped once every card has one - never partially. */
+async function rebuildCardsFromTabs(tabs) {
+	const built = [];
 	const ordinals = new Map();
 	for (const tab of Array.isArray(tabs) ? tabs : []) {
 		if (!tab || typeof tab !== 'object') continue;
@@ -676,7 +852,7 @@ function rebuildCardsFromTabs(tabs) {
 			typeof tab.projectPath === 'string'
 				? tab.projectPath
 				: sessionProjectPath.get(sessionId) || (existing ? existing.projectPath : undefined);
-		const card = {
+		built.push({
 			key: key,
 			sessionId: sessionId,
 			tabId: tab.id,
@@ -688,11 +864,15 @@ function rebuildCardsFromTabs(tabs) {
 			lastActivityAt:
 				sessionLastActivity.get(sessionId) || (existing ? existing.lastActivityAt : createdAt),
 			columnId: null,
-		};
-		card.columnId = deriveColumn(card);
-		next.set(key, card);
+		});
+	}
+	const next = new Map();
+	for (const card of built) {
+		card.columnId = await resolveCardColumnId(card);
+		next.set(card.key, card);
 	}
 	cards = next;
+	await flushDirtyPlacements();
 }
 
 function scheduleRefresh() {
@@ -708,8 +888,8 @@ function doRefresh() {
 	dirtySessions.clear();
 	sdk.tabs
 		.list()
-		.then((tabs) => {
-			rebuildCardsFromTabs(tabs);
+		.then((tabs) => rebuildCardsFromTabs(tabs))
+		.then(() => {
 			schedulePanelPush();
 		})
 		.catch((err) => {
@@ -884,7 +1064,7 @@ async function seed() {
 	}
 	try {
 		const tabs = await sdk.tabs.list();
-		rebuildCardsFromTabs(tabs);
+		await rebuildCardsFromTabs(tabs);
 	} catch (err) {
 		console.error('maestro-kanban: tabs.list failed: ' + String(err));
 	}
@@ -907,8 +1087,15 @@ function registerCommands(maestro) {
 		return seed();
 	});
 
-	// Phase 01 has no stored placement to clear; Phase 02 owns storage.
-	maestro.commands.register('clear-placements', () => Promise.resolve({ ok: true }));
+	maestro.commands.register('clear-placements', () =>
+		clearAllPlacements()
+			.then(() => seed())
+			.then(() => ({ ok: true }))
+			.catch((err) => {
+				console.error('maestro-kanban: clear-placements failed: ' + String(err));
+				return { ok: false };
+			})
+	);
 
 	// Invoked by the panel via parent.postMessage; no manifest `commands`
 	// entry is needed since it is never surfaced in the command palette.
@@ -958,6 +1145,7 @@ module.exports = {
 			console.error('maestro-kanban: events.subscribe failed: ' + String(err));
 		}
 		await seed();
+		await prunePlacements();
 	},
 
 	deactivate() {
@@ -971,6 +1159,8 @@ module.exports = {
 		}
 		dirtySessions.clear();
 		cards = new Map();
+		placementCache.clear();
+		dirtyPlacementBoards.clear();
 		if (sdk) {
 			return sdk.events.unsubscribe().catch(() => {});
 		}

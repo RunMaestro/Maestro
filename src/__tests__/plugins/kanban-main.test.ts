@@ -68,6 +68,20 @@ function createStubMaestro(overrides: StubOverrides = {}) {
 		notifications: {
 			toast: vi.fn(() => Promise.resolve({ ok: true })),
 		},
+		// No test in this file exercises a real board or placement file; a
+		// missing file / empty store is enough to keep every card on its
+		// deriveColumn() landing spot, same as before placement persistence
+		// existed. See kanban-persistence.test.ts for the storage-backed cases.
+		fs: {
+			read: vi.fn(() => Promise.reject(new Error('ENOENT: no such file or directory'))),
+			write: vi.fn(() => Promise.resolve({ ok: true })),
+		},
+		storage: {
+			get: vi.fn(() => Promise.resolve(null)),
+			set: vi.fn(() => Promise.resolve({ ok: true })),
+			delete: vi.fn(() => Promise.resolve({ ok: true })),
+			keys: vi.fn(() => Promise.resolve([])),
+		},
 	};
 
 	return { maestro, eventHandlers, commandHandlers };
