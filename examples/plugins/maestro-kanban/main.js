@@ -3668,6 +3668,153 @@ async function applyBoardSettings(args) {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 06 conductor configuration model: which agent, if any, a board's
+// conductor runs as. This section only holds the stored choice - the same
+// board-id-keyed, load-once-at-activate()/persist-on-every-change shape as
+// the board settings above, and for the same reason: picking a provider is a
+// click, not something to coalesce. Nothing here calls maestro.sessions;
+// turning this configuration into a running conductor agent (creating its
+// session, keeping its reach in sync) is Phase 06's later tasks.
+//
+// `agentId` names the toolType a new session would be created with
+// (`maestro.sessions.create({ agentId, ... })`, per
+// Phase-06-Conductor-Session-And-Reach.md) - never an existing agent
+// instance id. `customModel` and `customEffort` are the same plain strings
+// that call accepts. All three default to null, which means "no conductor
+// configured for this board": the board's provider/model/effort choice is
+// its own, with no Global-board fallback the way aging settings have one -
+// a conductor is a per-board decision, not something to inherit.
+// ===========================================================================
+
+const CONDUCTOR_CONFIG_STORAGE_KEY = 'conductor-config';
+
+/** @typedef {{ agentId: string|null, customModel: string|null, customEffort: string|null }} ConductorConfig */
+
+/** The configuration a board with nothing stored runs under: no conductor
+ * configured at all. */
+const DEFAULT_CONDUCTOR_CONFIG = { agentId: null, customModel: null, customEffort: null };
+
+/** @type {Map<string, ConductorConfig>} board id -> that board's conductor configuration */
+let conductorConfigs = new Map();
+
+/** A value from storage (or a patch from the settings surface) as a
+ * non-empty trimmed string, or null for anything else - absent, blank, and
+ * the wrong type all collapse to "unset" rather than throwing.
+ * @param {unknown} value
+ * @returns {string|null} */
+function normalizedConfigString(value) {
+	if (typeof value !== 'string') return null;
+	const trimmed = value.trim();
+	return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * Reads whatever is stored (or posted by the settings surface) into a
+ * complete `ConductorConfig`. Every field falls back to unset independently,
+ * so a partial patch from the settings surface and a half-written storage
+ * value both land on the same safe shape.
+ * @param {unknown} raw
+ * @returns {ConductorConfig}
+ */
+function normalizeConductorConfig(raw) {
+	const value =
+		raw && typeof raw === 'object' && !Array.isArray(raw)
+			? /** @type {{ agentId?: unknown, customModel?: unknown, customEffort?: unknown }} */ (raw)
+			: {};
+	return {
+		agentId: normalizedConfigString(value.agentId),
+		customModel: normalizedConfigString(value.customModel),
+		customEffort: normalizedConfigString(value.customEffort),
+	};
+}
+
+/** Restores every board's conductor configuration from storage. Called once,
+ * alongside loadBoardSettings(), before activate()'s first seed(). A storage
+ * failure, or a value that is not the object this plugin writes, degrades to
+ * "every board has no conductor configured" rather than throwing the
+ * activation. */
+async function loadConductorConfigs() {
+	conductorConfigs = new Map();
+	try {
+		const raw = await sdk.storage.get(CONDUCTOR_CONFIG_STORAGE_KEY);
+		if (typeof raw === 'string' && raw !== '') {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const key of Object.keys(parsed)) {
+					conductorConfigs.set(key, normalizeConductorConfig(parsed[key]));
+				}
+			}
+		}
+	} catch (err) {
+		console.error('maestro-kanban: failed to read stored conductor configuration: ' + String(err));
+	}
+}
+
+/** Writes every board's conductor configuration in one call. A failed write
+ * logs and moves on: the in-memory map stays authoritative for this session,
+ * so the failure degrades to "forgets on restart" rather than refusing the
+ * change. */
+async function persistConductorConfigs() {
+	const obj = {};
+	for (const [boardId, config] of conductorConfigs) {
+		obj[boardId] = config;
+	}
+	try {
+		await sdk.storage.set(CONDUCTOR_CONFIG_STORAGE_KEY, JSON.stringify(obj));
+	} catch (err) {
+		console.error('maestro-kanban: failed to persist conductor configuration: ' + String(err));
+	}
+}
+
+/** One board's stored conductor configuration, or null when that board has
+ * never had one set. Callers that want an answer either way use
+ * conductorConfigForBoard() below.
+ * @param {string|null} boardId */
+function storedConductorConfig(boardId) {
+	if (typeof boardId !== 'string' || boardId === '') return null;
+	return conductorConfigs.get(boardId) || null;
+}
+
+/** The conductor configuration a board runs under: its own when it has one,
+ * DEFAULT_CONDUCTOR_CONFIG (no conductor configured) otherwise.
+ * @param {string|null} boardId
+ * @returns {ConductorConfig} */
+function conductorConfigForBoard(boardId) {
+	return storedConductorConfig(boardId) || normalizeConductorConfig(DEFAULT_CONDUCTOR_CONFIG);
+}
+
+/** Records one board's conductor configuration and persists the whole map.
+ * `patch` is merged over whatever that board already has, so the settings
+ * surface can post a single changed field without restating the other two.
+ * Returns the existing stored value, without a write, when the patch would
+ * not actually change anything.
+ * @param {string} boardId
+ * @param {unknown} patch
+ * @returns {Promise<ConductorConfig>} */
+async function setConductorConfig(boardId, patch) {
+	const current = conductorConfigForBoard(boardId);
+	const merged = normalizeConductorConfig(
+		Object.assign({}, current, patch && typeof patch === 'object' ? patch : {})
+	);
+	const existing = storedConductorConfig(boardId);
+	if (
+		existing &&
+		existing.agentId === merged.agentId &&
+		existing.customModel === merged.customModel &&
+		existing.customEffort === merged.customEffort
+	) {
+		return existing;
+	}
+	conductorConfigs.set(boardId, merged);
+	await persistConductorConfigs();
+	return merged;
+}
+
+// ===========================================================================
+// End of Phase 06 conductor configuration model.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -5231,6 +5378,17 @@ module.exports = {
 	boardSettingsSnapshot: boardSettingsSnapshot,
 	applyBoardSettings: applyBoardSettings,
 
+	// Phase 06 conductor configuration model, exported for direct unit testing
+	// (see src/__tests__/plugins/kanban-conductor.test.ts). This is the stored
+	// per-board choice only, not the running conductor session - that is
+	// Phase 06's later tasks. normalizeConductorConfig() is pure; the rest
+	// read/write plugin storage, so a test calls them after activate() with a
+	// stub SDK first.
+	DEFAULT_CONDUCTOR_CONFIG: DEFAULT_CONDUCTOR_CONFIG,
+	normalizeConductorConfig: normalizeConductorConfig,
+	conductorConfigForBoard: conductorConfigForBoard,
+	setConductorConfig: setConductorConfig,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -5257,6 +5415,7 @@ module.exports = {
 		await loadSelectedBoard();
 		await loadCardNotes();
 		await loadBoardSettings();
+		await loadConductorConfigs();
 		await loadArchiveBoardIndex();
 		await seed();
 		await prunePlacements();
@@ -5286,6 +5445,7 @@ module.exports = {
 		pendingMoveRejection = null;
 		cardNotes = new Map();
 		boardSettings = new Map();
+		conductorConfigs = new Map();
 		agingByCard = new Map();
 		stopRetirementTicks();
 		cardColumnTrail.clear();
