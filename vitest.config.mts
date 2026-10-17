@@ -36,6 +36,10 @@ const jsdomOnlyTs = [
 	// module load, so neither can run under the node environment.
 	'src/__tests__/plugins/kanban-panel.test.ts',
 	'src/__tests__/plugins/kanban-drag.test.ts',
+	// Mixes sandbox-level main.js coverage with the same panel.html harness:
+	// the composer tests need the DOM the sandbox-level ones don't, but a
+	// vitest project include/exclude split is per-file, not per-describe.
+	'src/__tests__/plugins/kanban-messaging.test.ts',
 ];
 
 // Variables that tell git WHERE the repository is. Git exports them to hooks and

@@ -56,6 +56,10 @@ export interface SnapshotCard {
 	description?: string;
 	comments?: { id: string; body: string; createdAt: number }[];
 	lastCommentAt?: number | null;
+	/** Phase 04 messaging: the last `send-message` attempt's outcome for this
+	 * card (see `lastMessageOutcomes` in main.js), or null/absent when nothing
+	 * has ever been sent. */
+	messageOutcome?: { status: 'sent' | 'failed'; error: string | null; at: number } | null;
 }
 
 export interface SnapshotColumn {
@@ -171,6 +175,7 @@ export function makeCard(overrides: Partial<SnapshotCard> = {}): SnapshotCard {
 		description: '',
 		comments: [],
 		lastCommentAt: null,
+		messageOutcome: null,
 		...overrides,
 	};
 }
