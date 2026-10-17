@@ -14,6 +14,11 @@ import type { ProcessManager } from '../process-manager';
 import type { SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { DebugPackageDependencies } from '../debug-package';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
+import type { CueGateSetting, CueGateWriteResult } from '../../shared/cue/gate';
+import type {
+	CueInjectionScreenSetting,
+	CueInjectionScreenWriteResult,
+} from '../../shared/cue/injection-screen';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
 import { registerThemeCallbacks } from './callbacks/themeCallbacks';
@@ -97,6 +102,16 @@ export interface WebServerFactoryDependencies {
 	 *  per-`projectRoot` writes via a promise chain to keep concurrent
 	 *  toggles from clobbering each other. */
 	setCueSubscriptionEnabled?: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
+	/** Set (`gate` present) or remove (`null`) a Cue subscription's gate. */
+	setCueSubscriptionGate?: (
+		subscriptionId: string,
+		gate: CueGateSetting | null
+	) => Promise<CueGateWriteResult>;
+	/** Set a Cue subscription's prompt-injection screen (mode and threshold). */
+	setCueSubscriptionInjectionScreen?: (
+		subscriptionId: string,
+		setting: CueInjectionScreenSetting
+	) => Promise<CueInjectionScreenWriteResult>;
 	/** Direct CUE activity-log snapshot - bypasses renderer IPC round-trip.
 	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
 	 *  Same dead-bridge fix as `getCueGraphData`. */

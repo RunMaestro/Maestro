@@ -14,6 +14,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { formatRelativeTime } from '../../shared/formatters';
 import type { DesktopTabEntry as DesktopSessionEntry } from '../../shared/desktopTabs';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 export interface SessionListOptions {
 	json?: boolean;
@@ -147,7 +148,7 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 			const msg = error instanceof Error ? error.message : String(error);
 			emitErrorJson(`Failed to list sessions: ${msg}`, 'COMMAND_FAILED');
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -160,7 +161,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 				`Invalid --since value: ${options.since} (expected ISO-8601 or epoch number)`,
 				'INVALID_OPTION'
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		sinceMs = parsed;
@@ -178,7 +179,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 				`Invalid --tail value: ${options.tail} (expected non-negative integer)`,
 				'INVALID_OPTION'
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		tail = Number(trimmedTail);
@@ -208,7 +209,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 
 		if (!result.success) {
 			emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 
@@ -254,6 +255,6 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 			const msg = error instanceof Error ? error.message : String(error);
 			emitErrorJson(`Failed to show session: ${msg}`, 'COMMAND_FAILED');
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

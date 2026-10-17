@@ -71,6 +71,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Parquet tables** with a typed query language, on files far larger than memory
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
+- **Chat with the document** (`Cmd+Shift+\` / `Ctrl+Shift+\`, or the chat button in the bottom-left of the preview) - see below
 
 Several formats come with a filtering language built for that format rather than
 a plain search box. **[File Formats](./file-formats)** is the full map: what
@@ -105,6 +106,41 @@ way while you are typing: it does nothing in the find bar, in the markdown
 editor, or on a file with no headings. The same command is in the command
 palette (`Cmd+K` / `Ctrl+K`) as **Jump to Heading**, which appears only while a
 markdown file is open in preview.
+
+### Chatting with a Document
+
+The chat button in the **bottom-left** of the preview (`Cmd+Shift+\` /
+`Ctrl+Shift+\`) opens a small chat about the file you are reading, mirroring the
+Table of Contents on the other side. Ask a question and the agent whose
+workspace the file lives in reads it and answers there. It is not limited to the
+file: it reads whatever else it needs and uses its tools normally. It just
+starts from your document rather than from nothing.
+
+There are three ways to put a message in, chosen with the switch above the box:
+
+- **Type.** `Enter` sends, `Shift+Enter` breaks a line.
+- **Push to type.** Hold the microphone and speak. The words land in the box, so
+  you can fix them before sending. Nothing is spoken back.
+- **Push to talk.** Hold the microphone and speak, and the reply is spoken back
+  to you. This one needs [A Cappella](./voice-mode) switched on.
+
+Both microphone buttons work as a hold OR as a tap: hold them like a
+walkie-talkie for one sentence, or tap once to leave them running and tap again
+to stop. The mode you pick is remembered.
+
+All three land in the **same conversation**, so you can ask something out loud,
+type the follow-up, and read both in the chat. The conversation is an ordinary
+AI tab that Maestro keeps out of your tab strip until you want it, which means:
+
+- **It survives a restart.** Come back to the file tomorrow, open the chat, and
+  the whole conversation is still there.
+- **Pop out** turns it into a real tab, with the full transcript - tool calls,
+  thinking, everything the bubble leaves out.
+- **Reset** starts a fresh conversation with a new session. The previous one is
+  not deleted: it becomes an ordinary tab you can read or close yourself.
+
+The button is offered on any file with text in it, and not on images, media, or
+compiled binaries, which give the agent nothing to read.
 
 ### CSV and TSV Tables
 
@@ -433,9 +469,10 @@ That request travels with the command. When you ask for a follow-up, the model s
 **How the suggestion is made:**
 
 - **The model only names the command; it never runs anything.** The request is answered with tools disabled and in read-only mode, so a task-shaped request ("clean up the build output") comes back as a command to look at rather than as work already done.
-- **It is the tab's own provider**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
+- **It is the tab's own provider by default**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
+- **You can move it to a local model or your own endpoint.** Assign the **AI command mode** task under **Settings → Local Models → Assignments** (see [Local Models](./local-models#the-tasks)). The mode strip then names that model instead, and the proposal adds one line saying what the command does. If the assigned model cannot run, the request fails with the reason. It does not fall back to the tab's provider. **Off** switches AI Command Mode off: a request is refused and tells you where the setting is.
 - **The agent's conversation is untouched.** The request and the suggestion never enter the agent's context, the same as any other command-mode activity.
-- **The prompt is yours to change.** It is a core prompt (`ai-command`), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
+- **The prompt is yours to change.** It is a core prompt (`ai-command`, or the shorter `ai-command-local` when a local model or endpoint is assigned), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
 
 There is no rung above AI Command Mode, so a `!` typed here is an ordinary character - your request is prose, and prose contains bangs.
 
@@ -728,6 +765,14 @@ Very broad queries are capped so a single character can't stall the UI: 100 matc
 per tab and 500 overall. When a search hits either limit the modal says so, and
 narrowing the query brings the rest into view.
 
+When [Semantic search](./local-models) is assigned a source and ready, the modal
+also shows a **Semantic** toggle. With it on you describe what you are looking for
+instead of typing exact words, and the results are this agent's conversation turns
+ranked by how close they are in meaning, each with a percentage and the passage
+that matched. `Enter` jumps to the turn. The Find bar is left alone, since a match
+by meaning has no text to step through. The toggle is not shown while Semantic
+search is off or its model is not ready.
+
 <Note>
 	This search covers the AI tabs of the agent you're currently on, not your whole
 	fleet. Group chats have no AI tabs to search, so the menu entry is hidden there.
@@ -810,7 +855,7 @@ If automation needs an instruction on every turn, put it in the New Session Mess
 
 ### Editing Agents
 
-Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, additional directories, model, and effort. Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
+Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has six tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window), **Models** (Run on target, tiers, gateway and token proxy, System One), **Environment** (environment variables), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs, a tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
 
 Changing the **Agent Provider** here opens a native conversation translation preflight. Tabs, transcripts, drafts, queued messages, and file previews are preserved. Review the reported limits and accept them before saving. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded.
 
@@ -862,6 +907,10 @@ Organize agents into groups for better project management:
 
 - Click the group header to collapse or expand
 - Groups remember their collapsed state
+
+**Defaults for new agents:**
+
+- Right-click the group header → **Group Settings...** (or `Cmd+K` / `Ctrl+K` → "Group Settings" while an agent in the group is active) to set what a new agent in the group starts with, and the text of the group's pill label. See [Groups](./features#groups).
 
 ### Drag and Drop
 

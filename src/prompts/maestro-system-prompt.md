@@ -269,6 +269,8 @@ Three rules follow:
 
 {{ADDITIONAL_DIRECTORIES}}
 
+{{PEER_AGENTS}}
+
 ## Operating Rules
 
 **Asking questions:** When you need input from the user before proceeding, place ALL questions in a clearly labeled section at the **end** of your response using this format:

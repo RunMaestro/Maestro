@@ -3,12 +3,13 @@
  *
  * Regression test for: MAESTRO_SESSION_RESUMED env var display in group chat moderator customization
  * This test ensures that when users customize the moderator agent in group chat modals,
- * they see the built-in MAESTRO_SESSION_RESUMED environment variable.
+ * they see the built-in MAESTRO_SESSION_RESUMED environment variable (on the Environment tab).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GroupChatModal } from '../../../renderer/components/GroupChatModal';
+import { __resetRememberedModalTabsForTests } from '../../../renderer/components/ui/ModalTabStrip';
 import type { GroupChat, AgentConfig } from '../../../renderer/types';
 
 import { createMockTheme } from '../../helpers/mockTheme';
@@ -115,6 +116,12 @@ function createMockGroupChat(overrides: Partial<GroupChat> = {}): GroupChat {
 	};
 }
 
+/** Show one tab of the form. Only the active tab's fields are rendered. */
+const openTab = (name: string) =>
+	fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
+
+const selectedTab = () => screen.getByRole('tab', { selected: true });
+
 // =============================================================================
 // TESTS
 // =============================================================================
@@ -140,6 +147,8 @@ describe('GroupChatModal', () => {
 		mockUnregisterLayer.mockClear();
 		mockUpdateLayerHandler.mockClear();
 		setupDefaultMocks();
+		// The moderator form remembers its last tab; start every case on General.
+		__resetRememberedModalTabsForTests();
 	});
 
 	describe('create mode', () => {
@@ -169,11 +178,10 @@ describe('GroupChatModal', () => {
 			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });
 			expect(dropdown).toHaveValue('claude-code');
 
-			// Click the Customize button to expand config panel
-			const customizeButton = screen.getByRole('button', { name: /customize/i });
-			fireEvent.click(customizeButton);
+			// The moderator's env vars, built-ins included, live on the Environment tab
+			openTab('Environment');
 
-			// Wait for config panel to appear and verify MAESTRO_SESSION_RESUMED is displayed
+			// Verify MAESTRO_SESSION_RESUMED is displayed
 			await waitFor(() => {
 				expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
 			});
@@ -390,11 +398,10 @@ describe('GroupChatModal', () => {
 			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });
 			expect(dropdown).toHaveValue('claude-code');
 
-			// Click the Customize button to expand config panel
-			const customizeButton = screen.getByRole('button', { name: /customize/i });
-			fireEvent.click(customizeButton);
+			// The moderator's env vars, built-ins included, live on the Environment tab
+			openTab('Environment');
 
-			// Wait for config panel to appear and verify MAESTRO_SESSION_RESUMED is displayed
+			// Verify MAESTRO_SESSION_RESUMED is displayed
 			await waitFor(() => {
 				expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
 			});
@@ -567,6 +574,216 @@ describe('GroupChatModal', () => {
 					expect(availabilityToggle()).toHaveAttribute('aria-checked', 'true');
 				},
 				{ timeout: 3000 }
+			);
+		});
+	});
+
+	describe('tabbed form', () => {
+		function renderCreate(onCreate = vi.fn()) {
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={vi.fn()}
+					onCreate={onCreate}
+				/>
+			);
+			return onCreate;
+		}
+
+		function renderEdit(groupChat = createMockGroupChat(), onSave = vi.fn()) {
+			const view = render(
+				<GroupChatModal
+					mode="edit"
+					theme={createMockTheme()}
+					isOpen={true}
+					groupChat={groupChat}
+					onClose={vi.fn()}
+					onSave={onSave}
+				/>
+			);
+			return { onSave, view };
+		}
+
+		async function waitForModerator() {
+			await waitFor(
+				() =>
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toHaveValue(
+						'claude-code'
+					),
+				{ timeout: 3000 }
+			);
+		}
+
+		it('renders the four moderator tabs in order, opens on General, and is a resizable frame', async () => {
+			renderCreate();
+			await waitForModerator();
+
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Environment',
+				'SSH',
+			]);
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(
+				document.querySelector('[data-modal-resize-key="group-chat-settings"]')
+			).not.toBeNull();
+		});
+
+		it('renders only the active panel and has no Customize expander', async () => {
+			renderCreate();
+			await waitForModerator();
+
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'group-chat-tabpanel-general');
+			expect(screen.queryByRole('button', { name: /customize/i })).not.toBeInTheDocument();
+
+			openTab('SSH');
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'group-chat-tabpanel-ssh');
+		});
+
+		it('loads the provider config when the Provider tab opens, without its env vars', async () => {
+			renderCreate();
+			await waitForModerator();
+			expect(window.maestro.agents.getConfig).not.toHaveBeenCalled();
+
+			openTab('Provider');
+
+			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
+			expect(window.maestro.agents.getConfig).toHaveBeenCalledWith('claude-code');
+			expect(screen.queryByText('MAESTRO_SESSION_RESUMED')).not.toBeInTheDocument();
+		});
+
+		it('reopens an edit on the last tab used', async () => {
+			const { view } = renderEdit();
+			await waitForModerator();
+			openTab('SSH');
+			view.unmount();
+
+			renderEdit();
+			expect(selectedTab()).toHaveTextContent('SSH');
+		});
+
+		it('cycles the tabs with Cmd+Shift+] and Cmd+Shift+[', async () => {
+			renderCreate();
+			await waitForModerator();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('Provider');
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('SSH');
+		});
+
+		it('sends Cmd+Enter with an empty name from SSH to General, with the error and its dot', async () => {
+			const onCreate = renderCreate();
+			await waitForModerator();
+			expect(screen.queryByTestId('group-chat-tab-general-error')).not.toBeInTheDocument();
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('Enter a name for the group chat')).toBeInTheDocument();
+			expect(screen.getByTestId('group-chat-tab-general-error')).toBeInTheDocument();
+
+			fireEvent.change(screen.getByPlaceholderText(/Auth Feature Implementation/i), {
+				target: { value: 'Named' },
+			});
+			expect(screen.queryByTestId('group-chat-tab-general-error')).not.toBeInTheDocument();
+		});
+
+		it('creates once on Cmd+Enter from the name field', async () => {
+			const onCreate = renderCreate();
+			await waitForModerator();
+			const name = screen.getByPlaceholderText(/Auth Feature Implementation/i);
+			fireEvent.change(name, { target: { value: 'Keyboard Chat' } });
+
+			fireEvent.keyDown(name, { key: 'Enter', metaKey: true });
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			expect(onCreate).toHaveBeenCalledWith('Keyboard Chat', 'claude-code', undefined, true);
+		});
+
+		it('does nothing on Cmd+Enter in an edit with no changes', async () => {
+			const { onSave } = renderEdit();
+			await waitForModerator();
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('SSH');
+		});
+
+		it('saves an Environment edit, parked rows kept apart', async () => {
+			const { onSave } = renderEdit(
+				createMockGroupChat({
+					moderatorConfig: {
+						customEnvVars: { API_KEY: 'old' },
+						customEnvVarsDisabled: { PARKED: 'kept' },
+					},
+				})
+			);
+			await waitForModerator();
+			openTab('Environment');
+
+			fireEvent.change(screen.getByDisplayValue('old'), { target: { value: 'new' } });
+			openTab('General');
+			fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+			expect(onSave).toHaveBeenCalledWith(
+				'group-chat-1',
+				'Test Group Chat',
+				'claude-code',
+				expect.objectContaining({
+					customEnvVars: { API_KEY: 'new' },
+					customEnvVarsDisabled: { PARKED: 'kept' },
+				}),
+				true
+			);
+		});
+
+		it('carries the SSH remote chosen on the SSH tab into the moderator config', async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Build Box',
+						host: 'build.example.com',
+						port: 22,
+						username: 'dev',
+						privateKeyPath: '',
+						enabled: true,
+					},
+				],
+			} as Awaited<ReturnType<typeof window.maestro.sshRemote.getConfigs>>);
+			const onCreate = renderCreate();
+			await waitForModerator();
+
+			openTab('SSH');
+			const remote = await screen.findByRole('option', { name: /Build Box/ });
+			fireEvent.change(remote.closest('select') as HTMLSelectElement, {
+				target: { value: 'remote-1' },
+			});
+			openTab('General');
+			fireEvent.change(screen.getByPlaceholderText(/Auth Feature Implementation/i), {
+				target: { value: 'Remote Chat' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+			expect(onCreate).toHaveBeenCalledWith(
+				'Remote Chat',
+				'claude-code',
+				expect.objectContaining({
+					sshRemoteConfig: expect.objectContaining({ enabled: true, remoteId: 'remote-1' }),
+				}),
+				true
 			);
 		});
 	});

@@ -15,6 +15,7 @@ The Settings tab is called **Plugins** in v0.18.x and later. On **v0.17.4** and 
 - 🏪 **[Playbook Exchange](./playbook-exchange)** - Browse and import community-contributed playbooks directly into your Auto Run folder. Categories, search, and one-click import get you started with proven workflows for security audits, code reviews, documentation, and more.
 - 🎵 **[Maestro Symphony](./symphony)** - Contribute to open source by donating AI tokens. Browse registered projects, select GitHub issues, and let Maestro clone, process Auto Run docs, and create PRs automatically. Distributed computing for AI-assisted development. _(Encore Feature - on by default; toggle in Settings > Plugins)_
 - 💬 **[Group Chat](./group-chat)** - Delegate the moderating. You appoint one agent as moderator and hand it the question; it routes to the right agents, follows up when an answer is thin, and keeps going for as many rounds as it takes before returning a synthesis. The multi-turn collaboration is the point, and it is what an inline `@mention` cannot do.
+- 🕸️ **[Agent Delegation](./agent-delegation)** - Let an agent consult or delegate to other agents on its own. Give each agent a roster of peers, per agent, per group, or per worktree family, bound the chain with a consultation budget, and read or edit the whole team on the Delegation Graph.
 - 📣 **[Cross-Agent Mentions](./cross-agent-mentions)** - Type `@another-agent` in any chat to consult it inline. Maestro forwards the relevant slice of your conversation, runs the other agent in the background without blocking you, and streams its reply back attributed to who answered. Pick a group from the `@` picker to fan out to every member at once. Each mention is a single-turn consult and you stay the moderator, so reach for Group Chat when you want an agent to run the follow-ups instead.
 - 🌐 **[Remote Control](./remote-control)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
 - 🔗 **[SSH Remote Execution](./ssh-remote-execution)** - Run AI agents on remote hosts via SSH. Leverage powerful cloud VMs, access tools not installed locally, or work with projects requiring specific environments - all while controlling everything from your local Maestro instance.
@@ -57,3 +58,74 @@ The Settings tab is called **Plugins** in v0.18.x and later. On **v0.17.4** and 
 - 💬 **[Conversational Feedback](./feedback)** - Submit bug reports and feature requests through an AI-guided conversation. The agent asks clarifying questions, runs read-only diagnostics on your machine so you do not have to gather them yourself, checks for duplicate issues, and creates a well-structured GitHub issue - no forms to fill out.
 
 > **Note**: Maestro currently supports Claude Code, Codex (OpenAI), and OpenCode as fully-integrated providers, plus Factory Droid, Copilot-CLI, Hermes (Nous Research), Pi, Qwen3 Coder, and Oh My Pi in beta. Support for additional providers (Gemini CLI) is planned for future releases based on community demand.
+
+## Groups
+
+A group collects agents in the Left Bar. It also holds a **profile**: the settings a new agent in that group starts with. You edit the profile in **Group Settings**, which is the [Edit Agent](./general-usage#editing-agents) form with one extra field (the pill label) and a different job. Edit Agent changes one agent. Group Settings changes what the next agent in the group looks like.
+
+The modal has the same tabs as Edit Agent: **General**, **Provider**, **Models**, **Environment**, **Peers**, and **SSH**. It is resizable and remembers its size. Every field is optional. A blank field means "use the Maestro default", so a profile can set one value and leave the rest alone.
+
+### The Profile Is Copied, Not Inherited
+
+The profile is **copy-at-create**. When you add an agent to the group, the New Agent form opens with the profile already filled in, and you can change any of it before you create the agent. After that the agent owns its settings.
+
+- Nothing in the profile is read while an agent runs. It is not a layer in any precedence chain.
+- Moving an existing agent into the group does not change that agent.
+- Editing the profile does not change agents already in the group, unless you [publish](#publishing-a-save-to-existing-agents) the change.
+
+The motivating case is a Claude config directory. Give the **Work** group `CLAUDE_CONFIG_DIR=~/.claude-work` on its **Environment** tab and give **Personal** a different directory. Every Claude Code agent you create in **Work** starts on the work account, and you never have to remember to set it.
+
+### Pre-Filled From
+
+When the New Agent form is seeded from a group, a banner at the top reads **Pre-filled from** and the group's name. It also tells you:
+
+- when the group's SSH remote no longer exists, so the form runs locally;
+- which defaults are set when the agent is created, because the form has no control for them (tier targets, the token proxy mode, background requests, the System One opt-out), so you change them afterward in Edit Agent;
+- which defaults were **not** pre-filled, each with its reason.
+
+The group name in the banner is a button that opens that group's Group Settings. The New Agent form closes first, and what you typed in it is lost.
+
+### Three Ways In
+
+| Where                | How                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| **Left Bar**         | Right-click the group header, then **Group Settings...**                              |
+| **Quick Actions**    | `Cmd+K` / `Ctrl+K`, then **Group Settings**. It acts on the group of the active agent |
+| **New Agent banner** | Click the group name in the **Pre-filled from** banner                                |
+
+A group Maestro made for a git worktree family has no Group Settings, because its agents are made by **Create Worktree**, which copies the parent agent and never opens the New Agent form. From a terminal, use [`maestro-cli group-settings` and `update-group-settings`](./cli#group-settings).
+
+### Group Pill Label
+
+The **Group Pill Label** field on the General tab sets the text of the small badge drawn beside a group's bookmarked agents in the Left Bar.
+
+- Leave it blank and Maestro abbreviates the group name. The field shows the abbreviation as its placeholder.
+- A label is at most 12 characters.
+- The full group name still appears on hover.
+- It is about the group, not about its agents. It is never copied into a new agent and never published to existing ones, and **Clear defaults** leaves it alone.
+
+The badge is not drawn at all while **Show group label on bookmarked agents** is off in **Settings -> Display**. While **Show full group label on bookmarked agents** is on, the badge shows the full name instead of your label. Group Settings says so under the field and links to the setting.
+
+### Publishing a Save to Existing Agents
+
+If you save a change and the group already has agents that could receive it, Maestro asks **Publish to existing agents?** before it saves. The dialog names what you changed and lists the group's agents.
+
+| Button                  | What it does                                                                                                |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Publish to N agents** | Saves the profile and writes this save's change into each agent that can receive it                         |
+| **New agents only**     | Saves the profile and leaves every existing agent as it is. It has the focus, so `Enter` is the safe choice |
+| **Cancel** / `Esc`      | Abandons the save. The form keeps what you typed                                                            |
+
+What a publish writes:
+
+- **Only the fields changed in that save.** A profile that has held a model for a week does not stamp it over agents you have since tuned by hand.
+- **Never the provider, the working directory, or the SSH remote.** Each one moves an agent somewhere its conversations are not, so a change to one of them is for new agents only. The dialog lists what was not published.
+- **Environment variables merge by key.** A key the profile never named stays as the agent had it.
+- **List fields replace.** Additional directories and peer rows overwrite the agent's own list, and the dialog names them because they are the one lossy case.
+- **Provider-specific values** (model, effort, custom path, and the like) go only to agents on that provider.
+- **Direct members only.** Agents in a nested child group are not reached.
+- **A turn that is running** finishes on its current settings.
+
+The publish ends with a toast, **Published to N agents**, and that toast is the **Undo**: click it to put back the prior value of every field the publish changed. The Undo lives only on the toast, only for this app session, and the dialog does not offer a second chance. The group's profile is left as saved, so the result is the same as choosing **New agents only**.
+
+**Clear defaults** (bottom left of the modal) removes every default the group holds after a confirmation. It does not publish anything.

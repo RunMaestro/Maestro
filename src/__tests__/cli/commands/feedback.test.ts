@@ -347,6 +347,59 @@ describe('feedback commands', () => {
 			expect(sent.map((s) => s.payload.type)).toEqual(['feedback_submit']);
 		});
 
+		// The app screens the issue text and the support package before it files.
+		// The CLI has no dialog, so it refuses unless --allow-secrets is passed.
+		describe('secret screen', () => {
+			const refusal = {
+				success: false,
+				error: 'Found 1 possible secret in the feedback. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings: [
+					{ kind: 'anthropic-key', line: 2, preview: '••••••••AbCd', source: 'Actual' },
+				],
+			};
+
+			it('does not send allowSecrets unless the flag is passed', async () => {
+				const sent = mockBridge({ feedback_submit: { success: true, issueUrl: 'u' } });
+				await feedbackSubmit({ ...baseSubmit, force: true });
+				expect(sent[0].payload.payload).not.toHaveProperty('allowSecrets');
+			});
+
+			it('sends allowSecrets: true for --allow-secrets', async () => {
+				const sent = mockBridge({ feedback_submit: { success: true, issueUrl: 'u' } });
+				await feedbackSubmit({ ...baseSubmit, force: true, allowSecrets: true });
+				expect(sent[0].payload.payload).toMatchObject({ allowSecrets: true });
+			});
+
+			it('refuses, exits non-zero, and prints the masked findings', async () => {
+				mockBridge({ feedback_submit: refusal });
+				const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+				await expect(feedbackSubmit({ ...baseSubmit, force: true })).rejects.toThrow('__exit__');
+
+				expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+				const printed = errorSpy.mock.calls.map(([line]) => line).join('\n');
+				expect(printed).toContain(refusal.error);
+				expect(printed).toContain('Anthropic API key ••••••••AbCd (Actual, line 2)');
+				expect(printed).toContain('--allow-secrets');
+			});
+
+			it('carries the findings in --json', async () => {
+				mockBridge({ feedback_submit: refusal });
+
+				await expect(feedbackSubmit({ ...baseSubmit, force: true, json: true })).rejects.toThrow(
+					'__exit__'
+				);
+
+				expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({
+					success: false,
+					error: refusal.error,
+					code: 'SECRETS_FOUND',
+					secretFindings: refusal.secretFindings,
+				});
+			});
+		});
+
 		it('rejects an unknown category before connecting', async () => {
 			const sent = mockBridge({});
 			await expect(feedbackSubmit({ ...baseSubmit, category: 'rant' })).rejects.toThrow('__exit__');
@@ -376,6 +429,35 @@ describe('feedback commands', () => {
 			mockBridge({});
 			await expect(feedbackSubscribe('abc', {})).rejects.toThrow('__exit__');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+
+		it('sends allowSecrets only for --allow-secrets', async () => {
+			const sent = mockBridge({ feedback_subscribe: { success: true } });
+			await feedbackSubscribe('7', { comment: 'me too' });
+			await feedbackSubscribe('7', { comment: 'me too', allowSecrets: true });
+			expect(sent[0].payload).not.toHaveProperty('allowSecrets');
+			expect(sent[1].payload).toMatchObject({ allowSecrets: true });
+		});
+
+		it('refuses a comment the secret screen flagged and prints the findings', async () => {
+			mockBridge({
+				feedback_subscribe: {
+					success: false,
+					error: 'Found 1 possible secret in the comment. Nothing was sent.',
+					code: 'SECRETS_FOUND',
+					secretFindings: [
+						{ kind: 'slack-token', line: 1, preview: '••••••••wxyz', source: 'Comment' },
+					],
+				},
+			});
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			await expect(feedbackSubscribe('7', { comment: 'token ...' })).rejects.toThrow('__exit__');
+
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+			const printed = errorSpy.mock.calls.map(([line]) => line).join('\n');
+			expect(printed).toContain('Slack token ••••••••wxyz (Comment, line 1)');
+			expect(printed).toContain('--allow-secrets');
 		});
 	});
 

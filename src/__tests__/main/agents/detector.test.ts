@@ -1601,6 +1601,84 @@ describe('agent-detector', () => {
 			expect(models).toEqual([]);
 		});
 
+		it('should answer the Codex catalogue with the description and priority it states', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const cacheData = JSON.stringify({
+				models: [
+					{ slug: 'gpt-6.1-sol', description: 'Latest workhorse model.', priority: 1 },
+					{ slug: 'gpt-6-luna', visibility: 'list', priority: 4 },
+					{ slug: 'gpt-reserve', visibility: 'hide', priority: 4 },
+				],
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
+					return cacheData;
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			// The same ids `discoverModels` lists, each with what the file states.
+			expect(await detector.discoverModelCatalog('codex')).toEqual([
+				{ id: 'gpt-6.1-sol', description: 'Latest workhorse model.', priority: 1 },
+				{ id: 'gpt-6-luna', priority: 4 },
+			]);
+			// gpt-6-astra, the built-in high tier, is not in this catalogue.
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Codex tier "high" maps to gpt-6-astra'),
+				'AgentDetector',
+				expect.objectContaining({ tier: 'high', slug: 'gpt-6-astra', replacement: null })
+			);
+		});
+
+		it('should fall back to the static model options for a harness with no discovery', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'droid') {
+					return { stdout: '/usr/bin/droid\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const catalog = await detector.discoverModelCatalog('factory-droid');
+			expect(catalog).toEqual(
+				expect.arrayContaining([{ id: 'claude-haiku-4-5-20251001' }, { id: 'gpt-5.1' }])
+			);
+			// The empty option is "the provider default", not a model.
+			expect(catalog.some((model) => model.id === '')).toBe(false);
+		});
+
+		it('should answer an empty catalogue for a harness that is not installed', async () => {
+			mockExecFileNoThrow.mockImplementation(async () => ({
+				stdout: '',
+				stderr: 'not found',
+				exitCode: 1,
+			}));
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			expect(await detector.discoverModelCatalog('factory-droid')).toEqual([]);
+		});
+
 		it('should discover models for Grok from models_cache.json', async () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];

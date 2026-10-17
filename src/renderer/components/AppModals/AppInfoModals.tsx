@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo } from 'react';
+import { lazy, Suspense, memo, useCallback } from 'react';
 import type {
 	Theme,
 	Session,
@@ -16,7 +16,12 @@ import { AboutModal } from '../AboutModal';
 import { FeedbackModal } from '../FeedbackModal';
 import { ShortcutsHelpModal } from '../ShortcutsHelpModal';
 import { UpdateCheckModal } from '../UpdateCheckModal';
-import { getModalActions } from '../../stores/modalStore';
+import {
+	getModalActions,
+	selectModalData,
+	selectModalOpen,
+	useModalStore,
+} from '../../stores/modalStore';
 
 // Lazy-loaded heavy modals (rarely used, loaded on-demand)
 const ProcessMonitor = lazy(() =>
@@ -24,6 +29,11 @@ const ProcessMonitor = lazy(() =>
 );
 const UsageDashboardModal = lazy(() =>
 	import('../UsageDashboard').then((m) => ({ default: m.UsageDashboardModal }))
+);
+const DelegationGraphModal = lazy(() =>
+	import('../DelegationGraph/DelegationGraphModal').then((m) => ({
+		default: m.DelegationGraphModal,
+	}))
 );
 const AgentRunDashboardModal = lazy(() =>
 	import('../AgentRunDashboard').then((m) => ({ default: m.AgentRunDashboardModal }))
@@ -91,6 +101,7 @@ export interface AppInfoModalsProps {
  * - UpdateCheckModal: Shows update status
  * - ProcessMonitor: Shows running processes
  * - UsageDashboardModal: Shows usage analytics and visualizations
+ * - DelegationGraphModal: Draws which agent can consult or delegate to which
  *
  * NOTE: LogViewer is intentionally excluded - it's a content replacement component
  * that needs to be positioned in the flex layout, not an overlay modal.
@@ -136,6 +147,17 @@ export const AppInfoModals = memo(function AppInfoModals({
 	agentRunDashboardOpen,
 	onCloseAgentRunDashboard,
 }: AppInfoModalsProps) {
+	// The Delegation Graph reads the fleet from the session store itself, so it
+	// subscribes to the modal store here and takes no props from App.tsx. It is
+	// mounted in THIS host on purpose: its Peers link opens the Edit Agent modal
+	// (AppSessionModals, later in the DOM), which must paint on top of it.
+	const delegationGraphOpen = useModalStore(selectModalOpen('delegationGraph'));
+	const delegationGraphData = useModalStore(selectModalData('delegationGraph'));
+	const closeDelegationGraph = useCallback(
+		() => useModalStore.getState().closeModal('delegationGraph'),
+		[]
+	);
+
 	return (
 		<>
 			{/* --- SHORTCUTS HELP MODAL --- */}
@@ -212,6 +234,17 @@ export const AppInfoModals = memo(function AppInfoModals({
 						usageStats={usageStats}
 						handsOnTimeMs={handsOnTimeMs}
 						leaderboardRegistration={leaderboardRegistration}
+					/>
+				</Suspense>
+			)}
+
+			{/* --- DELEGATION GRAPH MODAL (lazy-loaded) --- */}
+			{delegationGraphOpen && (
+				<Suspense fallback={null}>
+					<DelegationGraphModal
+						theme={theme}
+						onClose={closeDelegationGraph}
+						scope={delegationGraphData?.scope}
 					/>
 				</Suspense>
 			)}

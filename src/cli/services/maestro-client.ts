@@ -12,6 +12,7 @@ export {
 	withBridgeConnection as withMaestroClient,
 	UnsupportedCommandError,
 	CommandTimeoutError,
+	MaestroNotRunningError,
 } from '../../shared/maestro-lib/client/bridge-connection';
 
 /**
@@ -26,6 +27,8 @@ export function resolveSessionId(options: { session?: string }): string {
 	const sessions = readSessions();
 	if (sessions.length === 0) {
 		console.error('Error: No agents found. Create an agent in Maestro first.');
+		// A raw exit on purpose: exit-codes.ts imports this module for its error
+		// classes, so importing `exitWith` here would be a cycle.
 		process.exit(1);
 	}
 

@@ -11,7 +11,13 @@ vi.mock('../../../../renderer/services/providerTranslation', () => ({
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
+import { __resetRememberedModalTabsForTests } from '../../../../renderer/components/ui/ModalTabStrip';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
+import { RUN_ON_MIN_CONTEXT_TOKENS } from '../../../../shared/local-models/run-on';
+import type { HarnessTierOptions } from '../../../../shared/local-models/tier-options';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
@@ -76,6 +82,34 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	}) as Session;
 
+/**
+ * The 27th `onSave` argument of a form whose Peers tab was never touched: a
+ * session with no peers saves every source of the roster as absent.
+ */
+const NO_PEER_GRANTS = {
+	peerAgents: undefined,
+	groupPeerAccess: undefined,
+	worktreePeerAccess: undefined,
+};
+
+/**
+ * Positions in `onSave`'s argument list that tests read by slot. Named here so
+ * an argument appended later does not shift what a test thought was "last".
+ */
+const SAVE_ARG = {
+	workingDirectory: 20,
+	codexAutoResetOnExhaustion: 21,
+	codexTransport: 22,
+	gatewayUrl: 23,
+	runOn: 24,
+	tierTargets: 25,
+	peerGrants: 26,
+} as const;
+
+/** Show one tab of the form. Only the active tab's fields are rendered. */
+const openTab = (name: string) =>
+	fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
+
 describe('EditAgentModal', () => {
 	let theme: Theme;
 	let onClose: ReturnType<typeof vi.fn>;
@@ -104,6 +138,9 @@ describe('EditAgentModal', () => {
 		onSave = vi.fn();
 
 		mockRegisterLayer.mockClear().mockReturnValue('layer-edit-agent-123');
+		// The form remembers its last tab per app session; start every case on General.
+		__resetRememberedModalTabsForTests();
+		useModalStore.getState().closeModal('editAgent');
 		mockUnregisterLayer.mockClear();
 		mockUpdateLayerHandler.mockClear();
 
@@ -244,9 +281,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalledTimes(1);
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
-		// and `codexTransport` trail it - anchor on the slot rather than on "last".
-		expect(args[args.length - 3]).toBe('/home/user/moved-project');
+		// Anchored on the slot, not on distance from the end: arguments keep
+		// being appended after it.
+		expect(args[SAVE_ARG.workingDirectory]).toBe('/home/user/moved-project');
 	});
 
 	it('should refuse a local working directory that does not exist', async () => {
@@ -331,9 +368,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalled();
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
-		// and `codexTransport` trail it - anchor on the slot rather than on "last".
-		expect(args[args.length - 3]).toBeUndefined(); // workingDirectory unchanged
+		// Anchored on the slot, not on distance from the end: arguments keep
+		// being appended after it.
+		expect(args[SAVE_ARG.workingDirectory]).toBeUndefined(); // workingDirectory unchanged
 	});
 
 	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
@@ -434,6 +471,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 
 		await waitFor(() => {
 			const providerSelect = screen.getByDisplayValue('Claude Code');
@@ -453,6 +491,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 
 		const providerSelect = await screen.findByDisplayValue('Claude Code');
 
@@ -491,6 +530,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		expect(
 			screen.getByRole('option', { name: '→ Codex · Memory + history (preview)' })
 		).toBeInTheDocument();
@@ -516,6 +556,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		expect(
 			screen.getByRole('option', { name: '→ Claude Code · Memory + history (preview)' })
 		).toBeInTheDocument();
@@ -533,6 +574,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		expect(screen.queryByRole('option', { name: /Memory \+ history/ })).not.toBeInTheDocument();
 		expect(
 			screen.getByText('Memory + session carry is not available from this provider.')
@@ -551,6 +593,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
 			target: { value: 'codex' },
 		});
@@ -578,6 +621,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		const picker = screen.getByRole('combobox', { name: 'Agent Provider' });
 		fireEvent.change(picker, { target: { value: 'codex' } });
 		await screen.findByText('Native resume remains unverified');
@@ -586,6 +630,7 @@ describe('EditAgentModal', () => {
 		expect(screen.getByRole('status')).toHaveTextContent(
 			'Translating memory and session history...'
 		);
+		openTab('Provider');
 		expect(picker).toBeDisabled();
 		finishSave();
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -625,6 +670,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 			fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
 				target: { value: 'codex' },
 			});
@@ -649,6 +695,7 @@ describe('EditAgentModal', () => {
 					],
 				})
 			);
+			openTab('Provider');
 			expect(screen.getByRole('status')).toHaveTextContent(
 				'Translating memory and session history...'
 			);
@@ -670,6 +717,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
 			target: { value: 'codex' },
 		});
@@ -725,6 +773,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// 'max' (session override), not 'high' (agent-level config)
 			expect(await screen.findByDisplayValue('max')).toBeInTheDocument();
@@ -755,7 +804,11 @@ describe('EditAgentModal', () => {
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: no Local Models gateway set
+				undefined, // runOn: the provider's own model
+				undefined, // tierTargets: every tier follows its harness default
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 
@@ -770,6 +823,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const effortSelect = await screen.findByDisplayValue('max');
 			fireEvent.change(effortSelect, { target: { value: 'low' } });
@@ -794,6 +848,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const yolo = await screen.findByLabelText('Enabled');
 			fireEvent.click(yolo);
@@ -856,7 +911,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined, // runOn: the provider's own model
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -1094,7 +1153,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined, // runOn: the provider's own model
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
@@ -1172,7 +1235,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined, // runOn: the provider's own model
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
@@ -1217,6 +1284,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('SSH');
 
 		// Wait for the SSH dropdown to render with the remote selected
 		const dropdown = (await screen.findByDisplayValue(/Dev Server/)) as HTMLSelectElement;
@@ -1256,7 +1324,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined, // runOn: the provider's own model
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
@@ -1284,6 +1356,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('SSH');
 
 		// SSH selector should appear after SSH configs load
 		await waitFor(() => {
@@ -1355,6 +1428,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				// Names the window actually in use, so the number in the field is not
@@ -1377,6 +1451,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('120000');
 				// The value is winning, so there is nothing to explain.
@@ -1394,6 +1469,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				// An unflagged report may be a parser-injected static fallback, so the
@@ -1427,6 +1503,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).not.toBeInTheDocument();
@@ -1460,6 +1537,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).toHaveTextContent('1.0M');
@@ -1493,6 +1571,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				// Note is present before the switch...
 				await screen.findByDisplayValue('200000');
@@ -1525,6 +1604,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).toHaveTextContent(/selected model/i);
@@ -1555,6 +1635,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Seeded from the agent-level config because the session has none.
 			expect(await screen.findByDisplayValue('200000')).toBeInTheDocument();
@@ -1583,6 +1664,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const input = await screen.findByDisplayValue('100000');
 			fireEvent.change(input, { target: { value: '' } });
@@ -1605,6 +1687,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const input = await screen.findByDisplayValue('100000');
 			fireEvent.change(input, { target: { value: '120000' } });
@@ -1644,7 +1727,7 @@ describe('EditAgentModal', () => {
 
 		function renderCodex(session: Session) {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([codexAgent]);
-			return render(
+			const result = render(
 				<EditAgentModal
 					isOpen={true}
 					onClose={onClose}
@@ -1654,6 +1737,8 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
+			return result;
 		}
 
 		const toggle = () =>
@@ -1682,8 +1767,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			// `codexTransport` trails it, so the reset flag is second-from-last.
-			expect(args[args.length - 2]).toBe(true);
+			expect(args[SAVE_ARG.codexAutoResetOnExhaustion]).toBe(true);
 		});
 
 		it('carries an opt-OUT out through Save', async () => {
@@ -1696,7 +1780,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 2]).toBe(false);
+			expect(args[SAVE_ARG.codexAutoResetOnExhaustion]).toBe(false);
 		});
 
 		it('is absent for a provider with no reset credits', async () => {
@@ -1711,7 +1795,8 @@ describe('EditAgentModal', () => {
 				/>
 			);
 
-			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+			openTab('Provider');
+			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
 			expect(screen.queryByTestId('codex-auto-reset-option')).not.toBeInTheDocument();
 		});
 
@@ -1729,7 +1814,7 @@ describe('EditAgentModal', () => {
 				fireEvent.click(screen.getByText('Save Changes'));
 
 				const args = onSave.mock.calls[0];
-				expect(args[args.length - 1]).toBe('exec');
+				expect(args[SAVE_ARG.codexTransport]).toBe('exec');
 			});
 
 			it('reflects a stored app-server choice', async () => {
@@ -1746,7 +1831,7 @@ describe('EditAgentModal', () => {
 				fireEvent.click(screen.getByText('Save Changes'));
 
 				const args = onSave.mock.calls[0];
-				expect(args[args.length - 1]).toBe('app-server');
+				expect(args[SAVE_ARG.codexTransport]).toBe('app-server');
 			});
 
 			it('is absent for a non-Codex agent', async () => {
@@ -1761,19 +1846,21 @@ describe('EditAgentModal', () => {
 					/>
 				);
 
-				await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+				openTab('Provider');
+				await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
 				expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
 			});
 		});
 	});
 
-	// The export section saves its own changes into its own store. Nothing of
+	// The Audit Log tab saves its own changes into its own store. Nothing of
 	// it may ride along with Save: Save writes the Session object, and that
 	// object lands in a file the CLI reads.
-	describe('chain of thought export section', () => {
+	describe('Audit Log tab', () => {
 		/** A name unlike anything else in the dialog, so a leak of the folder is found by it. */
 		const LOG_FOLDER = '/audit/turn-log-7f3c91d2';
 		const TOGGLE_LABEL = 'Keep an audit log for this agent';
+		const AUDIT_LOG_TAB = 'Audit Log';
 		const UNSUPPORTED_NOTE = /This provider does not expose its reasoning\./;
 		const INTERACTIVE_NOTE =
 			/Reasoning may be missing while this agent runs through the interactive/;
@@ -1801,7 +1888,8 @@ describe('EditAgentModal', () => {
 			return api;
 		}
 
-		const renderModal = (session: Session = createSession()) =>
+		/** The dialog as it opens, on General. */
+		const renderDialog = (session: Session = createSession()) =>
 			render(
 				<EditAgentModal
 					isOpen={true}
@@ -1813,12 +1901,27 @@ describe('EditAgentModal', () => {
 				/>
 			);
 
-		/** The form, once the agent and its config have loaded: what Save reads. */
-		const formReady = () =>
-			waitFor(() => {
-				expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
-				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0);
-			});
+		/** The dialog, on the Audit Log tab. The API must be installed first. */
+		const renderModal = (session: Session = createSession()) => {
+			const result = renderDialog(session);
+			openTab(AUDIT_LOG_TAB);
+			return result;
+		};
+
+		/**
+		 * The form, once the agent and its config have loaded: what Save reads.
+		 * The config is on Provider and the name on General, so each is checked
+		 * on its own tab before going to `endOn`.
+		 */
+		const formReady = async (endOn?: string) => {
+			openTab('Provider');
+			await waitFor(() =>
+				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0)
+			);
+			openTab('General');
+			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+			if (endOn) openTab(endOn);
+		};
 
 		/** The section, once its first status has arrived and its controls are free. */
 		const sectionReady = () =>
@@ -1836,24 +1939,64 @@ describe('EditAgentModal', () => {
 		});
 
 		it('is absent where the API is not exposed', async () => {
-			renderModal();
+			renderDialog();
 
 			await formReady();
-			expect(screen.queryByText('Audit Log')).not.toBeInTheDocument();
+			expect(screen.queryByRole('tab', { name: AUDIT_LOG_TAB })).not.toBeInTheDocument();
+			expect(screen.queryByText(AUDIT_LOG_TAB)).not.toBeInTheDocument();
 		});
 
-		it('mounts directly after Agent Resilience, for the agent being edited', async () => {
+		it('is the last tab, and holds the section for the agent being edited', async () => {
 			const api = installCotExport();
 			renderModal(createSession({ id: 'agent-under-edit' }));
 
-			const section = await screen.findByTestId('cot-export-section');
-			expect(section.previousElementSibling).toHaveTextContent('Agent Resilience');
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Models',
+				'Environment',
+				'Peers',
+				'SSH',
+				AUDIT_LOG_TAB,
+			]);
+			const panel = screen.getByRole('tabpanel');
+			expect(panel).toHaveAttribute('id', 'edit-agent-tabpanel-auditLog');
+			expect(panel).toContainElement(await screen.findByTestId('cot-export-section'));
 			expect(api.status).toHaveBeenCalledWith('agent-under-edit');
+		});
+
+		it('leaves the Provider tab without the section', async () => {
+			installCotExport();
+			renderDialog();
+
+			await formReady();
+			openTab('Provider');
+			expect(screen.getByText('Agent Resilience')).toBeInTheDocument();
+			expect(screen.queryByTestId('cot-export-section')).not.toBeInTheDocument();
+		});
+
+		it('reopens on Audit Log when it was the last tab used', () => {
+			installCotExport();
+			const first = renderModal();
+			first.unmount();
+
+			renderDialog();
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-auditLog');
+		});
+
+		it('falls back to General when the last tab used was Audit Log and it is gone', () => {
+			installCotExport();
+			const first = renderModal();
+			first.unmount();
+			delete (window.maestro as any).cotExport;
+
+			renderDialog();
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-general');
 		});
 
 		it('keeps every export change out of Save', async () => {
 			// What Save hands over with the feature absent...
-			const without = renderModal();
+			const without = renderDialog();
 			await formReady();
 			fireEvent.click(screen.getByText('Save Changes'));
 			const baseline = onSave.mock.calls[0];
@@ -1866,7 +2009,7 @@ describe('EditAgentModal', () => {
 			const selectFolder = vi.fn().mockResolvedValue(LOG_FOLDER);
 			(window.maestro as any).dialog = { ...(window.maestro as any).dialog, selectFolder };
 			renderModal();
-			await formReady();
+			await formReady(AUDIT_LOG_TAB);
 			await sectionReady();
 
 			fireEvent.click(screen.getByText('Choose Folder'));
@@ -1894,7 +2037,7 @@ describe('EditAgentModal', () => {
 			const saved = onSave.mock.calls[0];
 			expect(saved).toEqual(baseline);
 			expect(JSON.stringify(saved)).not.toMatch(
-				/cot[-_ ]?export|chain of thought|turn-log-7f3c91d2/i
+				/cot[-_ ]?export|chain of thought|audit ?log|turn-log-7f3c91d2/i
 			);
 		});
 
@@ -1975,6 +2118,1048 @@ describe('EditAgentModal', () => {
 			await sectionReady();
 
 			expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Local Models gateway', () => {
+		function renderWith(session: Session) {
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const field = () =>
+			screen.getByTestId('edit-agent-gateway').querySelector('input') as HTMLInputElement;
+
+		it("shows the agent's stored gateway and saves it unchanged", async () => {
+			renderWith(createSession({ gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await waitFor(() => expect(field().value).toBe('http://127.0.0.1:8787'));
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe('http://127.0.0.1:8787');
+		});
+
+		it('saves a typed gateway in its normalized form', async () => {
+			renderWith(createSession());
+
+			await waitFor(() => expect(field()).toBeInTheDocument());
+			fireEvent.change(field(), { target: { value: ' http://localhost:4000/anthropic/ ' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe('http://localhost:4000/anthropic');
+		});
+
+		it('clears the gateway when the field is emptied', async () => {
+			renderWith(createSession({ gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await waitFor(() => expect(field().value).toBe('http://127.0.0.1:8787'));
+			fireEvent.change(field(), { target: { value: '' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).toHaveBeenCalledTimes(1);
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBeUndefined();
+		});
+
+		it('refuses to save a value that is not a URL, and says why', async () => {
+			renderWith(createSession());
+
+			await waitFor(() => expect(field()).toBeInTheDocument());
+			fireEvent.change(field(), { target: { value: 'nope' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent('not a URL');
+		});
+
+		it("says the gateway is not applied when the agent's own variable sets the base URL", async () => {
+			renderWith(
+				createSession({
+					gatewayUrl: 'http://127.0.0.1:8787',
+					customEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+				})
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+					'Not applied: ANTHROPIC_BASE_URL'
+				)
+			);
+		});
+
+		it('disables the field for Copilot CLI with the reason', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'copilot-cli',
+					name: 'Copilot CLI',
+					available: true,
+					path: '/usr/local/bin/copilot',
+					binaryName: 'copilot',
+					hidden: false,
+				} as AgentConfig,
+			]);
+			renderWith(
+				createSession({
+					toolType: 'copilot-cli',
+					customPath: undefined,
+					customModel: undefined,
+					customEnvVars: undefined,
+				})
+			);
+
+			await waitFor(() => expect(field()).toBeDisabled());
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+				'ignores base-URL variables'
+			);
+		});
+	});
+
+	describe('tabbed form', () => {
+		const renderModal = (session: Session = createSession(), existingSessions: Session[] = []) =>
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={existingSessions}
+				/>
+			);
+
+		const selectedTab = () =>
+			screen.getAllByRole('tab').find((tab) => tab.getAttribute('aria-selected') === 'true');
+
+		it('renders the six tabs in order, opens on General, and is a resizable frame', () => {
+			const { container } = renderModal();
+
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Models',
+				'Environment',
+				'Peers',
+				'SSH',
+			]);
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(
+				container.ownerDocument.querySelector('[data-modal-resize-key="edit-agent"]')
+			).not.toBe(null);
+		});
+
+		it('renders only the active panel', () => {
+			renderModal();
+
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-general');
+			openTab('SSH');
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-ssh');
+		});
+
+		it('reopens on the last tab used', () => {
+			const first = renderModal();
+			openTab('Models');
+			first.unmount();
+
+			renderModal();
+			expect(selectedTab()).toHaveTextContent('Models');
+		});
+
+		it('moves the environment variables to the Environment tab', async () => {
+			renderModal();
+
+			openTab('Provider');
+			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
+			expect(screen.queryByDisplayValue('API_KEY')).not.toBeInTheDocument();
+
+			openTab('Environment');
+			expect(screen.getByDisplayValue('API_KEY')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('test-key')).toBeInTheDocument();
+		});
+
+		it('keeps an Environment edit through a tab switch and out through Save', async () => {
+			renderModal();
+			openTab('Environment');
+
+			fireEvent.change(screen.getByDisplayValue('test-key'), { target: { value: 'new-key' } });
+			openTab('General');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][7]).toEqual({ API_KEY: 'new-key' });
+		});
+
+		it('dots the General tab and sends Cmd+Enter there from SSH when the name is taken', async () => {
+			renderModal(createSession(), [createSession({ id: 'other', name: 'My Agent' })]);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-tab-general-error')).toBeInTheDocument()
+			);
+			openTab('SSH');
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('An agent named "My Agent" already exists')).toBeInTheDocument();
+		});
+
+		it('sends Cmd+Enter from SSH to General with the empty name shown as an error', async () => {
+			renderModal();
+			const name = await screen.findByDisplayValue('My Agent');
+			fireEvent.change(name, { target: { value: '' } });
+			// Clearing the name to retype it is not an error yet.
+			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('edit-agent-tab-general-error')).not.toBeInTheDocument();
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('Enter a name for the agent')).toBeInTheDocument();
+			expect(screen.getByTestId('edit-agent-tab-general-error')).toBeInTheDocument();
+
+			fireEvent.change(document.getElementById('edit-agent-name-input') as HTMLInputElement, {
+				target: { value: 'Renamed' },
+			});
+			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('edit-agent-tab-general-error')).not.toBeInTheDocument();
+		});
+
+		// `openAgentSettings(session, { tab: 'peers' })`: the Delegation Graph's link.
+		it('opens on the tab its opener asked for', async () => {
+			const session = createSession();
+			useModalStore.getState().openModal('editAgent', { session, initialTab: 'peers' });
+
+			renderModal(session);
+			await screen.findByRole('tab', { name: /^Peers/ });
+
+			expect(selectedTab()).toHaveTextContent('Peers');
+		});
+
+		it('sends Cmd+Enter from Peers to General when the name is empty', async () => {
+			renderModal();
+			const name = await screen.findByDisplayValue('My Agent');
+			fireEvent.change(name, { target: { value: '' } });
+			openTab('Peers');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+		});
+
+		it('lands on Models when Save refuses the gateway', async () => {
+			renderModal();
+			openTab('Models');
+			const gateway = screen
+				.getByTestId('edit-agent-gateway')
+				.querySelector('input') as HTMLInputElement;
+			fireEvent.change(gateway, { target: { value: 'not a url' } });
+			openTab('General');
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('Models');
+			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
+		});
+
+		it('cycles the tabs with Cmd+Shift+] and Cmd+Shift+[', () => {
+			renderModal();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('Provider');
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('SSH');
+		});
+
+		it('shows the Runs on chip on General and Agent Resilience on Provider', async () => {
+			renderModal();
+			expect(screen.getByTestId('edit-agent-runs-on')).toHaveTextContent('Local');
+
+			openTab('Provider');
+			expect(screen.getByText('Agent Resilience')).toBeInTheDocument();
+		});
+
+		describe('Peers tab', () => {
+			afterEach(() => {
+				useSessionStore.setState({ sessions: [], groups: [] } as never);
+			});
+
+			it('draws the Peer Agents section from the live fleet and saves the three grants', () => {
+				const session = createSession({
+					groupId: 'g-backend',
+					peerAgents: [
+						{ sessionId: 'peer-infra', read: true, write: false, description: 'Owns the infra' },
+					],
+					groupPeerAccess: { read: true, write: false },
+				});
+				// The fleet and the group name come from the store, not from the
+				// `session` and `existingSessions` props.
+				useSessionStore.setState({
+					sessions: [
+						session,
+						createSession({ id: 'peer-infra', name: 'Infra', groupId: 'g-backend' }),
+						createSession({ id: 'peer-docs', name: 'Docs', groupId: 'g-backend' }),
+					],
+					groups: [{ id: 'g-backend', name: 'Backend', emoji: '🛠', collapsed: false }],
+				} as never);
+
+				renderModal(session);
+				openTab('Peers');
+
+				// The section, seeded from the agent's stored grants.
+				expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-peers');
+				expect(screen.getByText('Peer Agents')).toBeInTheDocument();
+				expect(screen.getByText('2 other agents in Backend')).toBeInTheDocument();
+				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeChecked();
+				expect(screen.getByRole('checkbox', { name: /Worktree family/ })).not.toBeChecked();
+				expect(screen.getByDisplayValue('Owns the infra')).toBeInTheDocument();
+
+				// The agent being edited is not offered as its own peer.
+				const picker = screen.getByRole('button', { name: 'Peer agent' });
+				expect(picker).toHaveTextContent('Infra');
+				fireEvent.click(picker);
+				expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+					'Select an agent...',
+					'Docs',
+					'Infra',
+				]);
+				fireEvent.click(picker);
+
+				// Edit all three sources: delegate on the row, group off, worktree on.
+				fireEvent.click(screen.getByRole('switch', { name: 'Delegate to this peer' }));
+				fireEvent.click(screen.getByRole('checkbox', { name: /Peers in my group/ }));
+				fireEvent.click(screen.getByRole('checkbox', { name: /Worktree family/ }));
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				expect(onSave).toHaveBeenCalledTimes(1);
+				const grants = onSave.mock.calls[0][SAVE_ARG.peerGrants];
+				expect(grants).toEqual({
+					peerAgents: [
+						{ sessionId: 'peer-infra', read: true, write: true, description: 'Owns the infra' },
+					],
+					groupPeerAccess: undefined,
+					worktreePeerAccess: { read: true, write: false },
+				});
+				// Off is absent, never a pair of false bits.
+				expect(grants.groupPeerAccess).toBeUndefined();
+			});
+		});
+	});
+
+	describe('Maestro token proxy mode', () => {
+		const PROXY_PORT = 48123;
+		const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/anthropic`;
+		const proxy = () => window.maestro.localModels.proxy;
+
+		const reportWithPort = (port: number | null) => ({
+			status: { port, running: port !== null, agentIds: [], lastError: null, gatewayUrls: null },
+			agents: [],
+			usage: null,
+			recentCompressions: [],
+		});
+
+		function renderOnModels(session: Session) {
+			// The mode write reads and writes the live store entry, as the table does.
+			useSessionStore.setState({ sessions: [session] } as never);
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const modeSelect = () => screen.getByTestId('edit-agent-proxy-mode') as HTMLSelectElement;
+		const gatewayInput = () =>
+			screen.getByTestId('edit-agent-gateway').querySelector('input') as HTMLInputElement;
+
+		beforeEach(() => {
+			vi.mocked(proxy().report).mockReset().mockResolvedValue(reportWithPort(null));
+			vi.mocked(proxy().ensurePort).mockReset().mockResolvedValue(PROXY_PORT);
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+		});
+
+		it('sits on the Models tab beside the gateway and reads Off with no proxy', async () => {
+			renderOnModels(createSession());
+
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			expect(modeSelect()).toHaveValue('off');
+			expect(screen.getByTestId('edit-agent-gateway')).toBeInTheDocument();
+		});
+
+		it('reads the stored mode when the gateway is the proxy', async () => {
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'compress' }));
+
+			await waitFor(() => expect(modeSelect()).toHaveValue('compress'));
+			expect(screen.getByTestId('edit-agent-proxy-mode-note')).toBeInTheDocument();
+		});
+
+		it('applies a choice at once, and the gateway draft follows so Save keeps it', async () => {
+			renderOnModels(createSession());
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+
+			fireEvent.change(modeSelect(), { target: { value: 'passthrough' } });
+
+			await waitFor(() =>
+				expect(useSessionStore.getState().sessions[0]).toMatchObject({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+				})
+			);
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			await waitFor(() => expect(gatewayInput()).toHaveValue(proxyUrl));
+			await waitFor(() => expect(modeSelect()).toHaveValue('passthrough'));
+
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe(proxyUrl);
+		});
+
+		it('reads Off once a different gateway is typed over the proxy', async () => {
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'compress' }));
+			await waitFor(() => expect(modeSelect()).toHaveValue('compress'));
+
+			fireEvent.change(gatewayInput(), { target: { value: 'http://localhost:4000' } });
+
+			expect(modeSelect()).toHaveValue('off');
+		});
+
+		it('waits for a pending provider change, and says why', async () => {
+			renderOnModels(createSession());
+			openTab('Provider');
+			fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
+				target: { value: 'codex' },
+			});
+			openTab('Models');
+
+			expect(modeSelect()).toBeDisabled();
+			expect(screen.getByTestId('edit-agent-proxy-mode-blocked')).toHaveTextContent(
+				'Save the provider change first'
+			);
+		});
+
+		it('is refused for an agent on an SSH remote, before the click', async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [{ id: 'remote-1', name: 'Dev Box', host: 'dev', port: 22 }],
+			} as never);
+			renderOnModels(
+				createSession({ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } })
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-proxy-mode-blocked')).toHaveTextContent('Dev Box')
+			);
+			expect(modeSelect()).toBeDisabled();
+		});
+	});
+	describe('Background requests', () => {
+		const PROXY_PORT = 48123;
+		const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/anthropic`;
+		const proxy = () => window.maestro.localModels.proxy;
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const QWEN = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:4b' };
+		let savedEndpoints: LocalModelEndpoint[];
+
+		const reportWithPort = (port: number | null) => ({
+			status: { port, running: port !== null, agentIds: [], lastError: null, gatewayUrls: null },
+			agents: [],
+			usage: null,
+			recentCompressions: [],
+		});
+
+		function renderOnModels(session: Session) {
+			// The picker writes to, and is drawn from, the live store entry.
+			useSessionStore.setState({ sessions: [session] } as never);
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const picker = () =>
+			screen.getByTestId('edit-agent-background-requests-select') as HTMLSelectElement;
+		const queryPicker = () => screen.queryByTestId('edit-agent-background-requests-select');
+		const modeSelect = () => screen.getByTestId('edit-agent-proxy-mode') as HTMLSelectElement;
+		const stored = () => useSessionStore.getState().sessions[0];
+		const listed = () =>
+			waitFor(() =>
+				expect(
+					Array.from(picker().options).some((option) => option.value === 'ep-ollama:qwen3:4b')
+				).toBe(true)
+			);
+
+		beforeEach(() => {
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			vi.mocked(proxy().report).mockReset().mockResolvedValue(reportWithPort(PROXY_PORT));
+			vi.mocked(proxy().ensurePort).mockReset().mockResolvedValue(PROXY_PORT);
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+				async (endpoint) =>
+					typeof endpoint === 'string'
+						? { ok: true, models: [] }
+						: { ok: true, models: [{ id: 'qwen3:4b' }] }
+			);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(null));
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+				ok: true,
+				models: [],
+			});
+		});
+
+		it('is not offered while the agent is off the proxy', async () => {
+			renderOnModels(createSession());
+
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			expect(modeSelect()).toHaveValue('off');
+			expect(queryPicker()).not.toBeInTheDocument();
+		});
+
+		it('is not offered to a provider the proxy cannot route for', async () => {
+			renderOnModels(createSession({ toolType: 'codex', gatewayUrl: proxyUrl }));
+
+			await waitFor(() => expect(modeSelect()).toHaveValue('passthrough'));
+			expect(queryPicker()).not.toBeInTheDocument();
+		});
+
+		it('is offered to a Claude Code agent on the proxy, reading Off with the reason it exists', async () => {
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'passthrough' }));
+
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			expect(picker()).toHaveValue('none');
+			expect(screen.getByTestId('edit-agent-background-requests')).toHaveTextContent(
+				'side requests'
+			);
+		});
+
+		it('applies a choice at once: the agent holds the target before Save', async () => {
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'passthrough' }));
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			await listed();
+
+			fireEvent.change(picker(), { target: { value: 'ep-ollama:qwen3:4b' } });
+
+			await waitFor(() => expect(stored().backgroundRequests).toEqual({ target: QWEN }));
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ backgroundRequests: { target: QWEN } })],
+				[]
+			);
+			await waitFor(() => expect(picker()).toHaveValue('ep-ollama:qwen3:4b'));
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('shows the stored target, and turning the proxy off takes it away', async () => {
+			renderOnModels(
+				createSession({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: QWEN },
+				})
+			);
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			await listed();
+			expect(picker()).toHaveValue('ep-ollama:qwen3:4b');
+
+			fireEvent.change(modeSelect(), { target: { value: 'off' } });
+
+			await waitFor(() => expect(stored().backgroundRequests).toBeUndefined());
+			await waitFor(() => expect(queryPicker()).not.toBeInTheDocument());
+		});
+
+		it('says so when the stored target cannot be read', async () => {
+			renderOnModels(
+				createSession({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: { type: 'source' } } as never,
+				})
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-background-requests-error')).toHaveTextContent(
+					'The stored Background requests target cannot be used'
+				)
+			);
+			expect(picker()).toHaveValue('none');
+		});
+	});
+
+	describe('System One switch', () => {
+		const toggle = () => screen.getByRole('switch', { name: /use System One$/ });
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+		});
+
+		function renderOnModels(session: Session) {
+			// The switch reads and writes the live store entry, as the proxy mode does.
+			useSessionStore.setState({ sessions: [session] } as never);
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+		}
+
+		it('sits on the Models tab, on for an agent that was never switched off', () => {
+			renderOnModels(createSession());
+
+			expect(screen.getByTestId('edit-agent-system-one')).toBeInTheDocument();
+			expect(toggle()).toHaveAttribute('aria-checked', 'true');
+		});
+
+		it('applies at once and flushes to main, without Save', async () => {
+			renderOnModels(createSession());
+
+			fireEvent.click(toggle());
+
+			await waitFor(() =>
+				expect(useSessionStore.getState().sessions[0].systemOneOptOut).toBe(true)
+			);
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ systemOneOptOut: true })],
+				[]
+			);
+			await waitFor(() => expect(toggle()).toHaveAttribute('aria-checked', 'false'));
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('reads off for an agent that is switched off', () => {
+			renderOnModels(createSession({ systemOneOptOut: true }));
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'false');
+		});
+	});
+
+	describe('Tiers', () => {
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const LOCAL = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:latest' };
+		const row = (harness: 'claude-code' | 'codex'): HarnessTierOptions => ({
+			harness,
+			name: harness === 'codex' ? 'Codex' : 'Claude Code',
+			installed: true,
+			catalog:
+				harness === 'codex'
+					? [{ id: 'gpt-6-luna' }]
+					: [{ id: 'haiku' }, { id: 'sonnet' }, { id: 'opus' }],
+			runOn: { supported: true },
+			sources: [{ endpointId: OLLAMA.id, name: 'Ollama', models: ['qwen3:latest'] }],
+			problems: [],
+		});
+		let savedEndpoints: LocalModelEndpoint[];
+
+		const tierOptions = () => vi.mocked(window.maestro.localModels.tiers.options);
+		const picker = (tier: string) =>
+			screen.getByTestId(`edit-agent-tier-targets-${tier}`) as HTMLSelectElement;
+		const layer = (tier: string) =>
+			screen.getByTestId(`edit-agent-tier-targets-${tier}-source`).textContent;
+
+		beforeEach(() => {
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			tierOptions().mockImplementation(async (request) => [
+				row(request?.harness === 'codex' ? 'codex' : 'claude-code'),
+			]);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			tierOptions().mockReset().mockResolvedValue([]);
+		});
+
+		async function renderOnModels(session: Session) {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			await waitFor(() => screen.getByTestId('edit-agent-tier-targets-low'));
+		}
+
+		it('sits on the Models tab between Run on and the gateway', async () => {
+			await renderOnModels(createSession());
+
+			const runOn = screen.getByTestId('edit-agent-run-on');
+			const tiers = screen.getByTestId('edit-agent-tiers');
+			const gateway = screen.getByTestId('edit-agent-gateway');
+			expect(runOn.compareDocumentPosition(tiers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+			expect(
+				tiers.compareDocumentPosition(gateway) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('reads Harness default for an agent with no tier, and saves none', async () => {
+			await renderOnModels(createSession());
+
+			expect(picker('low').value).toBe('default');
+			expect(picker('low').selectedOptions[0].textContent).toBe('Harness default (haiku)');
+			expect(layer('low')).toBe('Built-in');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toBeUndefined();
+		});
+
+		it("shows the agent's stored tiers and saves them unchanged", async () => {
+			const tierTargets = {
+				low: LOCAL,
+				high: { type: 'provider-model' as const, model: 'sonnet' },
+			};
+			await renderOnModels(createSession({ tierTargets }));
+
+			expect(picker('low').value).toBe('ep-ollama:qwen3:latest');
+			expect(layer('low')).toBe('Agent');
+			expect(picker('high').value).toBe('provider:sonnet');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual(tierTargets);
+		});
+
+		it('saves a tier that was set and drops one put back on Harness default', async () => {
+			await renderOnModels(createSession({ tierTargets: { high: LOCAL } }));
+
+			fireEvent.change(picker('low'), { target: { value: 'provider:haiku' } });
+			fireEvent.change(picker('high'), { target: { value: 'default' } });
+			expect(layer('low')).toBe('Agent');
+			expect(layer('high')).toBe('Built-in');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual({
+				low: { type: 'provider-model', model: 'haiku' },
+			});
+		});
+
+		it('reads the built-in table as not applying once Run on is a source', async () => {
+			await renderOnModels(createSession({ runOn: { ...LOCAL, contextTokens: 65_536 } }));
+
+			expect(layer('low')).toBe('Not mapped');
+			expect(screen.getByTestId('edit-agent-tier-targets-low-note')).toHaveTextContent(
+				'runs on a Local Models source'
+			);
+		});
+
+		it('refuses to save a stored tier a launch would refuse, and names the tier', async () => {
+			await renderOnModels(createSession({ tierTargets: { high: { type: 'source' } } as never }));
+
+			expect(screen.getByTestId('edit-agent-tier-targets-high-problem')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-tier-targets-error')).toHaveTextContent(/^high: /);
+
+			// Picking a target again clears the refusal and saves.
+			fireEvent.change(picker('high'), { target: { value: 'provider:opus' } });
+			expect(screen.queryByTestId('edit-agent-tier-targets-error')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual({
+				high: { type: 'provider-model', model: 'opus' },
+			});
+		});
+
+		it('starts the tiers over on a provider switch: a tier names a model', async () => {
+			await renderOnModels(createSession({ tierTargets: { low: LOCAL } }));
+
+			openTab('Provider');
+			fireEvent.change(screen.getByDisplayValue('Claude Code'), { target: { value: 'codex' } });
+			await screen.findByText('Native resume remains unverified');
+			fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+			openTab('Models');
+			await waitFor(() =>
+				expect(picker('low').selectedOptions[0].textContent).toBe('Harness default (gpt-6-luna)')
+			);
+			expect(picker('low').value).toBe('default');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			await waitFor(() => expect(onSave).toHaveBeenCalled());
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toBeUndefined();
+		});
+	});
+
+	describe('Run on', () => {
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const QWEN = {
+			type: 'source' as const,
+			endpointId: OLLAMA.id,
+			model: 'qwen3:latest',
+			contextTokens: 65_536,
+		};
+		let savedEndpoints: LocalModelEndpoint[];
+
+		beforeEach(() => {
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			// The Maestro model server lists nothing; Ollama lists one model.
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+				async (endpoint) =>
+					typeof endpoint === 'string'
+						? { ok: true, models: [] }
+						: { ok: true, models: [{ id: 'qwen3:latest' }] }
+			);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+				ok: true,
+				models: [],
+			});
+		});
+
+		function renderOnModels(session: Session) {
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const picker = () => screen.getByTestId('edit-agent-run-on-field-select') as HTMLSelectElement;
+		const contextInput = () =>
+			screen
+				.getByTestId('edit-agent-run-on-field-context')
+				.querySelector('input') as HTMLInputElement;
+		const listed = () =>
+			waitFor(() =>
+				expect(
+					Array.from(picker().options).some((option) => option.value === 'ep-ollama:qwen3:latest')
+				).toBe(true)
+			);
+
+		it('reads Provider for an agent with no target, and saves none', async () => {
+			renderOnModels(createSession());
+
+			expect(picker().value).toBe('provider');
+			expect(screen.queryByTestId('edit-agent-run-on-field-context')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
+		});
+
+		it("shows the agent's stored target and saves it unchanged", async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			expect(contextInput().value).toBe('65536');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual(QWEN);
+		});
+
+		it('saves a model picked from a source, at the smallest agent context', async () => {
+			renderOnModels(createSession());
+
+			await listed();
+			fireEvent.change(picker(), { target: { value: 'ep-ollama:qwen3:latest' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual({
+				type: 'source',
+				endpointId: OLLAMA.id,
+				model: 'qwen3:latest',
+				contextTokens: RUN_ON_MIN_CONTEXT_TOKENS,
+			});
+		});
+
+		it('clears the target when Provider is chosen', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			fireEvent.change(picker(), { target: { value: 'provider' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).toHaveBeenCalledTimes(1);
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
+		});
+
+		it('saves a context size typed into the field', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(contextInput().value).toBe('65536'));
+			fireEvent.change(contextInput(), { target: { value: '131072' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual({ ...QWEN, contextTokens: 131_072 });
+		});
+
+		it('refuses a context under the agent minimum, on the Models tab, without saving', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(contextInput().value).toBe('65536'));
+			fireEvent.change(contextInput(), { target: { value: '8192' } });
+			openTab('General');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-run-on-field-status')).toHaveTextContent(
+				`at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens`
+			);
+			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
+		});
+
+		it('shows a stored target that cannot be read as Provider, with the reason', async () => {
+			renderOnModels(createSession({ runOn: { type: 'source', endpointId: OLLAMA.id } as never }));
+
+			expect(picker().value).toBe('provider');
+			expect(screen.getByTestId('edit-agent-run-on-field-status')).toHaveTextContent(
+				'The stored Run on target cannot be used'
+			);
+		});
+
+		it('disables both gateway controls while a source is chosen, and says why', async () => {
+			renderOnModels(createSession({ runOn: QWEN, gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			const gateway = screen
+				.getByTestId('edit-agent-gateway')
+				.querySelector('input') as HTMLInputElement;
+			expect(gateway).toBeDisabled();
+			// The stored URL is kept: it applies again when Run on is Provider.
+			expect(gateway.value).toBe('http://127.0.0.1:8787');
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+				'Not applied while Run on is a source'
+			);
+			expect(screen.getByTestId('edit-agent-proxy-mode')).toBeDisabled();
+
+			fireEvent.change(picker(), { target: { value: 'provider' } });
+			expect(gateway).not.toBeDisabled();
+		});
+
+		it('tests the target shown with the form as it stands, and shows the reply', async () => {
+			vi.mocked(window.maestro.localModels.runOn.test).mockResolvedValueOnce({
+				ok: true,
+				model: 'qwen3:latest',
+				label: 'qwen3:latest on Ollama',
+				reply: 'ready',
+				durationMs: 4200,
+				contextTokens: 65_536,
+			});
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			fireEvent.click(screen.getByTestId('edit-agent-run-on-field-test'));
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-run-on-field-test-result')).toHaveTextContent(
+					'qwen3:latest on Ollama answered in 4.2 s: ready'
+				)
+			);
+			expect(window.maestro.localModels.runOn.test).toHaveBeenCalledWith({
+				agentId: 'session-123',
+				target: QWEN,
+				subject: {
+					toolType: 'claude-code',
+					cwd: '/home/user/project',
+					customPath: '/custom/claude',
+					customArgs: '--verbose',
+					customEnvVars: { API_KEY: 'test-key' },
+					sshRemoteConfig: { enabled: false, remoteId: null },
+				},
+			});
+			// Testing saves nothing.
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('shows why a test failed', async () => {
+			vi.mocked(window.maestro.localModels.runOn.test).mockResolvedValueOnce({
+				ok: false,
+				code: 'run-on-model-not-served',
+				message: 'The source "Ollama" does not serve "qwen3:latest".',
+			});
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			fireEvent.click(screen.getByTestId('edit-agent-run-on-field-test'));
+
+			const result = await screen.findByTestId('edit-agent-run-on-field-test-result');
+			expect(result).toHaveAttribute('data-ok', 'false');
+			expect(result).toHaveTextContent('does not serve "qwen3:latest"');
 		});
 	});
 });

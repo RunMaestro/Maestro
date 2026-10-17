@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import {
 	ArrowUp,
 	Brain,
@@ -22,11 +22,15 @@ import {
 } from '../../../../shared/agentMetadata';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { shortcutSuffix } from '../../ui/ShortcutHint';
+import { DictationButton } from '../../ui/DictationButton';
+import type { DictationTarget } from '../../../utils/dictationTargets';
 import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
+import { useAutoModelChoice } from '../../../hooks/agent/useAutoModelChoice';
+import { withAutoModelOption } from '../../../../shared/autoTurn';
 import {
 	nextPermissionMode,
 	permissionModeFields,
@@ -56,6 +60,20 @@ interface ToolbarControlsProps {
 	isVoiceListening?: boolean;
 	/** Toggle voice dictation on/off. Stable identity (see InputArea). */
 	onToggleVoiceInput?: () => void;
+	/**
+	 * A Cappella owns the composer's microphone, so this row must not draw one.
+	 *
+	 * The A Cappella button lives under Send in `NotificationSendControls`, where
+	 * it is visible on every pointer type. Without this flag a touch device with
+	 * the Encore Feature on would show two microphones wired to the same toggle.
+	 */
+	voiceHandledElsewhere?: boolean;
+	/**
+	 * Where a dictated transcript lands in this composer. Dictation is not a
+	 * voice session: it types into the draft and nothing is sent or routed. The
+	 * button draws itself only when the `dictation` Local Models task is on.
+	 */
+	dictationTarget?: DictationTarget;
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
@@ -98,6 +116,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 	voiceSupported,
 	isVoiceListening,
 	onToggleVoiceInput,
+	voiceHandledElsewhere,
+	dictationTarget,
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
@@ -156,7 +176,21 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// targets would defeat the point. Shown only when the Web Speech API is
 	// supported AND the primary pointer is coarse (touch), so mouse/keyboard
 	// desktop users never see it.
-	const showVoiceButton = isAiMode && !!voiceSupported && !!onToggleVoiceInput && isCoarsePointer();
+	const showVoiceButton =
+		isAiMode &&
+		!!voiceSupported &&
+		!!onToggleVoiceInput &&
+		!voiceHandledElsewhere &&
+		isCoarsePointer();
+
+	// A Cappella owns the microphone through NotificationSendControls, and that
+	// whole column is dropped on a phone (see the phone branch below), so this
+	// row is the only place left to draw one there. Web Speech support is beside
+	// the point for it: the voice session runs in the main process, not in the
+	// browser's recognizer. Without this the one layout with no keyboard is also
+	// the one layout with no microphone.
+	const showACappellaVoiceButton =
+		phone && isAiMode && !!onToggleVoiceInput && !!voiceHandledElsewhere;
 
 	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
 	const rawPermissionMode: 'full' | 'standard' | 'readonly' = resolveTabPermissionMode(activeTab);
@@ -179,6 +213,15 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// shortcutSuffix both render nothing for an empty list, which is what keeps
 	// a cleared binding from drawing a bare "Try: ".
 	const modelEffortKeys = shortcuts?.openModelEffort?.keys;
+
+	// Auto is a model choice like any other, offered only for an agent it can
+	// act on. It is added here, where the agent is known, so the desktop pill and
+	// the phone sheet below list the same thing.
+	const autoModel = useAutoModelChoice(session);
+	const modelOptions = useMemo(
+		() => withAutoModelOption(availableModels, autoModel),
+		[availableModels, autoModel]
+	);
 
 	// The three tab-scoped toggles below are all bindable chords. Read them live
 	// from the tab shortcut map rather than spelling the default combo into the
@@ -301,7 +344,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						</button>
 					)}
 					{fileUploadControl}
-					{showVoiceButton && (
+					{(showVoiceButton || showACappellaVoiceButton) && (
 						<button
 							type="button"
 							onClick={onToggleVoiceInput}
@@ -368,7 +411,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 						tabShowThinking={tabShowThinking}
 						onThinkingModeChange={onToggleTabShowThinking ? handleThinkingModeChange : undefined}
 						currentModel={currentModel}
-						availableModels={availableModels}
+						availableModels={modelOptions}
+						autoModelTitle={autoModel?.title}
 						onModelChange={onModelChange}
 						currentEffort={currentEffort}
 						availableEfforts={availableEfforts}
@@ -379,8 +423,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 		);
 	}
 
+	// mt-auto pins the row to the bottom of the composer box. The A Cappella
+	// microphone makes the Send column taller than the textarea, and the box
+	// stretches to match it - without this the pills float in the middle with
+	// dead space under them.
 	return (
-		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
+		<div className="mt-auto flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
 			<div className="flex min-w-0 flex-1 gap-1 items-center">
 				{isTerminalMode && (
 					<div
@@ -428,6 +476,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<Mic className="w-4 h-4" />
 					</button>
 				)}
+				{isAiMode && dictationTarget && (
+					<DictationButton
+						theme={theme}
+						target={dictationTarget}
+						testId="composer-dictation-button"
+					/>
+				)}
 				{imageFileInput}
 				<ModelEffortPills
 					isVisible={isAiMode}
@@ -435,8 +490,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}
 					currentEffort={currentEffort}
-					availableModels={availableModels}
+					availableModels={modelOptions}
 					availableEfforts={availableEfforts}
+					autoModelTitle={autoModel?.title}
 					onModelChange={onModelChange}
 					onEffortChange={onEffortChange}
 					modelMenuOpen={modelMenuOpen}

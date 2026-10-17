@@ -1,6 +1,6 @@
 # CLAUDE-FEATURES.md
 
-Feature documentation for Usage Dashboard and Document Graph. For the main guide, see [[CLAUDE.md]].
+Feature documentation for Usage Dashboard, Document Graph, and Delegation Graph. For the main guide, see [[CLAUDE.md]].
 
 ## Usage Dashboard
 
@@ -104,7 +104,7 @@ The Document Graph (`src/renderer/components/DocumentGraph/`) visualizes markdow
 
 It renders to a **single HTML canvas**, not to React Flow. `MindMap.tsx` owns one `<canvas>` and draws every node, edge, hull, and caption into it by hand. That is why the graph can hold hundreds of documents without the DOM node count becoming the bottleneck, and it is also the constraint behind most of the patterns below: nothing here is a React component that can be styled or queried, so hit testing, layout, and text truncation are all arithmetic the module has to do itself.
 
-**Three files in this directory are dead.** `DocumentNode.tsx`, `ExternalLinkNode.tsx`, and `layoutAlgorithms.ts` are the React Flow implementation this replaced. They still import `reactflow` and are still referenced by tests, but no production code imports them. Do not extend them, and do not read them to learn how the graph works - they describe a rendering model this feature no longer uses.
+**Two node components in this directory are unused.** `DocumentNode.tsx` and `ExternalLinkNode.tsx` belong to the former React Flow renderer. `layoutAlgorithms.ts` still supplies the Delegation Graph's React Flow editor; it does not drive the Document Graph canvas.
 
 ### Architecture
 
@@ -127,11 +127,12 @@ src/renderer/components/DocumentGraph/
 │
 ├── DocumentNode.tsx             # UNUSED - React Flow leftover
 ├── ExternalLinkNode.tsx         # UNUSED - React Flow leftover
-└── layoutAlgorithms.ts          # UNUSED - React Flow leftover
+└── layoutAlgorithms.ts          # Shared React Flow layouts used by the delegation editor
 
 src/renderer/utils/
 ├── markdownLinkParser.ts        # Parses [[wiki-links]] and [markdown](links)
-└── documentStats.ts             # Document statistics (word count, mtime, description)
+├── documentStats.ts             # Document statistics (word count, mtime, description)
+└── graphEdgeGeometry.ts         # Shared directed-edge routing for canvas and React Flow
 
 src/main/ipc/handlers/
 └── documentGraph.ts             # Chokidar file watcher for real-time updates
@@ -261,3 +262,15 @@ documentGraphLayoutType: DocumentGraphLayoutType; // Default layout (default: 'h
 ### User Documentation
 
 [document-graph.md](docs/document-graph.md) covers the same feature for users: what each layout answers, the scroll modes, and the keyboard summary. A change to the layouts or the shortcuts belongs in both files.
+
+## Delegation Graph
+
+`DelegationGraphView.tsx` reuses `<MindMap>` from the Document Graph in View mode and retains the React Flow relationship editor in Edit mode. `delegationMindMapData()` adapts the live peer-roster model to canvas nodes and directed links. Both canvases use `graphEdgeGeometry()` in `src/renderer/utils/graphEdgeGeometry.ts`; do not add a second arrow router.
+
+`buildDelegationGraph()` accepts all-agent, group, and agent scopes. An agent scope follows incoming and outgoing links transitively across groups to show its connected component. Right-clicking an agent with a resolved peer relationship exposes **View Delegation Graph**. The toolbar can isolate the selected agent's cluster or show all agents again. Cmd/Ctrl+K and the hamburger menu open the global graph; `openDelegationGraph` ships with no shortcut assigned.
+
+The global default is `DEFAULT_GLOBAL_DELEGATION_LAYOUT` (`lobes`); group and agent scopes use `DEFAULT_DELEGATION_LAYOUT` (`hierarchical`). The layout vocabulary reuses the Document Graph's leaf labels and excludes Timeline, since relationships have no document timestamps. Layouts and positions are stored separately under `all`, `group:<groupId>`, and `agent:<sessionId>`.
+
+For the fleet view, `<MindMap clusterAllNodes nodeLabel="agent">` includes disconnected communities in Lobes. Directed links remain visible between every pair of displayed endpoints in every layout. Default Document Graph behavior is unchanged: disconnected documents remain in the orphan band unless the caller requests clustering. A canvas drag supplies all displayed positions to the caller so the existing debounced persistence can save the whole arrangement. Manual placement hides algorithm hulls, and Fit measures the displayed coordinates.
+
+User documentation: [agent-delegation.md](docs/agent-delegation.md#the-delegation-graph).

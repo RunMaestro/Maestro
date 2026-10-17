@@ -10,7 +10,12 @@ import {
 	type FirstPartyEncoreFlag,
 } from '../../shared/plugins/first-party';
 import { readSettingValue } from '../services/storage';
-import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	reportResult,
+	failCommand,
+	failFromError,
+} from '../services/session-command';
 
 // Feature ID -> display name. Keys mirror EncoreFeatureFlags in
 // src/shared/encoreFeatures.ts. Aliases let an agent say "symphony" or "cue".
@@ -26,8 +31,12 @@ const FEATURES: Record<string, string> = {
 	computerHistory: 'Computer History',
 	quickChat: 'Quick Chat',
 	maestroRun: 'MaestroRun (macOS)',
+	aCappella: 'A Cappella (Voice)',
 	throughputGauge: 'Throughput Gauge',
 };
+
+/** Every feature id `enable` accepts on some platform, in the order `list` prints them. */
+export const ENCORE_FEATURE_KEYS: readonly string[] = Object.keys(FEATURES);
 
 const ALIASES: Record<string, string> = {
 	'director-notes': 'directorNotes',
@@ -53,6 +62,10 @@ const ALIASES: Record<string, string> = {
 	quickchat: 'quickChat',
 	'maestro-run': 'maestroRun',
 	maestrorun: 'maestroRun',
+	'a-cappella': 'aCappella',
+	acappella: 'aCappella',
+	voice: 'aCappella',
+	'voice-mode': 'aCappella',
 	'throughput-gauge': 'throughputGauge',
 	throughputgauge: 'throughputGauge',
 	throughput: 'throughputGauge',
@@ -154,6 +167,6 @@ export async function encoreSet(
 			jsonExtra: { feature: key, enabled },
 		});
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

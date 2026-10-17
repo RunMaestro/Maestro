@@ -10,13 +10,19 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-const h = vi.hoisted(() => ({ configDir: '', flags: {} as Record<string, unknown> }));
+const h = vi.hoisted(() => ({
+	configDir: '',
+	flags: {} as Record<string, unknown>,
+	assignments: {} as Record<string, unknown>,
+}));
 
 vi.mock('../../../cli/services/storage', () => ({
 	getConfigDirectory: () => h.configDir,
 	readSettingValue: (key: string) => (key === 'encoreFeatures' ? h.flags : undefined),
 	resolveAgentId: (id: string) => id,
 	readActiveAgentId: () => null,
+	readLocalModelAssignments: () => h.assignments,
+	readLocalModelEndpoints: () => [{ id: 'ep-1', name: 'Ollama' }],
 }));
 vi.mock('../../../shared/cli-server-discovery', () => ({ isCliServerRunning: vi.fn(() => false) }));
 vi.mock('../../../cli/services/session-command', async (importOriginal) => {
@@ -72,6 +78,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	h.configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ch-cli-'));
 	h.flags = { computerHistory: true };
+	h.assignments = {};
 	logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 	vi.spyOn(process, 'exit').mockImplementation(() => {
@@ -191,7 +198,37 @@ describe('reads (from disk)', () => {
 
 	it('config with no flags prints defaults from disk', async () => {
 		await computerHistoryConfig({ json: true });
-		expect(lastJson()).toMatchObject({ config: { retentionDays: 90, snapshots: true } });
+		expect(lastJson()).toMatchObject({
+			config: { retentionDays: 90, snapshots: true, digests: { source: 'local' } },
+			digestModel: null,
+		});
+	});
+
+	it('config names the digest writer: the assigned model for the local source', async () => {
+		await computerHistoryConfig({});
+		expect(output()).toMatch(/Digests:\s+off \(local model not set\)/);
+
+		h.assignments = {
+			'history-digests': { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3:latest' },
+		};
+		logSpy.mockClear();
+		await computerHistoryConfig({});
+		expect(output()).toMatch(/Digests:\s+off \(local model qwen3:latest on Ollama\)/);
+		await computerHistoryConfig({ json: true });
+		expect(lastJson().digestModel).toBe('qwen3:latest on Ollama');
+	});
+
+	it('config and status name the agent for the agent source', async () => {
+		fs.mkdirSync(store(), { recursive: true });
+		fs.writeFileSync(
+			store('config.json'),
+			JSON.stringify({ digests: { enabled: true, source: 'agent', agentId: 'agent-7' } })
+		);
+		await computerHistoryConfig({});
+		expect(output()).toMatch(/Digests:\s+on \(agent agent-7\)/);
+		logSpy.mockClear();
+		await computerHistoryStatus({});
+		expect(output()).toMatch(/Digests:\s+on \(agent agent-7\), 6-hour roll-up on/);
 	});
 });
 
@@ -345,10 +382,47 @@ describe('writes (over WS)', () => {
 					retentionDays: 30,
 					maxBytes: 2 * 1024 ** 3,
 					snapshots: false,
-					digests: { enabled: true, agentId: 'agent-7' },
+					// Naming an agent chooses it as the writer.
+					digests: { enabled: true, agentId: 'agent-7', source: 'agent' },
 				},
 			},
 			'computer_history_command_result'
+		);
+	});
+
+	it('config --digest-source switches the writer and refuses an unknown one', async () => {
+		vi.mocked(sendSimpleCommand).mockResolvedValue({ success: true, config: {} });
+		await computerHistoryConfig({ digestSource: 'Local', json: true });
+		expect(sendSimpleCommand).toHaveBeenLastCalledWith(
+			{
+				type: 'computer_history_command',
+				action: 'config-set',
+				patch: { digests: { source: 'local' } },
+			},
+			'computer_history_command_result'
+		);
+		// An explicit source wins over the one an agent flag implies.
+		await computerHistoryConfig({ digestAgent: 'agent-7', digestSource: 'local', json: true });
+		expect(sendSimpleCommand).toHaveBeenLastCalledWith(
+			{
+				type: 'computer_history_command',
+				action: 'config-set',
+				patch: { digests: { agentId: 'agent-7', source: 'local' } },
+			},
+			'computer_history_command_result'
+		);
+		// Clearing the agent leaves the source alone.
+		await computerHistoryConfig({ digestAgent: '', json: true });
+		expect(sendSimpleCommand).toHaveBeenLastCalledWith(
+			{
+				type: 'computer_history_command',
+				action: 'config-set',
+				patch: { digests: { agentId: null } },
+			},
+			'computer_history_command_result'
+		);
+		await expect(computerHistoryConfig({ digestSource: 'cloud', json: true })).rejects.toThrow(
+			'__exit__'
 		);
 	});
 

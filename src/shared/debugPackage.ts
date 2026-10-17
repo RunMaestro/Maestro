@@ -72,4 +72,11 @@ export interface DebugPackageOptions {
 	 * unavailable rather than silently claiming no runs were active.
 	 */
 	autoRunSnapshots?: AutoRunDebugSnapshot[];
+	/**
+	 * Write the package even when the secret screen finds a possible credential
+	 * in it. Set by the "Create anyway" confirmation and by
+	 * `maestro-cli support-package --allow-secrets`; only a literal `true`
+	 * counts. Without it a finding writes no zip and returns the masked list.
+	 */
+	allowSecrets?: boolean;
 }

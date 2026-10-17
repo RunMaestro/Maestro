@@ -2,43 +2,83 @@ import { requestProviderTranslation } from '../../services/providerTranslation';
 import type { TranslationPlan } from '../../../shared/maestro-lib/translation/types';
 import { getDeclaredTranslationDirection } from '../../../shared/maestro-lib/translation/support';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Info, Copy, Check, X, Folder } from 'lucide-react';
+import { Info, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { isCotExportAvailable } from './AgentCotExportSection';
 import { Spinner } from '../ui/Spinner';
-import { AgentResilienceSection } from './AgentResilienceSection';
-import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { normalizePeerAgents } from '../../../shared/peerAgents';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
+import { useSettingsStore, selectACappellaEnabled } from '../../stores/settingsStore';
+import { useModalStore, selectModalData } from '../../stores/modalStore';
+import { AgentWakePhraseSection } from '../Settings/ACappella/AgentWakePhraseSection';
 import {
 	resolveContextWindow,
 	isStoredContextWindowOverridden,
 } from '../../utils/contextWindowPrecedence';
-import type { AdditionalDirectory, AgentConfig, ToolType } from '../../types';
+import type {
+	AdditionalDirectory,
+	AgentConfig,
+	PeerAccess,
+	PeerAgent,
+	ToolType,
+} from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
-import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
+import { ModalTabStrip, useModalTabs } from '../ui/ModalTabStrip';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
+import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
-import { SshRemoteSelector } from '../shared/SshRemoteSelector';
+import { usePeerFleet } from '../../hooks/agent/usePeerFleet';
+import { GatewayUrlField } from '../shared/GatewayUrlField';
+import { RunOnField } from '../shared/RunOnField';
+import { TierTargetsField } from '../shared/TierTargetsField';
+import {
+	AGENT_FORM_TAB_IDS,
+	AgentProviderSelect,
+	AUDIT_LOG_TAB_ID,
+	AuditLogTab,
+	BrowseFolderButton,
+	buildAgentSettingsTabs,
+	EDIT_AGENT_TAB_IDS,
+	EnvironmentTab,
+	firstTabWithError,
+	GeneralTab,
+	ModelsTab,
+	PeersTab,
+	ProviderTab,
+	sshFolderPickerUnavailableTitle,
+	SshTab,
+} from '../AgentSettings';
+import { AgentSystemOneControl } from './AgentSystemOneControl';
+import { AgentTokenProxyModeControl } from './AgentTokenProxyModeControl';
+import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
+import {
+	agentRunOnSupport,
+	isRunOnSourceTarget,
+	parseRunOnEdit,
+	parseRunOnTarget,
+	RUN_ON_GATEWAY_SKIPPED_REASON,
+	type RunOnSourceTarget,
+	type RunOnTarget,
+} from '../../../shared/local-models/run-on';
+import { parseTierTargetsEdit, type TierTargets } from '../../../shared/modelTiers';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
-import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
-import type { EditAgentModalProps } from './types';
-import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
+import { SUPPORTED_AGENTS, type EditAgentModalProps } from './types';
 import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
-import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 import type { CodexTransport } from '../../../shared/codexTransport';
 
 /**
@@ -46,6 +86,12 @@ import type { CodexTransport } from '../../../shared/codexTransport';
  *
  * Allows editing the agent's name, provider, working directory (refused while
  * the agent is running), messages, provider settings, and SSH configuration.
+ *
+ * The form is tabbed (General, Provider, Models, Environment, Peers, SSH; see
+ * `AgentSettings/`). Every piece of state stays here: the panels only draw it.
+ * Only the active panel is rendered, so Tab never walks into a hidden one.
+ * The desktop app adds a last tab, Audit Log, which is the exception: it saves
+ * itself and none of its state is here.
  */
 export function EditAgentModal({
 	isOpen,
@@ -60,6 +106,11 @@ export function EditAgentModal({
 	const [nudgeMessage, setNudgeMessage] = useState('');
 	const [newSessionMessage, setNewSessionMessage] = useState('');
 	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
+	// Peer Agents: the explicit rows, and the group and worktree grants. A grant
+	// that is off is `undefined`, never a pair of false bits.
+	const [peerAgents, setPeerAgents] = useState<PeerAgent[]>([]);
+	const [groupPeerAccess, setGroupPeerAccess] = useState<PeerAccess | undefined>(undefined);
+	const [worktreePeerAccess, setWorktreePeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const homeDir = useHomeDir();
 	const [agent, setAgent] = useState<AgentConfig | null>(null);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
@@ -77,6 +128,21 @@ export function EditAgentModal({
 	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>({});
 	// Vars the user switched off: listed and editable, never passed to the agent.
 	const [customEnvVarsDisabled, setCustomEnvVarsDisabled] = useState<Record<string, string>>({});
+	// Local Models gateway URL, and the reason the last save refused it.
+	const [gatewayUrl, setGatewayUrl] = useState('');
+	const [gatewayUrlError, setGatewayUrlError] = useState<string | undefined>(undefined);
+	// Where the agent's model runs, and the reason the last save refused it.
+	const [runOn, setRunOn] = useState<RunOnTarget>({ type: 'provider' });
+	const [runOnError, setRunOnError] = useState<string | undefined>(undefined);
+	// Where each tier launches for this agent, and the reason the last save
+	// refused it. A tier the record does not hold follows the harness default.
+	const [tierTargets, setTierTargets] = useState<TierTargets>({});
+	const [tierTargetsError, setTierTargetsError] = useState<string | undefined>(undefined);
+	// What the Auto model choice is judged against besides the provider, as the
+	// form holds it: mapping a tier on the Models tab can make Auto offered here.
+	const autoModelFor = useMemo(() => ({ tierTargets, runOn }), [tierTargets, runOn]);
+	// A save was refused: an empty name now says so instead of blocking silently.
+	const [saveAttempted, setSaveAttempted] = useState(false);
 	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
 	// SSH default - TUI - applies), false = explicit API, true = explicit
 	// maestro-p. Coercing undefined->false here (or false->undefined on save)
@@ -115,6 +181,22 @@ export function EditAgentModal({
 	// merged in for display. Blur-saves of agent-level options rebuild from this so
 	// they never write (or erase) the per-session model/contextWindow/effort.
 	const globalConfigRef = useRef<Record<string, any>>({});
+
+	// One owner for the voice gate: the same selector the HUD and Voice Setup read.
+	const aCappellaEnabled = useSettingsStore(selectACappellaEnabled);
+
+	// The one piece of form state the tabs own. Reopening shows the last tab used.
+	// A caller can send the user to one tab (`openAgentSettings(session, { tab })`).
+	const requestedTab = useModalStore((state) => selectModalData('editAgent')(state)?.initialTab);
+	// The Audit Log tab exists only where the desktop app offers the feature.
+	const tabIds = isCotExportAvailable() ? EDIT_AGENT_TAB_IDS : AGENT_FORM_TAB_IDS;
+	const { activeTab, setActiveTab } = useModalTabs({
+		tabs: tabIds,
+		initialTab: 'general',
+		rememberKey: 'edit-agent',
+		requestedTab,
+		enabled: isOpen,
+	});
 
 	// Clear copy timeout and reset copied state on unmount, close, or session change
 	useEffect(() => {
@@ -369,6 +451,19 @@ export function EditAgentModal({
 			setCustomArgs('');
 			setCustomEnvVars({});
 			setCustomEnvVarsDisabled({});
+			// A gateway URL is provider-specific (it names a proxy that speaks one
+			// provider's API), so it does not carry across a switch.
+			setGatewayUrl('');
+			// A Run on target names a source and a model, not a provider, so it is
+			// carried across. A provider whose harness cannot use one starts over.
+			if (!agentRunOnSupport(activeToolType).supported) {
+				setRunOn({ type: 'provider' });
+				setRunOnError(undefined);
+			}
+			// A tier names a model, and a provider's models are its own, so the
+			// tiers start over with the provider's other model settings.
+			setTierTargets({});
+			setTierTargetsError(undefined);
 			setEnableMaestroP(undefined);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -379,6 +474,20 @@ export function EditAgentModal({
 			setCustomArgs(session.customArgs ?? '');
 			setCustomEnvVars(session.customEnvVars ?? {});
 			setCustomEnvVarsDisabled(session.customEnvVarsDisabled ?? {});
+			setGatewayUrl(session.gatewayUrl ?? '');
+			// A stored target that cannot be read is shown as Provider with the
+			// reason, so the launch's refusal is visible where it can be fixed.
+			const storedRunOn = parseRunOnTarget(session.runOn);
+			setRunOn(storedRunOn.ok ? storedRunOn.target : { type: 'provider' });
+			setRunOnError(
+				storedRunOn.ok
+					? undefined
+					: `The stored Run on target cannot be used: ${storedRunOn.error} Saving sets it to what is chosen here.`
+			);
+			// Kept as stored: a target a launch would refuse is shown with the
+			// launch's own words beside its picker, where it can be replaced.
+			setTierTargets({ ...session.tierTargets });
+			setTierTargetsError(undefined);
 			// Preserve the tri-state (undefined stays undefined) so an unconfigured
 			// SSH agent keeps its "unset" signal instead of looking like explicit API.
 			setEnableMaestroP(session.enableMaestroP);
@@ -403,12 +512,17 @@ export function EditAgentModal({
 	useEffect(() => {
 		if (isOpen && session) {
 			setInstanceName(session.name);
+			setSaveAttempted(false);
 			setWorkingDir(session.projectRoot);
 			setNudgeMessage(session.nudgeMessage || '');
 			setNewSessionMessage(session.newSessionMessage || '');
 			// Clone the grants so editing a row doesn't mutate the persisted array
 			// in the session store before the user hits Save.
 			setAdditionalDirectories((session.additionalDirectories ?? []).map((d) => ({ ...d })));
+			// The same for the peer rows and the two grants.
+			setPeerAgents((session.peerAgents ?? []).map((peer) => ({ ...peer })));
+			setGroupPeerAccess(session.groupPeerAccess && { ...session.groupPeerAccess });
+			setWorktreePeerAccess(session.worktreePeerAccess && { ...session.worktreePeerAccess });
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 			setSelectedUserResources(['']);
@@ -438,6 +552,14 @@ export function EditAgentModal({
 		if (!remoteId) return undefined;
 		const remote = sshRemotes.find((r) => r.id === remoteId);
 		return remote?.host;
+	}, [isSshEnabled, sshRemoteConfig?.remoteId, sshRemotes]);
+
+	// The remote's name, for the gateway field and the "Runs on" chip. The id
+	// stands in until the remotes load: both must know the agent is remote.
+	const sshRemoteName = useMemo(() => {
+		if (!isSshEnabled) return undefined;
+		const remoteId = sshRemoteConfig?.remoteId ?? undefined;
+		return sshRemotes.find((r) => r.id === remoteId)?.name ?? remoteId;
 	}, [isSshEnabled, sshRemoteConfig?.remoteId, sshRemotes]);
 
 	const trimmedWorkingDir = workingDir.trim();
@@ -494,6 +616,11 @@ export function EditAgentModal({
 		if (folder) setWorkingDir(folder);
 	}, []);
 
+	// What the Peers tab draws from besides the form: the live fleet and the
+	// group this agent is in right now. This form does not edit the group, so the
+	// live entry is the truth and the opening snapshot is the fallback.
+	const peerGroupId = (liveSession ?? session)?.groupId;
+	const peerFleet = usePeerFleet(peerGroupId);
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
 	 * the one in use (#1370, following finding AD1).
@@ -558,6 +685,33 @@ export function EditAgentModal({
 		// Validate before saving
 		const result = validateEditSession(name, session.id, existingSessions);
 		if (!result.valid || workingDirError || newWorkingDirUnverified) return;
+
+		// A gateway the launch would refuse is refused here instead, where the
+		// user can still fix it. Blank clears the gateway.
+		const gatewayEdit = parseGatewayUrlEdit(selectedToolType, gatewayUrl);
+		if (!gatewayEdit.ok) {
+			setGatewayUrlError(gatewayEdit.error);
+			setActiveTab('models');
+			return;
+		}
+
+		// The Run on target goes through the validator every writer shares, so
+		// nothing is stored that the launch would refuse as malformed.
+		const runOnEdit = parseRunOnEdit(selectedToolType, runOn);
+		if (!runOnEdit.ok) {
+			setRunOnError(runOnEdit.error);
+			setActiveTab('models');
+			return;
+		}
+
+		// The tiers go through the check every tier writer shares, so a target a
+		// launch would refuse is refused here, with the tier named.
+		const tiersEdit = parseTierTargetsEdit(selectedToolType, tierTargets);
+		if (!tiersEdit.ok) {
+			setTierTargetsError(tiersEdit.error);
+			setActiveTab('models');
+			return;
+		}
 
 		// Get model, contextWindow and effort from agentConfig (updated via onConfigChange).
 		// Pass empty string to explicitly clear (distinguishes from undefined = never set)
@@ -635,11 +789,22 @@ export function EditAgentModal({
 				workingDirChanged ? trimmedWorkingDir : undefined,
 				codexAutoReset,
 				codexTransport,
+				gatewayEdit.gatewayUrl ?? undefined,
+				// Provider is the absence of a target on the agent record.
+				runOnEdit.target,
+				// No tier set is the absence of the field: every tier follows its harness default.
+				tiersEdit.tierTargets,
+				// A row with neither square lit is kept: it is an exclusion.
+				{
+					peerAgents: normalizePeerAgents(peerAgents),
+					groupPeerAccess,
+					worktreePeerAccess,
+				},
 			];
 			if (providerChanged) {
-				saveArguments[23] = acceptTranslationLimitations;
-				saveArguments[24] = selectedUserResources.map((p) => p.trim()).filter(Boolean);
-				saveArguments[25] = migrationPlan?.id;
+				saveArguments[27] = acceptTranslationLimitations;
+				saveArguments[28] = selectedUserResources.map((p) => p.trim()).filter(Boolean);
+				saveArguments[29] = migrationPlan?.id;
 			}
 			const saved = onSave(...saveArguments);
 			if (saved) await saved;
@@ -665,10 +830,16 @@ export function EditAgentModal({
 		newSessionMessage,
 		additionalDirectories,
 		homeDir,
+		peerAgents,
+		groupPeerAccess,
+		worktreePeerAccess,
 		customPath,
 		customArgs,
 		customEnvVars,
 		customEnvVarsDisabled,
+		gatewayUrl,
+		runOn,
+		tierTargets,
 		enableMaestroP,
 		maestroPMode,
 		maestroPPath,
@@ -684,6 +855,7 @@ export function EditAgentModal({
 		onSave,
 		onClose,
 		existingSessions,
+		setActiveTab,
 	]);
 
 	// Refresh available models
@@ -743,6 +915,50 @@ export function EditAgentModal({
 		acceptTranslationLimitations,
 	]);
 
+	// The message under the name. An empty name only says so once a save was
+	// refused, so clearing the field to retype it is not drawn in red.
+	const nameError =
+		validation.errorField === 'name'
+			? validation.error
+			: saveAttempted && !instanceName.trim()
+				? 'Enter a name for the agent'
+				: undefined;
+
+	// Fields showing an error message: each puts a dot on its tab.
+	const errorFields = useMemo(() => {
+		const fields: string[] = [];
+		if (nameError) fields.push('name');
+		if (!validation.valid && validation.errorField && validation.errorField !== 'name') {
+			fields.push(validation.errorField);
+		}
+		if (workingDirError) fields.push('workingDir');
+		if (gatewayUrlError) fields.push('gatewayUrl');
+		if (runOnError) fields.push('runOn');
+		if (tierTargetsError) fields.push('tierTargets');
+		return fields;
+	}, [
+		nameError,
+		validation.valid,
+		validation.errorField,
+		workingDirError,
+		gatewayUrlError,
+		runOnError,
+		tierTargetsError,
+	]);
+	const tabs = useMemo(() => buildAgentSettingsTabs(tabIds, errorFields), [tabIds, errorFields]);
+
+	// A save attempt that cannot save goes to the field that blocks it, so a
+	// user on another tab is not left facing a dead Save. An unverified new
+	// directory blocks without a message, so it counts here too.
+	const showFirstBlockingField = useCallback(() => {
+		setSaveAttempted(true);
+		const blocking = [...errorFields];
+		if (!instanceName.trim()) blocking.push('name');
+		if (newWorkingDirUnverified) blocking.push('workingDir');
+		const tab = firstTabWithError(blocking, tabIds);
+		if (tab) setActiveTab(tab);
+	}, [errorFields, instanceName, newWorkingDirUnverified, setActiveTab, tabIds]);
+
 	// Handle keyboard shortcuts via window listener (Modal stops propagation on its backdrop)
 	useEffect(() => {
 		if (!isOpen) return;
@@ -751,12 +967,71 @@ export function EditAgentModal({
 				e.preventDefault();
 				if (isFormValid) {
 					handleSave();
+				} else {
+					showFirstBlockingField();
 				}
 			}
 		};
 		window.addEventListener('keydown', handler, true);
 		return () => window.removeEventListener('keydown', handler, true);
-	}, [isOpen, isFormValid, handleSave]);
+	}, [isOpen, isFormValid, handleSave, showFirstBlockingField]);
+
+	// The live agent's gateway after the proxy mode control stored one.
+	const handleProxyGatewayUrl = useCallback((next: string) => {
+		setGatewayUrl(next);
+		setGatewayUrlError(undefined);
+	}, []);
+
+	// One test turn on the target the picker shows, launched with the form as
+	// it stands: a provider, path, variable or remote that is not saved yet is
+	// what the next turn would use once it is.
+	const handleTestRunOn = useCallback(
+		(target: RunOnSourceTarget) => {
+			if (!session) throw new Error('No agent to test.');
+			return window.maestro.localModels.runOn.test({
+				agentId: session.id,
+				target,
+				subject: {
+					toolType: selectedToolType,
+					cwd:
+						(workingDirChanged ? trimmedWorkingDir : undefined) ||
+						(isSshEnabled ? sshRemoteConfig?.workingDirOverride : undefined) ||
+						session.projectRoot,
+					customPath: customPath.trim() || undefined,
+					customArgs: customArgs.trim() || undefined,
+					customEnvVars,
+					sshRemoteConfig:
+						isSshEnabled && sshRemoteConfig?.remoteId
+							? {
+									enabled: true,
+									remoteId: sshRemoteConfig.remoteId,
+									workingDirOverride: sshRemoteConfig.workingDirOverride,
+								}
+							: { enabled: false, remoteId: null },
+				},
+			});
+		},
+		[
+			session,
+			selectedToolType,
+			workingDirChanged,
+			trimmedWorkingDir,
+			isSshEnabled,
+			sshRemoteConfig,
+			customPath,
+			customArgs,
+			customEnvVars,
+		]
+	);
+
+	// Shared by the Provider tab's config panel (which hides them) and the
+	// Environment tab (which draws them): one set of handlers over two records.
+	const envVarProps = agentEnvVarHandlers({
+		customEnvVars,
+		customEnvVarsDisabled,
+		setCustomEnvVars,
+		setCustomEnvVarsDisabled,
+	});
 
 	if (!isOpen || !session) return null;
 
@@ -768,6 +1043,16 @@ export function EditAgentModal({
 	const usesInteractiveTokenSource =
 		selectedToolType === 'claude-code' &&
 		getClaudeTokenMode({ enableMaestroP, maestroPMode }, { sshEnabled: !!isSshEnabled }) !== 'api';
+	// The agent's own vars replace the provider-level set, so the provider-level
+	// set only counts when the agent has none.
+	const effectiveEnvVars =
+		Object.keys(customEnvVars).length > 0
+			? customEnvVars
+			: (globalConfigRef.current.customEnvVars as Record<string, string> | undefined);
+	// A Run on target takes the gateway's place: both gateway controls say so.
+	const gatewaySkippedReason = isRunOnSourceTarget(runOn)
+		? RUN_ON_GATEWAY_SKIPPED_REASON
+		: undefined;
 
 	return (
 		<Modal
@@ -775,7 +1060,12 @@ export function EditAgentModal({
 			title={`Edit Agent: ${session.name}`}
 			priority={MODAL_PRIORITIES.NEW_INSTANCE}
 			onClose={onClose}
-			width={600}
+			resizable
+			resizeKey="edit-agent"
+			// Wider than New Agent's 720: the strip here can hold a seventh tab.
+			defaultSize={{ width: 820, height: 640 }}
+			minSize={{ width: 560, height: 420 }}
+			contentClassName="flex flex-col flex-1 min-h-0"
 			initialFocusRef={nameInputRef}
 			customHeader={
 				<div
@@ -824,382 +1114,472 @@ export function EditAgentModal({
 				/>
 			}
 		>
-			<div className="space-y-5">
-				{/* Agent Name */}
-				<FormInput
-					ref={nameInputRef}
-					id="edit-agent-name-input"
-					theme={theme}
-					label="Agent Name"
-					value={instanceName}
-					onChange={setInstanceName}
-					placeholder=""
-					error={validation.errorField === 'name' ? validation.error : undefined}
-					heightClass="p-2"
-				/>
-
-				{/* Agent Provider */}
-				<div>
-					<div
-						className="block text-xs font-bold opacity-70 uppercase mb-2"
-						style={{ color: theme.colors.textMain }}
-					>
-						Agent Provider
-					</div>
-					<select
-						aria-label="Agent Provider"
-						value={selectedToolType}
-						disabled={migrationSaving}
-						onChange={(e) => setSelectedToolType(e.target.value as ToolType)}
-						className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							backgroundColor: theme.colors.bgMain,
-						}}
-					>
-						{SUPPORTED_AGENTS.map((agentId) => {
-							const direction = getDeclaredTranslationDirection(session.toolType, agentId);
-							return (
-								<option key={agentId} value={agentId}>
-									{direction
-										? `→ ${getAgentDisplayName(agentId)} · Memory + history (${direction.verification === 'verified' ? 'verified' : 'preview'})`
-										: getAgentDisplayName(agentId)}
-								</option>
-							);
-						})}
-					</select>
-					<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
-						{carryDestinations.length > 0
-							? '→ Memory + session carry. Preview conversions are unverified; installed versions and content are checked before saving.'
-							: 'Memory + session carry is not available from this provider.'}
-					</div>
-					{providerChanged && migrationActivity && (
-						<div role="status" aria-live="polite" className="mt-2 flex items-center gap-2 text-xs">
-							<Spinner size={14} color={theme.colors.accent} decorative />
-							<span>{migrationActivity}</span>
-						</div>
-					)}
-					{providerChanged && (
-						<div
-							className="mt-2 p-2 rounded border text-xs space-y-2"
-							style={{
-								borderColor: theme.colors.accent + '60',
-								backgroundColor: theme.colors.accent + '10',
-								color: theme.colors.textMain,
-							}}
-						>
-							<div className="flex items-start gap-2">
-								<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-								<span>
-									Tabs, transcripts, drafts, queue and file previews are preserved. Native
-									conversion remains unverified until resume and round-trip acceptance are proved.
-								</span>
-							</div>
-							{selectedUserResources.map((resource, index) => (
-								<FormInput
-									key={index}
-									theme={theme}
-									label={`Selected user resource ${index + 1} (optional)`}
-									value={resource}
-									onChange={(value) => {
-										setSelectedUserResources((paths) =>
-											paths.map((p, i) => (i === index ? value : p))
-										);
-										setMigrationPlan(null);
-										setAcceptTranslationLimitations(false);
-									}}
-									placeholder="Absolute path to a selected skill, memory, instruction or subagent"
-									disabled={migrationSaving}
-								/>
-							))}
-							<div className="flex gap-3">
-								<button
-									type="button"
-									disabled={migrationSaving}
-									onClick={() => setSelectedUserResources((paths) => [...paths, ''])}
-								>
-									Add resource
-								</button>
-								<button
-									type="button"
-									disabled={migrationLoading || migrationSaving}
-									onClick={() => setSelectionRevision((v) => v + 1)}
-								>
-									Review selection
-								</button>
-							</div>
-							{migrationPlan && (
-								<div>
-									{migrationPlan.tabs.length} conversations, {migrationPlan.counts.records} native
-									records, {migrationPlan.counts.artifacts} artifacts.{' '}
-									{migrationPlan.status === 'deferred'
-										? 'Migration waits for the current turn to finish.'
-										: ''}
-								</div>
-							)}
-							{migrationPlan?.limitations.map((limit, index) => (
-								<div
-									key={`${limit.code}-${index}`}
-									style={{
-										color: limit.severity === 'block' ? theme.colors.error : theme.colors.textDim,
-									}}
-								>
-									{limit.message}
-								</div>
-							))}
-							{migrationPlan &&
-								migrationPlan.status !== 'blocked' &&
-								migrationPlan.limitations.length > 0 && (
-									<label className="flex items-center gap-2">
-										<input
-											type="checkbox"
-											checked={acceptTranslationLimitations}
-											disabled={migrationSaving}
-											onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
-										/>
-										Accept the listed conversion limitations
-									</label>
-								)}
-						</div>
-					)}
-					{migrationError && (
-						<div role="alert" className="mt-2 text-xs" style={{ color: theme.colors.error }}>
-							{migrationError}
-						</div>
-					)}
-				</div>
-
-				{/* Agent Resilience: auto-retry toggles (default ON), editable post-creation. */}
-				<AgentResilienceSection
-					theme={theme}
-					retryOnAvailabilityErrors={retryOnAvailabilityErrors}
-					retryOnTokenExhaustion={retryOnTokenExhaustion}
-					onChangeAvailability={setRetryOnAvailabilityErrors}
-					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
-				/>
-
-				{/* Chain of thought export. The section saves its own changes the
-				    moment they are made, into the feature's own store. It hands this
-				    dialog no state on purpose: nothing of it may reach `onSave`, and
-				    through that the Session object. */}
-				<AgentCotExportSection
-					theme={theme}
-					agentId={session.id}
-					agentName={session.name}
-					supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
-					usesInteractiveTokenSource={usesInteractiveTokenSource}
-				/>
-
-				{/* Working Directory */}
-				<div>
-					<FormInput
-						id="edit-agent-working-dir-input"
+			<ModalTabStrip
+				theme={theme}
+				tabs={tabs}
+				activeTab={activeTab}
+				onChange={setActiveTab}
+				label="Agent settings"
+				idPrefix="edit-agent"
+				className="px-6 pt-4"
+			/>
+			<div className="flex-1 min-h-0 overflow-y-auto p-6" data-testid="edit-agent-tab-body">
+				{activeTab === 'general' && (
+					<GeneralTab
 						theme={theme}
-						label="Working Directory"
-						value={workingDir}
-						onChange={setWorkingDir}
-						placeholder={
-							isSshEnabled
-								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
-								: 'Select directory...'
-						}
-						error={workingDirError}
-						helperText={
-							workingDirBlocker ??
-							(workingDirChanged
-								? 'On save, the Files panel, Auto Run folder, and git follow the new directory. Conversations the provider stored under the old path may not resume.'
-								: undefined)
-						}
-						disabled={!!workingDirBlocker}
-						monospace
-						heightClass="p-2"
-						addon={
-							<button
-								type="button"
-								onClick={handleSelectFolder}
-								disabled={isSshEnabled || !!workingDirBlocker}
-								className={`p-2 rounded border transition-colors ${isSshEnabled || workingDirBlocker ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title={
+						idPrefix="edit-agent"
+						name={instanceName}
+						onNameChange={setInstanceName}
+						nameError={nameError}
+						nameInputRef={nameInputRef}
+						nameInputId="edit-agent-name-input"
+						workingDirectory={
+							<FormInput
+								id="edit-agent-working-dir-input"
+								theme={theme}
+								label="Working Directory"
+								value={workingDir}
+								onChange={setWorkingDir}
+								placeholder={
 									isSshEnabled
-										? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-										: 'Browse folders'
+										? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
+										: 'Select directory...'
 								}
-								aria-label="Browse folders"
-							>
-								<Folder className="w-5 h-5" />
-							</button>
+								error={workingDirError}
+								helperText={
+									workingDirBlocker ??
+									(workingDirChanged
+										? 'On save, the Files panel, Auto Run folder, and git follow the new directory. Conversations the provider stored under the old path may not resume.'
+										: undefined)
+								}
+								disabled={!!workingDirBlocker}
+								monospace
+								heightClass="p-2"
+								addon={
+									<BrowseFolderButton
+										theme={theme}
+										onBrowse={handleSelectFolder}
+										disabled={isSshEnabled || !!workingDirBlocker}
+										title={
+											isSshEnabled ? sshFolderPickerUnavailableTitle(sshRemoteHost) : undefined
+										}
+									/>
+								}
+							/>
+						}
+						remotePathStatus={
+							// Remote path validation status (only shown when SSH is enabled)
+							isSshEnabled ? (
+								<RemotePathStatus
+									theme={theme}
+									validation={remotePathValidation}
+									remoteHost={sshRemoteHost || 'remote'}
+								/>
+							) : undefined
+						}
+						additionalDirectories={{
+							directories: additionalDirectories,
+							onChange: setAdditionalDirectories,
+							disableBrowse: !!isSshEnabled,
+							nativelyEnforced: !!agent?.capabilities?.supportsAdditionalDirectories,
+						}}
+						newSessionMessage={newSessionMessage}
+						onNewSessionMessageChange={setNewSessionMessage}
+						nudgeMessage={nudgeMessage}
+						onNudgeMessageChange={setNudgeMessage}
+						sshRemoteHost={sshRemoteName}
+						extra={
+							// Voice wake phrase. Renders nothing unless A Cappella is switched on.
+							<AgentWakePhraseSection
+								theme={theme}
+								agentSessionId={session.id}
+								enabled={aCappellaEnabled}
+							/>
 						}
 					/>
-					{/* Remote path validation status (only shown when SSH is enabled) */}
-					{isSshEnabled && (
-						<RemotePathStatus
-							theme={theme}
-							validation={remotePathValidation}
-							remoteHost={sshRemoteHost || 'remote'}
-						/>
-					)}
-				</div>
-
-				{/* Additional Directories: extra read/write grants beyond the working dir */}
-				<AdditionalDirectoriesSection
-					theme={theme}
-					directories={additionalDirectories}
-					onChange={setAdditionalDirectories}
-					disableBrowse={!!isSshEnabled}
-					nativelyEnforced={!!agent?.capabilities?.supportsAdditionalDirectories}
-				/>
-
-				{/* New Session Message */}
-				<NudgeMessageField
-					theme={theme}
-					value={newSessionMessage}
-					onChange={setNewSessionMessage}
-					maxLength={NEW_SESSION_MESSAGE_MAX_LENGTH}
-					label="New Session Message"
-					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
-					placeholder="Instructions sent with the first message of every new session..."
-					sizeKey="new-session-message"
-				/>
-
-				{/* Nudge Message */}
-				<NudgeMessageField theme={theme} value={nudgeMessage} onChange={setNudgeMessage} />
-
-				{/* Agent Configuration (custom path, args, env vars, agent-specific settings) */}
-				{/* Per-session config (path, args, env vars) saved on modal save, not on blur */}
-				{agent && (
-					<div>
-						<div
-							className="block text-xs font-bold opacity-70 uppercase mb-2"
-							style={{ color: theme.colors.textMain }}
-						>
-							{agentName} Settings
-						</div>
-						<AgentConfigPanel
-							theme={theme}
-							agent={agent}
-							configOptionNotes={configOptionNotes}
-							customPath={customPath}
-							onCustomPathChange={setCustomPath}
-							onCustomPathBlur={() => {
-								/* Saved on modal save */
-							}}
-							customArgs={customArgs}
-							onCustomArgsChange={setCustomArgs}
-							onCustomArgsBlur={() => {
-								/* Saved on modal save */
-							}}
-							customEnvVars={customEnvVars}
-							customEnvVarsDisabled={customEnvVarsDisabled}
-							onEnvVarToggle={(key, nextEnabled) => {
-								// Move the var between the two records, value intact.
-								const from = nextEnabled ? customEnvVarsDisabled : customEnvVars;
-								const setFrom = nextEnabled ? setCustomEnvVarsDisabled : setCustomEnvVars;
-								const setTo = nextEnabled ? setCustomEnvVars : setCustomEnvVarsDisabled;
-								const value = from[key] ?? '';
-								const remaining = { ...from };
-								delete remaining[key];
-								setFrom(remaining);
-								setTo((prev) => ({ ...prev, [key]: value }));
-							}}
-							onEnvVarKeyChange={(oldKey, newKey, value, enabled) => {
-								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
-								setVars((prev) => {
-									const newVars = { ...prev };
-									delete newVars[oldKey];
-									newVars[newKey] = value;
-									return newVars;
-								});
-							}}
-							onEnvVarValueChange={(key, value, enabled) => {
-								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
-								setVars((prev) => ({ ...prev, [key]: value }));
-							}}
-							onEnvVarRemove={(key, enabled) => {
-								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
-								setVars((prev) => {
-									const newVars = { ...prev };
-									delete newVars[key];
-									return newVars;
-								});
-							}}
-							onEnvVarAdd={() => {
-								setCustomEnvVars((prev) => withBlankEnvVarRow(prev));
-							}}
-							onEnvVarsBlur={() => {
-								/* Saved on modal save */
-							}}
-							agentConfig={agentConfig}
-							onConfigChange={(key, value) => {
-								setAgentConfig((prev) => ({ ...prev, [key]: value }));
-							}}
-							onConfigBlur={(key, value) => {
-								// model, contextWindow and effort are per-session: they are saved on
-								// modal save and must never leak into the agent-level config, which
-								// only supplies the defaults for newly created agents.
-								const effortKey = getEffortConfigKey(agent);
-								if (key === 'model' || key === 'contextWindow' || key === effortKey) return;
-
-								// agents:setConfig replaces the whole object, so rebuild from the
-								// agent-level config we loaded: dropping the per-session keys from
-								// `agentConfig` alone would erase the agent-level model/effort
-								// defaults every time an unrelated option was edited.
-								const {
-									model: _model,
-									contextWindow: _contextWindow,
-									[effortKey]: _effort,
-									...otherConfig
-								} = { ...agentConfig, [key]: value };
-								void window.maestro.agents
-									.setConfig(selectedToolType, { ...globalConfigRef.current, ...otherConfig })
-									.catch((error) => {
-										logger.error(
-											`Failed to persist config for ${selectedToolType}:`,
-											undefined,
-											error
-										);
-									});
-							}}
-							availableModels={availableModels}
-							loadingModels={loadingModels}
-							onRefreshModels={refreshModels}
-							dynamicOptions={editDynamicOptions}
-							loadingDynamicOptions={editLoadingDynamicOptions}
-							onRefreshAgent={handleRefreshAgent}
-							refreshingAgent={refreshingAgent}
-							showBuiltInEnvVars
-							isSshEnabled={isSshEnabled}
-							sshRemoteId={sshRemoteConfig?.remoteId ?? undefined}
-							enableMaestroP={enableMaestroP}
-							onEnableMaestroPChange={setEnableMaestroP}
-							maestroPMode={maestroPMode}
-							onMaestroPModeChange={setMaestroPMode}
-							maestroPPath={maestroPPath}
-							onMaestroPPathChange={setMaestroPPath}
-							onMaestroPPathBlur={() => {
-								/* Saved on modal save */
-							}}
-							detectedMaestroPPath={detectedMaestroPPath}
-							codexAutoResetOnExhaustion={codexAutoReset}
-							onCodexAutoResetChange={setCodexAutoReset}
-							codexTransport={codexTransport}
-							onCodexTransportChange={setCodexTransport}
-						/>
-					</div>
 				)}
 
-				{/* SSH Remote Execution - Top Level.
-				    Always rendered (not gated on sshRemotes.length) because the
-				    "remote-controlled" toggle inside is meaningful even when no
-				    local remotes exist - it lets a Maestro SSH'd into this
-				    machine see mirrored history for this agent. */}
-				<SshRemoteSelector
-					theme={theme}
-					sshRemotes={sshRemotes}
-					sshRemoteConfig={sshRemoteConfig}
-					onSshRemoteConfigChange={setSshRemoteConfig}
-				/>
+				{activeTab === 'provider' && (
+					<ProviderTab
+						theme={theme}
+						idPrefix="edit-agent"
+						picker={
+							<>
+								<AgentProviderSelect
+									theme={theme}
+									value={selectedToolType}
+									disabled={migrationSaving}
+									optionLabel={(agentId) => {
+										const direction = getDeclaredTranslationDirection(session.toolType, agentId);
+										return direction
+											? `→ ${getAgentDisplayName(agentId)} · Memory + history (${direction.verification === 'verified' ? 'verified' : 'preview'})`
+											: getAgentDisplayName(agentId);
+									}}
+									onChange={(providerId) => setSelectedToolType(providerId as ToolType)}
+								>
+									<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+										{carryDestinations.length > 0
+											? '→ Memory + session carry. Preview conversions are unverified; installed versions and content are checked before saving.'
+											: 'Memory + session carry is not available from this provider.'}
+									</div>
+									{providerChanged && migrationActivity && (
+										<div
+											role="status"
+											aria-live="polite"
+											className="mt-2 flex items-center gap-2 text-xs"
+										>
+											<Spinner size={14} color={theme.colors.accent} decorative />
+											<span>{migrationActivity}</span>
+										</div>
+									)}
+									{providerChanged && (
+										<div
+											className="mt-2 p-2 rounded border text-xs space-y-2"
+											style={{
+												borderColor: theme.colors.accent + '60',
+												backgroundColor: theme.colors.accent + '10',
+												color: theme.colors.textMain,
+											}}
+										>
+											<div className="flex items-start gap-2">
+												<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+												<span>
+													Tabs, transcripts, drafts, queue and file previews are preserved. Native
+													conversion remains unverified until resume and round-trip acceptance are
+													proved.
+												</span>
+											</div>
+											{selectedUserResources.map((resource, index) => (
+												<FormInput
+													key={index}
+													theme={theme}
+													label={`Selected user resource ${index + 1} (optional)`}
+													value={resource}
+													onChange={(value) => {
+														setSelectedUserResources((paths) =>
+															paths.map((p, i) => (i === index ? value : p))
+														);
+														setMigrationPlan(null);
+														setAcceptTranslationLimitations(false);
+													}}
+													placeholder="Absolute path to a selected skill, memory, instruction or subagent"
+													disabled={migrationSaving}
+												/>
+											))}
+											<div className="flex gap-3">
+												<button
+													type="button"
+													disabled={migrationSaving}
+													onClick={() => setSelectedUserResources((paths) => [...paths, ''])}
+												>
+													Add resource
+												</button>
+												<button
+													type="button"
+													disabled={migrationLoading || migrationSaving}
+													onClick={() => setSelectionRevision((v) => v + 1)}
+												>
+													Review selection
+												</button>
+											</div>
+											{migrationPlan && (
+												<div>
+													{migrationPlan.tabs.length} conversations, {migrationPlan.counts.records}{' '}
+													native records, {migrationPlan.counts.artifacts} artifacts.{' '}
+													{migrationPlan.status === 'deferred'
+														? 'Migration waits for the current turn to finish.'
+														: ''}
+												</div>
+											)}
+											{migrationPlan?.limitations.map((limit, index) => (
+												<div
+													key={`${limit.code}-${index}`}
+													style={{
+														color:
+															limit.severity === 'block'
+																? theme.colors.error
+																: theme.colors.textDim,
+													}}
+												>
+													{limit.message}
+												</div>
+											))}
+											{migrationPlan &&
+												migrationPlan.status !== 'blocked' &&
+												migrationPlan.limitations.length > 0 && (
+													<label className="flex items-center gap-2">
+														<input
+															type="checkbox"
+															checked={acceptTranslationLimitations}
+															disabled={migrationSaving}
+															onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
+														/>
+														Accept the listed conversion limitations
+													</label>
+												)}
+										</div>
+									)}
+									{migrationError && (
+										<div
+											role="alert"
+											className="mt-2 text-xs"
+											style={{ color: theme.colors.error }}
+										>
+											{migrationError}
+										</div>
+									)}
+								</AgentProviderSelect>
+
+								{/* Provider settings (path, args, agent-specific options). Its env
+								    vars live on the Environment tab. Per-session values are saved
+								    on modal save, not on blur. */}
+								{agent && (
+									<div>
+										<div
+											className="block text-xs font-bold opacity-70 uppercase mb-2"
+											style={{ color: theme.colors.textMain }}
+										>
+											{agentName} Settings
+										</div>
+										<AgentConfigPanel
+											theme={theme}
+											agent={agent}
+											hideEnvVars
+											autoModelFor={autoModelFor}
+											configOptionNotes={configOptionNotes}
+											customPath={customPath}
+											onCustomPathChange={setCustomPath}
+											onCustomPathBlur={() => {
+												/* Saved on modal save */
+											}}
+											customArgs={customArgs}
+											onCustomArgsChange={setCustomArgs}
+											onCustomArgsBlur={() => {
+												/* Saved on modal save */
+											}}
+											{...envVarProps}
+											agentConfig={agentConfig}
+											onConfigChange={(key, value) => {
+												setAgentConfig((prev) => ({ ...prev, [key]: value }));
+											}}
+											onConfigBlur={(key, value) => {
+												// model, contextWindow and effort are per-session: they are saved on
+												// modal save and must never leak into the agent-level config, which
+												// only supplies the defaults for newly created agents.
+												const effortKey = getEffortConfigKey(agent);
+												if (key === 'model' || key === 'contextWindow' || key === effortKey) return;
+
+												// agents:setConfig replaces the whole object, so rebuild from the
+												// agent-level config we loaded: dropping the per-session keys from
+												// `agentConfig` alone would erase the agent-level model/effort
+												// defaults every time an unrelated option was edited.
+												const {
+													model: _model,
+													contextWindow: _contextWindow,
+													[effortKey]: _effort,
+													...otherConfig
+												} = { ...agentConfig, [key]: value };
+												void window.maestro.agents
+													.setConfig(selectedToolType, {
+														...globalConfigRef.current,
+														...otherConfig,
+													})
+													.catch((error) => {
+														logger.error(
+															`Failed to persist config for ${selectedToolType}:`,
+															undefined,
+															error
+														);
+													});
+											}}
+											availableModels={availableModels}
+											loadingModels={loadingModels}
+											onRefreshModels={refreshModels}
+											dynamicOptions={editDynamicOptions}
+											loadingDynamicOptions={editLoadingDynamicOptions}
+											onRefreshAgent={handleRefreshAgent}
+											refreshingAgent={refreshingAgent}
+											isSshEnabled={isSshEnabled}
+											sshRemoteId={sshRemoteConfig?.remoteId ?? undefined}
+											enableMaestroP={enableMaestroP}
+											onEnableMaestroPChange={setEnableMaestroP}
+											maestroPMode={maestroPMode}
+											onMaestroPModeChange={setMaestroPMode}
+											maestroPPath={maestroPPath}
+											onMaestroPPathChange={setMaestroPPath}
+											onMaestroPPathBlur={() => {
+												/* Saved on modal save */
+											}}
+											detectedMaestroPPath={detectedMaestroPPath}
+											codexAutoResetOnExhaustion={codexAutoReset}
+											onCodexAutoResetChange={setCodexAutoReset}
+											codexTransport={codexTransport}
+											onCodexTransportChange={setCodexTransport}
+										/>
+									</div>
+								)}
+							</>
+						}
+						// Agent Resilience: auto-retry toggles (default ON), editable post-creation.
+						resilience={{
+							retryOnAvailabilityErrors,
+							retryOnTokenExhaustion,
+							onChangeAvailability: setRetryOnAvailabilityErrors,
+							onChangeTokenExhaustion: setRetryOnTokenExhaustion,
+						}}
+					/>
+				)}
+
+				{activeTab === 'models' && (
+					<ModelsTab
+						theme={theme}
+						idPrefix="edit-agent"
+						runOn={
+							<div data-testid="edit-agent-run-on">
+								<RunOnField
+									theme={theme}
+									toolType={selectedToolType}
+									value={runOn}
+									onChange={(target) => {
+										setRunOn(target);
+										setRunOnError(undefined);
+									}}
+									userEnvVars={effectiveEnvVars}
+									sshRemoteName={sshRemoteName}
+									error={runOnError}
+									onTest={handleTestRunOn}
+									testId="edit-agent-run-on-field"
+								/>
+							</div>
+						}
+						tiers={
+							<div data-testid="edit-agent-tiers">
+								<TierTargetsField
+									theme={theme}
+									toolType={selectedToolType}
+									value={tierTargets}
+									onChange={(next) => {
+										setTierTargets(next);
+										setTierTargetsError(undefined);
+									}}
+									runOn={runOn}
+									error={tierTargetsError}
+									testId="edit-agent-tier-targets"
+								/>
+							</div>
+						}
+						gateway={
+							<>
+								{/* Maestro token proxy mode, and under it where the proxy sends
+								    background requests. Both apply at once; the gateway draft
+								    below follows the mode. */}
+								<AgentTokenProxyModeControl
+									theme={theme}
+									agentId={session.id}
+									agentName={session.name}
+									toolType={selectedToolType}
+									gatewayUrl={gatewayUrl}
+									storedMode={(liveSession ?? session).tokenProxyMode}
+									storedBackgroundRequests={(liveSession ?? session).backgroundRequests}
+									sshRemoteName={sshRemoteName}
+									pendingReason={
+										gatewaySkippedReason ??
+										(providerChanged
+											? 'Save the provider change first: the proxy route depends on the provider.'
+											: undefined)
+									}
+									onGatewayUrlChange={handleProxyGatewayUrl}
+								/>
+
+								{/* Local Models gateway. Rendered for every provider: one that cannot
+								    use a gateway shows the field disabled with the reason. */}
+								<div data-testid="edit-agent-gateway">
+									<GatewayUrlField
+										theme={theme}
+										label="Local Models Gateway"
+										toolType={selectedToolType}
+										value={gatewayUrl}
+										onChange={(value) => {
+											setGatewayUrl(value);
+											setGatewayUrlError(undefined);
+										}}
+										userEnvVars={effectiveEnvVars}
+										sshRemoteName={sshRemoteName}
+										error={gatewayUrlError}
+										disabledReason={gatewaySkippedReason}
+										testId="edit-agent-gateway-url"
+									/>
+								</div>
+							</>
+						}
+						systemOne={
+							// Whether this agent may ask System One. Applies at once, like the
+							// proxy mode above: main answers the request and builds the prompt.
+							<AgentSystemOneControl
+								theme={theme}
+								agentId={session.id}
+								agentName={session.name}
+								optedOut={(liveSession ?? session).systemOneOptOut === true}
+								sshRemoteName={sshRemoteName}
+							/>
+						}
+					/>
+				)}
+
+				{activeTab === 'environment' && (
+					<EnvironmentTab
+						theme={theme}
+						idPrefix="edit-agent"
+						toolType={selectedToolType}
+						isSshEnabled={!!isSshEnabled}
+						{...envVarProps}
+					/>
+				)}
+
+				{activeTab === 'peers' && (
+					<PeersTab
+						theme={theme}
+						idPrefix="edit-agent"
+						peers={peerAgents}
+						onChange={setPeerAgents}
+						groupAccess={groupPeerAccess}
+						onGroupAccessChange={setGroupPeerAccess}
+						worktreeAccess={worktreePeerAccess}
+						onWorktreeAccessChange={setWorktreePeerAccess}
+						{...peerFleet}
+						selfSessionId={session.id}
+						groupId={peerGroupId}
+					/>
+				)}
+
+				{activeTab === 'ssh' && (
+					// Always rendered (not gated on sshRemotes.length) because the
+					// "remote-controlled" toggle inside is meaningful even when no
+					// local remotes exist - it lets a Maestro SSH'd into this
+					// machine see mirrored history for this agent.
+					<SshTab
+						theme={theme}
+						idPrefix="edit-agent"
+						sshRemotes={sshRemotes}
+						sshRemoteConfig={sshRemoteConfig}
+						onSshRemoteConfigChange={setSshRemoteConfig}
+					/>
+				)}
+
+				{activeTab === AUDIT_LOG_TAB_ID && (
+					// The tab saves its own changes the moment they are made, into the
+					// feature's own store. It hands this dialog no state on purpose:
+					// nothing of it may reach `onSave`, and through that the Session
+					// object.
+					<AuditLogTab
+						theme={theme}
+						idPrefix="edit-agent"
+						agentId={session.id}
+						agentName={session.name}
+						supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
+						usesInteractiveTokenSource={usesInteractiveTokenSource}
+					/>
+				)}
 			</div>
 		</Modal>
 	);

@@ -28,6 +28,12 @@
  *   later through `onChunk`.
  */
 
+import { admitConsult, type ConsultBudgetStoreOptions } from './consult-budget';
+import {
+	buildConsultChainEnv,
+	normalizeMaxConsultationsPerTurn,
+	type ConsultChain,
+} from '../../consultBudget';
 import { getAgentDisplayName } from '../../agentMetadata';
 import { getClaudeTokenMode } from '../../claudeTokenMode';
 import type { CrossAgentRequest, CrossAgentResponseChunk } from '../../crossAgentTypes';
@@ -126,6 +132,8 @@ export interface ConsultRunner {
 }
 
 export interface ConsultStartOptions {
+	maxConsultationsPerTurn?: number;
+	consultBudgetStore?: ConsultBudgetStoreOptions;
 	runner: ConsultRunner;
 	/** Resolves a provider to the agent definition a spawn needs, or null when it is not installed. */
 	resolveAgent(providerId: string): Promise<AgentConfig | null>;
@@ -148,7 +156,10 @@ export interface ConsultStartOptions {
 	 * its own tabs carry. Optional: a host that cannot build one passes none and
 	 * the consult starts without it.
 	 */
-	getSystemPrompt?: (target: CrossAgentTargetSession) => Promise<string | undefined>;
+	getSystemPrompt?: (
+		target: CrossAgentTargetSession,
+		chain?: ConsultChain
+	) => Promise<string | undefined>;
 	/** Called with each response chunk; `done: true` marks completion/failure. */
 	onChunk: (chunk: CrossAgentResponseChunk) => void;
 }
@@ -480,6 +491,30 @@ export function createConsultService() {
 			return;
 		}
 
+		let targetChain = request.consultChain;
+		if (!targetChain) {
+			const admission = admitConsult(
+				{
+					chain: request.sourceConsultChain,
+					fromAgent: false,
+					limit: normalizeMaxConsultationsPerTurn(opts.maxConsultationsPerTurn),
+				},
+				opts.consultBudgetStore
+			);
+			if (!admission.allowed) {
+				settled = true;
+				release();
+				emitError(admission.message);
+				return;
+			}
+			targetChain = admission.chain;
+		}
+		const consultEnvVars = {
+			...(configResolution.effectiveCustomEnvVars ??
+				opts.getCustomEnvVars?.(target.toolType) ??
+				{}),
+			...buildConsultChainEnv(targetChain),
+		};
 		try {
 			const spawnResult = await runner.start(
 				{
@@ -490,8 +525,8 @@ export function createConsultService() {
 					args: configResolution.args,
 					cwd: target.cwd,
 					prompt: fullPrompt,
-					customEnvVars:
-						configResolution.effectiveCustomEnvVars ?? opts.getCustomEnvVars?.(target.toolType),
+					customEnvVars: consultEnvVars,
+					maestroAgentId: target.id,
 					agentConfigValues,
 					sshRemoteConfig: target.sshRemoteConfig,
 					tokenMode: getClaudeTokenMode(target, {
@@ -506,7 +541,7 @@ export function createConsultService() {
 					// The consulted agent is a real Maestro agent: it answers with the same
 					// system prompt its own tabs carry. A resumed consult skips re-embedding
 					// for agents without the native flag (already in that transcript).
-					appendSystemPrompt: await opts.getSystemPrompt?.(target),
+					appendSystemPrompt: await opts.getSystemPrompt?.(target, targetChain),
 					isResume: !!request.resumeAgentSessionId && !!agent.resumeArgs,
 				},
 				observer

@@ -79,3 +79,50 @@ export function assertSerializedJsonIsSafe(
 		throw new Error(`Refusing to write unparseable JSON to ${target}: ${err}`);
 	}
 }
+
+/**
+ * Pull the first JSON object out of a model response.
+ *
+ * Models wrap JSON in prose and code fences however they are told, so every
+ * consumer of a model reply (the voice Brains, the Local Models text service)
+ * reads it through this one scanner.
+ *
+ * Brace matching rather than a regex: a `prompt` field can legally contain
+ * braces, and the non-greedy regex that "worked" would truncate the object at the
+ * first one.
+ */
+export function extractJsonObject(raw: string): Record<string, unknown> | null {
+	const text = raw.trim();
+	const start = text.indexOf('{');
+	if (start === -1) return null;
+
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+
+	for (let i = start; i < text.length; i++) {
+		const char = text[i];
+
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+
+		if (char === '"') inString = true;
+		else if (char === '{') depth++;
+		else if (char === '}' && --depth === 0) {
+			try {
+				const parsed: unknown = JSON.parse(text.slice(start, i + 1));
+				return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+					? (parsed as Record<string, unknown>)
+					: null;
+			} catch {
+				return null;
+			}
+		}
+	}
+
+	return null;
+}

@@ -110,6 +110,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setCreateGroupCallback = vi.fn();
 			setRenameGroupCallback = vi.fn();
 			setUpdateGroupCallback = vi.fn();
+			setUpdateGroupSettingsCallback = vi.fn();
 			setDeleteGroupCallback = vi.fn();
 			setMoveSessionToGroupCallback = vi.fn();
 			setCreateSessionCallback = vi.fn();
@@ -135,6 +136,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setCreateGistCallback = vi.fn();
 			setGetCueSubscriptionsCallback = vi.fn();
 			setToggleCueSubscriptionCallback = vi.fn();
+			setSetCueSubscriptionGateCallback = vi.fn();
+			setSetCueSubscriptionInjectionScreenCallback = vi.fn();
 			setGetCueActivityCallback = vi.fn();
 			setTriggerCueSubscriptionCallback = vi.fn();
 			setGetUsageDashboardCallback = vi.fn();
@@ -842,7 +845,7 @@ describe('web-server/web-server-factory', () => {
 		 * recent `remote:executeCommand` send, standing in for the renderer.
 		 * The acknowledgement must originate from the owning webContents.
 		 */
-		const answerReceipt = (accepted: boolean, reason?: string): void => {
+		const answerReceipt = (accepted: boolean, reason?: string): unknown[] => {
 			const send = mockWebContents.send as ReturnType<typeof vi.fn>;
 			const call = [...send.mock.calls]
 				.reverse()
@@ -851,6 +854,8 @@ describe('web-server/web-server-factory', () => {
 			const receiptChannel = call[call.length - 1] as string;
 			const listener = vi.mocked(ipcMain.on).mock.calls.find((c) => c[0] === receiptChannel)?.[1];
 			listener?.({ sender: mockWebContents } as never, { accepted, reason });
+			// What the renderer was sent, without the receipt channel.
+			return call.slice(0, -1);
 		};
 
 		it('should return false when mainWindow is null', async () => {
@@ -865,6 +870,106 @@ describe('web-server/web-server-factory', () => {
 
 			expect(result).toBe(false);
 			expect(logger.warn).toHaveBeenCalled();
+		});
+
+		it('should send command to renderer (omitting tabId routes to active tab)', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'test command', 'ai');
+
+			expect(answerReceipt(true)).toEqual([
+				'remote:executeCommand',
+				'session-1',
+				'test command',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+			]);
+			await expect(resultPromise).resolves.toBe(true);
+		});
+
+		it('forwards tabId to the renderer so `dispatch --session <tabId>` writes into the requested tab', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'follow up', 'ai', 'tab-7');
+
+			expect(answerReceipt(true)).toEqual([
+				'remote:executeCommand',
+				'session-1',
+				'follow up',
+				'ai',
+				'tab-7',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+			]);
+			await expect(resultPromise).resolves.toBe(true);
+		});
+
+		it('forwards force=true to the renderer so `dispatch --force` bypasses the renderer busy guard', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'concurrent write', 'ai', undefined, true);
+
+			expect(answerReceipt(true)).toEqual([
+				'remote:executeCommand',
+				'session-1',
+				'concurrent write',
+				'ai',
+				undefined,
+				true,
+				undefined,
+				undefined,
+				undefined,
+			]);
+			await expect(resultPromise).resolves.toBe(true);
+		});
+
+		it('forwards images so pasted attachments reach the renderer alongside the prompt', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const images = ['data:image/png;base64,abc', 'data:image/png;base64,def'];
+			const resultPromise = callback(
+				'session-1',
+				'look at this',
+				'ai',
+				undefined,
+				undefined,
+				images
+			);
+
+			expect(answerReceipt(true)).toEqual([
+				'remote:executeCommand',
+				'session-1',
+				'look at this',
+				'ai',
+				undefined,
+				undefined,
+				images,
+				undefined,
+				undefined,
+			]);
+			await expect(resultPromise).resolves.toBe(true);
 		});
 
 		// V1 secondary defect: `success` used to mean "an IPC send was issued", so
@@ -1559,6 +1664,154 @@ describe('web-server/web-server-factory', () => {
 		});
 	});
 
+	describe('Cue gate callback', () => {
+		it('delegates to setCueSubscriptionGate, for a set and for a removal', async () => {
+			const setCueSubscriptionGate = vi.fn().mockResolvedValue({ ok: true, updated: ['Triage'] });
+			const createWebServer = createWebServerFactory({ ...deps, setCueSubscriptionGate });
+			const server = createWebServer() as any;
+
+			expect(server.setSetCueSubscriptionGateCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setSetCueSubscriptionGateCallback.mock.calls[0][0];
+
+			const gate = { condition: 'the issue reports a bug', onUnavailable: 'skip' };
+			expect(await callback('agent-1::Triage::Triage', gate)).toEqual({
+				ok: true,
+				updated: ['Triage'],
+			});
+			expect(setCueSubscriptionGate).toHaveBeenCalledWith('agent-1::Triage::Triage', gate);
+
+			await callback('agent-1::Triage::Triage', null);
+			expect(setCueSubscriptionGate).toHaveBeenLastCalledWith('agent-1::Triage::Triage', null);
+		});
+
+		it('answers with a printable refusal when the dep is missing', async () => {
+			const createWebServer = createWebServerFactory({
+				...deps,
+				setCueSubscriptionGate: undefined,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setSetCueSubscriptionGateCallback.mock.calls[0][0];
+
+			expect(await callback('agent-1::P::Triage', null)).toEqual({
+				ok: false,
+				error: 'Cue gate editing is not available.',
+			});
+		});
+
+		it('lists a gate back on the subscription, and leaves an ungated one without the keys', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Worker',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Triage',
+							event: 'github.issue',
+							enabled: true,
+							prompt: 'triage it',
+							pipeline_name: 'Triage',
+							gate: 'the issue reports a bug',
+							gate_on_unavailable: 'skip',
+						},
+						{
+							name: 'Plain',
+							event: 'github.issue',
+							enabled: true,
+							prompt: 'x',
+							pipeline_name: 'Plain',
+						},
+					],
+				},
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+			const [gated, plain] = await callback();
+
+			expect(gated).toMatchObject({ gate: 'the issue reports a bug', gateOnUnavailable: 'skip' });
+			expect(plain).not.toHaveProperty('gate');
+			expect(plain).not.toHaveProperty('gateOnUnavailable');
+		});
+	});
+
+	describe('Cue injection screen callback', () => {
+		it('delegates to setCueSubscriptionInjectionScreen', async () => {
+			const setCueSubscriptionInjectionScreen = vi
+				.fn()
+				.mockResolvedValue({ ok: true, updated: ['Triage'] });
+			const createWebServer = createWebServerFactory({
+				...deps,
+				setCueSubscriptionInjectionScreen,
+			});
+			const server = createWebServer() as any;
+
+			expect(server.setSetCueSubscriptionInjectionScreenCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setSetCueSubscriptionInjectionScreenCallback.mock.calls[0][0];
+
+			const setting = { mode: 'on', threshold: 0.6 };
+			expect(await callback('agent-1::Triage::Triage', setting)).toEqual({
+				ok: true,
+				updated: ['Triage'],
+			});
+			expect(setCueSubscriptionInjectionScreen).toHaveBeenCalledWith(
+				'agent-1::Triage::Triage',
+				setting
+			);
+		});
+
+		it('answers with a printable refusal when the dep is missing', async () => {
+			const createWebServer = createWebServerFactory({
+				...deps,
+				setCueSubscriptionInjectionScreen: undefined,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setSetCueSubscriptionInjectionScreenCallback.mock.calls[0][0];
+
+			expect(await callback('agent-1::P::Triage', { mode: 'on' })).toEqual({
+				ok: false,
+				error: 'Cue injection screen editing is not available.',
+			});
+		});
+
+		it('lists the screen back as written, and leaves a default one without the keys', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Worker',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Screened',
+							event: 'github.issue',
+							enabled: true,
+							prompt: 'triage it',
+							pipeline_name: 'Screened',
+							screen_injection: false,
+							injection_threshold: 0.6,
+						},
+						{
+							name: 'Plain',
+							event: 'github.issue',
+							enabled: true,
+							prompt: 'x',
+							pipeline_name: 'Plain',
+						},
+					],
+				},
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+			const [screened, plain] = await callback();
+
+			// `false` is a setting the caller has to be able to read back.
+			expect(screened).toMatchObject({ screenInjection: false, injectionThreshold: 0.6 });
+			expect(plain).not.toHaveProperty('screenInjection');
+			expect(plain).not.toHaveProperty('injectionThreshold');
+		});
+	});
+
 	describe('Cue activity callback', () => {
 		// Same dead-bridge fix as the subscriptions callback: previously this
 		// forwarded `remote:getCueActivity` to the renderer with no listener,
@@ -1684,7 +1937,8 @@ describe('web-server/web-server-factory', () => {
 			const server = createWebServer() as any;
 			const callback = server.setEnqueueCommandCallback.mock.calls[0][0];
 
-			void callback('session-1', 'do the thing', 'ai', 'tab-1');
+			const chain = { chainId: 'chain-queued', depth: 2 };
+			void callback('session-1', 'do the thing', 'ai', 'tab-1', undefined, true, true, chain);
 
 			expect(mockWebContents.send).toHaveBeenCalledWith(
 				'remote:enqueueCommand',
@@ -1694,8 +1948,9 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				'tab-1',
 				undefined,
-				undefined,
-				undefined
+				true,
+				true,
+				chain
 			);
 		});
 
@@ -1824,6 +2079,27 @@ describe('web-server/web-server-factory', () => {
 				'a description',
 				true,
 				undefined,
+				false,
+				expect.any(String)
+			);
+		});
+
+		// `--allow-secrets` is the only thing that publishes past the secret
+		// screen, so it has to survive the hop to the renderer as a boolean.
+		it('carries allowSecrets to the renderer ahead of the response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setCreateGistCallback.mock.calls[0][0];
+
+			void callback('session-1', '', false, 'provider-session-9', true);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:createGist',
+				'session-1',
+				'',
+				false,
+				'provider-session-9',
+				true,
 				expect.any(String)
 			);
 		});
@@ -2123,6 +2399,21 @@ describe('web-server/web-server-factory', () => {
 				'remote:updateGroup',
 				'group-1',
 				{ icon: 'rocket', clear: ['color'] },
+				expect.any(String)
+			);
+		});
+
+		it('setUpdateGroupSettingsCallback forwards the request to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setUpdateGroupSettingsCallback.mock.calls[0][0];
+
+			void callback('group-1', { configPatch: { nudgeMessage: 'N' }, publish: true });
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:updateGroupSettings',
+				'group-1',
+				{ configPatch: { nudgeMessage: 'N' }, publish: true },
 				expect.any(String)
 			);
 		});
@@ -2468,6 +2759,7 @@ describe('web-server/web-server-factory', () => {
 				expect.anything(),
 				expect.anything(),
 				expect.anything(),
+				expect.anything(),
 				expect.anything()
 			);
 			const request = secondaryWebContents.send.mock.calls.find(
@@ -2479,6 +2771,7 @@ describe('web-server/web-server-factory', () => {
 				'hello owner',
 				'ai',
 				'tab-1',
+				undefined,
 				undefined,
 				undefined,
 				undefined,

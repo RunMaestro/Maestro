@@ -1,19 +1,6 @@
-export interface TextEditResult {
-	content: string;
-	cursorPosition: number;
-}
+import { insertTextAtSelection, type TextEditResult } from '../../../../../utils/textSelectionEdit';
 
-export function insertTextAtSelection(
-	content: string,
-	start: number,
-	end: number,
-	insertText: string
-): TextEditResult {
-	return {
-		content: content.substring(0, start) + insertText + content.substring(end),
-		cursorPosition: start + insertText.length,
-	};
-}
+export { insertTextAtSelection, type TextEditResult };
 
 export function insertCheckboxAtCursor(content: string, cursorPosition: number): TextEditResult {
 	const textBeforeCursor = content.substring(0, cursorPosition);

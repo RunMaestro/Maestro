@@ -42,6 +42,9 @@ const NO_PALETTE_ENTRY_BY_DESIGN = new Set<string>([
 	'quickAction',
 	// The palette's own agent-switcher mode; the palette is already open.
 	'agentSwitcher',
+	// Dictates into the text box that holds the caret. Opening the palette moves
+	// the caret into the palette, so there is no text box left to dictate into.
+	'dictate',
 ]);
 
 /**

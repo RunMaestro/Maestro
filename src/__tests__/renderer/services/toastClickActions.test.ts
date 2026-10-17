@@ -219,6 +219,14 @@ describe('dispatchToastClickAction', () => {
 		);
 	});
 
+	it('undo-group-publish reports a publish that is no longer there, never a silent click', async () => {
+		dispatchToastClickAction({ kind: 'undo-group-publish', publishId: 'gone' });
+
+		await vi.waitFor(() =>
+			expect(useNotificationStore.getState().toasts[0]?.title).toBe('Nothing to undo')
+		);
+	});
+
 	it('closes the Document Graph overlay before landing on a tab', () => {
 		useFileExplorerStore.setState({ isGraphViewOpen: true });
 		seedSessions([createMockSession({ id: 's1', terminalTabs: [terminalTab({ id: 'term-1' })] })]);

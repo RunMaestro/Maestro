@@ -79,6 +79,28 @@ function createDeps(overrides: Partial<SessionLifecycleDeps> = {}): SessionLifec
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(requestProviderTranslation).mockReset();
+	vi.mocked(requestProviderTranslation).mockImplementation(async (request) => {
+		const sessions = useSessionStore.getState().sessions;
+		useSessionStore.setState({
+			sessions: sessions.map((session) =>
+				session.id === request.agentId
+					? commitTranslationSession(
+							session,
+							request.destination!,
+							'test-migration',
+							session.aiTabs.map((tab) => ({
+								tabId: tab.id,
+								sourceSessionId: tab.agentSessionId,
+								destinationSessionId: `translated-${tab.id}`,
+								artifacts: [],
+								lineage: {},
+							}))
+						)
+					: session
+			),
+		});
+		return { success: true };
+	});
 	vi.useFakeTimers();
 
 	// Reset stores
@@ -103,6 +125,11 @@ beforeEach(() => {
 	(window as any).maestro = {
 		process: {
 			kill: vi.fn().mockResolvedValue(undefined),
+		},
+		// A gateway edit flushes the agent to main (see agentGateway.ts).
+		sessions: {
+			setMany: vi.fn().mockResolvedValue(undefined),
+			setActiveSessionId: vi.fn().mockResolvedValue(undefined),
 		},
 		stats: {
 			recordSessionClosed: vi.fn(),
@@ -331,6 +358,435 @@ describe('useSessionLifecycle', () => {
 			expect(updated.nudgeMessage).toBeUndefined();
 			expect(updated.newSessionMessage).toBeUndefined();
 			expect(updated.customPath).toBeUndefined();
+		});
+
+		describe('Local Models gateway', () => {
+			const saveWithGateway = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				gatewayUrl: string | undefined,
+				toolType?: Parameters<typeof save>[2]
+			) => {
+				// `gatewayUrl` is the 24th argument, after `codexTransport`; everything
+				// between is left unset.
+				const args = new Array(24).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[2] = toolType;
+				args[23] = gatewayUrl;
+				return (save as (...all: unknown[]) => Promise<void>)(...args);
+			};
+
+			it('stores the gateway and flushes the agent to main at once', async () => {
+				// The desktop spawn reads the gateway from main's store, which the
+				// debounced persistence would leave stale for two seconds.
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, 'http://127.0.0.1:8787');
+				});
+
+				expect(useSessionStore.getState().sessions[0].gatewayUrl).toBe('http://127.0.0.1:8787');
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'session-1', gatewayUrl: 'http://127.0.0.1:8787' })],
+					[]
+				);
+			});
+
+			it('clears the gateway and flushes that too', async () => {
+				const session = createMockSession({ id: 'session-1', gatewayUrl: 'http://127.0.0.1:8787' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, undefined);
+				});
+
+				expect(useSessionStore.getState().sessions[0].gatewayUrl).toBeUndefined();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			});
+
+			it('drops the token proxy mode when the save changes the gateway', async () => {
+				// A mode belongs to the gateway it was chosen for.
+				const session = createMockSession({
+					id: 'session-1',
+					gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+					tokenProxyMode: 'compress',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, 'http://127.0.0.1:8787');
+				});
+
+				expect(useSessionStore.getState().sessions[0].tokenProxyMode).toBeUndefined();
+			});
+
+			it('keeps the token proxy mode when the save leaves the gateway alone', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+					tokenProxyMode: 'compress',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, 'http://127.0.0.1:48123/anthropic');
+				});
+
+				expect(useSessionStore.getState().sessions[0].tokenProxyMode).toBe('compress');
+			});
+
+			it('does not flush a save that left the gateway alone', async () => {
+				const session = createMockSession({ id: 'session-1', gatewayUrl: 'http://127.0.0.1:8787' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, 'http://127.0.0.1:8787');
+				});
+
+				expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+			});
+
+			it('keeps a gateway entered for the NEW provider across a provider switch', async () => {
+				// The dialog empties its gateway field on a switch and validates what
+				// is typed afterwards against the new provider, so the switch must
+				// not clear it the way it clears the old provider's overrides.
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code',
+					customPath: '/old/claude',
+					gatewayUrl: 'http://127.0.0.1:8787/anthropic',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					await saveWithGateway(
+						result.current.handleSaveEditAgent,
+						'http://127.0.0.1:8787/openai',
+						'codex'
+					);
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.toolType).toBe('codex');
+				expect(updated.customPath).toBeUndefined();
+				expect(updated.gatewayUrl).toBe('http://127.0.0.1:8787/openai');
+			});
+		});
+
+		describe('Tier targets', () => {
+			const LOCAL = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			const OPUS = { type: 'provider-model' as const, model: 'opus' };
+
+			const saveWithTiers = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				tierTargets: Record<string, unknown> | undefined,
+				gatewayUrl?: string
+			) => {
+				// `tierTargets` is the 26th argument, after `runOn`; everything between
+				// is left unset, bar the gateway a case wants kept.
+				const args = new Array(26).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[23] = gatewayUrl;
+				args[25] = tierTargets;
+				return (save as (...all: unknown[]) => Promise<void>)(...args);
+			};
+
+			it('stores the tiers and flushes the agent to main at once', async () => {
+				// The CLI's Auto Run resolves a tier from main's store. Left to the
+				// debounced persistence, a run started straight after the save would
+				// launch a tier on the model the user just moved it off.
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithTiers(result.current.handleSaveEditAgent, { low: LOCAL, high: OPUS });
+				});
+
+				expect(useSessionStore.getState().sessions[0].tierTargets).toEqual({
+					low: LOCAL,
+					high: OPUS,
+				});
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'session-1', tierTargets: { low: LOCAL, high: OPUS } })],
+					[]
+				);
+			});
+
+			it('clears the tiers and flushes that too', async () => {
+				const session = createMockSession({ id: 'session-1', tierTargets: { low: LOCAL } });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithTiers(result.current.handleSaveEditAgent, undefined);
+				});
+
+				expect(useSessionStore.getState().sessions[0].tierTargets).toBeUndefined();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			});
+
+			it('does not flush a save that left the tiers alone', async () => {
+				const session = createMockSession({ id: 'session-1', tierTargets: { low: LOCAL } });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					// An equal record in another object, as the dialog hands it back.
+					saveWithTiers(result.current.handleSaveEditAgent, { low: { ...LOCAL } });
+				});
+
+				expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('Peer grants', () => {
+			const ROWS = [
+				{ sessionId: 'peer-1', read: true, write: false, description: 'Owns the docs' },
+				// Neither bit: an exclusion, which the save must keep.
+				{ sessionId: 'peer-2', read: false, write: false },
+			];
+
+			const saveWithPeers = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				peerGrants: Record<string, unknown> | undefined,
+				toolType?: string
+			) => {
+				// `peerGrants` is the 27th argument, after `tierTargets`; everything
+				// between is left unset, bar the provider a case wants switched.
+				const args = new Array(27).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[2] = toolType;
+				args[26] = peerGrants;
+				return (save as (...all: unknown[]) => Promise<void>)(...args);
+			};
+
+			it('stores the rows and both grants on the agent', () => {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				act(() => {
+					saveWithPeers(result.current.handleSaveEditAgent, {
+						peerAgents: ROWS,
+						groupPeerAccess: { read: true, write: false },
+						worktreePeerAccess: { read: true, write: true },
+					});
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.peerAgents).toEqual(ROWS);
+				expect(updated.groupPeerAccess).toEqual({ read: true, write: false });
+				expect(updated.worktreePeerAccess).toEqual({ read: true, write: true });
+			});
+
+			it('removes a source the form switched off', () => {
+				const session = createMockSession({
+					id: 'session-1',
+					peerAgents: ROWS,
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: { read: true, write: true },
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				act(() => {
+					// The form hands back absent fields for an empty list and two
+					// unchecked grants.
+					saveWithPeers(result.current.handleSaveEditAgent, {
+						worktreePeerAccess: { read: false, write: true },
+					});
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.peerAgents).toBeUndefined();
+				expect(updated.groupPeerAccess).toBeUndefined();
+				expect(updated.worktreePeerAccess).toEqual({ read: false, write: true });
+			});
+
+			it('keeps the grants across a provider switch', async () => {
+				// A peer names another agent, not a provider.
+				const session = createMockSession({ id: 'session-1', toolType: 'claude-code' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					await saveWithPeers(
+						result.current.handleSaveEditAgent,
+						{ peerAgents: ROWS, groupPeerAccess: { read: true, write: false } },
+						'codex'
+					);
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.toolType).toBe('codex');
+				expect(updated.peerAgents).toEqual(ROWS);
+				expect(updated.groupPeerAccess).toEqual({ read: true, write: false });
+			});
+		});
+
+		describe('Background requests', () => {
+			const QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:4b' };
+			const onProxy = 'http://127.0.0.1:48123/anthropic';
+
+			const saveWithGateway = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				gatewayUrl: string | undefined
+			) => {
+				const args = new Array(24).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[23] = gatewayUrl;
+				return (save as (...all: unknown[]) => Promise<void>)(...args);
+			};
+
+			it('keeps the target when the save leaves the gateway alone: Save is not its writer', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					gatewayUrl: onProxy,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: QWEN },
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, onProxy);
+				});
+
+				expect(useSessionStore.getState().sessions[0].backgroundRequests).toEqual({
+					target: QWEN,
+				});
+			});
+
+			it('drops the target with the proxy mode when the save changes the gateway', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					gatewayUrl: onProxy,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: QWEN },
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, undefined);
+				});
+
+				const saved = useSessionStore.getState().sessions[0];
+				expect(saved.tokenProxyMode).toBeUndefined();
+				expect(saved.backgroundRequests).toBeUndefined();
+			});
+		});
+
+		describe('Run on', () => {
+			const QWEN = {
+				type: 'source' as const,
+				endpointId: 'ep-ollama',
+				model: 'qwen3:latest',
+				contextTokens: 65_536,
+			};
+
+			const saveWithRunOn = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				runOn: typeof QWEN | undefined,
+				toolType?: Parameters<typeof save>[2]
+			) => {
+				// `runOn` is the 25th argument, after `gatewayUrl`; everything between
+				// is left unset.
+				const args = new Array(25).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[2] = toolType;
+				args[24] = runOn;
+				return (save as (...all: unknown[]) => Promise<void>)(...args);
+			};
+
+			it('stores the target and flushes the agent to main at once', async () => {
+				// The launch reads the target from main's store. Left to the debounced
+				// persistence, a message sent straight after the save would run on the
+				// provider's cloud model the user just turned away from.
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithRunOn(result.current.handleSaveEditAgent, QWEN);
+				});
+
+				expect(useSessionStore.getState().sessions[0].runOn).toEqual(QWEN);
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'session-1', runOn: QWEN })],
+					[]
+				);
+			});
+
+			it('clears the target and flushes that too', async () => {
+				const session = createMockSession({ id: 'session-1', runOn: QWEN });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithRunOn(result.current.handleSaveEditAgent, undefined);
+				});
+
+				expect(useSessionStore.getState().sessions[0].runOn).toBeUndefined();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			});
+
+			it('flushes a change of context size alone', async () => {
+				const session = createMockSession({ id: 'session-1', runOn: QWEN });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithRunOn(result.current.handleSaveEditAgent, { ...QWEN, contextTokens: 131_072 });
+				});
+
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			});
+
+			it('does not flush a save that left the target alone', async () => {
+				const session = createMockSession({ id: 'session-1', runOn: QWEN });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					// An equal target in another object, as the dialog hands it back.
+					saveWithRunOn(result.current.handleSaveEditAgent, { ...QWEN });
+				});
+
+				expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+			});
+
+			it('keeps the target across a provider switch, unlike the old provider overrides', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code',
+					customPath: '/old/claude',
+					runOn: QWEN,
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					await saveWithRunOn(result.current.handleSaveEditAgent, QWEN, 'codex');
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.toolType).toBe('codex');
+				expect(updated.customPath).toBeUndefined();
+				expect(updated.runOn).toEqual(QWEN);
+			});
 		});
 
 		const saveWithWorkingDirectory = (

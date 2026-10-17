@@ -191,6 +191,8 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 			userMessage: prompt,
 			agentType: session.toolType,
 			cwd: session.cwd,
+			// Lets main show a "local model unavailable" notice once per agent.
+			sessionId,
 			sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 			// Forward session env so naming uses the same provider auth as the chat.
 			sessionCustomEnvVars: session.customEnvVars,

@@ -20,6 +20,7 @@ import {
 } from '../services/pianola-store';
 import { generateUUID } from '../../shared/uuid';
 import { ensurePianolaEnabled } from './pianola';
+import { failCommand } from '../services/session-command';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -40,16 +41,6 @@ export interface PianolaSuperviseCommonOptions {
 	json?: boolean;
 }
 
-/** Print an error (JSON-aware) and exit non-zero. */
-function fail(message: string, json?: boolean): never {
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(message);
-	}
-	process.exit(1);
-}
-
 /** Parse a positive-integer seconds/count flag; returns undefined when absent or invalid. */
 function parsePositiveInt(raw: string | undefined, min: number): number | undefined {
 	if (raw === undefined) return undefined;
@@ -62,7 +53,7 @@ function parsePositiveInt(raw: string | undefined, min: number): number | undefi
 export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWatchOptions): void {
 	ensurePianolaEnabled(options.json);
 	if (!options.agent || options.agent.trim().length === 0) {
-		fail('supervise watch requires --agent <agent-id>', options.json);
+		failCommand('supervise watch requires --agent <agent-id>', options.json);
 	}
 
 	// Reuse an existing watcher for the same (kind, tabId, agentId) so registering
@@ -84,7 +75,7 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 
 	const written = upsertPianolaSupervisorTarget(target);
 	if (!written.some((t) => t.id === target.id)) {
-		fail('Target failed validation and was not saved', options.json);
+		failCommand('Target failed validation and was not saved', options.json);
 	}
 
 	if (options.json) {
@@ -117,7 +108,7 @@ export function pianolaSuperviseOrchestrate(
 
 	const written = upsertPianolaSupervisorTarget(target);
 	if (!written.some((t) => t.id === target.id)) {
-		fail('Target failed validation and was not saved', options.json);
+		failCommand('Target failed validation and was not saved', options.json);
 	}
 
 	if (options.json) {
@@ -162,7 +153,7 @@ export function pianolaSuperviseRemove(id: string, options: PianolaSuperviseComm
 	ensurePianolaEnabled(options.json);
 	const before = readPianolaSupervisorTargets();
 	if (!before.some((t) => t.id === id)) {
-		fail(`No supervised target with id ${id}`, options.json);
+		failCommand(`No supervised target with id ${id}`, options.json);
 	}
 	const after = removePianolaSupervisorTarget(id);
 	if (options.json) {
@@ -181,7 +172,7 @@ export function pianolaSuperviseSetEnabled(
 	ensurePianolaEnabled(options.json);
 	const current = readPianolaSupervisorTargets().find((t) => t.id === id);
 	if (!current) {
-		fail(`No supervised target with id ${id}`, options.json);
+		failCommand(`No supervised target with id ${id}`, options.json);
 	}
 	// Immutable: build a new target rather than mutating the read result.
 	const written = upsertPianolaSupervisorTarget({ ...current, enabled });

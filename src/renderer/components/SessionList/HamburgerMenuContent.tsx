@@ -20,12 +20,15 @@ import {
 	Music2,
 	LogOut,
 	MessageCircle,
+	Sparkles,
+	Waypoints,
 	Gauge,
 } from 'lucide-react';
 import type { Theme } from '../../types';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { ShortcutHint } from '../ui/ShortcutHint';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { getModalActions } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { openUiSurface } from '../../utils/openUiSurface';
@@ -149,7 +152,7 @@ export function HamburgerMenuContent({
 			{notificationCenterEnabled && (
 				<button
 					onClick={() => {
-						openUiSurface('notification-center');
+						openUiSurface({ surface: 'notification-center' });
 						setMenuOpen(false);
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
@@ -259,6 +262,60 @@ export function HamburgerMenuContent({
 					</div>
 				</div>
 				<ShortcutHint theme={theme} keys={shortcuts.processMonitor?.keys ?? []} />
+			</button>
+			<button
+				onClick={() => {
+					useModalStore.getState().openModal('tabCleanup');
+					setMenuOpen(false);
+				}}
+				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+			>
+				<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<div className="flex-1">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Tab Cleanup
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Suggest tabs to close, snooze, or wake
+					</div>
+				</div>
+				{/* Ships unbound, so the badge appears only once the user binds a chord. */}
+				{shortcuts.tabCleanupSuggestions?.keys.length > 0 && (
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{formatShortcutKeys(shortcuts.tabCleanupSuggestions.keys)}
+					</span>
+				)}
+			</button>
+			<button
+				onClick={() => {
+					useModalStore.getState().openModal('delegationGraph');
+					setMenuOpen(false);
+				}}
+				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+			>
+				<Waypoints className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<div className="flex-1">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Delegation Graph
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Which agent can consult or delegate to which
+					</div>
+				</div>
+				{/* Ships unbound, so the badge appears only once the user binds a chord. */}
+				{shortcuts.openDelegationGraph?.keys.length > 0 && (
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{formatShortcutKeys(shortcuts.openDelegationGraph.keys)}
+					</span>
+				)}
 			</button>
 			{encoreFeatures.usageStats && (
 				<button

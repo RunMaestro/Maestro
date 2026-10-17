@@ -26,6 +26,7 @@ import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import type {
 	Theme,
 	Shortcut,
@@ -462,6 +463,9 @@ describe('SettingsModal', () => {
 		settingsPanels = [];
 		vi.useFakeTimers();
 		__resetLastOpenSettingsTabForTests();
+		// The Models panel and Library section are remembered in localStorage; a
+		// fresh store per test keeps one test's pick out of the next.
+		installLocalStorageMock();
 		useModalStore.getState().closeAll();
 		useSettingsStore.setState({
 			encoreFeatures: {
@@ -601,6 +605,66 @@ describe('SettingsModal', () => {
 			expect(document.querySelector('[data-setting-id="general-forced-parallel"]')).not.toBeNull();
 		});
 
+		it('should open the Models panel named by initialNavigationRequest.subTab', async () => {
+			// `maestro-cli open settings --tab models --sub-tab gateway`
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'models',
+						initialNavigationRequest: { tab: 'models', subTab: 'gateway' },
+					})}
+				/>
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTitle('Gateway')).toHaveAttribute('aria-current', 'page');
+			expect(screen.getByTestId('models-settings-tab')).toHaveAttribute('data-panel', 'gateway');
+		});
+
+		it('should open the Library section named by a sub-tab path', async () => {
+			// `maestro-cli open settings --tab models --sub-tab library/engines`
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'models',
+						initialNavigationRequest: { tab: 'models', subTab: 'library/engines' },
+					})}
+				/>
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTitle('Library')).toHaveAttribute('aria-current', 'page');
+			expect(screen.getByRole('tab', { name: 'Engines' })).toHaveAttribute('aria-selected', 'true');
+		});
+
+		it('should open the inner tab that renders the setting named by initialSettingId', async () => {
+			// A Settings search result for a System Two control has to land where
+			// the control is drawn, not on whichever inner tab was open last.
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'models',
+						initialSettingId: 'local-models-utility-agent',
+					})}
+				/>
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTitle('System Two')).toHaveAttribute('aria-current', 'page');
+			expect(
+				document.querySelector('[data-setting-id="local-models-utility-agent"]')
+			).not.toBeNull();
+		});
+
 		it('should switch to shortcuts tab when clicked', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
@@ -721,6 +785,30 @@ describe('SettingsModal', () => {
 			expect(getContent()!.scrollTop).toBe(180);
 		});
 
+		it('should remember separate scroll positions for Models panels', async () => {
+			const { container } = render(
+				<SettingsModal {...createDefaultProps({ initialTab: 'models' })} />
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			const content = container.querySelector<HTMLDivElement>('.p-6.overflow-y-auto')!;
+
+			fireEvent.click(screen.getByTitle('Library'));
+			content.scrollTop = 120;
+			fireEvent.scroll(content);
+
+			fireEvent.click(screen.getByTitle('Sources'));
+			expect(content.scrollTop).toBe(0);
+			content.scrollTop = 260;
+			fireEvent.scroll(content);
+
+			fireEvent.click(screen.getByTitle('Library'));
+			expect(content.scrollTop).toBe(120);
+			fireEvent.click(screen.getByTitle('Sources'));
+			expect(content.scrollTop).toBe(260);
+		});
+
 		it('should restore the saved scroll position when the modal is reopened', async () => {
 			const first = render(<SettingsModal {...createDefaultProps()} />);
 
@@ -753,7 +841,7 @@ describe('SettingsModal', () => {
 
 	describe('keyboard tab navigation', () => {
 		// Sidebar is alphabetized by label, so the order under no LLM flag is:
-		// About, AI Commands, Display, Environment, General, Maestro Prompts,
+		// About, AI Commands, Display, Environment, General, Maestro Prompts, Models,
 		// Notifications, Plugins, Shortcuts, SSH Hosts, Themes.
 		it('should navigate to next tab with Cmd+Shift+] from default (general)', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
@@ -772,8 +860,44 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Maestro Prompts tab should now be the active sidebar entry
 			expect(screen.getByTitle('Maestro Prompts')).toHaveClass('font-bold');
+
+			// And the one after that is Models, with its shell rendered
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTitle('Models')).toHaveClass('font-bold');
+			expect(screen.getByTestId('models-settings-tab')).toBeInTheDocument();
+			// Stepping into Models lands on its Overview, then walks its subtree.
+			expect(screen.getByTitle('Models')).toHaveAttribute('aria-current', 'page');
+			expect(screen.getByTestId('models-overview')).toBeInTheDocument();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTitle('Library')).toHaveAttribute('aria-current', 'page');
+		});
+
+		it('should step into Models on its last panel going backwards', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'notifications' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTitle('Gateway')).toHaveAttribute('aria-current', 'page');
 		});
 
 		it('should navigate to previous tab with Cmd+Shift+[ from shortcuts', async () => {
@@ -834,6 +958,142 @@ describe('SettingsModal', () => {
 			});
 
 			expect(screen.getByText('dark Mode')).toBeInTheDocument();
+		});
+	});
+
+	describe('Models subtree', () => {
+		it('keeps the Models panels expanded under Models while the sidebar has room', async () => {
+			// jsdom lays nothing out, so the sidebar reads as never overflowing.
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByTitle('Models')).toHaveAttribute('aria-expanded', 'true');
+			for (const label of ['Library', 'Sources', 'System One', 'System Two', 'Gateway']) {
+				expect(screen.getByTitle(label)).toBeInTheDocument();
+				// Shown, not selected: General is the open tab.
+				expect(screen.getByTitle(label)).not.toHaveAttribute('aria-current');
+			}
+			expect(screen.getByTitle('Models')).not.toHaveClass('font-bold');
+		});
+
+		describe('when the expanded subtree would scroll the sidebar', () => {
+			// The sidebar wants 900px and has 600: expanding would make it scroll.
+			beforeEach(() => {
+				const sidebar = (el: HTMLElement) => el.getAttribute('aria-label') === 'Settings tabs';
+				Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+					configurable: true,
+					get(this: HTMLElement) {
+						return sidebar(this) ? 900 : 0;
+					},
+				});
+				Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+					configurable: true,
+					get(this: HTMLElement) {
+						return sidebar(this) ? 600 : 0;
+					},
+				});
+			});
+
+			afterEach(() => {
+				delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+				delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+			});
+
+			it('collapses it, and opens it only under the selected Models tab', async () => {
+				render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				expect(screen.queryByTitle('System One')).not.toBeInTheDocument();
+				expect(screen.getByTitle('Models')).toHaveAttribute('aria-expanded', 'false');
+
+				fireEvent.click(screen.getByTitle('Models'));
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				expect(screen.getByTitle('Models')).toHaveAttribute('aria-expanded', 'true');
+				for (const label of ['Library', 'Sources', 'System One', 'System Two', 'Gateway']) {
+					expect(screen.getByTitle(label)).toBeInTheDocument();
+				}
+				// The Models row opened its Overview, so it is the selected row.
+				expect(screen.getByTitle('Models')).toHaveAttribute('aria-current', 'page');
+			});
+		});
+
+		it('opens a panel from its sidebar row', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'models' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Sources'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByTitle('Sources')).toHaveAttribute('aria-current', 'page');
+			expect(screen.getByTestId('models-settings-tab')).toHaveAttribute('data-panel', 'sources');
+			expect(
+				document.querySelector('[data-setting-id="local-models-model-server"]')
+			).not.toBeNull();
+			// With a panel open, the Models row is the open parent, not the selection.
+			expect(screen.getByTitle('Models')).not.toHaveAttribute('aria-current');
+		});
+
+		it('opens on the Overview the first time, with the Models row selected', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'models' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByTestId('models-overview')).toBeInTheDocument();
+			expect(screen.getByTitle('Models')).toHaveAttribute('aria-current', 'page');
+		});
+
+		it('opens the Overview from the Models row, whatever panel was open before', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'models' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Gateway'));
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+			fireEvent.click(screen.getByTitle('Models'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByTitle('Models')).toHaveAttribute('aria-current', 'page');
+			expect(screen.getByTitle('Gateway')).not.toHaveAttribute('aria-current');
+			expect(screen.getByTestId('models-overview')).toBeInTheDocument();
+		});
+
+		it('jumps from an Overview card to its panel', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'models' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'Open System Two' }));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByTitle('System Two')).toHaveAttribute('aria-current', 'page');
 		});
 	});
 
@@ -1636,7 +1896,9 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Off' }));
+			// Scoped to the duration control: spoken notices has an "Off" of its own.
+			const duration = document.querySelector('[data-setting-id="notifications-toast"]');
+			fireEvent.click(within(duration as HTMLElement).getByRole('button', { name: 'Off' }));
 			expect(mockSetToastDuration).toHaveBeenCalledWith(-1);
 
 			fireEvent.click(screen.getByRole('button', { name: '5s' }));

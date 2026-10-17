@@ -13,6 +13,7 @@ import { getWakaTimeManager } from '../wakatime-instance';
 import type { CueEvent, CueRunResult, CueRunStatus, CueSubscription } from './cue-types';
 import type { SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
+import type { CueTurnLaunch } from '../../shared/cue/turn-settings';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
@@ -74,8 +75,32 @@ export interface CueExecutionConfig {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	/** The agent's Local Models gateway URL, applied by the launch plan. */
+	gatewayUrl?: string;
+	/**
+	 * The agent's stored Run on target, as data (`prepareAgentRunOn` validates
+	 * it). One that names a source replaces `customModel` and the gateway.
+	 */
+	runOn?: unknown;
+	/**
+	 * Set when the run's tier names a target that cannot be used
+	 * (`ResolvedTurnSettings.refusal`). The run fails with this message and no
+	 * process is started: it never runs on the agent's own model in its place.
+	 */
+	launchRefusal?: string;
 	customModel?: string;
 	customEffort?: string;
+	/**
+	 * Set for a run whose model, effort and place depend on its prompt: a
+	 * subscription on the Auto model, which the model router reads the prompt
+	 * for. Called once, with the prompt after variable substitution, and what it
+	 * answers replaces `customModel`, `customEffort`, `runOn` and
+	 * `launchRefusal` above (which hold what the run launches with when the
+	 * router gives no decision). It must not reject on a routing: no decision is
+	 * an answer. A `launchRefusal` it answers fails the run before any process
+	 * starts, like one set at dispatch.
+	 */
+	resolveLateTurn?: (prompt: string) => Promise<CueTurnLaunch>;
 	/** Legacy Adaptive Mode opt-in (maestro-p TUI). Off/absent means pure API. */
 	enableMaestroP?: boolean;
 	/** Refinement of the opt-in. Absent defaults to `dynamic` (legacy behavior). */
@@ -165,6 +190,13 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		endedAt: new Date().toISOString(),
 	});
 
+	// A tier target that cannot be used: refused before anything else, so the
+	// run's record names it.
+	if (config.launchRefusal) {
+		onLog('error', config.launchRefusal);
+		return failedResult(config.launchRefusal);
+	}
+
 	// 1. Validate prompt content
 	const trimmedPrompt = promptPath?.trim();
 	if (!trimmedPrompt) {
@@ -198,8 +230,23 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	// subscription's own prompt, which a standing prefix must not mask.
 	const finalPrompt = prependNewSessionMessage(substitutedPrompt, session.newSessionMessage);
 
-	// 3. Build spawn spec (agent args, SSH wrapping, etc.)
-	const buildResult = await buildSpawnSpec(config, finalPrompt);
+	// 3. Settings that depend on the prompt (a subscription on the Auto model)
+	// are decided now that there is one. A tier target that cannot be used
+	// fails the run by name, exactly as the refusal checked at the top does.
+	// The router reads the subscription's own prompt, not the standing prefix:
+	// the prefix is the same on every run and says nothing about this one.
+	let launchConfig = config;
+	if (config.resolveLateTurn) {
+		const late = await config.resolveLateTurn(substitutedPrompt);
+		if (late.launchRefusal) {
+			onLog('error', late.launchRefusal);
+			return failedResult(late.launchRefusal);
+		}
+		launchConfig = { ...config, ...late };
+	}
+
+	// 4. Build spawn spec (agent args, SSH wrapping, etc.)
+	const buildResult = await buildSpawnSpec(launchConfig, finalPrompt);
 	if (!buildResult.ok) {
 		onLog('error', buildResult.message);
 		return failedResult(buildResult.message);
@@ -212,7 +259,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		onLog('cue', `[CUE] Using SSH remote: ${spec.sshRemoteUsed.name || spec.sshRemoteUsed.host}`);
 	}
 
-	// 4. Execute the process
+	// 5. Execute the process
 	onLog(
 		'cue',
 		`[CUE] Executing run ${runId}: "${subscription.name}" → ${spec.command} (${event.type})`
@@ -263,7 +310,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		}
 	}
 
-	// 5. Assemble final result. `processResult.stdout` is already clean text and
+	// 6. Assemble final result. `processResult.stdout` is already clean text and
 	// `providerSessionId`/`usage` already extracted - both parsed once, live,
 	// by `cue-process-lifecycle.ts`'s stream capture as stdout arrived, rather
 	// than re-parsed here from the finished buffer.

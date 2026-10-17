@@ -40,6 +40,7 @@ import {
 	messageStartsWithAgentMention,
 	type MentionRouting,
 } from '../../shared/crossAgentContext';
+import type { ConsultChain } from '../../shared/consultBudget';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
 import {
 	holdTurnForConsults,
@@ -164,6 +165,14 @@ export function planCrossAgentMentions(
  * - `handoff`: consult nobody yet; arm a hand-off that forwards the source
  *   turn's answer when it ends (see `crossAgentHandoff`).
  *
+ * `sourceConsultChain` is the place in a consult chain of the turn `message`
+ * starts, and only a message another agent sent has one (`maestro-cli
+ * dispatch`; see `QueuedItem.consultChain`). It goes with everything the mention
+ * sets off: each consult and hand-off, so main spends one from that chain for
+ * it, and the hold, so the turn it releases into stays in the chain. A message
+ * the user typed has none: its mentions are the user's own asking, which main
+ * lets through without spending (see `CrossAgentRequest.sourceConsultChain`).
+ *
  * Returns what the caller must tell the local turn: the parallel consult
  * targets (pending note) and the hand-off targets (hand-off note).
  */
@@ -172,22 +181,32 @@ export function dispatchCrossAgentMentions(
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string,
-	images?: string[]
+	images?: string[],
+	sourceConsultChain?: ConsultChain
 ): CrossAgentMentionDispatch {
 	const targets = resolveConsultTargets(plan.targetSessionIds);
 	if (plan.routing === 'handoff') {
-		armMentionHandoff(sourceSession.id, sourceTabId, { targets, message });
+		armMentionHandoff(sourceSession.id, sourceTabId, {
+			targets,
+			message,
+			...(sourceConsultChain && { sourceConsultChain }),
+		});
 		return { consultTargets: [], handoffTargets: targets };
 	}
 
 	// Hold BEFORE sending, so a consult that settles almost at once (a target
 	// that no longer exists) still finds the hold waiting to record it.
 	if (plan.routing === 'parallel') {
-		holdTurnForConsults(sourceSession.id, sourceTabId, targets);
+		holdTurnForConsults(sourceSession.id, sourceTabId, targets, {
+			consultChain: sourceConsultChain,
+		});
 	} else if (plan.routing === 'consult-first') {
 		holdTurnForConsults(sourceSession.id, sourceTabId, targets, {
-			message,
-			...(images && images.length > 0 && { images: [...images] }),
+			deferred: {
+				message,
+				...(images && images.length > 0 && { images: [...images] }),
+			},
+			consultChain: sourceConsultChain,
 		});
 	}
 
@@ -204,6 +223,7 @@ export function dispatchCrossAgentMentions(
 			// The source agent's working directory: the consulted agent is told it
 			// may READ files here to answer (see cross-agent-router prompt).
 			sourceCwd: sourceSession.cwd,
+			...(sourceConsultChain && { sourceConsultChain }),
 		});
 	}
 	return plan.routing === 'parallel'
@@ -222,9 +242,17 @@ export function dispatchCrossAgentMentionsForMessage(
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string,
-	images?: string[]
+	images?: string[],
+	sourceConsultChain?: ConsultChain
 ): CrossAgentMentionDispatch {
 	const plan = planCrossAgentMentions(message, sourceSession.id);
 	if (!plan) return NO_MENTION_DISPATCH;
-	return dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId, images);
+	return dispatchCrossAgentMentions(
+		plan,
+		message,
+		sourceSession,
+		sourceTabId,
+		images,
+		sourceConsultChain
+	);
 }

@@ -99,6 +99,13 @@ export const MODAL_PRIORITIES = {
 	/** Rename group modal */
 	RENAME_GROUP: 850,
 
+	/**
+	 * Group Settings modal: the defaults a new agent in one group starts with.
+	 * Sits with Rename Group, the other per-group dialog. Its publish and clear
+	 * confirmations use CONFIRM, which is above it.
+	 */
+	GROUP_SETTINGS: 849,
+
 	/** Create new group modal */
 	CREATE_GROUP: 800,
 
@@ -167,6 +174,9 @@ export const MODAL_PRIORITIES = {
 
 	/** Snoozed tabs list modal (shows every agent's snoozed tabs) */
 	SNOOZED_TABS: 703,
+
+	/** Tab Cleanup Suggestions (suggested closes, snoozes, and wakes across every agent) */
+	TAB_CLEANUP: 702,
 
 	/**
 	 * Snooze history log. Must rank ABOVE SNOOZED_TABS: it opens on top of that
@@ -284,6 +294,20 @@ export const MODAL_PRIORITIES = {
 	/** Document Graph modal */
 	DOCUMENT_GRAPH: 545,
 
+	/**
+	 * Delegation Graph (the fleet's peer relationships, drawn). Must rank BELOW
+	 * NEW_INSTANCE: its Peers link opens the Edit Agent modal on top of it, and
+	 * Escape closes the highest-priority layer.
+	 */
+	DELEGATION_GRAPH: 546,
+
+	/**
+	 * The Delegation Graph's edge editor, a popover over its canvas. Above the
+	 * graph, so Escape closes the editor first and leaves the graph open for a
+	 * second Escape.
+	 */
+	DELEGATION_GRAPH_EDGE_EDITOR: 548,
+
 	/** Computer History viewer (destination surface) */
 	COMPUTER_HISTORY: 547,
 
@@ -367,8 +391,19 @@ export const MODAL_PRIORITIES = {
 	 * goes back to the extensions grid instead of closing the whole modal). */
 	EXTENSION_DETAILS: 452,
 
+	/** Wake phrase training dialog, opened from Voice Controls inside Settings.
+	 * Above Settings so Escape closes the dialog (and its microphone) and leaves
+	 * Settings open; below CONFIRM so "delete these recordings?" layers on top. */
+	WAKE_PHRASE_TRAINING: 453,
+
 	/** Settings modal */
 	SETTINGS: 450,
+
+	/** A Cappella Voice HUD - floating, non-blocking. Above the other floating
+	 * panels because it is the surface of a live conversation: Escape has to end
+	 * the voice session before it touches a git overlay or the thought stream.
+	 * Still below real modals, which keep Escape when one is open. */
+	VOICE_HUD: 230,
 
 	/** Thought Stream introspection panel - floating, non-blocking; sits below
 	 * real modals so they take Escape/focus first, above git overlays. */
@@ -377,6 +412,10 @@ export const MODAL_PRIORITIES = {
 	 * the menu first. */
 	GIT_PILL_MENU: 220,
 
+	/** Header voice pill dropdown. Above the HUD, so Escape closes the menu the
+	 * user just opened rather than ending the conversation underneath it - the
+	 * one Escape in this feature that must NOT reach for the microphone. */
+	VOICE_PILL_MENU: 232,
 	/** Header notification center popover - same tier as the git pill menu:
 	 * Escape closes the popover before anything underneath it. */
 	NOTIFICATION_CENTER: 221,

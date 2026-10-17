@@ -1,9 +1,13 @@
 import picomatch from 'picomatch';
 import {
 	CUE_EVENT_TYPES,
+	CUE_GATE_MAX_CONDITION_LENGTH,
+	CUE_GATE_ON_UNAVAILABLE,
 	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
+	DEFAULT_CUE_INJECTION_THRESHOLD,
+	cueInjectionThresholdProblem,
 	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueScheduleDay,
@@ -365,6 +369,42 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 				`${prefix}: "fan_in_timeout_minutes" must be a positive integer between 1 and 1440`
 			);
 		}
+	}
+
+	if (subRecord.gate !== undefined) {
+		if (typeof subRecord.gate !== 'string' || subRecord.gate.trim().length === 0) {
+			errors.push(
+				`${prefix}: "gate" must be a non-empty string (a condition the event must meet, in plain language)`
+			);
+		} else if (subRecord.gate.length > CUE_GATE_MAX_CONDITION_LENGTH) {
+			errors.push(
+				`${prefix}: "gate" must be at most ${CUE_GATE_MAX_CONDITION_LENGTH} characters (one sentence is enough)`
+			);
+		}
+	}
+	if (subRecord.gate_on_unavailable !== undefined) {
+		if (
+			typeof subRecord.gate_on_unavailable !== 'string' ||
+			!(CUE_GATE_ON_UNAVAILABLE as readonly string[]).includes(subRecord.gate_on_unavailable)
+		) {
+			errors.push(
+				`${prefix}: "gate_on_unavailable" must be one of: ${CUE_GATE_ON_UNAVAILABLE.join(', ')} (what a gate does when its model cannot answer; omitted = run)`
+			);
+		}
+	}
+
+	if (subRecord.screen_injection !== undefined && typeof subRecord.screen_injection !== 'boolean') {
+		errors.push(
+			`${prefix}: "screen_injection" must be true or false (omitted = screen shell commands that use untrusted text)`
+		);
+	}
+	if (
+		subRecord.injection_threshold !== undefined &&
+		cueInjectionThresholdProblem(subRecord.injection_threshold) !== null
+	) {
+		errors.push(
+			`${prefix}: "injection_threshold" must be a number above 0 and at most 1 (omitted = ${DEFAULT_CUE_INJECTION_THRESHOLD})`
+		);
 	}
 
 	if (subRecord.filter !== undefined) {

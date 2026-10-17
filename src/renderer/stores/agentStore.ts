@@ -37,6 +37,8 @@ import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMess
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
+import { isAutoModel } from '../../shared/autoModel';
+import { settleAutoTurn, turnSpawnSettings } from '../services/autoTurn';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore, selectSessionById, takePendingMergedContext } from './sessionStore';
@@ -452,7 +454,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				item.text,
 				session,
 				targetTab.id,
-				item.images
+				item.images,
+				// Set only when another agent's `maestro-cli dispatch` queued the item:
+				// the mentions in it are then that agent's consults, and spend its chain.
+				item.consultChain
 			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole
@@ -477,6 +482,18 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// each item on what it was queued with. Falls back to the live values only
 		// for items queued before the capture existed.
 		const { turnModel, turnEffort } = codifyQueuedTurnSettings(item, targetTab, session);
+		// An item on the Auto model (queued on it, or sent on it by an agent that
+		// is) is settled below, inside the `try`: the tab took the turn with a
+		// stamp, and the router's answer decides what this spawn launches with.
+		// Read from the item's own capture, like the model and effort above, so a
+		// stamp left by the turn before never speaks for an item on a named model.
+		const sentOnAuto = isAutoModel(
+			item.turnSettings ? item.turnSettings.model : (targetTab.customModel ?? session.customModel)
+		);
+		const settleAuto = (prompt: string) =>
+			sentOnAuto
+				? settleAutoTurn({ sessionId, tabId: targetTab.id, prompt, itemId: item.id })
+				: Promise.resolve(null);
 
 		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target
 		// tab so it matches the error listener's tab) so it can be auto-resent if
@@ -538,10 +555,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// handleQuickActionsDebugReleaseQueuedItem) so it lands atomically with
 				// the dequeue/state-busy transition. Adding it here too would duplicate.
 
-				const appendSystemPrompt = await prepareMaestroSystemPrompt({
-					session,
-					activeTabId: targetTab.id,
-				});
+				// The router judges the message itself, without the consult replies
+				// and merged context folded in around it above. A tier target that
+				// cannot be used throws, and the catch below holds the item.
+				const [appendSystemPrompt, autoLaunch] = await Promise.all([
+					prepareMaestroSystemPrompt({
+						session,
+						activeTabId: targetTab.id,
+						consultChain: item.consultChain,
+					}),
+					settleAuto(messagePrompt),
+				]);
 
 				logger.info('[processQueuedItem] Spawning agent with queued message:', undefined, {
 					sessionId: targetSessionId,
@@ -572,10 +596,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomArgs: session.customArgs,
 					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: turnModel,
-					sessionCustomEffort: turnEffort,
+					...turnSpawnSettings(autoLaunch, { model: turnModel, effort: turnEffort }),
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					// A turn another agent delegated runs in the chain that agent
+					// was admitted to, so its own consults spend the same budget.
+					...(item.consultChain ? { consultChain: item.consultChain } : {}),
 				});
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
@@ -619,10 +645,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						conductorProfile: deps.conductorProfile,
 					});
 
-					const appendSystemPromptForCommand = await prepareMaestroSystemPrompt({
-						session,
-						activeTabId: targetTab.id,
-					});
+					// A command's prompt is only known here, so a command on the Auto
+					// model is routed at its dispatch, on the prompt it expands to.
+					const [appendSystemPromptForCommand, autoLaunch] = await Promise.all([
+						prepareMaestroSystemPrompt({
+							session,
+							activeTabId: targetTab.id,
+							consultChain: item.consultChain,
+						}),
+						settleAuto(substitutedPrompt),
+					]);
 
 					// Add user log showing the command with its interpolated prompt
 					useSessionStore.getState().addLogToTab(
@@ -671,10 +703,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomArgs: session.customArgs,
 						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: turnModel,
-						sessionCustomEffort: turnEffort,
+						...turnSpawnSettings(autoLaunch, { model: turnModel, effort: turnEffort }),
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+						...(item.consultChain ? { consultChain: item.consultChain } : {}),
 					});
 				} else {
 					// Unknown command - add error log and reset to idle

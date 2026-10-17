@@ -105,4 +105,65 @@ describe('gist create command', () => {
 		expect(output.error).toContain('No transcript found');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
+
+	// The desktop screens the transcript before it publishes. The CLI raises no
+	// dialog, so its "Publish anyway" is a flag, and a refusal has to say what
+	// was found (masked) and how to send it regardless.
+	describe('secret screen', () => {
+		const refusal = {
+			success: false,
+			error: 'Found 1 possible secret in the gist. Nothing was sent.',
+			code: 'SECRETS_FOUND',
+			secretFindings: [
+				{ kind: 'github-token', line: 12, preview: '••••••••abcd', source: 'agent_context.md' },
+			],
+		};
+
+		function replyWith(result: Record<string, unknown>): Record<string, unknown> {
+			const captured: Record<string, unknown> = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({
+					sendCommand: vi.fn().mockImplementation((msg) => {
+						Object.assign(captured, msg);
+						return Promise.resolve(result);
+					}),
+				} as never)
+			);
+			return captured;
+		}
+
+		it('does not send allowSecrets unless the flag is passed', async () => {
+			const msg = captureMessage();
+			await gistCreate('agent-1', {});
+			expect(msg.allowSecrets).toBeUndefined();
+		});
+
+		it('sends allowSecrets: true for --allow-secrets', async () => {
+			const msg = captureMessage();
+			await gistCreate('agent-1', { allowSecrets: true });
+			expect(msg.allowSecrets).toBe(true);
+		});
+
+		it('refuses, exits non-zero, and prints the masked findings', async () => {
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			replyWith(refusal);
+
+			await gistCreate('agent-1', {});
+
+			// stdout stays one JSON document a script can parse.
+			const output = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+			expect(output).toEqual({
+				success: false,
+				error: refusal.error,
+				code: 'SECRETS_FOUND',
+				secretFindings: refusal.secretFindings,
+			});
+			expect(output.gistUrl).toBeUndefined();
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+
+			const printed = errorSpy.mock.calls.map(([line]) => line).join('\n');
+			expect(printed).toContain('GitHub token ••••••••abcd (agent_context.md, line 12)');
+			expect(printed).toContain('--allow-secrets');
+		});
+	});
 });

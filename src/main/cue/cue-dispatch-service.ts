@@ -9,6 +9,61 @@ import type {
 } from './cue-types';
 import { recordTriggerFired } from './cue-telemetry';
 import { cueTurnSettingsOf, type CueTurnSettings } from '../../shared/cue/turn-settings';
+import type { CueLogPayload } from '../../shared/cue-log-types';
+import {
+	resolveCueGateDecision,
+	withCueGateRecord,
+	type CueGateCheck,
+	type CueGateEvaluator,
+	type CueGateRecord,
+} from '../../shared/cue/gate';
+import {
+	collectCueInjectionTargets,
+	resolveCueInjectionDecision,
+	resolveCueInjectionScreen,
+	screenCueInjectionTargets,
+	withCueInjectionRecord,
+	type CueInjectionCheck,
+	type CueInjectionRecord,
+	type CueInjectionScorer,
+	type CueInjectionScreenPlan,
+	type CueInjectionTarget,
+} from '../../shared/cue/injection-screen';
+import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
+import { captureException } from '../utils/sentry';
+import { buildCueTemplateContext } from './cue-template-context-builder';
+
+/** A dispatch a subscription's `gate` skipped. Nothing was spawned for it. */
+export interface CueGatedDispatch {
+	ownerSessionId: string;
+	subscription: CueSubscription;
+	/** The event, carrying the gate record (see `withCueGateRecord`). */
+	event: CueEvent;
+	record: CueGateRecord;
+	/** When the gate check began, so the recorded event spans the check. */
+	startedAt: number;
+	chainRootId?: string;
+	parentEventId?: string;
+}
+
+/** A dispatch the prompt-injection screen refused. Nothing was spawned for it. */
+export interface CueBlockedDispatch {
+	ownerSessionId: string;
+	subscription: CueSubscription;
+	/** The event, carrying the screen record (see `withCueInjectionRecord`). */
+	event: CueEvent;
+	record: CueInjectionRecord;
+	/** When the checks began, so the recorded event spans them. */
+	startedAt: number;
+	chainRootId?: string;
+	parentEventId?: string;
+}
+
+/** What one event has to be screened for: the plan, and the values it filled. */
+interface CueInjectionScreenWork {
+	plan: CueInjectionScreenPlan;
+	targets: CueInjectionTarget[];
+}
 
 export interface CueDispatchServiceDeps {
 	getSessions: () => Array<{ id: string; name: string }>;
@@ -36,6 +91,38 @@ export interface CueDispatchServiceDeps {
 	 * to subscribed plugins; best-effort and must never throw into dispatch.
 	 */
 	onTriggerFired?: (eventType: string) => void;
+	/**
+	 * Answers a subscription's `gate` condition against the event. Injected so
+	 * this module never imports the model stack: the desktop engine passes the
+	 * Local Models evaluator, and the standalone runner passes nothing. Absent
+	 * means no gate can be checked in this process, which is the `unavailable`
+	 * case, not "no gate": the subscription's policy still decides.
+	 */
+	evaluateGate?: CueGateEvaluator;
+	/**
+	 * Called when a gate skipped a dispatch, so the owner of `cue_events` and
+	 * the activity log can record the event and the reason.
+	 */
+	onGated?: (gated: CueGatedDispatch) => void;
+	/**
+	 * Scores one untrusted value for prompt injection (the `injection-screen`
+	 * Local Models task). Injected for the same reason as `evaluateGate`.
+	 * Absent means this process has no screen at all, which is the `off` case:
+	 * a subscription that asked for screening by name still fails closed on a
+	 * command, and one that only got the default keeps running.
+	 */
+	scoreInjection?: CueInjectionScorer;
+	/**
+	 * Called when the screen refused a dispatch, so the owner of `cue_events`
+	 * and the activity log can record the event, the variable, and the score.
+	 */
+	onInjectionBlocked?: (blocked: CueBlockedDispatch) => void;
+	/**
+	 * Whether the engine is still running. A check is awaited, and the engine
+	 * can stop while one is in flight; the dispatch is dropped then rather
+	 * than starting a run on a stopped engine.
+	 */
+	isActive?: () => boolean;
 }
 
 /**
@@ -76,6 +163,286 @@ export interface CueDispatchService {
 }
 
 export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispatchService {
+	// The gate and the injection screen are awaited, so two events for one
+	// subscription could finish out of order and start their runs in the wrong
+	// sequence. One chain per subscription keeps dispatch in arrival order;
+	// different subscriptions still check concurrently.
+	const checkQueue = createKeyedWriteQueue();
+
+	/**
+	 * Ask the evaluator. Never rejects: every way a check can fail to produce a
+	 * verdict is `unavailable`, so the subscription's policy decides and no
+	 * event is stranded by a throw.
+	 */
+	async function checkGate(
+		condition: string,
+		ownerSessionId: string,
+		sub: CueSubscription,
+		event: CueEvent
+	): Promise<CueGateCheck> {
+		if (!deps.evaluateGate) {
+			return {
+				status: 'unavailable',
+				reason: 'This Cue runner does not load Local Models, so it cannot check a gate.',
+			};
+		}
+		try {
+			return await deps.evaluateGate({
+				condition,
+				event,
+				subscriptionName: sub.name,
+				...(sub.gate_on_unavailable ? { onUnavailable: sub.gate_on_unavailable } : {}),
+				agentId: ownerSessionId,
+			});
+		} catch (error) {
+			// An unclassified failure inside the model engine is a bug. Report
+			// it, and let the policy decide what happens to the event.
+			void captureException(error, { operation: 'cue:gate', subscriptionName: sub.name });
+			return {
+				status: 'unavailable',
+				reason: `The gate check failed: ${error instanceof Error ? error.message : String(error)}`,
+			};
+		}
+	}
+
+	/**
+	 * Check the gate. Returns the event stamped with what the gate decided, or
+	 * `null` when no run starts (the event was gated, or the engine stopped).
+	 *
+	 * Failure policy (see `src/shared/cue/gate.ts`): a gate whose model cannot
+	 * answer fails OPEN with a visible warning, because a missing gate model
+	 * must not silently stop the user's automation. `gate_on_unavailable: skip`
+	 * is the opt-in to fail closed.
+	 */
+	async function applyGate(
+		condition: string,
+		ownerSessionId: string,
+		sub: CueSubscription,
+		event: CueEvent,
+		startedAt: number,
+		chainRootId?: string,
+		parentEventId?: string
+	): Promise<CueEvent | null> {
+		const check = await checkGate(condition, ownerSessionId, sub, event);
+		const decision = resolveCueGateDecision(check, sub.gate_on_unavailable);
+
+		if (deps.isActive && !deps.isActive()) {
+			deps.onLog('cue', `[CUE] "${sub.name}" gate answered after the engine stopped - dropped`);
+			return null;
+		}
+
+		if (decision.warn) {
+			deps.onLog('warn', `[CUE] "${sub.name}" gate not checked: ${decision.record.reason}`, {
+				type: 'gateUnavailable',
+				sessionId: ownerSessionId,
+				subscriptionName: sub.name,
+				message: `"${sub.name}": ${decision.record.reason}`,
+				ran: decision.run,
+			} satisfies CueLogPayload);
+		}
+
+		const gatedEvent = withCueGateRecord(event, decision.record);
+		if (!decision.run) {
+			deps.onLog('cue', `[CUE] "${sub.name}" gated - no run started: ${decision.record.reason}`);
+			deps.onGated?.({
+				ownerSessionId,
+				subscription: sub,
+				event: gatedEvent,
+				record: decision.record,
+				startedAt,
+				chainRootId,
+				parentEventId,
+			});
+			return null;
+		}
+
+		if (decision.record.outcome === 'passed') {
+			deps.onLog('cue', `[CUE] "${sub.name}" gate passed: ${decision.record.reason}`);
+		}
+		return gatedEvent;
+	}
+
+	/**
+	 * What an event has to be screened for, or `null` when there is nothing to
+	 * screen: the subscription is not screened, or the event filled none of
+	 * the untrusted variables its templates reference. Decided before any
+	 * model is asked, so an event with no outside text never waits on one and
+	 * is never blocked by a screen that cannot run.
+	 */
+	function planInjectionScreen(
+		sub: CueSubscription,
+		event: CueEvent,
+		promptOverride?: string
+	): CueInjectionScreenWork | null {
+		const plan = resolveCueInjectionScreen(sub, promptOverride);
+		if (!plan.screen || plan.variables.length === 0) return null;
+		// The run id is not known yet and no untrusted variable reads it.
+		const targets = collectCueInjectionTargets(
+			plan.variables,
+			buildCueTemplateContext(event, sub, '')
+		);
+		return targets.length > 0 ? { plan, targets } : null;
+	}
+
+	/**
+	 * Score the event's untrusted values. Never rejects: a scorer that throws
+	 * is `unavailable`, so the policy decides and no event is stranded.
+	 */
+	async function checkInjection(
+		ownerSessionId: string,
+		sub: CueSubscription,
+		work: CueInjectionScreenWork
+	): Promise<CueInjectionCheck> {
+		const scorer = deps.scoreInjection;
+		if (!scorer) {
+			return {
+				status: 'off',
+				reason: 'This Cue runner does not load Local Models, so it cannot screen text.',
+			};
+		}
+		try {
+			return await screenCueInjectionTargets(work.targets, work.plan.threshold, (target) =>
+				scorer({
+					text: target.text,
+					variable: target.variable,
+					subscriptionName: sub.name,
+					agentId: ownerSessionId,
+				})
+			);
+		} catch (error) {
+			void captureException(error, {
+				operation: 'cue:injectionScreen',
+				subscriptionName: sub.name,
+			});
+			return {
+				status: 'unavailable',
+				reason: `The screen failed: ${error instanceof Error ? error.message : String(error)}`,
+			};
+		}
+	}
+
+	/**
+	 * Screen the event. Returns the event stamped with what the screen found,
+	 * or `null` when no run starts (the run was blocked, or the engine stopped).
+	 *
+	 * Failure policy (see `src/shared/cue/injection-screen.ts`): a command
+	 * fails CLOSED when the screen was asked for and cannot run; every other
+	 * action fails OPEN with a visible warning, unless the screen is on System
+	 * One and its task fails closed.
+	 */
+	async function applyInjectionScreen(
+		work: CueInjectionScreenWork,
+		ownerSessionId: string,
+		sub: CueSubscription,
+		event: CueEvent,
+		startedAt: number,
+		chainRootId?: string,
+		parentEventId?: string
+	): Promise<CueEvent | null> {
+		const check = await checkInjection(ownerSessionId, sub, work);
+		const decision = resolveCueInjectionDecision(check, {
+			action: sub.action,
+			explicit: work.plan.explicit,
+			threshold: work.plan.threshold,
+		});
+
+		if (deps.isActive && !deps.isActive()) {
+			deps.onLog(
+				'cue',
+				`[CUE] "${sub.name}" injection screen answered after the engine stopped - dropped`
+			);
+			return null;
+		}
+
+		const screenedEvent = withCueInjectionRecord(event, decision.record);
+		if (!decision.run) {
+			deps.onLog('warn', `[CUE] "${sub.name}" blocked - no run started: ${decision.record.reason}`);
+			deps.onInjectionBlocked?.({
+				ownerSessionId,
+				subscription: sub,
+				event: screenedEvent,
+				record: decision.record,
+				startedAt,
+				chainRootId,
+				parentEventId,
+			});
+			return null;
+		}
+
+		if (decision.record.outcome === 'ran-unscreened') {
+			// Always logged. The payload, which is what raises the notice, is
+			// attached only when the policy says the user has to be told.
+			deps.onLog(
+				'warn',
+				`[CUE] "${sub.name}" not screened for prompt injection: ${decision.record.reason}`,
+				decision.warn
+					? ({
+							type: 'injectionScreenUnavailable',
+							sessionId: ownerSessionId,
+							subscriptionName: sub.name,
+							message: `"${sub.name}": ${decision.record.reason}`,
+						} satisfies CueLogPayload)
+					: undefined
+			);
+		}
+		return screenedEvent;
+	}
+
+	/**
+	 * Run the checks a dispatch needs, in order, then start the run. The gate
+	 * goes first: it is the cheap answer to "does this event need a run at
+	 * all", and an event it skips needs no screen.
+	 */
+	async function dispatchThroughChecks(
+		condition: string | undefined,
+		screen: CueInjectionScreenWork | null,
+		ownerSessionId: string,
+		sub: CueSubscription,
+		event: CueEvent,
+		sourceSessionName: string,
+		chainDepth?: number,
+		promptOverride?: string,
+		chainRootId?: string,
+		parentEventId?: string
+	): Promise<void> {
+		const startedAt = Date.now();
+		let checked: CueEvent | null = event;
+		if (condition) {
+			checked = await applyGate(
+				condition,
+				ownerSessionId,
+				sub,
+				checked,
+				startedAt,
+				chainRootId,
+				parentEventId
+			);
+			if (!checked) return;
+		}
+		if (screen) {
+			checked = await applyInjectionScreen(
+				screen,
+				ownerSessionId,
+				sub,
+				checked,
+				startedAt,
+				chainRootId,
+				parentEventId
+			);
+			if (!checked) return;
+		}
+		dispatchNow(
+			ownerSessionId,
+			sub,
+			checked,
+			sourceSessionName,
+			chainDepth,
+			promptOverride,
+			chainRootId,
+			parentEventId
+		);
+	}
+
 	return {
 		dispatchSubscription(
 			ownerSessionId: string,
@@ -100,135 +467,205 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			// Surface `cue.fired` to subscribed plugins (type only, no prompt text).
 			deps.onTriggerFired?.(event.type);
 
-			// One model choice per subscription: every fan-out target shares it.
-			const turnSettings = cueTurnSettingsOf(sub);
+			// A manual trigger (Play, `maestro-cli cue trigger`) is a person
+			// asking for this run, and its synthetic payload has nothing for a
+			// condition to judge. The gate is for events nobody is watching.
+			let condition = sub.gate?.trim() || undefined;
+			if (condition && event.payload.manual === true) {
+				deps.onLog('cue', `[CUE] "${sub.name}" gate not applied to a manual trigger`);
+				condition = undefined;
+			}
+			// The screen needs no such rule: a manual payload fills no
+			// untrusted variable, so there is nothing for it to score.
+			const screen = planInjectionScreen(sub, event, promptOverride);
 
-			if (sub.fan_out && sub.fan_out.length > 0) {
-				const targetNames = sub.fan_out.join(', ');
-				deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
+			if (!condition && !screen) {
+				return dispatchNow(
+					ownerSessionId,
+					sub,
+					event,
+					sourceSessionName,
+					chainDepth,
+					promptOverride,
+					chainRootId,
+					parentEventId
+				);
+			}
 
-				const allSessions = deps.getSessions();
-				let dispatched = 0;
-				const skippedTargets: string[] = [];
-				for (let i = 0; i < sub.fan_out.length; i++) {
-					const targetName = sub.fan_out[i];
-					// Prefer the stable id when present so a renamed agent still
-					// resolves. Falls back to name-or-id match for legacy YAML
-					// written before `fan_out_ids` existed.
-					const targetId = sub.fan_out_ids?.[i];
-					const targetSession =
-						(targetId ? allSessions.find((s) => s.id === targetId) : undefined) ??
-						allSessions.find((s) => s.name === targetName || s.id === targetName);
-
-					if (!targetSession) {
-						deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" - skipping`);
-						skippedTargets.push(`${targetName} (not found)`);
-						continue;
-					}
-
-					const fanOutEvent: CueEvent = {
-						...event,
-						id: crypto.randomUUID(),
-						payload: {
-							...event.payload,
-							fanOutSource: sourceSessionName,
-							fanOutIndex: i,
-						},
-					};
-					// The normalizer (cue-config-normalizer.ts) resolves prompt_file → prompt
-					// content at config load time. sub.prompt is always a string post-normalization.
-					const perTargetPrompt = sub.fan_out_prompts?.[i];
-					const prompt = promptOverride ?? perTargetPrompt ?? sub.prompt;
-					if (!prompt) {
-						deps.onLog(
-							'warn',
-							`[CUE] Fan-out target ${i} of "${sub.name}" has no prompt - skipping dispatch`
-						);
-						skippedTargets.push(`${targetName} (empty prompt)`);
-						continue;
-					}
-					deps.executeRun(
-						targetSession.id,
-						prompt,
-						fanOutEvent,
-						sub.name,
-						sub.pipeline_name,
-						sub.output_prompt,
+			// The checks are awaited, so the count reports the dispatch as
+			// accepted: its verdict (a run, or a `gated` or `blocked-injection`
+			// event) follows.
+			void checkQueue
+				.enqueue(`${ownerSessionId}\u0000${sub.name}`, () =>
+					dispatchThroughChecks(
+						condition,
+						screen,
+						ownerSessionId,
+						sub,
+						event,
+						sourceSessionName,
 						chainDepth,
-						sub.cli_output,
-						sub.action,
-						sub.command,
+						promptOverride,
 						chainRootId,
-						parentEventId,
-						undefined, // notify: a fan-out branch is always a prompt run
-						undefined, // autoRun: same
-						turnSettings
-					);
-					dispatched++;
-				}
-				// If every fan-out target was skipped the user sees nothing happen -
-				// surface a loud error so they can fix the broken prompts. This was
-				// the primary cause of "manual trigger doesn't start with 2 agents"
-				// reports: the debounce race wiped prompts so both targets got skipped.
-				if (dispatched === 0 && skippedTargets.length > 0) {
+						parentEventId
+					)
+				)
+				.catch((error) => {
+					// Only a throw from the dispatch itself reaches here (the
+					// checks cannot reject). Report it; the event is lost either
+					// way, and an unhandled rejection would hide which one.
+					void captureException(error, {
+						operation: 'cue:checkedDispatch',
+						subscriptionName: sub.name,
+					});
 					deps.onLog(
 						'error',
-						`[CUE] "${sub.name}": no fan-out targets ran (${skippedTargets.join('; ')}). Check that each agent has a prompt configured.`
+						`[CUE] "${sub.name}" could not be dispatched after its checks: ${error instanceof Error ? error.message : String(error)}`
 					);
-				}
-				return dispatched;
-			}
-
-			// For `action: notify` the prompt slot carries the resolved toast
-			// body - the validator allows empty `prompt` since the message comes
-			// from the notify config + fallback chain.
-			let prompt: string;
-			let resolvedNotify: CueNotifyConfig | undefined;
-			let resolvedAutoRun: CueAutoRunConfig | undefined;
-			if (sub.action === 'notify') {
-				const message = resolveNotifyMessage(sub);
-				prompt = message;
-				resolvedNotify = { ...(sub.notify ?? {}), message };
-			} else if (sub.action === 'autorun') {
-				// An autorun subscription's work is its document list, not a
-				// prompt. Bail loudly rather than dispatching a run that would
-				// reach the executor with nothing to launch - a scheduled run
-				// fires when nobody is watching, so a silent no-op looks
-				// exactly like a run that never fired at all.
-				if (!sub.auto_run || sub.auto_run.documents.length === 0) {
-					deps.onLog(
-						'error',
-						`[CUE] "${sub.name}" has action='autorun' but no documents - skipping dispatch`
-					);
-					return 0;
-				}
-				resolvedAutoRun = sub.auto_run;
-				prompt = sub.prompt?.trim() || sub.auto_run.documents.join(', ');
-			} else {
-				prompt = promptOverride ?? sub.prompt;
-				if (!prompt) {
-					deps.onLog('warn', `[CUE] "${sub.name}" has no prompt - skipping dispatch`);
-					return 0;
-				}
-			}
-			deps.executeRun(
-				ownerSessionId,
-				prompt,
-				event,
-				sub.name,
-				sub.pipeline_name,
-				sub.output_prompt,
-				chainDepth,
-				sub.cli_output,
-				sub.action,
-				sub.command,
-				chainRootId,
-				parentEventId,
-				resolvedNotify,
-				resolvedAutoRun,
-				turnSettings
-			);
+				});
 			return 1;
 		},
 	};
+
+	/** Start the run(s) for a subscription. The body of dispatch, after its checks. */
+	function dispatchNow(
+		ownerSessionId: string,
+		sub: CueSubscription,
+		event: CueEvent,
+		sourceSessionName: string,
+		chainDepth?: number,
+		promptOverride?: string,
+		chainRootId?: string,
+		parentEventId?: string
+	): number {
+		// One model choice per subscription: every fan-out target shares it.
+		const turnSettings = cueTurnSettingsOf(sub);
+
+		if (sub.fan_out && sub.fan_out.length > 0) {
+			const targetNames = sub.fan_out.join(', ');
+			deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
+
+			const allSessions = deps.getSessions();
+			let dispatched = 0;
+			const skippedTargets: string[] = [];
+			for (let i = 0; i < sub.fan_out.length; i++) {
+				const targetName = sub.fan_out[i];
+				// Prefer the stable id when present so a renamed agent still
+				// resolves. Falls back to name-or-id match for legacy YAML
+				// written before `fan_out_ids` existed.
+				const targetId = sub.fan_out_ids?.[i];
+				const targetSession =
+					(targetId ? allSessions.find((s) => s.id === targetId) : undefined) ??
+					allSessions.find((s) => s.name === targetName || s.id === targetName);
+
+				if (!targetSession) {
+					deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" - skipping`);
+					skippedTargets.push(`${targetName} (not found)`);
+					continue;
+				}
+
+				const fanOutEvent: CueEvent = {
+					...event,
+					id: crypto.randomUUID(),
+					payload: {
+						...event.payload,
+						fanOutSource: sourceSessionName,
+						fanOutIndex: i,
+					},
+				};
+				// The normalizer (cue-config-normalizer.ts) resolves prompt_file → prompt
+				// content at config load time. sub.prompt is always a string post-normalization.
+				const perTargetPrompt = sub.fan_out_prompts?.[i];
+				const prompt = promptOverride ?? perTargetPrompt ?? sub.prompt;
+				if (!prompt) {
+					deps.onLog(
+						'warn',
+						`[CUE] Fan-out target ${i} of "${sub.name}" has no prompt - skipping dispatch`
+					);
+					skippedTargets.push(`${targetName} (empty prompt)`);
+					continue;
+				}
+				deps.executeRun(
+					targetSession.id,
+					prompt,
+					fanOutEvent,
+					sub.name,
+					sub.pipeline_name,
+					sub.output_prompt,
+					chainDepth,
+					sub.cli_output,
+					sub.action,
+					sub.command,
+					chainRootId,
+					parentEventId,
+					undefined, // notify: a fan-out branch is always a prompt run
+					undefined, // autoRun: same
+					turnSettings
+				);
+				dispatched++;
+			}
+			// If every fan-out target was skipped the user sees nothing happen -
+			// surface a loud error so they can fix the broken prompts. This was
+			// the primary cause of "manual trigger doesn't start with 2 agents"
+			// reports: the debounce race wiped prompts so both targets got skipped.
+			if (dispatched === 0 && skippedTargets.length > 0) {
+				deps.onLog(
+					'error',
+					`[CUE] "${sub.name}": no fan-out targets ran (${skippedTargets.join('; ')}). Check that each agent has a prompt configured.`
+				);
+			}
+			return dispatched;
+		}
+
+		// For `action: notify` the prompt slot carries the resolved toast
+		// body - the validator allows empty `prompt` since the message comes
+		// from the notify config + fallback chain.
+		let prompt: string;
+		let resolvedNotify: CueNotifyConfig | undefined;
+		let resolvedAutoRun: CueAutoRunConfig | undefined;
+		if (sub.action === 'notify') {
+			const message = resolveNotifyMessage(sub);
+			prompt = message;
+			resolvedNotify = { ...(sub.notify ?? {}), message };
+		} else if (sub.action === 'autorun') {
+			// An autorun subscription's work is its document list, not a
+			// prompt. Bail loudly rather than dispatching a run that would
+			// reach the executor with nothing to launch - a scheduled run
+			// fires when nobody is watching, so a silent no-op looks
+			// exactly like a run that never fired at all.
+			if (!sub.auto_run || sub.auto_run.documents.length === 0) {
+				deps.onLog(
+					'error',
+					`[CUE] "${sub.name}" has action='autorun' but no documents - skipping dispatch`
+				);
+				return 0;
+			}
+			resolvedAutoRun = sub.auto_run;
+			prompt = sub.prompt?.trim() || sub.auto_run.documents.join(', ');
+		} else {
+			prompt = promptOverride ?? sub.prompt;
+			if (!prompt) {
+				deps.onLog('warn', `[CUE] "${sub.name}" has no prompt - skipping dispatch`);
+				return 0;
+			}
+		}
+		deps.executeRun(
+			ownerSessionId,
+			prompt,
+			event,
+			sub.name,
+			sub.pipeline_name,
+			sub.output_prompt,
+			chainDepth,
+			sub.cli_output,
+			sub.action,
+			sub.command,
+			chainRootId,
+			parentEventId,
+			resolvedNotify,
+			resolvedAutoRun,
+			turnSettings
+		);
+		return 1;
+	}
 }

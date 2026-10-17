@@ -2002,6 +2002,7 @@ class WsMaestroClient implements MaestroClient {
 			method,
 			{
 				type: 'cross_agent_ask',
+				...(input.consultChain ? { consultChain: input.consultChain } : {}),
 				sessionId: input.targetAgentId,
 				question: input.question,
 				...(input.fromAgentId ? { fromSessionId: input.fromAgentId } : {}),

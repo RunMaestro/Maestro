@@ -8,9 +8,12 @@ import {
 	FolderPlus,
 	FolderUp,
 	Plus,
+	Settings,
 	Trash2,
+	Waypoints,
 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
+import { isWorktreeGroup } from '../../../shared/types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 
@@ -23,6 +26,10 @@ interface GroupContextMenuProps {
 	groupsPlusEnabled?: boolean;
 	memberCount: number;
 	onRename: () => void;
+	/** Open Group Settings (the defaults for new agents) on this group. */
+	onGroupSettings?: () => void;
+	/** Open the Delegation Graph on this group. */
+	onOpenDelegationGraph?: () => void;
 	onNewAgent: () => void;
 	onDelete?: () => void;
 	/** Override the delete button label; defaults based on memberCount. */
@@ -52,6 +59,8 @@ export function GroupContextMenu({
 	groupsPlusEnabled = false,
 	memberCount,
 	onRename,
+	onGroupSettings,
+	onOpenDelegationGraph,
 	onNewAgent,
 	onDelete,
 	deleteLabel,
@@ -135,6 +144,41 @@ export function GroupContextMenu({
 				<Edit3 className="w-3.5 h-3.5" />
 				Rename Group...
 			</button>
+
+			{/* A worktree group is made by Maestro, and its agents are made by
+			    create-worktree, which copies the parent agent and never opens the
+			    create form. Defaults for that form would do nothing there. */}
+			{onGroupSettings && !isWorktreeGroup(group) && (
+				<button
+					type="button"
+					onClick={() => {
+						onGroupSettings();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Settings className="w-3.5 h-3.5" />
+					Group Settings...
+				</button>
+			)}
+
+			{/* Offered on a worktree group too: its agents hold peer grants like
+			    any others, so its graph is as real as a hand-made group's. */}
+			{onOpenDelegationGraph && (
+				<button
+					type="button"
+					onClick={() => {
+						onOpenDelegationGraph();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Waypoints className="w-3.5 h-3.5" />
+					Delegation Graph
+				</button>
+			)}
 
 			<button
 				type="button"

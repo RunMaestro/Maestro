@@ -18,9 +18,10 @@ import { describe, it, expect } from 'vitest';
 import {
 	sidebarSessionEquality,
 	activeSessionChromeEquality,
+	delegationRosterEquality,
 } from '../../../renderer/stores/sessionEquality';
 import { createMockSession } from '../../helpers/mockSession';
-import type { AITab, Session } from '../../../renderer/types';
+import type { AITab, PeerAgent, Session } from '../../../renderer/types';
 
 function tab(overrides: Partial<AITab> = {}): AITab {
 	return {
@@ -195,5 +196,67 @@ describe('activeSessionChromeEquality', () => {
 			],
 		};
 		expect(activeSessionChromeEquality(a, b)).toBe(true);
+	});
+});
+
+describe('delegationRosterEquality', () => {
+	const base = (overrides: Partial<Session> = {}): Session =>
+		createMockSession({ id: 'a', name: 'Alpha', ...overrides });
+
+	it('is true for the same array', () => {
+		const sessions = [base()];
+		expect(delegationRosterEquality(sessions, sessions)).toBe(true);
+	});
+
+	it('ignores a field the graph does not read', () => {
+		expect(delegationRosterEquality([base({ state: 'idle' })], [base({ state: 'busy' })])).toBe(
+			true
+		);
+	});
+
+	it('is false when an agent is added or removed', () => {
+		expect(delegationRosterEquality([base()], [base(), base({ id: 'b' })])).toBe(false);
+	});
+
+	it.each<[string, Partial<Session>]>([
+		['name', { name: 'Renamed' }],
+		['group', { groupId: 'g1' }],
+		['parent', { parentSessionId: 'p1' }],
+		['group grant', { groupPeerAccess: { read: true, write: false } }],
+		['worktree grant', { worktreePeerAccess: { read: true, write: true } }],
+		['peer rows', { peerAgents: [{ sessionId: 'b', read: true, write: false }] }],
+	])('is false when the %s changes', (_label, change) => {
+		expect(delegationRosterEquality([base()], [base(change)])).toBe(false);
+	});
+
+	it('compares peer rows by value, so equal rows in a new array are no change', () => {
+		const rows = () => [{ sessionId: 'b', read: true, write: false, description: 'Docs' }];
+		expect(
+			delegationRosterEquality([base({ peerAgents: rows() })], [base({ peerAgents: rows() })])
+		).toBe(true);
+	});
+
+	it.each<[string, Partial<PeerAgent>]>([
+		['target', { sessionId: 'c' }],
+		['consult bit', { read: false }],
+		['delegate bit', { write: true }],
+		['description', { description: 'Other' }],
+	])('is false when the %s of a peer row changes', (_label, change) => {
+		const row = { sessionId: 'b', read: true, write: false, description: 'Docs' };
+		expect(
+			delegationRosterEquality(
+				[base({ peerAgents: [row] })],
+				[base({ peerAgents: [{ ...row, ...change }] })]
+			)
+		).toBe(false);
+	});
+
+	it('compares a grant by its bits, so an equal grant in a new object is no change', () => {
+		expect(
+			delegationRosterEquality(
+				[base({ groupPeerAccess: { read: true, write: false } })],
+				[base({ groupPeerAccess: { read: true, write: false } })]
+			)
+		).toBe(true);
 	});
 });

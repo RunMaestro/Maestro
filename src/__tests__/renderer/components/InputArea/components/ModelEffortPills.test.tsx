@@ -114,6 +114,77 @@ describe('ModelEffortPills', () => {
 			);
 		});
 	});
+	// Auto is a model choice like any other: the stored value is the word
+	// `auto`, drawn as "Auto", and its tooltip says what it acts on and who
+	// decides.
+	describe('the Auto model choice', () => {
+		const AUTO_TITLE = 'Auto: picks the model and the effort for each turn. Decided by System One.';
+		const WITH_AUTO = ['', 'auto', 'gpt-5', 'gpt-5-mini'];
+
+		it('draws the word as Auto in the pill', () => {
+			renderPills({ currentModel: 'auto', availableModels: WITH_AUTO });
+
+			expect(screen.getByText('Auto')).toBeInTheDocument();
+			expect(screen.queryByText('auto')).not.toBeInTheDocument();
+		});
+
+		it('draws the row as Auto, carries its tooltip, and selects the word', () => {
+			const onModelChange = vi.fn();
+			renderPills({
+				modelMenuOpen: true,
+				availableModels: WITH_AUTO,
+				autoModelTitle: AUTO_TITLE,
+				onModelChange,
+			});
+
+			const row = screen.getByText('Auto').closest('button')!;
+			expect(row).toHaveAttribute('title', AUTO_TITLE);
+			fireEvent.click(row);
+
+			expect(onModelChange).toHaveBeenCalledWith('auto');
+		});
+
+		it('puts the tooltip on the Auto row alone', () => {
+			renderPills({ modelMenuOpen: true, availableModels: WITH_AUTO, autoModelTitle: AUTO_TITLE });
+
+			expect(screen.getByText('gpt-5-mini').closest('button')).not.toHaveAttribute('title');
+			expect(screen.getByText('(default)').closest('button')).not.toHaveAttribute('title');
+		});
+
+		it("starts the pill's tooltip with the Auto title while Auto is the model", () => {
+			renderPills({
+				currentModel: 'auto',
+				availableModels: WITH_AUTO,
+				autoModelTitle: AUTO_TITLE,
+			});
+
+			const pill = screen.getByText('Auto').closest('button')!;
+			expect(pill.getAttribute('title')).toBe(`${AUTO_TITLE} Click to change`);
+		});
+
+		it('appends the shortcut after the Auto title', () => {
+			renderPills({
+				currentModel: 'auto',
+				availableModels: WITH_AUTO,
+				autoModelTitle: AUTO_TITLE,
+				shortcutKeys: HINT_KEYS,
+			});
+
+			const title = screen.getByText('Auto').closest('button')!.getAttribute('title')!;
+			expect(title.startsWith(`${AUTO_TITLE} Click to change`)).toBe(true);
+			expect(title).toContain(formatShortcutKeys(HINT_KEYS));
+		});
+
+		it('keeps the plain tooltip on a named model, and on Auto with no title to show', () => {
+			const { unmount } = renderPills({ availableModels: WITH_AUTO, autoModelTitle: AUTO_TITLE });
+			expect(screen.getByTitle('Change model')).toBeInTheDocument();
+			unmount();
+
+			renderPills({ currentModel: 'auto', availableModels: WITH_AUTO });
+			expect(screen.getByTitle('Change model')).toBeInTheDocument();
+		});
+	});
+
 	describe('typing a model ID that is not in the list', () => {
 		// The motivating case: a limited-access model the CLI accepts but that
 		// discovery cannot see, so it never reaches availableModels.

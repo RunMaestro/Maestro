@@ -5,6 +5,9 @@ import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { resolveDictationTarget } from '../../../renderer/services/dictation';
+import { QWEN3_1_7B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -1254,6 +1257,20 @@ describe('InputArea', () => {
 	});
 
 	describe('Command Mode', () => {
+		it('never changes the mode for dictated text, even text that starts with a bang', () => {
+			const props = createDefaultProps();
+			render(<InputArea {...props} />);
+
+			// The composer registers its own dictation target, written through the
+			// draft setter. The textarea's onChange is where the `!` gesture lives,
+			// and a transcript must never reach it.
+			const target = resolveDictationTarget(screen.getByRole('textbox'));
+			expect(target?.insert('!ls')).toBe(true);
+
+			expect(props.setInputValue).toHaveBeenCalledWith('!ls');
+			expect(useComposerInputStore.getState().aiCommandMode).toBe('off');
+		});
+
 		// Command mode is composer state; the `!` gesture is consumed on entry, so
 		it('shows the command mode bar when the composer is in command mode', () => {
 			const props = createDefaultProps({
@@ -1374,6 +1391,44 @@ describe('InputArea', () => {
 			expect(screen.getByTestId('ai-command-proposed')).toHaveTextContent('du -sh * | sort -rh');
 			expect(screen.getByTestId('ai-command-run')).toBeInTheDocument();
 			expect(screen.getByTestId('ai-command-cancel')).toBeInTheDocument();
+		});
+
+		it('shows what the command does when the model explained it', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId);
+			useAiCommandStore
+				.getState()
+				.resolveAiCommand('req-1', 'du -sh *', { explanation: 'Sizes everything here.' });
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-explanation')).toHaveTextContent(
+				'Sizes everything here.'
+			);
+		});
+
+		it('draws no explanation line for a reply that came without one', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId, 'du -sh *');
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByTestId('ai-command-explanation')).not.toBeInTheDocument();
+		});
+
+		it('names the assigned local model on the bar before anything is sent', () => {
+			const previous = useSettingsStore.getState().localModelAssignments;
+			useSettingsStore.setState({
+				localModelAssignments: { 'ai-command': { type: 'local', modelId: QWEN3_1_7B_ID } },
+			});
+			try {
+				render(<InputArea {...aiCommandProps()} />);
+
+				expect(screen.getByTestId('turn-model-pill')).toHaveTextContent(
+					getLocalModel(QWEN3_1_7B_ID)!.displayName
+				);
+				expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+			} finally {
+				useSettingsStore.setState({ localModelAssignments: previous });
+			}
 		});
 
 		it('keeps the request on screen so the command can be judged against it', () => {

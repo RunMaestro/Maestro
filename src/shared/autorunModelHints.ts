@@ -52,7 +52,13 @@ import {
 	CHECKED_TASK_COUNT_REGEX,
 	UNCHECKED_TASK_REGEX,
 } from './markdownTaskScan';
-import { asTierLevel, resolveTierModel, resolveEffortLevel, type ModelTier } from './modelTiers';
+import {
+	asTierLevel,
+	resolveEffortLevel,
+	tierLaunchKey,
+	type ModelTier,
+	type TierRouting,
+} from './modelTiers';
 import type { ToolType } from './types';
 
 /**
@@ -81,9 +87,11 @@ export type HintDirective = ModelTier | typeof INHERIT_KEYWORD;
  * Which scope supplied a value, for reporting where a setting came from.
  * `'subscription'` is a Cue subscription's static `tier` / `effort`, which
  * rides the same resolver (see `src/shared/cue/turn-settings.ts`); markers
- * never produce it.
+ * never produce it. `'auto'` is a level the model router chose for a turn sent
+ * on the Auto model (see `src/shared/autoTurn.ts`); markers never produce it
+ * either.
  */
-export type HintScope = 'document' | 'task' | 'subscription';
+export type HintScope = 'document' | 'task' | 'subscription' | 'auto';
 
 export interface ModelHint {
 	tier?: HintDirective;
@@ -274,23 +282,23 @@ export function findAllModelHints(content: string): ModelHint[] {
  * `resolveTurnSettings`: that lives in `autorunTurnSettings`, which imports
  * `ModelHint` from this file. Type-only today, so erased - but a value import
  * back the other way would make it a real cycle. This needs two lookups, not
- * the notes and warnings machinery.
+ * the notes and warnings machinery. The model half is `tierLaunchKey`, which
+ * resolves the tier's TARGET the way `resolveTurnSettings` does: two tiers on
+ * one model name but different sources are different settings.
  */
 function settingsKey(
 	toolType: ToolType,
 	hint: ModelHint | null,
 	baselineModel?: string,
-	baselineEffort?: string
+	baselineEffort?: string,
+	routing?: TierRouting
 ): string {
-	let model = baselineModel;
+	const tier = hint?.tier && hint.tier !== INHERIT_KEYWORD ? hint.tier : undefined;
 	let effort = baselineEffort;
-	if (hint?.tier && hint.tier !== INHERIT_KEYWORD) {
-		model = resolveTierModel(toolType, hint.tier) ?? baselineModel;
-	}
 	if (hint?.effort && hint.effort !== INHERIT_KEYWORD) {
 		effort = resolveEffortLevel(toolType, hint.effort) ?? baselineEffort;
 	}
-	return `${model ?? ''}\u0000${effort ?? ''}`;
+	return `${tierLaunchKey(toolType, tier, baselineModel, routing)}\u0000${effort ?? ''}`;
 }
 
 /**
@@ -304,24 +312,27 @@ function settingsKey(
  * next N, then stop", so the existing `while (remainingTasks > 0)` loop comes
  * back around and re-resolves for the rest.
  *
- * Compares the RESOLVED `{model, effort}` pair, not the tier words, and that
- * distinction is the whole reason this takes a toolType. `resolveTierModel`
- * returns undefined for providers with no tier table (codex, copilot-cli,
- * opencode), so on those `tier="low"` and `tier="high"` both resolve to the
- * agent's own model - identical settings. Splitting on the words there would
- * end one dispatch and start another to run at exactly the same configuration.
+ * Compares the RESOLVED `{model, place, effort}` settings, not the tier words,
+ * and that distinction is the whole reason this takes a toolType. A provider
+ * with no tier table and no harness default (copilot-cli, opencode) resolves
+ * no tier, so on those `tier="low"` and `tier="high"` both run on the agent's
+ * own model - identical settings. Splitting on the words there would end one
+ * dispatch and start another to run at exactly the same configuration.
  * `tier="default"` versus no marker is the same trap.
  *
  * @param content - the document, read fresh; this is recomputed per dispatch
  * @param toolType - provider, because tier to model mapping is per provider
  * @param baselineModel - the agent's configured model, the fallback a hint overrides
  * @param baselineEffort - the agent's configured effort
+ * @param routing - the agent's tier targets and the harness defaults; the same
+ *   value the dispatch hands `resolveTurnSettings`, or the boundary moves
  */
 export function countTasksUnderActiveHint(
 	content: string,
 	toolType: ToolType,
 	baselineModel?: string,
-	baselineEffort?: string
+	baselineEffort?: string,
+	routing?: TierRouting
 ): { count: number; total: number } {
 	let documentHint: ModelHint | null = null;
 	let firstKey: string | null = null;
@@ -335,7 +346,7 @@ export function countTasksUnderActiveHint(
 			total++;
 			const taskHint = markerMatch ? parseModelMarker(markerMatch[1] || '', index, 'task') : null;
 			const merged = mergeHints(documentHint, taskHint);
-			const key = settingsKey(toolType, merged, baselineModel, baselineEffort);
+			const key = settingsKey(toolType, merged, baselineModel, baselineEffort, routing);
 			if (firstKey === null) {
 				firstKey = key;
 				count = 1;

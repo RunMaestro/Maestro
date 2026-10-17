@@ -21,6 +21,11 @@ export function useDirectoryKeyboard({
 }: UseDirectoryKeyboardParams) {
 	return useCallback(
 		(e: KeyboardEvent) => {
+			// An open dropdown on this screen (the peer picker) owns its own Enter
+			// and Escape: they choose an option and close the menu. Without this,
+			// the same keystroke also continues the wizard or steps it back.
+			if ((e.target as Element | null)?.closest?.('[role="listbox"]')) return;
+
 			switch (e.key) {
 				case 'Enter':
 					if (document.activeElement === browseButtonRef.current) {

@@ -21,6 +21,7 @@ import { notifyToast, type Toast } from '../stores/notificationStore';
 import { resolveTerminalTab } from '../utils/terminalTabHelpers';
 import { browserTabFocusFields, terminalTabFocusFields } from '../utils/tabFocusFields';
 import { openUrl } from '../utils/openUrl';
+import { undoGroupDefaultsPublish } from './groupDefaultsPublish';
 import { logger } from '../utils/logger';
 
 export interface ToastClickActionHandlers {
@@ -159,6 +160,12 @@ export function dispatchToastClickAction(
 
 		case 'open-url':
 			openUrl(action.url);
+			return true;
+
+		case 'undo-group-publish':
+			// The service says what it restored, or that there is nothing left to
+			// undo, so this click never ends in silence either.
+			void undoGroupDefaultsPublish(action.publishId);
 			return true;
 
 		default: {

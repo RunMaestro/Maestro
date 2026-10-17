@@ -26,6 +26,7 @@ When you need detailed guidance on a Maestro feature, fetch the relevant documen
 | **Agent Collaboration** (mention vs group chat, picking one) | https://docs.runmaestro.ai/agent-collaboration.md       |
 | **Group Chat** (delegated moderation, multi-turn)            | https://docs.runmaestro.ai/group-chat.md                |
 | **Cross-Agent Mentions** (`@name`, single-turn consult)      | https://docs.runmaestro.ai/cross-agent-mentions.md      |
+| **Agent Delegation** (peer rosters, budget, the graph)       | https://docs.runmaestro.ai/agent-delegation.md          |
 | **Symphony mode** (token-donation contributions)             | https://docs.runmaestro.ai/symphony.md                  |
 | **SpecKit commands** (spec-driven workflow)                  | https://docs.runmaestro.ai/speckit-commands.md          |
 | **OpenSpec commands** (change management workflow)           | https://docs.runmaestro.ai/openspec-commands.md         |

@@ -385,4 +385,24 @@ describe('AgentPickerGrid', () => {
 		expect(options[0]).toHaveAttribute('aria-selected', 'true');
 		expect(options[1]).toHaveAttribute('aria-selected', 'false');
 	});
+
+	describe('hideEnvVars', () => {
+		const expanded = {
+			expandedAgent: 'claude-code',
+			customAgentEnvVars: { 'claude-code': { API_KEY: 'test-key' } },
+		};
+
+		it('draws the env vars inside the expanded card by default', () => {
+			render(<AgentPickerGrid {...createDefaultProps(expanded)} />);
+
+			expect(screen.getByDisplayValue('API_KEY')).toBeInTheDocument();
+		});
+
+		it('leaves them out when the form edits them on its own tab', () => {
+			render(<AgentPickerGrid {...createDefaultProps({ ...expanded, hideEnvVars: true })} />);
+
+			expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
+			expect(screen.queryByDisplayValue('API_KEY')).not.toBeInTheDocument();
+		});
+	});
 });

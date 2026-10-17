@@ -157,6 +157,18 @@ describe('FilePreviewHeader on a phone', () => {
 		expect(screen.getByText('View in Document Graph')).toBeInTheDocument();
 	});
 
+	it('carries Talk with Document into the sheet, pressed while a session runs', () => {
+		const onTalkWithDocument = vi.fn();
+		renderHeader({ onTalkWithDocument, isTalkingAboutDocument: true });
+		openSheet();
+
+		const row = screen.getByText('End the voice session about this document').closest('button');
+		expect(row).toHaveAttribute('aria-pressed', 'true');
+
+		fireEvent.click(row!);
+		expect(onTalkWithDocument).toHaveBeenCalledTimes(1);
+	});
+
 	it('offers the preview tier as an accordion rather than an anchored popover', () => {
 		const onPreviewTierChange = vi.fn();
 		renderHeader({ onPreviewTierChange });
@@ -189,5 +201,28 @@ describe('FilePreviewHeader on a desktop', () => {
 		expect(screen.getByTestId('preview-tier-chip-button')).toBeInTheDocument();
 		expect(screen.getByText('/Users/pedram/Pedsidian/Meetings')).toBeInTheDocument();
 		expect(screen.getByText('Size:')).toBeInTheDocument();
+	});
+
+	// Talk with Document is a TOGGLE - the same button ends the session it
+	// started - so it has to announce that state, not just take the accent color.
+	it('draws Talk with Document and announces whether a session is running', () => {
+		const onTalkWithDocument = vi.fn();
+		renderHeader({ onTalkWithDocument });
+
+		const idle = screen.getByTestId('talk-with-document-button');
+		expect(idle).toHaveAttribute('aria-pressed', 'false');
+
+		cleanup();
+		renderHeader({ onTalkWithDocument, isTalkingAboutDocument: true });
+		expect(screen.getByTestId('talk-with-document-button')).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('drops Talk with Document when it is switched off in Settings', () => {
+		renderHeader({
+			onTalkWithDocument: vi.fn(),
+			toolbarVisibility: { ...allVisible, talkWithDocument: false },
+		});
+
+		expect(screen.queryByTestId('talk-with-document-button')).not.toBeInTheDocument();
 	});
 });

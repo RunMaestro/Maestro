@@ -76,6 +76,27 @@ describe('buildQueuedMessageItem', () => {
 		expect(item.turnSettings).toBeDefined();
 	});
 
+	// A prompt another agent's `maestro-cli dispatch` queued carries the place in
+	// the consult chain its turn takes; the spawn reads it off the item.
+	it('carries a consult chain on the item when the caller was admitted to one', () => {
+		const session = seed();
+		const item = buildQueuedMessageItem({
+			session,
+			tab: session.aiTabs[1],
+			text: 'take this over',
+			consultChain: { chainId: 'chain-a', depth: 2 },
+		});
+
+		expect(item.consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+	});
+
+	it('leaves the consult chain off everything else', () => {
+		const session = seed();
+		const item = buildQueuedMessageItem({ session, tab: session.aiTabs[1], text: 'carry on' });
+
+		expect(item).not.toHaveProperty('consultChain');
+	});
+
 	it('marks an item queued from a read-only tab', () => {
 		const session = seed({
 			aiTabs: [createMockAITab({ id: 'a', name: 'Alpha', readOnlyMode: true })],
@@ -141,6 +162,18 @@ describe('enqueuePromptForTab', () => {
 		expect(currentQueue().map((item) => item.text)).toEqual(['first', 'second']);
 	});
 
+	it('queues the consult chain with the prompt', () => {
+		seed();
+		enqueuePromptForTab({
+			sessionId: 'session-1',
+			tabId: 'b',
+			text: 'take this over',
+			consultChain: { chainId: 'chain-a', depth: 2 },
+		});
+
+		expect(currentQueue()[0].consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+	});
+
 	it('falls back to the active tab when the target tab is gone', () => {
 		// Losing the prompt because a tab moved is worse than answering it in the
 		// tab next door - the caller has already decided this agent gets asked.
@@ -165,6 +198,44 @@ describe('enqueuePromptForTab', () => {
 		seed({ aiTabs: [], unifiedTabOrder: [], activeTabId: undefined });
 		expect(enqueuePromptForTab({ sessionId: 'session-1', tabId: 'a', text: 'nope' })).toBeNull();
 		expect(currentQueue()).toHaveLength(0);
+	});
+
+	// A prompt queued for an agent on the Auto model is routed as it is queued,
+	// like one the composer queues, and the answer rides on the item.
+	it('routes a prompt queued for an agent set to the Auto model', async () => {
+		const routeTurn = vi.mocked(window.maestro.localModels.routeTurn);
+		routeTurn.mockResolvedValueOnce({
+			tier: 'low',
+			effort: 'low',
+			engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+			latencyMs: 12,
+		});
+		seed({ customModel: 'auto' });
+
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'tidy up' });
+
+		expect(item!.turnSettings).toEqual({ model: 'auto', effort: undefined });
+		expect(routeTurn).toHaveBeenCalledWith(
+			expect.objectContaining({ prompt: 'tidy up', agentId: 'session-1', tabId: 'b' })
+		);
+		await vi.waitFor(() =>
+			expect(currentQueue()[0].turnSettings?.route).toEqual({
+				tier: 'low',
+				effort: 'low',
+				engine: 'Embedding router',
+				calibrated: false,
+			})
+		);
+	});
+
+	it('asks the router nothing for an agent on a named model', () => {
+		const routeTurn = vi.mocked(window.maestro.localModels.routeTurn);
+		routeTurn.mockClear();
+		seed({ customModel: 'opus' });
+
+		enqueuePromptForTab({ sessionId: 'session-1', tabId: 'a', text: 'carry on' });
+
+		expect(routeTurn).not.toHaveBeenCalled();
 	});
 });
 

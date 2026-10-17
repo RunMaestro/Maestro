@@ -62,6 +62,7 @@ export const ENCORE_FEATURE_LABELS: Record<EncoreFlag, string> = {
 	opencodeServer: 'OpenCode server',
 	concerto: 'Concerto',
 	groupsPlus: 'Groups+',
+	aCappella: 'A Cappella',
 	webLogin: 'Web Login',
 	computerHistory: 'Computer History',
 	quickChat: 'Quick Chat',

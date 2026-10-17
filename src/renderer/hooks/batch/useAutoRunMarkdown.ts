@@ -11,7 +11,10 @@ import {
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../../components/Markdown/remarkAlert';
-import { remarkMaestroMarkers } from '../../components/Markdown/remarkMaestroMarkers';
+import {
+	remarkMaestroMarkers,
+	type MaestroMarkersOptions,
+} from '../../components/Markdown/remarkMaestroMarkers';
 import { remarkStripHtmlComments } from '../../../shared/remarkStripHtmlComments';
 import {
 	remarkFileLinks,
@@ -70,6 +73,11 @@ export interface UseAutoRunMarkdownParams {
 	 * source line of the task; resolves false when the write did not happen.
 	 */
 	onTaskToggle?: (sourceLine: number) => Promise<boolean>;
+	/**
+	 * Names where a tier launches for this panel's agent, so a model pill reads
+	 * `low · qwen3.5-4b · Maestro` instead of `low model`. See `useTierPillLabel`.
+	 */
+	describeTier?: MaestroMarkersOptions['describeTier'];
 }
 
 export interface UseAutoRunMarkdownReturn {
@@ -101,6 +109,7 @@ export function useAutoRunMarkdown({
 	bionifyIntensity,
 	bionifyAlgorithm,
 	onTaskToggle,
+	describeTier,
 }: UseAutoRunMarkdownParams): UseAutoRunMarkdownReturn {
 	// 1. Memoize prose CSS styles - only regenerate when theme changes
 	const proseStyles = useMemo(() => generateAutoRunProseStyles(theme), [theme]);
@@ -218,7 +227,7 @@ export function useAutoRunMarkdown({
 			remarkFrontmatterTable,
 			// Marker pills matter most here: this is the panel with the Run button,
 			// so a gate or halt that will block the run has to be visible from it.
-			remarkMaestroMarkers,
+			[remarkMaestroMarkers, { describeTier }],
 			// This surface has no rehype-raw, so react-markdown would render every
 			// HTML comment as visible body text. Runs after remarkMaestroMarkers so
 			// the markers above still become pills.
@@ -234,7 +243,7 @@ export function useAutoRunMarkdown({
 			]);
 		}
 		return plugins;
-	}, [fileTreeIndices, projectRoot, homeDir]);
+	}, [fileTreeIndices, projectRoot, homeDir, describeTier]);
 
 	// 9. Task toggling, pinned to one identity. A toggle handler naturally closes
 	// over the document content, so it is reborn on every edit - and rebuilding

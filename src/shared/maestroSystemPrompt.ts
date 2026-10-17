@@ -3,9 +3,11 @@
  *
  * Every Maestro-spawned agent gets the same system prompt: the
  * `maestro-system-prompt` template, then any role sections (the Pianola manager
- * instructions), then one section per enabled first-party plugin that declares
- * a `systemPromptSection` (see `FirstPartyPluginDefinition`). Three builders
- * resolve the inputs in their own process and hand them here:
+ * instructions), then one section per core feature that is ready for the agent
+ * (`coreSystemPromptSectionsFor`: System One), then one section per enabled
+ * first-party plugin that declares a `systemPromptSection` (see
+ * `FirstPartyPluginDefinition`). Three builders resolve the inputs in their own
+ * process and hand them here:
  *
  * - renderer: `prepareMaestroSystemPrompt` (src/renderer/utils/spawnHelpers.ts)
  * - CLI: `prepareMaestroSystemPromptCli` (src/cli/services/system-prompt.ts)
@@ -18,6 +20,12 @@
  */
 
 import { resolveEncoreFeatures } from './encoreFeatureDefaults';
+import type { SystemOneAgentAccess } from './local-models/system-one-agent';
+import {
+	SYSTEM_ONE_SYSTEM_PROMPT_ID,
+	isSystemOneAdvertised,
+	systemOnePromptVariables,
+} from './local-models/system-one-prompt';
 import { FIRST_PARTY_PLUGIN_DEFINITIONS, type FirstPartyEncoreFlag } from './plugins/first-party';
 import { substituteTemplateVariables, type TemplateContext } from './templateVariables';
 
@@ -62,6 +70,61 @@ export function systemPromptSectionsFor(
 	return refs;
 }
 
+/** A core section to load: which core feature asked, and the core prompt holding its text. */
+export interface CoreSystemPromptSectionRef {
+	featureId: 'system-one';
+	promptId: string;
+}
+
+/**
+ * What a builder knows about the core features that add a section. Core
+ * features are not Encore Features: no flag switches them, so each is gated on
+ * a fact the builder resolved for the agent being spawned.
+ */
+export interface CoreSystemPromptInput {
+	/** True for an SSH remote agent, whose shell cannot reach this desktop. */
+	isSsh: boolean;
+	/**
+	 * `getSystemOneAgentAccess()` for the agent being spawned. Leave it out when
+	 * the builder could not ask: no answer drops the section, so an agent is
+	 * never told about a tool that may refuse it.
+	 */
+	systemOne?: SystemOneAgentAccess | null;
+}
+
+/**
+ * The core sections an agent spawned right now should carry.
+ *
+ * System One: present only while a request from this agent would be answered
+ * (an engine is chosen, set up and has passed its Test; "Let agents use System
+ * One" is on; the agent is not switched off in its own settings; the day's
+ * budget is not spent), and never for an SSH remote agent. The gate is asked on
+ * every spawn, so switching System One off removes the section from the next
+ * one.
+ */
+export function coreSystemPromptSectionsFor(
+	input: CoreSystemPromptInput
+): CoreSystemPromptSectionRef[] {
+	const refs: CoreSystemPromptSectionRef[] = [];
+	if (isSystemOneAdvertised(input.systemOne, { isSsh: input.isSsh })) {
+		refs.push({ featureId: 'system-one', promptId: SYSTEM_ONE_SYSTEM_PROMPT_ID });
+	}
+	return refs;
+}
+
+/**
+ * The template context the core sections read, decided on the same input as
+ * {@link coreSystemPromptSectionsFor}: a builder spreads this into its context
+ * so a section and the variables it names cannot come from two answers.
+ */
+export function coreSystemPromptContext(
+	input: CoreSystemPromptInput
+): Pick<TemplateContext, 'systemOne'> {
+	return isSystemOneAdvertised(input.systemOne, { isSsh: input.isSsh })
+		? { systemOne: systemOnePromptVariables(input.systemOne) }
+		: {};
+}
+
 export interface AssembleMaestroSystemPromptInput {
 	/** The `maestro-system-prompt` template text (customizations already applied). */
 	template: string;
@@ -69,6 +132,8 @@ export interface AssembleMaestroSystemPromptInput {
 	context: TemplateContext;
 	/** Role-specific additions (e.g. the Pianola manager prompt). Appended first. */
 	roleSections?: ReadonlyArray<string | null | undefined>;
+	/** Core section texts, in `coreSystemPromptSectionsFor` order. Appended after the role sections. */
+	coreSections?: ReadonlyArray<string | null | undefined>;
 	/** Plugin section texts, in `systemPromptSectionsFor` order. Appended last. */
 	pluginSections?: ReadonlyArray<string | null | undefined>;
 }
@@ -82,7 +147,11 @@ export interface AssembleMaestroSystemPromptInput {
 export function assembleMaestroSystemPrompt(input: AssembleMaestroSystemPromptInput): string {
 	const { template, context } = input;
 	const parts = [substituteTemplateVariables(template, context)];
-	for (const section of [...(input.roleSections ?? []), ...(input.pluginSections ?? [])]) {
+	for (const section of [
+		...(input.roleSections ?? []),
+		...(input.coreSections ?? []),
+		...(input.pluginSections ?? []),
+	]) {
 		if (!section || !section.trim()) continue;
 		const substituted = substituteTemplateVariables(section, context);
 		if (substituted.trim()) parts.push(substituted);

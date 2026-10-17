@@ -28,6 +28,14 @@ const createMockParentSession = (overrides: Partial<Session> = {}): Session =>
 		customArgs: ['--verbose'],
 		customEnvVars: { KEY: 'val' },
 		customEnvVarsDisabled: { PARKED: 'later' },
+		gatewayUrl: 'http://127.0.0.1:8787',
+		tokenProxyMode: 'compress' as const,
+		runOn: { type: 'source' as const, endpointId: 'maestro-server', model: 'gpt-oss-20b' },
+		tierTargets: { high: { type: 'provider-model' as const, model: 'opus' } },
+		backgroundRequests: {
+			target: { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+		},
+		systemOneOptOut: true,
 		customModel: 'opus',
 		customContextWindow: 200000,
 		contextWindowSource: 'user-edited' as const,
@@ -74,6 +82,29 @@ describe('buildWorktreeSession', () => {
 		// Parked vars come along too, or the worktree agent silently loses the
 		// switched-off entries the user is keeping for later.
 		expect(session.customEnvVarsDisabled).toEqual({ PARKED: 'later' });
+		// The gateway too: a worktree agent that went direct while its parent
+		// was proxied would be a silent change of endpoint.
+		expect(session.gatewayUrl).toBe('http://127.0.0.1:8787');
+		// And how the Maestro proxy carries it, when that gateway is the proxy:
+		// a worktree agent of a compressing parent compresses too.
+		expect(session.tokenProxyMode).toBe('compress');
+		// And the Run on target: a worktree agent on the provider's cloud model
+		// while its parent runs on a local one would spend money silently.
+		expect(session.runOn).toEqual({
+			type: 'source',
+			endpointId: 'maestro-server',
+			model: 'gpt-oss-20b',
+		});
+		// And the tier targets, so a tier the parent sends somewhere goes there
+		// from its worktree too.
+		expect(session.tierTargets).toEqual({ high: { type: 'provider-model', model: 'opus' } });
+		// And where background requests go: it is read with the gateway above.
+		expect(session.backgroundRequests).toEqual({
+			target: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+		});
+		// And the System One switch: an agent the user switched off must not start
+		// asking, and spending, from a worktree of the same project.
+		expect(session.systemOneOptOut).toBe(true);
 		expect(session.customModel).toBe('opus');
 		expect(session.customContextWindow).toBe(200000);
 		// Provenance travels with the value (finding AD1): inheriting the number

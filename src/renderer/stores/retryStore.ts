@@ -744,12 +744,20 @@ export function scheduleRetryForError(
  * countdown runs are re-read. The provider was always taken live (see
  * `codifyQueuedTurnSettings`), so model and effort are all that needed
  * unfreezing.
+ *
+ * What the model router answered for the prompt is not one of those knobs. A
+ * turn that went out on the Auto model and is resent on it keeps its answer:
+ * the words are the same, so they are not routed twice. It is dropped by the
+ * capture when the agent is on a named model now.
  */
 function replayItem(entry: RetryEntry, item: QueuedItem): QueuedItem {
 	const session = selectSessionById(entry.sessionId)(useSessionStore.getState());
 	if (!session) return item;
 	const tab = session.aiTabs?.find((t) => t.id === entry.tabId);
-	return { ...item, turnSettings: captureQueuedTurnSettings(tab, session) };
+	return {
+		...item,
+		turnSettings: captureQueuedTurnSettings(tab, session, item.turnSettings?.route),
+	};
 }
 
 /**

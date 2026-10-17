@@ -1,5 +1,7 @@
 import type React from 'react';
 import type { Group, RightPanelTab, Session } from '../../../types';
+import { isWorktreeGroup } from '../../../../shared/types';
+import { getModalActions } from '../../../stores/modalStore';
 import { getAllFolderPaths } from '../../../utils/fileExplorer';
 import type { QuickAction, QuickActionMode } from '../types';
 
@@ -73,6 +75,24 @@ export function buildAgentPanelCommands({
 					setRenameGroupModalOpen(true);
 					setQuickActionOpen(false);
 				}
+			},
+		});
+	}
+
+	// The active agent's group, the one Rename Group acts on. A worktree group
+	// gets no Group Settings: its agents are made by create-worktree, which
+	// copies the parent agent and never opens the create form.
+	const activeGroup = activeSession?.groupId
+		? groups.find((g) => g.id === activeSession.groupId)
+		: undefined;
+	if (activeGroup && !isWorktreeGroup(activeGroup)) {
+		commands.push({
+			id: 'groupSettings',
+			label: 'Group Settings',
+			subtext: `Defaults for new agents in ${activeGroup.emoji} ${activeGroup.name}`,
+			action: () => {
+				getModalActions().openGroupSettings(activeGroup.id);
+				setQuickActionOpen(false);
 			},
 		});
 	}

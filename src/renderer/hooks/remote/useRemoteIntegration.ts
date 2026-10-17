@@ -14,13 +14,14 @@ import {
 	aiTabFocusFields,
 	createTab,
 	closeTab,
+	focusAiTabInSession,
 	getActiveTab,
 	getRepairedUnifiedTabOrder,
-	focusAiTabInSession,
 	reopenClosedAiTabById,
 	hasActiveWizard,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
+import { focusAiTabWithSnooze, type FocusAiTabOutcome } from '../../utils/snoozeHelpers';
 import { logger } from '../../utils/logger';
 import {
 	buildQueuedMessageItem,
@@ -28,6 +29,7 @@ import {
 	setQueuedItemPaused,
 	mergeQueuedItemIntoAbove,
 } from '../../services/queuedPrompt';
+import { routeQueuedAutoItem } from '../../services/autoTurn';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
@@ -71,6 +73,7 @@ import {
 } from '../../utils/desktopTabSelectionSync';
 import { loadAllSettings } from '../../stores/settingsStore';
 import { useRemoteGroupChat } from './useRemoteGroupChat';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
@@ -349,6 +352,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				consultChain?: ConsultChain,
 				receiptChannel?: string
 			) => {
 				// Delivery receipt for the web server's `executeCommand` promise.
@@ -455,7 +459,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force, images, receiptChannel },
+						detail: {
+							sessionId,
+							command,
+							inputMode,
+							tabId,
+							force,
+							images,
+							receiptChannel,
+							// The turn's place in a consult chain, when another agent's
+							// `maestro-cli dispatch` sent this command.
+							...(consultChain ? { consultChain } : {}),
+						},
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -556,14 +571,47 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				// If tabId provided, also switch to that tab
 				if (tabId) {
-					updateSessionWith(sessionId, (s) => {
-						// Check if tab exists
-						if (!s.aiTabs.some((t) => t.id === tabId)) {
-							return s;
-						}
-						return focusAiTabInSession(s, tabId);
-					});
+					// The shared jump, not a hand-rolled focus: it reveals a hidden
+					// consult tab, reopens one from the closed-tab history, and
+					// activates a tab that lives inside a tiled group as a pane. A tab
+					// that is neither open nor in that history changes nothing: the
+					// jump's own fallback would move the view to the agent's AI tab.
+					updateSessionWith(sessionId, (s) =>
+						s.aiTabs.some((t) => t.id === tabId) || reopenClosedAiTabById(s, tabId)
+							? focusAiTabInSession(s, tabId)
+							: s
+					);
 				}
+			}
+		);
+
+		// A Cappella's spoken recall: land on one AI tab and say what that took.
+		// Answers on a response channel because the caller has to know whether the
+		// tab was focused, woken out of a snooze, or reopened - it narrates the
+		// result out loud, and main cannot see any of those three states.
+		const unsubscribeFocusAiTab = window.maestro.process.onRemoteFocusAiTab(
+			(sessionId: string, tabId: string, responseChannel: string) => {
+				let outcome: FocusAiTabOutcome | null = null;
+
+				updateSessionWith(sessionId, (s) => {
+					outcome = focusAiTabWithSnooze(s, tabId);
+					return outcome.session;
+				});
+
+				const result = outcome as FocusAiTabOutcome | null;
+				if (result && result.action !== 'missing' && result.tabId) {
+					setActiveSessionId(sessionId);
+					window.maestro.process.sendRemoteFocusAiTabResponse(responseChannel, {
+						ok: true,
+						tabId: result.tabId,
+						action: result.action,
+					});
+					return;
+				}
+				window.maestro.process.sendRemoteFocusAiTabResponse(responseChannel, {
+					ok: false,
+					reason: result ? 'tab-not-found' : 'agent-not-found',
+				});
 			}
 		);
 
@@ -727,7 +775,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
-				hidden?: boolean
+				hidden?: boolean,
+				consultChain?: ConsultChain
 			) => {
 				const ack = (result: {
 					success: boolean;
@@ -813,6 +862,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						sessionId,
 						tabId: createdTabId,
 						text: prompt,
+						consultChain,
 						slashCommand: isSlashCommand,
 					});
 					if (!queued) {
@@ -842,6 +892,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							tabId: createdTabId,
 							// Unexpanded provider commands go to the provider as typed.
 							literalPrompt: commandName.startsWith('/'),
+							...(consultChain ? { consultChain } : {}),
 						},
 					})
 				);
@@ -1146,7 +1197,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				consultChain?: ConsultChain
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1194,7 +1246,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						}
 						window.dispatchEvent(
 							new CustomEvent('maestro:remoteCommand', {
-								detail: { sessionId, command, inputMode: 'ai', tabId: resolvedTabId, images },
+								detail: {
+									sessionId,
+									command,
+									inputMode: 'ai',
+									tabId: resolvedTabId,
+									images,
+									...(consultChain ? { consultChain } : {}),
+								},
 							})
 						);
 						reply({ success: true, tabId: resolvedTabId, queued: false });
@@ -1212,6 +1271,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							tab: targetTab,
 							text: command,
 							images,
+							consultChain,
 						}),
 						...(held && { paused: true }),
 					};
@@ -1225,6 +1285,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						...s,
 						executionQueue: [...s.executionQueue, queuedItem],
 					}));
+					// Routed as it is queued when the agent is set to the Auto model,
+					// like a message the composer queues. A no-op on a named model.
+					routeQueuedAutoItem(sessionId, queuedItem);
 
 					reply({
 						success: true,
@@ -1389,6 +1452,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		return () => {
 			unsubscribeSelectSession();
+			unsubscribeFocusAiTab();
 			unsubscribeSelectTab();
 			unsubscribeNewTab();
 			unsubscribeNewTabWithPrompt();
@@ -1487,11 +1551,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	);
 
 	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
-	// The main process has already validated the surface and tab, so this is a
-	// straight hand-off to the shared opener.
+	// The main process has already validated the surface, tab, group and agent
+	// scope, so this is a straight hand-off to the shared opener.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenModal((params) => {
-			openUiSurface(params.surface, params.tab);
+			openUiSurface(params);
 		});
 		return () => {
 			unsubscribe();
@@ -2397,6 +2461,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		const unsubscribeUpdateGroupSettings = window.maestro.process.onRemoteUpdateGroupSettings(
+			(groupId, request, responseChannel) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteUpdateGroupSettings', {
+						detail: { groupId, request, responseChannel },
+					})
+				);
+			}
+		);
+
 		const unsubscribeRenameGroup = window.maestro.process.onRemoteRenameGroup(
 			(groupId: string, name: string, responseChannel: string) => {
 				window.dispatchEvent(
@@ -2435,6 +2509,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeCreateGroup();
 			unsubscribeRenameGroup();
 			unsubscribeUpdateGroup();
+			unsubscribeUpdateGroupSettings();
 			unsubscribeDeleteGroup();
 			unsubscribeMoveSessionToGroup();
 		};
@@ -2585,6 +2660,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				description: string,
 				isPublic: boolean,
 				agentSessionId: string | undefined,
+				allowSecrets: boolean,
 				responseChannel: string
 			) => {
 				try {
@@ -2641,11 +2717,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						? `${safeName}_${safeSessionId}_context.md`
 						: `${safeName}_context.md`;
 
+					// No dialog on this path: a refusal from the secret screen goes
+					// back to the caller with its masked findings, and only an
+					// explicit `--allow-secrets` publishes past it.
 					const result = await window.maestro.git.createGist(
 						filename,
 						content,
 						description,
-						isPublic
+						isPublic,
+						undefined,
+						{ allowSecrets }
 					);
 					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, result);
 				} catch (error) {

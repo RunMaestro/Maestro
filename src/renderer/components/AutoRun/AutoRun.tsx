@@ -72,6 +72,7 @@ import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
 import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
+import { useTierPillLabel } from '../../hooks/batch/useTierPillLabel';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
 import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -653,6 +654,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
 	const effectivePreviewBionifyReadingMode = bionifyReadingMode && !hasActivePreviewSearch;
 
+	// A model marker's pill names the tier and where it launches for THIS agent
+	// (`low · qwen3.5-4b · Maestro`), from the same resolution the task's launch uses.
+	const describeTier = useTierPillLabel(sessionId);
+
 	// Markdown rendering: prose styles, task counts, token count, remark plugins, components
 	const { proseStyles, taskCounts, tokenCount, remarkPlugins, markdownComponents } =
 		useAutoRunMarkdown({
@@ -678,6 +683,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			// Locked documents belong to the running Auto Run - leave their
 			// checkboxes read-only, matching the disabled editor.
 			onTaskToggle: isLocked ? undefined : handleToggleTask,
+			describeTier,
 		});
 
 	// Keep the document selector badge in sync with the bottom-panel counter.

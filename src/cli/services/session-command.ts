@@ -11,6 +11,7 @@ import type { DesktopTabEntry } from '../../shared/desktopTabs';
 
 export type { DesktopTabEntry };
 import { formatError, formatSuccess } from '../output/formatter';
+import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import { isQuiet } from '../output/verbosity';
 
 export interface SimpleResult {
@@ -40,14 +41,64 @@ export function errorFrameMessage(reply: unknown): string | null {
 	return null;
 }
 
-/** Print an error (JSON-aware) and exit non-zero. Never returns. */
-export function failCommand(message: string, json?: boolean): never {
+/**
+ * Print an error (JSON-aware) and exit non-zero. Never returns.
+ *
+ * `code` names the class of failure for a script: a bad invocation is
+ * `InvalidUsage`, a bridge call that failed takes `exitCodeForError(error)`.
+ * Left out, it is the general failure every caller of this had before.
+ */
+export function failCommand(
+	message: string,
+	json?: boolean,
+	code: ExitCode = ExitCode.GeneralError
+): never {
 	if (json) {
 		console.log(JSON.stringify({ success: false, error: message }));
 	} else {
 		console.error(formatError(message));
 	}
-	return process.exit(1);
+	return exitWith(code);
+}
+
+/**
+ * Report a caught failure and exit with the code its class names: a closed app
+ * is `NotRunning`, an old build `Unsupported`, a hung renderer `Timeout`, and
+ * anything else the general failure. The one spelling of
+ * `catch (error) { failCommand(...) }` so no verb reports 1 for all of them.
+ */
+export function failFromError(error: unknown, json?: boolean): never {
+	return failCommand(
+		error instanceof Error ? error.message : String(error),
+		json,
+		exitCodeForError(error)
+	);
+}
+
+/**
+ * One bridge round trip for a verb that needs the reply's fields.
+ *
+ * A transport failure exits with the code for it (an older app build, a hung
+ * renderer), and a reply the app marked `success: false` exits with its error,
+ * so the caller reads a reply that succeeded and nothing else.
+ */
+export async function sendBridgeCommand<T extends { success: boolean; error?: string }>(
+	payload: Record<string, unknown>,
+	responseType: string,
+	json: boolean | undefined,
+	timeoutMs?: number
+): Promise<T> {
+	let reply: T;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<T>(payload, responseType, timeoutMs)
+		);
+	} catch (error) {
+		failFromError(error, json);
+	}
+	if (!reply.success)
+		failCommand(reply.error || errorFrameMessage(reply) || 'Request failed', json);
+	return reply;
 }
 
 /** Report a `{ success }` result: success line, or error + exit(1) on failure. */
@@ -83,7 +134,7 @@ export function resolveAgentOrFail(agentId: string, json?: boolean): string {
 	try {
 		return resolveAgentId(agentId);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), json);
+		return failFromError(error, json);
 	}
 }
 
@@ -176,6 +227,6 @@ export async function runAgentCommand(
 		const result = await sendSimpleCommand({ type, sessionId, ...extraPayload }, responseType);
 		reportResult(result, { json: options.json, successMessage, jsonExtra: { sessionId } });
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

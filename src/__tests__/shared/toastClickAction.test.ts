@@ -123,4 +123,18 @@ describe('parseToastClickAction', () => {
 			expect(parseToastClickAction({ kind: 'open-url' }).error).toContain('requires url');
 		});
 	});
+
+	describe('undo-group-publish', () => {
+		it('accepts a publishId', () => {
+			expect(
+				parseToastClickAction({ kind: 'undo-group-publish', publishId: 'publish-1' }).action
+			).toEqual({ kind: 'undo-group-publish', publishId: 'publish-1' });
+		});
+
+		it('requires publishId', () => {
+			expect(parseToastClickAction({ kind: 'undo-group-publish' }).error).toContain(
+				'requires publishId'
+			);
+		});
+	});
 });

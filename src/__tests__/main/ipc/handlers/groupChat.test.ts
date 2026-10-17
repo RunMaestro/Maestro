@@ -52,10 +52,28 @@ vi.mock('../../../../main/group-chat/group-chat-storage', () => ({
 	// `queue.json` through this, and `stopAll` now pauses the queue.
 	getGroupChatDir: vi.fn((id: string) => `/tmp/maestro-test-group-chats/${id}`),
 	getGroupChatHistoryFilePath: vi.fn(),
+	updateParticipant: vi.fn(),
+}));
+
+// The participant summary's agent turn. Never spawns in these tests.
+vi.mock('../../../../main/utils/context-groomer', () => ({
+	groomContext: vi.fn(),
+}));
+
+// The Local Models router answers `use-utility-agent` (the default assignment)
+// unless a test says otherwise.
+vi.mock('../../../../main/local-models/task-router', () => ({
+	runLocalTask: vi.fn(),
+}));
+
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => `mock prompt for ${id}`),
 }));
 
 // Mock group-chat-log
-vi.mock('../../../../main/group-chat/group-chat-log', () => ({
+vi.mock('../../../../main/group-chat/group-chat-log', async (importOriginal) => ({
+	// The prompt formatter is pure, so the real one runs.
+	...(await importOriginal<typeof import('../../../../main/group-chat/group-chat-log')>()),
 	appendToLog: vi.fn(),
 	readLog: vi.fn(),
 	saveImage: vi.fn(),
@@ -128,6 +146,9 @@ import * as groupChatModerator from '../../../../main/group-chat/group-chat-mode
 import * as groupChatAgent from '../../../../main/group-chat/group-chat-agent';
 import * as groupChatRouter from '../../../../main/group-chat/group-chat-router';
 import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
+import { groomContext } from '../../../../main/utils/context-groomer';
+import { runLocalTask } from '../../../../main/local-models/task-router';
+import { resetLocalTaskNotices } from '../../../../main/local-models/task-notices';
 
 describe('groupChat IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -180,6 +201,9 @@ describe('groupChat IPC handlers', () => {
 		// The queue is module state in main, so it has to be cleared between tests
 		// or one test's items and armed drains leak into the next.
 		resetGroupChatQueueForTests();
+
+		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-utility-agent' });
+		resetLocalTaskNotices();
 
 		// Register handlers
 		registerGroupChatHandlers(mockDeps);
@@ -1414,6 +1438,132 @@ describe('groupChat IPC handlers', () => {
 
 			const after = (await getQueueHandler({} as never, chatId)) as { items: unknown[] };
 			expect(after.items).toHaveLength(0);
+		});
+	});
+
+	describe('groupChat:resetParticipantContext summary routing', () => {
+		const localSource = { type: 'local', modelId: 'qwen3-1.7b' } as const;
+		const chat: GroupChat = {
+			id: 'gc-1',
+			name: 'Release Prep',
+			createdAt: 1,
+			updatedAt: 1,
+			moderatorAgentId: 'claude-code',
+			moderatorSessionId: 'group-chat-gc-1-moderator',
+			participants: [
+				{
+					name: 'Backend',
+					agentId: 'claude-code',
+					agentSessionId: 'provider-session-1',
+					addedAt: 1,
+				} as GroupChatParticipant,
+			],
+			logPath: '/path/to/log',
+			imagesDir: '/path/to/images',
+		};
+		const reset = () =>
+			handlers.get('groupChat:resetParticipantContext')!({} as any, 'gc-1', 'Backend', '/proj');
+		const sentToasts = () =>
+			vi
+				.mocked(mockMainWindow.webContents.send)
+				.mock.calls.filter(([channel]) => channel === 'remote:notifyToast');
+
+		beforeEach(() => {
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(chat);
+			vi.mocked(groupChatStorage.updateParticipant).mockResolvedValue(chat as never);
+			vi.mocked(groupChatLog.readLog).mockResolvedValue([
+				{ timestamp: '1', from: 'user', content: 'Ship the release notes' },
+				{ timestamp: '2', from: 'Backend', content: 'Drafted notes in docs/releases-draft.md' },
+			]);
+			vi.mocked(groomContext).mockResolvedValue({
+				response: 'agent summary',
+				durationMs: 10,
+			} as never);
+		});
+
+		it('keeps the agent turn for use-utility-agent, resuming the provider session', async () => {
+			await reset();
+
+			expect(groomContext).toHaveBeenCalledWith(
+				expect.objectContaining({ agentSessionId: 'provider-session-1' }),
+				mockProcessManager,
+				mockAgentDetector
+			);
+			expect(groupChatStorage.updateParticipant).toHaveBeenCalledWith('gc-1', 'Backend', {
+				agentSessionId: undefined,
+				contextUsage: 0,
+			});
+		});
+
+		it('asks the router with the chat log and never spawns an agent on ok', async () => {
+			vi.mocked(runLocalTask).mockResolvedValue({
+				status: 'ok',
+				text: 'Backend drafted the release notes.',
+				source: localSource,
+				durationMs: 50,
+			});
+
+			await reset();
+
+			expect(runLocalTask).toHaveBeenCalledWith(
+				'tab-summary',
+				expect.objectContaining({
+					system: 'mock prompt for group-chat-participant-summary-local',
+					prompt: expect.stringContaining('[Backend]: Drafted notes in docs/releases-draft.md'),
+					signal: expect.any(AbortSignal),
+				})
+			);
+			expect(vi.mocked(runLocalTask).mock.calls[0][1].prompt).toContain('Participant: Backend');
+			expect(groomContext).not.toHaveBeenCalled();
+			expect(groupChatStorage.updateParticipant).toHaveBeenCalled();
+		});
+
+		it('skips the summary when off, and still resets the participant', async () => {
+			vi.mocked(runLocalTask).mockResolvedValue({ status: 'off' });
+
+			const result = await reset();
+
+			expect(groomContext).not.toHaveBeenCalled();
+			expect(groupChatStorage.updateParticipant).toHaveBeenCalled();
+			expect(result).toEqual({ newAgentSessionId: expect.any(String) });
+			expect(sentToasts()).toHaveLength(0);
+		});
+
+		it('skips the summary when unavailable, without an agent, and toasts once', async () => {
+			vi.mocked(runLocalTask).mockResolvedValue({
+				status: 'unavailable',
+				source: localSource,
+				reason: 'Qwen3 1.7B is not downloaded.',
+				code: 'model-not-installed',
+			});
+
+			await reset();
+			await reset();
+
+			expect(groomContext).not.toHaveBeenCalled();
+			expect(groupChatStorage.updateParticipant).toHaveBeenCalledTimes(2);
+			expect(sentToasts()).toHaveLength(1);
+			expect(sentToasts()[0][1]).toEqual(
+				expect.objectContaining({ color: 'yellow', message: 'Qwen3 1.7B is not downloaded.' })
+			);
+		});
+
+		it('skips the summary when the assigned model times out', async () => {
+			vi.mocked(runLocalTask).mockResolvedValue({ status: 'cancelled', source: localSource });
+
+			await reset();
+
+			expect(groomContext).not.toHaveBeenCalled();
+			expect(groupChatStorage.updateParticipant).toHaveBeenCalled();
+		});
+
+		it('still resets the participant when the router throws', async () => {
+			vi.mocked(runLocalTask).mockRejectedValue(new Error('engine bug'));
+
+			await reset();
+
+			expect(groomContext).not.toHaveBeenCalled();
+			expect(groupChatStorage.updateParticipant).toHaveBeenCalled();
 		});
 	});
 

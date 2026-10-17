@@ -28,9 +28,19 @@ import type { AgentConfigsData, MaestroSettings } from '../../stores/types';
 import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
+import { MAX_TASK_MAX_TOKENS, runLocalTask } from '../../local-models/task-router';
 import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[ContextMerge]';
+
+/**
+ * Ceiling for one summary on the assigned local model or endpoint. Longer than
+ * an agent turn's budget: a local model on CPU writes a long summary slowly.
+ */
+const LOCAL_SUMMARY_TIMEOUT_MS = 5 * 60_000;
+
+/** Local summaries in flight, so `context:cancelGrooming` stops them too. */
+const activeLocalSummaries = new Set<AbortController>();
 
 /**
  * Helper to create handler options with consistent context
@@ -137,6 +147,11 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					 * grooming and transfer must not, because their output becomes the
 					 * context every later turn reads. The handler cannot tell the three
 					 * apart - it only receives a prompt string - so the caller decides.
+					 *
+					 * The same flag routes the turn through the `tab-summary` Local
+					 * Models assignment (see `summarizeWithAssignedModel`). Grooming
+					 * and transfer never set it, so they always stay on the agent's
+					 * own model: a weak result there would degrade every later turn.
 					 */
 					cheapTurn?: boolean;
 					/**
@@ -152,6 +167,16 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					claudeTokenSource?: ClaudeTokenSourceFields;
 				}
 			): Promise<string> => {
+				// A cheap turn that may use tools is a context SUMMARY, so the model
+				// assigned to `tab-summary` gets it first. An answer-only turn (Quick
+				// Chat's tab routing) is cheap too, but it is a question with a
+				// one-word answer, not a summary: it must not be sent to the summary
+				// model, with the summary's token budget and timeout.
+				if (options?.cheapTurn && !options.disableTools) {
+					const assigned = await summarizeWithAssignedModel(prompt);
+					if (assigned !== null) return assigned;
+				}
+
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
@@ -231,6 +256,61 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 		withIpcErrorLogging(handlerOpts('cancelGrooming'), async (): Promise<void> => {
 			logger.info('Cancelling all grooming sessions via IPC', LOG_CONTEXT);
 			cancelAllGroomingSessions();
+			for (const controller of activeLocalSummaries) controller.abort();
 		})
 	);
+}
+
+/**
+ * Write a context summary with the `tab-summary` Local Models assignment, when
+ * it is a local model or an endpoint. Returns `null` when the caller should
+ * keep its agent path.
+ *
+ * Compaction is something the user asked for, and it cannot happen without a
+ * model, so the verdicts differ from a cosmetic task like tab naming:
+ *   - `use-utility-agent` (the default) and `off` keep the agent path. `off`
+ *     cannot mean "skip": a skipped compaction is a failed one.
+ *   - `unavailable` does NOT fall back to an agent: it fails the compaction
+ *     with the reason, which the "Compaction Failed" toast shows. That toast is
+ *     the notice, raised once per attempt the user made, so the deduplicated
+ *     Local Models notice would only repeat it.
+ *   - `cancelled` (Stop, or the timeout) fails the compaction the same way.
+ *
+ * SSH: a local model runs on THIS machine even when the agent is remote. The
+ * transcript being summarized already came from this machine's renderer, so
+ * nothing crosses that would not have crossed already.
+ */
+async function summarizeWithAssignedModel(prompt: string): Promise<string | null> {
+	const controller = new AbortController();
+	activeLocalSummaries.add(controller);
+	try {
+		const verdict = await runLocalTask('tab-summary', {
+			prompt,
+			maxTokens: MAX_TASK_MAX_TOKENS,
+			signal: AbortSignal.any([controller.signal, AbortSignal.timeout(LOCAL_SUMMARY_TIMEOUT_MS)]),
+		});
+		switch (verdict.status) {
+			case 'use-utility-agent':
+			case 'off':
+				return null;
+			case 'cancelled':
+				throw new Error('The summary on the assigned local model was stopped before it finished.');
+			case 'unavailable':
+				logger.warn('Context summary skipped: assigned model unavailable', LOG_CONTEXT, {
+					source: verdict.source,
+					code: verdict.code,
+					reason: verdict.reason,
+				});
+				throw new Error(verdict.reason);
+			case 'ok':
+				logger.info('Context summary on the assigned model', LOG_CONTEXT, {
+					source: verdict.source,
+					durationMs: verdict.durationMs,
+					responseLength: verdict.text.length,
+				});
+				return verdict.text;
+		}
+	} finally {
+		activeLocalSummaries.delete(controller);
+	}
 }

@@ -73,6 +73,7 @@ import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { normalizePeerAgents } from '../../../shared/peerAgents';
 import { getHomeDir } from '../../utils/homeDir';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
 import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
@@ -1215,6 +1216,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				selectedAgent,
 				directoryPath,
 				additionalDirectories,
+				peerAgents,
+				groupPeerAccess,
+				worktreePeerAccess,
 				agentName,
 				generatedDocuments,
 				customPath,
@@ -1311,6 +1315,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				// getHomeDir() reads the module cache the app warmed at startup, so `~`
 				// paths typed in the wizard expand the same way they do in the modals.
 				additionalDirectories: normalizeAdditionalDirectories(additionalDirectories, getHomeDir()),
+				// The same save rule as the agent forms: an empty list is stored as
+				// absent, and a row with neither square lit is kept (it excludes).
+				peerAgents: normalizePeerAgents(peerAgents),
+				groupPeerAccess,
+				worktreePeerAccess,
 				createdAt: Date.now(),
 				isGitRepo,
 				gitBranches,

@@ -1,6 +1,7 @@
 // Notify-flash command - show a center-screen flash in the Maestro desktop app.
 
 import { withMaestroClient } from '../services/maestro-client';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 interface NotifyFlashOptions {
 	color?: string;
@@ -18,7 +19,7 @@ const MAX_TIMEOUT_SECONDS = 5;
 export async function notifyFlash(message: string, options: NotifyFlashOptions): Promise<void> {
 	if (!message.trim()) {
 		console.error('Error: message cannot be empty');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	let color: AllowedColor;
@@ -26,7 +27,7 @@ export async function notifyFlash(message: string, options: NotifyFlashOptions):
 		const candidate = options.color.toLowerCase();
 		if (!ALLOWED_COLORS.includes(candidate as AllowedColor)) {
 			console.error(`Error: --color must be one of: ${ALLOWED_COLORS.join(', ')}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		color = candidate as AllowedColor;
 	} else {
@@ -40,11 +41,11 @@ export async function notifyFlash(message: string, options: NotifyFlashOptions):
 		const seconds = Number(options.timeout);
 		if (!Number.isFinite(seconds) || seconds <= 0) {
 			console.error('Error: --timeout must be a positive number of seconds');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		if (seconds > MAX_TIMEOUT_SECONDS) {
 			console.error(`Error: --timeout cannot exceed ${MAX_TIMEOUT_SECONDS} seconds`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		duration = Math.round(seconds * 1000);
 	}
@@ -76,7 +77,7 @@ export async function notifyFlash(message: string, options: NotifyFlashOptions):
 			} else {
 				console.error(`Error: ${errMsg}`);
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		const errMsg = error instanceof Error ? error.message : String(error);
@@ -85,6 +86,6 @@ export async function notifyFlash(message: string, options: NotifyFlashOptions):
 		} else {
 			console.error(`Error: ${errMsg}`);
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

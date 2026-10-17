@@ -26,6 +26,7 @@ import {
 	serializeTranscript,
 } from '../../shared/maestro-lib/agents/consult-prompt';
 import { createDesktopConsultRunner } from './consult-runner';
+import type { ConsultBudgetStoreOptions } from '../peer-consults/consult-budget';
 import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
 
 /**
@@ -79,6 +80,18 @@ export interface StartCrossAgentRequestOptions {
 	 * Defaults to false: consults are read-only.
 	 */
 	writable?: boolean;
+	/**
+	 * The consultation budget: the `maxConsultationsPerTurn` setting, read through
+	 * `normalizeMaxConsultationsPerTurn()`. Spent only for a mention made by a
+	 * turn that is already in a consult chain (`CrossAgentRequest.sourceConsultChain`).
+	 */
+	maxConsultationsPerTurn: number;
+	/**
+	 * Where the budget counter lives. Defaults to Maestro's data directory; a
+	 * test passes a temp directory, because the default is the LIVE one in an
+	 * agent's shell.
+	 */
+	consultBudgetStore?: ConsultBudgetStoreOptions;
 	/** Called with each response chunk; `done: true` marks completion/failure. */
 	onChunk: (chunk: CrossAgentResponseChunk) => void;
 }
@@ -100,7 +113,13 @@ export function startCrossAgentRequest(
 		getCustomEnvVars: opts.getCustomEnvVars,
 		getAgentConfig: opts.getAgentConfig,
 		writable: opts.writable,
-		getSystemPrompt: (target) => buildMaestroSystemPromptForSession(target.id),
+		maxConsultationsPerTurn: opts.maxConsultationsPerTurn,
+		consultBudgetStore: opts.consultBudgetStore,
+		getSystemPrompt: (target, consultChain) =>
+			buildMaestroSystemPromptForSession(target.id, {
+				consultChain,
+				consultBudgetStore: opts.consultBudgetStore,
+			}),
 		onChunk: opts.onChunk,
 	});
 }

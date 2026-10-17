@@ -672,3 +672,57 @@ describe('Quick Chat text zoom', () => {
 		expect(store.value).toMatchObject({ width: 720, fontScale: 1.2 });
 	});
 });
+
+describe('Quick Chat window as the surface of a voice session', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	function makeVoiceDeps() {
+		const { deps: d } = makeDeps();
+		const onHidden = vi.fn();
+		return { deps: { ...d, onHidden } as typeof d, onHidden };
+	}
+
+	it('names the window by its registry id, and by nothing once it is gone', async () => {
+		const { deps: d } = makeVoiceDeps();
+		const mod = await freshModule();
+		expect(mod.getQuickChatWindowId()).toBeNull();
+
+		mod.showQuickChatWindow(d);
+		// The id a voice session bound to Quick Chat is stamped with.
+		expect(mod.getQuickChatWindowId()).toBe('quick-window');
+
+		lastWindow().close();
+		expect(mod.getQuickChatWindowId()).toBeNull();
+	});
+
+	it('reports being put away, so a session shown only here can end', async () => {
+		const { deps: d, onHidden } = makeVoiceDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		lastWindow().emit('ready-to-show');
+		expect(onHidden).not.toHaveBeenCalled();
+
+		mod.hideQuickChatWindow();
+
+		expect(onHidden).toHaveBeenCalledTimes(1);
+		expect(onHidden).toHaveBeenCalledWith('quick-window');
+	});
+
+	it('reports nothing for a window that was never on screen', async () => {
+		const { deps: d, onHidden } = makeVoiceDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+
+		// Hidden before its first paint: there was no surface to lose.
+		mod.hideQuickChatWindow();
+
+		expect(onHidden).not.toHaveBeenCalled();
+	});
+});

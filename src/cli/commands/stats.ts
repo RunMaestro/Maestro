@@ -1,15 +1,20 @@
 // Stats commands - introspect the Usage Dashboard's SQLite store.
 //
-//   maestro-cli stats [--range <r>] [--json]   -> aggregated dashboard metrics
-//   maestro-cli stats-query "<sql>" [--json]    -> arbitrary read-only SQL
+//   maestro-cli stats [--range <r>] [--json]          -> aggregated dashboard metrics
+//   maestro-cli stats models [--range <r>] [--json]   -> the dashboard's Models tab
+//   maestro-cli stats-query "<sql>" [--json]           -> arbitrary read-only SQL
 //   maestro-cli stats-tokens [--range <r>] [--json] -> Tokens tab: totals + speed
 //
-// Both route through the running desktop app over the existing WebSocket
+// All route through the running desktop app over the existing WebSocket
 // bridge; the app owns the open stats database and runs the query/aggregation
 // against it. The SQL path is read-only enforced in the main process.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { formatError } from '../output/formatter';
+import { ExitCode, exitCodeForError } from '../exit-codes';
+import { formatModelUsage } from '../output/formatter';
+import type { ModelUsage } from '../../shared/local-models/model-usage';
+import { isStatsTimeRange, STATS_TIME_RANGES } from '../../shared/stats-types';
+import { failCommand } from '../services/session-command';
 import {
 	formatCalendarDay,
 	formatCost,
@@ -21,9 +26,6 @@ import {
 import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
-
-const VALID_RANGES = ['day', 'week', 'month', 'quarter', 'year', 'all'] as const;
-type StatsRange = (typeof VALID_RANGES)[number];
 
 interface StatsOptions {
 	range?: string;
@@ -64,16 +66,11 @@ interface StatsQueryResponse {
  * `maestro-cli stats` - aggregated Usage Dashboard metrics for a time range.
  */
 export async function stats(options: StatsOptions): Promise<void> {
-	const range = (options.range || 'week') as StatsRange;
+	const range = options.range || 'week';
 
-	if (!VALID_RANGES.includes(range)) {
-		const message = `Invalid range "${options.range}". Must be one of: ${VALID_RANGES.join(', ')}`;
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+	if (!isStatsTimeRange(range)) {
+		const message = `Invalid range "${options.range}". Must be one of: ${STATS_TIME_RANGES.join(', ')}`;
+		failCommand(message, options.json);
 	}
 
 	try {
@@ -95,6 +92,49 @@ export async function stats(options: StatsOptions): Promise<void> {
 	}
 }
 
+interface ModelUsageResponse {
+	type: string;
+	success: boolean;
+	data?: ModelUsage;
+	error?: string;
+}
+
+/**
+ * `maestro-cli stats models` - what every model other than a provider's own
+ * did in a time range: the sources, the tasks, the agents on a Run on source,
+ * System One's decisions and the token proxy. The record the Usage Dashboard's
+ * Models tab draws, from the same main-process read.
+ *
+ * Exit codes, for scripts: 2 for a range that is not one of the six, and the
+ * bridge's own codes when the app is not running, is an older build, or does
+ * not answer in time. A range in which nothing ran is not a failure.
+ */
+export async function statsModels(options: StatsOptions): Promise<void> {
+	const range = options.range || 'week';
+	const fail = (message: string, code: ExitCode): never => failCommand(message, options.json, code);
+
+	if (!isStatsTimeRange(range)) {
+		return fail(
+			`Invalid range "${options.range}". Must be one of: ${STATS_TIME_RANGES.join(', ')}`,
+			ExitCode.InvalidUsage
+		);
+	}
+
+	let reply: ModelUsageResponse;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<ModelUsageResponse>({ type: 'get_model_usage', range }, 'model_usage')
+		);
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error), exitCodeForError(error));
+	}
+	if (!reply.success || !reply.data) {
+		return fail(reply.error || 'Model usage could not be read', ExitCode.GeneralError);
+	}
+
+	console.log(options.json ? JSON.stringify(reply.data, null, 2) : formatModelUsage(reply.data));
+}
+
 /**
  * `maestro-cli stats-tokens` - the Usage Dashboard's Tokens tab: token and cost
  * totals plus tokens per second (average and peak, input/output/total) overall,
@@ -102,11 +142,13 @@ export async function stats(options: StatsOptions): Promise<void> {
  * of serving the app's short-lived in-memory result.
  */
 export async function statsTokens(options: StatsTokensOptions): Promise<void> {
-	const range = (options.range || 'week') as StatsRange;
+	const range = options.range || 'week';
 
-	if (!VALID_RANGES.includes(range)) {
+	if (!isStatsTimeRange(range)) {
 		handleCommandError(
-			new Error(`Invalid range "${options.range}". Must be one of: ${VALID_RANGES.join(', ')}`),
+			new Error(
+				`Invalid range "${options.range}". Must be one of: ${STATS_TIME_RANGES.join(', ')}`
+			),
 			options.json
 		);
 	}
@@ -304,10 +346,5 @@ function formatMs(ms: number): string {
 
 function handleCommandError(error: unknown, json?: boolean): never {
 	const message = error instanceof Error ? error.message : String(error);
-	if (json) {
-		console.error(JSON.stringify({ error: message }));
-	} else {
-		console.error(formatError(message));
-	}
-	process.exit(1);
+	failCommand(message, json);
 }

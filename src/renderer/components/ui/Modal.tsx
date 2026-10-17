@@ -494,6 +494,11 @@ export interface ModalFooterProps {
 	confirmButtonRef?: React.RefObject<HTMLButtonElement>;
 	/** Ref to attach to cancel button for focus management */
 	cancelButtonRef?: React.RefObject<HTMLButtonElement>;
+	/**
+	 * A third outcome, drawn between Cancel and Confirm. Build it from
+	 * `MODAL_BUTTON_SECONDARY_CLASS` so it takes the footer's type scale.
+	 */
+	between?: React.ReactNode;
 }
 
 /**
@@ -533,6 +538,7 @@ export function ModalFooter({
 	confirmClassName = '',
 	confirmButtonRef,
 	cancelButtonRef,
+	between,
 }: ModalFooterProps) {
 	// Stop Enter key propagation to prevent parent handlers from triggering after modal closes
 	const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {
@@ -559,6 +565,7 @@ export function ModalFooter({
 					{cancelLabel}
 				</button>
 			)}
+			{between}
 			<button
 				ref={confirmButtonRef}
 				type="button"

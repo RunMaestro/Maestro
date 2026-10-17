@@ -1,9 +1,9 @@
 /**
  * Computer History - digests tab.
  *
- * Agent-written markdown summaries: one per 15-minute window, plus a 6-hour
- * roll-up per block when enabled. Newest first, roll-ups badged. Bodies are
- * agent output summarizing screen content, so they render as a document
+ * Markdown summaries written by a local model or an agent: one per 15-minute
+ * window, plus a 6-hour roll-up per block when enabled. Newest first, roll-ups
+ * badged. Bodies are model output summarizing screen content, so they render as a document
  * (no raw HTML) and links are not followed for the user.
  */
 
@@ -73,7 +73,7 @@ export function DigestsPanel({ theme, sinceMs, untilMs, refreshToken }: DigestsP
 				description={
 					digestsEnabled
 						? 'Digests are written after each 15-minute window with activity closes.'
-						: 'Digests are off. Turn them on in the Computer History settings and pick an agent to write them.'
+						: 'Digests are off. Turn them on in the Computer History settings and pick a local model or an agent to write them.'
 				}
 			/>
 		);

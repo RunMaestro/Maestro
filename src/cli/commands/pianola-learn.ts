@@ -24,6 +24,7 @@ import {
 	type TranscriptAgent,
 } from '../../shared/pianola/transcript-mining';
 import type { PianolaMessage } from '../../shared/pianola/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 const LEARN_MAX_FILE_BYTES = 50 * 1024 * 1024; // skip transcripts larger than 50 MB
 const LEARN_DEFAULT_SESSION_LIMIT = 300; // per agent, newest first
@@ -122,7 +123,7 @@ export function pianolaLearn(options: PianolaLearnOptions): void {
 		const message = '--agent must include claude-code and/or codex';
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const sessionLimit = options.limit
@@ -137,7 +138,7 @@ export function pianolaLearn(options: PianolaLearnOptions): void {
 			const message = `--since must be a date (e.g. 2026-06-01), got "${options.since}"`;
 			if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 			else console.error(message);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		sinceMs = parsed;
 	}

@@ -12,6 +12,7 @@ export const TOOLBAR_BUTTON_LABELS: Record<FilePreviewToolbarButton, string> = {
 	copyContent: 'Copy content',
 	publishGist: 'Publish as gist',
 	documentGraph: 'Document graph',
+	talkWithDocument: 'Talk with document',
 	openInDefault: 'Open in default app',
 	// Platform-dependent wording ("Reveal in Finder" / "Explorer" / "File Manager")
 	// is resolved at render time via getRevealLabel().

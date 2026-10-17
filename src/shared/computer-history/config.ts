@@ -7,13 +7,14 @@
  * field by field instead of breaking the recorder.
  */
 
-import { APP_CAPTURE_MODES } from './types';
+import { APP_CAPTURE_MODES, DIGEST_SOURCES } from './types';
 import type {
 	AppCaptureMode,
 	CaptureRule,
 	CaptureRuleAction,
 	CaptureRuleMatch,
 	ComputerHistoryConfig,
+	DigestSource,
 } from './types';
 
 export const DEFAULT_RETENTION_DAYS = 90;
@@ -40,8 +41,29 @@ export function defaultComputerHistoryConfig(): ComputerHistoryConfig {
 		skipPrivateWindows: true,
 		rules: [],
 		pausedUntil: null,
-		digests: { enabled: false, agentId: null, rollup: true },
+		digests: { enabled: false, source: 'local', agentId: null, rollup: true },
 	};
+}
+
+/** What each digest source is called on a control and in a sentence. */
+export const DIGEST_SOURCE_LABELS: Readonly<Record<DigestSource, string>> = Object.freeze({
+	local: 'Local model',
+	agent: 'Agent',
+});
+
+export function isDigestSource(value: unknown): value is DigestSource {
+	return DIGEST_SOURCES.includes(value as DigestSource);
+}
+
+/**
+ * The digest source a stored config means. A stored source wins. A config
+ * written before the source existed keeps the behavior it had: an agent was
+ * the only writer then, so a chosen agent reads as `agent`. Everything else is
+ * the local model, which is the source offered first.
+ */
+export function normalizeDigestSource(value: unknown, agentId: string | null): DigestSource {
+	if (isDigestSource(value)) return value;
+	return agentId ? 'agent' : 'local';
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -157,8 +179,28 @@ export function normalizeConfig(raw: unknown): ComputerHistoryConfig {
 		rules,
 		pausedUntil: normalizePausedUntil(r.pausedUntil),
 		// The 6-hour roll-up rides along with digests unless explicitly off.
-		digests: { enabled: digestsRaw.enabled === true, agentId, rollup: digestsRaw.rollup !== false },
+		digests: {
+			enabled: digestsRaw.enabled === true,
+			source: normalizeDigestSource(digestsRaw.source, agentId),
+			agentId,
+			rollup: digestsRaw.rollup !== false,
+		},
 	};
+}
+
+/**
+ * Who writes digests, as one phrase for a status line: `local model Qwen3 1.7B`,
+ * `agent 1a2b3c`, or the same with `not set`. `localModel` is what the
+ * `history-digests` assignment is called (`localModelAssignmentSourceLabel`),
+ * or null while it names no model.
+ */
+export function describeDigestWriter(
+	digests: Pick<ComputerHistoryConfig['digests'], 'source' | 'agentId'>,
+	localModel: string | null
+): string {
+	return digests.source === 'local'
+		? `local model ${localModel ?? 'not set'}`
+		: `agent ${digests.agentId ?? 'not set'}`;
 }
 
 /** The fields `config set` may change. Rules and pause have their own verbs. */
@@ -168,7 +210,12 @@ export interface ComputerHistoryConfigPatch {
 	snapshots?: boolean;
 	appMode?: AppCaptureMode;
 	skipPrivateWindows?: boolean;
-	digests?: { enabled?: boolean; agentId?: string | null; rollup?: boolean };
+	digests?: {
+		enabled?: boolean;
+		source?: DigestSource;
+		agentId?: string | null;
+		rollup?: boolean;
+	};
 }
 
 /** Apply a patch and re-normalize (out-of-range values clamp, junk is ignored). */
@@ -188,6 +235,7 @@ export function applyConfigPatch(
 		digests: {
 			...config.digests,
 			...(patch.digests?.enabled !== undefined ? { enabled: patch.digests.enabled } : {}),
+			...(patch.digests?.source !== undefined ? { source: patch.digests.source } : {}),
 			...(patch.digests?.agentId !== undefined ? { agentId: patch.digests.agentId } : {}),
 			...(patch.digests?.rollup !== undefined ? { rollup: patch.digests.rollup } : {}),
 		},

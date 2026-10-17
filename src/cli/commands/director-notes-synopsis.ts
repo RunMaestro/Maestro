@@ -3,8 +3,8 @@
 // Requires the Maestro desktop app to be running
 
 import { withMaestroClient } from '../services/maestro-client';
+import { failCommand } from '../services/session-command';
 import { readSettings } from '../services/storage';
-import { formatError } from '../output/formatter';
 import {
 	parseDirectorNotesNarrative,
 	recoverDirectorNotesNarrative,
@@ -192,11 +192,6 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (format === 'json') {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		failCommand(message, format === 'json');
 	}
 }

@@ -10,6 +10,7 @@ import {
 	type QueueSteerOutcome,
 	type QueueSteerResult,
 } from '../../shared/chatSteering';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 interface QueueListItem {
 	id: string;
@@ -91,7 +92,7 @@ export async function queueList(options: QueueListOptions): Promise<void> {
 			sessionId = resolveAgentId(options.agent);
 		} catch (error) {
 			emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
-			process.exit(1);
+			exitWith(exitCodeForError(error));
 			return;
 		}
 	}
@@ -105,7 +106,7 @@ export async function queueList(options: QueueListOptions): Promise<void> {
 		);
 		if (result.success === false) {
 			emitError(result.error ?? 'Failed to list queue', 'LIST_FAILED');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		const queues = result.queues ?? [];
@@ -113,7 +114,7 @@ export async function queueList(options: QueueListOptions): Promise<void> {
 	} catch (error) {
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -129,7 +130,7 @@ function countItems(queues: QueueListSession[]): number {
 export async function queueRemove(itemId: string, options: QueueRemoveOptions): Promise<void> {
 	if (!options.agent) {
 		emitError('queue remove requires --agent <id>', 'INVALID_OPTIONS');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -138,7 +139,7 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 		sessionId = resolveAgentId(options.agent);
 	} catch (error) {
 		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 		return;
 	}
 
@@ -151,12 +152,12 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 		);
 		if (result.success === false) {
 			emitError(result.error ?? 'Remove failed', 'REMOVE_FAILED');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		if (!result.removed) {
 			emitError(`No queued item with id ${itemId} for agent ${sessionId}`, 'ITEM_NOT_FOUND');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		console.log(
@@ -165,7 +166,7 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 	} catch (error) {
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -313,7 +314,7 @@ const STEER_FAILURE_CODES: Record<Exclude<QueueSteerOutcome, 'delivered' | 'sett
 export async function queueSteer(itemId: string, options: QueueSteerOptions): Promise<void> {
 	if (!options.agent) {
 		emitError('queue steer requires --agent <id>', 'INVALID_OPTIONS');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -322,7 +323,7 @@ export async function queueSteer(itemId: string, options: QueueSteerOptions): Pr
 		sessionId = resolveAgentId(options.agent);
 	} catch (error) {
 		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 		return;
 	}
 
@@ -337,7 +338,7 @@ export async function queueSteer(itemId: string, options: QueueSteerOptions): Pr
 		const result = response.result;
 		if (response.success === false || !result) {
 			emitError(response.error ?? 'Steer failed', 'STEER_FAILED');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		const ok = result.outcome === 'delivered' || result.outcome === 'settled';
@@ -351,10 +352,10 @@ export async function queueSteer(itemId: string, options: QueueSteerOptions): Pr
 				: { code: STEER_FAILURE_CODES[result.outcome as keyof typeof STEER_FAILURE_CODES] }),
 		};
 		console.log(JSON.stringify(payload, null, 2));
-		if (!ok) process.exit(1);
+		if (!ok) exitWith(ExitCode.GeneralError);
 	} catch (error) {
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

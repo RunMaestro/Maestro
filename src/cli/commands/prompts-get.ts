@@ -4,6 +4,7 @@
 
 import { getCliPrompt } from '../services/prompt-loader';
 import { CORE_PROMPTS } from '../../shared/promptDefinitions';
+import { failCommand } from '../services/session-command';
 
 interface PromptsGetOptions {
 	json?: boolean;
@@ -14,12 +15,7 @@ export async function promptsGet(id: string, options: PromptsGetOptions): Promis
 	if (!def) {
 		const known = CORE_PROMPTS.map((p) => p.id).join(', ');
 		const message = `Unknown prompt id: ${id}. Available: ${known}`;
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(message);
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 
 	try {
@@ -39,12 +35,7 @@ export async function promptsGet(id: string, options: PromptsGetOptions): Promis
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(message);
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 }
 

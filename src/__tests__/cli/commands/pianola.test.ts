@@ -148,7 +148,11 @@ describe('pianola watch', () => {
 		sendCommandMock.mockResolvedValue(questionResponse());
 		runDispatchMock.mockResolvedValue({ success: true });
 		await pianolaWatch('tab-1', { once: true });
-		expect(runDispatchMock).toHaveBeenCalledWith('a1', 'Use tabs.', { tab: 'tab-1' });
+		// A supervisor loop is not a consult: it opts out of the consult budget.
+		expect(runDispatchMock).toHaveBeenCalledWith('a1', 'Use tabs.', {
+			tab: 'tab-1',
+			skipConsultBudget: true,
+		});
 		// Intent + outcome records.
 		expect(appendPianolaDecision).toHaveBeenCalledTimes(2);
 	});
@@ -158,7 +162,10 @@ describe('pianola watch', () => {
 		sendCommandMock.mockResolvedValue(questionResponse({ agentId: 'a1' }));
 		runDispatchMock.mockResolvedValue({ success: true });
 		await pianolaWatch('tab-1', { once: true, agent: 'a2' });
-		expect(runDispatchMock).toHaveBeenCalledWith('a2', 'Use tabs.', { tab: 'tab-1' });
+		expect(runDispatchMock).toHaveBeenCalledWith('a2', 'Use tabs.', {
+			tab: 'tab-1',
+			skipConsultBudget: true,
+		});
 	});
 
 	it('logs and exits the single run on a poll failure', async () => {

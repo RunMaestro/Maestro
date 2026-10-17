@@ -2295,6 +2295,8 @@ The Left Bar header is a single row that neither wraps nor scrolls, and the user
 
 **The row is three zones: identity, indicators, menu.** The wand and the wordmark sit in a `shrink-0` zone on the left, the hamburger in a `shrink-0` zone on the right, and every status control goes in the `flex-1 justify-center min-w-0` band between them (`data-testid="sidebar-header-indicators"`). `flex-1` is what centers the band: it takes whatever the two fixed zones leave and centers its contents in that, so the indicators read as their own group rather than as a tail on the wordmark. A new status control belongs in the band, not beside the wordmark.
 
+The Conductor voice-floor mark is the one exception: it sits beside the wordmark because the session is bound to Maestro itself. `useConductorHoldsFloor()` controls both the mark and its width reserve, which scales with `useHeaderTextDelta().remScale`. The collapsed rail also shows it.
+
 **The MAESTRO wordmark is drawn in full or not at all.** It used to carry `truncate`, which rendered the brand as "MAE..." on a narrow sidebar. A clipped brand reads as a rendering bug, not as a deliberate space saving, so `SessionList` gates it on a width instead:
 
 ```ts

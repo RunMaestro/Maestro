@@ -671,13 +671,14 @@ One vocabulary (`low | medium | high`) for two independent axes: which model run
 | `TIER_LEVELS`                                | `readonly ['low', 'medium', 'high']`                                     | The vocabulary. Both axes use it.                                                                                                                                               |
 | `asTierLevel(value)`                         | `(unknown) => ModelTier \| undefined`                                    | Narrow an untrusted value to a rung.                                                                                                                                            |
 | `resolveTierModel(toolType, tier)`           | `(ToolType, ModelTier) => string \| undefined`                           | Model for a tier. `undefined` = no mapping, inherit the agent's model **and say so**.                                                                                           |
+| `resolveTierTarget(agent, tier, defaults)`   | `(TierTargetAgent, ModelTier, defaults?) => TierTargetResolution`        | Target and layer (agent, harness default, built-in), or a named refusal. `resolveTierModel` is the built-in layer only.                                                         |
 | `resolveEffortLevel(toolType, level)`        | `(ToolType, EffortLevel) => string \| undefined`                         | Provider effort string for a level. `undefined` = provider has no effort knob.                                                                                                  |
 | `supportsTierSelection(toolType)`            | `(ToolType) => boolean`                                                  | Whether this provider can act on a tier hint at all.                                                                                                                            |
 | `supportsEffortSelection(toolType)`          | `(ToolType) => boolean`                                                  | Whether this provider can act on an effort hint at all.                                                                                                                         |
 | `cheapTurnSettings(toolType)`                | `(ToolType) => { model?: string; effort?: string }`                      | Bottom of both ladders. Used to pin throwaway synopsis turns.                                                                                                                   |
 | `cheapResumeTurnSettings(toolType, current)` | `(ToolType, { model?, effort? }) => { model?: string; effort?: string }` | `cheapTurnSettings` for a turn that resumes its session: keeps `current.model` when the cheap one has a smaller context window, and inherits `current` where no tier is mapped. |
 
-Tier maps ship only where model IDs are stable (`claude-code` permanent aliases, `factory-droid`). Do NOT add one for a provider that discovers its catalogue at runtime (`codex`, `copilot-cli`, `opencode`): a shipped guess rots into naming a model the user cannot run. `undefined` must never become a silent substitution.
+Tier maps ship only where model IDs are stable (`claude-code` permanent aliases, `factory-droid`) or follow a stable family (`codex`: Luna, Sol, Astra, the newest listed member of each, with `staleTierModels('codex', catalog)` warning from the agent detector when a slug drops out of the user's `models_cache.json`; bump the three slugs when a generation lands). Do NOT add one for a provider with no stable families (`copilot-cli`, `opencode`): a shipped guess rots into naming a model the user cannot run. `undefined` must never become a silent substitution. Codex's effort floor is `low`, not `minimal`: current models answer `minimal` with a 400.
 
 `cheapTurnSettings` is safe only because a synopsis is a LEAF - every caller discards the `agentSessionId` it returns. A future caller that adopts that id has to revisit the pin first, or the tab silently continues on the cheap model.
 
@@ -717,6 +718,35 @@ A checked task is stepped over entirely, marker and all. That keeps a half-finis
 | `getAllFilePaths(nodes, basePath?)`     | `(TreeNode[], string?) => string[]`          | Convenience: all file paths.                                  |
 | `getAllFolderPaths(nodes, basePath?)`   | `(TreeNode[], string?) => string[]`          | Convenience: all folder paths.                                |
 | `buildFileIndex(nodes, basePath?)`      | `(TreeNode[], string?) => FilePathEntry[]`   | Build flat index with `{ relativePath, filename }`.           |
+
+---
+
+## A Cappella Encore Flag (`src/shared/acappella/feature-flag.ts` - Both)
+
+The ONE reader of the `encoreFeatures.aCappella` flag. Do NOT hand-roll
+`flags.aCappella === true` at a new call site: the surfaces that gate on it are
+not one system (IPC handlers, the hotkey installation, the WebSocket signaling
+adapter, the transport, the debug-package collector), they each control a real
+resource - a microphone, a global shortcut, a Bonjour advert - and a surface that
+disagrees with the rest leaves one of those running behind a switch the user
+believes is off. Five byte-identical copies had already accumulated.
+
+| Function / Constant              | Signature                   | Purpose                                                                                                                      |
+| -------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `isACappellaEnabled(store)`      | `(EncoreFlagStore) => bool` | True only for the literal `true`. A hand-edited `"true"` or `1` reads as OFF, which is the safe direction for a mic feature. |
+| `requireACappellaEnabled(store)` | `(EncoreFlagStore) => void` | Throw `ACappellaDisabled` unless the flag is on. What a gated IPC handler calls.                                             |
+| `ACAPPELLA_DISABLED_ERROR`       | `'ACappellaDisabled'`       | The stable error string the renderer maps. Not prose - a sentence here would be a wire contract.                             |
+| `EncoreFlagStore`                | `{ get(key, default?) }`    | The narrow store slice this needs, so an electron-store or a plain object both satisfy it.                                   |
+
+**Turning the flag off is a teardown, not just a gate.**
+`shutdownACappellaForDisable()` in `src/main/ipc/handlers/acappella.ts` is what
+`main/index.ts` runs from its `encoreFeatures` watcher: it stops the session,
+drops the audio bridge, disposes the inference pipeline (which is also what lets
+reclaim-disk delete model files on Windows), and calls
+`ACappellaTransport.standDown()` for the advert and the connected phones. It
+deliberately does NOT dispose the transport or the hotkey installation - both are
+built once per process, so tearing them down would mean switching the feature
+back on did nothing until the next restart.
 
 ---
 

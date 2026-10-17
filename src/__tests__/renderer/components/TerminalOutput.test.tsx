@@ -4425,6 +4425,90 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('low')).toBeInTheDocument();
 		});
 
+		it('names where a Run on turn ran in place of its model', () => {
+			// The agent's own model was not the one asked, so the pill names the
+			// source's model and the source.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered by a source',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnRunOn: 'qwen3:latest · Ollama',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-run-on-pill')).toHaveTextContent('qwen3:latest · Ollama');
+			expect(screen.queryByText('opus')).not.toBeInTheDocument();
+		});
+
+		it('reads what the router decided on a turn sent on Auto, in place of its model', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered on a routed model',
+					source: 'stdout',
+					turnModel: 'sonnet',
+					turnAuto: {
+						status: 'routed',
+						route: {
+							tier: 'medium',
+							effort: 'high',
+							engine: 'Embedding router',
+							calibrated: false,
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-auto-pill')).toHaveTextContent(
+				'Auto \u2192 medium \u00b7 sonnet'
+			);
+			expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+		});
+
+		it('draws the Auto pill for a turn that carries nothing but its stamp', () => {
+			// The router was off and the agent names no model: no model, effort or
+			// Run on label is on the entry, and the pill still has to say so.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered on the agent default',
+					source: 'stdout',
+					turnAuto: {
+						status: 'router-off',
+						route: { skipped: 'off', detail: 'Model routing is off.' },
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-auto-pill')).toHaveTextContent('Auto (router off)');
+		});
+
 		it('renders on non-Claude agents, which have no token-source pill', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
@@ -4901,6 +4985,40 @@ describe('collapseAiResponseLogs', () => {
 		]);
 		expect(out).toHaveLength(1);
 		expect(out[0].renderStyle).toBe('text-stream');
+	});
+
+	it('carries where a Run on turn ran onto the combined entry', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'part 1 ' }),
+			mk({ id: 'b', source: 'stdout', text: 'part 2', turnRunOn: 'qwen3:latest \u00b7 Ollama' }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0].turnRunOn).toBe('qwen3:latest \u00b7 Ollama');
+	});
+
+	it("carries a turn's Auto stamp onto the combined entry", () => {
+		// Like the Run on label, the stamp may sit on any entry of the group, and
+		// the bubble is drawn from the first.
+		const turnAuto = {
+			status: 'routed' as const,
+			route: { tier: 'medium' as const, effort: 'high' as const, engine: 'Embedding router' },
+		};
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'part 1 ' }),
+			mk({ id: 'b', source: 'stdout', text: 'part 2', turnModel: 'sonnet', turnAuto }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0].id).toBe('a');
+		expect(out[0].turnAuto).toEqual(turnAuto);
+		expect(out[0].turnModel).toBe('sonnet');
+	});
+
+	it('leaves the combined entry without an Auto stamp when no entry carries one', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'part 1 ' }),
+			mk({ id: 'b', source: 'stdout', text: 'part 2' }),
+		]);
+		expect(out[0]).not.toHaveProperty('turnAuto');
 	});
 
 	it('keeps Agent Resilience outage markers standalone, not folded into a text group', () => {

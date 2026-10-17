@@ -175,6 +175,123 @@ The `triggeredBy` field contains the subscription name that triggered the comple
   prompt: Lint {{CUE_FILE_PATH}}.
 ```
 
+## Gating with a local model
+
+A `filter` matches fields. A `gate` asks a question. Write the condition in plain language, and a local model reads the event and answers yes or no before Cue starts a run:
+
+```yaml
+- name: triage-comments
+  event: github.issue
+  retrigger_on_comments: true
+  gate: the newest comment asks for a code change or reports a bug
+  prompt: Handle the request in issue {{CUE_GH_NUMBER}}.
+```
+
+A "no" starts nothing. The event is recorded as **gated** in the Cue modal's Activity Log, with the model's one-sentence reason, so you can see what was skipped and why. A gated event does not appear in History, does not count as a run or a failure, and does not fire downstream chain steps.
+
+The point is cost. Most events a busy subscription sees do not need an agent turn, and a small model on your own machine can tell which ones do.
+
+**Setup.** The gate runs on the **Cue gate** task in Settings > Models > System One. Assign it a local model or an endpoint (Ollama, LM Studio). The task is off by default.
+
+**Where to set it.** You do not have to edit YAML:
+
+| Surface                           | How                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Pipeline editor                   | Select the trigger node. The **Gate** field is under the trigger's own settings.                  |
+| Scheduled Tasks tab               | **New Task**, or the edit button on a task. The **Gate** field is at the bottom of the form.      |
+| `maestro-cli cue gate <sub>`      | `--set "<condition>"`, `--on-unavailable run\|skip`, `--clear`. With no flag, it prints the gate. |
+| `maestro-cli cue schedule --gate` | Sets the gate when the scheduled task is created.                                                 |
+
+Under the field, the editor tells you if the Cue gate task is ready. If it is not, it tells you what is missing and what happens to events until it is. `maestro-cli cue gate` prints the same note after a write.
+
+A trigger that fans out to several agents or commands is several subscriptions in `cue.yaml`. The Gate field and `maestro-cli cue gate` both set the gate on all of them, so every branch is gated together. A CLI trigger has no Gate field, because it only fires from a manual run and manual runs are not gated.
+
+**When the model cannot answer** (the task is off, the model is not downloaded, the server is down, the reply is not a yes or no), the default is to start the run anyway and warn you with a sticky notice. A missing gate model must not silently stop your automation. To skip instead, set the policy on the subscription:
+
+```yaml
+gate: the change touches the public API
+gate_on_unavailable: skip # default is run
+```
+
+| `gate_on_unavailable` | Gate model cannot answer                              |
+| --------------------- | ----------------------------------------------------- |
+| `run` (default)       | The run starts. You get a warning.                    |
+| `skip`                | No run. A gated event is recorded. You get a warning. |
+
+Things to know:
+
+- **Manual triggers are not gated.** Play in the Cue modal and `maestro-cli cue trigger` always run: you asked for that run.
+- **`filter` runs first.** A filtered-out event never reaches the gate, and leaves no record. Use `filter` for anything a field comparison can decide, and `gate` for what needs reading.
+- **The model reads a shortened event.** Long text (an issue body, a diff) is cut to fit a small model, so write a condition the first part of the text can answer.
+- **When the event does not say enough, the gate passes.** A run that was not needed costs little. A skipped run that was needed is lost.
+- **A gate is not a security check.** Text inside the event can argue with a yes/no model. Do not rely on a gate to keep hostile text away from an agent or a shell command.
+- **A gated `time.once` task is consumed.** Its condition was checked at its scheduled time and the answer was no.
+- **The standalone engine cannot check a gate.** `maestro-cli cue engine` does not load local models, so every gate there follows `gate_on_unavailable`.
+
+Read gated events from the command line with `maestro-cli cue activity`. Read a subscription's gate with `maestro-cli cue gate <subscription>`, or list every gate with `maestro-cli cue list`.
+
+## Screening for prompt injection
+
+Some triggers carry text that other people wrote: a GitHub comment, an issue or pull request title and body, a webhook payload, the content of a watched task file. When a prompt or a command uses that text, the writer can try to give your agent instructions. The injection screen has a local classifier score that text before Cue starts a run.
+
+```yaml
+- name: reply-to-comments
+  event: github.issue
+  retrigger_on_comments: true
+  screen_injection: true
+  injection_threshold: 0.8 # default
+  prompt: Reply to the new comments on issue {{CUE_GH_NUMBER}}. {{CUE_NEW_COMMENTS}}
+```
+
+A score at or above the threshold starts nothing. The event is recorded as **blocked** in the Cue modal's Activity Log, with the variable and the score, and you get a red notice that stays until you dismiss it. A blocked run counts as a failure for the pipeline, appears in History, and does not fire downstream chain steps.
+
+**Setup.** The screen runs on the **Prompt-injection screen** task in Settings > Models > System One. Assign it a classifier model from the catalog. The task is off by default.
+
+**What is screened.** Only the untrusted variables your prompt or command uses, and only the ones the event filled:
+
+| Trigger            | Untrusted variables                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `github.*`         | `{{CUE_GH_TITLE}}`, `{{CUE_GH_BODY}}`, `{{CUE_NEW_COMMENTS}}`, `{{CUE_GH_BRANCH}}`                        |
+| `task.pending`     | `{{CUE_TASK_CONTENT}}`, `{{CUE_TASK_LIST}}`                                                               |
+| `webhook.received` | `{{CUE_WEBHOOK_BODY}}`, `{{CUE_WEBHOOK_HEADERS}}`, `{{CUE_WEBHOOK_EVENT}}`, `{{CUE_WEBHOOK_DELIVERY_ID}}` |
+
+The output of your own upstream agent (`{{CUE_SOURCE_OUTPUT}}`) is not screened.
+
+**When a subscription is screened.**
+
+| `screen_injection` | Result                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| not set (default)  | Screened when it is an `action: command` subscription that uses an untrusted variable. |
+| `true`             | Always screened.                                                                       |
+| `false`            | Never screened.                                                                        |
+
+**Where to set it.**
+
+| Surface                        | How                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Pipeline editor                | Select the trigger node. The **Prompt-injection screen** field is under the Gate, on triggers that carry untrusted text. |
+| `maestro-cli cue screen <sub>` | `--mode on\|off\|auto`, `--threshold <score>`. With no flag, it prints the screen.                                       |
+
+**When the classifier cannot run** (the task is off, the model is not downloaded, it takes too long), what happens depends on what the subscription does:
+
+| Subscription                                               | Classifier cannot run                                                  |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| A command, and you asked for the screen                    | The run is **blocked**. A command does not start with unscreened text. |
+| A command, `screen_injection` not set, and the task is off | The run starts, marked as not screened in the Activity Log.            |
+| A prompt with `screen_injection: true`                     | The run starts. You get a warning.                                     |
+
+"You asked for the screen" means `screen_injection: true`, or a model assigned to the Prompt-injection screen task. If you assign a model and it stops working, every command that uses untrusted text is blocked until you fix it or set `screen_injection: false`.
+
+Things to know:
+
+- **A clean score does not make text safe for a shell.** The classifier looks for instructions aimed at a model. Text such as `$(rm -rf ~)` is not one and can score low. Do not put untrusted variables in a shell command unless the command quotes and validates them itself.
+- **The whole value is read.** A long body is scored in overlapping pieces and the highest score counts, so an injection at the end of a long comment is not hidden.
+- **The gate runs first.** An event the gate skips is not screened.
+- **A manual run fills no untrusted variable**, so there is nothing to screen and nothing to block.
+- **The standalone engine has no classifier.** In `maestro-cli cue engine`, `screen_injection: true` on a command blocks the run, and the default lets it start.
+
+Read blocked runs from the command line with `maestro-cli cue activity`. Read a subscription's screen with `maestro-cli cue screen <subscription>`.
+
 ## Agent Chaining
 
 Agent chaining connects multiple agents in a pipeline where each agent's completion triggers the next. This is built on `agent.completed` events with optional filtering.

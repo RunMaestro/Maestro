@@ -51,3 +51,13 @@ how the process ended) and ignores the arguments it was started with, so it
 can take the place of any provider's binary. The run layer's tests and the
 headless program's test start it as a real process. Its header comment lists
 the environment variables that drive it.
+
+## `fake-llama-server.mjs`
+
+A stand-in for llama.cpp's `llama-server` in router mode. It takes the
+arguments the model server supervisor starts the real binary with (`--host`,
+`--port`, `--api-key-file`, `--models-preset`, `--models-max`) and answers
+`/health`, `/models` and `/models/load` in the real server's shapes, so the
+supervisor's tests start, stop, crash and load models against a real process
+without a real model. Its header comment lists the environment variables that
+drive it.

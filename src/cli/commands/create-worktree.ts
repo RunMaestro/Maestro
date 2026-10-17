@@ -16,6 +16,7 @@
 
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface CreateWorktreeOptions {
 	agent?: string;
@@ -35,7 +36,7 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<vo
 		} else {
 			console.error(`Error: ${msg}`);
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 
 	if (!options.branch || options.branch.trim() === '') {

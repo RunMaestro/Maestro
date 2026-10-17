@@ -27,6 +27,7 @@
  * Design: `Plans/maestro-tui-group-chat.md` section 7.
  */
 
+import { normalizeMaxConsultationsPerTurn } from '../../consultBudget';
 import {
 	deriveConsultSubject,
 	inferContextStrategy,
@@ -314,6 +315,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 				}
 
 				const request: CrossAgentRequest = {
+					...(input.consultChain ? { consultChain: input.consultChain } : {}),
 					requestId,
 					sourceSessionId: key.sourceSessionId,
 					sourceAgentName: sourceName,
@@ -332,6 +334,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 				};
 
 				const chunk = await new Promise<CrossAgentResponseChunk>((resolve) => {
+					const settings = readSettingsStore(paths.settingsFile);
 					void service.start(request, {
 						runner: background.consultRunner(),
 						resolveAgent: (providerId) => background.resolveAgent(providerId),
@@ -344,6 +347,10 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 							agentConfigs()[toolType]?.customEnvVars as Record<string, string> | undefined,
 						getAgentConfig: (toolType) => agentConfigs()[toolType],
 						writable: writableFor(isHandoff),
+						maxConsultationsPerTurn: normalizeMaxConsultationsPerTurn(
+							settings.status === 'ok' ? settings.data.maxConsultationsPerTurn : undefined
+						),
+						consultBudgetStore: { dataDir: paths.userDataDir },
 						// The target answers as itself: the system prompt its own chat turn carries.
 						getSystemPrompt: (consulted) => {
 							const stored = repository.getAgent(consulted.id);

@@ -2,7 +2,12 @@
 // the rename_group WS message. Mirrors the Left Bar group "Rename" action.
 
 import { resolveGroupId } from '../services/storage';
-import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	reportResult,
+	failCommand,
+	failFromError,
+} from '../services/session-command';
 
 interface RenameGroupOptions {
 	json?: boolean;
@@ -22,7 +27,7 @@ export async function renameGroup(
 	try {
 		resolvedGroupId = resolveGroupId(groupId);
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 
 	try {
@@ -36,6 +41,6 @@ export async function renameGroup(
 			jsonExtra: { groupId: resolvedGroupId, name: trimmed },
 		});
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

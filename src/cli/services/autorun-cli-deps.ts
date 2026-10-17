@@ -16,6 +16,8 @@ import type {
 	AutoRunTurnRequest,
 	AutoRunTurnResult,
 } from '../../shared/maestro-lib/autorun/engine-types';
+import { readHarnessTierDefaults } from './storage';
+import { resolveCliAutoTurn } from './auto-turn';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
 import {
@@ -39,6 +41,8 @@ function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		customArgs: session.customArgs,
 		additionalDirectories: session.additionalDirectories,
 		customEnvVars: session.customEnvVars,
+		gatewayUrl: session.gatewayUrl,
+		runOn: session.runOn,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
 		// This is Auto Run, not someone typing. Marks the turn so delegation
 		// reporting downstream of the spawn does not count it as hands-on work.
@@ -54,6 +58,8 @@ function goalTurnOptions(session: SessionInfo): SpawnAgentOptions {
 	return {
 		customArgs: session.customArgs,
 		customEnvVars: session.customEnvVars,
+		gatewayUrl: session.gatewayUrl,
+		runOn: session.runOn,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
 	};
 }
@@ -81,12 +87,19 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 					customModel: request.model,
 					customEffort: request.effort,
 					...options,
+					...(request.runOn !== undefined ? { runOn: request.runOn } : {}),
 					signal: request.signal,
 				}),
 			settlementFromAgentResult
 		);
 
 	return {
+		tierRouting: () => ({
+			tierTargets: session.tierTargets,
+			runOn: session.runOn,
+			harnessDefaults: readHarnessTierDefaults(),
+		}),
+		resolveAutoTurn: (input) => resolveCliAutoTurn({ ...input, agent: session }),
 		turns: {
 			async prepare() {
 				appendSystemPrompt = await prepareMaestroSystemPromptCli(session);

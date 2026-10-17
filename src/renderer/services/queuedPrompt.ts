@@ -32,7 +32,9 @@ import {
 } from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions } from './crossAgentMentions';
+import { routeQueuedAutoItem } from './autoTurn';
 import { generateId } from '../utils/ids';
+import type { ConsultChain } from '../../shared/consultBudget';
 import { logger } from '../utils/logger';
 
 /** What to queue, and where. */
@@ -43,6 +45,11 @@ export interface QueuedPromptOptions {
 	text: string;
 	/** Base64 data URLs, forwarded to the spawn. */
 	images?: string[];
+	/**
+	 * The place in a consult chain the queued turn takes, when another agent's
+	 * `maestro-cli dispatch` is what queued it. See `QueuedItem.consultChain`.
+	 */
+	consultChain?: ConsultChain;
 	/** Resolve a slash command through the command queue when this item drains. */
 	slashCommand?: boolean;
 }
@@ -66,6 +73,7 @@ export function buildQueuedMessageItem({
 	tab,
 	text,
 	images,
+	consultChain,
 	slashCommand,
 }: QueuedPromptOptions): QueuedItem {
 	const commandText = slashCommand ? text.trim() : undefined;
@@ -90,6 +98,7 @@ export function buildQueuedMessageItem({
 			crossAgentMention: true,
 			crossAgentOnly: mentionPlan.suppressLocal,
 		}),
+		...(consultChain ? { consultChain } : {}),
 	};
 }
 
@@ -136,17 +145,25 @@ export function enqueuePromptForTab(options: {
 	tabId: string;
 	text: string;
 	images?: string[];
+	consultChain?: ConsultChain;
 	slashCommand?: boolean;
 	expandCommands?: boolean;
 }): QueuedItem | null {
-	const { sessionId, tabId, text, images, slashCommand, expandCommands } = options;
+	const { sessionId, tabId, text, images, consultChain, slashCommand, expandCommands } = options;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
 	const tab = session.aiTabs?.find((t) => t.id === tabId) ?? getActiveTab(session);
 	if (!tab) return null;
 
-	const message = buildQueuedMessageItem({ session, tab, text, images, slashCommand });
+	const message = buildQueuedMessageItem({
+		session,
+		tab,
+		text,
+		images,
+		consultChain,
+		slashCommand,
+	});
 	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text) : null;
 	const item: QueuedItem = command
 		? {
@@ -159,12 +176,16 @@ export function enqueuePromptForTab(options: {
 				tabName: message.tabName,
 				readOnlyMode: message.readOnlyMode,
 				turnSettings: message.turnSettings,
+				consultChain: message.consultChain,
 			}
 		: message;
 	updateSessionWith(sessionId, (s) => ({
 		...s,
 		executionQueue: [...(s.executionQueue || []), item],
 	}));
+	// On an agent set to the Auto model the prompt is routed as it is queued,
+	// like one the composer queues. A no-op on a named model.
+	routeQueuedAutoItem(sessionId, item);
 	return item;
 }
 

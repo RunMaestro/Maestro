@@ -426,6 +426,79 @@ describe('applyQueuedItemEdit', () => {
 		expect(next[0].turnSettings?.model).toBeUndefined();
 	});
 
+	// The model router's answer is about the item's words. Edit the words and
+	// the answer is about something else, so it is dropped and the dispatch
+	// routes the message for what it now says.
+	describe('the answer the model router gave an item on Auto', () => {
+		const route = { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false };
+		const routed = { model: 'auto', effort: 'high', route } as QueuedItem['turnSettings'];
+
+		it('is dropped when the text changed', () => {
+			const queue = [{ ...item('a'), turnSettings: routed }];
+
+			const next = applyQueuedItemEdit(queue, 'a', {
+				text: 'a rewritten request',
+				images: [],
+				turnSettings: routed!,
+			});
+
+			expect(next[0].turnSettings).toEqual({ model: 'auto', effort: 'high' });
+		});
+
+		it('is kept when only the settings or the images changed', () => {
+			const queue = [{ ...item('a'), turnSettings: routed }];
+
+			const next = applyQueuedItemEdit(queue, 'a', {
+				text: queue[0].text!,
+				images: ['data:image/png;base64,AAAA'],
+				turnSettings: { ...routed!, effort: 'low' },
+			});
+
+			expect(next[0].turnSettings).toEqual({ model: 'auto', effort: 'low', route });
+		});
+
+		// An answer means nothing on a named model: the edit took the item off
+		// Auto, so the answer goes even though the words are the same.
+		it('is dropped when the edit names a model, with the text unchanged', () => {
+			const queue = [{ ...item('a'), turnSettings: routed }];
+
+			const next = applyQueuedItemEdit(queue, 'a', {
+				text: queue[0].text!,
+				images: [],
+				turnSettings: { ...routed!, model: 'opus' },
+			});
+
+			expect(next[0].turnSettings).toEqual({ model: 'opus', effort: 'high' });
+			expect(next[0].turnSettings).not.toHaveProperty('route');
+		});
+
+		it('is dropped when the edit clears the model back to the default, with the text unchanged', () => {
+			const queue = [{ ...item('a'), turnSettings: routed }];
+
+			const next = applyQueuedItemEdit(queue, 'a', {
+				text: queue[0].text!,
+				images: [],
+				turnSettings: { ...routed!, model: undefined },
+			});
+
+			expect(next[0].turnSettings).not.toHaveProperty('route');
+			expect(next[0].turnSettings?.model).toBeUndefined();
+			expect(next[0].turnSettings?.effort).toBe('high');
+		});
+
+		it('is kept when the text is unchanged and the model is still Auto', () => {
+			const queue = [{ ...item('a'), turnSettings: routed }];
+
+			const next = applyQueuedItemEdit(queue, 'a', {
+				text: queue[0].text!,
+				images: [],
+				turnSettings: routed!,
+			});
+
+			expect(next[0].turnSettings).toEqual({ model: 'auto', effort: 'high', route });
+		});
+	});
+
 	it('preserves queue order and length', () => {
 		const queue = [item('a'), item('b'), item('c')];
 

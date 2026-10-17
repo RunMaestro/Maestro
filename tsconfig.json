@@ -15,5 +15,12 @@
 		"noUnusedParameters": true,
 		"noFallthroughCasesInSwitch": true
 	},
-	"include": ["src/renderer", "src/web", "src/shared", "src/types", "src/main/lite/preload.ts"]
+	"include": [
+		"src/renderer",
+		"src/web",
+		"src/web-desktop",
+		"src/shared",
+		"src/types",
+		"src/main/lite/preload.ts"
+	]
 }

@@ -30,6 +30,7 @@ import {
 } from '../../utils/shellCommandInput';
 import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
+import { voiceHudClaimsTab } from '../../stores/voiceUiStore';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { useEventListener } from '../utils/useEventListener';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
@@ -578,6 +579,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					setCommandHistorySelectedIndex(0);
 				}
 			} else if (e.key === 'Tab') {
+				// An AI-mode composer swallows Tab only so focus stays put. While the
+				// voice HUD is up the key cycles its Tab / Agent / Conductor switch
+				// instead, so it is left unclaimed for the HUD's listener. A shell
+				// line keeps Tab: completion is a real use of the key.
+				if (!isShellInput && voiceHudClaimsTab()) return;
 				e.preventDefault();
 
 				if (isShellInput && !slashCommandOpen) {

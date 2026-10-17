@@ -2401,5 +2401,202 @@ describe('HistoryPanel', () => {
 			});
 		});
 	});
+
+	// ===== SEMANTIC SEARCH MODE =====
+	// The filter box can search this agent's History by meaning through the
+	// main-process search. The toggle is offered only while the Semantic search
+	// task would answer.
+	describe('semantic search mode', () => {
+		let mockTaskReadiness: ReturnType<typeof vi.fn>;
+		let mockSearch: ReturnType<typeof vi.fn>;
+
+		const loaded = createMockEntry({ id: 'loaded-1', summary: 'Loaded window entry' });
+		const bestMatch = createMockEntry({
+			id: 'match-1',
+			type: 'USER',
+			summary: 'Fixed the login timeout',
+		});
+		const secondMatch = createMockEntry({ id: 'match-2', summary: 'Tuned the retry backoff' });
+
+		const hitFor = (entry: HistoryEntry, score: number, snippet: string) => ({
+			sourceType: 'history',
+			sourceId: entry.id,
+			agentId: 'agent-1',
+			score,
+			title: entry.summary,
+			snippet,
+			history: { type: entry.type, entry },
+		});
+
+		beforeEach(() => {
+			mockTaskReadiness = vi
+				.fn()
+				.mockResolvedValue([{ taskId: 'semantic-search', state: 'ready' }]);
+			mockSearch = vi.fn().mockResolvedValue({
+				status: 'ok',
+				mode: 'semantic',
+				durationMs: 1,
+				hits: [
+					hitFor(bestMatch, 0.82, 'The token refresh raced the logout.'),
+					hitFor(secondMatch, 0.44, 'Backoff now doubles up to a minute.'),
+				],
+			});
+			(window as unknown as { maestro: Record<string, unknown> }).maestro.localModels = {
+				taskReadiness: mockTaskReadiness,
+				search: mockSearch,
+			};
+			mockHistoryGetAll.mockResolvedValue([loaded]);
+		});
+
+		async function openFilter() {
+			const session = createMockSession({ id: 'agent-1' });
+			const view = render(<HistoryPanel session={session} theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByText('Loaded window entry')).toBeInTheDocument();
+			});
+			fireEvent.keyDown(view.container.querySelector('[tabIndex="0"]')!, {
+				key: 'f',
+				metaKey: true,
+			});
+			await screen.findByPlaceholderText('Filter history...');
+			return view;
+		}
+
+		async function searchByMeaning(query: string) {
+			fireEvent.click(await screen.findByTestId('history-semantic-toggle'));
+			const input = screen.getByPlaceholderText('Search history by meaning...');
+			fireEvent.change(input, { target: { value: query } });
+			await waitFor(() => expect(mockSearch).toHaveBeenCalled());
+			return input;
+		}
+
+		it.each(['off', 'unavailable', 'utility-agent'])(
+			'does not offer the toggle while the task is %s',
+			async (state) => {
+				mockTaskReadiness.mockResolvedValue([{ taskId: 'semantic-search', state }]);
+				await openFilter();
+				await waitFor(() => expect(mockTaskReadiness).toHaveBeenCalledWith('semantic-search'));
+				expect(screen.queryByTestId('history-semantic-toggle')).not.toBeInTheDocument();
+			}
+		);
+
+		it('offers the toggle once the task is ready, and text filtering stays the default', async () => {
+			await openFilter();
+
+			const toggle = await screen.findByTestId('history-semantic-toggle');
+			expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+			fireEvent.change(screen.getByPlaceholderText('Filter history...'), {
+				target: { value: 'Loaded' },
+			});
+			await waitFor(() => expect(screen.getByText('1 result')).toBeInTheDocument());
+			expect(mockSearch).not.toHaveBeenCalled();
+		});
+
+		it("searches this agent's History by meaning and lists hits with score and snippet", async () => {
+			await openFilter();
+			await searchByMeaning('why did login break');
+
+			expect(mockSearch).toHaveBeenCalledWith({
+				query: 'why did login break',
+				mode: 'semantic',
+				sourceTypes: ['history'],
+				agentId: 'agent-1',
+				limit: 30,
+				includeEntries: true,
+			});
+
+			// The hits replace the loaded window, best first.
+			await waitFor(() => {
+				expect(screen.getByText('Fixed the login timeout')).toBeInTheDocument();
+			});
+			expect(screen.getByText('Tuned the retry backoff')).toBeInTheDocument();
+			expect(screen.queryByText('Loaded window entry')).not.toBeInTheDocument();
+			expect(screen.getByText('82%')).toBeInTheDocument();
+			expect(screen.getByText('The token refresh raced the logout.')).toBeInTheDocument();
+			expect(screen.getByText('44%')).toBeInTheDocument();
+			expect(screen.getByText('2 results')).toBeInTheDocument();
+
+			const summaries = screen
+				.getAllByText(/Fixed the login timeout|Tuned the retry backoff/)
+				.map((node) => node.textContent);
+			expect(summaries).toEqual(['Fixed the login timeout', 'Tuned the retry backoff']);
+		});
+
+		it('opens the best match on Enter from the search box', async () => {
+			await openFilter();
+			const input = await searchByMeaning('why did login break');
+			await waitFor(() => {
+				expect(screen.getByText('Fixed the login timeout')).toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(screen.getByTestId('modal-entry-id')).toHaveTextContent('match-1');
+		});
+
+		it('opens the selected match on Enter from the list', async () => {
+			const { container } = await openFilter();
+			const input = await searchByMeaning('retry');
+			await waitFor(() => {
+				expect(screen.getByText('Tuned the retry backoff')).toBeInTheDocument();
+			});
+
+			const list = container.querySelector('[tabIndex="0"]')!;
+			fireEvent.keyDown(input, { key: 'ArrowDown' });
+			fireEvent.keyDown(list, { key: 'ArrowDown' });
+			fireEvent.keyDown(list, { key: 'Enter' });
+
+			expect(screen.getByTestId('modal-entry-id')).toHaveTextContent('match-2');
+		});
+
+		it('still applies the type pills to the hits', async () => {
+			await openFilter();
+			await searchByMeaning('anything');
+			await waitFor(() => {
+				expect(screen.getByText('Fixed the login timeout')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /USER/i }));
+
+			await waitFor(() => {
+				expect(screen.queryByText('Fixed the login timeout')).not.toBeInTheDocument();
+			});
+			expect(screen.getByText('Tuned the retry backoff')).toBeInTheDocument();
+		});
+
+		it('shows why a search could not run instead of an empty list', async () => {
+			mockSearch.mockResolvedValue({
+				status: 'unavailable',
+				reason: 'bge-small-en-v1.5 is not downloaded.',
+			});
+			await openFilter();
+			await searchByMeaning('anything');
+
+			await waitFor(() => {
+				expect(screen.getByTestId('history-empty-state')).toHaveTextContent(
+					'bge-small-en-v1.5 is not downloaded.'
+				);
+			});
+		});
+
+		it('goes back to the loaded window when the mode is switched off', async () => {
+			await openFilter();
+			await searchByMeaning('login');
+			await waitFor(() => {
+				expect(screen.getByText('Fixed the login timeout')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('history-semantic-toggle'));
+			fireEvent.change(screen.getByPlaceholderText('Filter history...'), {
+				target: { value: '' },
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('Loaded window entry')).toBeInTheDocument();
+			});
+			expect(screen.queryByText('Fixed the login timeout')).not.toBeInTheDocument();
+		});
+	});
 });
 // Restore original Intl.DateTimeFormat after all tests

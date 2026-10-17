@@ -12,6 +12,8 @@ import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHel
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
+import { routeQueuedAutoItem, settleAutoTurn, turnSpawnSettings } from '../../services/autoTurn';
+import type { AutoRouteStamp } from '../../../shared/autoTurn';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
@@ -1196,6 +1198,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
+					// A message queued on the Auto model is routed NOW, while it waits,
+					// and the answer is written onto the item: what the router said is
+					// part of what was frozen at send. A no-op on a named model.
+					routeQueuedAutoItem(resolvedSessionId, queuedItem);
 					// Steer Running Turn: the draft is a queued item now, which is what a
 					// steer starts from. One that cannot be steered stays queued and the
 					// service says why.
@@ -1521,10 +1527,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// queue if the spawn collides with a live turn. Both must describe the same
 			// message - the raw text the user typed (no nudge, which processQueuedItem
 			// does not add either), its images, and the turn settings frozen at send.
+			// `route` is what the model router answered for this send, once a turn
+			// on the Auto model has been settled: a resend or a re-queue of the same
+			// message carries the answer instead of asking again.
 			const buildComposerQueuedItem = (
 				tabId: string,
 				tab: AITab | undefined,
-				session: Session
+				session: Session,
+				route?: AutoRouteStamp
 			): QueuedItem => ({
 				id: generateId(),
 				timestamp: Date.now(),
@@ -1536,12 +1546,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				readOnlyMode: isReadOnlyEntry,
 				...(isForceParallel && { forceParallel: true }),
 				...(crossAgentMentionPlan && { crossAgentMention: true }),
-				turnSettings: captureQueuedTurnSettings(tab, session),
+				turnSettings: captureQueuedTurnSettings(tab, session, route),
 			});
 
 			if (isBatchModeAgent) {
 				// Batch mode: Spawn new agent process with prompt
 				(async () => {
+					// What the model router answered for this send, when it went out on
+					// the Auto model. Outside the `try` so a collision re-queue keeps it.
+					let sentRoute: AutoRouteStamp | undefined;
 					try {
 						// Get agent configuration
 						const agent = await window.maestro.agents.get(activeSession.toolType);
@@ -1637,10 +1650,24 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						//    invocation - the flag isn't persisted into the session transcript.
 						//  - Fallback-embed agents (e.g. Copilot-CLI, Codex): embed only on first
 						//    turn; on resume the prompt is already in the transcript.
-						const appendSystemPrompt = await prepareMaestroSystemPrompt({
-							session: freshSession,
-							activeTabId: targetTabId,
-						});
+						// A turn on the Auto model is settled here, beside the system
+						// prompt: the tab took the turn with a pending stamp, and the
+						// router's answer decides the model, effort and place this spawn
+						// launches with. The router judges what the user sent, without the
+						// notes added around it above. Null for a turn on a named model. A
+						// tier target that cannot be used throws, into the catch below.
+						const [appendSystemPrompt, autoLaunch] = await Promise.all([
+							prepareMaestroSystemPrompt({
+								session: freshSession,
+								activeTabId: targetTabId,
+							}),
+							settleAutoTurn({
+								sessionId: resolvedSessionId,
+								tabId: freshActiveTab.id,
+								prompt: hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : effectiveInputValue,
+							}),
+						]);
+						sentRoute = autoLaunch?.route;
 
 						// Agent Resilience: snapshot the prompt BEFORE spawning. This path does
 						// not go through agentStore.processQueuedItem, so without this a limit
@@ -1650,7 +1677,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// spawn promise settles, so this cannot wait until after the await.
 						noteDirectDispatch(
 							resolvedSessionId,
-							buildComposerQueuedItem(freshActiveTab.id, freshActiveTab, freshSession)
+							buildComposerQueuedItem(freshActiveTab.id, freshActiveTab, freshSession, sentRoute)
 						);
 
 						// Spawn agent with generic config - the main process will use agent-specific
@@ -1673,8 +1700,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomArgs: freshSession.customArgs,
 							sessionAdditionalDirectories: freshSession.additionalDirectories,
 							sessionCustomEnvVars: freshSession.customEnvVars,
-							sessionCustomModel: freshActiveTab?.customModel ?? freshSession.customModel,
-							sessionCustomEffort: freshActiveTab?.customEffort ?? freshSession.customEffort,
+							...turnSpawnSettings(autoLaunch, {
+								model: freshActiveTab?.customModel ?? freshSession.customModel,
+								effort: freshActiveTab?.customEffort ?? freshSession.customEffort,
+							}),
 							sessionCustomContextWindow: freshSession.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
@@ -1710,7 +1739,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// only a real spawn failure, where nothing is running, resets
 							// it and writes the error the user can act on.
 							if (isSpawnCollision) {
-								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s);
+								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s, sentRoute);
 								return { ...s, executionQueue: [...executionQueue, requeued] };
 							}
 							// Reset target tab's state to 'idle' and add error log

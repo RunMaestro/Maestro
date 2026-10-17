@@ -4,6 +4,9 @@ import {
 	getClaudeTokenSourceFields,
 } from '../../../shared/claudeTokenMode';
 import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
+import type { RunOnTarget } from '../../../shared/local-models/run-on';
+import { turnModelStatsFields, type AutoTurnStamp } from '../../../shared/autoTurn';
+import { turnRunOnTarget } from '../../../shared/autorunTurnSettings';
 import {
 	getActiveTab,
 	markTabRunningQueuedItem,
@@ -67,6 +70,18 @@ export interface SpawnAgentOptions {
 	modelOverride?: string;
 	/** Overrides session.customEffort for this spawn only */
 	effortOverride?: string;
+	/**
+	 * The Run on target this spawn launches on in place of the agent's own: the
+	 * target of the tier an Auto Run task resolved (`ResolvedTurnSettings.runOn`).
+	 * Absent means the agent's stored target, which the spawn handler reads.
+	 */
+	runOnOverride?: RunOnTarget;
+	/**
+	 * What Auto's router answered for this spawn, when its model was `auto`. It
+	 * never reaches the agent: it is kept for the turn's stats row
+	 * (`query_events.routed_tier`).
+	 */
+	autoStamp?: AutoTurnStamp;
 }
 
 /**
@@ -381,6 +396,13 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										tabId: activeTab?.id,
 										isRemote: session.sessionSshRemoteConfig?.enabled ?? false,
 										isWorktree: !!session.parentSessionId,
+										// The same place the spawn below is sent to: the override
+										// when a tier chose one, else the agent's own target, both
+										// as they stood when the task started.
+										...turnModelStatsFields({
+											runOn: turnRunOnTarget({ runOn: options?.runOnOverride }, session.runOn),
+											auto: options?.autoStamp,
+										}),
 										// `taskUsageStats` is already scoped to this task -
 										// it is declared inside the per-task closure and only
 										// accumulates that task's usage events - so it is the
@@ -671,6 +693,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// whether it was launched from the app or maestro-cli, which passed it.
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
+							// A tier that names a place (a local source for `low`, the provider
+							// for `high`) launches there, through the Run on path. Sent with
+							// the model above: a source's model name means nothing to the
+							// provider, so one without the other would fail the task.
+							runOnOverride: options?.runOnOverride,
 							// Forward the agent's Claude token source (TUI / Dynamic / API). The
 							// spawn handler reads the persisted record first; this is the
 							// fallback, same as the synopsis spawn below.
@@ -769,6 +796,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					throw new Error(`${toolType} agent has no command configured`);
 				}
 
+				// Not routed through the Local Models `tab-summary` assignment on
+				// purpose: the synopsis RESUMES the agent's own provider session,
+				// which a local model cannot open, and it is what history and
+				// hand-offs record as the turn's outcome. It stays on the agent.
 				// Bottom of both ladders, except that the tab's model is kept when
 				// the cheap one has a smaller context window: resuming replays the
 				// whole transcript, which fit the tab's model and may not fit the

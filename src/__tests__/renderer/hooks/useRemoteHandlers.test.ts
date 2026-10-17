@@ -505,6 +505,149 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		// A prompt another agent's `maestro-cli dispatch` sent carries the place in
+		// the consult chain its turn takes. It has to reach the spawn, and the
+		// retry snapshot, or the delegated turn would root a fresh budget.
+		it('hands the spawn and the retry snapshot the consult chain of a dispatched command', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+			noteDirectDispatchMock.mockClear();
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'take this over',
+							inputMode: 'ai',
+							consultChain: { chainId: 'chain-a', depth: 2 },
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: 'take this over',
+					consultChain: { chainId: 'chain-a', depth: 2 },
+				})
+			);
+			for (const [, item] of noteDirectDispatchMock.mock.calls) {
+				expect(item.consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+			}
+		});
+
+		it('adds no consult chain to the spawn of a command that carries none', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain this code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect((window.maestro.process.spawn as any).mock.calls[0][0]).not.toHaveProperty(
+				'consultChain'
+			);
+		});
+
+		// A command that lands on an agent set to the Auto model: the tab takes
+		// the turn, the model router is asked, and the spawn launches on what it
+		// answers, exactly as a message typed in the composer does.
+		describe('an agent on the Auto model', () => {
+			const routeTurn = vi.fn();
+			const send = async (session: Session, command: string) => {
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+				(window as any).maestro.localModels = { routeTurn };
+				const deps = createMockDeps({ sessionsRef: { current: [session] } });
+				renderHook(() => useRemoteHandlers(deps));
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: { sessionId: session.id, command, inputMode: 'ai' },
+						})
+					);
+				});
+				return (window.maestro.process.spawn as any).mock.calls[0]?.[0];
+			};
+
+			beforeEach(() => {
+				routeTurn.mockReset();
+				routeTurn.mockResolvedValue({
+					tier: 'high',
+					effort: 'medium',
+					engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+					latencyMs: 25,
+				});
+			});
+
+			it('spawns on the tier and effort the router chose', async () => {
+				const spawned = await send(
+					createMockSession({ inputMode: 'ai', customModel: 'auto' }),
+					'design the migration'
+				);
+
+				expect(routeTurn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						prompt: 'design the migration',
+						agentId: 'session-1',
+						tabId: 'tab-1',
+					})
+				);
+				expect(spawned.sessionCustomModel).toBe('opus');
+				expect(spawned.sessionCustomEffort).toBe('high');
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].turnAuto?.status).toBe('routed');
+			});
+
+			it('runs on the agent default when the router gives no decision', async () => {
+				routeTurn.mockResolvedValue({ skipped: 'timeout', detail: 'slow', latencyMs: 400 });
+
+				const spawned = await send(
+					createMockSession({ inputMode: 'ai', customModel: 'auto', customEffort: 'low' }),
+					'design the migration'
+				);
+
+				expect(spawned.sessionCustomModel).toBeUndefined();
+				expect(spawned.sessionCustomEffort).toBe('low');
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].turnAuto?.status).toBe(
+					'no-decision'
+				);
+			});
+
+			it('asks the router nothing, and passes what it always passed, on a named model', async () => {
+				const spawned = await send(
+					createMockSession({ inputMode: 'ai', customModel: 'sonnet', customEffort: 'low' }),
+					'design the migration'
+				);
+
+				expect(routeTurn).not.toHaveBeenCalled();
+				expect(spawned.sessionCustomModel).toBe('sonnet');
+				expect('sessionCustomEffort' in spawned).toBe(false);
+			});
+		});
+
 		it('consults the mentioned agent instead of spawning when the prompt leads with @mention', async () => {
 			// A CLI-dispatched "@Reviewer look at this" is addressed at Reviewer
 			// only: no local turn, but the consult MUST fire (it used to be inert -
@@ -538,6 +681,8 @@ describe('useRemoteHandlers', () => {
 				'@Reviewer look at this',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
+				undefined,
+				// No consult chain on the command, so none for its mentions.
 				undefined
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
@@ -622,7 +767,48 @@ describe('useRemoteHandlers', () => {
 				'fix it, then ask @Reviewer',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
+				undefined,
 				undefined
+			);
+		});
+
+		// A command another agent's `maestro-cli dispatch` sent arrives in that
+		// agent's consult chain. A mention in it is that agent's consult, so the
+		// chain goes with it and main spends from it.
+		it.each([
+			['a leading @mention', '@Reviewer look at this', true],
+			['a trailing @mention', 'fix it, then ask @Reviewer', false],
+		])('hands the chain of a dispatched command to %s', async (_what, command, suppressLocal) => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = { targetSessionIds: ['reviewer-1'], suppressLocal };
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command,
+							inputMode: 'ai',
+							consultChain: { chainId: 'chain-a', depth: 1 },
+						},
+					})
+				);
+			});
+
+			expect(dispatchCrossAgentMentions).toHaveBeenCalledWith(
+				plan,
+				command,
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined,
+				{ chainId: 'chain-a', depth: 1 }
 			);
 		});
 

@@ -10,7 +10,10 @@ import { isWindows } from '../../shared/platformDetection';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
+import { DEFAULT_DOWNLOAD_BASE } from '../../shared/local-models/download-base';
+import { DEFAULT_SPOKEN_NOTICE_MODE } from '../../shared/spokenNotices';
 import { DEFAULT_QUICK_CHAT_SETTINGS } from '../../shared/quickChat';
+import { DEFAULT_MAX_CONSULTATIONS_PER_TURN } from '../../shared/consultBudget';
 import { DEFAULT_THROUGHPUT_GAUGE_SETTINGS } from '../../shared/throughputGauge';
 
 import type {
@@ -127,11 +130,18 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	delegationMilestone: 0,
 	lastSelectedPromptId: null,
 	modalSizes: {},
+	// Delegation Graph: the layout and agent positions the user left, per scope.
+	// Sparse (empty = every scope on the default layout). The renderer owns the
+	// shape; see renderer/stores/settingsDelegationGraphSlice.ts.
+	delegationGraphLayouts: {},
 	concertoStageFloating: false,
 	concertoStagePosition: null,
 	spellCheck: false,
 	usageRefreshIntervals: {},
 	pianolaAutoWatchNewAgents: false,
+	// Consultation budget: peer consults and delegations per user message, whole
+	// chain. Main and the CLI enforce it. See shared/consultBudget.ts.
+	maxConsultationsPerTurn: DEFAULT_MAX_CONSULTATIONS_PER_TURN,
 	annotatorPenColor: '#9146FF',
 	annotatorPenSize: 10,
 	annotatorThinning: 0.5,
@@ -170,6 +180,24 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	encoreFeatures: { ...ENCORE_FEATURE_DEFAULTS },
 	cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	groupCueEntries: true,
+	// Local Models endpoints the user runs (Ollama, LM Studio, OpenAI-compatible).
+	// See shared/local-models/endpoints.ts.
+	localModelEndpoints: [],
+	// Where Local Models downloads model files from. See
+	// shared/local-models/download-base.ts.
+	localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,
+	// Local Models task assignments, sparse (empty = every task on its default).
+	// See shared/local-models/tasks.ts.
+	localModelAssignments: {},
+	// Harness tier defaults, sparse (empty = the built-in table for every
+	// harness). See shared/modelTiers.ts.
+	harnessTierDefaults: {},
+	// Whether the semantic index includes Cue runs. Off: they are most of History
+	// by volume and mostly noise. Read by main (local-models/semantic-indexer.ts).
+	semanticIndexCue: false,
+	// When a finished turn is spoken about. Off: speaking aloud is opt-in. Read
+	// by main (local-models/spoken-notices.ts). See shared/spokenNotices.ts.
+	spokenNotices: DEFAULT_SPOKEN_NOTICE_MODE,
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

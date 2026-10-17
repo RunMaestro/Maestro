@@ -2729,6 +2729,7 @@ describe('useInputProcessing', () => {
 				userMessage: 'Help me implement a new feature',
 				agentType: 'claude-code',
 				cwd: '/test/project',
+				sessionId: session.id,
 				sessionSshRemoteConfig: undefined,
 			});
 		});
@@ -3576,6 +3577,224 @@ describe('useInputProcessing', () => {
 			);
 
 			cancelRetry(session.id, tab.id);
+		});
+	});
+
+	// A message sent on the Auto model: the tab takes the turn at once, the
+	// model router is asked without holding the send, and the spawn launches on
+	// what it answers. A message that has to queue is routed when it is queued.
+	describe('a turn on the Auto model', () => {
+		const routeTurn = () => vi.mocked(window.maestro.localModels.routeTurn);
+		const ROUTED = {
+			tier: 'medium' as const,
+			effort: 'low' as const,
+			engine: { id: 'embedding-router' as const, label: 'Embedding router', calibrated: false },
+			latencyMs: 22,
+		};
+		const STAMP = { tier: 'medium', effort: 'low', engine: 'Embedding router', calibrated: false };
+		const liveSession = () => useSessionStore.getState().sessions[0];
+
+		beforeEach(() => {
+			routeTurn().mockResolvedValue(ROUTED);
+		});
+
+		afterEach(() => {
+			routeTurn().mockResolvedValue({
+				skipped: 'off',
+				detail: 'Model routing is off.',
+				latencyMs: 0,
+			});
+		});
+
+		const autoSession = (overrides: Partial<Session> = {}, tabOverrides = {}) => {
+			const tab = createMockTab({ id: 'tab-auto', state: 'idle', ...tabOverrides });
+			return createMockSession({
+				state: 'idle',
+				customModel: 'auto',
+				customEffort: 'high',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+				...overrides,
+			});
+		};
+
+		it('spawns on the tier and effort the router chose, never on the word auto', async () => {
+			const session = autoSession({ nudgeMessage: 'Always run the linter.' });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'rename formatDate to formatDay',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await vi.waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+
+			const spawned = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawned.sessionCustomModel).toBe('sonnet');
+			expect(spawned.sessionCustomEffort).toBe('low');
+			expect(spawned.runOnOverride).toBeUndefined();
+			// The router judged what the user typed, not the nudge appended for the agent.
+			expect(routeTurn()).toHaveBeenCalledTimes(1);
+			expect(routeTurn().mock.calls[0][0]).toMatchObject({
+				prompt: 'rename formatDate to formatDay',
+				agentId: session.id,
+				tabId: 'tab-auto',
+			});
+			expect(liveSession().aiTabs[0]).toMatchObject({
+				turnModel: 'sonnet',
+				turnEffort: 'low',
+				turnAuto: { status: 'routed', route: STAMP },
+			});
+		});
+
+		it('marks the tab busy with the user message before the router has answered', async () => {
+			let answer: (value: typeof ROUTED) => void = () => {};
+			routeTurn().mockReturnValue(new Promise((resolve) => (answer = resolve)));
+			const session = autoSession();
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'rename formatDate',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// The send did not wait: the bubble is in, the tab is busy, the stamp is pending.
+			const tab = liveSession().aiTabs[0];
+			expect(tab.state).toBe('busy');
+			expect(tab.logs.at(-1)).toMatchObject({ source: 'user', text: 'rename formatDate' });
+			expect(tab.turnAuto).toEqual({ status: 'pending' });
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+
+			await act(async () => {
+				answer(ROUTED);
+			});
+			await vi.waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+		});
+
+		it('rule 1: a warm session keeps its model and takes only the effort', async () => {
+			const session = autoSession(
+				{},
+				{
+					agentSessionId: 'claude-abc',
+					turnProvider: 'claude-code',
+					turnModel: 'haiku',
+					logs: [{ id: 'l1', timestamp: Date.now() - 15_000, source: 'stdout', text: 'done' }],
+				}
+			);
+			routeTurn().mockResolvedValue({ ...ROUTED, tier: 'high' });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'now design the migration',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await vi.waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+
+			expect(vi.mocked(window.maestro.process.spawn).mock.calls[0][0]).toMatchObject({
+				sessionCustomModel: 'haiku',
+				sessionCustomEffort: 'low',
+			});
+			// The exchange before the prompt goes along, so a short prompt can be judged.
+			expect(routeTurn().mock.calls[0][0].recent).toEqual({ assistant: 'done' });
+		});
+
+		it('rule 2: with the router off the turn runs on the agent default', async () => {
+			routeTurn().mockResolvedValue({ skipped: 'off', detail: 'Off.', latencyMs: 0 });
+			const session = autoSession();
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'rename formatDate',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await vi.waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+
+			const spawned = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawned.sessionCustomModel).toBeUndefined();
+			expect(spawned.sessionCustomEffort).toBe('high');
+			expect(liveSession().aiTabs[0].turnAuto?.status).toBe('router-off');
+		});
+
+		it('does not launch when the routed tier names a target that cannot be used', async () => {
+			const session = autoSession({
+				toolType: 'factory-droid',
+				tierTargets: { medium: { type: 'source', endpointId: 'ep-x', model: 'qwen3' } },
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'rename formatDate',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await vi.waitFor(() => expect(liveSession().aiTabs[0].state).toBe('idle'));
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(liveSession().aiTabs[0].logs.at(-1)?.text).toMatch(/"medium" tier target/);
+		});
+
+		it('routes a message when it is QUEUED behind a busy agent, and freezes the answer on it', async () => {
+			const session = autoSession({ state: 'busy' }, { state: 'busy' });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'then rename formatDate',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(routeTurn()).toHaveBeenCalledTimes(1);
+			expect(routeTurn().mock.calls[0][0]).toMatchObject({ prompt: 'then rename formatDate' });
+			await vi.waitFor(() =>
+				expect(liveSession().executionQueue[0].turnSettings).toEqual({
+					model: 'auto',
+					effort: 'high',
+					route: STAMP,
+				})
+			);
+		});
+
+		it('asks the router nothing for an agent on a named model', async () => {
+			const session = autoSession({ customModel: 'opus' });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'rename formatDate',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await vi.waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+
+			expect(routeTurn()).not.toHaveBeenCalled();
+			expect(vi.mocked(window.maestro.process.spawn).mock.calls[0][0]).toMatchObject({
+				sessionCustomModel: 'opus',
+				sessionCustomEffort: 'high',
+			});
 		});
 	});
 });

@@ -16,3 +16,7 @@ docs/releases.md
 # undone by the next `npm run fonts:fetch`, breaking the format gate on a
 # routine font refresh.
 src/renderer/generated-fonts.css
+
+# Upstream Hugging Face tokenizer files, kept byte-for-byte at their pinned
+# revision so the fixture matches the hash the model catalog will verify.
+src/__tests__/fixtures/tokenizers/

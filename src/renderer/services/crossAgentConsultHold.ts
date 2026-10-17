@@ -47,6 +47,7 @@ import type {
 	QueuedItem,
 	Session,
 } from '../types';
+import type { ConsultChain } from '../../shared/consultBudget';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
@@ -211,8 +212,14 @@ export function buildConsultHoldItem(opts: {
 	targets: ConsultHoldTarget[];
 	/** The unanswered message, for a consult that runs FIRST. */
 	deferred?: ConsultHold['deferred'];
+	/**
+	 * The held turn's own place in a consult chain, when another agent's
+	 * `maestro-cli dispatch` started it. The hold releases into a NEW spawn, and
+	 * without this that spawn would root a fresh chain with a fresh budget.
+	 */
+	consultChain?: ConsultChain;
 }): QueuedItem {
-	const { session, tab, targets, deferred } = opts;
+	const { session, tab, targets, deferred, consultChain } = opts;
 	return {
 		id: generateId(),
 		timestamp: Date.now(),
@@ -223,6 +230,7 @@ export function buildConsultHoldItem(opts: {
 		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
 		turnSettings: captureQueuedTurnSettings(tab, session),
 		awaitingConsult: { pending: [...targets], replies: [], ...(deferred && { deferred }) },
+		...(consultChain && { consultChain }),
 	};
 }
 
@@ -361,13 +369,13 @@ export function holdTurnForConsults(
 	sessionId: string,
 	tabId: string,
 	targets: ConsultHoldTarget[],
-	deferred?: ConsultHold['deferred']
+	options: { deferred?: ConsultHold['deferred']; consultChain?: ConsultChain } = {}
 ): void {
 	if (targets.length === 0) return;
 	updateSessionWith(sessionId, (session) => {
 		const tab = session.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return session;
-		const hold = buildConsultHoldItem({ session, tab, targets, deferred });
+		const hold = buildConsultHoldItem({ session, tab, targets, ...options });
 		return { ...session, executionQueue: [hold, ...(session.executionQueue ?? [])] };
 	});
 }

@@ -2,14 +2,16 @@
 // Supports --json, --verbose, --keys-only, --defaults, --category filters
 
 import { readSettings } from '../services/storage';
-import { formatSettingsList, formatError, type SettingDisplay } from '../output/formatter';
+import { formatSettingsList, type SettingDisplay } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
 import {
 	SETTINGS_METADATA,
 	CATEGORY_ORDER,
 	CATEGORY_LABELS,
 	type SettingCategory,
+	redactNestedSettingSecrets,
 } from '../../shared/settingsMetadata';
+import { failCommand } from '../services/session-command';
 
 interface SettingsListOptions {
 	json?: boolean;
@@ -35,8 +37,12 @@ export function settingsList(options: SettingsListOptions): void {
 
 			for (const key of keys) {
 				const meta = SETTINGS_METADATA[key];
-				const currentValue = key in settings ? settings[key] : meta.default;
-				const isDefault = JSON.stringify(currentValue) === JSON.stringify(meta.default);
+				const storedValue = key in settings ? settings[key] : meta.default;
+				const isDefault = JSON.stringify(storedValue) === JSON.stringify(meta.default);
+				// A secret inside an object setting is masked like a sensitive key is.
+				const currentValue = options.showSecrets
+					? storedValue
+					: redactNestedSettingSecrets(key, storedValue);
 
 				entries.push({
 					key,
@@ -92,11 +98,6 @@ export function settingsList(options: SettingsListOptions): void {
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list settings: ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to list settings: ${message}`, options.json);
 	}
 }

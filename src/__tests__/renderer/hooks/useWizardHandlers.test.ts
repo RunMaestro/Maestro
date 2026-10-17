@@ -2976,6 +2976,77 @@ describe('useWizardHandlers', () => {
 			expect(sessions[0].customEnvVars).toEqual({ API_KEY: '123' });
 			expect(sessions[0].sessionSshRemoteConfig).toEqual(sshConfig);
 		});
+
+		describe('Peer grants', () => {
+			const launchWith = async (peerState: Record<string, unknown>) => {
+				useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+				const deps = createMockDeps({
+					wizardContext: {
+						state: {
+							currentStep: 'review' as any,
+							isOpen: true,
+							selectedAgent: 'claude-code',
+							availableAgents: [],
+							agentName: 'Peer Project',
+							directoryPath: '/projects/peers',
+							additionalDirectories: [],
+							generatedDocuments: [],
+							wantsTour: false,
+							...peerState,
+						} as any,
+						completeWizard: vi.fn().mockResolvedValue(undefined),
+						clearResumeState: vi.fn().mockResolvedValue(undefined),
+					},
+				});
+
+				const { result } = renderHook(() => useWizardHandlers(deps));
+				await act(async () => {
+					await result.current.handleWizardLaunchSession(false);
+				});
+
+				return useSessionStore.getState().sessions[0];
+			};
+
+			it('carries the rows and both grants onto the new agent', async () => {
+				const newSession = await launchWith({
+					peerAgents: [
+						{ sessionId: 'agent-a', read: true, write: false, description: '  Docs  ' },
+						// Neither square lit: an exclusion. The launch must keep it.
+						{ sessionId: 'agent-b', read: false, write: false },
+					],
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: { read: true, write: true },
+				});
+
+				// Normalized on the way in, the same as the agent forms: the note is trimmed.
+				expect(newSession.peerAgents).toEqual([
+					{ sessionId: 'agent-a', read: true, write: false, description: 'Docs' },
+					{ sessionId: 'agent-b', read: false, write: false },
+				]);
+				expect(newSession.groupPeerAccess).toEqual({ read: true, write: false });
+				expect(newSession.worktreePeerAccess).toEqual({ read: true, write: true });
+			});
+
+			it('drops a row with no agent picked and stores an empty list as absent', async () => {
+				const newSession = await launchWith({
+					peerAgents: [{ sessionId: '', read: true, write: false, description: '' }],
+				});
+
+				expect(newSession.peerAgents).toBeUndefined();
+				expect(newSession.groupPeerAccess).toBeUndefined();
+				expect(newSession.worktreePeerAccess).toBeUndefined();
+			});
+
+			it('creates an agent with no peers from a wizard state that predates the fields', async () => {
+				// A resume state saved by an older build has none of the three keys.
+				const newSession = await launchWith({});
+
+				expect(newSession.peerAgents).toBeUndefined();
+				expect(newSession.groupPeerAccess).toBeUndefined();
+				expect(newSession.worktreePeerAccess).toBeUndefined();
+			});
+		});
 	});
 
 	// ======================================================================

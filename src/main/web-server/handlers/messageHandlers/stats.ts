@@ -2,13 +2,14 @@
  * Stats domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_usage_dashboard,
- * get_stats_aggregation, get_token_usage, stats_query, get_achievements,
+ * get_stats_aggregation, get_model_usage, get_token_usage, stats_query, get_achievements,
  * generate_director_notes_synopsis.
  */
 
 import { getStatsDB } from '../../../stats/singleton';
 import { runReadonlyStatsQuery } from '../../../stats/readonly-query';
-import type { StatsTimeRange } from '../../../../shared/stats-types';
+import { readModelUsage } from '../../../local-models/model-usage';
+import { isStatsTimeRange, STATS_TIME_RANGES } from '../../../../shared/stats-types';
 import { tokenUsageQueryForRange } from '../../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../../stats/token-usage/token-usage-accessor';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -60,15 +61,14 @@ export function handleGetStatsAggregation(
 	message: WebClientMessage
 ): void {
 	const range = (message.range as string) || 'week';
-	const validRanges = new Set(['day', 'week', 'month', 'quarter', 'year', 'all']);
 
-	if (!validRanges.has(range)) {
-		ctx.sendError(client, 'Invalid range. Must be one of: day, week, month, quarter, year, all');
+	if (!isStatsTimeRange(range)) {
+		ctx.sendError(client, `Invalid range. Must be one of: ${STATS_TIME_RANGES.join(', ')}`);
 		return;
 	}
 
 	try {
-		const data = getStatsDB().getAggregatedStats(range as StatsTimeRange);
+		const data = getStatsDB().getAggregatedStats(range);
 		ctx.send(client, {
 			type: 'stats_aggregation',
 			data,
@@ -84,6 +84,34 @@ export function handleGetStatsAggregation(
 }
 
 /**
+ * Handle get_model_usage message - what every model other than a provider's
+ * own did in a range, per source, task and agent, with System One's decisions
+ * and the token proxy's totals (`maestro-cli stats models`). The same record
+ * the `stats:get-model-usage` IPC channel answers with. A range that is not
+ * one of the six is an error; none reads the week.
+ *
+ * A failure answers under the reply's own type with the request's id, so the
+ * caller hears it at once: an `error` message carries no id, and a CLI waiting
+ * on `model_usage` would sit out its whole timeout.
+ */
+export async function handleGetModelUsage(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = { type: 'model_usage', requestId: message.requestId, timestamp: Date.now() };
+	try {
+		ctx.send(client, { ...reply, success: true, data: await readModelUsage(message.range) });
+	} catch (error) {
+		ctx.send(client, {
+			...reply,
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
+
+/**
  * Handle get_token_usage message - the Usage Dashboard's Tokens payload (totals,
  * breakdowns, and per-call token speed) for a time range, read from the
  * agents' transcripts by the same accessor the Tokens tab uses.
@@ -94,14 +122,12 @@ export function handleGetTokenUsage(
 	message: WebClientMessage
 ): void {
 	const range = (message.range as string) || 'week';
-	const validRanges = new Set(['day', 'week', 'month', 'quarter', 'year', 'all']);
-
-	if (!validRanges.has(range)) {
-		ctx.sendError(client, 'Invalid range. Must be one of: day, week, month, quarter, year, all');
+	if (!isStatsTimeRange(range)) {
+		ctx.sendError(client, `Invalid range. Must be one of: ${STATS_TIME_RANGES.join(', ')}`);
 		return;
 	}
 
-	getTokenUsageAggregate(tokenUsageQueryForRange(range as StatsTimeRange), message.force === true)
+	getTokenUsageAggregate(tokenUsageQueryForRange(range), message.force === true)
 		.then((data) => {
 			ctx.send(client, {
 				type: 'token_usage',

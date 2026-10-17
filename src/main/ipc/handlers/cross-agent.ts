@@ -31,6 +31,13 @@ import type {
 	CrossAgentResponseChunk,
 } from '../../../shared/crossAgentTypes';
 import { generateUUID } from '../../../shared/uuid';
+import {
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	normalizeMaxConsultationsPerTurn,
+	parseConsultChain,
+	type ConsultBudgetStatus,
+} from '../../../shared/consultBudget';
+import { readConsultBudgetStatus } from '../../peer-consults/consult-budget';
 import { logger } from '../../utils/logger';
 import {
 	startCrossAgentRequest,
@@ -150,6 +157,9 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					strategy: payload.strategy,
 					sourceCwd: payload.sourceCwd,
 					handoffAnswer: payload.handoffAnswer,
+					// Data from the renderer: anything that is not a chain reads as none.
+					consultChain: parseConsultChain(payload.consultChain),
+					sourceConsultChain: parseConsultChain(payload.sourceConsultChain),
 					createdAt: Date.now(),
 				};
 
@@ -157,6 +167,11 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 				// because passing work on is their point. Each has its own switch
 				// under Settings > General > Cross-Agent Mentions.
 				const writable = resolveCrossAgentWritable(request, settingsStore);
+				// Through the normalizer: `0` is a real budget, and the CLI can store
+				// any JSON under the key.
+				const maxConsultationsPerTurn = normalizeMaxConsultationsPerTurn(
+					settingsStore.get(MAX_CONSULTATIONS_PER_TURN_SETTING)
+				);
 
 				logger.info(`${LOG_CONTEXT} Dispatching cross-agent request`, LOG_CONTEXT, {
 					requestId,
@@ -178,6 +193,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					getAgentConfig,
 					getCustomEnvVars,
 					writable,
+					maxConsultationsPerTurn,
 					onChunk: (chunk: CrossAgentResponseChunk) => safeSend('cross-agent:chunk', chunk),
 				}).catch((err) => {
 					logger.error(`${LOG_CONTEXT} Cross-agent dispatch failed`, LOG_CONTEXT, {
@@ -201,6 +217,28 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 				});
 
 				return { requestId };
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'cross-agent:consultBudget',
+		withIpcErrorLogging(
+			handlerOpts('consultBudget'),
+			async (payload?: { consultChain?: unknown }): Promise<ConsultBudgetStatus | null> => {
+				// The renderer builds a tab's system prompt but can read neither the
+				// counter file nor the chain `process:spawn` is about to mint, so it
+				// asks here. No chain (or one that is not a chain, which the spawn
+				// reads as none too) means the turn is a root with nothing spent.
+				const status = readConsultBudgetStatus({
+					chain: parseConsultChain(payload?.consultChain),
+					// Through the normalizer: `0` is a real budget, and the CLI can
+					// store any JSON under the key.
+					limit: normalizeMaxConsultationsPerTurn(
+						settingsStore.get(MAX_CONSULTATIONS_PER_TURN_SETTING)
+					),
+				});
+				return status ?? null;
 			}
 		)
 	);

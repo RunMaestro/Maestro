@@ -37,6 +37,9 @@ import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { getPrompt } from '../../prompt-manager';
 import { isWindows } from '../../../shared/platformDetection';
 import type { ProcessManager } from '../../process-manager';
+import type { SafeSendFn } from '../../utils/safe-send';
+import { runLocalTask, type LocalTaskResult } from '../../local-models/task-router';
+import { clearLocalTaskNotice, reportLocalTaskUnavailable } from '../../local-models/task-notices';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
@@ -66,6 +69,11 @@ export interface TabNamingHandlerDependencies {
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
 	settingsStore: Store<MaestroSettings>;
+	/**
+	 * Broadcast channel for the Local Models `unavailable` notice. Absent for
+	 * plugin title calls, which never use the Local Models assignment.
+	 */
+	safeSend?: SafeSendFn;
 }
 
 /**
@@ -104,6 +112,11 @@ export interface TabNamingConfig {
 	userMessage: string;
 	agentType: string;
 	cwd: string;
+	/**
+	 * The agent the tab belongs to. Scopes the Local Models "unavailable"
+	 * notice so it shows once per agent, not per tab.
+	 */
+	sessionId?: string;
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
 		remoteId: string | null;
@@ -133,6 +146,31 @@ export async function generateTabName(
 ): Promise<string | null> {
 	if (signal?.aborted) return null;
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;
+
+	// Local Models assignment first, for ordinary tab naming only. A plugin
+	// title pins the authorized agent (`useUtilityAgent: false`), and a local
+	// model is not that agent any more than the Utility Agent is. Only
+	// `use-utility-agent` (the default) continues to the agent spawn below.
+	if (config.useUtilityAgent !== false) {
+		let assigned: AssignedNamingOutcome;
+		try {
+			assigned = await nameTabWithAssignedModel(
+				config.userMessage,
+				config.sessionId,
+				deps.safeSend
+			);
+		} catch (error) {
+			// The router throws only for an unclassified engine failure: a bug
+			// worth reporting, but naming is cosmetic, so leave the tab.
+			void captureException(error);
+			logger.error('Tab naming on the assigned model failed', LOG_CONTEXT, {
+				error: String(error),
+			});
+			return null;
+		}
+		if (assigned.handled) return assigned.name;
+	}
+
 	const processManager = requireDependency(getProcessManager, 'Process manager');
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
@@ -661,6 +699,86 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 			generateTabName(deps, config)
 		)
 	);
+}
+
+/** Tokens a local naming turn may spend. `{"name": "..."}` is well under this. */
+const LOCAL_TAB_NAME_MAX_TOKENS = 48;
+
+/** The reply shape `tab-naming-local.md` asks for; the grammar keeps a small model on it. */
+const LOCAL_TAB_NAME_SCHEMA: Record<string, unknown> = {
+	type: 'object',
+	properties: { name: { type: 'string', maxLength: 40 } },
+	required: ['name'],
+	additionalProperties: false,
+};
+
+type AssignedNamingOutcome = { handled: false } | { handled: true; name: string | null };
+
+/**
+ * Name the tab with the `tab-naming` Local Models assignment, when it is a
+ * local model or an endpoint.
+ *
+ * `use-utility-agent` is not handled here: the caller keeps its agent spawn,
+ * which is the default, so nothing changes until the user assigns a model.
+ * Every other verdict IS handled, and none of them falls back to an agent:
+ *   - `off` skips naming. Naming is cosmetic, so a skipped turn just leaves the
+ *     tab name as it is (the rename modal's "Auto" button included).
+ *   - `unavailable` skips naming and tells the user once per agent why.
+ *   - `cancelled` (the timeout below fired) skips naming; the next send retries.
+ *
+ * SSH: a local model runs on THIS machine even when the agent runs on a remote
+ * host. That is fine here: the message text already crossed to this machine
+ * (the renderer sent it), and naming reads nothing from the remote.
+ */
+async function nameTabWithAssignedModel(
+	userMessage: string,
+	sessionId: string | undefined,
+	safeSend: SafeSendFn | undefined
+): Promise<AssignedNamingOutcome> {
+	const verdict = await runLocalTask('tab-naming', {
+		system: getPrompt('tab-naming-local'),
+		prompt: userMessage,
+		maxTokens: LOCAL_TAB_NAME_MAX_TOKENS,
+		jsonSchema: LOCAL_TAB_NAME_SCHEMA,
+		signal: AbortSignal.timeout(TAB_NAMING_TIMEOUT_MS),
+	});
+	switch (verdict.status) {
+		case 'use-utility-agent':
+			return { handled: false };
+		case 'off':
+			return { handled: true, name: null };
+		case 'cancelled':
+			logger.warn('Tab naming on the assigned model timed out', LOG_CONTEXT, {
+				source: verdict.source,
+			});
+			return { handled: true, name: null };
+		case 'unavailable':
+			reportLocalTaskUnavailable({ safeSend, taskId: 'tab-naming', verdict, sessionId });
+			return { handled: true, name: null };
+		case 'ok': {
+			clearLocalTaskNotice('tab-naming', sessionId);
+			// The same cleanup an agent's reply gets: the schema keeps the shape,
+			// not the content, and a small model can still answer with noise.
+			const extraction = extractTabName(localTabNameText(verdict));
+			logger.info('Tab naming on the assigned model', LOG_CONTEXT, {
+				source: verdict.source,
+				durationMs: verdict.durationMs,
+				tabName: extraction.name,
+				reason: extraction.reason,
+			});
+			return { handled: true, name: extraction.name };
+		}
+	}
+}
+
+/** The `name` field when the reply parsed against the schema, else the raw text. */
+function localTabNameText(verdict: Extract<LocalTaskResult, { status: 'ok' }>): string {
+	const json = verdict.json;
+	if (json && typeof json === 'object' && 'name' in json) {
+		const name = (json as { name: unknown }).name;
+		if (typeof name === 'string') return name;
+	}
+	return verdict.text;
 }
 
 /**

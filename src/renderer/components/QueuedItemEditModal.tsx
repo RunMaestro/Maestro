@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ImagePlus, PenLine, X } from 'lucide-react';
 import type { Theme, QueuedItem, QueuedItemEditPatch, QueuedTurnSettings } from '../types';
@@ -17,7 +17,9 @@ import { LightboxModal } from './LightboxModal';
 import { ModelEffortPills } from './InputArea/components/ModelEffortPills';
 import { useModelEffortMenus } from './InputArea/hooks/useModelEffortMenus';
 import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
-import { codifyTurnSettings } from '../utils/providerTabSessions';
+import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
+import { useAutoModelChoice } from '../hooks/agent/useAutoModelChoice';
+import { withAutoModelOption } from '../../shared/autoTurn';
 
 interface QueuedItemEditModalProps {
 	item: QueuedItem;
@@ -62,13 +64,18 @@ export function QueuedItemEditModal({
 		if (item.turnSettings) return item.turnSettings;
 		if (!session) return {};
 		const tab = session.aiTabs?.find((t) => t.id === item.tabId);
-		const live = codifyTurnSettings(tab, session);
-		return { model: live.turnModel, effort: live.turnEffort };
+		// The selection, not a resolution of it: an agent on Auto keeps the word.
+		return captureQueuedTurnSettings(tab, session);
 	});
 
 	// Options come from the agent's own provider, never a hardcoded list: Claude
 	// Code's thinking levels and Codex's reasoning efforts are different sets.
 	const providerOptions = useAgentModelEffortOptions(session?.toolType);
+	const autoModel = useAutoModelChoice(session);
+	const modelOptions = useMemo(
+		() => withAutoModelOption(providerOptions.models, autoModel),
+		[providerOptions.models, autoModel]
+	);
 	const menus = useModelEffortMenus();
 	// Currently-viewed image in the local carousel; null when the carousel is closed.
 	const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -297,7 +304,8 @@ export function QueuedItemEditModal({
 								theme={theme}
 								currentModel={turnSettings.model ?? providerOptions.defaultModel}
 								currentEffort={turnSettings.effort ?? providerOptions.defaultEffort}
-								availableModels={providerOptions.models}
+								availableModels={modelOptions}
+								autoModelTitle={autoModel?.title}
 								availableEfforts={providerOptions.efforts}
 								onModelChange={(model) =>
 									setTurnSettings((prev) => ({ ...prev, model: model || undefined }))

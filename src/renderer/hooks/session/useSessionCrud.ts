@@ -26,8 +26,12 @@ import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
+import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { PeerGrants } from '../../../shared/peerAgents';
+import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
 import { logger } from '../../utils/logger';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 
@@ -84,7 +88,15 @@ export interface UseSessionCrudReturn {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` sets none. */
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget,
+		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+		peerGrants?: PeerGrants,
+		/** Group defaults the create form has no control for; stamped onto the new agent. */
+		seedExtras?: GroupDefaultsCreateExtras
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -181,7 +193,15 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-			codexTransport?: CodexTransport
+			codexTransport?: CodexTransport,
+			/** Local Models gateway URL, already validated; `undefined` sets none. */
+			gatewayUrl?: string,
+			/** Run on target, already validated; `undefined` means the provider's model. */
+			runOn?: RunOnSourceTarget,
+			/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+			peerGrants?: PeerGrants,
+			/** Group defaults the create form has no control for; stamped onto the new agent. */
+			seedExtras?: GroupDefaultsCreateExtras
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -324,6 +344,24 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
 					// Same rule: `exec` is the default, so only the opt-in is stored.
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
+					// Set from the New Agent Models tab. The token proxy mode is not set
+					// here: absent reads as `passthrough` when this URL is the proxy's.
+					gatewayUrl: gatewayUrl || undefined,
+					// Set from the New Agent Models tab. Absent means the provider's
+					// own model. A target takes the gateway's place at launch.
+					runOn,
+					// Set from the New Agent Peers tab. Each source is stored only when
+					// it is on: an absent field is what the roster reads as off.
+					peerAgents: peerGrants?.peerAgents,
+					groupPeerAccess: peerGrants?.groupPeerAccess,
+					worktreePeerAccess: peerGrants?.worktreePeerAccess,
+					// Group defaults the New Agent form has no control for, copied from
+					// the group the agent was created in. The token proxy mode and its
+					// background requests target are not among them: they are applied
+					// below, through the writers that work out the proxy's address.
+					customEnvVarsDisabled: seedExtras?.customEnvVarsDisabled,
+					tierTargets: seedExtras?.tierTargets,
+					systemOneOptOut: seedExtras?.systemOneOptOut,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
@@ -352,6 +390,13 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 				setActiveFocus('main');
 				setTimeout(() => inputRef.current?.focus(), 50);
+
+				// The agent is in the store now, which is where the proxy writers
+				// look it up. Not awaited: the agent exists whatever they answer, and
+				// a refusal is reported by its own toast.
+				if (seedExtras?.tokenProxyMode) {
+					void applySeededTokenProxy(newId, seedExtras);
+				}
 			} catch (error) {
 				logger.error('Failed to create session:', undefined, error);
 			}

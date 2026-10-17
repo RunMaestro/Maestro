@@ -32,6 +32,12 @@ import { resolveConfigDirKeyFromEnv } from './claudeSpawnCore';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
+import {
+	codexCatalogModels,
+	staleTierModels,
+	type CodexCatalogModel,
+	type HarnessCatalogModel,
+} from '../../shared/modelTiers';
 import { capabilitySnapshots } from './capability-snapshot';
 import {
 	setOmpModelCatalog,
@@ -85,6 +91,25 @@ async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
 		logger.warn('Failed to fetch models from models.dev for copilot-cli', LOG_CONTEXT, {
 			error: String(err),
 		});
+		return null;
+	}
+}
+
+// ============ Codex model discovery ============
+
+/**
+ * The listed models of `~/.codex/models_cache.json` (the file the Codex CLI
+ * maintains), with the description and priority it states for each. `null`
+ * when the file is missing or unreadable: a fresh install has not written it.
+ */
+function readCodexModelCatalog(): HarnessCatalogModel[] | null {
+	try {
+		const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+		const cacheContent = fs.readFileSync(path.join(codexHome, 'models_cache.json'), 'utf8');
+		const cache = parseJsonWithBom<{ models?: CodexCatalogModel[] }>(cacheContent);
+		return Array.isArray(cache.models) ? codexCatalogModels(cache.models) : null;
+	} catch {
+		logger.debug('Could not read Codex models_cache.json for model discovery', LOG_CONTEXT);
 		return null;
 	}
 }
@@ -631,6 +656,35 @@ export class AgentDetector {
 	}
 
 	/**
+	 * The models a harness can run, each with what its catalogue states about it.
+	 *
+	 * The ids are `discoverModels()` (same cache, same gates), so this lists
+	 * exactly what the model picker offers. A harness with no discovery falls
+	 * back to the static `model` options of its definition (Factory Droid), so
+	 * a tier picker is not empty for it. Only Codex's catalogue states more than
+	 * an id: its description and its order, which Suggest ranks by.
+	 */
+	async discoverModelCatalog(
+		agentId: string,
+		forceRefresh = false
+	): Promise<HarnessCatalogModel[]> {
+		let ids = await this.discoverModels(agentId, forceRefresh);
+		if (ids.length === 0) {
+			const agent = await this.getAgent(agentId);
+			if (agent?.available && agent.capabilities.supportsModelSelection) {
+				const option = AGENT_DEFINITIONS.find((d) => d.id === agentId)?.configOptions?.find(
+					(o) => o.key === 'model'
+				);
+				if (option?.type === 'select') ids = (option.options ?? []).filter((id) => id !== '');
+			}
+		}
+		const stated = new Map(
+			(agentId === 'codex' ? (readCodexModelCatalog() ?? []) : []).map((model) => [model.id, model])
+		);
+		return ids.map((id) => stated.get(id) ?? { id });
+	}
+
+	/**
 	 * Run the agent-specific model discovery command.
 	 * Each agent may have a different way to list available models.
 	 *
@@ -690,32 +744,26 @@ export class AgentDetector {
 				case 'codex': {
 					// Codex: read ~/.codex/models_cache.json maintained by the Codex CLI.
 					// Contains the full list of available models with metadata.
-					try {
-						const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-						const cachePath = path.join(codexHome, 'models_cache.json');
-						const cacheContent = fs.readFileSync(cachePath, 'utf8');
-						const cache = parseJsonWithBom<{
-							models?: Array<{ slug?: string; visibility?: string }>;
-						}>(cacheContent);
-						if (Array.isArray(cache.models)) {
-							const models = cache.models
-								.filter(
-									(m: {
-										slug?: string;
-										visibility?: string;
-									}): m is { slug: string; visibility?: string } =>
-										typeof m.slug === 'string' && m.visibility !== 'hide'
-								)
-								.map((m) => m.slug);
-							logger.info(
-								`Discovered ${models.length} models for ${agentId} from models_cache.json`,
+					const catalog = readCodexModelCatalog();
+					if (catalog) {
+						// The Codex tier table names one slug per family, and the
+						// slugs move every generation. Say so here, where the
+						// user's own catalogue is read, rather than at the 400
+						// Codex answers a stale slug with.
+						for (const stale of staleTierModels('codex', catalog)) {
+							logger.warn(
+								`Codex tier "${stale.tier}" maps to ${stale.model}, which this Codex account does not list`,
 								LOG_CONTEXT,
-								{ models }
+								{ tier: stale.tier, slug: stale.model, replacement: stale.replacement }
 							);
-							return models;
 						}
-					} catch {
-						logger.debug('Could not read Codex models_cache.json for model discovery', LOG_CONTEXT);
+						const models = catalog.map((model) => model.id);
+						logger.info(
+							`Discovered ${models.length} models for ${agentId} from models_cache.json`,
+							LOG_CONTEXT,
+							{ models }
+						);
+						return models;
 					}
 					return [];
 				}

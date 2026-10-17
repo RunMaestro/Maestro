@@ -176,6 +176,43 @@ describe('cue schedule --list', () => {
 		expect(parsed[0].in).toBe('1h');
 	});
 
+	it('lists a gate in JSON, and draws the GATE column only when a task has one', async () => {
+		const once = (name: string, extra: Record<string, unknown> = {}) => ({
+			name,
+			event: 'time.once',
+			enabled: true,
+			prompt: 'hello',
+			fire_at: '2026-05-23T13:00:00.000Z',
+			action: 'prompt',
+			label: name,
+			...extra,
+		});
+		mockReadSessions.mockReturnValue([session({ projectRoot: '/p/alpha' })]);
+
+		mockLoadCueConfigDetailed.mockReturnValue(detailedOk([once('plain')]));
+		await cueSchedule({ list: true });
+		expect(consoleSpy.mock.calls[0][0] as string).not.toContain('GATE');
+
+		consoleSpy.mockClear();
+		mockLoadCueConfigDetailed.mockReturnValue(
+			detailedOk([
+				once('plain'),
+				once('gated', { gate: 'the build is red', gate_on_unavailable: 'skip' }),
+			])
+		);
+		await cueSchedule({ list: true });
+		const table = consoleSpy.mock.calls[0][0] as string;
+		expect(table.split('\n')[0]).toMatch(/LABEL\s+GATE$/);
+		expect(table).toContain('the build is red');
+
+		consoleSpy.mockClear();
+		await cueSchedule({ list: true, json: true });
+		const rows = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+		const gated = rows.find((row: { name: string }) => row.name === 'gated');
+		expect(gated).toMatchObject({ gate: 'the build is red', gate_on_unavailable: 'skip' });
+		expect(rows.find((row: { name: string }) => row.name === 'plain')).not.toHaveProperty('gate');
+	});
+
 	it('emits an empty JSON array when --json and no tasks pending', async () => {
 		mockReadSessions.mockReturnValue([session()]);
 		mockLoadCueConfigDetailed.mockReturnValue({ ok: false, reason: 'missing' });

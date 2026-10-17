@@ -17,17 +17,28 @@
  * model, and on OpenCode there is nothing to switch to. Running the task anyway
  * is right (the work still needs doing), but doing it without saying so is how
  * someone concludes the feature is broken three tasks later.
+ *
+ * A tier names a TARGET, not only a model: {@link resolveTierTarget} reads the
+ * agent's own tier targets, then the harness defaults, then the built-in table.
+ * So a `low` task can launch on a local source and a `high` task on the
+ * provider. A target a layer names and that cannot be used is not a warning: it
+ * sets `refusal`, and the task must not launch (never on some other model).
  */
 
 import type { ToolType } from './types';
 import type { ModelHint } from './autorunModelHints';
+import type { RunOnTarget } from './local-models/run-on';
 import { describeEffortRejection } from './effortRejection';
 import {
 	rejectedEffortForLevel,
 	resolveEffortLevel,
-	resolveTierModel,
+	resolveTierTarget,
 	supportsEffortSelection,
-	supportsTierSelection,
+	tierTargetLaunch,
+	TIER_TARGET_SOURCE_LABELS,
+	type TierRouting,
+	type TierTargetRefusal,
+	type TierTargetSource,
 } from './modelTiers';
 
 export interface ResolvedTurnSettings {
@@ -35,6 +46,19 @@ export interface ResolvedTurnSettings {
 	model?: string;
 	/** Effort to spawn with, or `undefined` to let the agent's config decide. */
 	effort?: string;
+	/**
+	 * Where the turn launches, when the tier's target decides it: the provider,
+	 * or a source (then `model` is the source's model). `undefined` means the
+	 * agent's own Run on target stands.
+	 */
+	runOn?: RunOnTarget;
+	/** The layer the tier's target came from. Absent when no tier was applied. */
+	tierSource?: TierTargetSource;
+	/**
+	 * Set when a layer names a target for the tier that cannot be used. The turn
+	 * must fail with this message; it must not launch on the agent's own model.
+	 */
+	refusal?: Pick<TierTargetRefusal, 'code' | 'message'>;
 	/**
 	 * One line per axis describing what was applied, for the JSONL stream and
 	 * the History entry. Empty when the document set no hint.
@@ -52,17 +76,22 @@ export interface ResolvedTurnSettings {
  *
  * `agentModel` / `agentEffort` are the agent's own configured values, used
  * whenever the document is silent or the provider cannot act on the hint.
+ * `routing` carries the agent's tier targets and the harness defaults.
  */
 export function resolveTurnSettings(
 	toolType: ToolType,
 	hint: ModelHint | null,
 	agentModel?: string,
-	agentEffort?: string
+	agentEffort?: string,
+	routing?: TierRouting
 ): ResolvedTurnSettings {
 	const notes: string[] = [];
 	const warnings: string[] = [];
 	let model = agentModel;
 	let effort = agentEffort;
+	let runOn: RunOnTarget | undefined;
+	let tierSource: TierTargetSource | undefined;
+	let refusal: ResolvedTurnSettings['refusal'];
 
 	for (const invalid of hint?.invalid ?? []) {
 		warnings.push(
@@ -74,16 +103,24 @@ export function resolveTurnSettings(
 	// what `model` already holds - so it is skipped exactly like an absent axis.
 	// The two only differ when scopes merge, upstream of this.
 	if (hint?.tier && hint.tier !== 'default') {
-		const tierModel = resolveTierModel(toolType, hint.tier);
-		if (tierModel) {
-			model = tierModel;
-			notes.push(`tier="${hint.tier}" (${hint.scopes?.tier ?? 'document'}) -> model ${tierModel}`);
-		} else {
-			warnings.push(
-				supportsTierSelection(toolType)
-					? `No "${hint.tier}" tier model is mapped for ${toolType}; using the agent's configured model.`
-					: `${toolType} has no model tier mapping, so tier="${hint.tier}" was ignored; using the agent's configured model.`
+		const resolved = resolveTierTarget(
+			{ toolType, tierTargets: routing?.tierTargets, runOn: routing?.runOn },
+			hint.tier,
+			routing?.harnessDefaults
+		);
+		if (resolved.kind === 'resolved') {
+			const launch = tierTargetLaunch(resolved, agentModel);
+			model = launch.model;
+			runOn = launch.runOn;
+			tierSource = resolved.source;
+			notes.push(
+				`tier="${hint.tier}" (${hint.scopes?.tier ?? 'document'}) -> ${describeTierLaunch(launch)} (${TIER_TARGET_SOURCE_LABELS[resolved.source]})`
 			);
+		} else if (resolved.blocksLaunch) {
+			refusal = { code: resolved.code, message: resolved.message };
+			warnings.push(resolved.message);
+		} else {
+			warnings.push(resolved.message);
 		}
 	}
 
@@ -109,7 +146,35 @@ export function resolveTurnSettings(
 		}
 	}
 
-	return { model, effort, notes, warnings };
+	return {
+		model,
+		effort,
+		...(runOn ? { runOn } : {}),
+		...(tierSource ? { tierSource } : {}),
+		...(refusal ? { refusal } : {}),
+		notes,
+		warnings,
+	};
+}
+
+/**
+ * The Run on target a resolved turn launches on, as data for the Run on path
+ * (`prepareLaunchRunOn`, which validates it): the tier's target when a layer
+ * the user wrote decided the place, else the agent's own stored one. Every
+ * surface that launches a resolved turn passes this, never the agent's `runOn`
+ * alone: that would launch a source tier's model name on the provider.
+ */
+export function turnRunOnTarget(turn: { runOn?: unknown }, agentRunOn: unknown): unknown {
+	return turn.runOn ?? agentRunOn;
+}
+
+/** What a tier resolved to, for a note: the model, and the source when it names one. */
+function describeTierLaunch(launch: { model: string | undefined; runOn?: RunOnTarget }): string {
+	if (launch.runOn?.type === 'source') {
+		return `model ${launch.runOn.model} on source ${launch.runOn.endpointId}`;
+	}
+	const model = launch.model ? `model ${launch.model}` : "the agent's model";
+	return launch.runOn ? `${model} on the provider` : model;
 }
 
 /**

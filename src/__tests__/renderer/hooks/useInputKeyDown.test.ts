@@ -56,6 +56,7 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useVoiceUiStore } from '../../../renderer/stores/voiceUiStore';
 import type { InputKeyDownDeps } from '../../../renderer/hooks/input/useInputKeyDown';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../../renderer/services/aiCommand';
@@ -817,6 +818,49 @@ describe('Tab completion trigger', () => {
 		});
 
 		expect(e.preventDefault).toHaveBeenCalled();
+	});
+
+	describe('while the voice HUD cycles its mode on Tab', () => {
+		afterEach(() => {
+			useVoiceUiStore.setState({ tabCyclesMode: false });
+		});
+
+		it('leaves Tab unclaimed in AI mode, where the composer only swallows it', () => {
+			// The HUD's listener runs in the bubble phase and stands down for a key
+			// that was already claimed. The AI composer has no use for Tab, so
+			// claiming it here would make the HUD's Tab dead in the one place focus
+			// usually is.
+			useVoiceUiStore.setState({ tabCyclesMode: true });
+			setActiveSession({ inputMode: 'ai' });
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			const e = createKeyEvent('Tab');
+
+			act(() => {
+				result.current.handleInputKeyDown(e);
+			});
+
+			expect(e.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('keeps Tab for a shell line, where completion is a real use of the key', () => {
+			useVoiceUiStore.setState({ tabCyclesMode: true });
+			setActiveSession({ inputMode: 'terminal' });
+			const suggestions = [{ value: 'src/', type: 'folder' as const, label: 'src/' }] as any;
+			const deps = createMockDeps({
+				inputValue: 'sr',
+				getTabCompletionSuggestions: vi.fn().mockReturnValue(suggestions),
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			const e = createKeyEvent('Tab');
+
+			act(() => {
+				result.current.handleInputKeyDown(e);
+			});
+
+			expect(e.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('src/');
+		});
 	});
 
 	it('auto-completes single suggestion in terminal mode', () => {

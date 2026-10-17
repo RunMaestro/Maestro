@@ -7,20 +7,12 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveGroupId, getSessionsByGroup, readGroups } from '../services/storage';
-import { formatError, formatSuccess } from '../output/formatter';
+import { formatSuccess } from '../output/formatter';
+import { failCommand, failFromError } from '../services/session-command';
 
 interface RemoveGroupOptions {
 	force?: boolean;
 	json?: boolean;
-}
-
-function emitError(message: string, options: RemoveGroupOptions): never {
-	if (options.json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(formatError(message));
-	}
-	return process.exit(1);
 }
 
 export async function removeGroup(groupId: string, options: RemoveGroupOptions): Promise<void> {
@@ -29,7 +21,7 @@ export async function removeGroup(groupId: string, options: RemoveGroupOptions):
 	try {
 		resolvedGroupId = resolveGroupId(groupId);
 	} catch (error) {
-		emitError(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 
 	// Capture the name before deletion so we can report it afterward.
@@ -38,9 +30,9 @@ export async function removeGroup(groupId: string, options: RemoveGroupOptions):
 	// Guard: refuse to scatter a populated group unless --force
 	const members = getSessionsByGroup(resolvedGroupId);
 	if (members.length > 0 && !options.force) {
-		emitError(
+		failCommand(
 			`Group "${resolvedGroupId}" has ${members.length} agent(s). Move them out first, or pass --force to ungroup and delete.`,
-			options
+			options.json
 		);
 	}
 
@@ -74,9 +66,9 @@ export async function removeGroup(groupId: string, options: RemoveGroupOptions):
 				}
 			}
 		} else {
-			emitError(result.error || 'Failed to remove group', options);
+			failCommand(result.error || 'Failed to remove group', options.json);
 		}
 	} catch (error) {
-		emitError(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 }

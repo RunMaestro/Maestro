@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { TerminalTabInfo, ReadTerminalTabResult, NewAITabWithPromptResult } from '../types';
 
 export function registerBrowserTabCallbacks(
@@ -315,7 +316,13 @@ export function registerBrowserTabCallbacks(
 	});
 
 	server.setNewAITabWithPromptCallback(
-		async (sessionId: string, prompt: string, background?: boolean, hidden?: boolean) => {
+		async (
+			sessionId: string,
+			prompt: string,
+			background?: boolean,
+			hidden?: boolean,
+			consultChain?: ConsultChain
+		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
@@ -365,7 +372,8 @@ export function registerBrowserTabCallbacks(
 					prompt,
 					responseChannel,
 					background,
-					hidden
+					hidden,
+					consultChain
 				);
 
 				const timeoutId = setTimeout(() => {

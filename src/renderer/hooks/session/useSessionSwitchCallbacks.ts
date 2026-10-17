@@ -311,10 +311,14 @@ export function useSessionSwitchCallbacks(
 			}
 
 			const ui = useUIStore.getState();
-			const searchKey = outputSearchKeyFor(activeSession.id, tabId);
-			ui.setOutputSearchQuery(searchKey, query);
-			ui.setOutputSearchRegex(searchKey, regex);
-			ui.setOutputSearchOpen(searchKey, true);
+			// A semantic hit carries no query: it matched by meaning, so there is
+			// nothing for the Find bar to look for. Only the jump happens.
+			if (query !== '') {
+				const searchKey = outputSearchKeyFor(activeSession.id, tabId);
+				ui.setOutputSearchQuery(searchKey, query);
+				ui.setOutputSearchRegex(searchKey, regex);
+				ui.setOutputSearchOpen(searchKey, true);
+			}
 			ui.setPendingLogJump({ sessionId: activeSession.id, tabId, logId });
 			setActiveFocus('main');
 		},

@@ -74,27 +74,25 @@ export function ThemedSelect({
 
 	useClickOutside(containerRef, closeAndRefocus, open);
 
-	// On open: reset query, seed active index, focus the right element.
+	// Focus only when opening, not when live options refresh.
 	// With a filter we focus the search input so typing narrows immediately;
 	// otherwise we focus the menu so arrow keys work.
 	useEffect(() => {
 		if (open) {
-			setQuery('');
-			const idx = options.findIndex((o) => o.value === value);
-			setActiveIndex(idx >= 0 ? idx : 0);
-			requestAnimationFrame(() => {
+			const frame = requestAnimationFrame(() => {
 				if (filterable) {
 					searchRef.current?.focus({ preventScroll: true });
 				} else {
 					menuRef.current?.focus({ preventScroll: true });
 				}
 			});
+			return () => cancelAnimationFrame(frame);
 		}
-	}, [open, options, value, filterable]);
+	}, [open, filterable]);
 
 	// When the user types, the filtered list shrinks. Snap activeIndex to the
 	// first match (or -1 if nothing matches). Gated on a non-empty query so
-	// this doesn't fight the open-effect's seed-from-`value` on initial open.
+	// this doesn't fight the opening handler's seed-from-`value` on initial open.
 	useEffect(() => {
 		if (!open || !filterable) return;
 		if (query.trim() === '') return;
@@ -102,15 +100,22 @@ export function ThemedSelect({
 	}, [query, open, filterable, filteredOptions.length]);
 
 	const handleOpen = useCallback(() => {
-		if (!containerRef.current) {
-			setOpen((v) => !v);
+		if (open) {
+			closeAndRefocus();
 			return;
 		}
-		const rect = containerRef.current.getBoundingClientRect();
-		const spaceBelow = window.innerHeight - rect.bottom;
-		setDropUp(spaceBelow < 120);
-		setOpen((v) => !v);
-	}, []);
+		// Initialize once per opening. Parents may rebuild options on every
+		// fleet update; those refreshes must not erase the user's search.
+		setQuery('');
+		const idx = options.findIndex((o) => o.value === value);
+		setActiveIndex(idx >= 0 ? idx : 0);
+		if (containerRef.current) {
+			const rect = containerRef.current.getBoundingClientRect();
+			const spaceBelow = window.innerHeight - rect.bottom;
+			setDropUp(spaceBelow < 120);
+		}
+		setOpen(true);
+	}, [open, options, value, closeAndRefocus]);
 
 	const handleSelect = useCallback(
 		(optValue: string) => {

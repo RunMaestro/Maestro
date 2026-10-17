@@ -1,6 +1,7 @@
 /**
- * AgentCotExportSection - the one control of chain of thought export: a
- * section of the Edit Agent dialog, operated by a person at the desktop app.
+ * AgentCotExportSection - the one control of chain of thought export: the
+ * body of the Edit Agent dialog's Audit Log tab, operated by a person at the
+ * desktop app.
  *
  * NOTHING HERE GOES THROUGH THE DIALOG'S SAVE
  * The folder and the switch are saved the moment they change, through
@@ -35,7 +36,7 @@ import type { Theme } from '../../types';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { isWebDesktop } from '../../utils/runtimeContext';
 
-interface AgentCotExportSectionProps {
+export interface AgentCotExportSectionProps {
 	theme: Theme;
 	/** The Maestro agent the section controls. */
 	agentId: string;
@@ -60,10 +61,23 @@ function countOf(count: number, noun: string): string {
 const BUTTON_CLASS =
 	'shrink-0 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded border transition-colors hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed';
 
+/** The API where the section shows (see WHERE IT SHOWS), `undefined` everywhere else. */
+function cotExportApi(): CotExportApi | undefined {
+	return isWebDesktop() ? undefined : window.maestro?.cotExport;
+}
+
+/**
+ * Whether this runtime shows the section at all. Edit Agent asks before it
+ * draws the tab that holds the section, so no runtime gets an empty tab.
+ */
+export function isCotExportAvailable(): boolean {
+	return cotExportApi() !== undefined;
+}
+
 export function AgentCotExportSection(
 	props: AgentCotExportSectionProps
 ): React.ReactElement | null {
-	const api: CotExportApi | undefined = isWebDesktop() ? undefined : window.maestro?.cotExport;
+	const api = cotExportApi();
 	if (!api) return null;
 	return <CotExportControls {...props} api={api} />;
 }

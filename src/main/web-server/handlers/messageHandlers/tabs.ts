@@ -10,6 +10,7 @@
 import path from 'path';
 import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
 import { isRemoteMediaUrl, type MediaOpenMode } from '../../../../shared/mediaTypes';
+import { parseConsultChain } from '../../../../shared/consultBudget';
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
@@ -19,9 +20,10 @@ import type { WebClient, WebClientMessage, MessageHandlerContext } from './types
 import {
 	UI_SURFACES,
 	resolveUiSurface,
-	resolveUiSurfaceTab,
-	surfaceTabIds,
+	resolveUiSurfaceTarget,
+	surfaceEncoreRefusal,
 } from '../../../../shared/uiSurfaces';
+import { currentEncoreFeatures } from '../bridgePathGuard';
 import { normalizeRenameTabResult } from '../../types';
 
 /**
@@ -692,6 +694,9 @@ export function handleNewAITabWithPrompt(
 	// background=true creates the tab without switching to/focusing it.
 	// `maestro-cli dispatch --new-tab` sets this by default; `--focus` clears it.
 	const background = message.background === true;
+	// The new tab's turn's place in a consult chain, admitted and paid for by
+	// `maestro-cli dispatch` (see handleSendCommand). Not a chain reads as none.
+	const consultChain = parseConsultChain(message.consultChain);
 	// hidden=true creates the tab with no chip in the strip: a hand-off another
 	// agent (or Cue) dispatched runs out of sight until the user opens it from a
 	// toast or the delegation pill. `dispatch --new-tab` sets it by default;
@@ -743,7 +748,7 @@ export function handleNewAITabWithPrompt(
 	}
 
 	ctx.callbacks
-		.newAITabWithPrompt(sessionId, prompt, background, hidden)
+		.newAITabWithPrompt(sessionId, prompt, background, hidden, consultChain)
 		.then((result) => {
 			// Arm the callback only once the fresh tab id is known - that id is
 			// the correlation key. `isNewTab` lets the registry adopt a spawn the
@@ -1080,8 +1085,9 @@ export function handleOpenDocumentGraph(
 
 /**
  * Handle open_modal message - open one of the app's modals / dashboards by
- * `UiSurface.id`, optionally on a specific tab. Both the surface and the tab
- * are validated here so the renderer only ever receives ids it can act on.
+ * `UiSurface.id`, optionally on a specific tab, on one agent group, or on one
+ * agent. The surface, the tab and whether the surface takes a group or an agent
+ * are validated here so the renderer only ever receives a request it can act on.
  */
 export function handleOpenModal(
 	ctx: MessageHandlerContext,
@@ -1091,6 +1097,12 @@ export function handleOpenModal(
 	const surfaceName = typeof message.surface === 'string' ? message.surface : '';
 	const tabName =
 		typeof message.tab === 'string' && message.tab.length > 0 ? message.tab : undefined;
+	const subTabName =
+		typeof message.subTab === 'string' && message.subTab.length > 0 ? message.subTab : undefined;
+	const groupId =
+		typeof message.group === 'string' && message.group.length > 0 ? message.group : undefined;
+	const agentId =
+		typeof message.agent === 'string' && message.agent.length > 0 ? message.agent : undefined;
 
 	const sendResult = (success: boolean, error?: string) => {
 		ctx.send(client, {
@@ -1110,24 +1122,43 @@ export function handleOpenModal(
 		return;
 	}
 
-	let tabId: string | undefined;
-	if (tabName !== undefined) {
-		const tab = resolveUiSurfaceTab(surface, tabName);
-		if (!tab) {
-			const valid = surfaceTabIds(surface);
-			sendResult(
-				false,
-				valid.length > 0
-					? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
-					: `${surface.label} has no tabs.`
-			);
-			return;
-		}
-		tabId = tab.id;
+	const target = resolveUiSurfaceTarget(surface, {
+		tab: tabName,
+		subTab: subTabName,
+		group: groupId,
+		agent: agentId,
+	});
+	if ('error' in target) {
+		sendResult(false, target.error);
+		return;
+	}
+	const tabId = target.tab?.id;
+	const subTabId = target.subTab?.id;
+
+	// A surface behind a switched-off Encore Feature does not open: the app
+	// shows a toast and stays as it was. The caller is told so here, with the
+	// same sentence, instead of hearing that it opened.
+	const refusal = surfaceEncoreRefusal(surface, currentEncoreFeatures());
+	if (refusal) {
+		sendResult(false, refusal);
+		return;
+	}
+
+	// An agent's surface has nothing to show for an agent that is gone, and the
+	// renderer would open nothing without a word. A group is not checked the
+	// same way: the one surface that takes an optional group falls back to
+	// every agent.
+	if (
+		target.agent !== undefined &&
+		ctx.callbacks.getSessions &&
+		!ctx.callbacks.getSessions().some((session) => session.id === target.agent)
+	) {
+		sendResult(false, `Agent not found: ${target.agent}`);
+		return;
 	}
 
 	logger.info(
-		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}`,
+		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}, subTab=${subTabId ?? '-'}, group=${target.group ?? '-'}, agent=${target.agent ?? '-'}`,
 		LOG_CONTEXT
 	);
 
@@ -1137,7 +1168,13 @@ export function handleOpenModal(
 	}
 
 	ctx.callbacks
-		.openModal({ surface: surface.id, tab: tabId })
+		.openModal({
+			surface: surface.id,
+			tab: tabId,
+			subTab: subTabId,
+			group: target.group,
+			agent: target.agent,
+		})
 		.then((success) => sendResult(success, success ? undefined : 'Maestro window is not available'))
 		.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
 }

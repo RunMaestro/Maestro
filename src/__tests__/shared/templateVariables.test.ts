@@ -6,6 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
 	TEMPLATE_VARIABLES,
 	TEMPLATE_VARIABLES_GENERAL,
@@ -13,6 +15,7 @@ import {
 	TemplateContext,
 	TemplateSessionInfo,
 } from '../../shared/templateVariables';
+import type { ResolvedPeer } from '../../shared/peerAgents';
 
 // Helper to create a minimal session for testing
 function createTestSession(overrides: Partial<TemplateSessionInfo> = {}): TemplateSessionInfo {
@@ -425,6 +428,114 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('Worktrees: {{WORKTREE_BASE_PATH}}', context);
 			expect(result).toBe('Worktrees: ');
+		});
+	});
+
+	describe('Peer Agents Variable', () => {
+		const roster: ResolvedPeer[] = [
+			{ sessionId: 'peer-1', name: 'Docs', read: true, write: true, source: 'explicit' },
+		];
+
+		it('should list {{PEER_AGENTS}} as a general variable', () => {
+			expect(TEMPLATE_VARIABLES_GENERAL.map((v) => v.variable)).toContain('{{PEER_AGENTS}}');
+		});
+
+		it('should replace {{PEER_AGENTS}} with nothing when the builder passed no roster', () => {
+			// What every call site other than the two system prompt builders gets:
+			// no heading and no table, not a section that looks half loaded.
+			const result = substituteTemplateVariables('BEFORE\n{{PEER_AGENTS}}\nAFTER', {
+				session: createTestSession(),
+			});
+			expect(result).toBe('BEFORE\n\nAFTER');
+		});
+
+		it('should replace {{PEER_AGENTS}} with nothing when the roster is empty', () => {
+			const context = createTestContext({ peerRoster: [] });
+			expect(substituteTemplateVariables('{{PEER_AGENTS}}', context)).toBe('');
+		});
+
+		it('should render the roster with the peer id', () => {
+			const context = createTestContext({ peerRoster: roster });
+			const result = substituteTemplateVariables('{{PEER_AGENTS}}', context);
+			expect(result).toContain('## Peer Agents');
+			expect(result).toContain('| Docs | `peer-1` | Consult + Delegate |');
+		});
+
+		it("should write the agent's own id into the delegate command", () => {
+			// The block cannot leave an {{AGENT_ID}} for the loop to expand: that key
+			// is replaced before PEER_AGENTS.
+			const context = createTestContext({ peerRoster: roster });
+			const result = substituteTemplateVariables('{{PEER_AGENTS}}', context);
+			expect(result).toContain('--notify-on-complete test-session-123');
+			expect(result).not.toContain('{{');
+		});
+
+		it('should teach the same CLI command {{MAESTRO_CLI_PATH}} resolves to', () => {
+			const context = createTestContext({
+				peerRoster: roster,
+				maestroCliPath: '/opt/maestro/maestro-cli.js',
+			});
+			const result = substituteTemplateVariables('{{MAESTRO_CLI_PATH}}\n{{PEER_AGENTS}}', context);
+			const cli = 'node "/opt/maestro/maestro-cli.js"';
+			expect(result.split('\n')[0]).toBe(cli);
+			expect(result).toContain(`\`${cli} ask <agent-id> "<question>"\``);
+			expect(result).toContain(`\`${cli} dispatch <agent-id> "<task>" --new-tab`);
+		});
+
+		it('should state the remaining consultation budget when the builder knows it', () => {
+			const context = createTestContext({
+				peerRoster: roster,
+				consultBudget: { limit: 25, spent: 4 },
+			});
+			const result = substituteTemplateVariables('{{PEER_AGENTS}}', context);
+			expect(result).toContain('- **Budget:** 21 of the 25 consults and delegations');
+		});
+
+		it('should say nothing about the budget when the builder does not know it', () => {
+			const context = createTestContext({ peerRoster: roster });
+			expect(substituteTemplateVariables('{{PEER_AGENTS}}', context)).not.toMatch(/budget/i);
+		});
+
+		it('should render no budget for an agent with no peers', () => {
+			const context = createTestContext({ consultBudget: { limit: 25, spent: 4 } });
+			expect(substituteTemplateVariables('{{PEER_AGENTS}}', context)).toBe('');
+		});
+
+		describe('in the Maestro system prompt', () => {
+			// The file as shipped. A checkout on Windows may hold CRLF line endings.
+			const systemPrompt = readFileSync(
+				join(__dirname, '..', '..', 'prompts', 'maestro-system-prompt.md'),
+				'utf8'
+			).replace(/\r\n/g, '\n');
+
+			it('should sit once, on its own line, between Additional Directories and Operating Rules', () => {
+				// Both blocks are access the Conductor granted beyond the default, so
+				// they are adjacent. No heading wraps the variable: the formatter emits
+				// its own, and a bare heading would read as a section that failed to load.
+				expect(systemPrompt).toContain(
+					'\n{{ADDITIONAL_DIRECTORIES}}\n\n{{PEER_AGENTS}}\n\n## Operating Rules\n'
+				);
+				expect(systemPrompt.match(/\{\{PEER_AGENTS\}\}/gi)).toHaveLength(1);
+			});
+
+			it('should leave no Peer Agents section when the agent has no roster', () => {
+				const result = substituteTemplateVariables(systemPrompt, createTestContext());
+				expect(result).not.toContain('{{PEER_AGENTS}}');
+				expect(result).not.toContain('## Peer Agents');
+			});
+
+			it('should render the roster ahead of Operating Rules', () => {
+				const result = substituteTemplateVariables(
+					systemPrompt,
+					createTestContext({ peerRoster: roster })
+				);
+				const block = result.indexOf('## Peer Agents');
+				expect(block).toBeGreaterThan(
+					result.indexOf('## Critical Directive: Directory Restrictions')
+				);
+				expect(block).toBeLessThan(result.indexOf('## Operating Rules'));
+				expect(result).toContain('| Docs | `peer-1` | Consult + Delegate |');
+			});
 		});
 	});
 

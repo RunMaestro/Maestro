@@ -3,6 +3,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
+import { failCommand, failFromError } from '../services/session-command';
 
 interface AutoRunOptions {
 	agent?: string;
@@ -24,12 +25,12 @@ interface AutoRunOptions {
 	effort?: string;
 	/** Skip the documents' MAESTRO:MODEL markers for this run (--ignore-model-hints). */
 	ignoreModelHints?: boolean;
+	json?: boolean;
 }
 
 export async function autoRun(docs: string[], options: AutoRunOptions): Promise<void> {
 	if (!docs || docs.length === 0) {
-		console.error('Error: At least one document path is required');
-		process.exit(1);
+		failCommand('At least one document path is required', options.json);
 	}
 
 	// Resolve and validate each document path
@@ -38,13 +39,11 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		const absolutePath = path.resolve(doc);
 
 		if (!fs.existsSync(absolutePath)) {
-			console.error(`Error: File not found: ${absolutePath}`);
-			process.exit(1);
+			failCommand(`File not found: ${absolutePath}`, options.json);
 		}
 
 		if (path.extname(absolutePath).toLowerCase() !== '.md') {
-			console.error(`Error: File must be a .md file: ${absolutePath}`);
-			process.exit(1);
+			failCommand(`File must be a .md file: ${absolutePath}`, options.json);
 		}
 
 		resolvedPaths.push(absolutePath);
@@ -66,8 +65,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 			: undefined;
 
 	if (maxLoops !== undefined && (isNaN(maxLoops) || maxLoops < 1)) {
-		console.error('Error: --max-loops must be a positive integer');
-		process.exit(1);
+		failCommand('--max-loops must be a positive integer', options.json);
 	}
 
 	// Worktree configuration: requires --launch and --branch.
@@ -85,14 +83,11 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		| undefined;
 	if (options.worktree) {
 		if (!options.launch) {
-			console.error('Error: --worktree requires --launch');
-			process.exit(1);
+			failCommand('--worktree requires --launch', options.json);
 		} else if (!options.branch || options.branch.trim() === '') {
-			console.error('Error: --worktree requires --branch <name>');
-			process.exit(1);
+			failCommand('--worktree requires --branch <name>', options.json);
 		} else if (!options.worktreePath || options.worktreePath.trim() === '') {
-			console.error('Error: --worktree requires --worktree-path <path>');
-			process.exit(1);
+			failCommand('--worktree requires --worktree-path <path>', options.json);
 		} else {
 			worktree = {
 				enabled: true,
@@ -110,10 +105,10 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		options.createPr ||
 		options.prTargetBranch
 	) {
-		console.error(
-			'Error: --branch, --base-branch, --worktree-path, --create-pr, and --pr-target-branch require --worktree'
+		failCommand(
+			'--branch, --base-branch, --worktree-path, --create-pr, and --pr-target-branch require --worktree',
+			options.json
 		);
-		process.exit(1);
 	}
 
 	// Run-scoped model/effort overrides. Sent only when set so an omitted flag
@@ -148,7 +143,17 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		});
 
 		if (result.success) {
-			if (options.saveAs) {
+			if (options.json) {
+				console.log(
+					JSON.stringify({
+						success: true,
+						documents: documents.length,
+						launched: Boolean(options.launch),
+						...(result.playbookId ? { playbookId: result.playbookId } : {}),
+						...(options.saveAs ? { savedAs: options.saveAs } : {}),
+					})
+				);
+			} else if (options.saveAs) {
 				console.log(
 					`Playbook '${options.saveAs}' saved${result.playbookId ? ` (ID: ${result.playbookId})` : ''}`
 				);
@@ -162,11 +167,9 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 				);
 			}
 		} else {
-			console.error(`Error: ${result.error || 'Failed to configure auto-run'}`);
-			process.exit(1);
+			failCommand(result.error || 'Failed to configure auto-run', options.json);
 		}
 	} catch (error) {
-		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-		process.exit(1);
+		failFromError(error, options.json);
 	}
 }

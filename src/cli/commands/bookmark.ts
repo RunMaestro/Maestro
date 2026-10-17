@@ -14,8 +14,8 @@
 import {
 	sendSimpleCommand,
 	reportResult,
-	failCommand,
 	resolveAgentOrFail,
+	failFromError,
 } from '../services/session-command';
 
 interface BookmarkOptions {
@@ -44,6 +44,6 @@ export async function setBookmark(
 			jsonExtra: { agentId: sessionId, bookmarked },
 		});
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

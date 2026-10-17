@@ -4,7 +4,12 @@
 // `--list` to see the available themes.
 
 import { THEMES } from '../../shared/themes';
-import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	reportResult,
+	failCommand,
+	failFromError,
+} from '../services/session-command';
 
 interface SetThemeOptions {
 	list?: boolean;
@@ -54,6 +59,6 @@ export async function setTheme(
 			jsonExtra: { themeId: match.id, name: match.name },
 		});
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

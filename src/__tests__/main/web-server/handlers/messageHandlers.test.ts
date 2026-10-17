@@ -73,6 +73,409 @@ import {
 } from '../../../../main/feedback';
 import { generateDebugPackage } from '../../../../main/debug-package';
 
+// The endpoint service reads settings and dials model servers; the handler
+// tests only care that the CLI's message reaches it and the verdict comes back.
+vi.mock('../../../../main/local-models/endpoint-service', () => ({
+	detectNewLocalModelEndpoints: vi
+		.fn()
+		.mockResolvedValue([
+			{ kind: 'ollama', name: 'Ollama', baseUrl: 'http://127.0.0.1:11434', models: [] },
+		]),
+	testLocalModelEndpoint: vi.fn().mockResolvedValue({ ok: true, model: 'qwen3', latencyMs: 42 }),
+	listLocalModelEndpointModels: vi
+		.fn()
+		.mockResolvedValue({ ok: true, models: [{ id: 'qwen3:4b', sizeBytes: 1024 }] }),
+}));
+
+import {
+	detectNewLocalModelEndpoints,
+	listLocalModelEndpointModels,
+	testLocalModelEndpoint,
+} from '../../../../main/local-models/endpoint-service';
+
+// The task router reads assignments and calls models; the handler tests only
+// care that `maestro-cli models run` reaches it and the verdict comes back.
+vi.mock('../../../../main/local-models/task-router', () => ({
+	runLocalTaskRequest: vi.fn().mockResolvedValue({ status: 'off' }),
+}));
+
+import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
+
+// The readiness resolver reads the model store and lists endpoints; the handler
+// tests only care that `maestro-cli models status` reaches it.
+vi.mock('../../../../main/local-models/task-readiness', () => ({
+	resolveTaskReadinessRequest: vi
+		.fn()
+		.mockResolvedValue([{ taskId: 'injection-screen', state: 'unavailable' }]),
+}));
+
+import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
+
+vi.mock('../../../../main/local-models/git-drafts', () => ({
+	draftPullRequestRequest: vi.fn().mockResolvedValue({
+		success: true,
+		title: 'Add retry',
+		body: 'Retries.',
+		baseBranch: 'main',
+		commitCount: 2,
+		truncated: false,
+	}),
+}));
+import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
+
+vi.mock('../../../../main/local-models/spoken-notices', () => ({
+	speakNoticeRequest: vi.fn().mockResolvedValue({
+		spoken: true,
+		text: 'The build is green.',
+		lineSource: 'given',
+	}),
+}));
+
+vi.mock('../../../../main/local-models/dictation', () => ({
+	transcribeAudioFileRequest: vi.fn().mockResolvedValue({
+		status: 'ok',
+		text: 'ship the fix today',
+		audioMs: 2100,
+		source: { type: 'local', modelId: 'parakeet-tdt-0.6b-v2' },
+		durationMs: 310,
+	}),
+}));
+import { transcribeAudioFileRequest } from '../../../../main/local-models/dictation';
+import { speakNoticeRequest } from '../../../../main/local-models/spoken-notices';
+
+vi.mock('../../../../main/local-models/semantic-indexer', () => ({
+	semanticIndexProgress: vi.fn(() => ({
+		state: 'indexing',
+		indexed: 3,
+		total: 10,
+		bySourceType: {
+			history: { indexed: 3, total: 8 },
+			'directors-notes': { indexed: 0, total: 1 },
+			transcript: { indexed: 0, total: 1 },
+		},
+		modelId: 'local:bge-small-en-v1.5',
+	})),
+}));
+import { semanticIndexProgress } from '../../../../main/local-models/semantic-indexer';
+
+vi.mock('../../../../main/local-models/proxy/service', () => ({
+	getTokenProxyReport: vi.fn(async () => ({
+		status: { port: 48123, running: true, agentIds: ['a'], lastError: null, gatewayUrls: null },
+		agents: [
+			{ id: 'a', name: 'Alpha', toolType: 'claude-code', mode: 'compress', gatewayUrl: 'x' },
+		],
+		usage: null,
+		recentCompressions: [],
+	})),
+	readTokenProxyBlock: vi.fn(async () => ({
+		hash: 'a'.repeat(64),
+		original: 'long',
+		compressed: 'short',
+	})),
+}));
+import {
+	getTokenProxyReport,
+	readTokenProxyBlock,
+} from '../../../../main/local-models/proxy/service';
+
+vi.mock('../../../../main/local-models/server/supervisor', () => ({
+	startModelServer: vi.fn(async () => ({ state: 'running' })),
+	stopModelServer: vi.fn(async () => ({ state: 'stopped' })),
+	getModelServerKey: vi.fn(async () => 'sk-maestro-key'),
+}));
+import {
+	getModelServerKey,
+	startModelServer,
+	stopModelServer,
+} from '../../../../main/local-models/server/supervisor';
+
+vi.mock('../../../../main/local-models/server/server-endpoint', () => ({
+	modelServerForHarness: vi.fn(async () => ({
+		ok: true,
+		baseUrl: 'http://127.0.0.1:47811',
+		key: 'sk-maestro-key',
+	})),
+}));
+import { modelServerForHarness } from '../../../../main/local-models/server/server-endpoint';
+
+vi.mock('../../../../main/local-models/run-on-test', () => ({
+	testAgentRunOn: vi.fn(async () => ({
+		ok: true,
+		model: 'qwen3:latest',
+		label: 'qwen3:latest on Ollama',
+		reply: 'ready',
+		durationMs: 4200,
+		contextTokens: 40960,
+	})),
+}));
+import { testAgentRunOn } from '../../../../main/local-models/run-on-test';
+
+vi.mock('../../../../main/local-models/tier-options', () => ({
+	listHarnessTierOptionsRequest: vi.fn(async () => [
+		{
+			harness: 'codex',
+			name: 'Codex',
+			installed: true,
+			catalog: [{ id: 'gpt-6-luna', priority: 4 }],
+			runOn: { supported: true },
+			sources: [],
+			problems: [],
+		},
+	]),
+}));
+import { listHarnessTierOptionsRequest } from '../../../../main/local-models/tier-options';
+
+vi.mock('../../../../main/local-models/server/service', () => ({
+	getModelServerReport: vi.fn(async () => ({
+		status: { state: 'running', baseUrl: 'http://127.0.0.1:47811' },
+		engine: { installed: true },
+		loaded: [],
+		installing: null,
+	})),
+	installModelServerEngine: vi.fn(async () => ({})),
+	updateModelServerConfigRequest: vi.fn(async () => ({ state: 'running' })),
+}));
+import {
+	getModelServerReport,
+	installModelServerEngine,
+	updateModelServerConfigRequest,
+} from '../../../../main/local-models/server/service';
+
+vi.mock('../../../../main/local-models/system-one/service', () => {
+	const report = {
+		settings: { engine: 'jev-cloud' },
+		engineLabel: 'Jev (TypeSafe cloud)',
+		keys: { 'jev-cloud': { source: 'stored', storage: 'os' }, openjev: { source: 'none' } },
+		problem: null,
+	};
+	return {
+		getSystemOneReport: vi.fn(async () => report),
+		updateSystemOneSettingsRequest: vi.fn(async () => report),
+		setSystemOneKeyRequest: vi.fn(async () => report),
+		clearSystemOneKeyRequest: vi.fn(async () => report),
+		testSystemOne: vi.fn(async () => ({
+			ok: true,
+			engine: 'jev-cloud',
+			engineLabel: 'Jev (TypeSafe cloud)',
+			probability: 0.97,
+			latencyMs: 212,
+		})),
+	};
+});
+import {
+	clearSystemOneKeyRequest,
+	getSystemOneReport,
+	setSystemOneKeyRequest,
+	testSystemOne,
+	updateSystemOneSettingsRequest,
+} from '../../../../main/local-models/system-one/service';
+
+vi.mock('../../../../main/local-models/system-one/decisions', () => ({
+	readSystemOneLedger: vi.fn(() => ({
+		entries: [
+			{
+				id: 'decision-1',
+				taskId: 'cue-gate',
+				engine: 'jev-cloud',
+				questionIds: ['proceed'],
+				outcome: 'failed-open',
+				code: 'timeout',
+				startedAt: 1_800_000_000_000,
+				latencyMs: 1500,
+			},
+		],
+		total: 1,
+		retentionDays: 30,
+		notice: null,
+	})),
+}));
+import { readSystemOneLedger } from '../../../../main/local-models/system-one/decisions';
+
+vi.mock('../../../../main/local-models/system-one/agent-service', () => ({
+	readSystemOneAgentUsage: vi.fn(async () => ({
+		since: 1_800_000_000_000,
+		retentionDays: 30,
+		rows: [],
+		totals: { requests: 0, cachedRequests: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 },
+		budget: {
+			dayStartedAt: 1_800_000_000_000,
+			dailyBudgetUsd: 1,
+			spentTodayUsd: 0,
+			remainingTodayUsd: 1,
+		},
+		engine: 'jev-cloud',
+		engineLabel: 'Jev (TypeSafe cloud)',
+		notice: null,
+	})),
+	runAgentSystemOneRequest: vi.fn(async () => ({
+		ok: true,
+		kind: 'ask',
+		verb: 'yes',
+		answers: { q: { type: 'noul', probability: 0.93 } },
+		engine: 'jev-cloud',
+		engineLabel: 'Jev (TypeSafe cloud)',
+		calibrated: true,
+		model: 'jev-1.13.0',
+		cached: false,
+		latencyMs: 180,
+		tokens: { inputTokens: 120, outputTokens: 1 },
+		costUsd: 0.000005,
+		redacted: false,
+	})),
+	getSystemOneAgentAccessRequest: vi.fn(async () => ({
+		allowed: true,
+		gate: null,
+		message: null,
+		engine: 'jev-cloud',
+		engineLabel: 'Jev (TypeSafe cloud)',
+		calibrated: true,
+		budget: {
+			dayStartedAt: 1_800_000_000_000,
+			dailyBudgetUsd: 1,
+			spentTodayUsd: 0,
+			remainingTodayUsd: 1,
+		},
+	})),
+}));
+import {
+	getSystemOneAgentAccessRequest,
+	readSystemOneAgentUsage,
+	runAgentSystemOneRequest,
+} from '../../../../main/local-models/system-one/agent-service';
+
+vi.mock('../../../../main/local-models/route-turn', () => ({
+	routeTurnRequest: vi.fn(async () => ({
+		tier: 'medium',
+		effort: 'low',
+		engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+		latencyMs: 24,
+	})),
+}));
+import { routeTurnRequest } from '../../../../main/local-models/route-turn';
+
+vi.mock('../../../../main/local-models/model-usage', () => ({
+	readModelUsage: vi.fn(async (range?: unknown) => ({ range: range ?? 'week', sources: [] })),
+}));
+import { readModelUsage } from '../../../../main/local-models/model-usage';
+
+vi.mock('../../../../main/local-models/model-routing-corrections', () => ({
+	recordModelRoutingCorrectionRequest: vi.fn(async () => ({
+		ok: true,
+		replaced: false,
+		total: 1,
+	})),
+}));
+import { recordModelRoutingCorrectionRequest } from '../../../../main/local-models/model-routing-corrections';
+
+vi.mock('../../../../main/local-models/tab-cleanup', () => ({
+	suggestTabCleanup: vi.fn().mockResolvedValue({
+		success: true,
+		suggestions: [
+			{
+				tabId: 'tab-1',
+				agentId: 'agent-1',
+				action: 'close',
+				reason: 'Untouched for a month.',
+				agentName: 'Backend',
+				label: 'Fix login bug',
+				kind: 'open',
+				tabType: 'ai',
+				lastActivityAt: 1,
+				messageCount: 4,
+			},
+		],
+		considered: 3,
+		protectedCount: 1,
+		droppedCount: 0,
+		truncated: false,
+	}),
+}));
+
+vi.mock('../../../../main/local-models/work-search', () => ({
+	searchPastWorkRequest: vi.fn().mockResolvedValue({
+		status: 'ok',
+		mode: 'semantic',
+		hits: [{ sourceType: 'history', sourceId: 'e1', agentId: 'agent-1', score: 0.8 }],
+		durationMs: 4,
+	}),
+}));
+import { searchPastWorkRequest } from '../../../../main/local-models/work-search';
+import { suggestTabCleanup } from '../../../../main/local-models/tab-cleanup';
+
+// The Local Models service reads the model store and runs the downloader; the
+// handler tests only care that `maestro-cli models list|install|verify|remove`
+// reach the same service functions the Settings rows call.
+vi.mock('../../../../main/local-models/hardware', () => ({
+	resolveHardwareProfile: vi.fn().mockResolvedValue({
+		platform: 'darwin',
+		arch: 'arm64',
+		totalMemoryBytes: 16 * 1024 ** 3,
+		unifiedMemory: true,
+		gpus: [],
+	}),
+}));
+
+vi.mock('../../../../main/local-models/user-models', () => ({
+	previewHuggingFaceModel: vi.fn().mockResolvedValue({
+		ok: true,
+		value: { entry: { id: 'hf-owner-model' }, alreadyAdded: false },
+	}),
+	addHuggingFaceModel: vi.fn().mockResolvedValue({
+		ok: true,
+		value: { entry: { id: 'hf-owner-model' }, added: true },
+	}),
+	removeUserLocalModel: vi.fn().mockResolvedValue({
+		ok: true,
+		value: { id: 'hf-owner-model', displayName: 'model', bytes: 512 },
+	}),
+}));
+
+vi.mock('../../../../main/local-models/service', () => ({
+	listLocalModels: vi.fn().mockResolvedValue([{ entry: { id: 'bge-small-en-v1.5' } }]),
+	localModelsFootprint: vi.fn().mockResolvedValue({ bytes: 42, models: [] }),
+	installLocalModel: vi.fn().mockResolvedValue({
+		modelId: 'bge-small-en-v1.5',
+		status: 'complete',
+		runtime: { runtimeId: 'onnx', status: 'installed' },
+	}),
+	listLocalRuntimes: vi.fn().mockResolvedValue([
+		{
+			id: 'llama',
+			label: 'llama.cpp',
+			models: ['qwen3-1.7b-instruct-q4km'],
+			installed: true,
+			stale: false,
+			downloadable: true,
+			bytes: 1000,
+		},
+	]),
+	installLocalRuntime: vi.fn().mockResolvedValue(undefined),
+	verifyLocalModel: vi
+		.fn()
+		.mockResolvedValue({ id: 'bge-small-en-v1.5', ok: true, status: 'installed' }),
+	removeLocalModel: vi.fn().mockResolvedValue(2048),
+	pauseLocalModel: vi.fn().mockReturnValue(true),
+	cancelLocalModel: vi.fn().mockResolvedValue(false),
+}));
+
+import {
+	cancelLocalModel,
+	installLocalModel,
+	installLocalRuntime,
+	listLocalModels,
+	listLocalRuntimes,
+	pauseLocalModel,
+	removeLocalModel,
+	verifyLocalModel,
+} from '../../../../main/local-models/service';
+
+import { resolveHardwareProfile } from '../../../../main/local-models/hardware';
+import {
+	addHuggingFaceModel,
+	previewHuggingFaceModel,
+	removeUserLocalModel,
+} from '../../../../main/local-models/user-models';
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -220,6 +623,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		createGroup: vi.fn().mockResolvedValue({ id: 'group-1' }),
 		renameGroup: vi.fn().mockResolvedValue(true),
 		updateGroup: vi.fn().mockResolvedValue(true),
+		updateGroupSettings: vi.fn().mockResolvedValue({ success: true }),
 		deleteGroup: vi.fn().mockResolvedValue(true),
 		moveSessionToGroup: vi.fn().mockResolvedValue(true),
 		createSession: vi.fn().mockResolvedValue({ sessionId: 'new-session-1' }),
@@ -252,6 +656,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example' }),
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
+		setCueSubscriptionGate: vi.fn().mockResolvedValue({ ok: true, updated: ['Triage'] }),
+		setCueSubscriptionInjectionScreen: vi.fn().mockResolvedValue({ ok: true, updated: ['Triage'] }),
 		getCueActivity: vi.fn().mockResolvedValue([]),
 		triggerCueSubscription: vi.fn().mockResolvedValue(true),
 		listCuePipelines: vi.fn().mockResolvedValue({ pipelines: [] }),
@@ -442,6 +848,125 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	// `maestro-cli dispatch` and `ask` admit a consult in the CLI, spend for it
+	// there, and send the place in the chain its target takes. Main spends
+	// nothing: it only carries that place to whatever spawns the target's turn.
+	describe('Consult chain (maestro-cli dispatch / ask)', () => {
+		const chain = { chainId: 'chain-a', depth: 2 };
+
+		it('hands send_command the chain as the last executeCommand argument', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Take this over',
+				inputMode: 'ai',
+				consultChain: chain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Take this over',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					false,
+					chain
+				);
+			});
+		});
+
+		it('hands new_ai_tab_with_prompt the chain for the new tab', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Take this over',
+				background: true,
+				consultChain: chain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Take this over',
+					true,
+					// Not hidden: the message did not ask for it.
+					false,
+					chain
+				);
+			});
+		});
+
+		it('hands enqueue_command the chain for the queued item', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Take this over',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				held: true,
+				consultChain: chain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Take this over',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					true,
+					chain
+				);
+			});
+		});
+
+		it('hands cross_agent_ask the chain for the consult', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				consultChain: chain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalledWith(
+					expect.objectContaining({ targetSessionId: 'session-1', consultChain: chain })
+				);
+			});
+		});
+
+		it.each([
+			['an id the counter would refuse', { chainId: '../escape', depth: 1 }],
+			['a bare string', 'chain-a'],
+			['null', null],
+		])('reads %s as no chain, and still delivers', async (_what, consultChain) => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Take this over',
+				inputMode: 'ai',
+				consultChain,
+			});
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				consultChain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalled();
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+			expect((callbacks.executeCommand as any).mock.calls[0][7]).toBeUndefined();
+			expect((callbacks.consultAgent as any).mock.calls[0][0]).not.toHaveProperty('consultChain');
+		});
+	});
+
 	describe('Cross-Agent Ask (maestro-cli ask)', () => {
 		it('forwards the asking agent tab so the consult pill lands in that conversation', async () => {
 			handler.handleMessage(client, {
@@ -565,7 +1090,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -650,7 +1176,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -716,7 +1243,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-explicit',
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -747,7 +1275,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -786,7 +1315,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -810,7 +1340,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					true,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -836,7 +1367,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -860,7 +1392,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2497,7 +3030,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					false,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -2523,7 +3057,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					true,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2542,7 +3077,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					true,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -2561,7 +3097,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					false,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2872,7 +3409,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-1',
 					undefined,
 					true,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -3068,7 +3606,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					undefined,
 					false,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -4472,7 +5011,13 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', 'My gist', false, undefined);
+				expect(callbacks.createGist).toHaveBeenCalledWith(
+					'session-1',
+					'My gist',
+					false,
+					undefined,
+					false
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -4488,7 +5033,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false, undefined);
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false, undefined, false);
 			});
 		});
 
@@ -4546,9 +5091,56 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'',
 					false,
-					'provider-session-9'
+					'provider-session-9',
+					false
 				);
 			});
+		});
+
+		// The secret screen refuses in the main process; the bridge must hand the
+		// masked findings back to the CLI rather than flattening them to an error.
+		it('returns a secret-screen refusal with its masked findings', async () => {
+			const refusal = {
+				success: false,
+				error: 'Found 1 possible secret in the gist. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings: [{ kind: 'github-token', line: 4, preview: '••••••••abcd' }],
+			};
+			(callbacks.createGist as any).mockResolvedValue(refusal);
+
+			handler.handleMessage(client, { type: 'create_gist', sessionId: 'session-1' });
+
+			await vi.waitFor(() => {
+				expect(client.socket.send).toHaveBeenCalled();
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({ type: 'create_gist_result', ...refusal });
+		});
+
+		it('forwards allowSecrets only when it is a literal true', async () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				allowSecrets: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false, undefined, true);
+			});
+		});
+
+		it('rejects a non-boolean allowSecrets instead of reading it as consent', () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				allowSecrets: 'true',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('allowSecrets');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
 		});
 
 		it('rejects a blank agentSessionId instead of publishing the open tabs', () => {
@@ -5233,6 +5825,269 @@ describe('WebSocketMessageHandler', () => {
 
 			expect(callbacks.updateGroup).not.toHaveBeenCalled();
 		});
+
+		describe('update_group_settings', () => {
+			const lastFrame = () =>
+				JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]) as Record<string, unknown>;
+
+			it('forwards a validated request and answers with the whole result', async () => {
+				vi.mocked(callbacks.updateGroupSettings).mockResolvedValue({
+					success: true,
+					defaults: { nudgeMessage: 'N' },
+					shortLabel: 'BE',
+					changed: ['Nudge Message'],
+					publish: {
+						agents: [{ id: 'a', name: 'A' }],
+						skipped: [],
+						changed: ['Nudge Message'],
+						unpublished: [],
+						replaced: [],
+						providerBound: [],
+					},
+				});
+				handler.handleMessage(client, {
+					type: 'update_group_settings',
+					groupId: 'group-1',
+					requestId: 'r1',
+					configPatch: { nudgeMessage: 'N' },
+					shortLabel: 'BE',
+					publish: true,
+				});
+
+				await vi.waitFor(() => expect(lastFrame().type).toBe('update_group_settings_result'));
+				expect(callbacks.updateGroupSettings).toHaveBeenCalledWith('group-1', {
+					configPatch: { nudgeMessage: 'N' },
+					shortLabel: 'BE',
+					publish: true,
+				});
+				expect(lastFrame()).toMatchObject({
+					success: true,
+					requestId: 'r1',
+					groupId: 'group-1',
+					shortLabel: 'BE',
+					publish: { agents: [{ id: 'a', name: 'A' }] },
+				});
+			});
+
+			it('relays a refusal from the app', async () => {
+				vi.mocked(callbacks.updateGroupSettings).mockResolvedValue({
+					success: false,
+					error: 'Group not found',
+				});
+				handler.handleMessage(client, {
+					type: 'update_group_settings',
+					groupId: 'group-1',
+					shortLabel: 'BE',
+				});
+
+				await vi.waitFor(() => expect(lastFrame().type).toBe('update_group_settings_result'));
+				expect(lastFrame()).toMatchObject({ success: false, error: 'Group not found' });
+			});
+
+			it('rejects a request with no groupId', () => {
+				handler.handleMessage(client, { type: 'update_group_settings', shortLabel: 'BE' });
+
+				expect(callbacks.updateGroupSettings).not.toHaveBeenCalled();
+				expect(lastFrame().message).toContain('groupId');
+			});
+
+			it('rejects a request that changes nothing', () => {
+				handler.handleMessage(client, { type: 'update_group_settings', groupId: 'group-1' });
+
+				expect(callbacks.updateGroupSettings).not.toHaveBeenCalled();
+				expect(lastFrame().message).toContain('Nothing to update');
+			});
+
+			it('rejects a key that is not a group default before the renderer is asked', () => {
+				handler.handleMessage(client, {
+					type: 'update_group_settings',
+					groupId: 'group-1',
+					configPatch: { bookmarked: true },
+				});
+
+				expect(callbacks.updateGroupSettings).not.toHaveBeenCalled();
+				expect(lastFrame().message).toContain('bookmarked');
+			});
+		});
+	});
+
+	describe('Cue gate (maestro-cli cue gate)', () => {
+		const lastFrame = () =>
+			JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]) as Record<string, unknown>;
+
+		it('sets a gate with its policy and reports every subscription changed', async () => {
+			vi.mocked(callbacks.setCueSubscriptionGate).mockResolvedValue({
+				ok: true,
+				updated: ['Triage', 'Triage-cmd-a'],
+			});
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_gate',
+				requestId: 'g1',
+				subscriptionId: 'a1::Triage::Triage',
+				gate: '  the issue reports a bug  ',
+				gateOnUnavailable: 'skip',
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe('set_cue_subscription_gate_result'));
+			expect(callbacks.setCueSubscriptionGate).toHaveBeenCalledWith('a1::Triage::Triage', {
+				condition: '  the issue reports a bug  ',
+				onUnavailable: 'skip',
+			});
+			expect(lastFrame()).toMatchObject({
+				success: true,
+				requestId: 'g1',
+				subscriptionId: 'a1::Triage::Triage',
+				updated: ['Triage', 'Triage-cmd-a'],
+				gate: 'the issue reports a bug',
+				gateOnUnavailable: 'skip',
+			});
+		});
+
+		it('removes a gate on an explicit null', async () => {
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_gate',
+				subscriptionId: 'a1::Triage::Triage',
+				gate: null,
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe('set_cue_subscription_gate_result'));
+			expect(callbacks.setCueSubscriptionGate).toHaveBeenCalledWith('a1::Triage::Triage', null);
+			expect(lastFrame()).toMatchObject({ success: true, gate: null });
+		});
+
+		it('passes the engine refusal back as a failed result', async () => {
+			vi.mocked(callbacks.setCueSubscriptionGate).mockResolvedValue({
+				ok: false,
+				error: 'Could not write the gate.',
+			});
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_gate',
+				subscriptionId: 'a1::Triage::Missing',
+				gate: 'the issue reports a bug',
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe('set_cue_subscription_gate_result'));
+			expect(lastFrame()).toMatchObject({ success: false, error: 'Could not write the gate.' });
+			expect(lastFrame()).not.toHaveProperty('updated');
+		});
+
+		it('refuses a frame that is neither a removal nor a usable condition', () => {
+			const refused = (frame: Record<string, unknown>) => {
+				handler.handleMessage(client, { type: 'set_cue_subscription_gate', ...frame });
+				return lastFrame();
+			};
+
+			// A dropped `gate` field must not be read as "remove the gate".
+			expect(refused({ subscriptionId: 'a1::T::T' })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('Missing gate'),
+			});
+			expect(refused({ subscriptionId: 'a1::T::T', gate: '   ' }).type).toBe('error');
+			expect(refused({ subscriptionId: 'a1::T::T', gate: 'x'.repeat(1001) }).type).toBe('error');
+			expect(
+				refused({ subscriptionId: 'a1::T::T', gate: 'a bug', gateOnUnavailable: 'maybe' })
+			).toMatchObject({ type: 'error', message: expect.stringContaining('gateOnUnavailable') });
+			expect(refused({ gate: 'a bug' })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('Missing subscriptionId'),
+			});
+			expect(callbacks.setCueSubscriptionGate).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Cue injection screen (maestro-cli cue screen)', () => {
+		const lastFrame = () =>
+			JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]) as Record<string, unknown>;
+		const RESULT = 'set_cue_subscription_injection_screen_result';
+
+		it('sets the mode and threshold and reports every subscription changed', async () => {
+			vi.mocked(callbacks.setCueSubscriptionInjectionScreen).mockResolvedValue({
+				ok: true,
+				updated: ['Triage', 'Triage-cmd-a'],
+			});
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_injection_screen',
+				requestId: 's1',
+				subscriptionId: 'a1::Triage::Triage',
+				mode: 'on',
+				threshold: 0.6,
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe(RESULT));
+			expect(callbacks.setCueSubscriptionInjectionScreen).toHaveBeenCalledWith(
+				'a1::Triage::Triage',
+				{ mode: 'on', threshold: 0.6 }
+			);
+			expect(lastFrame()).toMatchObject({
+				success: true,
+				requestId: 's1',
+				subscriptionId: 'a1::Triage::Triage',
+				updated: ['Triage', 'Triage-cmd-a'],
+				mode: 'on',
+				threshold: 0.6,
+			});
+		});
+
+		it('sets a mode with no threshold', async () => {
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_injection_screen',
+				subscriptionId: 'a1::Triage::Triage',
+				mode: 'off',
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe(RESULT));
+			expect(callbacks.setCueSubscriptionInjectionScreen).toHaveBeenCalledWith(
+				'a1::Triage::Triage',
+				{ mode: 'off' }
+			);
+			expect(lastFrame()).not.toHaveProperty('threshold');
+		});
+
+		it('passes the engine refusal back as a failed result', async () => {
+			vi.mocked(callbacks.setCueSubscriptionInjectionScreen).mockResolvedValue({
+				ok: false,
+				error: 'Could not write the screen.',
+			});
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_injection_screen',
+				subscriptionId: 'a1::Triage::Missing',
+				mode: 'on',
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe(RESULT));
+			expect(lastFrame()).toMatchObject({ success: false, error: 'Could not write the screen.' });
+			expect(lastFrame()).not.toHaveProperty('updated');
+		});
+
+		it('refuses a frame with no mode, an unknown mode, or a bad threshold', () => {
+			const refused = (frame: Record<string, unknown>) => {
+				handler.handleMessage(client, {
+					type: 'set_cue_subscription_injection_screen',
+					...frame,
+				});
+				return lastFrame();
+			};
+
+			// A dropped `mode` must not be read as "back to the default": that
+			// would switch off a screen someone turned on.
+			expect(refused({ subscriptionId: 'a1::T::T' })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('Invalid mode'),
+			});
+			expect(refused({ subscriptionId: 'a1::T::T', mode: 'sometimes' }).type).toBe('error');
+			expect(refused({ subscriptionId: 'a1::T::T', mode: 'on', threshold: 0 })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('above 0 and at most 1'),
+			});
+			expect(refused({ subscriptionId: 'a1::T::T', mode: 'on', threshold: '0.5' }).type).toBe(
+				'error'
+			);
+			expect(refused({ mode: 'on' })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('Missing subscriptionId'),
+			});
+			expect(callbacks.setCueSubscriptionInjectionScreen).not.toHaveBeenCalled();
+		});
 	});
 });
 
@@ -5662,6 +6517,8 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect.any(AbortSignal),
 			'user',
 			undefined,
+			// No `model` on the message: no turn settings are passed at all, so the
+			// agent's own model runs.
 			undefined
 		);
 		expect(client.socket.off).toHaveBeenCalledWith('close', expect.any(Function));
@@ -5672,6 +6529,135 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			response: 'hello',
 			sessionId: 'provider-1',
 		});
+	});
+
+	it.each(['sonnet', 'auto'])(
+		'hands the runner the model of this one turn (%s), and carries its Auto report back',
+		async (model) => {
+			const auto = { label: 'Auto → low · haiku', detail: 'Auto: the router chose tier low.' };
+			const run = vi.fn(async () => ({
+				success: true,
+				response: 'hello',
+				sessionId: 'provider-1',
+				...(model === 'auto' ? { auto } : {}),
+			}));
+			vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+			client.cliAuthenticated = true;
+			(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+				remoteAddress: '127.0.0.1',
+			};
+			handler.handleMessage(client, {
+				type: 'plugins_send_agent',
+				agentId: 'agent-a',
+				prompt: 'hello',
+				model,
+			});
+			await vi.waitFor(() => expect(run).toHaveBeenCalled());
+			expect(run).toHaveBeenCalledWith(
+				'agent-a',
+				'hello',
+				undefined,
+				expect.any(AbortSignal),
+				'user',
+				undefined,
+				undefined,
+				// `requirePluginTools`, which sits ahead of the turn settings.
+				false,
+				{ model }
+			);
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastResult()).toMatchObject({
+				type: 'plugins_send_agent_result',
+				available: true,
+				success: true,
+				response: 'hello',
+			});
+			if (model === 'auto') expect(lastResult().auto).toEqual(auto);
+			else expect(lastResult()).not.toHaveProperty('auto');
+		}
+	);
+
+	// The CLI admitted the send against a consult chain and already spent for
+	// it. This process spawns the agent, so the chain rides the turn settings.
+	it('hands the runner the consult chain the CLI admitted the send at', async () => {
+		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+			model: 'sonnet',
+			consultChain: { chainId: 'chain-a', depth: 2 },
+		});
+		await vi.waitFor(() => expect(run).toHaveBeenCalled());
+		expect(run).toHaveBeenCalledWith(
+			'agent-a',
+			'hello',
+			undefined,
+			expect.any(AbortSignal),
+			'user',
+			undefined,
+			undefined,
+			false,
+			{ model: 'sonnet', consultChain: { chainId: 'chain-a', depth: 2 } }
+		);
+	});
+
+	it.each([
+		['an id the counter would refuse', { chainId: '../escape', depth: 1 }],
+		['a bare string', 'chain-a'],
+		['null', null],
+	])('reads %s as no consult chain, and still runs the send', async (_what, consultChain) => {
+		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+			consultChain,
+		});
+		await vi.waitFor(() => expect(run).toHaveBeenCalled());
+		// No model and no usable chain: no turn settings at all.
+		expect(vi.mocked(run).mock.calls[0][7]).toBeUndefined();
+	});
+
+	it.each([
+		['a flag', '-x'],
+		['a number', 7],
+		['an empty string', ''],
+		['a name with a space before it', ' sonnet'],
+		['a name with a line break', 'son\nnet'],
+		['an object', { model: 'sonnet' }],
+		['null', null],
+	])('refuses %s as the model of a CLI send, and starts no run', async (_what, model) => {
+		const run = vi.fn();
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+			model,
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({
+			type: 'plugins_send_agent_result',
+			available: true,
+			success: false,
+			error: 'Invalid headless agent request',
+		});
+		expect(run).not.toHaveBeenCalled();
 	});
 
 	it('aborts a desktop-routed CLI send when its socket closes', async () => {
@@ -5876,6 +6862,1229 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		expect(lastResult()).toMatchObject({ available: false });
 		expect(run).not.toHaveBeenCalled();
 	});
+	describe('Local Models endpoints (maestro-cli models endpoints)', () => {
+		const lastResponse = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('local_models_endpoints_detect answers with the detected servers', async () => {
+			handler.handleMessage(client, { type: 'local_models_endpoints_detect', requestId: 'd1' });
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_endpoints_detect_result')
+			);
+			expect(detectNewLocalModelEndpoints).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'd1',
+				detected: [{ kind: 'ollama', baseUrl: 'http://127.0.0.1:11434' }],
+			});
+		});
+
+		it('local_models_endpoint_test passes the reference and model through', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_endpoint_test',
+				requestId: 't1',
+				endpoint: 'ollama',
+				model: 'qwen3',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_endpoint_test_result'));
+			expect(testLocalModelEndpoint).toHaveBeenCalledWith('ollama', 'qwen3');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 't1',
+				result: { ok: true, model: 'qwen3', latencyMs: 42 },
+			});
+		});
+
+		it('local_models_endpoint_models passes the reference through and returns the verdict', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_endpoint_models',
+				requestId: 'm1',
+				endpoint: 'ollama',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_endpoint_models_result')
+			);
+			expect(listLocalModelEndpointModels).toHaveBeenCalledWith('ollama');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'm1',
+				result: { ok: true, models: [{ id: 'qwen3:4b', sizeBytes: 1024 }] },
+			});
+		});
+
+		it('local_models_endpoint_models carries an unreachable server as a verdict', async () => {
+			vi.mocked(listLocalModelEndpointModels).mockResolvedValueOnce({
+				ok: false,
+				error: { kind: 'network', message: 'Nothing is listening' },
+			} as never);
+			handler.handleMessage(client, {
+				type: 'local_models_endpoint_models',
+				requestId: 'm2',
+				endpoint: 'ollama',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_endpoint_models_result')
+			);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				result: { ok: false, error: { kind: 'network' } },
+			});
+		});
+
+		it('local_models_endpoint_test reports a thrown failure as success: false', async () => {
+			vi.mocked(testLocalModelEndpoint).mockRejectedValueOnce(new Error('store gone'));
+			handler.handleMessage(client, {
+				type: 'local_models_endpoint_test',
+				requestId: 't2',
+				endpoint: 'x',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_endpoint_test_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'store gone' });
+		});
+
+		it('local_models_run_task passes the task id and input through', async () => {
+			const input = { prompt: 'diff' };
+			handler.handleMessage(client, {
+				type: 'local_models_run_task',
+				requestId: 'r1',
+				taskId: 'git-drafts',
+				input,
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_run_task_result'));
+			expect(runLocalTaskRequest).toHaveBeenCalledWith('git-drafts', input);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'r1',
+				result: { status: 'off' },
+			});
+		});
+
+		it('local_models_run_task reports a refused request as success: false', async () => {
+			vi.mocked(runLocalTaskRequest).mockRejectedValueOnce(new Error('Unknown task "x".'));
+			handler.handleMessage(client, {
+				type: 'local_models_run_task',
+				requestId: 'r2',
+				taskId: 'x',
+				input: { prompt: 'p' },
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_run_task_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'Unknown task "x".' });
+		});
+
+		it('local_models_git_draft passes the repository and target branch through', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_git_draft',
+				requestId: 'g1',
+				cwd: '/repo',
+				baseBranch: 'main',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_git_draft_result'));
+			expect(draftPullRequestRequest).toHaveBeenCalledWith({ cwd: '/repo', baseBranch: 'main' });
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'g1',
+				result: { success: true, title: 'Add retry', body: 'Retries.' },
+			});
+		});
+
+		it('local_models_git_draft reports a refused request as success: false', async () => {
+			vi.mocked(draftPullRequestRequest).mockRejectedValueOnce(
+				new Error('A pull request draft needs a repository path (cwd).')
+			);
+			handler.handleMessage(client, { type: 'local_models_git_draft', requestId: 'g2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_git_draft_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'A pull request draft needs a repository path (cwd).',
+			});
+		});
+
+		it('local_models_transcribe passes the file path through and returns the transcript', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_transcribe',
+				requestId: 't1',
+				path: '/clips/note.wav',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_transcribe_result'));
+			expect(transcribeAudioFileRequest).toHaveBeenCalledWith('/clips/note.wav');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 't1',
+				result: { status: 'ok', text: 'ship the fix today' },
+			});
+		});
+
+		it('local_models_transcribe reports a refused request as success: false', async () => {
+			vi.mocked(transcribeAudioFileRequest).mockRejectedValueOnce(
+				new Error('An absolute path to a WAV file is required.')
+			);
+			handler.handleMessage(client, { type: 'local_models_transcribe', requestId: 't2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_transcribe_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'An absolute path to a WAV file is required.',
+			});
+		});
+
+		it('notify_speak passes the text through and answers once it was spoken', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_speak',
+				requestId: 'sp1',
+				text: 'The build is green.',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('notify_speak_result'));
+			expect(speakNoticeRequest).toHaveBeenCalledWith('The build is green.');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'sp1',
+				result: { spoken: true, text: 'The build is green.' },
+			});
+		});
+
+		it('notify_speak returns a refusal as a verdict, not an error', async () => {
+			vi.mocked(speakNoticeRequest).mockResolvedValueOnce({
+				spoken: false,
+				code: 'voice-session-active',
+				message: 'A voice session is live, so the notice was not spoken.',
+			});
+			handler.handleMessage(client, { type: 'notify_speak', requestId: 'sp2', text: 'hello' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('notify_speak_result'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				result: { spoken: false, code: 'voice-session-active' },
+			});
+		});
+
+		it('notify_speak reports a bad request as success: false', async () => {
+			vi.mocked(speakNoticeRequest).mockRejectedValueOnce(new Error('Text to speak is required.'));
+			handler.handleMessage(client, { type: 'notify_speak', requestId: 'sp3' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('notify_speak_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'Text to speak is required.',
+			});
+		});
+
+		it('local_models_task_readiness passes the task id through and returns the verdicts', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_task_readiness',
+				requestId: 'q1',
+				taskId: 'injection-screen',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_task_readiness_result')
+			);
+			expect(resolveTaskReadinessRequest).toHaveBeenCalledWith('injection-screen');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'q1',
+				readiness: [{ taskId: 'injection-screen', state: 'unavailable' }],
+			});
+		});
+
+		it('local_models_tab_cleanup answers with the suggestions and takes nothing from the message', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_tab_cleanup',
+				requestId: 'tc-1',
+				sessions: [],
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_tab_cleanup_result'));
+			expect(suggestTabCleanup).toHaveBeenCalledWith();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'tc-1',
+				result: {
+					success: true,
+					considered: 3,
+					suggestions: [{ tabId: 'tab-1', agentId: 'agent-1', action: 'close' }],
+				},
+			});
+		});
+
+		it('local_models_tab_cleanup carries a task that is off as a successful round trip', async () => {
+			vi.mocked(suggestTabCleanup).mockResolvedValueOnce({
+				success: false,
+				status: 'off',
+				error: 'Tab cleanup suggestions is off.',
+			});
+			handler.handleMessage(client, { type: 'local_models_tab_cleanup', requestId: 'tc-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('tc-2'));
+			expect(lastResponse()).toMatchObject({
+				type: 'local_models_tab_cleanup_result',
+				success: true,
+				result: { success: false, status: 'off' },
+			});
+		});
+
+		it('local_models_semantic_index_status answers with the indexer record', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_semantic_index_status',
+				requestId: 'si-1',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_semantic_index_status_result')
+			);
+			expect(semanticIndexProgress).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'si-1',
+				progress: {
+					state: 'indexing',
+					indexed: 3,
+					total: 10,
+					bySourceType: { history: { indexed: 3, total: 8 } },
+					modelId: 'local:bge-small-en-v1.5',
+				},
+			});
+		});
+
+		it('local_models_semantic_index_status reports a failed read as success: false', async () => {
+			vi.mocked(semanticIndexProgress).mockImplementationOnce(() => {
+				throw new Error('indexer exploded');
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_semantic_index_status',
+				requestId: 'si-2',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_semantic_index_status_result')
+			);
+			expect(lastResponse()).toMatchObject({ success: false, error: 'indexer exploded' });
+		});
+
+		it('local_models_proxy_status answers with the proxy report', async () => {
+			handler.handleMessage(client, { type: 'local_models_proxy_status', requestId: 'px-1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_proxy_status_result'));
+			expect(getTokenProxyReport).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'px-1',
+				report: {
+					status: { port: 48123, running: true },
+					agents: [{ id: 'a', mode: 'compress' }],
+				},
+			});
+		});
+
+		it('local_models_proxy_status reports a failed read as success: false', async () => {
+			vi.mocked(getTokenProxyReport).mockRejectedValueOnce(new Error('state file unreadable'));
+			handler.handleMessage(client, { type: 'local_models_proxy_status', requestId: 'px-2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_proxy_status_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'state file unreadable' });
+		});
+
+		it('local_models_server_status answers with the model server report', async () => {
+			handler.handleMessage(client, { type: 'local_models_server_status', requestId: 'ms-1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_status_result'));
+			expect(getModelServerReport).toHaveBeenCalled();
+			expect(startModelServer).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'ms-1',
+				report: { status: { state: 'running', baseUrl: 'http://127.0.0.1:47811' } },
+			});
+		});
+
+		it('local_models_server_start and _stop call the supervisor and answer with the report', async () => {
+			handler.handleMessage(client, { type: 'local_models_server_start', requestId: 'ms-2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_start_result'));
+			expect(startModelServer).toHaveBeenCalledTimes(1);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				report: { status: { state: 'running' } },
+			});
+
+			handler.handleMessage(client, { type: 'local_models_server_stop', requestId: 'ms-3' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_stop_result'));
+			expect(stopModelServer).toHaveBeenCalledTimes(1);
+		});
+
+		it('local_models_server_start reports a failed start with its reason', async () => {
+			vi.mocked(startModelServer).mockRejectedValueOnce(
+				new Error('Another program is using 127.0.0.1:47811.')
+			);
+			handler.handleMessage(client, { type: 'local_models_server_start', requestId: 'ms-4' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-4'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'Another program is using 127.0.0.1:47811.',
+			});
+		});
+
+		it('local_models_server_set applies the settings, then the build', async () => {
+			const order: string[] = [];
+			vi.mocked(updateModelServerConfigRequest).mockImplementationOnce(async () => {
+				order.push('settings');
+				return { state: 'running' } as never;
+			});
+			vi.mocked(installModelServerEngine).mockImplementationOnce(async () => {
+				order.push('build');
+				return {} as never;
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_server_set',
+				bind: 'network',
+				maxModels: 2,
+				rotateKey: true,
+				build: 'cpu',
+				requestId: 'ms-5',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-5'));
+			expect(updateModelServerConfigRequest).toHaveBeenCalledWith({
+				bind: 'network',
+				maxModels: 2,
+				rotateKey: true,
+			});
+			expect(installModelServerEngine).toHaveBeenCalledWith('cpu');
+			expect(order).toEqual(['settings', 'build']);
+			expect(lastResponse()).toMatchObject({ success: true });
+		});
+
+		it('local_models_server_set with only a build leaves the settings alone', async () => {
+			// The previous case called it once, and this file does not reset mocks between cases.
+			vi.mocked(updateModelServerConfigRequest).mockClear();
+			handler.handleMessage(client, {
+				type: 'local_models_server_set',
+				build: 'default',
+				requestId: 'ms-6',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-6'));
+			expect(updateModelServerConfigRequest).not.toHaveBeenCalled();
+			expect(installModelServerEngine).toHaveBeenCalledWith('default');
+		});
+
+		it('local_models_server_key answers with the key', async () => {
+			handler.handleMessage(client, { type: 'local_models_server_key', requestId: 'ms-7' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_key_result'));
+			expect(getModelServerKey).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({ success: true, key: 'sk-maestro-key' });
+		});
+
+		it('local_models_server_ensure makes the server ready and answers with its address and key', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_server_ensure',
+				model: ' gpt-oss-20b ',
+				requestId: 'ms-8',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_ensure_result'));
+			expect(modelServerForHarness).toHaveBeenCalledWith('gpt-oss-20b');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				baseUrl: 'http://127.0.0.1:47811',
+				key: 'sk-maestro-key',
+			});
+		});
+
+		it('local_models_server_ensure answers with the reason when the server cannot serve the model', async () => {
+			vi.mocked(modelServerForHarness).mockResolvedValueOnce({
+				ok: false,
+				error: 'gpt-oss 20B is not downloaded.',
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_server_ensure',
+				model: 'gpt-oss-20b',
+				requestId: 'ms-9',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-9'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'gpt-oss 20B is not downloaded.',
+			});
+			// A refusal carries no address and no key.
+			expect(lastResponse()).not.toHaveProperty('key');
+		});
+
+		it('local_models_server_ensure refuses a request that names no model', async () => {
+			vi.mocked(modelServerForHarness).mockClear();
+			handler.handleMessage(client, { type: 'local_models_server_ensure', requestId: 'ms-10' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-10'));
+			expect(lastResponse()).toMatchObject({ success: false });
+			expect(modelServerForHarness).not.toHaveBeenCalled();
+		});
+
+		it('local_models_run_on_test tests the stored agent and answers with the verdict', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_run_on_test',
+				agentId: ' agent-1 ',
+				// Only the agent's id crosses the bridge: a caller cannot hand the
+				// test a command, a directory or a target of its own.
+				target: { type: 'source', endpointId: 'ep-other', model: 'm' },
+				subject: { customPath: '/tmp/evil' },
+				requestId: 'ro-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_run_on_test_result'));
+			expect(testAgentRunOn).toHaveBeenCalledWith({ agentId: 'agent-1' });
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'ro-1',
+				result: { ok: true, model: 'qwen3:latest', reply: 'ready' },
+			});
+		});
+
+		it('local_models_run_on_test carries a refusal as a successful round trip', async () => {
+			vi.mocked(testAgentRunOn).mockResolvedValueOnce({
+				ok: false,
+				code: 'run-on-source-disabled',
+				message: 'The source "Ollama" is disabled.',
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_run_on_test',
+				agentId: 'agent-1',
+				requestId: 'ro-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ro-2'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				result: { ok: false, code: 'run-on-source-disabled' },
+			});
+		});
+
+		it('local_models_run_on_test refuses a request that names no agent', async () => {
+			vi.mocked(testAgentRunOn).mockClear();
+			handler.handleMessage(client, { type: 'local_models_run_on_test', requestId: 'ro-3' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ro-3'));
+			expect(lastResponse()).toMatchObject({ success: false });
+			expect(testAgentRunOn).not.toHaveBeenCalled();
+		});
+
+		it('system_one_status answers with the report, and asks the engine nothing', async () => {
+			handler.handleMessage(client, { type: 'system_one_status', requestId: 's1-1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_status_result'));
+			expect(getSystemOneReport).toHaveBeenCalled();
+			expect(testSystemOne).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1-1',
+				report: { engineLabel: 'Jev (TypeSafe cloud)' },
+			});
+		});
+
+		it('system_one_set hands the patch to the service, and reports a refusal with its reason', async () => {
+			const patch = { engine: 'openjev', openJevUrl: 'https://gpu.lan:8000' };
+			handler.handleMessage(client, { type: 'system_one_set', patch, requestId: 's1-2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_set_result'));
+			expect(updateSystemOneSettingsRequest).toHaveBeenCalledWith(patch);
+			expect(lastResponse()).toMatchObject({ success: true, requestId: 's1-2' });
+
+			vi.mocked(updateSystemOneSettingsRequest).mockRejectedValueOnce(
+				new Error('"gpt" is not an engine.')
+			);
+			handler.handleMessage(client, {
+				type: 'system_one_set',
+				patch: { engine: 'gpt' },
+				requestId: 's1-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-3'));
+			expect(lastResponse()).toMatchObject({ success: false, error: '"gpt" is not an engine.' });
+		});
+
+		it('system_one_key_set stores the key and never sends it back', async () => {
+			const key = 'sk-bridge-test-0123456789abcdef';
+			handler.handleMessage(client, {
+				type: 'system_one_key_set',
+				engine: 'jev-cloud',
+				key,
+				requestId: 's1-4',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_key_set_result'));
+			expect(setSystemOneKeyRequest).toHaveBeenCalledWith({ engine: 'jev-cloud', key });
+			expect(JSON.stringify(lastResponse())).not.toContain(key);
+		});
+
+		it('system_one_key_clear forgets the key of the engine named, or of the one in force', async () => {
+			handler.handleMessage(client, { type: 'system_one_key_clear', requestId: 's1-5' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_key_clear_result'));
+			expect(clearSystemOneKeyRequest).toHaveBeenCalledWith({ engine: undefined });
+
+			handler.handleMessage(client, {
+				type: 'system_one_key_clear',
+				engine: 'openjev',
+				requestId: 's1-6',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-6'));
+			expect(clearSystemOneKeyRequest).toHaveBeenLastCalledWith({ engine: 'openjev' });
+		});
+
+		it('system_one_test answers with the verdict, a failed one included', async () => {
+			handler.handleMessage(client, { type: 'system_one_test', requestId: 's1-7' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_test_result'));
+			expect(lastResponse()).toMatchObject({ success: true, result: { ok: true, latencyMs: 212 } });
+
+			vi.mocked(testSystemOne).mockResolvedValueOnce({
+				ok: false,
+				engine: 'jev-cloud',
+				engineLabel: 'Jev (TypeSafe cloud)',
+				code: 'timeout',
+				error: 'Jev (TypeSafe cloud) did not answer within 1500 ms.',
+			});
+			handler.handleMessage(client, { type: 'system_one_test', requestId: 's1-8' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-8'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				result: { ok: false, code: 'timeout' },
+			});
+		});
+
+		it('system_one_ledger answers with the page for the query, and reports a bad query', async () => {
+			const query = { taskId: 'cue-gate', outcome: 'timeout', limit: 10 };
+			handler.handleMessage(client, { type: 'system_one_ledger', query, requestId: 's1-9' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_ledger_result'));
+			expect(readSystemOneLedger).toHaveBeenLastCalledWith(query);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				page: { total: 1, entries: [{ id: 'decision-1', code: 'timeout' }] },
+			});
+
+			vi.mocked(readSystemOneLedger).mockImplementationOnce(() => {
+				throw new Error('"sideways" is not an outcome.');
+			});
+			handler.handleMessage(client, {
+				type: 'system_one_ledger',
+				query: { outcome: 'sideways' },
+				requestId: 's1-10',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-10'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: '"sideways" is not an outcome.',
+			});
+		});
+
+		it('system_one_agent_request hands the request and the caller to the service, and answers with its response', async () => {
+			const request = { kind: 'ask', verb: 'yes', state: 'The build is red.', questions: {} };
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request,
+				fromSessionId: 'agent-1',
+				fromTabId: 'tab-7',
+				// A caller cannot name the key, the engine or the budget: none of these is read.
+				apiKey: 'sk-mine',
+				engine: 'openjev',
+				requestId: 's1-agent-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_agent_result'));
+
+			expect(runAgentSystemOneRequest).toHaveBeenLastCalledWith(request, {
+				agentId: 'agent-1',
+				tabId: 'tab-7',
+			});
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1-agent-1',
+				response: { ok: true, engine: 'jev-cloud', calibrated: true, cached: false },
+			});
+		});
+
+		it('system_one_agent_request passes on a caller with no tab, and one that names nobody', async () => {
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request: { kind: 'rank' },
+				fromSessionId: '  agent-2  ',
+				requestId: 's1-agent-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-2'));
+			expect(runAgentSystemOneRequest).toHaveBeenLastCalledWith(
+				{ kind: 'rank' },
+				{ agentId: 'agent-2' }
+			);
+
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request: { kind: 'batch' },
+				// A tab with no agent names nobody.
+				fromTabId: 'tab-9',
+				requestId: 's1-agent-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-3'));
+			expect(runAgentSystemOneRequest).toHaveBeenLastCalledWith({ kind: 'batch' }, undefined);
+		});
+
+		it('system_one_usage hands the query and the caller to the service, and reports a bad query', async () => {
+			const query = { agentId: 'agent-2', since: 1_800_000_000_000 };
+			handler.handleMessage(client, {
+				type: 'system_one_usage',
+				query,
+				fromSessionId: ' agent-1 ',
+				requestId: 's1-usage-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_usage_result'));
+
+			expect(readSystemOneAgentUsage).toHaveBeenLastCalledWith(query, 'agent-1');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1-usage-1',
+				report: { retentionDays: 30, engine: 'jev-cloud', rows: [] },
+			});
+
+			// A caller that names nobody: a person at a terminal.
+			handler.handleMessage(client, { type: 'system_one_usage', requestId: 's1-usage-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-usage-2'));
+			expect(readSystemOneAgentUsage).toHaveBeenLastCalledWith(undefined, undefined);
+
+			vi.mocked(readSystemOneAgentUsage).mockRejectedValueOnce(
+				new Error('since is a time in epoch milliseconds.')
+			);
+			handler.handleMessage(client, {
+				type: 'system_one_usage',
+				query: { since: 'yesterday' },
+				requestId: 's1-usage-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-usage-3'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'since is a time in epoch milliseconds.',
+			});
+		});
+
+		it('system_one_access asks the service about the agent that was named, and answers with what it says', async () => {
+			handler.handleMessage(client, {
+				type: 'system_one_access',
+				agentId: 'agent-7',
+				requestId: 's1-access-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_access_result'));
+
+			// The agent asked ABOUT, not the caller: the CLI builds a prompt for the agent it spawns.
+			expect(getSystemOneAgentAccessRequest).toHaveBeenLastCalledWith('agent-7');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1-access-1',
+				access: { allowed: true, gate: null, engine: 'jev-cloud', calibrated: true },
+			});
+
+			// A refusal is an answer, not a failed round trip: the builder reads the gate.
+			vi.mocked(getSystemOneAgentAccessRequest).mockResolvedValueOnce({
+				allowed: false,
+				gate: 'agents-off',
+				message: 'System One is off for agents. Continue without System One.',
+				engine: 'jev-cloud',
+				engineLabel: 'Jev (TypeSafe cloud)',
+				calibrated: true,
+				budget: { dayStartedAt: 0, dailyBudgetUsd: 1, spentTodayUsd: 0, remainingTodayUsd: 1 },
+			});
+			handler.handleMessage(client, { type: 'system_one_access', requestId: 's1-access-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-access-2'));
+			expect(getSystemOneAgentAccessRequest).toHaveBeenLastCalledWith(undefined);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				access: { allowed: false, gate: 'agents-off' },
+			});
+
+			vi.mocked(getSystemOneAgentAccessRequest).mockRejectedValueOnce(
+				new Error('settings unreadable')
+			);
+			handler.handleMessage(client, { type: 'system_one_access', requestId: 's1-access-3' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-access-3'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'settings unreadable' });
+		});
+
+		it('model_route_turn routes the turn the request names, and carries no decision as an answer', async () => {
+			const request = { prompt: 'rename the helper', agentId: 'agent-7', timeoutMs: 5000 };
+			handler.handleMessage(client, {
+				type: 'model_route_turn',
+				request,
+				// The caller is another agent: the turn being routed is agent-7's, not its own.
+				fromSessionId: 'agent-caller',
+				requestId: 'route-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('model_route_turn_result'));
+
+			expect(routeTurnRequest).toHaveBeenLastCalledWith(request);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'route-1',
+				result: { tier: 'medium', effort: 'low', engine: { id: 'embedding-router' } },
+			});
+
+			// Off, slow or down is a result the caller resolves to the agent's default.
+			vi.mocked(routeTurnRequest).mockResolvedValueOnce({
+				skipped: 'off',
+				detail: 'Model routing is off.',
+				latencyMs: 0,
+			});
+			handler.handleMessage(client, { type: 'model_route_turn', request, requestId: 'route-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('route-2'));
+			expect(lastResponse()).toMatchObject({ success: true, result: { skipped: 'off' } });
+
+			// Only a request that cannot be read is a failed round trip.
+			vi.mocked(routeTurnRequest).mockRejectedValueOnce(
+				new Error("A routing request's prompt is text.")
+			);
+			handler.handleMessage(client, { type: 'model_route_turn', requestId: 'route-3' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('route-3'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: "A routing request's prompt is text.",
+			});
+		});
+
+		it('get_model_usage answers with the record for the range, and carries a failure under its own type', async () => {
+			handler.handleMessage(client, {
+				type: 'get_model_usage',
+				range: 'month',
+				requestId: 'usage-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('model_usage'));
+
+			expect(readModelUsage).toHaveBeenLastCalledWith('month');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'usage-1',
+				data: { range: 'month', sources: [] },
+			});
+
+			// No range is the service's to default, not the handler's.
+			handler.handleMessage(client, { type: 'get_model_usage', requestId: 'usage-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('usage-2'));
+			expect(readModelUsage).toHaveBeenLastCalledWith(undefined);
+
+			// A refused range answers as `model_usage` with the request's id: an
+			// `error` message carries no id and the CLI would wait out its timeout.
+			vi.mocked(readModelUsage).mockRejectedValueOnce(
+				new Error('Invalid range. Must be one of: day, week, month, quarter, year, all')
+			);
+			handler.handleMessage(client, {
+				type: 'get_model_usage',
+				range: 'fortnight',
+				requestId: 'usage-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('usage-3'));
+			expect(lastResponse()).toMatchObject({
+				type: 'model_usage',
+				success: false,
+				error: 'Invalid range. Must be one of: day, week, month, quarter, year, all',
+			});
+		});
+
+		it('model_route_correct records the correction the request names, and carries a refusal as an answer', async () => {
+			const request = { prompt: 'rename the helper', tier: 'high' };
+			const routedBefore = vi.mocked(routeTurnRequest).mock.calls.length;
+			handler.handleMessage(client, {
+				type: 'model_route_correct',
+				request,
+				requestId: 'correct-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('model_route_correct_result'));
+
+			expect(recordModelRoutingCorrectionRequest).toHaveBeenLastCalledWith(request);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'correct-1',
+				result: { ok: true, replaced: false, total: 1 },
+			});
+			// A correction is not a routing: the router is not asked.
+			expect(routeTurnRequest).toHaveBeenCalledTimes(routedBefore);
+
+			// A correction the store refuses is a result with the reason in it.
+			vi.mocked(recordModelRoutingCorrectionRequest).mockResolvedValueOnce({
+				ok: false,
+				message: 'There is no prompt to record a correction for.',
+			});
+			handler.handleMessage(client, {
+				type: 'model_route_correct',
+				request: { prompt: '  ', tier: 'low' },
+				requestId: 'correct-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('correct-2'));
+			expect(lastResponse()).toMatchObject({
+				type: 'model_route_correct_result',
+				success: true,
+				result: { ok: false, message: 'There is no prompt to record a correction for.' },
+			});
+
+			// Only a request that cannot be read is a failed round trip.
+			vi.mocked(recordModelRoutingCorrectionRequest).mockRejectedValueOnce(
+				new Error("A routing correction's tier is one of low, medium, high.")
+			);
+			handler.handleMessage(client, { type: 'model_route_correct', requestId: 'correct-3' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('correct-3'));
+			expect(recordModelRoutingCorrectionRequest).toHaveBeenLastCalledWith(undefined);
+			expect(lastResponse()).toMatchObject({
+				type: 'model_route_correct_result',
+				success: false,
+				error: "A routing correction's tier is one of low, medium, high.",
+			});
+		});
+
+		it('system_one_agent_request carries a refusal as a successful round trip, and a bug as a failed one', async () => {
+			vi.mocked(runAgentSystemOneRequest).mockResolvedValueOnce({
+				ok: false,
+				code: 'budget',
+				gate: 'budget-day',
+				message: "System One's budget for today is spent. Continue without System One.",
+			});
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request: {},
+				requestId: 's1-agent-4',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-4'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				response: { ok: false, code: 'budget', gate: 'budget-day' },
+			});
+
+			vi.mocked(runAgentSystemOneRequest).mockRejectedValueOnce(new Error('engine bug'));
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request: {},
+				requestId: 's1-agent-5',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-5'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'engine bug' });
+		});
+
+		it('local_models_tier_options answers with what the harness can launch a tier on', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_tier_options',
+				harness: 'codex',
+				refresh: true,
+				// Only the harness and the refresh flag are read.
+				catalog: [{ id: 'made-up' }],
+				requestId: 'to-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_tier_options_result'));
+			expect(listHarnessTierOptionsRequest).toHaveBeenCalledWith({
+				harness: 'codex',
+				refresh: true,
+			});
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'to-1',
+				options: [{ harness: 'codex', catalog: [{ id: 'gpt-6-luna', priority: 4 }] }],
+			});
+		});
+
+		it('local_models_tier_options answers a harness with no tiers as an error', async () => {
+			vi.mocked(listHarnessTierOptionsRequest).mockRejectedValueOnce(
+				new Error('Unknown harness "nope".')
+			);
+			handler.handleMessage(client, {
+				type: 'local_models_tier_options',
+				harness: 'nope',
+				requestId: 'to-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('to-2'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'Unknown harness "nope".' });
+		});
+
+		it('local_models_proxy_block answers with both sides of the block', async () => {
+			const hash = 'a'.repeat(64);
+			handler.handleMessage(client, { type: 'local_models_proxy_block', hash, requestId: 'pb-1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_proxy_block_result'));
+			expect(readTokenProxyBlock).toHaveBeenCalledWith(hash);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'pb-1',
+				block: { hash, original: 'long', compressed: 'short' },
+			});
+		});
+
+		it('local_models_proxy_block answers null for a block the cache does not hold, and an error for a value that is not a hash', async () => {
+			vi.mocked(readTokenProxyBlock).mockResolvedValueOnce(null);
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash: 'b'.repeat(64),
+				requestId: 'pb-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-2'));
+			expect(lastResponse()).toMatchObject({ success: true, block: null });
+
+			vi.mocked(readTokenProxyBlock).mockRejectedValueOnce(
+				new Error('A compressed block is named by its SHA-256 hash')
+			);
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash: '../x',
+				requestId: 'pb-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-3'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'A compressed block is named by its SHA-256 hash',
+			});
+		});
+
+		it('local_models_search passes the request through and answers with the verdict', async () => {
+			const request = { query: 'retry logic', mode: 'semantic', limit: 5 };
+			handler.handleMessage(client, { type: 'local_models_search', request, requestId: 's1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_search_result'));
+			expect(searchPastWorkRequest).toHaveBeenCalledWith(request);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1',
+				result: { status: 'ok', mode: 'semantic', hits: [{ sourceId: 'e1', score: 0.8 }] },
+			});
+		});
+
+		it('local_models_search reports a refused request as success: false', async () => {
+			vi.mocked(searchPastWorkRequest).mockRejectedValueOnce(new Error('A search needs a query.'));
+			handler.handleMessage(client, { type: 'local_models_search', requestId: 's2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_search_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'A search needs a query.' });
+		});
+
+		it('local_models_list answers with the listings and the footprint', async () => {
+			handler.handleMessage(client, { type: 'local_models_list', requestId: 'l1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_list_result'));
+			expect(listLocalModels).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'l1',
+				listings: [{ entry: { id: 'bge-small-en-v1.5' } }],
+				footprint: { bytes: 42 },
+			});
+		});
+
+		it('local_models_list reads the hardware only when the fit was asked for', async () => {
+			vi.mocked(resolveHardwareProfile).mockClear();
+			vi.mocked(addHuggingFaceModel).mockClear();
+			vi.mocked(previewHuggingFaceModel).mockClear();
+			handler.handleMessage(client, { type: 'local_models_list', requestId: 'l2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('l2'));
+			expect(resolveHardwareProfile).not.toHaveBeenCalled();
+			expect(lastResponse().hardware).toBeUndefined();
+
+			handler.handleMessage(client, { type: 'local_models_list', requestId: 'l3', fit: true });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('l3'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				hardware: { unifiedMemory: true, totalMemoryBytes: 16 * 1024 ** 3 },
+			});
+		});
+
+		it('local_models_hf_add adds the repo file and answers with its entry', async () => {
+			vi.mocked(resolveHardwareProfile).mockClear();
+			vi.mocked(addHuggingFaceModel).mockClear();
+			vi.mocked(previewHuggingFaceModel).mockClear();
+			handler.handleMessage(client, {
+				type: 'local_models_hf_add',
+				requestId: 'hf1',
+				repo: 'owner/repo',
+				file: 'model.gguf',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_hf_add_result'));
+			expect(addHuggingFaceModel).toHaveBeenCalledWith('owner/repo', 'model.gguf');
+			expect(previewHuggingFaceModel).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'hf1',
+				added: true,
+				entry: { id: 'hf-owner-model' },
+			});
+		});
+
+		it('local_models_hf_add with dryRun describes the model and saves nothing', async () => {
+			vi.mocked(resolveHardwareProfile).mockClear();
+			vi.mocked(addHuggingFaceModel).mockClear();
+			vi.mocked(previewHuggingFaceModel).mockClear();
+			handler.handleMessage(client, {
+				type: 'local_models_hf_add',
+				requestId: 'hf2',
+				repo: 'owner/repo',
+				file: 'model.gguf',
+				dryRun: true,
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('hf2'));
+			expect(previewHuggingFaceModel).toHaveBeenCalledWith('owner/repo', 'model.gguf');
+			expect(addHuggingFaceModel).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({ success: true, added: false, dryRun: true });
+		});
+
+		it('local_models_hf_add reports a refusal as success: false with its message', async () => {
+			vi.mocked(addHuggingFaceModel).mockResolvedValueOnce({
+				ok: false,
+				message: 'owner/repo is gated on Hugging Face.',
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_hf_add',
+				requestId: 'hf3',
+				repo: 'owner/repo',
+				file: 'model.gguf',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('hf3'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'owner/repo is gated on Hugging Face.',
+			});
+		});
+
+		it('local_models_hf_remove answers with the bytes reclaimed, or the refusal', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_hf_remove',
+				requestId: 'hf4',
+				modelId: 'hf-owner-model',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_hf_remove_result'));
+			expect(removeUserLocalModel).toHaveBeenCalledWith('hf-owner-model');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				id: 'hf-owner-model',
+				displayName: 'model',
+				bytes: 512,
+			});
+
+			vi.mocked(removeUserLocalModel).mockResolvedValueOnce({
+				ok: false,
+				message: 'No model you added has the id "x".',
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_hf_remove',
+				requestId: 'hf5',
+				modelId: 'x',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('hf5'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'No model you added has the id "x".',
+			});
+		});
+
+		it('local_models_download passes the model id through and returns the result', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_download',
+				requestId: 'dl1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_download_result'));
+			// The model AND its engine: the same call the Settings button makes.
+			expect(installLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'dl1',
+				result: { status: 'complete', runtime: { runtimeId: 'onnx', status: 'installed' } },
+			});
+		});
+
+		it('local_models_runtimes_list returns every engine', async () => {
+			handler.handleMessage(client, { type: 'local_models_runtimes_list', requestId: 'rl1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_runtimes_list_result'));
+			expect(listLocalRuntimes).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'rl1',
+				runtimes: [{ id: 'llama', installed: true }],
+			});
+		});
+
+		it('local_models_runtime_install installs one engine and answers with its listing', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_runtime_install',
+				requestId: 'ri1',
+				runtimeId: 'llama',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_runtime_install_result')
+			);
+			expect(installLocalRuntime).toHaveBeenCalledWith('llama');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'ri1',
+				runtime: { id: 'llama', installed: true },
+			});
+		});
+
+		it('local_models_runtime_install reports a refused install as a failure', async () => {
+			vi.mocked(installLocalRuntime).mockRejectedValueOnce(new Error('UnknownLocalRuntime'));
+			handler.handleMessage(client, {
+				type: 'local_models_runtime_install',
+				requestId: 'ri2',
+				runtimeId: 'nope',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_runtime_install_result')
+			);
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				requestId: 'ri2',
+				error: 'UnknownLocalRuntime',
+			});
+		});
+
+		it('local_models_pause passes the model id through and says whether it paused', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_pause',
+				requestId: 'p1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_pause_result'));
+			expect(pauseLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({ success: true, requestId: 'p1', paused: true });
+		});
+
+		it('local_models_pause reports an unknown model as success: false', async () => {
+			vi.mocked(pauseLocalModel).mockImplementationOnce(() => {
+				throw new Error('UnknownLocalModel: nope');
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_pause',
+				requestId: 'p2',
+				modelId: 'nope',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_pause_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'UnknownLocalModel: nope' });
+		});
+
+		it('local_models_cancel passes the model id through and says whether a job ran', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_cancel',
+				requestId: 'c1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_cancel_result'));
+			expect(cancelLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({ success: true, requestId: 'c1', cancelled: false });
+		});
+
+		it('local_models_verify passes the model id through and returns the verdict', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_verify',
+				requestId: 'v1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_verify_result'));
+			expect(verifyLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({ success: true, result: { ok: true } });
+		});
+
+		it('local_models_remove answers with the bytes reclaimed', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_remove',
+				requestId: 'rm1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_remove_result'));
+			expect(removeLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({ success: true, requestId: 'rm1', bytes: 2048 });
+		});
+
+		it('local_models_remove reports an unknown model as success: false', async () => {
+			vi.mocked(removeLocalModel).mockRejectedValueOnce(new Error('UnknownLocalModel'));
+			handler.handleMessage(client, {
+				type: 'local_models_remove',
+				requestId: 'rm2',
+				modelId: 'nope',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_remove_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'UnknownLocalModel' });
+		});
+
+		it('local_models_task_readiness reports an unknown task as success: false', async () => {
+			vi.mocked(resolveTaskReadinessRequest).mockRejectedValueOnce(new Error('Unknown task "x".'));
+			handler.handleMessage(client, {
+				type: 'local_models_task_readiness',
+				requestId: 'q2',
+				taskId: 'x',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_task_readiness_result')
+			);
+			expect(lastResponse()).toMatchObject({ success: false, error: 'Unknown task "x".' });
+		});
+	});
+
 	describe('Feedback and support package (maestro-cli feedback / support-package)', () => {
 		const lastResponse = () => {
 			const calls = (client.socket.send as any).mock.calls;
@@ -5898,6 +8107,54 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				path: '/tmp/p.zip',
 				requestId: 'sp-1',
 			});
+		});
+
+		it('support_package_create returns a secret-screen refusal and writes nothing', async () => {
+			const secretFindings = [
+				{ kind: 'slack-token', line: 12, preview: '••••••••wxyz', source: 'logs.json' },
+			];
+			vi.mocked(generateDebugPackage).mockResolvedValueOnce({
+				success: false,
+				error: 'Found 1 possible secret in the support package. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+				filesIncluded: [],
+				totalSizeBytes: 0,
+			} as any);
+			handler.handleMessage(client, {
+				type: 'support_package_create',
+				requestId: 'sp-secret',
+				outputDir: '/tmp/out',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('support_package_create_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				code: 'SECRETS_FOUND',
+				secretFindings,
+				requestId: 'sp-secret',
+			});
+			expect(lastResponse().path).toBeUndefined();
+		});
+
+		it('support_package_create passes allowSecrets only for a literal true', async () => {
+			vi.mocked(generateDebugPackage).mockClear();
+			handler.handleMessage(client, {
+				type: 'support_package_create',
+				requestId: 'sp-allow',
+				outputDir: '/tmp/out',
+				options: { allowSecrets: true },
+			});
+			await vi.waitFor(() => expect(generateDebugPackage).toHaveBeenCalledTimes(1));
+			expect(vi.mocked(generateDebugPackage).mock.calls[0][2]).toEqual({ allowSecrets: true });
+
+			handler.handleMessage(client, {
+				type: 'support_package_create',
+				requestId: 'sp-allow-2',
+				outputDir: '/tmp/out',
+				options: { allowSecrets: 'yes' },
+			});
+			await vi.waitFor(() => expect(generateDebugPackage).toHaveBeenCalledTimes(2));
+			expect(vi.mocked(generateDebugPackage).mock.calls[1][2]).toEqual({});
 		});
 
 		it('support_package_create refuses a relative outputDir', async () => {
@@ -5951,6 +8208,54 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(subscribeFeedbackIssue).toHaveBeenCalledWith({
 				issueNumber: 42,
 				comment: 'same here',
+				allowSecrets: false,
+			});
+		});
+
+		it('feedback_subscribe forwards allowSecrets and returns a secret-screen refusal', async () => {
+			const secretFindings = [{ kind: 'openai-key', line: 1, preview: '••••••••9xYz' }];
+			vi.mocked(subscribeFeedbackIssue).mockResolvedValueOnce({
+				success: false,
+				error: 'Found 1 possible secret in the comment. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+			} as any);
+			handler.handleMessage(client, {
+				type: 'feedback_subscribe',
+				requestId: 'fsub-secret',
+				issueNumber: 42,
+				comment: 'my key is sk-...',
+				allowSecrets: true,
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_subscribe_result'));
+			expect(subscribeFeedbackIssue).toHaveBeenLastCalledWith({
+				issueNumber: 42,
+				comment: 'my key is sk-...',
+				allowSecrets: true,
+			});
+			expect(lastResponse()).toMatchObject({ success: false, secretFindings });
+		});
+
+		it('feedback_submit returns a secret-screen refusal with its findings', async () => {
+			const secretFindings = [
+				{ kind: 'anthropic-key', line: 1, preview: '••••••••AbCd', source: 'Actual' },
+			];
+			vi.mocked(submitFeedbackConversation).mockResolvedValueOnce({
+				success: false,
+				error: 'Found 1 possible secret in the feedback. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+			} as any);
+			handler.handleMessage(client, {
+				type: 'feedback_submit',
+				requestId: 'sub-secret',
+				payload: { category: 'bug_report' },
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_submit_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				code: 'SECRETS_FOUND',
+				secretFindings,
 			});
 		});
 	});

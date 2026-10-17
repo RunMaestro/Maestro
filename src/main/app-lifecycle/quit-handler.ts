@@ -99,6 +99,10 @@ export interface QuitHandlerDependencies {
 	tunnelManager: typeof tunnelManagerInstance;
 	/** Function to close the stats database */
 	closeStatsDB: () => void;
+	/** Function to close the semantic index's embedding store */
+	closeEmbeddingStore: () => void;
+	/** Function to stop the Maestro model server, the whole process tree, at once */
+	stopModelServer?: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
 	/** Function to stop settings file watcher (optional, may not be started yet) */
@@ -176,6 +180,8 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getHistoryManager,
 		tunnelManager,
 		closeStatsDB,
+		closeEmbeddingStore,
+		stopModelServer,
 		stopCliWatcher,
 		stopSettingsWatcher,
 		releaseDataDirLock,
@@ -432,6 +438,16 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		logger.info('Killing all running processes', 'Shutdown');
 		getProcessManager()?.killAll({ shutdown: true });
 
+		// The model server and each model's process under it. It holds no state
+		// to write, so the whole tree goes at once.
+		if (stopModelServer) {
+			try {
+				stopModelServer();
+			} catch (err) {
+				logger.error(`Error stopping the model server on quit: ${err}`, 'Shutdown');
+			}
+		}
+
 		// Once more, now that nothing is running: a line a process printed on its
 		// way out can have moved that store after the save near the top.
 		try {
@@ -464,6 +480,8 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		logger.info('Closing stats database', 'Shutdown');
 		closeStatsDB();
 
+		// Close the embedding store (a no-op when semantic search never opened it)
+		closeEmbeddingStore();
 		// Last: the stores are flushed, so a TUI waiting to host may now take the directory.
 		releaseDataDirLock?.();
 

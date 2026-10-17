@@ -1,3 +1,5 @@
+import { agentRunOnSupport } from '../../local-models/run-on';
+import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType } from '../../types';
 import type {
 	ProviderMigrationState,
@@ -181,6 +183,12 @@ export function commitTranslationSession<T extends TranslatableSession>(
 				agentSessionId: tab.agentSessionId,
 				providerSessions: tab.providerSessions,
 			})),
+		// Model names and API gateways belong to the source provider. A source
+		// target survives only when the destination has a recipe for it.
+		gatewayUrl: undefined,
+		...OFF_TOKEN_PROXY_FIELDS,
+		tierTargets: undefined,
+		...(agentRunOnSupport(destination).supported ? {} : { runOn: undefined }),
 		customPath: undefined,
 		customArgs: undefined,
 		customEnvVars: undefined,

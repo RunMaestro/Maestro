@@ -33,6 +33,7 @@ import {
 	type MediaOpenMode,
 } from '../../shared/mediaTypes';
 import { resolveOwningAgent } from '../utils/owning-agent';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 interface OpenFileOptions {
 	agent?: string;
@@ -56,14 +57,14 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 
 	if (!remote && !fs.existsSync(target.absolutePath)) {
 		console.error(`Error: File not found: ${target.absolutePath}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (options.queue && !remote && !isMediaFile(target.absolutePath)) {
 		const error = `--queue only applies to audio and video files: ${target.absolutePath}`;
 		if (options.json) console.log(JSON.stringify({ success: false, error }));
 		else console.error(`Error: ${error}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 	const mediaMode: MediaOpenMode = options.queue ? 'queue' : 'play';
 	const displayName = remote
@@ -110,13 +111,13 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 			const error = result.error || 'Failed to open file';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -132,14 +133,14 @@ function resolveUrlTarget(url: string, options: OpenFileOptions): ResolvedTarget
 		new URL(url);
 	} catch {
 		console.error(`Error: Not a valid URL: ${url}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (options.agent) {
 		const session = getSessionById(options.agent);
 		if (!session) {
 			console.error(`Error: Agent not found: ${options.agent}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		return { sessionId: session.id, absolutePath: url };
 	}
@@ -149,7 +150,7 @@ function resolveUrlTarget(url: string, options: OpenFileOptions): ResolvedTarget
 		console.error(
 			`Error: the current directory is not inside any agent's working directory. Pick an agent with --agent <id>.`
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 	return { sessionId: owned.agent.id, absolutePath: url };
 }
@@ -173,7 +174,7 @@ function resolveTarget(filePath: string, options: OpenFileOptions): ResolvedTarg
 		const session = getSessionById(options.agent);
 		if (!session) {
 			console.error(`Error: Agent not found: ${options.agent}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		return { sessionId: session.id, absolutePath };
 	}
@@ -184,7 +185,7 @@ function resolveTarget(filePath: string, options: OpenFileOptions): ResolvedTarg
 		console.error(
 			`Error: ${absolutePath} is not inside any agent's working directory. Pick an agent with --agent <id>.`
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (owned.others.length > 0) {

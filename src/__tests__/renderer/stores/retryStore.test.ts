@@ -425,6 +425,61 @@ describe('firing the retry', () => {
 		);
 	});
 
+	// The router's answer is about the prompt, and the prompt resent is the one
+	// that was sent. So a resend on the Auto model keeps the answer rather than
+	// asking again, and a resend on a named model has no use for it.
+	it('resends a turn that went out on Auto with the answer the router gave it', () => {
+		const route = { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false };
+		setupSession('s10a', 't1', { customModel: 'auto', customEffort: 'low' });
+		noteDispatch(
+			's10a',
+			{
+				id: 'item-1',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'hi',
+				turnSettings: { model: 'auto', effort: 'high', route },
+			},
+			deps
+		);
+		scheduleRetryForError('s10a', 't1', quota());
+
+		retryNow('s10a', 't1');
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's10a',
+			expect.objectContaining({ turnSettings: { model: 'auto', effort: 'low', route } }),
+			deps
+		);
+	});
+
+	it('drops the answer when the agent has been moved to a named model since', () => {
+		const route = { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false };
+		setupSession('s10b', 't1', { customModel: 'opus' });
+		noteDispatch(
+			's10b',
+			{
+				id: 'item-1',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'hi',
+				turnSettings: { model: 'auto', route },
+			},
+			deps
+		);
+		scheduleRetryForError('s10b', 't1', quota());
+
+		retryNow('s10b', 't1');
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's10b',
+			expect.objectContaining({ turnSettings: { model: 'opus', effort: undefined } }),
+			deps
+		);
+	});
+
 	it('prefers the tab override over the agent default when re-codifying', () => {
 		const tab = createMockAITab({ id: 't1', customModel: 'sonnet', customEffort: 'medium' });
 		useSessionStore.setState({

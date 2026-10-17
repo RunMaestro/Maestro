@@ -2,7 +2,8 @@
  * Groups domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_groups, create_group,
- * rename_group, delete_group, move_session_to_group.
+ * rename_group, update_group, update_group_settings, delete_group,
+ * move_session_to_group.
  */
 
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -13,6 +14,7 @@ import {
 	type GroupClearableField,
 	type GroupUpdateRequest,
 } from '../../../../shared/groupAppearance';
+import { parseGroupSettingsUpdateRequest } from '../../../../shared/groupSettingsUpdate';
 
 /** Read an optional string field, rejecting a present-but-wrong-typed value. */
 function optionalString(
@@ -227,6 +229,54 @@ export function handleUpdateGroup(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to update group: ${error.message}`);
+		});
+}
+
+/**
+ * Handle update_group_settings message - write a group's Group Settings profile
+ * (the defaults a new agent starts with) and its pill label.
+ *
+ * The request's shape is checked here, before the renderer is asked to mutate
+ * anything. What only the renderer can judge (the profile's provider, the saved
+ * sources and remotes, the live agents) is judged there, and the whole request
+ * fails or applies as one. The reply carries the stored profile and, for a
+ * publish, the agents it reached and what it skipped.
+ */
+export function handleUpdateGroupSettings(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const groupId = message.groupId;
+	if (!groupId || typeof groupId !== 'string') {
+		ctx.sendError(client, 'Missing groupId');
+		return;
+	}
+
+	const { type: _type, groupId: _groupId, requestId: _requestId, ...rest } = message;
+	const parsed = parseGroupSettingsUpdateRequest(rest);
+	if (!parsed.ok) {
+		ctx.sendError(client, parsed.error);
+		return;
+	}
+
+	if (!ctx.callbacks.updateGroupSettings) {
+		ctx.sendError(client, 'Group settings updating not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.updateGroupSettings(groupId, parsed.request)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'update_group_settings_result',
+				...result,
+				groupId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to update group settings: ${error.message}`);
 		});
 }
 

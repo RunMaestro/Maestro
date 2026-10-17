@@ -6,6 +6,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 interface ListTerminalsOptions {
 	agent?: string;
@@ -34,7 +35,7 @@ export async function listTerminals(options: ListTerminalsOptions): Promise<void
 			sessionId = resolveAgentId(options.agent);
 		} catch (error) {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
+			exitWith(exitCodeForError(error));
 		}
 	}
 
@@ -52,7 +53,7 @@ export async function listTerminals(options: ListTerminalsOptions): Promise<void
 			const error = result.error || 'Failed to list terminal tabs';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const tabs = result.tabs ?? [];
@@ -82,6 +83,6 @@ export async function listTerminals(options: ListTerminalsOptions): Promise<void
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

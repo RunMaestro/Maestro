@@ -1020,7 +1020,11 @@ export const LogItem = memo(
 					    replaces it. */}
 					{!crossAgent &&
 						log.source !== 'user' &&
-						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
+						((isClaudeCode && showProviderModePill) ||
+							log.turnModel ||
+							log.turnEffort ||
+							log.turnRunOn ||
+							log.turnAuto) && (
 							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
 								{isClaudeCode &&
 									showProviderModePill &&
@@ -1043,7 +1047,13 @@ export const LogItem = memo(
 											</span>
 										);
 									})()}
-								<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
+								<TurnSettingPills
+									theme={theme}
+									model={log.turnModel}
+									effort={log.turnEffort}
+									runOn={log.turnRunOn}
+									auto={log.turnAuto}
+								/>
 							</div>
 						)}
 					{/* Jump to top of this message - bottom left corner */}

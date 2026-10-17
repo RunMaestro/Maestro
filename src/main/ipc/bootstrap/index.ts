@@ -59,6 +59,10 @@ import {
 	registerTabsHandlers,
 	registerContextTimelineHandlers,
 	registerPianolaHandlers,
+	registerACappellaHandlers,
+	stopVoiceSessionForWindow,
+	registerACappellaModelsHandlers,
+	registerLocalModelsHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
 	registerCoworkingHandlers,
@@ -71,12 +75,14 @@ import {
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
 import { saveWindowState } from '../../window-state-persistence';
+import { getQuickChatController } from '../../quick-chat';
 import { ensureCoworkingServerScript } from '../../coworking/coworking-server-paths';
 import { startCoworkingBridge } from '../../coworking/coworking-bridge';
 import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
+import { syncTokenProxy } from '../../local-models/proxy/service';
 import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
@@ -266,6 +272,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 				logger.error('Could not register new Pianola watches', '[Pianola]', error);
 				void captureException(error, { operation: 'pianola:autoWatchNewSessions' });
 			}
+			// An agent's gateway is part of what was just written, and this store
+			// raises no change event. A no-op (no disk, no scan) until the token
+			// proxy has a port; it never rejects.
+			void syncTokenProxy();
 		},
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
@@ -356,6 +366,73 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		});
 	}
 
+	// Register A Cappella handlers (voice sessions). Registration is free: the
+	// session service, its providers, and the dispatch executor are all built
+	// lazily on the first start-session, so an app with the Encore Feature off
+	// pays nothing for these channels being present.
+	registerACappellaHandlers({
+		settingsStore: deps.settingsStore,
+		getMainWindow: deps.getMainWindow,
+		// Multi-window dispatch: a spoken instruction has to land in the window that
+		// owns the agent. Sending it to whichever window is "main" would activate an
+		// agent that window does not own, which is how a window ends up showing
+		// "No agents".
+		getWindowForSession: (agentSessionId: string) => {
+			const windowId = deps.windowRegistry.getWindowForSession(agentSessionId);
+			return windowId ? (deps.windowRegistry.get(windowId)?.browserWindow ?? null) : null;
+		},
+		// Which window's HUD a voice session belongs to. Voice events are broadcast
+		// to every window like every other main -> renderer push, so this is what
+		// keeps a session the user opened in one window from drawing a HUD in all of
+		// them. A trigger with no window behind it (global hotkey, wake word, paired
+		// phone) lands on the focused window.
+		resolveVoiceWindowId: (sender) =>
+			(sender
+				? deps.windowRegistry.findBySender(sender)
+				: deps.windowRegistry.getFocusedAppWindow()
+			)?.id ?? null,
+		// A session bound to Quick Chat is shown by its window and delivered by
+		// its `send`. The controller is created after these handlers, so it is
+		// read when a session asks for it.
+		getQuickChat: getQuickChatController,
+		safeSend: deps.safeSend,
+		audioHostDeps: deps.acappellaAudioHostDeps,
+		// The paired-device transport rides the web server's authenticated socket,
+		// so the QR code cannot be produced without its token and port.
+		getWebServer: deps.getWebServer,
+		// What the `voiceCurrentAgent` hotkey binds to. The renderer is the only
+		// thing that knows which agent is on screen, and it persists that here on
+		// every switch, so main can answer without a round trip - which matters,
+		// because a global hotkey handler cannot await one.
+		getFocusedAgentSessionId: () =>
+			(deps.sessionsStore.get('activeSessionId') as string | undefined) || null,
+		// The event source for the agent-output tap. It is the SAME emitter the
+		// desktop transcript listens to, which is what keeps what is spoken and what
+		// is on screen from drifting apart.
+		getProcessManager: () => deps.getProcessManager(),
+		getAgentType: (agentSessionId: string) => {
+			const sessions = (deps.sessionsStore.get('sessions', []) ?? []) as Array<{
+				id?: string;
+				agentType?: string;
+			}>;
+			return sessions.find((session) => session.id === agentSessionId)?.agentType;
+		},
+	});
+
+	// Register A Cappella model handlers (catalog, download, verify, disk). Also
+	// free: the catalog is a frozen constant and the downloader is built lazily, so
+	// nothing here reaches the network until the user presses Download.
+	registerACappellaModelsHandlers({
+		settingsStore: deps.settingsStore,
+		safeSend: deps.safeSend,
+	});
+
+	// Register the core Local Models handlers (`localModels:*`). Ungated, because
+	// Local Models is a core service voice is only one consumer of; the A Cappella
+	// channels above delegate to the same service. Equally free: nothing reaches
+	// the network until the user presses Download or Install.
+	registerLocalModelsHandlers({ safeSend: deps.safeSend });
+
 	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
 	// The manager is constructed during core-service init above; guard for types.
 	const pluginManager = deps.getPluginManager();
@@ -445,6 +522,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	deps.windowRegistry.onChange((change) => {
 		if ((change.type === 'name-changed' || change.type === 'panel-changed') && change.windowId) {
 			saveWindowState(deps.windowStateStore, deps.windowRegistry, change.windowId);
+		}
+		// A voice session is shown by exactly one window, so closing that window
+		// would otherwise leave an open microphone with no surface anywhere.
+		if (change.type === 'removed' && change.windowId) {
+			void stopVoiceSessionForWindow(change.windowId);
 		}
 	});
 
@@ -573,6 +655,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
+		safeSend: deps.safeSend,
 	});
 
 	// AI Command handlers (plain-English request -> one shell command line).

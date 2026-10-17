@@ -122,8 +122,11 @@ function accessLabel(dir: AdditionalDirectory): string {
  * Make a freeform description safe to drop into a markdown table cell: collapse
  * any newlines/runs of whitespace to single spaces and escape pipes so a stray
  * `|` in the user's hint can't break the table.
+ *
+ * Exported for the other prompt tables that carry a Conductor-written Notes
+ * column (`formatPeerAgentsForPrompt` in `./peerAgents`).
  */
-function sanitizeDescriptionCell(description: string): string {
+export function sanitizeDescriptionCell(description: string): string {
 	return description.trim().replace(/\s+/g, ' ').replace(/\|/g, '\\|');
 }
 

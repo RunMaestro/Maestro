@@ -139,7 +139,8 @@ describe('cue model', () => {
 	});
 
 	it('warns at write time when the provider cannot honor a tier', async () => {
-		mockReadSessions.mockReturnValue([session({ projectRoot, toolType: 'codex' })]);
+		// Copilot-CLI: a provider with no tier table. Codex has one (by model family).
+		mockReadSessions.mockReturnValue([session({ projectRoot, toolType: 'copilot-cli' })]);
 		writeCueYaml(projectRoot, [review]);
 
 		await cueModel('review', { tier: 'high', json: true });
@@ -147,7 +148,7 @@ describe('cue model', () => {
 		const out = jsonOutput();
 		expect(out.tier).toBe('high');
 		expect(out.warnings).toHaveLength(1);
-		expect((out.warnings as string[])[0]).toMatch(/codex has no model tier mapping/);
+		expect((out.warnings as string[])[0]).toMatch(/copilot-cli has no model tier mapping/);
 	});
 
 	it('prints a human summary with the resolved model', async () => {

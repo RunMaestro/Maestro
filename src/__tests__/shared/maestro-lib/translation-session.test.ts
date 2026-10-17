@@ -6,8 +6,6 @@ import {
 	translatedHistorySessionId,
 	type TranslatableSession,
 } from '../../../shared/maestro-lib/translation/session';
-import { switchTabProvider as rendererSwitch } from '../../../renderer/utils/providerTabSessions';
-import { switchTabProvider } from '../../../shared/maestro-lib/translation/session';
 
 describe('one provider mapping commit', () => {
 	it.each(['open', 'closed', 'inventory'] as const)(
@@ -226,7 +224,6 @@ describe('one provider mapping commit', () => {
 		expect(result.filePreviewTabs).toBe(session.filePreviewTabs);
 		expect(result.closedTabHistory![0].tab.agentSessionId).toBe('new-codex-closed');
 		expect(translationSessionTabs(session)).toHaveLength(2);
-		expect(rendererSwitch).toBe(switchTabProvider);
 	});
 	it('holds next turns until deferred/staged migrations settle', () => {
 		const base = {
@@ -237,5 +234,35 @@ describe('one provider mapping commit', () => {
 		expect(migrationHoldsTurns({ ...base, state: 'deferred' })).toBe(true);
 		expect(migrationHoldsTurns({ ...base, state: 'committed' })).toBe(false);
 		expect(migrationHoldsTurns(undefined)).toBe(false);
+	});
+});
+
+describe('provider-specific model routing after translation', () => {
+	const target = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' } as const;
+	const session: TranslatableSession = {
+		id: 'agent',
+		toolType: 'claude-code',
+		aiTabs: [],
+		runOn: target,
+		tierTargets: { low: target, high: { type: 'provider-model', model: 'opus' } },
+		gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+		tokenProxyMode: 'passthrough',
+		backgroundRequests: { target },
+	};
+	it('keeps the source target when the destination harness has a recipe', () => {
+		expect(commitTranslationSession(session, 'codex', 'migration', []).runOn).toEqual(target);
+	});
+	it('drops a source target the destination harness cannot run', () => {
+		expect(commitTranslationSession(session, 'gemini-cli', 'migration', []).runOn).toBeUndefined();
+	});
+	it('clears source-provider tier model names', () => {
+		expect(commitTranslationSession(session, 'codex', 'migration', []).tierTargets).toBeUndefined();
+	});
+	it('clears the source API gateway, proxy mode and background request target', () => {
+		const updated = commitTranslationSession(session, 'codex', 'migration', []);
+		expect(updated.gatewayUrl).toBeUndefined();
+		expect(updated.tokenProxyMode).toBeUndefined();
+		expect(updated.backgroundRequests).toBeUndefined();
+		expect(session.gatewayUrl).toBe('http://127.0.0.1:48123/anthropic');
 	});
 });

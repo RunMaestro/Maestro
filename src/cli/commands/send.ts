@@ -3,9 +3,19 @@
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-capture';
-import { resolveAgentId, getSessionById, addHistoryEntry } from '../services/storage';
+import {
+	resolveAgentId,
+	getSessionById,
+	addHistoryEntry,
+	readHarnessTierDefaults,
+} from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { requestCliSynopsis } from '../services/synopsis';
+import { admitCliConsult } from '../services/consult-budget-guard';
+import { resolveCliAutoTurn } from '../services/auto-turn';
+import { isAutoModel, isTurnModelName } from '../../shared/autoModel';
+import { autoModelProblem, autoTurnReport, type AutoTurnReport } from '../../shared/autoTurn';
+import { turnRunOnTarget } from '../../shared/autorunTurnSettings';
 import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
@@ -25,11 +35,18 @@ import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface SendOptions {
 	session?: string;
 	readOnly?: boolean;
 	tab?: boolean;
+	/**
+	 * `--model <model>`: this one turn's model, in place of the agent's own.
+	 * `auto` asks the desktop's model router for the tier and effort the message
+	 * needs, as a turn of an agent set to Auto does.
+	 */
+	model?: string;
 	/** Fail closed when the desktop cannot start a run with plugin tools. */
 	requirePluginTools?: boolean;
 	/** Require an actual successful call to this namespaced plugin tool ID. */
@@ -187,6 +204,8 @@ interface SendResponse {
 	toolReceipts?: PluginToolReceipt[];
 	/** How the turn ended: `completed`, `completed-with-warning`, `interrupted` or `crashed`. */
 	outcome?: TurnOutcome;
+	/** Set for a turn on the Auto model: how its pill reads, and what the router did. */
+	auto?: AutoTurnReport;
 	usage: {
 		inputTokens: number;
 		outputTokens: number;
@@ -206,9 +225,10 @@ interface DesktopSendAgentReply {
 	error?: string;
 	usageStats?: AgentResult['usageStats'];
 	toolReceipts?: PluginToolReceipt[];
+	auto?: AutoTurnReport;
 }
 
-type SendAgentResult = AgentResult & { toolReceipts?: PluginToolReceipt[] };
+type SendAgentResult = AgentResult & { toolReceipts?: PluginToolReceipt[]; auto?: AutoTurnReport };
 
 function emitErrorJson(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
@@ -246,6 +266,7 @@ function buildResponse(
 		...(result.success ? {} : { error: result.error }),
 		...(result.toolReceipts !== undefined ? { toolReceipts: result.toolReceipts } : {}),
 		...(result.outcome ? { outcome: result.outcome } : {}),
+		...(result.auto ? { auto: result.auto } : {}),
 		usage,
 	};
 }
@@ -266,13 +287,13 @@ export async function send(
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : 'Unknown error';
 		emitErrorJson(msg, 'AGENT_NOT_FOUND');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const agent = getSessionById(agentId);
 	if (!agent) {
 		emitErrorJson(`Agent not found: ${agentIdArg}`, 'AGENT_NOT_FOUND');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// Validate agent type is supported for CLI spawning
@@ -282,7 +303,7 @@ export async function send(
 			`Agent type "${agent.toolType}" is not supported for send mode.`,
 			'AGENT_UNSUPPORTED'
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// Verify agent CLI is available
@@ -290,8 +311,33 @@ export async function send(
 	if (!detection.available) {
 		const errorCode = `${agent.toolType.toUpperCase().replace(/-/g, '_')}_NOT_FOUND`;
 		emitErrorJson(`${def.name} CLI not found. Please install ${def.name}.`, errorCode);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
+
+	// `--model`: this one turn's model. Checked before anything is started: a
+	// value that cannot be a model name, and an `auto` that would change nothing
+	// for this agent (the pickers do not offer it; the CLI refuses it by name).
+	const turnModel = options.model;
+	if (turnModel !== undefined) {
+		if (!isTurnModelName(turnModel)) {
+			emitErrorJson(
+				'--model takes a model name, or "auto" to let the model router decide.',
+				'INVALID_MODEL'
+			);
+			exitWith(ExitCode.GeneralError);
+			return;
+		}
+		const autoProblem = isAutoModel(turnModel)
+			? autoModelProblem(agent, readHarnessTierDefaults())
+			: null;
+		if (autoProblem) {
+			emitErrorJson(`--model auto: ${autoProblem}`, 'AUTO_MODEL_UNAVAILABLE');
+			exitWith(ExitCode.GeneralError);
+			return;
+		}
+	}
+	// What the turn runs on when nothing routes it: `--model`, else the agent's own.
+	const sendModel = turnModel ?? agent.customModel;
 
 	// Only resume a session when explicitly requested via --session flag.
 	// Without -s, always create a fresh session to prevent session leakage
@@ -300,7 +346,7 @@ export async function send(
 	const requiredToolId = options.requireToolReceipt?.trim();
 	if (options.requireToolReceipt !== undefined && !requiredToolId) {
 		emitErrorJson('A required plugin tool ID must be provided', 'INVALID_PLUGIN_TOOL_ID');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 	const requirePluginHost = options.requirePluginTools || !!requiredToolId;
@@ -314,7 +360,7 @@ export async function send(
 			'Verified local plugin tools are unavailable for this agent',
 			'PLUGIN_TOOLS_UNAVAILABLE'
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -352,9 +398,26 @@ export async function send(
 			'A desktop-backed plugin-tool run is unavailable for this request',
 			'PLUGIN_TOOLS_UNAVAILABLE'
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
+
+	// The consult budget, checked last so a send that was never going to start
+	// spends nothing. A send from an agent's shell is a consult made while
+	// working on some user message: it spends one from that message's chain, and
+	// when the chain is out it is refused here, loudly, because a silent no-op
+	// would read to the calling agent as a peer with nothing to say. A send the
+	// user runs is their own message and always passes. Either way the target is
+	// handed its place in the chain, on both routes below, so what IT sends and
+	// asks is counted against the same budget (see admitConsult).
+	const admission = admitCliConsult();
+	if (!admission.allowed) {
+		desktop?.disconnect();
+		emitErrorJson(admission.message, admission.code);
+		exitWith(ExitCode.GeneralError);
+		return;
+	}
+	const consultChain = admission.chain;
 
 	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
 	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
@@ -394,6 +457,8 @@ export async function send(
 								prompt: agentPrompt,
 								providerSessionId: agentSessionId || undefined,
 								...(requiredToolId ? { requiredToolId } : {}),
+								...(turnModel !== undefined ? { model: turnModel } : {}),
+								consultChain,
 							},
 							'plugins_send_agent_result',
 							HEADLESS_RUN_COMPLETION_TIMEOUT_MS
@@ -440,6 +505,7 @@ export async function send(
 									: 'Required plugin tool returned no delivery receipt'),
 							usageStats: reply.usageStats,
 							...(requiredToolId ? { toolReceipts: reply.toolReceipts ?? [] } : {}),
+							...(reply.auto ? { auto: reply.auto } : {}),
 						};
 					}
 					if (requirePluginHost) {
@@ -449,19 +515,42 @@ export async function send(
 						};
 					}
 				}
+				// A turn on the Auto model (the agent's own setting, or `--model
+				// auto` for this one send) has no model of its own to pass:
+				// the desktop's model router decides this turn's model and effort,
+				// and the place when the tier names one. With no desktop to ask (or
+				// no decision) the turn runs on the agent's default. A tier target
+				// that cannot be used fails the send by name. (A send the desktop
+				// runs, above, is routed there, by the same resolver.)
+				const autoTurn = isAutoModel(sendModel)
+					? await resolveCliAutoTurn({
+							agent,
+							prompt: message,
+							agentEffort: agent.customEffort,
+							client: desktop,
+						})
+					: undefined;
+				if (autoTurn?.refusal) return { success: false, error: autoTurn.refusal.message };
+				for (const warning of autoTurn?.warnings ?? []) console.error(`Warning: ${warning}`);
 				const appendSystemPrompt =
-					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
-				return spawnAgent(agent.toolType, agent.cwd, agentPrompt, agentSessionId, {
+					options.systemPrompt !== false
+						? await prepareMaestroSystemPromptCli(agent, { consultChain })
+						: undefined;
+				const spawned = await spawnAgent(agent.toolType, agent.cwd, agentPrompt, agentSessionId, {
 					signal: interrupt.signal,
 					readOnlyMode: options.readOnly,
 					// A send Cue started is still Cue's turn on this agent. Left
 					// unset otherwise, so the turn keeps the default origin.
 					...(origin.kind === 'cue' ? { querySource: 'cue' as const } : {}),
-					customModel: agent.customModel,
-					customEffort: agent.customEffort,
+					consultChain,
+					customModel: autoTurn ? autoTurn.model : sendModel,
+					customEffort: autoTurn ? autoTurn.effort : agent.customEffort,
 					customArgs: agent.customArgs,
 					additionalDirectories: agent.additionalDirectories,
 					customEnvVars: agent.customEnvVars,
+					gatewayUrl: agent.gatewayUrl,
+					// The tier's target when Auto decided the place, else the agent's own.
+					runOn: turnRunOnTarget(autoTurn ?? {}, agent.runOn),
 					sshRemoteConfig: agent.sessionSshRemoteConfig,
 					appendSystemPrompt,
 					// Honor the agent's Claude token source for `maestro-cli send` turns.
@@ -469,6 +558,7 @@ export async function send(
 					maestroPMode: agent.maestroPMode,
 					maestroPPath: agent.maestroPPath,
 				});
+				return autoTurn ? { ...spawned, auto: autoTurnReport(autoTurn) } : spawned;
 			},
 			settlementFromAgentResult
 		);
@@ -498,7 +588,7 @@ export async function send(
 		// would otherwise see a silent non-zero exit.
 		console.error(`maestro-cli send failed: ${result.error ?? 'unknown error'}`);
 		// 130 is the shell convention for an interrupt; 1 stays for real failures.
-		process.exit(result.outcome === 'interrupted' ? 130 : 1);
+		exitWith(result.outcome === 'interrupted' ? ExitCode.Interrupted : ExitCode.GeneralError);
 	}
 
 	// If --tab flag is set, focus the session tab in Maestro desktop

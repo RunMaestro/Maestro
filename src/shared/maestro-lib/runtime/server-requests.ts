@@ -12,6 +12,7 @@
  * transport answers with the bridge's `echo`, the signal a client reads as "unsupported".
  */
 
+import { parseConsultChain } from '../../consultBudget';
 import type { AgentRecord } from '../store/records';
 import { parseProcessId } from '../client/bridge-frames';
 import type {
@@ -751,6 +752,9 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 			case 'cross_agent_ask': {
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
+					...(parseConsultChain(message.consultChain)
+						? { consultChain: parseConsultChain(message.consultChain) }
+						: {}),
 					question: typeof message.question === 'string' ? message.question : '',
 					...(str(message.fromSessionId) ? { fromAgentId: str(message.fromSessionId) } : {}),
 					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),

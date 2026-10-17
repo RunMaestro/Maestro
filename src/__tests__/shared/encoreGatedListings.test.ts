@@ -22,6 +22,7 @@ describe('isPromptAvailable', () => {
 			expect.arrayContaining([
 				'pianola-system',
 				'computer-history-system',
+				'computer-history-digest-local',
 				'concerto-system',
 				'maestro-run-system',
 				'director-notes',

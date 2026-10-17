@@ -2,7 +2,7 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
 import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
@@ -63,10 +63,11 @@ import {
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
 import { reference } from './commands/reference';
+import { applyCommandExamples } from './command-examples';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
-import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
+import { cueEnable, cueDisable, cueGate, cueScreen, cueActivity } from './commands/cue-control';
 import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
 import { cueModel } from './commands/cue-model';
@@ -91,6 +92,8 @@ import { removeGroup } from './commands/remove-group';
 import { createWorktree } from './commands/create-worktree';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
+import { collectRepeatable } from './services/peer-flags';
+import { PICKABLE_AGENT_IDS } from '../shared/agentMetadata';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
@@ -123,8 +126,121 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { notifySpeak } from './commands/notify-speak';
 import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
+import {
+	modelsEndpointsAdd,
+	modelsEndpointsDetect,
+	modelsEndpointsList,
+	modelsEndpointsModels,
+	modelsEndpointsRemove,
+	modelsEndpointsTest,
+	modelsEndpointsUpdate,
+} from './commands/models-endpoints';
+import { modelsConfigSet, modelsConfigShow } from './commands/models-config';
+import { modelsAssign, modelsTasks } from './commands/models-assign';
+import { loadUserLocalModels } from './services/storage';
+import {
+	modelsAddHf,
+	modelsCancel,
+	modelsInstall,
+	modelsList,
+	modelsRemoveHf,
+	modelsPause,
+	modelsRemove,
+	modelsVerify,
+} from './commands/models-manage';
+import { modelsRun } from './commands/models-run';
+import { modelsRuntimesInstall, modelsRuntimesList } from './commands/models-runtimes';
+import { modelsIndex } from './commands/models-index';
+import { modelsProxyBlock, modelsProxyStatus } from './commands/models-proxy';
+import {
+	modelsTiersList,
+	modelsTiersOptions,
+	modelsTiersReset,
+	modelsTiersSet,
+	modelsTiersSuggest,
+} from './commands/models-tiers';
+import {
+	modelsServerKey,
+	modelsServerSet,
+	modelsServerStart,
+	modelsServerStatus,
+	modelsServerStop,
+} from './commands/models-server';
+import {
+	systemOneKeyClear,
+	systemOneKeySet,
+	systemOneLedger,
+	systemOneSetAgents,
+	systemOneSetBudget,
+	systemOneSetEngine,
+	systemOneSetFailPolicy,
+	systemOneSetKeepInputs,
+	systemOneSetTimeout,
+	systemOneStatus,
+	systemOneTest,
+} from './commands/system-one';
+import { registerSystemOneAgentCommands } from './commands/system-one-ask';
+import { systemOneRoute } from './commands/system-one-route';
+import { modelsStatus } from './commands/models-status';
+import {
+	voiceWakeAdd,
+	voiceWakeClearBackground,
+	voiceWakeList,
+	voiceWakeRecord,
+	voiceWakeRemove,
+	voiceWakeStatus,
+	voiceWakeStop,
+	voiceWakeTrain,
+	voiceWakeUndo,
+} from './commands/voice-wake';
+import {
+	voiceInputList,
+	voiceInputSet,
+	voiceLatency,
+	voiceListen,
+	voiceMute,
+	voiceScope,
+	voiceSelfTest,
+	voiceSend,
+	voiceSetup,
+	voiceStart,
+	voiceStatus,
+	voiceStop,
+	voiceStopReply,
+	voiceUnmute,
+	voiceVolume,
+	voiceWait,
+	voiceWakeTest,
+} from './commands/voice';
+import {
+	voiceCredentialsClear,
+	voiceCredentialsList,
+	voiceCredentialsSet,
+	voiceCredentialsTest,
+	voiceProvidersList,
+	voiceProvidersSet,
+	voiceVoicesList,
+	voiceVoicesPreview,
+	voiceVoicesSet,
+	voiceWakePhraseClear,
+	voiceWakePhraseList,
+	voiceWakePhraseSet,
+} from './commands/voice-providers';
+import {
+	voiceDevicesDisconnect,
+	voiceDevicesDiscovery,
+	voiceDevicesForget,
+	voiceDevicesList,
+	voiceDevicesRename,
+	voiceDevicesRevoke,
+	voiceDevicesRevokeAll,
+	voiceDevicesTestConnection,
+} from './commands/voice-devices';
+import { search } from './commands/search';
+import { tabSuggestCleanup } from './commands/tab-suggest-cleanup';
 import { quickChat } from './commands/quick-chat';
 import { maestroRun } from './commands/maestro-run';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
@@ -150,10 +266,13 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsQuery, statsTokens } from './commands/stats';
+import { stats, statsModels, statsQuery, statsTokens } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
+import { groupSettings } from './commands/group-settings';
+import { updateGroupSettings } from './commands/update-group-settings';
+import { delegationGraph } from './commands/delegation-graph';
 import {
 	stopAutoRun,
 	resumeAutoRun,
@@ -166,6 +285,7 @@ import {
 import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
+import { agentTestRunOn } from './commands/agent-test-run-on';
 import {
 	tabNew,
 	tabClose,
@@ -185,7 +305,7 @@ import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
 import { gloss } from './commands/gloss';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
-import { encoreList, encoreSet } from './commands/encore';
+import { ENCORE_FEATURE_KEYS, encoreList, encoreSet } from './commands/encore';
 import {
 	computerHistoryApps,
 	computerHistoryClear,
@@ -237,6 +357,7 @@ import {
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
 import { logger } from '../main/utils/logger';
+import { ExitCode, exitWith } from './exit-codes';
 
 import { registerLiteCommands } from './commands/lite';
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
@@ -378,8 +499,11 @@ const show = program.command('show').description('Show details of a resource');
 
 show
 	.command('agent <id>')
-	.description('Show agent details including history and usage stats')
+	.description(
+		'Show agent details: settings, the environment it is spawned with, peers, history and usage stats'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
+	.option('--show-secrets', 'Print secret environment values in full instead of masked')
 	.action(showAgent);
 
 show
@@ -500,6 +624,10 @@ program
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
+	.option(
+		'--model <model>',
+		'Run this one turn on a model other than the agent\'s own. "auto" asks the model router for the tier and effort this message needs (see: s1 route)'
+	)
 	.option('--require-plugin-tools', 'Fail if a desktop-backed run with plugin tools is unavailable')
 	.option(
 		'--require-tool-receipt <tool-id>',
@@ -514,6 +642,7 @@ program
 		'Do not write a History entry for this turn (written by default, desktop app running or not)'
 	)
 	.option('--no-synopsis', 'Skip the synopsis turn; the History entry carries the response instead')
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -573,6 +702,7 @@ program
 		'--callback-timeout <seconds>',
 		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
 	)
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(dispatch);
 
 // Ask command - the agent-to-agent question. `dispatch` hands WORK to an agent
@@ -613,12 +743,14 @@ queue
 		'-a, --agent <id>',
 		'Only list items for this agent (default: every agent with queued items)'
 	)
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(queueList);
 
 queue
 	.command('remove <item-id>')
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(queueRemove);
 
 queue
@@ -651,6 +783,7 @@ queue
 		'Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.'
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(queueSteer);
 
 // Window commands - the CLI half of the Left Bar's "Move to Window" menus (on an
@@ -952,6 +1085,12 @@ program
 	.command('open [surface]')
 	.description('Open a Maestro modal or dashboard (use --list to see every surface)')
 	.option('-t, --tab <tab>', 'Deep-link to a tab within the surface')
+	.option('--sub-tab <sub-tab>', 'Deep-link to a tab inside that tab (needs --tab)')
+	.option(
+		'-g, --group <id>',
+		'Open the surface on one agent group (Delegation Graph, Group Settings)'
+	)
+	.option('-a, --agent <id>', "Open one agent's surface for this agent (Edit Agent)")
 	.option('--list', 'List every openable surface, its tabs, and its shortcut')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openModal);
@@ -1103,6 +1242,7 @@ program
 		'--ignore-model-hints',
 		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(autoRun);
 
 // Auto Run control commands - stop a run and recover from an error pause. These
@@ -1275,6 +1415,45 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueDisable);
 
+// Cue gate - the pipeline editor's Gate field: a plain-language condition the
+// Local Models `cue-gate` task checks before an event starts a run. With no
+// flag it prints the gate, so a write can be read back.
+cue
+	.command('gate <subscription>')
+	.description(
+		"Show, set, or remove a subscription's gate (a condition a local model checks before a run starts)"
+	)
+	.option('--set <condition>', 'Set the gate: a condition the event must meet, in plain language')
+	.option(
+		'--on-unavailable <policy>',
+		'When no model can answer: run (start the run and warn; default) or skip'
+	)
+	.option('--clear', 'Remove the gate')
+	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueGate);
+
+// Cue screen - the pipeline editor's injection screen field: whether the
+// Local Models `injection-screen` task scores the untrusted text a
+// subscription substitutes before a run starts. With no flag it prints the
+// screen, so a write can be read back.
+cue
+	.command('screen <subscription>')
+	.description(
+		"Show or set a subscription's prompt-injection screen (a local classifier scores untrusted text before a run starts)"
+	)
+	.option(
+		'--mode <mode>',
+		'on (always screen), off (never), or auto (screen commands that use untrusted text; default)'
+	)
+	.option(
+		'--threshold <score>',
+		'Block at or above this score, above 0 and at most 1 (default 0.8)'
+	)
+	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueScreen);
+
 cue
 	.command('activity')
 	.description('Show recent Cue runs, newest first')
@@ -1360,6 +1539,14 @@ cue
 	.option(
 		'--keep-on-failure',
 		'Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)'
+	)
+	.option(
+		'--gate <condition>',
+		'Only run when a local model says the fire meets this condition (edit later with `cue gate`)'
+	)
+	.option(
+		'--gate-on-unavailable <policy>',
+		'With --gate, when no model can answer: run (default) or skip'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueSchedule);
@@ -1475,6 +1662,7 @@ directorNotes
 program
 	.command('status')
 	.description('Check if the Maestro desktop app is running and reachable')
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(status);
 
 // Version command - report the running app's version + build commit hash (the
@@ -1553,14 +1741,22 @@ program
 // Create agent command - create a new agent in the Maestro desktop app
 program
 	.command('create-agent <name>')
-	.description('Create a new agent in the Maestro desktop app')
-	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
-	.option(
-		'-t, --type <type>',
-		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)',
-		'claude-code'
+	.description(
+		"Create a new agent in the Maestro desktop app. With --group, the agent starts from that group's defaults (see group-settings); flags you pass take precedence"
 	)
-	.option('-g, --group <id>', 'Group ID to assign the agent to')
+	.option(
+		'-d, --cwd <path>',
+		'Working directory for the agent (required, unless --group names a group whose defaults set one)'
+	)
+	.option('-t, --type <type>', `Agent type (${PICKABLE_AGENT_IDS.join(', ')})`, 'claude-code')
+	.option(
+		'-g, --group <id>',
+		"Group to assign the agent to. The agent starts from the group's defaults (provider, model, environment variables, peers, ...), and every flag below overrides one"
+	)
+	.option(
+		'--no-group-defaults',
+		"Create a bare agent in --group, ignoring the group's defaults (no effect without --group)"
+	)
 	.option('--nudge <message>', 'Nudge message appended to every user message')
 	.option('--new-session-message <message>', 'Message prefixed to first message in new sessions')
 	.option('--custom-path <path>', 'Custom binary path for the agent')
@@ -1571,7 +1767,10 @@ program
 		(val: string, prev: string[]) => [...prev, val],
 		[] as string[]
 	)
-	.option('--model <model>', 'Model override (e.g., sonnet, opus)')
+	.option(
+		'--model <model>',
+		'Model override (e.g., sonnet, opus; "auto" lets the model router pick the tier and effort of each turn)'
+	)
 	.option('--effort <level>', 'Effort/reasoning level override')
 	.option('--context-window <size>', 'Context window size in tokens')
 	.option('--provider-path <path>', 'Custom provider path')
@@ -1585,10 +1784,49 @@ program
 		'--auto-run-folder <path>',
 		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
 	)
+	.option(
+		'--gateway-url <url|none>',
+		"Local Models gateway: an HTTP proxy this agent's provider traffic goes through, set as its base-URL variable at launch. Set the Maestro token proxy mode afterwards with update-agent --proxy-mode"
+	)
+	.option(
+		'--run-on <target>',
+		"Where this agent's model runs: provider (the default), or <source id>:<model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). The agent keeps its provider's CLI"
+	)
+	.option(
+		'--run-on-context <tokens>',
+		"Context size the harness is told a --run-on source has (at least 40960; default: the model's catalog context on the Maestro model server, 40960 elsewhere)"
+	)
+	// The Peers tab of the New Agent dialog, spelled as on update-agent.
+	.option(
+		'--peer <agent:access>',
+		'Set one explicit peer row (repeatable): <agent>:r (consult), :w (delegate), :rw, or :none (exclude the peer from a group or worktree grant)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--peer-note <agent:text>',
+		'Set the note on a peer row, the hint the agent reads for when to reach it (repeatable; needs a row)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--group-peers <r|w|rw|off>',
+		'Grant access to every other agent in the same group, resolved live'
+	)
+	.option(
+		'--worktree-peers <r|w|rw|off>',
+		"Grant access to the agent's worktree family, resolved live"
+	)
 	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
 	.option('--focus', 'Select the new agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
-	.action(createAgent);
+	.action((name, options, command) =>
+		createAgent(name, {
+			...options,
+			// `--type` carries a default, so only its source says whether it was typed.
+			typeExplicit: command.getOptionValueSource('type') !== 'default',
+		})
+	);
 
 // Create group command - create a new group in the Maestro desktop app
 program
@@ -1649,6 +1887,151 @@ program
 	.option('--show', 'Bring a hidden group back into the Left Bar')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, options) => updateGroup(groupId, options));
+
+// Delegation commands - the fleet's peer relationships read as one graph, the
+// model the Delegation Graph draws. Read only: an edge is written with
+// `update-agent --peer` / `--remove-peer`, and `open delegation-graph` shows
+// the canvas.
+const delegation = program
+	.command('delegation')
+	.description('Read which agents may consult or delegate to which (the Delegation Graph)');
+
+delegation
+	.command('graph')
+	.description(
+		'Print the Delegation Graph: every agent, whom it may consult or delegate to, and who reaches it'
+	)
+	.option(
+		'-g, --group <id>',
+		'Only one agent group, and the agents outside it that an edge joins to it'
+	)
+	.option('--json', 'Output the graph model (nodes and edges) as JSON')
+	.action(delegationGraph);
+
+// Group settings commands - the Group Settings dialog: the defaults a new agent
+// created in a group starts with (copy-at-create; never a runtime layer), and
+// the group's pill label. `group-settings` reads, `update-group-settings` writes.
+program
+	.command('group-settings <group-id>')
+	.description(
+		"Show a group's defaults (what a new agent in it starts with) and its Left Bar pill label"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, options) => groupSettings(groupId, options));
+
+program
+	.command('update-group-settings <group-id>')
+	.description(
+		"Set a group's defaults for new agents and its pill label (requires the desktop app). Existing agents change only with --publish"
+	)
+	.option(
+		'--provider <type>',
+		'Default provider for new agents (use "none" for no default; switching resets the profile\'s provider-bound values)'
+	)
+	.option('-d, --cwd <path>', 'Default working directory (empty string clears)')
+	.option('--nudge <message>', 'Nudge message appended to every message (empty string clears)')
+	.option(
+		'--new-session-message <message>',
+		'Message prefixed to the first message of new sessions (empty string clears)'
+	)
+	.option('--custom-path <path>', 'Override the agent binary path (empty string clears)')
+	.option('--custom-args <args>', 'Custom CLI arguments for the agent (empty string clears)')
+	.option(
+		'--env <KEY=VALUE>',
+		'Set an environment variable (repeatable; replaces the env map)',
+		(value: string, prev: string[]) => [...(prev ?? []), value],
+		[] as string[]
+	)
+	.option('--clear-env', 'Clear all environment variable defaults')
+	.option(
+		'--gateway-url <url|none>',
+		'Local Models gateway URL ("none" clears). Not combinable with --proxy-mode'
+	)
+	.option(
+		'--run-on <target>',
+		'Where new agents run their model: provider, or <source id>:<model> on a Local Models source'
+	)
+	.option(
+		'--run-on-context <tokens>',
+		'Context size the harness is told the Run on source has (at least 40960)'
+	)
+	.option(
+		'--proxy-mode <mode>',
+		'Maestro token proxy for new agents: off | passthrough | compress | compress-early'
+	)
+	.option(
+		'--tier <tier=target>',
+		'Where a low, medium or high task launches (repeatable): low=<source id>:<model>, high=provider:<model>, medium=provider, or low=default',
+		(value: string, prev: string[]) => [...(prev ?? []), value],
+		[] as string[]
+	)
+	.option(
+		'--background-requests <target>',
+		'Where the token proxy sends side requests: <source id>:<model>, or none'
+	)
+	.option(
+		'--system-one <on|off>',
+		'Whether new agents may ask System One: off switches it off for them'
+	)
+	.option(
+		'--peer <agent:access>',
+		'Set one explicit peer row (repeatable): <agent>:r, :w, :rw, or :none',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--peer-note <agent:text>',
+		'Set the note on a peer row (repeatable; needs a row, empty text clears)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--remove-peer <agent>',
+		'Delete a peer row (repeatable). Not the same as :none',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option('--group-peers <r|w|rw|off>', 'Grant access to every other agent in the same group')
+	.option('--worktree-peers <r|w|rw|off>', "Grant access to the agent's worktree family")
+	.option(
+		'--model <model>',
+		'Default model ("auto" lets the model router pick; empty string clears)'
+	)
+	.option('--effort <level>', 'Default effort/reasoning level (empty string clears)')
+	.option('--context-window <size>', 'Default context window in tokens (0 or "none" clears)')
+	.option(
+		'--token-source <mode>',
+		'Claude token source: api | tui | dynamic (needs the Claude Code provider)'
+	)
+	.option('--maestro-p-path <path>', 'Override the maestro-p binary path (empty string clears)')
+	.option(
+		'--codex-transport <transport>',
+		'Codex transport: exec | app-server (needs the Codex provider)'
+	)
+	.option(
+		'--ssh-remote <id>',
+		'Default SSH remote for new agents, by id or name (use "none" for local execution)'
+	)
+	.option('--ssh-cwd <path>', 'Working directory override on the SSH remote')
+	.option(
+		'--sync-history-to-remote <bool>',
+		'Sync history entries to .maestro/history/ on the remote host (true/false)'
+	)
+	.option(
+		'--short-label <text>',
+		"Text for the pill drawn beside the group's bookmarked agents, at most 12 characters (empty string returns to the automatic abbreviation). Display only: never copied or published"
+	)
+	.option(
+		'--clear',
+		'Remove the defaults entirely. Does not touch --short-label, which is group display state and not an agent default. Cannot be combined with other defaults or --publish'
+	)
+	.option(
+		'--publish',
+		"Also write this call's changes into the agents already in the group (provider, working directory and SSH remote are never written; env vars merge by key, lists replace). Needs --yes unless you answer a prompt"
+	)
+	.option('--yes', 'Confirm a --publish without asking')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, options) => updateGroupSettings(groupId, options));
 
 // Create-worktree command - create a new agent in a git worktree off a parent
 // agent, without an Auto Run playbook. The parent agent must already exist in
@@ -1723,7 +2106,67 @@ program
 		[] as string[]
 	)
 	.option('--clear-env', 'Clear all per-agent environment variables')
-	.option('--model <model>', 'Model override (e.g. sonnet, opus; empty string clears)')
+	.option(
+		'--gateway-url <url|none>',
+		'Local Models gateway: an HTTP proxy this agent\'s provider traffic goes through, set as its base-URL variable at launch ("none" clears)'
+	)
+	.option(
+		'--run-on <target>',
+		"Where this agent's model runs: provider (its provider's own model; clears a target), or <source id>:<model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). Check it with agent test-run-on"
+	)
+	.option(
+		'--run-on-context <tokens>',
+		"Context size the harness is told the Run on source has (at least 40960). Alone, it changes the context of the agent's current target"
+	)
+	.option(
+		'--proxy-mode <mode>',
+		'Maestro token proxy for this agent: off | passthrough | compress | compress-early. Any mode but off points the gateway at the proxy; off clears it. compress shortens a tool result after the model has read it once; compress-early shortens it before, which is cheaper and means the model works from the shortened output (requires the desktop app)'
+	)
+	.option(
+		'--tier <tier=target>',
+		"Where a low, medium or high task of this agent launches (repeatable): low=<source id>:<model>, high=provider:<model>, medium=provider (the provider, on the agent's own model), or low=default to follow the harness default again. Read them with show agent",
+		(value: string, prev: string[]) => [...(prev ?? []), value],
+		[] as string[]
+	)
+	.option(
+		'--background-requests <target>',
+		"Where the Maestro token proxy sends this agent's side requests (titles, summaries): <source id>:<model> for a model on a source that serves the Anthropic Messages route, or none. Claude Code agents on the token proxy only"
+	)
+	.option(
+		'--system-one <on|off>',
+		'Whether this agent may ask System One with maestro-cli s1: off switches it off for this agent only, on follows "Let agents use System One" (default on)'
+	)
+	// The Peers tab. An agent is named by id, unique id prefix, or display name.
+	.option(
+		'--peer <agent:access>',
+		'Set one explicit peer row (repeatable): <agent>:r (consult), :w (delegate), :rw, or :none (exclude the peer from a group or worktree grant)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--peer-note <agent:text>',
+		'Set the note on a peer row, the hint the agent reads for when to reach it (repeatable; needs a row, empty text clears)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--remove-peer <agent>',
+		'Delete a peer row (repeatable). Not the same as :none: a deleted row lets the group and worktree grants apply again',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--group-peers <r|w|rw|off>',
+		'Grant access to every other agent in the same group, resolved live (off clears)'
+	)
+	.option(
+		'--worktree-peers <r|w|rw|off>',
+		"Grant access to the agent's worktree family: parent, sibling and child worktrees, resolved live (off clears)"
+	)
+	.option(
+		'--model <model>',
+		'Model override (e.g. sonnet, opus; "auto" lets the model router pick per turn; empty string clears)'
+	)
 	.option('--effort <level>', 'Effort/reasoning level override (empty string clears)')
 	.option('--context-window <size>', 'Context window size in tokens (0 or "none" clears)')
 	.option(
@@ -1736,6 +2179,42 @@ program
 		'Codex transport: exec | app-server (experimental, enables steering; Codex only)'
 	)
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
+	// Agent Resilience and the rest of the Edit Agent dialog.
+	.option(
+		'--retry-on-availability <bool>',
+		'Agent Resilience: resend a turn the provider refused as overloaded (true/false; "default" drops the choice, which is on)'
+	)
+	.option(
+		'--retry-on-token-exhaustion <bool>',
+		'Agent Resilience: resend a turn refused for a spent quota once it resets (true/false; "default" drops the choice, which is on)'
+	)
+	.option(
+		'--codex-auto-reset <bool>',
+		'Spend a Codex rate-limit reset credit when the quota is exhausted (true/false; "default" drops the choice; Codex only)'
+	)
+	.option(
+		'--additional-dir <path[:access]>',
+		'A directory outside the working directory the agent may use (repeatable; replaces the list): <path> is read-only, <path>:rw adds write',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option('--clear-additional-dirs', 'Remove every additional directory')
+	.option(
+		'--env-park <KEY>',
+		'Switch an environment variable off without deleting it (repeatable): kept and editable, never spawned with',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--env-unpark <KEY>',
+		'Switch a parked environment variable back on (repeatable)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--share-history-to-project-dir <bool>',
+		"Mirror History entries into the local project's .maestro/history/ (true/false; for an agent another Maestro controls; agent must be stopped)"
+	)
 	.option(
 		'--provider <type>',
 		'Translate owned conversations and selected project knowledge to another provider'
@@ -1759,6 +2238,17 @@ program
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);
+
+// Agent verbs that act on one agent and are not a setting of it.
+const agentCmd = program.command('agent').description('Act on one agent');
+
+agentCmd
+	.command('test-run-on <agent-id>')
+	.description(
+		"Send one short read-only turn through the agent's harness on its Run on target and report the reply (requires the desktop app)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => agentTestRunOn(agentId, options));
 
 // Rename agent command - change an agent's display name in the desktop app
 program
@@ -1804,7 +2294,10 @@ program
 
 // Tab commands - manage an agent's AI tabs in the desktop app. Every verb that
 // takes <tab-id> also accepts the literal "active" (with -a to say whose).
-const tab = program.command('tab').description("Manage an agent's tabs in the desktop app");
+const tab = program
+	.command('tab')
+	.alias('tabs')
+	.description("Manage an agent's tabs in the desktop app");
 
 /**
  * Options every tab-targeted verb shares: --agent disambiguates the "active"
@@ -1860,7 +2353,7 @@ function tabBoolArg(value: string, label: string): boolean {
 		return parseCliBool(value, label);
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));
-		return process.exit(1);
+		return exitWith(ExitCode.GeneralError);
 	}
 }
 
@@ -1880,7 +2373,7 @@ tabTargetOptions(tab.command('thinking <tab-id> <mode>'))
 		const v = String(mode).trim().toLowerCase();
 		if (v !== 'cycle' && asThinkingMode(v) === undefined) {
 			console.error(`Invalid mode "${mode}". Use off, on, sticky, or cycle.`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		return tabThinking(tabId, v as ThinkingMode | 'cycle', options);
 	});
@@ -1890,7 +2383,9 @@ tabTargetOptions(tab.command('read-only <tab-id> <bool>'))
 	.action((tabId, bool, options) => tabReadOnly(tabId, tabBoolArg(bool, 'read-only'), options));
 
 tabTargetOptions(tab.command('model <tab-id> <model>'))
-	.description('Override the model for this tab ("inherit" clears the override)')
+	.description(
+		'Override the model for this tab ("inherit" clears the override; "auto" lets the model router pick the tier and effort of each turn)'
+	)
 	.action((tabId, model, options) =>
 		tabModel(tabId, isInheritValue(model) ? null : model, options)
 	);
@@ -1910,6 +2405,16 @@ tabTargetOptions(tab.command('enter-to-send <tab-id> <bool>'))
 tabTargetOptions(tab.command('move <tab-id> <position>'))
 	.description('Move a tab to a position in its agent\'s tab bar (0-based, or "first"/"last")')
 	.action((tabId, position, options) => tabMove(tabId, position, options));
+
+// Read-only: the CLI half of the Tab Cleanup Suggestions modal. It prints what
+// the Tab cleanup assignment suggests and the verb that applies each one.
+tab
+	.command('suggest-cleanup')
+	.description(
+		'Suggest tabs to close, snooze, or wake across every agent (read-only; uses the Tab cleanup Local Models assignment)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(tabSuggestCleanup);
 
 // Create SSH remote command - add a new SSH remote configuration
 program
@@ -2099,6 +2604,7 @@ settings
 settings
 	.command('media-status')
 	.description('Report media tools available to this CLI process and allowed models as JSON')
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(settingsMediaStatus);
 
 // Agent-specific config subcommands
@@ -2203,9 +2709,7 @@ encore
 
 encore
 	.command('enable <feature>')
-	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, throughputGauge)'
-	)
+	.description(`Enable an Encore feature (${ENCORE_FEATURE_KEYS.join(', ')})`)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
 
@@ -2271,7 +2775,7 @@ computerHistory
 
 computerHistory
 	.command('digests')
-	.description('List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)')
+	.description('List 15-minute digests and 6-hour roll-ups (model-written, untrusted content)')
 	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
 	.option('--until <time>', 'End (default now)')
 	.option('--kind <kind>', '15m | 6h (default both)')
@@ -2353,8 +2857,15 @@ computerHistory
 		'--skip-private-windows <on|off>',
 		'Never record private / incognito browser windows (default on)'
 	)
-	.option('--digests <on|off>', 'Have an agent write 15-minute digests (off by default)')
-	.option('--digest-agent <id>', 'Agent that writes digests (empty string clears it)')
+	.option('--digests <on|off>', 'Write 15-minute digests (off by default)')
+	.option(
+		'--digest-source <local|agent>',
+		'Who writes digests: the model assigned to the history-digests task (models assign), or the digest agent'
+	)
+	.option(
+		'--digest-agent <id>',
+		'Agent that writes digests; also sets the source to agent (empty string clears it)'
+	)
 	.option(
 		'--digest-rollup <on|off>',
 		'Also write 6-hour roll-ups from the 15-minute digests (default on)'
@@ -2560,6 +3071,11 @@ gist
 		'-s, --session <id>',
 		"Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs"
 	)
+	.option(
+		'--allow-secrets',
+		'Publish even when the secret screen finds a possible credential (default: refuse and list them, masked)'
+	)
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(gistCreate);
 
 // Notify commands - surface notifications in the Maestro desktop app
@@ -2669,6 +3185,921 @@ notify
 	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyFlash);
+
+notify
+	.command('speak <text>')
+	.description(
+		'Say one line aloud on the computer running Maestro, with a local voice. Waits until it was spoken; queued behind other notices, and refused while a voice session is live'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(notifySpeak);
+
+// Local Models commands - the model catalog, model servers the user runs
+// (Ollama, LM Studio, OpenAI-compatible), task assignments, and the task
+// router. Endpoint list/add/remove and assign edit settings directly; the
+// catalog verbs, test/detect, run, status, and readiness run in the desktop app.
+program
+	.command('search <query>')
+	.description(
+		"Search past work across History entries, Director's Notes, and tab transcripts: exact text by default, by meaning with --semantic (requires the desktop app)"
+	)
+	.option(
+		'--semantic',
+		'Match by meaning on the Semantic search assignment instead of by exact text'
+	)
+	.option(
+		'--source <source>',
+		'Restrict to a source: history, notes, or transcripts (repeatable, or comma-separated)',
+		(value: string, previous: string[] = []) => [...previous, value]
+	)
+	.option('-a, --agent <id>', 'Restrict to one agent (id, id prefix, or exact name)')
+	.option('-l, --limit <n>', 'Most results to return (default 20, max 100)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(search);
+
+// Voice (A Cappella). The Voice HUD and Settings > Voice, verb for verb: the
+// session and its controls, providers and voices, cloud keys, paired devices,
+// and wake phrase training.
+const voice = program
+	.command('voice')
+	.description(
+		'A Cappella voice: sessions, the HUD controls, providers, voices, cloud keys, paired devices and the wake word'
+	);
+
+voice
+	.command('status')
+	.description(
+		'Show whether voice is on, the live session, the send wait, and what blocks a session from starting (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceStatus);
+
+voice
+	.command('start')
+	.description(
+		'Start a voice session on the Conductor (the default), an agent, one tab, a document, or Quick Chat. Its HUD opens in the window you are looking at'
+	)
+	.option('-a, --agent <id>', 'Talk to this agent (id, id prefix, or exact name)')
+	.option('--tab <id>', 'Talk to this tab only ("active" for the selected tab)')
+	.option('--conductor', 'Talk to the Conductor, which routes each request to an agent')
+	.option('--document <path>', 'Talk about this document with the agent named by --agent')
+	.option(
+		'--quick-chat',
+		'Talk to Quick Chat: opens its window and locks the session to its chat (no "voice scope")'
+	)
+	.option(
+		'--paused',
+		'Open with the microphone shut (push-to-talk): nothing is heard until "voice listen on"'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceStart);
+
+voice
+	.command('stop')
+	.description('End the voice session and close the microphone. Works with voice switched off')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceStop);
+
+voice
+	.command('listen <state>')
+	.description(
+		'Open (on) or shut (off) the microphone and keep the session: the HUD talk button, and both ends of push-to-talk'
+	)
+	.option('--send', 'With "off": send what was said, as releasing push-to-talk does')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceListen);
+
+voice
+	.command('send')
+	.description('Send what was said now, without waiting out the pause: the HUD "Send now" button')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceSend);
+
+voice
+	.command('stop-reply')
+	.description('Cut off the spoken reply and keep the session open')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceStopReply);
+
+voice
+	.command('scope <mode>')
+	.description(
+		'Re-aim the live session: conductor, agent, or tab (the HUD Tab / Agent / Conductor switch). Refused for a Quick Chat session, which is locked'
+	)
+	.option('-a, --agent <id>', 'The agent, for agent and tab (default: the active agent)')
+	.option('--tab <id>', 'The tab, for tab (default: the selected tab)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceScope);
+
+voice
+	.command('wait [ms]')
+	.description(
+		'Show, or set for this conversation, how long a pause sends a request. "default" returns to the saved wait'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWait);
+
+voice
+	.command('volume <level>')
+	.description(
+		'Set the volume of the spoken reply (0.1 to 1): saved, and applied to what is playing'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceVolume);
+
+voice
+	.command('mute')
+	.description('Silence the spoken reply for now. Not saved, like the HUD mute button')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceMute);
+
+voice
+	.command('unmute')
+	.description('Return the spoken reply to the saved volume')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceUnmute);
+
+voice
+	.command('latency')
+	.description('Show where the time went in the last finished voice turn, hop by hop')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceLatency);
+
+voice
+	.command('self-test')
+	.description(
+		'Load each native runtime voice runs on and read the microphone permission. Works with voice switched off'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceSelfTest);
+
+voice
+	.command('setup')
+	.description(
+		'Show the models local voice needs and which are on disk. Downloads nothing unless --download is passed'
+	)
+	.option('--download', 'Download what is missing, as the Voice Setup Download button does')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceSetup);
+
+const voiceInput = voice.command('input').description('The microphone voice listens on');
+
+voiceInput
+	.command('list')
+	.description('List the microphones the app has seen and the one selected')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceInputList);
+
+voiceInput
+	.command('set <device-id>')
+	.description(
+		'Choose the microphone, from the next capture on. "default" follows the system default'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceInputSet);
+
+const voiceProviders = voice
+	.command('providers')
+	.description('What transcribes speech, speaks replies, and routes a request');
+
+voiceProviders
+	.command('list')
+	.description('Show what each slot (stt, tts, brain) runs and what it could run')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceProvidersList);
+
+voiceProviders
+	.command('set <slot> <provider-id>')
+	.description(
+		'Pick what a slot runs (stt, tts, brain, realtime), or the pipeline (cascade, realtime), then tell the running app'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceProvidersSet);
+
+const voiceVoices = voice.command('voices').description('The voice replies are spoken in');
+
+voiceVoices
+	.command('list')
+	.description('List the voices the Text-to-Speech provider offers and the one selected')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceVoicesList);
+
+voiceVoices
+	.command('set <voice-id>')
+	.description('Pick the voice replies are spoken in')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceVoicesSet);
+
+voiceVoices
+	.command('preview [voice-id]')
+	.description(
+		'Speak one line in a voice (the selected one by default). Refused while a session is live'
+	)
+	.option('--text <text>', 'The line to speak (default: the Settings Preview line)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceVoicesPreview);
+
+const voiceCredentials = voice
+	.command('credentials')
+	.description(
+		'The cloud keys hosted voice providers use (openai, elevenlabs, anthropic), kept in the OS keychain'
+	);
+
+voiceCredentials
+	.command('list')
+	.description('Show which keys are stored. Never prints a key')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceCredentialsList);
+
+voiceCredentials
+	.command('set <service>')
+	.description(
+		'Store a key read from standard input (never an argument, so it stays out of shell history)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceCredentialsSet);
+
+voiceCredentials
+	.command('test <service>')
+	.description('Ask the service whether the stored key works')
+	.option('--stdin', 'Test a key read from standard input instead, before storing it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceCredentialsTest);
+
+voiceCredentials
+	.command('clear <service>')
+	.description('Remove a stored key')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceCredentialsClear);
+
+const voiceDevices = voice
+	.command('devices')
+	.description(
+		'Devices paired to hold a voice session from elsewhere. Pairing itself is approved in the app'
+	);
+
+voiceDevices
+	.command('list')
+	.description('List every paired device, whether it is connected, and LAN discovery')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesList);
+
+voiceDevices
+	.command('rename <device> <name>')
+	.description('Rename a paired device (id, id prefix, or exact name)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesRename);
+
+voiceDevices
+	.command('revoke <device>')
+	.description('End a pairing now: the device is disconnected and must pair again')
+	.option('-y, --yes', 'Do not ask for confirmation')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesRevoke);
+
+voiceDevices
+	.command('forget <device>')
+	.description("Delete a device's record altogether")
+	.option('-y, --yes', 'Do not ask for confirmation')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesForget);
+
+voiceDevices
+	.command('revoke-all')
+	.description('End every pairing now')
+	.option('-y, --yes', 'Do not ask for confirmation')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesRevokeAll);
+
+voiceDevices
+	.command('disconnect')
+	.description('Drop every live device connection and keep the pairings')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesDisconnect);
+
+voiceDevices
+	.command('discovery <state>')
+	.description('Advertise this machine on the local network (on), or stop (off)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesDiscovery);
+
+voiceDevices
+	.command('test-connection')
+	.description(
+		'Probe which paths a device could reach this machine on: local network, STUN, TURN relay'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesTestConnection);
+
+const voiceWakePhrase = voice
+	.command('wake-phrase')
+	.description('A wake phrase of its own for one agent: saying it opens a session on that agent');
+
+voiceWakePhrase
+	.command('list')
+	.description('List every agent with a wake phrase of its own')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakePhraseList);
+
+voiceWakePhrase
+	.command('set <agent> <phrase>')
+	.description("Set one agent's wake phrase, leaving every other agent's as it is")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakePhraseSet);
+
+voiceWakePhrase
+	.command('clear <agent>')
+	.description("Remove one agent's wake phrase")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakePhraseClear);
+
+const voiceWake = voice
+	.command('wake')
+	.description(
+		'Teach the wake word a phrase from your own recordings: record or add WAV files, then train (requires the desktop app)'
+	);
+
+voiceWake
+	.command('test [phrase]')
+	.description(
+		'Run the wake word alone for a few seconds and count how often it fired (default: the configured phrase)'
+	)
+	.option('--seconds <n>', 'How long to listen, 1 to 60 (default 10)')
+	.option('--sensitivity <n>', 'Try a sensitivity from 0 to 1 without saving it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeTest);
+
+voiceWake
+	.command('list')
+	.description('List every phrase with recordings, and whether each is trained')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeList);
+
+voiceWake
+	.command('status [phrase]')
+	.description(
+		'Show what is recorded for a phrase and what its trained model measured (default: the configured wake phrase)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeStatus);
+
+voiceWake
+	.command('record [phrase]')
+	.description(
+		'Open the microphone and keep each burst of speech as one recording of the phrase (default: the configured wake phrase), until "voice wake stop"'
+	)
+	.option(
+		'--other-speech',
+		'Record ordinary speech that is NOT the phrase instead (about 30 seconds)'
+	)
+	.addOption(new Option('--background').hideHelp())
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeRecord);
+
+voiceWake
+	.command('stop')
+	.description('End the recording in progress and close the microphone')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeStop);
+
+voiceWake
+	.command('add <phrase> <files...>')
+	.description(
+		'Add recordings from 16-bit PCM WAV files instead of the microphone, one recording of the phrase per file'
+	)
+	.option('--other-speech', 'The files are ordinary speech that is NOT the phrase')
+	.addOption(new Option('--background').hideHelp())
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeAdd);
+
+voiceWake
+	.command('undo [phrase]')
+	.description('Remove the newest recording of the phrase (default: the configured wake phrase)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeUndo);
+
+voiceWake
+	.command('clear-background [phrase]')
+	.description(
+		'Remove the ordinary speech recorded for a phrase, so it can be recorded again (default: the configured wake phrase)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeClearBackground);
+
+voiceWake
+	.command('train [phrase]')
+	.description(
+		'Build the wake word model for a phrase from its recordings (default: the configured wake phrase); waits until training finishes'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeTrain);
+
+voiceWake
+	.command('remove <phrase>')
+	.description('Delete the trained model and every recording of a phrase')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeRemove);
+
+const models = program.command('models').description('Local Models: model sources Maestro can use');
+
+// The models the user added from Hugging Face join the catalog before any
+// `models` verb reads an id, so they resolve the way they do in the desktop.
+models.hook('preAction', () => loadUserLocalModels());
+
+models
+	.command('list')
+	.description(
+		'List the local model Library grouped by what each model is for, with install status, size, what it is good at, and what uses it (requires the desktop app)'
+	)
+	.option(
+		'-k, --kind <kind>',
+		'Only one kind: text-gen | embedding | classifier | stt | tts | wake-word'
+	)
+	.option(
+		'--fit',
+		'Say whether each model runs on this computer: Fits, Tight or Too large, with the reason'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsList);
+
+models
+	.command('add-hf <repo> <file>')
+	.description(
+		'Add a GGUF text model from Hugging Face to the Library by repo id and file name, pinned and labeled "Not verified by Maestro"; prints its license and downloads nothing (requires the desktop app)'
+	)
+	.option('--dry-run', 'Describe the model and its license without adding it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsAddHf);
+
+models
+	.command('remove-hf <model-id>')
+	.description(
+		'Take a model added with add-hf out of the Library and delete its files. Refuses a model a task is assigned to unless --force (requires the desktop app)'
+	)
+	.option('-f, --force', 'Remove it even though assigned tasks become unavailable')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRemoveHf);
+
+models
+	.command('install <model-id>')
+	.description(
+		'Download and verify a local model and the engine it runs on, resuming a paused download; waits until it finishes (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsInstall);
+
+const modelRuntimes = models
+	.command('runtimes')
+	.description('The native engines local models run on (ONNX Runtime, llama.cpp)');
+
+modelRuntimes
+	.command('list')
+	.description(
+		'List the engines with install state, size, and the models each runs (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRuntimesList);
+
+modelRuntimes
+	.command('install <runtime-id>')
+	.description(
+		'Download, verify and install one engine (onnx | llama), or update a stale one; waits until it is usable (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRuntimesInstall);
+
+models
+	.command('pause <model-id>')
+	.description(
+		'Pause a running download and keep what arrived; models install resumes it (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsPause);
+
+models
+	.command('cancel <model-id>')
+	.description(
+		'Cancel a download and delete its partial files; an installed model is not touched (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsCancel);
+
+models
+	.command('remove <model-id>')
+	.description(
+		'Delete a downloaded model. Refuses a model a task is assigned to unless --force (requires the desktop app)'
+	)
+	.option('-f, --force', 'Remove it even though assigned tasks become unavailable')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRemove);
+
+models
+	.command('verify <model-id>')
+	.description(
+		'Re-hash a downloaded model against the catalog; never deletes or re-downloads (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsVerify);
+
+models
+	.command('assign <task-id> <assignment>')
+	.description(
+		'Choose what a task runs on: off | utility-agent | system-one | local:<model-id> | endpoint:<endpoint>:<model>'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsAssign);
+
+models
+	.command('tasks')
+	.description(
+		'List every task with its assignment, plus readiness when the desktop app is running'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTasks);
+
+models
+	.command('run <task-id>')
+	.description(
+		'Run a text-generation task (or dictation, with --audio) through its assignment; prints the text, or why it did not run (requires the desktop app)'
+	)
+	.option('-i, --input <text>', 'The prompt to send (required, except with --cwd or --audio)')
+	.option(
+		'--cwd <path>',
+		'git-drafts only: draft a pull request title and body for the branch checked out in this repository'
+	)
+	.option('--base <branch>', 'git-drafts only: the target branch (default: main, then master)')
+	.option(
+		'--audio <file>',
+		'dictation only: transcribe this 16-bit PCM WAV file and print the transcript'
+	)
+	.option('-s, --system <text>', 'System prompt')
+	.option('--max-tokens <n>', 'Token budget for the reply (default 512)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRun);
+
+models
+	.command('status [task-id]')
+	.description(
+		'Whether each task (or one) would run on its assignment, and if not why and what to do (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsStatus);
+
+models
+	.command('index')
+	.description(
+		'What the semantic index is doing: its state, and how many sources are indexed (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsIndex);
+
+const modelProxy = models
+	.command('proxy')
+	.description('The Maestro token proxy: what it carried, saved, and shortened');
+
+modelProxy
+	.command('status')
+	.description(
+		'Whether the proxy is listening, the agents on it and their mode, tokens saved and added latency for the last 30 days, and recent compressions (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsProxyStatus);
+
+modelProxy
+	.command('block <hash>')
+	.description(
+		'Show one compressed block from the cache: a diff of what the agent sent against what was sent in its place (requires the desktop app)'
+	)
+	.option('--original', 'Print only the text the agent sent')
+	.option('--compressed', 'Print only the text sent in its place')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsProxyBlock);
+
+const modelServer = models
+	.command('server')
+	.description(
+		"The Maestro model server: llama.cpp's llama-server, serving downloaded models to agent harnesses over HTTP"
+	);
+
+modelServer
+	.command('status')
+	.description(
+		'State, address, engine build and accelerator, models served and loaded, key storage and log path (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerStatus);
+
+modelServer
+	.command('start')
+	.description('Start the model server and wait until it answers (requires the desktop app)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerStart);
+
+modelServer
+	.command('stop')
+	.description('Stop the model server and wait until it exits (requires the desktop app)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerStop);
+
+modelServer
+	.command('set')
+	.description(
+		'Change who can reach it, how many models stay loaded, the key, or the engine build; a running server restarts (requires the desktop app)'
+	)
+	.option('--bind <mode>', 'local (127.0.0.1, this machine) | network (0.0.0.0, needs the key)')
+	.option('--max-models <n>', 'Models loaded at the same time (1 to 16, default 1)')
+	.option('--rotate-key', 'Replace the API key; whatever used the old key needs the new one')
+	.option(
+		'--build <choice>',
+		'Install this engine build: default | cpu | cuda | rocm (cuda and rocm on Windows and Linux x64 only)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerSet);
+
+modelServer
+	.command('key')
+	.description(
+		'Print the API key a harness sends to the model server, made on first use (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerKey);
+
+// System One: the engine that answers typed questions (yes or no, pick one,
+// rate on a rubric). Every verb runs in the desktop app.
+const systemOne = program
+	.command('s1')
+	.description(
+		'System One: ask typed questions about a text (yes, pick, rate, ask, rank, batch) and get calibrated judgments back; plus the engine that answers them (Jev, OpenJev, or a local judge), its key, a test, the decision ledger and the spend'
+	);
+
+systemOne
+	.command('status')
+	.description(
+		'The engine in force, its address, model and timeout, where each key comes from, the fail policies, and what agents may ask and spend (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneStatus);
+
+const systemOneSet = systemOne
+	.command('set')
+	.description(
+		'Change the System One engine, its timeout, a task fail policy, what the ledger keeps, or what agents may ask and spend'
+	);
+
+systemOneSet
+	.command('engine <engine>')
+	.description(
+		'Choose the engine: off | jev-cloud (sends task text to TypeSafe) | openjev (your server) | local-judge (a local model, not calibrated) (requires the desktop app)'
+	)
+	.option('--url <url>', 'The OpenJev server (openjev only)')
+	.option(
+		'--model <model>',
+		'jev-cloud, openjev: pin this model, or "default" to remove the pin. local-judge: the source it answers on, local:<model-id> or endpoint:<endpoint>:<model>'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetEngine);
+
+systemOneSet
+	.command('timeout <ms>')
+	.description(
+		'The request budget for Jev and OpenJev, in milliseconds (100 to 60000, default 1500) (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetTimeout);
+
+systemOneSet
+	.command('fail-policy <task> <policy>')
+	.description(
+		'What a task does when the engine gives no answer: open (the work goes ahead) | closed (it stops) | default (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetFailPolicy);
+
+systemOneSet
+	.command('keep-inputs <on|off>')
+	.description(
+		'Whether a decision record keeps the state and questions it was asked, with secrets redacted (default off) (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetKeepInputs);
+
+systemOneSet
+	.command('agents <on|off>')
+	.description(
+		"Let agents use System One: whether an agent's own s1 yes, pick, rate, ask, rank and batch are answered, and whether its system prompt says so (default on; one agent is switched off with update-agent --system-one off) (requires the desktop app)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetAgents);
+
+systemOneSet
+	.command('budget [usd]')
+	.description(
+		'What agents may spend on System One in a local day, in US dollars across all agents (0 to 1000, default 1; 0 refuses every agent request) (requires the desktop app)'
+	)
+	.option(
+		'--per-agent <usd|none>',
+		'The most one agent may spend in a day, or "none" for no cap of its own (default none)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetBudget);
+
+const systemOneKey = systemOne
+	.command('key')
+	.description('The API key Maestro stores, sealed, for Jev or OpenJev. No verb prints a key');
+
+systemOneKey
+	.command('set')
+	.description(
+		'Store a key read from standard input, never from an argument: pbpaste | maestro-cli s1 key set (requires the desktop app)'
+	)
+	.option('--engine <engine>', 'jev-cloud | openjev (default: the engine in force)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneKeySet);
+
+systemOneKey
+	.command('clear')
+	.description('Forget the stored key (requires the desktop app)')
+	.option('--engine <engine>', 'jev-cloud | openjev (default: the engine in force)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneKeyClear);
+
+systemOne
+	.command('test')
+	.description(
+		'Ask the engine one fixed question and print the answer, the latency and the engine; exits non-zero with no answer (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneTest);
+
+systemOne
+	.command('ledger')
+	.description(
+		'The decision ledger: what each System One run decided, or what its fail policy did with no answer, newest first, kept 30 days (requires the desktop app)'
+	)
+	.option('--task <task>', 'Only this task (list them with: models tasks)')
+	.option(
+		'--outcome <outcome>',
+		'ok | failed-open | failed-closed | unavailable | cancelled | timeout'
+	)
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default: 30 days)')
+	.option('--limit <n>', 'At most this many decisions, 1 to 1000 (default 100)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneLedger);
+
+systemOne
+	.command('route <prompt>')
+	.description(
+		'A dry run of the model router: the tier and effort the model-routing task picks for a prompt, the router that decided and its latency, without sending anything. With --agent, also what a turn on the Auto model would launch on for that agent. Exits 6 when the router is off and 7 when it gave no decision (requires the desktop app)'
+	)
+	.option(
+		'--agent <id>',
+		'Resolve the decision for this agent: its tier targets, the harness defaults, and the model, effort and place a turn on Auto would launch on (supports partial IDs)'
+	)
+	.option(
+		'--correct <tier>',
+		'Record that this prompt needed low | medium | high instead of routing it. The embedding router votes with the correction from the next prompt'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneRoute);
+
+// The verbs an agent asks System One with: yes, pick, rate, ask, rank, batch,
+// and what they cost (usage, cost).
+registerSystemOneAgentCommands(systemOne);
+
+const modelTiers = models
+	.command('tiers')
+	.description(
+		'Harness tier defaults: which model a low, medium or high task launches on, per harness'
+	);
+
+modelTiers
+	.command('list')
+	.description(
+		'Each tier of each harness with its value and where it came from: Harness default (set by you) or Built-in'
+	)
+	.option('--harness <id>', 'Only this harness (e.g. claude-code, codex, opencode)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersList);
+
+modelTiers
+	.command('options <harness>')
+	.description(
+		'What a harness can launch a tier on: its own catalogue and the Run on targets, each in the spelling "tiers set" takes (requires the desktop app)'
+	)
+	.option('--refresh', "Ask the harness again instead of using the app's cached list")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersOptions);
+
+modelTiers
+	.command('suggest <harness>')
+	.description(
+		'A suggested model per tier with the reason, from what the harness lists; a tier nothing ranks is left blank (requires the desktop app)'
+	)
+	.option('--apply', 'Save the suggested tiers; a tier with no suggestion keeps its value')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersSuggest);
+
+modelTiers
+	.command('set <harness> <tier> <target>')
+	.description(
+		"Set one tier (low | medium | high) of one harness. Target: default (clear it) | provider (the agent's own model) | provider:<model> | <source id>:<model>"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersSet);
+
+modelTiers
+	.command('reset <harness>')
+	.description('Put a harness back on the built-in tier table, or one tier with --tier')
+	.option('--tier <tier>', 'Only this tier: low | medium | high')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersReset);
+
+const modelConfig = models
+	.command('config')
+	.description('Local Models configuration: where model files are downloaded from');
+
+modelConfig
+	.command('show')
+	.description('Show the download base in force (works with Maestro closed)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsConfigShow);
+
+modelConfig
+	.command('set <key> <value>')
+	.description(
+		'Set a Local Models option. Key: download-base, the host models and Hugging Face metadata are requested from (a mirror when your network blocks Hugging Face; "default" restores https://huggingface.co). Every download is still checked against its hash'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsConfigSet);
+
+const modelEndpoints = models
+	.command('endpoints')
+	.description('Model servers you run: Ollama, LM Studio, or any OpenAI-compatible base URL');
+
+modelEndpoints
+	.command('list')
+	.description('List configured endpoints (flags an API key variable that is not set)')
+	.option('--json', 'Output as JSON lines (for scripting)')
+	.action(modelsEndpointsList);
+
+modelEndpoints
+	.command('add')
+	.description('Add an endpoint. Ollama and LM Studio default to their standard local port')
+	.requiredOption('--kind <kind>', 'ollama | lmstudio | openai-compatible')
+	.option('--url <url>', 'Base URL (http/https, no credentials); required for openai-compatible')
+	.option('--name <name>', 'Display name (default: the kind, e.g. "Ollama")')
+	.option(
+		'--api-key-env <name>',
+		'NAME of the Settings -> Environment variable holding the API key (the key itself is never stored)'
+	)
+	.option('--disabled', 'Add it switched off')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsAdd);
+
+modelEndpoints
+	.command('update <endpoint>')
+	.description('Edit an endpoint, named by id, id prefix, or name; only the fields you pass change')
+	.option('--name <name>', 'Display name')
+	.option('--url <url>', 'Base URL (http/https, no credentials)')
+	.option('--kind <kind>', 'ollama | lmstudio | openai-compatible')
+	.option(
+		'--api-key-env <name>',
+		'NAME of the Settings -> Environment variable holding the API key (the key itself is never stored)'
+	)
+	.option('--clear-api-key-env', 'Stop sending an API key')
+	.option('--enable', 'Switch the endpoint on')
+	.option('--disable', 'Switch the endpoint off; tasks assigned to it become unavailable')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsUpdate);
+
+modelEndpoints
+	.command('remove <endpoint>')
+	.description('Remove an endpoint, named by id, id prefix, or name')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsRemove);
+
+modelEndpoints
+	.command('models <endpoint>')
+	.description(
+		'List the models an endpoint serves now, for models assign endpoint:<endpoint>:<model> (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsModels);
+
+modelEndpoints
+	.command('test <endpoint>')
+	.description('Send a one-token chat and report latency (requires the desktop app)')
+	.option('-m, --model <model>', 'Model to test (default: the first one the server lists)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsTest);
+
+modelEndpoints
+	.command('detect')
+	.description(
+		'Probe this machine for Ollama and LM Studio not yet configured; adds nothing (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsDetect);
 
 const profiling = program
 	.command('profiling')
@@ -3052,6 +4483,10 @@ program
 	.option('--no-sessions', 'Leave out agent/session metadata')
 	.option('--no-group-chats', 'Leave out group chat metadata')
 	.option('--no-batch-state', 'Leave out Auto Run state')
+	.option(
+		'--allow-secrets',
+		'Write the package even when the secret screen finds a possible credential (default: refuse and list them, masked)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(supportPackage);
 
@@ -3128,6 +4563,10 @@ feedback
 		'Generate a sanitized support package and link it from the issue (the modal checkbox)'
 	)
 	.option('--force', 'File even when possible duplicates exist')
+	.option(
+		'--allow-secrets',
+		'File even when the secret screen finds a possible credential (default: refuse and list them, masked)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackSubmit);
 
@@ -3135,17 +4574,33 @@ feedback
 	.command('subscribe <issue>')
 	.description('Add a +1 to an existing issue instead of filing a duplicate')
 	.option('--comment <text>', 'Also post this comment on the issue')
+	.option(
+		'--allow-secrets',
+		'Post the comment even when the secret screen finds a possible credential in it'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackSubscribe);
 
 // Stats commands - introspect the Usage Dashboard's SQLite store (requires the
 // running Maestro desktop app, which owns the open database).
-program
+const statsCommand = program
 	.command('stats')
 	.description('Show aggregated Usage Dashboard metrics for a time range')
 	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
 	.option('--json', 'Output the full aggregation object as JSON')
 	.action(stats);
+
+// `stats` owns `--range` and `--json` too, and Commander hands a flag to the
+// first command that knows it, so the flags written after `models` land on the
+// parent. `optsWithGlobals()` reads them from wherever they landed.
+statsCommand
+	.command('models')
+	.description(
+		"Show what every model other than a provider's own did: sources, tasks, Run on agents, System One and the token proxy (the Usage Dashboard's Models tab)"
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the full model usage record as JSON')
+	.action((_options: unknown, command: Command) => statsModels(command.optsWithGlobals()));
 
 program
 	.command('stats-tokens')
@@ -3242,9 +4697,18 @@ mcp
 	.option('--tab <id>', 'Originating desktop tab id (diagnostics only)')
 	.action((options) => mcpServe(options));
 
+// Every command shows its examples in `--help` and in `reference`.
+applyCommandExamples(program);
+
+// The tree walk in src/__tests__/cli/command-tree.test.ts imports this module for
+// `program`; it must not parse the test runner's argv.
+export { program };
+
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander
 // only strips argv[0] and treats the script path as the first user command.
 // Force node-style argv parsing so the shim that spawns us via Electron-as-Node
 // (see MaestroCliManager.writeUnixShim / writeWindowsShim) works correctly.
-program.parse(process.argv, { from: 'node' });
+if (!process.env.VITEST) {
+	program.parse(process.argv, { from: 'node' });
+}

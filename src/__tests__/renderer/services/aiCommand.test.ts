@@ -13,7 +13,11 @@ import {
 	requestAiCommand,
 	acceptAiCommand,
 	dismissAiCommand,
+	resolveAiCommandProvenance,
 } from '../../../renderer/services/aiCommand';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { QWEN3_1_7B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
+import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import {
 	aiCommandKey,
 	useAiCommandStore,
@@ -60,11 +64,82 @@ let suggest: Mock;
 beforeEach(() => {
 	vi.clearAllMocks();
 	useAiCommandStore.setState({ entries: {} });
+	useSettingsStore.setState({ localModelAssignments: {}, localModelEndpoints: [] });
 	suggest = vi.fn().mockResolvedValue({ success: true, command: 'du -sh *' });
 	(window as unknown as { maestro: unknown }).maestro = { aiCommand: { suggest } };
 });
 
+const OLLAMA = { id: 'ep-1', name: 'Ollama' } as LocalModelEndpoint;
+const QWEN_NAME = getLocalModel(QWEN3_1_7B_ID)!.displayName;
+
+describe('resolveAiCommandProvenance', () => {
+	const turn = { turnModel: 'opus', turnEffort: 'high' };
+
+	it('names the tab model and effort for the default assignment', () => {
+		expect(resolveAiCommandProvenance(turn, {}, [])).toEqual({ model: 'opus', effort: 'high' });
+		expect(resolveAiCommandProvenance(turn, undefined, [])).toEqual({
+			model: 'opus',
+			effort: 'high',
+		});
+	});
+
+	it('names an assigned local model, with no effort beside it', () => {
+		expect(
+			resolveAiCommandProvenance(
+				turn,
+				{ 'ai-command': { type: 'local', modelId: QWEN3_1_7B_ID } },
+				[]
+			)
+		).toEqual({ model: QWEN_NAME });
+	});
+
+	it('names an assigned endpoint model with its endpoint', () => {
+		expect(
+			resolveAiCommandProvenance(
+				turn,
+				{ 'ai-command': { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3:latest' } },
+				[OLLAMA]
+			)
+		).toEqual({ model: 'qwen3:latest on Ollama' });
+	});
+
+	it('names nothing when the task is off', () => {
+		expect(resolveAiCommandProvenance(turn, { 'ai-command': { type: 'off' } }, [])).toEqual({});
+	});
+});
+
 describe('requestAiCommand', () => {
+	it('stamps the assigned local model, not the tab model, while the request is in flight', async () => {
+		useSettingsStore.setState({
+			localModelAssignments: { 'ai-command': { type: 'local', modelId: QWEN3_1_7B_ID } },
+		});
+
+		const pending = requestAiCommand({ session: makeSession(), tabId: TAB_ID, request: 'ls' });
+
+		expect(entryNow()?.model).toBe(QWEN_NAME);
+		expect(entryNow()?.effort).toBeUndefined();
+		await pending;
+	});
+
+	it('keeps the explanation and the source main reports on the proposal', async () => {
+		suggest.mockResolvedValue({
+			success: true,
+			command: 'du -sh *',
+			explanation: 'Sizes everything here.',
+			producedBy: 'qwen3:latest on Ollama',
+		});
+
+		await requestAiCommand({ session: makeSession(), tabId: TAB_ID, request: 'how big' });
+
+		expect(entryNow()).toMatchObject({
+			status: 'proposed',
+			command: 'du -sh *',
+			explanation: 'Sizes everything here.',
+			model: 'qwen3:latest on Ollama',
+		});
+		expect(entryNow()?.effort).toBeUndefined();
+	});
+
 	it('parks a thinking entry immediately, then resolves it with the proposal', async () => {
 		const pending = requestAiCommand({
 			session: makeSession(),

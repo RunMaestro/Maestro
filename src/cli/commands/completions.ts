@@ -11,7 +11,7 @@
 
 import type { Command } from 'commander';
 import { formatError } from '../output/formatter';
-import { ExitCode } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface CommandNode {
 	name: string;
@@ -23,6 +23,8 @@ interface CommandNode {
 function collectFlags(cmd: Command): string[] {
 	const flags: string[] = [];
 	for (const opt of cmd.options) {
+		// A hidden option is a kept alias for an old spelling: do not offer it.
+		if (opt.hidden) continue;
 		// `opt.long` is the `--foo` form; fall back to the short form if that's all
 		// the option has. Skip Commander's auto help (added per-command).
 		if (opt.long) flags.push(opt.long);
@@ -149,6 +151,6 @@ export function completions(program: Command, shell: string): void {
 			break;
 		default:
 			console.error(formatError(`Unsupported shell "${shell}". Use one of: bash, zsh, fish.`));
-			process.exit(ExitCode.InvalidUsage);
+			exitWith(ExitCode.InvalidUsage);
 	}
 }

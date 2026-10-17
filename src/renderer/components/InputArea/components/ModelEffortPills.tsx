@@ -3,6 +3,8 @@ import type React from 'react';
 import { Gauge, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ShortcutHint, shortcutSuffix } from '../../ui/ShortcutHint';
+import { isAutoModel } from '../../../../shared/autoModel';
+import { modelChoiceLabel } from '../../../../shared/autoTurn';
 
 interface ModelEffortPillsProps {
 	isVisible: boolean;
@@ -22,6 +24,14 @@ interface ModelEffortPillsProps {
 	currentEffort?: string;
 	availableModels: string[];
 	availableEfforts: string[];
+	/**
+	 * What the Auto model choice says for this agent (`useAutoModelChoice`):
+	 * which axes it acts on and which router decides. The tooltip of the Auto row
+	 * and, while Auto is the selection, of the pill. The row itself is in
+	 * `availableModels` (`withAutoModelOption`), so a caller that does not offer
+	 * Auto passes neither.
+	 */
+	autoModelTitle?: string;
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
 	modelMenuOpen: boolean;
@@ -40,6 +50,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	currentEffort,
 	availableModels,
 	availableEfforts,
+	autoModelTitle,
 	onModelChange,
 	onEffortChange,
 	modelMenuOpen,
@@ -70,10 +81,14 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							color: theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}25`,
 						}}
-						title={`Change model${shortcutSuffix(shortcutKeys)}`}
+						title={
+							isAutoModel(currentModel) && autoModelTitle
+								? `${autoModelTitle} Click to change${shortcutSuffix(shortcutKeys)}`
+								: `Change model${shortcutSuffix(shortcutKeys)}`
+						}
 					>
 						<Sparkles className="w-3 h-3" />
-						<span>{currentModel || 'default'}</span>
+						<span>{currentModel ? modelChoiceLabel(currentModel) : 'default'}</span>
 					</button>
 					{modelMenuOpen && (
 						<div
@@ -93,6 +108,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 												onModelChange(model);
 												setModelMenuOpen(false);
 											}}
+											title={isAutoModel(model) ? autoModelTitle : undefined}
 											className="w-full text-left px-3 py-1.5 text-xs font-mono whitespace-nowrap hover:bg-white/10 transition-colors"
 											style={{
 												color: model === currentModel ? theme.colors.accent : theme.colors.textMain,
@@ -100,7 +116,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 													model === currentModel ? 'rgba(255,255,255,0.05)' : undefined,
 											}}
 										>
-											{model || '(default)'}
+											{model ? modelChoiceLabel(model) : '(default)'}
 										</button>
 									)
 								)}

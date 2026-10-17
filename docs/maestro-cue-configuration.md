@@ -58,6 +58,10 @@ subscriptions:
     fan_out: list # Optional. Target agent display names for fan-out
     fan_out_ids: list # Optional companion to fan_out - agent UUIDs (parallel array). Preferred at runtime; survives renames
     filter: object # Optional. Payload field conditions
+    gate: string # Optional. A condition in plain language a local model checks before a run starts
+    gate_on_unavailable: string # Optional. "run" (default) or "skip": what the gate does when its model cannot answer
+    screen_injection: boolean # Optional. Score untrusted text for prompt injection before a run starts
+    injection_threshold: number # Optional. Block at or above this score, above 0 and at most 1 (default 0.8)
     repo: string # Optional for github.* (auto-detected if omitted)
     poll_minutes: number # Optional for github.*, task.pending
     gh_label_target: string # Optional for github.label. "pr" | "issue" | "both" (default "both")
@@ -150,6 +154,10 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 | `fan_out`                  | list of strings   | -        | Target agent display names to fan out to                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `fan_out_ids`              | list of strings   | -        | Companion UUID array for `fan_out` (one entry per fan-out target). Preferred by the dispatcher at lookup time; falls back to `fan_out` names when absent. Set this alongside `fan_out` for rename stability                                                                                                                                                                                                                                                                                                                     |
 | `filter`                   | object            | -        | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `gate`                     | string            | -        | A condition in plain language that the event must meet before a run starts. A local model answers it (see [Gating with a local model](./maestro-cue-advanced#gating-with-a-local-model))                                                                                                                                                                                                                                                                                                                                        |
+| `gate_on_unavailable`      | string            | `run`    | What a `gate` does when its model cannot answer: `run` starts the run and warns you, `skip` records a gated event instead                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `screen_injection`         | boolean           | see note | Whether a local classifier scores the untrusted text this subscription uses before a run starts. Not set: screened when it is an `action: command` subscription that uses an untrusted variable (see [Screening for prompt injection](./maestro-cue-advanced#screening-for-prompt-injection))                                                                                                                                                                                                                                   |
+| `injection_threshold`      | number            | `0.8`    | The score, above 0 and at most 1, at or above which a screened value blocks the run                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `repo`                     | string            | -        | GitHub repo (`owner/repo`). Auto-detected from git remote                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `poll_minutes`             | number            | varies   | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `gh_label_target`          | string            | `both`   | `github.label` only. Which kind of item to watch: `pr`, `issue`, or `both`                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -239,13 +247,13 @@ subscriptions:
 
 `tier` and `effort` use one vocabulary for every provider. Maestro maps each level to that provider's own models and effort ladder, using the same tables as Auto Run's `MAESTRO:MODEL` markers:
 
-| Provider      | `tier` low / medium / high            | `effort` low / medium / high |
-| ------------- | ------------------------------------- | ---------------------------- |
-| Claude Code   | haiku / sonnet / opus                 | low / high / max             |
-| Factory Droid | Claude Haiku / Sonnet / Opus model id | low / medium / high          |
-| Codex         | not mapped: use `model`               | low / medium / xhigh         |
-| Copilot-CLI   | not mapped: use `model`               | low / medium / xhigh         |
-| OpenCode      | not mapped: use `model`               | not supported                |
+| Provider      | `tier` low / medium / high             | `effort` low / medium / high |
+| ------------- | -------------------------------------- | ---------------------------- |
+| Claude Code   | haiku / sonnet / opus                  | low / high / max             |
+| Factory Droid | Claude Haiku / Sonnet / Opus model id  | low / medium / high          |
+| Codex         | gpt-6-luna / gpt-6.1-sol / gpt-6-astra | low / medium / xhigh         |
+| Copilot-CLI   | not mapped: use `model`                | low / medium / xhigh         |
+| OpenCode      | not mapped: use `model`                | not supported                |
 
 Rules:
 
@@ -430,6 +438,10 @@ The engine validates your YAML on every load. Common validation errors:
 | `"max_concurrent" must be between 1-10`    | Keep concurrent runs within the allowed range                                                       |
 | `"queue_size" must be between 0-10000`     | Keep queue size within the allowed range                                                            |
 | `filter key must be string/number/bool`    | Filter values only accept primitive types                                                           |
+| `"gate" must be a non-empty string`        | A gate is one sentence in plain language, at most 1000 characters                                   |
+| `"gate_on_unavailable" must be one of`     | Use `run` or `skip`                                                                                 |
+| `"screen_injection" must be true or false` | Use `true` or `false`, or remove the key for the default                                            |
+| `"injection_threshold" must be a number`   | Use a number above 0 and at most 1, such as `0.8`                                                   |
 
 The inline YAML editor in the Cue Modal shows validation errors in real-time as you type. A green **Valid YAML** indicator at the bottom confirms your config parses correctly.
 

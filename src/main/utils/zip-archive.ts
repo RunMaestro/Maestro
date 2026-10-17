@@ -170,10 +170,14 @@ function assertNoSymlinkOnPath(destRoot: string, target: string): void {
  * overwrite a destination that is already a symlink, and will not write
  * through an intermediate path component that is already a symlink.
  */
-export function extractZipTo(zipPath: string, destDir: string): void {
+export function extractZipTo(
+	zipPath: string,
+	destDir: string,
+	options?: Pick<ReadZipArchiveOptions, 'maxOriginalSize' | 'maxEntries'>
+): void {
 	fs.mkdirSync(destDir, { recursive: true });
 	const destRoot = fs.realpathSync(destDir);
-	const zip = readZipArchive(zipPath);
+	const zip = readZipArchive(zipPath, options);
 
 	for (const entry of zip.getEntries()) {
 		if (entry.isDirectory) continue;

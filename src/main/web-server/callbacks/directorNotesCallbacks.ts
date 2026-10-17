@@ -1,6 +1,7 @@
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { getHistoryManager } from '../../history-manager';
+import { archiveDirectorNotesSynopsisInBackground } from '../../local-models/directors-notes-archive';
 
 export function registerDirectorNotesCallbacks(
 	server: WebServer,
@@ -88,6 +89,7 @@ export function registerDirectorNotesCallbacks(
 				// Intentionally local, same as the desktop Director's Notes handler:
 				// the prompt manifests history files on THIS machine, so grooming
 				// gets no `sessionSshRemoteConfig` and spawns locally (issue #1416).
+				// Not routed through Local Models, for the reason given there.
 				const result = await groomContext(
 					{
 						projectRoot: process.cwd(),
@@ -108,6 +110,14 @@ export function registerDirectorNotesCallbacks(
 						error: 'Agent returned an empty response.',
 					};
 				}
+
+				// Keep a copy for semantic search, as the desktop path does. A no-op
+				// unless that task is assigned a source.
+				archiveDirectorNotesSynopsisInBackground({
+					synopsis,
+					lookbackDays,
+					provider: agentType,
+				});
 
 				return {
 					success: true,

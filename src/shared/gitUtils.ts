@@ -11,6 +11,19 @@
  * This module focuses on parsing and utility functions that can be shared.
  */
 
+import type { SecretScreenFields } from './secretScan';
+
+/**
+ * What `git:createGist` and the `create_gist` bridge message answer with. A
+ * publish refused by the secret screen carries `secretFindings` (see
+ * `src/shared/secretScan.ts`); nothing was sent in that case.
+ */
+export interface CreateGistResult extends SecretScreenFields {
+	success: boolean;
+	gistUrl?: string;
+	error?: string;
+}
+
 /**
  * Git operations that stream their output live to the renderer instead of
  * returning only a buffered result (see `git:runCommand`).

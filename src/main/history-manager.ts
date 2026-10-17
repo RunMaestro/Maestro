@@ -134,6 +134,13 @@ export class HistoryManager {
 	 * rotation check, and persisting it would reintroduce a per-append write.
 	 */
 	private appendsSinceRotationCheck = new Map<string, number>();
+	/**
+	 * Called after an entry reaches disk through {@link addEntry}. The one
+	 * in-process choke point for a new entry, so a consumer that must stay
+	 * current (the semantic indexer) hooks here instead of at each writer.
+	 * Entries appended by another process (`maestro-cli`) do not pass through.
+	 */
+	private entryAddedListeners = new Set<(sessionId: string, entry: HistoryEntry) => void>();
 
 	constructor() {
 		this.configDir = app.getPath('userData');
@@ -148,6 +155,18 @@ export class HistoryManager {
 	 */
 	setMaxEntriesResolver(resolver: () => number): void {
 		this.maxEntriesResolver = resolver;
+	}
+
+	/**
+	 * Listen for entries written through {@link addEntry}. Returns the
+	 * unsubscribe. A listener runs after the append succeeded and must not throw
+	 * work back at the writer: a failure in one is logged and the write stands.
+	 */
+	onEntryAdded(listener: (sessionId: string, entry: HistoryEntry) => void): () => void {
+		this.entryAddedListeners.add(listener);
+		return () => {
+			this.entryAddedListeners.delete(listener);
+		};
 	}
 
 	/**
@@ -459,6 +478,14 @@ export class HistoryManager {
 				logger.error(`Failed to write history for session ${sessionId}: ${error}`, LOG_CONTEXT);
 				captureException(error, { operation: 'history:write', sessionId });
 				return;
+			}
+
+			for (const listener of this.entryAddedListeners) {
+				try {
+					listener(sessionId, record);
+				} catch (error) {
+					logger.warn(`History entry listener failed: ${error}`, LOG_CONTEXT);
+				}
 			}
 
 			await this.maybeRotate(sessionId, limit);

@@ -44,6 +44,10 @@ import { logger } from '../utils/logger';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
 import { visibleHistoryEntryTypes } from '../../shared/history';
 import { EscCloseButton } from './ui/EscCloseButton';
+import { SemanticMatchLine, SemanticSearchToggle } from './SemanticSearch';
+import { useSemanticSearch, useSemanticSearchReady } from '../hooks/localModels';
+import type { EmbeddingSourceType } from '../../shared/local-models/embedding-index';
+import type { WorkSearchHit } from '../../shared/local-models/work-search';
 
 interface HistoryPanelProps {
 	session: Session;
@@ -70,6 +74,22 @@ const PAGE_SIZE = 100;
 
 /** Distance from bottom (px) at which to trigger loading the next page. */
 const SCROLL_LOAD_THRESHOLD = 500;
+
+/** What the panel's semantic mode searches: this agent's History and nothing else. */
+const HISTORY_SEMANTIC_SOURCES: readonly EmbeddingSourceType[] = ['history'];
+
+/** Most entries a semantic search lists. Past this a match is too loose to be useful. */
+const HISTORY_SEMANTIC_LIMIT = 30;
+
+/** Lines of matched text shown above a semantic hit's row. */
+const SEMANTIC_MATCH_LINES = 3;
+
+/**
+ * Height the match line adds to a row's estimate: its clamped lines plus the
+ * gap under them. An upper bound, like the row estimate itself, so measuring
+ * only ever shrinks a row.
+ */
+const SEMANTIC_MATCH_LINE_HEIGHT = SEMANTIC_MATCH_LINES * 20 + 8;
 
 /**
  * Resolve the bucket count for a given lookback selection. The bucket
@@ -130,6 +150,14 @@ export const HistoryPanel = React.memo(
 		// window on every keystroke; keying on "is there a term" resets it once
 		// when the user starts typing and once when they clear the box.
 		const isSearching = searchFilter.length > 0;
+		// Semantic mode: the filter box searches this agent's History by MEANING
+		// (the embedding index, in main) instead of matching text in the loaded
+		// window. The toggle is drawn only while the Semantic search task would
+		// answer, and the mode is live only while it is: a source that went away
+		// drops the panel back to text filtering rather than leaving it in a mode
+		// that can only refuse.
+		const semanticReady = useSemanticSearchReady();
+		const [semanticMode, setSemanticMode] = useState(false);
 		// Source/host filter - null means "All Sources". When set, both the
 		// entry list and the activity graph narrow to entries from that host.
 		const [selectedHost, setSelectedHost] = useState<string | null>(null);
@@ -164,6 +192,35 @@ export const HistoryPanel = React.memo(
 			undefined
 		);
 		const graphRefreshScheduled = useRef(false);
+
+		const semanticActive = semanticMode && semanticReady && searchFilterOpen;
+		const semantic = useSemanticSearch({
+			query: searchFilter,
+			enabled: semanticActive,
+			sourceTypes: HISTORY_SEMANTIC_SOURCES,
+			agentId: session.id,
+			limit: HISTORY_SEMANTIC_LIMIT,
+			includeEntries: true,
+		});
+		// Entries deleted from the detail view while a semantic result list is up.
+		// The list is a snapshot of one search, so a deleted entry would otherwise
+		// stay on screen until the query changed.
+		const [deletedSemanticIds, setDeletedSemanticIds] = useState<ReadonlySet<string>>(
+			() => new Set()
+		);
+		// The hits as History entries, best match first, and each entry's hit for
+		// the score and snippet drawn above its row.
+		const { semanticEntries, semanticHitById } = useMemo(() => {
+			const entries: HistoryEntry[] = [];
+			const byId = new Map<string, WorkSearchHit>();
+			for (const hit of semantic.hits) {
+				const entry = hit.history?.entry;
+				if (!entry || deletedSemanticIds.has(entry.id) || byId.has(entry.id)) continue;
+				entries.push(entry);
+				byId.set(entry.id, hit);
+			}
+			return { semanticEntries: entries, semanticHitById: byId };
+		}, [semantic.hits, deletedSemanticIds]);
 
 		const listRef = useRef<HTMLDivElement>(null);
 		const searchInputRef = useRef<HTMLInputElement>(null);
@@ -422,8 +479,12 @@ export const HistoryPanel = React.memo(
 		// now server-side (part of the page loader), so it doesn't appear
 		// here - entries arriving from the IPC are already inside the
 		// window. Type + search + host all stay client-side over loaded pages.
+		//
+		// In semantic mode the list is the search's hits instead of the loaded
+		// window, in score order. The type, host and sender filters still apply;
+		// the text match does not, since the hits were already chosen by meaning.
 		const allFilteredEntries = useMemo(() => {
-			return historyEntries.filter((entry) => {
+			return (semanticActive ? semanticEntries : historyEntries).filter((entry) => {
 				if (!entry || !entry.type) return false;
 				if (!activeFilters.has(entry.type)) return false;
 
@@ -437,7 +498,7 @@ export const HistoryPanel = React.memo(
 					if (entryUser !== selectedUser) return false;
 				}
 
-				if (searchFilter) {
+				if (searchFilter && !semanticActive) {
 					const searchLower = searchFilter.toLowerCase();
 					const summaryMatch = entry.summary?.toLowerCase().includes(searchLower);
 					const responseMatch = entry.fullResponse?.toLowerCase().includes(searchLower);
@@ -470,7 +531,15 @@ export const HistoryPanel = React.memo(
 
 				return true;
 			});
-		}, [historyEntries, activeFilters, searchFilter, selectedHost, selectedUser]);
+		}, [
+			historyEntries,
+			semanticEntries,
+			semanticActive,
+			activeFilters,
+			searchFilter,
+			selectedHost,
+			selectedUser,
+		]);
 
 		// Is the user hiding at least one entry type right now? The type filter
 		// runs SERVER-side (see `loadPage`), so `totalCount` is already net of
@@ -563,9 +632,12 @@ export const HistoryPanel = React.memo(
 			(index: number) => {
 				const entry = allFilteredEntries[index];
 				if (!entry) return ESTIMATED_ROW_HEIGHT;
-				return estimateHistoryRowHeight(entry);
+				return (
+					estimateHistoryRowHeight(entry) +
+					(semanticActive && semanticHitById.has(entry.id) ? SEMANTIC_MATCH_LINE_HEIGHT : 0)
+				);
 			},
-			[allFilteredEntries]
+			[allFilteredEntries, semanticActive, semanticHitById]
 		);
 
 		// Create virtualizer
@@ -711,8 +783,10 @@ export const HistoryPanel = React.memo(
 
 			// Pagination: load next older page when near bottom. The hook
 			// guards against concurrent calls and no-ops when there's
-			// nothing more to load.
-			if (!isLoading) {
+			// nothing more to load. Not in semantic mode: its list is a short
+			// set of hits, so every scroll would read as "near the bottom" and
+			// page through history nobody is looking at.
+			if (!isLoading && !semanticActive) {
 				const nearBottom =
 					target.scrollHeight - target.scrollTop - target.clientHeight < SCROLL_LOAD_THRESHOLD;
 				if (nearBottom) {
@@ -742,7 +816,7 @@ export const HistoryPanel = React.memo(
 					end: topEntry.timestamp,
 				});
 			}
-		}, [session.id, allFilteredEntries, virtualizer, isLoading, loadMoreOlder]);
+		}, [session.id, allFilteredEntries, virtualizer, isLoading, loadMoreOlder, semanticActive]);
 
 		// PERF: Throttle scroll handler to 4ms (~240fps) for smooth scrollbar
 		const throttledScrollHandler = useThrottledCallback(handleScrollInner, 4);
@@ -785,7 +859,7 @@ export const HistoryPanel = React.memo(
 			if (listRef.current) {
 				listRef.current.scrollTop = 0;
 			}
-		}, [activeFilters, searchFilter, graphLookbackHours, setSelectedIndex]);
+		}, [activeFilters, searchFilter, graphLookbackHours, semanticActive, setSelectedIndex]);
 
 		// Scroll selected item into view when selectedIndex changes (keyboard navigation)
 		useEffect(() => {
@@ -849,6 +923,7 @@ export const HistoryPanel = React.memo(
 					const success = await window.maestro.history.delete(entryId, session.id);
 					if (success) {
 						mutateEntries((prev) => prev.filter((entry) => entry.id !== entryId));
+						setDeletedSemanticIds((prev) => new Set(prev).add(entryId));
 						setSelectedIndex(-1);
 					}
 				} catch (error) {
@@ -865,46 +940,77 @@ export const HistoryPanel = React.memo(
 					{/* Search Filter - above buttons when open */}
 					{searchFilterOpen && (
 						<div>
-							<div className="relative">
-								<input
-									ref={searchInputRef}
-									autoFocus
-									type="text"
-									placeholder="Filter history..."
-									value={searchFilter}
-									onChange={(e) => setSearchFilter(e.target.value)}
-									onKeyDown={(e) => {
-										if (e.key === 'Escape') {
+							<div className="flex items-center gap-2">
+								<div className="relative flex-1 min-w-0">
+									<input
+										ref={searchInputRef}
+										autoFocus
+										type="text"
+										placeholder={
+											semanticActive ? 'Search history by meaning...' : 'Filter history...'
+										}
+										value={searchFilter}
+										onChange={(e) => setSearchFilter(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === 'Escape') {
+												setSearchFilterOpen(false);
+												setSearchFilter('');
+												// Return focus to the list
+												listRef.current?.focus();
+											} else if (e.key === 'ArrowDown') {
+												e.preventDefault();
+												// Move focus to list and select first item
+												listRef.current?.focus();
+												if (filteredEntries.length > 0) {
+													setSelectedIndex(0);
+												}
+											} else if (
+												e.key === 'Enter' &&
+												semanticActive &&
+												!semantic.loading &&
+												filteredEntries.length > 0
+											) {
+												// A semantic list is ranked, so Enter from the box opens
+												// the best match without a trip through the list.
+												e.preventDefault();
+												openDetailModal(filteredEntries[0], 0);
+											}
+										}}
+										className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
+										style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
+									/>
+									<EscCloseButton
+										theme={theme}
+										variant="adornment"
+										label="Close filter (Esc)"
+										onClose={() => {
 											setSearchFilterOpen(false);
 											setSearchFilter('');
-											// Return focus to the list
 											listRef.current?.focus();
-										} else if (e.key === 'ArrowDown') {
-											e.preventDefault();
-											// Move focus to list and select first item
-											listRef.current?.focus();
-											if (filteredEntries.length > 0) {
-												setSelectedIndex(0);
-											}
-										}
-									}}
-									className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
-									style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
-								/>
-								<EscCloseButton
-									theme={theme}
-									variant="adornment"
-									label="Close filter (Esc)"
-									onClose={() => {
-										setSearchFilterOpen(false);
-										setSearchFilter('');
-										listRef.current?.focus();
-									}}
-								/>
+										}}
+									/>
+								</div>
+								{semanticReady && (
+									<SemanticSearchToggle
+										theme={theme}
+										variant="icon"
+										active={semanticMode}
+										onToggle={() => {
+											setSemanticMode((prev) => !prev);
+											searchInputRef.current?.focus();
+										}}
+										testId="history-semantic-toggle"
+									/>
+								)}
 							</div>
 							{searchFilter && (
 								<div className="text-2xs mt-1 text-right" style={{ color: theme.colors.textDim }}>
-									{allFilteredEntries.length} result{allFilteredEntries.length !== 1 ? 's' : ''}
+									{semanticActive && semantic.loading
+										? 'Searching...'
+										: `${allFilteredEntries.length} result${allFilteredEntries.length !== 1 ? 's' : ''}`}
+									{semanticActive && semantic.indexNote && (
+										<span style={{ color: theme.colors.warning }}> · {semantic.indexNote}</span>
+									)}
 								</div>
 							)}
 						</div>
@@ -1004,8 +1110,16 @@ export const HistoryPanel = React.memo(
 					{isLoading ? (
 						<div className="text-center py-8 text-xs opacity-50">Loading history...</div>
 					) : allFilteredEntries.length === 0 ? (
-						<div className="text-center py-8 text-xs opacity-50">
-							{totalCount === 0 && !hasNarrowingTypeFilter ? (
+						<div className="text-center py-8 text-xs opacity-50" data-testid="history-empty-state">
+							{semanticActive ? (
+								!searchFilter.trim() ? (
+									'Describe what you are looking for to search history by meaning.'
+								) : semantic.loading ? (
+									'Searching by meaning...'
+								) : (
+									(semantic.notice ?? `No history entries are close to "${searchFilter.trim()}".`)
+								)
+							) : totalCount === 0 && !hasNarrowingTypeFilter ? (
 								graphLookbackHours !== null ? (
 									<>
 										No entries in the last{' '}
@@ -1058,6 +1172,16 @@ export const HistoryPanel = React.memo(
 											transform: `translateY(${virtualItem.start}px)`,
 										}}
 									>
+										{semanticActive && semanticHitById.has(entry.id) && (
+											<SemanticMatchLine
+												theme={theme}
+												score={semanticHitById.get(entry.id)!.score}
+												snippet={semanticHitById.get(entry.id)!.snippet}
+												query={semantic.searchedQuery}
+												maxLines={SEMANTIC_MATCH_LINES}
+												className="px-1 pb-1"
+											/>
+										)}
 										<HistoryEntryItem
 											entry={entry}
 											index={virtualItem.index}

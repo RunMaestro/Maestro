@@ -32,6 +32,7 @@ import type {
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
 import type { ToastPosition } from '../../../shared/toastPosition';
+import type { SpokenNoticeMode } from '../../../shared/spokenNotices';
 import type { GlossLevel } from '../../../shared/themeGloss';
 import type { QuickChatSettings } from '../../../shared/quickChat';
 import type { ThroughputGaugeSettings } from '../../../shared/throughputGauge';
@@ -46,8 +47,14 @@ import type {
 	FilePreviewToolbarButton,
 	FilePreviewToolbarVisibility,
 } from '../../stores/settingsStore';
+import type {
+	DelegationGraphLayouts,
+	DelegationScopeLayout,
+} from '../../stores/settingsDelegationGraphSlice';
+import type { DelegationGraphScope } from '../../../shared/delegationGraph';
 import type { ModalResizeKey, ModalSize, ModalSizes } from '../../utils/modalSizing';
 import { notifyToast } from '../../stores/notificationStore';
+import { describeGlobalHotkeyStatus, globalHotkeyLabel } from '../../../shared/global-hotkeys';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import type { TypographySurface } from '../../../shared/typography';
@@ -219,6 +226,8 @@ export interface UseSettingsReturn {
 	setIdleNotificationEnabled: (value: boolean) => void;
 	idleNotificationCommand: string;
 	setIdleNotificationCommand: (value: string) => void;
+	spokenNotices: SpokenNoticeMode;
+	setSpokenNotices: (value: SpokenNoticeMode) => void;
 
 	// Update settings
 	checkForUpdatesOnStartup: boolean;
@@ -487,6 +496,8 @@ export interface UseSettingsReturn {
 	setSendButtonMenu: (value: boolean) => void;
 	crossAgentMentionsWritable: boolean;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	maxConsultationsPerTurn: number;
+	setMaxConsultationsPerTurn: (value: number) => void;
 	crossAgentHandoffsWritable: boolean;
 	setCrossAgentHandoffsWritable: (value: boolean) => void;
 
@@ -517,6 +528,11 @@ export interface UseSettingsReturn {
 	setWakatimeEnabled: (value: boolean) => void;
 	wakatimeDetailedTracking: boolean;
 	setWakatimeDetailedTracking: (value: boolean) => void;
+
+	// Delegation Graph: saved layout and agent positions, per scope
+	delegationGraphLayouts: DelegationGraphLayouts;
+	setDelegationScopeLayout: (scope: DelegationGraphScope, value: DelegationScopeLayout) => void;
+	resetDelegationScopeLayout: (scope: DelegationGraphScope) => void;
 
 	// Window chrome settings
 	useNativeTitleBar: boolean;
@@ -649,13 +665,13 @@ export function useSettings(): UseSettingsReturn {
 	// another app). Mounted here so the toast fires even when Settings is closed.
 	useEffect(() => {
 		if (!window.maestro?.app?.onGlobalHotkeyRegistrationFailed) return;
-		const cleanup = window.maestro.app.onGlobalHotkeyRegistrationFailed((keys) => {
-			const combo = keys.length > 0 ? formatShortcutKeys(keys) : '(none)';
-			logger.warn(`[Settings] Global hotkey registration failed: ${combo}`);
+		const cleanup = window.maestro.app.onGlobalHotkeyRegistrationFailed((status) => {
+			const combo = status.keys.length > 0 ? formatShortcutKeys(status.keys) : '(none)';
+			logger.warn(`[Settings] Global hotkey '${status.id}' registration failed: ${combo}`);
 			notifyToast({
 				color: 'orange',
-				title: 'Global hotkey unavailable',
-				message: `${combo} is already in use by another app. Pick a different combo in Settings → General.`,
+				title: `Global hotkey unavailable: ${globalHotkeyLabel(status.id)}`,
+				message: describeGlobalHotkeyStatus(status, combo),
 				dismissible: true,
 			});
 		});

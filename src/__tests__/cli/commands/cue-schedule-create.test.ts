@@ -710,4 +710,73 @@ describe('cue schedule (create)', () => {
 		const sub = (parsed.subscriptions as Array<Record<string, unknown>>)[0];
 		expect(sub.fire_at as string).toMatch(TZ_SUFFIX_REGEX);
 	});
+
+	it('--gate writes the condition on the task and reports it', async () => {
+		mockReadSessions.mockReturnValue([session({ id: 'agent-alpha', name: 'Alpha', projectRoot })]);
+
+		await cueSchedule({
+			every: '30m',
+			agent: 'Alpha',
+			prompt: 'triage the queue',
+			name: 'triage',
+			gate: '  the queue is not empty  ',
+			gateOnUnavailable: 'skip',
+			json: true,
+		});
+
+		expect(processExitSpy).not.toHaveBeenCalled();
+		const sub = (
+			readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>
+		)[0];
+		expect(sub.gate).toBe('the queue is not empty');
+		expect(sub.gate_on_unavailable).toBe('skip');
+		expect(JSON.parse(consoleSpy.mock.calls[0][0] as string)).toMatchObject({
+			ok: true,
+			names: ['triage'],
+			gate: 'the queue is not empty',
+			gate_on_unavailable: 'skip',
+		});
+	});
+
+	it('--gate in human mode says which Local Models task checks it', async () => {
+		mockReadSessions.mockReturnValue([session({ id: 'agent-alpha', name: 'Alpha', projectRoot })]);
+
+		await cueSchedule({
+			every: '30m',
+			agent: 'Alpha',
+			prompt: 'triage',
+			gate: 'the queue is not empty',
+		});
+
+		const lines = consoleSpy.mock.calls.map((call) => String(call[0]));
+		expect(lines[1]).toBe('Gate: the queue is not empty');
+		expect(lines[2]).toContain('maestro-cli models status cue-gate');
+		const sub = (
+			readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>
+		)[0];
+		// The default policy is not spelled out on disk.
+		expect(sub).not.toHaveProperty('gate_on_unavailable');
+	});
+
+	it('refuses --gate-on-unavailable without --gate, and a policy that is not one', async () => {
+		mockReadSessions.mockReturnValue([session({ id: 'agent-alpha', name: 'Alpha', projectRoot })]);
+
+		await cueSchedule({ every: '30m', agent: 'Alpha', prompt: 'x', gateOnUnavailable: 'skip' });
+		expect(consoleErrorSpy.mock.calls[0][0] as string).toContain(
+			'--gate-on-unavailable requires --gate'
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+
+		consoleErrorSpy.mockClear();
+		await cueSchedule({
+			every: '30m',
+			agent: 'Alpha',
+			prompt: 'x',
+			gate: 'the queue is not empty',
+			gateOnUnavailable: 'maybe',
+		});
+		expect(consoleErrorSpy.mock.calls[0][0] as string).toContain(
+			'--gate-on-unavailable must be one of: run, skip'
+		);
+	});
 });

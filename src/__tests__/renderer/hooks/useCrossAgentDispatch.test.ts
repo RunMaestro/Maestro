@@ -397,6 +397,46 @@ describe('sendCrossAgentRequest in-flight registration', () => {
 		expect(registered.targetTabId).toBeTruthy();
 	});
 
+	it('forwards an admitted consult chain to the main process, and only then', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'target', name: 'Pedsidian', toolType: 'claude-code' }),
+				createMockSession({ id: 'src', name: 'Scratch' }),
+			],
+		} as never);
+
+		const send = vi.fn().mockResolvedValue({ requestId: 'req-1' });
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			crossAgent: { send },
+		} as never;
+
+		const base = {
+			sourceSessionId: 'src',
+			sourceAgentName: 'Scratch',
+			sourceTabId: 'src-tab',
+			sourceLogs: [],
+			targetSessionId: 'target',
+			userPrompt: 'what is the status?',
+		};
+		// `maestro-cli ask` spent for this consult and names the target's place.
+		sendCrossAgentRequest({ ...base, consultChain: { chainId: 'chain-a', depth: 2 } });
+		// A typed mention carries none.
+		sendCrossAgentRequest(base);
+		// A mention inside a dispatched prompt names the MENTIONING turn's place,
+		// for main to spend from. Never as an admitted chain.
+		sendCrossAgentRequest({ ...base, sourceConsultChain: { chainId: 'chain-a', depth: 1 } });
+
+		expect(send.mock.calls[0][0].consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+		expect(send.mock.calls[0][0]).not.toHaveProperty('sourceConsultChain');
+		expect(send.mock.calls[1][0]).not.toHaveProperty('consultChain');
+		expect(send.mock.calls[1][0]).not.toHaveProperty('sourceConsultChain');
+		expect(send.mock.calls[2][0].sourceConsultChain).toEqual({ chainId: 'chain-a', depth: 1 });
+		expect(send.mock.calls[2][0]).not.toHaveProperty('consultChain');
+		await vi.waitFor(() => {
+			expect(Object.keys(useCrossAgentInFlightStore.getState().requests)).toHaveLength(1);
+		});
+	});
+
 	it('delivers onComplete when the send itself rejects', async () => {
 		useSessionStore.setState({
 			sessions: [

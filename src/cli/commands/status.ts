@@ -8,6 +8,7 @@ import {
 } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode } from '../exit-codes';
+import { failCommand } from '../services/session-command';
 
 /**
  * Said when no discovery file exists. `session`, `dispatch`, and `queue` match
@@ -24,20 +25,24 @@ export function describeHost(info: Pick<CliServerInfo, 'hostKind' | 'pid'>): str
 		: 'Maestro';
 }
 
-export async function status(): Promise<void> {
+export interface StatusOptions {
+	json?: boolean;
+}
+
+export async function status(options: StatusOptions = {}): Promise<void> {
 	const info = readCliServerInfo();
 	if (!info) {
-		console.log(NOT_RUNNING_MESSAGE);
-		process.exit(ExitCode.NotRunning);
+		failCommand(NOT_RUNNING_MESSAGE, options.json, ExitCode.NotRunning);
 	}
 
 	if (!isCliServerRunning()) {
-		console.log(
+		failCommand(
 			info.hostKind === 'headless'
 				? 'Maestro discovery file is stale (the headless host may have crashed; `maestro-cli host start` starts a new one)'
-				: 'Maestro discovery file is stale (app may have crashed)'
+				: 'Maestro discovery file is stale (app may have crashed)',
+			options.json,
+			ExitCode.NotRunning
 		);
-		process.exit(ExitCode.NotRunning);
 	}
 
 	try {
@@ -52,12 +57,21 @@ export async function status(): Promise<void> {
 			);
 
 			const sessionCount = sessionsResult.sessions?.length ?? 0;
-			console.log(
-				`${describeHost(info)} is running on port ${info.port} with ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
-			);
+			if (options.json) {
+				console.log(
+					JSON.stringify({ success: true, running: true, port: info.port, agents: sessionCount })
+				);
+			} else {
+				console.log(
+					`${describeHost(info)} is running on port ${info.port} with ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
+				);
+			}
 		});
 	} catch (error) {
-		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-		process.exit(ExitCode.NotRunning);
+		failCommand(
+			error instanceof Error ? error.message : String(error),
+			options.json,
+			ExitCode.NotRunning
+		);
 	}
 }

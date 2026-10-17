@@ -367,6 +367,57 @@ subscriptions:
 
 **`time.once`:** `{{CUE_FIRE_AT}}` (the originally-scheduled fire timestamp, ISO-8601 with timezone - handy for "you asked me to remind you at {{CUE_FIRE_AT}}" phrasing in notify messages or prompts)
 
+### Gate (`gate`)
+
+Any subscription may carry a `gate`: one sentence in plain language that the event must meet before a run starts. A local model (the **Cue gate** task in Settings > Models > System One) reads the event payload and answers yes or no. A "no" starts nothing and records a `gated` event with the reason in the Activity Log.
+
+```yaml
+- name: triage-comments
+  event: github.issue
+  retrigger_on_comments: true
+  gate: the newest comment asks for a code change or reports a bug
+  gate_on_unavailable: run # default. "skip" records a gated event instead of running unchecked
+  prompt: Handle the request in issue {{CUE_GH_NUMBER}}.
+```
+
+- Use `filter` for what a field comparison can decide, `gate` for what needs reading. `filter` runs first and leaves no record; a gated event is recorded.
+- The gate is a cost control. It saves agent turns on events that do not need one. It is not a security check.
+- If the gate model cannot answer (task off, model missing, server down), the run starts and the user is warned, unless `gate_on_unavailable: skip`.
+- A manual trigger (`cue trigger`, Play) is never gated.
+- Suggest a gate only when the user has (or wants) a model assigned to the Cue gate task; without one, every event runs unchecked and raises a warning.
+- To set, change, or remove a gate on an existing subscription, use the CLI instead of editing YAML. It writes every branch of a fan-out trigger together and reports whether a model will check the gate:
+
+```bash
+{{MAESTRO_CLI_PATH}} cue gate <subscription>                                   # print the gate
+{{MAESTRO_CLI_PATH}} cue gate <subscription> --set "the comment reports a bug" # set or replace it
+{{MAESTRO_CLI_PATH}} cue gate <subscription> --on-unavailable skip             # change only the policy
+{{MAESTRO_CLI_PATH}} cue gate <subscription> --clear                           # remove it
+{{MAESTRO_CLI_PATH}} cue schedule --every 30m --agent <id> --prompt "..." --gate "the build is red"
+```
+
+### Injection screen (`screen_injection`)
+
+Some variables carry text other people wrote: `{{CUE_GH_TITLE}}`, `{{CUE_GH_BODY}}`, `{{CUE_NEW_COMMENTS}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_TASK_CONTENT}}`, `{{CUE_TASK_LIST}}`, and every `{{CUE_WEBHOOK_*}}` variable except the path. A subscription can have a local classifier (the **Prompt-injection screen** task in Settings > Models > System One) score that text before a run starts. A score at or above `injection_threshold` (default 0.8) blocks the run and records a `blocked` event.
+
+```yaml
+- name: reply-to-comments
+  event: github.issue
+  screen_injection: true
+  prompt: Reply to the new comments. {{CUE_NEW_COMMENTS}}
+```
+
+- Not set, an `action: command` subscription that uses one of those variables is screened, and nothing else is. `true` always screens; `false` never does.
+- If the classifier cannot run, a command that asked for the screen is BLOCKED, and a prompt starts with a warning. A command with the key not set, while the task is off, starts unscreened.
+- When you write a subscription that puts one of those variables in a prompt, set `screen_injection: true` if the user has a classifier assigned.
+- Do not put an untrusted variable in a shell command. The screen looks for instructions aimed at a model; it does not make text safe for a shell. Pass the text to an agent prompt instead, or have the command read it from a file or an API by number.
+- To read or change the screen on an existing subscription, use the CLI:
+
+```bash
+{{MAESTRO_CLI_PATH}} cue screen <subscription>                  # print the screen
+{{MAESTRO_CLI_PATH}} cue screen <subscription> --mode on        # always screen (off, auto)
+{{MAESTRO_CLI_PATH}} cue screen <subscription> --threshold 0.9  # change only the threshold
+```
+
 ### CLI
 
 ```bash
@@ -394,7 +445,7 @@ When a user asks you to add, modify, or debug a Cue subscription:
 6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration.md, https://docs.runmaestro.ai/maestro-cue-events.md, https://docs.runmaestro.ai/maestro-cue-advanced.md, https://docs.runmaestro.ai/maestro-cue-examples.md. Don't guess field names.
 7. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` - the engine reloads automatically when the file changes.
 8. For anything clock-driven - one-off ("do X at 4pm") or repeating ("every weekday at 9am", "every 30 minutes") - use `{{MAESTRO_CLI_PATH}} cue schedule` - see the **Scheduled Tasks** section. Never hand-write `time.once`, `time.scheduled`, or `time.heartbeat` subscriptions; let the CLI generate them, and point the user at Maestro Cue → Scheduled Tasks to manage them.
-9. **Per-step model and effort.** A subscription that runs an agent may set `tier: low|medium|high` OR an exact `model: <id>`, plus `effort: low|medium|high`. They override the agent's own model for that run only. Tier and effort map per provider (Claude: tier `high` = opus, effort `high` = max). Codex, Copilot-CLI, and OpenCode have no tier table, so use `model` there. Never set both `tier` and `model`, and never set them on `action: command` or `action: notify`; the validator rejects all three cases. Typical use: `tier: low` on a high-volume triage step, `tier: high` on the one synthesis step that needs it. To change it on a subscription that already exists, run `{{MAESTRO_CLI_PATH}} cue model <subscription> --tier high --effort low` (or `--model <id>`, `--clear-model`, `--clear-effort`) instead of hand-editing the YAML; with no setting flag it prints the current choice and what it resolves to. When creating a scheduled task, pass `--tier` / `--model` / `--effort` to `cue schedule`.
+9. **Per-step model and effort.** A subscription that runs an agent may set `tier: low|medium|high` OR an exact `model: <id>`, plus `effort: low|medium|high`. They override the agent's own model for that run only. Tier and effort map per provider (Claude: tier `high` = opus, effort `high` = max; Codex: tier `low` / `medium` / `high` = the newest Luna / Sol / Astra model). Copilot-CLI and OpenCode have no tier table, so use `model` there. Never set both `tier` and `model`, and never set them on `action: command` or `action: notify`; the validator rejects all three cases. Typical use: `tier: low` on a high-volume triage step, `tier: high` on the one synthesis step that needs it. To change it on a subscription that already exists, run `{{MAESTRO_CLI_PATH}} cue model <subscription> --tier high --effort low` (or `--model <id>`, `--clear-model`, `--clear-effort`) instead of hand-editing the YAML; with no setting flag it prints the current choice and what it resolves to. When creating a scheduled task, pass `--tier` / `--model` / `--effort` to `cue schedule`.
 
 ### Multi-Root Pipelines (agents in different project roots)
 

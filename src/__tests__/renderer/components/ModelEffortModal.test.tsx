@@ -20,6 +20,7 @@ import { useModalLayer } from '../../../renderer/hooks/ui/useModalLayer';
 import { useFocusAfterRender } from '../../../renderer/hooks/utils/useFocusAfterRender';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../renderer/stores/tabStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { createMockSession, createMockAITab } from '../../helpers';
 import { mockTheme } from '../../helpers/mockTheme';
 import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
@@ -27,13 +28,17 @@ import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
 const MODELS = ['claude-sonnet-4.5', 'gpt-5', 'gemini-2.5-pro'];
 const EFFORTS = ['', 'low', 'medium', 'high'];
 
-function seedStore(tabOverrides: Record<string, unknown> = {}) {
+function seedStore(
+	tabOverrides: Record<string, unknown> = {},
+	sessionOverrides: Record<string, unknown> = {}
+) {
 	const tab = createMockAITab({ id: 'tab-1', name: 'Refactor', ...tabOverrides });
 	const session = createMockSession({
 		id: 'session-1',
 		toolType: 'claude-code',
 		aiTabs: [tab],
 		activeTabId: 'tab-1',
+		...sessionOverrides,
 	});
 	useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 	return session;
@@ -72,6 +77,12 @@ describe('ModelEffortModal', () => {
 		setTabModel = vi.fn();
 		setTabEffort = vi.fn();
 		useTabStore.setState({ setTabModel, setTabEffort } as never);
+		// The shipped defaults: no harness tier overrides, the model router off.
+		useSettingsStore.setState({
+			harnessTierDefaults: {},
+			localModelAssignments: {},
+			localModelEndpoints: [],
+		});
 		seedStore();
 	});
 
@@ -92,7 +103,9 @@ describe('ModelEffortModal', () => {
 		renderModal();
 		await screen.findByText('claude-sonnet-4.5');
 
-		// Selection starts on '(default)' (index 0); one Down lands on the first model.
+		// Selection starts on '(default)' (index 0). Auto follows it, so the
+		// second Down lands on the first model and the third on gpt-5.
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
 		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
 		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
 		fireEvent.keyDown(keyTarget(), { key: 'ArrowRight' });
@@ -133,7 +146,9 @@ describe('ModelEffortModal', () => {
 		renderModal();
 		await screen.findByText('gpt-5');
 
-		// gpt-5 sits at index 2; two Ups return to '(default)'.
+		// gpt-5 sits at index 3, after '(default)', Auto and the first model;
+		// three Ups return to '(default)'.
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowUp' });
 		fireEvent.keyDown(keyTarget(), { key: 'ArrowUp' });
 		fireEvent.keyDown(keyTarget(), { key: 'ArrowUp' });
 		fireEvent.keyDown(keyTarget(), { key: 'ArrowLeft' });
@@ -151,6 +166,8 @@ describe('ModelEffortModal', () => {
 		renderModal();
 		await screen.findByText('claude-sonnet-4.5');
 
+		// The first Down lands on Auto, which is not a vendor's model.
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
 		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
 		expect(screen.getByText('Claude')).toBeInTheDocument();
 
@@ -169,8 +186,10 @@ describe('ModelEffortModal', () => {
 		});
 		renderModal();
 		// With an agent-level default set, the wheel opens on the resolved model,
-		// so reaching the '(default)' row takes one step up.
+		// so reaching the '(default)' row takes two steps up: past Auto, which
+		// sits between them.
 		await screen.findByText('claude-sonnet-4.5');
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowUp' });
 		fireEvent.keyDown(keyTarget(), { key: 'ArrowUp' });
 
 		expect(screen.getByText('Agent default - claude-sonnet-4.5')).toBeInTheDocument();
@@ -186,6 +205,9 @@ describe('ModelEffortModal', () => {
 	});
 
 	it('says so when the agent exposes neither knob, but not before the lookups settle', async () => {
+		// An agent Auto has nothing to act on either: no effort ladder Maestro can
+		// name and no tier mapped to a model. Auto would be a knob of its own.
+		seedStore({}, { toolType: 'opencode' });
 		let releaseModels: (models: string[]) => void = () => {};
 		(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockReturnValue(
 			new Promise<string[]>((resolve) => {
@@ -204,6 +226,35 @@ describe('ModelEffortModal', () => {
 		await waitFor(() => {
 			expect(screen.getByText(/no model or effort options/i)).toBeInTheDocument();
 		});
+	});
+
+	it('keeps the loading state for an agent that offers Auto, then offers Auto alone', async () => {
+		// Auto does not come from the lookups, so it is known before they settle.
+		// A wheel of '(default)' and Auto mid-flight would open on the wrong row
+		// for a tab on a named model, so the placeholder holds until they land.
+		let releaseModels: (models: string[]) => void = () => {};
+		(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockReturnValue(
+			new Promise<string[]>((resolve) => {
+				releaseModels = resolve;
+			})
+		);
+		(window.maestro.agents.getConfigOptions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+		renderModal();
+
+		expect(screen.getByText(/loading options/i)).toBeInTheDocument();
+		expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+
+		// The provider lists nothing. Auto is still a choice, so there is
+		// something to tune and the "no options" line would be wrong. A wheel of
+		// two rows draws only the one it is on, so Auto is one step away.
+		releaseModels([]);
+		await waitFor(() => expect(screen.queryByText(/loading options/i)).not.toBeInTheDocument());
+		expect(screen.queryByText(/no model or effort options/i)).not.toBeInTheDocument();
+
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
+		expect(screen.getByText('Auto')).toBeInTheDocument();
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'auto');
 	});
 
 	it('re-applies the current value when Enter lands before the lists load', async () => {
@@ -226,6 +277,89 @@ describe('ModelEffortModal', () => {
 		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'gpt-5');
 		releaseModels(MODELS);
 		await waitFor(() => expect(screen.getByText('gpt-5')).toBeInTheDocument());
+	});
+
+	// Auto is a model choice like any other: one row on the wheel, right after
+	// '(default)', for an agent it can act on. The stored value is the word.
+	describe('the Auto model choice', () => {
+		it('offers Auto after (default) for a Claude Code agent and commits the word', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			expect(screen.getByText('Auto')).toBeInTheDocument();
+
+			fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
+			// Not a vendor's model: the caption says which axes it acts on, and its
+			// tooltip says who decides.
+			const caption = screen.getByText('picks the model and the effort for each turn');
+			expect(caption.getAttribute('title')).toContain('The model router is off');
+
+			fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+			expect(setTabModel).toHaveBeenCalledWith('tab-1', 'auto');
+		});
+
+		it('names the router in the caption tooltip once one is assigned', async () => {
+			useSettingsStore.setState({
+				localModelAssignments: { 'model-routing': { type: 'system-one' } },
+			});
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+
+			fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
+
+			expect(
+				screen.getByText('picks the model and the effort for each turn').getAttribute('title')
+			).toContain('Decided by System One.');
+		});
+
+		it('opens on the Auto row for a tab set to Auto', async () => {
+			seedStore({ customModel: 'auto' });
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+
+			expect(screen.getByText('picks the model and the effort for each turn')).toBeInTheDocument();
+			// The word is never drawn raw.
+			expect(screen.queryByText('auto')).not.toBeInTheDocument();
+			fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+			expect(setTabModel).toHaveBeenCalledWith('tab-1', 'auto');
+		});
+
+		it('is reached by typing its label', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+
+			fireEvent.keyDown(keyTarget(), { key: 'a' });
+			fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+
+			expect(setTabModel).toHaveBeenCalledWith('tab-1', 'auto');
+		});
+
+		it('offers no Auto for an agent it would change nothing for', async () => {
+			// OpenCode has no effort ladder Maestro can name, and none of this
+			// agent's tiers is mapped to a model.
+			seedStore({}, { toolType: 'opencode' });
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+
+			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+			// One Down from '(default)' is the first model, with no row between.
+			fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
+			fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+			expect(setTabModel).toHaveBeenCalledWith('tab-1', 'claude-sonnet-4.5');
+		});
+
+		it('offers Auto for that agent once one of its tiers is mapped', async () => {
+			seedStore(
+				{},
+				{
+					toolType: 'opencode',
+					tierTargets: { medium: { type: 'provider-model', model: 'gpt-5' } },
+				}
+			);
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+
+			expect(screen.getByText('Auto')).toBeInTheDocument();
+		});
 	});
 
 	it('jumps the wheel to the model matching a typed letter', async () => {

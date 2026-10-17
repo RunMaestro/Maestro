@@ -2,10 +2,11 @@
 // Displays unified history aggregated across all agents
 
 import { readSessions, readHistory, readSettings } from '../services/storage';
-import { formatError, formatDirectorNotesHistory } from '../output/formatter';
+import { formatDirectorNotesHistory } from '../output/formatter';
 import type { HistoryEntry, HistoryEntryType } from '../../shared/types';
 import { ALL_HISTORY_ENTRY_TYPES, isHistoryEntryType } from '../../shared/history';
 import { formatDurationDecimal } from '../../shared/duration';
+import { failCommand } from '../services/session-command';
 
 type OutputFormat = 'json' | 'markdown' | 'text';
 
@@ -194,11 +195,6 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (resolveFormat(options) === 'json') {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		failCommand(message, resolveFormat(options) === 'json');
 	}
 }

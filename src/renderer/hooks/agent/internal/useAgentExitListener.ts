@@ -28,6 +28,7 @@ import {
 } from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
+import { announceAgentFinished } from '../../../services/spokenNotices';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { isQuickChatTab } from '../../../services/quickChatEngine';
 import {
@@ -52,6 +53,7 @@ import {
 } from './helpers/exitSynopsis';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { drainTurnUsage, turnUsageStatsFields } from '../../../../shared/turnUsageLedger';
+import { turnModelStatsFields, type TurnModelStatsFields } from '../../../../shared/autoTurn';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
 import { releaseMentionHandoff } from '../../../services/crossAgentHandoff';
 import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
@@ -231,6 +233,8 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 				projectPath?: string;
 				startTime?: number;
 				isRemote?: boolean;
+				/** Where the turn ran and what Auto chose, as frozen on the tab at send. */
+				modelStats?: TurnModelStatsFields;
 			} | null = null;
 			let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
 			let synopsisData: SynopsisData | null = null;
@@ -342,6 +346,13 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						isRemote: !!(
 							currentSession.sshRemoteId || currentSession.sessionSshRemoteConfig?.enabled
 						),
+						// Read from the tab's send-time stamps, never the live agent record:
+						// a Run on target edited mid-turn must not refile the turn that is
+						// already running somewhere else.
+						modelStats: turnModelStatsFields({
+							runOn: completedTab?.turnRunOnSource,
+							auto: completedTab?.turnAuto,
+						}),
 					};
 
 					if (shouldRunSynopsisOnExit(currentSession, completedTab)) {
@@ -808,6 +819,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						isRemote: toastData.isRemote,
 						isWorktree: !!sessionForStats?.parentSessionId,
 						...turnUsageStatsFields(turnUsage),
+						...toastData.modelStats,
 					})
 					.catch((err) => {
 						logger.warn('[onProcessExit] Failed to record query stats:', undefined, err);
@@ -928,6 +940,18 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								task: toastData!.title,
 							});
 						}
+					}
+
+					// The spoken notice (Settings > Notifications, off by default). Main
+					// decides whether to say anything: it knows whether Maestro is focused
+					// and whether a voice session is live. Spoken on the HOST, so only the
+					// side-effect owner reports the turn, whichever tab is on screen.
+					if (ownsSideEffects) {
+						announceAgentFinished({
+							agentName: toastData!.projectName,
+							prompt: toastData!.prompt,
+							response: toastData!.response,
+						});
 					}
 				}, 0);
 			}

@@ -91,6 +91,50 @@ describe('ComposerOptionsSheet', () => {
 		expect(onModelChange).toHaveBeenCalledWith('');
 	});
 
+	// Auto is in `availableModels` like any model (the toolbar adds it for an
+	// agent it can act on); the sheet's part is to draw the word as "Auto" and to
+	// say under it what it does.
+	describe('the Auto model choice', () => {
+		const AUTO_TITLE = 'Auto: picks the model and the effort for each turn. Decided by System One.';
+
+		it('reads Auto on the collapsed section while Auto is the model', () => {
+			renderSheet({ currentModel: 'auto', availableModels: ['', 'auto', 'gpt-5'] });
+			expect(screen.getByTestId('composer-options-model')).toHaveTextContent('Auto');
+			expect(screen.getByTestId('composer-options-model')).not.toHaveTextContent('auto');
+		});
+
+		it('lists Auto with what it does beneath it, and reports the word', () => {
+			const onModelChange = vi.fn();
+			renderSheet({
+				onModelChange,
+				availableModels: ['', 'auto', 'gpt-5'],
+				autoModelTitle: AUTO_TITLE,
+			});
+			fireEvent.click(screen.getByTestId('composer-options-model'));
+
+			const row = screen.getByRole('button', { name: /^Auto/ });
+			expect(row).toHaveTextContent(AUTO_TITLE);
+			fireEvent.click(row);
+			expect(onModelChange).toHaveBeenCalledWith('auto');
+		});
+
+		it('describes the Auto row alone', () => {
+			renderSheet({ availableModels: ['', 'auto', 'gpt-5'], autoModelTitle: AUTO_TITLE });
+			fireEvent.click(screen.getByTestId('composer-options-model'));
+
+			expect(screen.getAllByText(AUTO_TITLE)).toHaveLength(1);
+			expect(screen.getByRole('button', { name: 'gpt-5' })).not.toHaveTextContent(AUTO_TITLE);
+		});
+
+		it('lists no Auto when the list it is handed has none', () => {
+			renderSheet({ autoModelTitle: AUTO_TITLE });
+			fireEvent.click(screen.getByTestId('composer-options-model'));
+
+			expect(screen.queryByRole('button', { name: /^Auto/ })).not.toBeInTheDocument();
+			expect(screen.queryByText(AUTO_TITLE)).not.toBeInTheDocument();
+		});
+	});
+
 	it('names an effort rather than stepping to the next one', () => {
 		const onEffortChange = vi.fn();
 		renderSheet({ onEffortChange });

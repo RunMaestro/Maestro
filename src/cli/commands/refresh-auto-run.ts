@@ -2,6 +2,7 @@
 
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 interface RefreshAutoRunOptions {
 	agent?: string;
@@ -32,12 +33,12 @@ export async function refreshAutoRun(options: RefreshAutoRunOptions): Promise<vo
 			const error = result.error || 'Failed to refresh Auto Run documents';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

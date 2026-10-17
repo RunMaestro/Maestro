@@ -10,6 +10,7 @@ import {
 	failCommand,
 	errorFrameMessage,
 	resolveAgentOrFail,
+	failFromError,
 } from '../services/session-command';
 import { resolveCliPath } from '../utils/parse';
 
@@ -110,7 +111,7 @@ export async function autoRunStatus(
 			client.sendCommand({ type: 'get_auto_run_state', sessionId }, 'auto_run_state')
 		);
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 	const frameError = errorFrameMessage(reply);
 	if (frameError) failCommand(frameError, options.json);

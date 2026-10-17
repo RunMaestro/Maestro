@@ -59,6 +59,7 @@ import {
 	GroupsView,
 	AutoRunView,
 	DashboardTabPanel,
+	ModelsView,
 	OverviewView,
 	ProviderQuotaUsageView,
 	ShortcutsView,
@@ -267,6 +268,7 @@ export function UsageDashboardModal({
 								  viewMode === 'agent-overview' ||
 								  viewMode === 'shortcuts' ||
 								  viewMode === 'tokens' ||
+								  viewMode === 'models' ||
 								  viewMode === 'anthropic-usage' ||
 								  viewMode === 'codex-usage'
 								? 'overview'
@@ -310,6 +312,20 @@ export function UsageDashboardModal({
 		if (viewMode === 'tokens') {
 			return (
 				<TokensView
+					key={viewMode}
+					timeRange={timeRange}
+					theme={theme}
+					colorBlindMode={colorBlindMode}
+				/>
+			);
+		}
+
+		// Model usage has its own record too (local model runs, System One, the
+		// token proxy), and a housekeeping task on a local model leaves no query
+		// event. Must stay above the `totalQueries === 0` empty-state gate below.
+		if (viewMode === 'models') {
+			return (
+				<ModelsView
 					key={viewMode}
 					timeRange={timeRange}
 					theme={theme}

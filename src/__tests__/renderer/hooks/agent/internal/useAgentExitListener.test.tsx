@@ -21,6 +21,11 @@ vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: () => mockIsWebDesktop,
 }));
 
+const mockAnnounceAgentFinished = vi.fn();
+vi.mock('../../../../../renderer/services/spokenNotices', () => ({
+	announceAgentFinished: (...args: unknown[]) => mockAnnounceAgentFinished(...args),
+}));
+
 let handler: ((sessionId: string, code: number) => Promise<void>) | undefined;
 const mockUnsubscribe = vi.fn();
 
@@ -126,6 +131,217 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(updated.state).toBe('idle');
+	});
+
+	describe('the spoken notice', () => {
+		beforeEach(async () => {
+			// An exit defers its notifications by a tick. Let any that an earlier
+			// test left pending run now, so they are not counted here.
+			await new Promise((r) => setTimeout(r, 0));
+			mockAnnounceAgentFinished.mockClear();
+		});
+
+		/** An agent whose tab just answered a request. */
+		function finishedTurn() {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: 0,
+				logs: [
+					{ id: 'l1', timestamp: 1, source: 'user', text: 'Fix the login test' },
+					{ id: 'l2', timestamp: 2, source: 'stdout', text: 'Fixed. Tests pass.' },
+				],
+			} as any);
+			const session = createMockSession({
+				id: 'sess-1',
+				name: 'Backend',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: 1000,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' } as any);
+		}
+
+		async function exit() {
+			renderHook(() => useAgentExitListener(makeDeps()));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+		}
+
+		it('reports a finished turn with who finished, the request, and the reply', async () => {
+			finishedTurn();
+			await exit();
+
+			// Reported even though the finished tab is the one on screen: whether to
+			// speak is main's call (the setting, window focus, a live voice session).
+			expect(mockAnnounceAgentFinished).toHaveBeenCalledTimes(1);
+			expect(mockAnnounceAgentFinished).toHaveBeenCalledWith({
+				agentName: 'Backend',
+				prompt: 'Fix the login test',
+				response: 'Fixed. Tests pass.',
+			});
+		});
+
+		it('is not reported from a web-desktop client, which does not own the side effects', async () => {
+			// The line is spoken on the host, so a browser reporting the same turn
+			// would say it a second time.
+			mockIsWebDesktop = true;
+			finishedTurn();
+			await exit();
+
+			expect(mockAnnounceAgentFinished).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('the stats row of a finished turn', () => {
+		const OLLAMA_QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+		const MAESTRO_QWEN = {
+			type: 'source' as const,
+			endpointId: 'maestro-server',
+			model: 'qwen3.5-4b',
+		};
+
+		/** Finish one turn on a tab with these send-time stamps, and return its stats row. */
+		async function recordedRow(
+			tabStamps: Record<string, unknown>,
+			session: Record<string, unknown> = {}
+		): Promise<Record<string, unknown>> {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: 0,
+				logs: [
+					{ id: 'l1', timestamp: 1, source: 'user', text: 'Rename formatDate' },
+					{ id: 'l2', timestamp: 2, source: 'stdout', text: 'Renamed.' },
+				],
+				...tabStamps,
+			} as any);
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 'sess-1',
+						aiTabs: [tab],
+						activeTabId: 'tab-1',
+						state: 'busy',
+						busySource: 'ai',
+						thinkingStartTime: 1000,
+						...session,
+					}),
+				],
+				activeSessionId: 'sess-1',
+			} as any);
+
+			renderHook(() => useAgentExitListener(makeDeps()));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			const recordQuery = (window as any).maestro.stats.recordQuery;
+			expect(recordQuery).toHaveBeenCalledTimes(1);
+			return recordQuery.mock.calls[0][0];
+		}
+
+		it('names no source and no tier for a turn on a named model on the provider', async () => {
+			const row = await recordedRow({ turnModel: 'opus' });
+
+			expect(row).toMatchObject({ sessionId: 'sess-1', tabId: 'tab-1', source: 'user' });
+			expect(row).not.toHaveProperty('runOnEndpoint');
+			expect(row).not.toHaveProperty('runOnModel');
+			expect(row).not.toHaveProperty('routedTier');
+		});
+
+		it('names the Run on source the turn was sent on', async () => {
+			const row = await recordedRow(
+				{ turnRunOn: 'qwen3:latest · Ollama', turnRunOnSource: OLLAMA_QWEN },
+				{ runOn: OLLAMA_QWEN }
+			);
+
+			expect(row).toMatchObject({ runOnEndpoint: 'ep-ollama', runOnModel: 'qwen3:latest' });
+			expect(row).not.toHaveProperty('routedTier');
+		});
+
+		it('files the turn where it was SENT, not where the agent points when it ends', async () => {
+			// Settings are codified at send. The agent's target was changed while the
+			// turn ran: once to another source, once back to the provider.
+			const retargeted = await recordedRow(
+				{ turnRunOn: 'qwen3:latest · Ollama', turnRunOnSource: OLLAMA_QWEN },
+				{ runOn: MAESTRO_QWEN }
+			);
+			expect(retargeted).toMatchObject({ runOnEndpoint: 'ep-ollama', runOnModel: 'qwen3:latest' });
+
+			(window as any).maestro.stats.recordQuery.mockClear();
+			const backOnProvider = await recordedRow(
+				{ turnRunOn: 'qwen3:latest · Ollama', turnRunOnSource: OLLAMA_QWEN },
+				{ runOn: undefined }
+			);
+			expect(backOnProvider).toMatchObject({
+				runOnEndpoint: 'ep-ollama',
+				runOnModel: 'qwen3:latest',
+			});
+		});
+
+		it('does not file a provider turn under a source the agent was pointed at afterwards', async () => {
+			const row = await recordedRow({ turnModel: 'opus' }, { runOn: OLLAMA_QWEN });
+
+			expect(row).not.toHaveProperty('runOnEndpoint');
+			expect(row).not.toHaveProperty('runOnModel');
+		});
+
+		it("records the tier Auto's router chose, and the source that tier launched on", async () => {
+			const row = await recordedRow({
+				turnModel: 'qwen3.5-4b',
+				turnRunOn: 'qwen3.5-4b · Maestro model server',
+				turnRunOnSource: MAESTRO_QWEN,
+				turnAuto: {
+					status: 'routed',
+					runOn: MAESTRO_QWEN,
+					route: { tier: 'low', effort: 'low', engine: 'Jev (TypeSafe cloud)', calibrated: true },
+				},
+			});
+
+			expect(row).toMatchObject({
+				runOnEndpoint: 'maestro-server',
+				runOnModel: 'qwen3.5-4b',
+				routedTier: 'low',
+			});
+		});
+
+		it('records the tier of a routed turn that stayed on the provider', async () => {
+			const row = await recordedRow({
+				turnModel: 'opus',
+				turnAuto: {
+					status: 'routed',
+					route: { tier: 'high', effort: 'medium', engine: 'Embedding router', calibrated: false },
+				},
+			});
+
+			expect(row).toMatchObject({ routedTier: 'high' });
+			expect(row).not.toHaveProperty('runOnEndpoint');
+		});
+
+		it('records no tier for an Auto turn no router decided', async () => {
+			const off = await recordedRow({
+				turnAuto: {
+					status: 'router-off',
+					route: { skipped: 'off', detail: 'Model routing is off.' },
+				},
+			});
+			expect(off).not.toHaveProperty('routedTier');
+
+			(window as any).maestro.stats.recordQuery.mockClear();
+			const slow = await recordedRow({
+				turnAuto: {
+					status: 'no-decision',
+					route: { skipped: 'timeout', detail: 'No decision within 400 ms.' },
+				},
+			});
+			expect(slow).not.toHaveProperty('routedTier');
+		});
 	});
 
 	// 2026-10-12: a `--print` turn emits its whole reply on the final result, an

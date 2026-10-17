@@ -5,23 +5,39 @@
  * - 'create': Empty initial state, "Create" button, description text
  * - 'edit': Pre-populated from existing group chat, "Save" button, moderator change warning
  *
- * Allows user to:
- * - Select a moderator agent from a dropdown of available agents
- * - Customize moderator settings (CLI args, path, ENV vars) via expandable panel
- * - Enter/edit a name for the group chat
+ * Four tabs, the moderator's share of the agent settings form:
+ * - General: the chat name, the moderator agent, and agent availability
+ * - Provider: the moderator's provider settings (path, args, model, token source)
+ * - Environment: the moderator's environment variables
+ * - SSH: where the moderator process runs
+ *
+ * No Models tab: a moderator is nobody's agent, so it has no gateway or token
+ * proxy of its own. No Peers tab: a group chat has no peers.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Settings, ChevronDown, Check, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ChevronDown, AlertTriangle } from 'lucide-react';
 import { AGENT_AUTOSELECT_ORDER, isBetaAgent } from '../../shared/agentMetadata';
 import { requiresIdleParticipants } from '../../shared/group-chat-types';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput, ToggleSwitch } from './ui';
+import { ModalTabStrip, useModalTabs } from './ui/ModalTabStrip';
 import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
+import { agentEnvVarHandlers } from './shared/agentEnvVarHandlers';
+import {
+	AgentSettingsPanel,
+	EnvironmentTab,
+	MODERATOR_TAB_IDS,
+	ProviderTab,
+	SshTab,
+	buildAgentSettingsTabs,
+	firstTabWithError,
+} from './AgentSettings';
 import { useAgentConfiguration } from '../hooks/agent';
-import { withBlankEnvVarRow } from '../../shared/envVarCatalog';
+
+const TAB_ID_PREFIX = 'group-chat';
 
 interface GroupChatModalCreateProps {
 	mode: 'create';
@@ -67,6 +83,8 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	const [requireIdle, setRequireIdle] = useState(true);
 	// Track if user has visited/modified the config panel (edit mode only)
 	const [configWasModified, setConfigWasModified] = useState(false);
+	// Set by a submit that could not go through, so the empty name shows why.
+	const [submitAttempted, setSubmitAttempted] = useState(false);
 	// Auto-detected maestro-p path, shown as helper text in the Claude Token Source selector
 	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 
@@ -78,6 +96,21 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		loadSshRemotes: true,
 		autoSelect: false, // We handle auto-select with AGENT_TILES priority
 	});
+
+	// The one piece of form state the tabs own. Reopening shows the last tab used.
+	const { activeTab, setActiveTab } = useModalTabs({
+		tabs: MODERATOR_TAB_IDS,
+		initialTab: 'general',
+		rememberKey: 'group-chat-moderator',
+		enabled: isOpen,
+	});
+
+	// The provider's config and models load while the Provider tab shows, as
+	// they did while the old Customize panel was open.
+	const { setConfigExpanded } = ac;
+	useEffect(() => {
+		setConfigExpanded(isOpen && activeTab === 'provider');
+	}, [isOpen, activeTab, setConfigExpanded]);
 
 	// Initialize state from groupChat when modal opens (edit mode)
 	useEffect(() => {
@@ -152,6 +185,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			setName('');
 			setRequireIdle(true);
 			setConfigWasModified(false);
+			setSubmitAttempted(false);
 		}
 	}, [isOpen]);
 
@@ -213,6 +247,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		setName('');
 		setRequireIdle(true);
 		setConfigWasModified(false);
+		setSubmitAttempted(false);
 		onClose();
 	}, [name, ac.selectedAgent, buildModeratorConfig, mode, props, groupChat, requireIdle, onClose]);
 
@@ -278,6 +313,45 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	const canSubmit =
 		name.trim().length > 0 && ac.selectedAgent !== null && (mode === 'create' || hasChanges());
 
+	// The empty name gets its message and its tab dot only after a submit
+	// attempt, so a fresh form does not open in red.
+	const nameError = submitAttempted && !name.trim() ? 'Enter a name for the group chat' : undefined;
+	const tabs = useMemo(
+		() => buildAgentSettingsTabs(MODERATOR_TAB_IDS, nameError ? ['name'] : []),
+		[nameError]
+	);
+
+	// Cmd+Enter / Cmd+S from any tab. A submit that cannot go through goes to
+	// the field that blocks it; an edit with nothing changed simply does nothing.
+	const attemptSubmit = useCallback(() => {
+		if (canSubmit) {
+			handleSubmit();
+			return;
+		}
+		const blocking: string[] = [];
+		if (!name.trim()) blocking.push('name');
+		if (!ac.selectedAgent) blocking.push('moderator');
+		const tab = firstTabWithError(blocking, MODERATOR_TAB_IDS);
+		if (!tab) return;
+		setSubmitAttempted(true);
+		setActiveTab(tab);
+	}, [canSubmit, handleSubmit, name, ac.selectedAgent, setActiveTab]);
+
+	// Window capture, as in Edit Agent: the Modal stops keydown propagation on
+	// its backdrop, and preventDefault here keeps the name field's own Enter
+	// submit from firing a second time.
+	useEffect(() => {
+		if (!isOpen) return;
+		const handler = (e: KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
+				e.preventDefault();
+				attemptSubmit();
+			}
+		};
+		window.addEventListener('keydown', handler, true);
+		return () => window.removeEventListener('keydown', handler, true);
+	}, [isOpen, attemptSubmit]);
+
 	if (!isOpen) return null;
 	if (mode === 'edit' && !groupChat) return null;
 
@@ -291,11 +365,34 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	const selectedAgentConfig = ac.detectedAgents.find((a) => a.id === ac.selectedAgent);
 	const selectedTile = AGENT_TILES.find((t) => t.id === ac.selectedAgent);
 
+	// Shared by the Provider tab's config panel (which hides them) and the
+	// Environment tab (which draws them).
+	const envVarProps = agentEnvVarHandlers({
+		customEnvVars: ac.customEnvVars,
+		customEnvVarsDisabled: ac.customEnvVarsDisabled,
+		setCustomEnvVars: ac.setCustomEnvVars,
+		setCustomEnvVarsDisabled: ac.setCustomEnvVarsDisabled,
+	});
+
+	const nameInput = (
+		<FormInput
+			ref={nameInputRef}
+			id="group-chat-name-input"
+			theme={theme}
+			label="Chat Name"
+			value={name}
+			onChange={setName}
+			onSubmit={canSubmit ? handleSubmit : undefined}
+			placeholder="e.g., Auth Feature Implementation"
+			error={nameError}
+		/>
+	);
+
 	// Rendered in both modes, but in different slots: the edit form leads with the
 	// chat's identity, while the create form ends with the name field the modal
 	// focuses on open.
 	const availabilitySection = (
-		<div className="mb-6">
+		<div>
 			<label
 				className="block text-xs font-bold opacity-70 uppercase mb-2"
 				style={{ color: theme.colors.textMain }}
@@ -358,7 +455,11 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			priority={modalPriority}
 			onClose={onClose}
 			initialFocusRef={nameInputRef}
-			width={600}
+			resizable
+			resizeKey="group-chat-settings"
+			defaultSize={{ width: 720, height: 640 }}
+			minSize={{ width: 560, height: 420 }}
+			contentClassName="flex flex-col flex-1 min-h-0"
 			footer={
 				<ModalFooter
 					theme={theme}
@@ -369,282 +470,215 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 				/>
 			}
 		>
-			<div>
-				{/* Description (create mode only) */}
-				{isCreate && (
-					<div className="mb-6 text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
-						A Group Chat lets you collaborate with multiple AI agents in a single conversation. The{' '}
-						<span style={{ color: theme.colors.textMain }}>moderator</span> manages the conversation
-						flow, deciding when to involve other agents. You can{' '}
-						<span style={{ color: theme.colors.accent }}>@mention</span> any agent defined in
-						Maestro to bring them into the discussion. You can @mention agents from any regular AI
-						chat too, but there each mention is a single-turn answer and you are the moderator:
-						every follow-up is yours to write. A Group Chat delegates that job to an agent who acts
-						as your fiduciary, wrangling the others to work together across multiple turns.
-					</div>
-				)}
-
-				{/* Name Input (edit mode: before moderator, create mode: after) */}
-				{!isCreate && (
-					<div className="mb-6">
-						<FormInput
-							ref={nameInputRef}
-							theme={theme}
-							label="Chat Name"
-							value={name}
-							onChange={setName}
-							onSubmit={canSubmit ? handleSubmit : undefined}
-							placeholder="e.g., Auth Feature Implementation"
-						/>
-					</div>
-				)}
-
-				{/* Moderator Selection - Dropdown with Customize button */}
-				<div className="mb-6">
-					<label
-						className="block text-xs font-bold opacity-70 uppercase mb-2"
-						style={{ color: theme.colors.textMain }}
-					>
-						{isCreate ? 'Select Moderator' : 'Moderator Agent'}
-					</label>
-
-					{ac.isDetecting ? (
-						<div className="flex items-center gap-2 py-2">
-							<div
-								className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
-								style={{ borderColor: theme.colors.accent, borderTopColor: 'transparent' }}
-							/>
-							<span className="text-sm" style={{ color: theme.colors.textDim }}>
-								Detecting agents...
-							</span>
-						</div>
-					) : availableTiles.length === 0 ? (
-						<div className="text-sm py-2" style={{ color: theme.colors.textDim }}>
-							No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.
-						</div>
-					) : (
-						<div className="flex items-center gap-2">
-							{/* Dropdown */}
-							<div className="relative flex-1" style={{ zIndex: 10000 }}>
-								<select
-									value={ac.selectedAgent || ''}
-									onChange={(e) => ac.handleAgentChange(e.target.value)}
-									className="w-full px-3 py-2 pr-10 rounded-lg border outline-none appearance-none cursor-pointer text-sm relative"
-									style={{
-										backgroundColor: theme.colors.bgMain,
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-										zIndex: 10000,
-									}}
-									aria-label="Select moderator agent"
-								>
-									{availableTiles.map((tile) => {
-										const isBeta = isBetaAgent(tile.id);
-										return (
-											<option key={tile.id} value={tile.id}>
-												{tile.name}
-												{isBeta ? ' (Beta)' : ''}
-											</option>
-										);
-									})}
-								</select>
-								<ChevronDown
-									className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
-									style={{ color: theme.colors.textDim, zIndex: 10001 }}
-								/>
+			<ModalTabStrip
+				theme={theme}
+				tabs={tabs}
+				activeTab={activeTab}
+				onChange={setActiveTab}
+				label="Moderator settings"
+				idPrefix={TAB_ID_PREFIX}
+				className="px-6 pt-4"
+			/>
+			<div className="flex-1 min-h-0 overflow-y-auto p-6" data-testid="group-chat-tab-body">
+				{activeTab === 'general' && (
+					<AgentSettingsPanel theme={theme} idPrefix={TAB_ID_PREFIX} tab="general">
+						{/* Description (create mode only) */}
+						{isCreate && (
+							<div className="text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
+								A Group Chat lets you collaborate with multiple AI agents in a single conversation.
+								The <span style={{ color: theme.colors.textMain }}>moderator</span> manages the
+								conversation flow, deciding when to involve other agents. You can{' '}
+								<span style={{ color: theme.colors.accent }}>@mention</span> any agent defined in
+								Maestro to bring them into the discussion. You can @mention agents from any regular
+								AI chat too, but there each mention is a single-turn answer and you are the
+								moderator: every follow-up is yours to write. A Group Chat delegates that job to an
+								agent who acts as your fiduciary, wrangling the others to work together across
+								multiple turns.
 							</div>
+						)}
 
-							{/* Customize button */}
-							<button
-								onClick={ac.toggleConfigExpanded}
-								className="flex items-center gap-1.5 px-3 py-2 rounded-lg border transition-colors hover:bg-white/5"
-								style={{
-									borderColor: ac.isConfigExpanded ? theme.colors.accent : theme.colors.border,
-									color: ac.isConfigExpanded ? theme.colors.accent : theme.colors.textDim,
-									backgroundColor: ac.isConfigExpanded ? `${theme.colors.accent}10` : 'transparent',
-								}}
-								title="Customize moderator settings"
+						{/* Name Input (edit mode: before moderator, create mode: after) */}
+						{!isCreate && nameInput}
+
+						{/* Moderator Selection. Its settings live on the other tabs. */}
+						<div>
+							<label
+								className="block text-xs font-bold opacity-70 uppercase mb-2"
+								style={{ color: theme.colors.textMain }}
 							>
-								<Settings className="w-4 h-4" />
-								<span className="text-sm">Customize</span>
-								{ac.hasCustomization && (
-									<span
-										className="w-2 h-2 rounded-full"
-										style={{ backgroundColor: theme.colors.accent }}
+								{isCreate ? 'Select Moderator' : 'Moderator Agent'}
+							</label>
+
+							{ac.isDetecting ? (
+								<div className="flex items-center gap-2 py-2">
+									<div
+										className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
+										style={{ borderColor: theme.colors.accent, borderTopColor: 'transparent' }}
 									/>
-								)}
-							</button>
-						</div>
-					)}
+									<span className="text-sm" style={{ color: theme.colors.textDim }}>
+										Detecting agents...
+									</span>
+								</div>
+							) : availableTiles.length === 0 ? (
+								<div className="text-sm py-2" style={{ color: theme.colors.textDim }}>
+									No agents available. Please install Claude Code, OpenCode, Codex, or Factory
+									Droid.
+								</div>
+							) : (
+								<div className="relative">
+									<select
+										value={ac.selectedAgent || ''}
+										onChange={(e) => ac.handleAgentChange(e.target.value)}
+										className="w-full px-3 py-2 pr-10 rounded-lg border outline-none appearance-none cursor-pointer text-sm"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+										aria-label="Select moderator agent"
+									>
+										{availableTiles.map((tile) => {
+											const isBeta = isBetaAgent(tile.id);
+											return (
+												<option key={tile.id} value={tile.id}>
+													{tile.name}
+													{isBeta ? ' (Beta)' : ''}
+												</option>
+											);
+										})}
+									</select>
+									<ChevronDown
+										className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
+										style={{ color: theme.colors.textDim }}
+									/>
+								</div>
+							)}
 
-					{/* Expandable Configuration Panel */}
-					{ac.isConfigExpanded && selectedAgentConfig && selectedTile && (
-						<div
-							className="mt-3 p-4 rounded-lg border"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								borderColor: theme.colors.border,
-							}}
-						>
-							<div className="flex items-center justify-between mb-3">
-								<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
-									{selectedTile.name} Configuration
-								</span>
-								{ac.hasCustomization && (
-									<div className="flex items-center gap-1">
-										<Check className="w-3 h-3" style={{ color: theme.colors.success }} />
-										<span className="text-xs" style={{ color: theme.colors.success }}>
-											Customized
-										</span>
+							{/* Warning about changing moderator (edit mode only) */}
+							{mode === 'edit' && groupChat && ac.selectedAgent !== groupChat.moderatorAgentId && (
+								<div
+									className="mt-3 text-xs p-3 rounded"
+									style={{
+										backgroundColor: `${theme.colors.warning}20`,
+										color: theme.colors.warning,
+										border: `1px solid ${theme.colors.warning}40`,
+									}}
+								>
+									<strong>Note:</strong> Changing the moderator agent will restart the moderator
+									process. Existing conversation history will be preserved.
+								</div>
+							)}
+						</div>
+
+						{/* Agent availability (edit mode: after the moderator) */}
+						{!isCreate && availabilitySection}
+
+						{/* Name Input (create mode: after the moderator, before the options) */}
+						{isCreate && nameInput}
+
+						{/* Agent availability (create mode: last, below the name) */}
+						{isCreate && availabilitySection}
+					</AgentSettingsPanel>
+				)}
+
+				{activeTab === 'provider' && (
+					<ProviderTab
+						theme={theme}
+						idPrefix={TAB_ID_PREFIX}
+						picker={
+							selectedAgentConfig && selectedTile ? (
+								// The moderator's provider settings. Its env vars live on the
+								// Environment tab; everything is saved with the chat.
+								<div>
+									<div
+										className="block text-xs font-bold opacity-70 uppercase mb-2"
+										style={{ color: theme.colors.textMain }}
+									>
+										{selectedTile.name} Settings
 									</div>
-								)}
-							</div>
-							<AgentConfigPanel
-								theme={theme}
-								agent={selectedAgentConfig}
-								customPath={ac.customPath}
-								onCustomPathChange={ac.setCustomPath}
-								onCustomPathBlur={() => {
-									/* Local state only */
-								}}
-								customArgs={ac.customArgs}
-								onCustomArgsChange={ac.setCustomArgs}
-								onCustomArgsBlur={() => {
-									/* Local state only */
-								}}
-								customEnvVars={ac.customEnvVars}
-								customEnvVarsDisabled={ac.customEnvVarsDisabled}
-								onEnvVarToggle={(key, nextEnabled) => {
-									// Move the var between the two records, value intact.
-									const from = nextEnabled ? ac.customEnvVarsDisabled : ac.customEnvVars;
-									const value = from[key] ?? '';
-									const remaining = { ...from };
-									delete remaining[key];
-									if (nextEnabled) {
-										ac.setCustomEnvVarsDisabled(remaining);
-										ac.setCustomEnvVars({ ...ac.customEnvVars, [key]: value });
-									} else {
-										ac.setCustomEnvVars(remaining);
-										ac.setCustomEnvVarsDisabled((prev) => ({ ...prev, [key]: value }));
-									}
-								}}
-								onEnvVarKeyChange={(oldKey, newKey, value, enabled) => {
-									if (enabled === false) {
-										ac.setCustomEnvVarsDisabled((prev) => {
-											const newVars = { ...prev };
-											delete newVars[oldKey];
-											newVars[newKey] = value;
-											return newVars;
-										});
-										return;
-									}
-									const newVars = { ...ac.customEnvVars };
-									delete newVars[oldKey];
-									newVars[newKey] = value;
-									ac.setCustomEnvVars(newVars);
-								}}
-								onEnvVarValueChange={(key, value, enabled) => {
-									if (enabled === false) {
-										ac.setCustomEnvVarsDisabled((prev) => ({ ...prev, [key]: value }));
-										return;
-									}
-									ac.setCustomEnvVars({ ...ac.customEnvVars, [key]: value });
-								}}
-								onEnvVarRemove={(key, enabled) => {
-									if (enabled === false) {
-										ac.setCustomEnvVarsDisabled((prev) => {
-											const newVars = { ...prev };
-											delete newVars[key];
-											return newVars;
-										});
-										return;
-									}
-									const newVars = { ...ac.customEnvVars };
-									delete newVars[key];
-									ac.setCustomEnvVars(newVars);
-								}}
-								onEnvVarAdd={() => {
-									ac.setCustomEnvVars(withBlankEnvVarRow(ac.customEnvVars));
-								}}
-								onEnvVarsBlur={() => {
-									/* Local state only */
-								}}
-								agentConfig={ac.agentConfig}
-								onConfigChange={(key, value) => {
-									const newConfig = { ...ac.agentConfig, [key]: value };
-									ac.setAgentConfig(newConfig);
-									ac.agentConfigRef.current = newConfig;
-									if (mode === 'edit') {
-										setConfigWasModified(true);
-									}
-								}}
-								onConfigBlur={async () => {
-									if (ac.selectedAgent) {
-										await ac.saveAgentConfig(ac.selectedAgent);
-										if (mode === 'edit') {
-											setConfigWasModified(true);
-										}
-									}
-								}}
-								availableModels={ac.availableModels}
-								loadingModels={ac.loadingModels}
-								onRefreshModels={ac.refreshModels}
-								dynamicOptions={ac.dynamicOptions}
-								loadingDynamicOptions={ac.loadingDynamicOptions}
-								onRefreshAgent={ac.refreshAgent}
-								refreshingAgent={ac.refreshingAgent}
-								enableMaestroP={ac.enableMaestroP}
-								onEnableMaestroPChange={ac.setEnableMaestroP}
-								maestroPMode={ac.maestroPMode}
-								onMaestroPModeChange={ac.setMaestroPMode}
-								maestroPPath={ac.maestroPPath}
-								onMaestroPPathChange={ac.setMaestroPPath}
-								onMaestroPPathBlur={() => {
-									/* Local state only */
-								}}
-								detectedMaestroPPath={detectedMaestroPPath}
-								compact
-								showBuiltInEnvVars
-							/>
-						</div>
-					)}
-				</div>
-
-				{/* Agent availability (edit mode: above the moderator-change note) */}
-				{!isCreate && availabilitySection}
-
-				{/* Warning about changing moderator (edit mode only) */}
-				{mode === 'edit' && groupChat && ac.selectedAgent !== groupChat.moderatorAgentId && (
-					<div
-						className="text-xs p-3 rounded"
-						style={{
-							backgroundColor: `${theme.colors.warning}20`,
-							color: theme.colors.warning,
-							border: `1px solid ${theme.colors.warning}40`,
-						}}
-					>
-						<strong>Note:</strong> Changing the moderator agent will restart the moderator process.
-						Existing conversation history will be preserved.
-					</div>
+									<AgentConfigPanel
+										theme={theme}
+										agent={selectedAgentConfig}
+										hideEnvVars
+										customPath={ac.customPath}
+										onCustomPathChange={ac.setCustomPath}
+										onCustomPathBlur={() => {
+											/* Local state only */
+										}}
+										customArgs={ac.customArgs}
+										onCustomArgsChange={ac.setCustomArgs}
+										onCustomArgsBlur={() => {
+											/* Local state only */
+										}}
+										{...envVarProps}
+										agentConfig={ac.agentConfig}
+										onConfigChange={(key, value) => {
+											const newConfig = { ...ac.agentConfig, [key]: value };
+											ac.setAgentConfig(newConfig);
+											ac.agentConfigRef.current = newConfig;
+											if (mode === 'edit') {
+												setConfigWasModified(true);
+											}
+										}}
+										onConfigBlur={async () => {
+											if (ac.selectedAgent) {
+												await ac.saveAgentConfig(ac.selectedAgent);
+												if (mode === 'edit') {
+													setConfigWasModified(true);
+												}
+											}
+										}}
+										availableModels={ac.availableModels}
+										loadingModels={ac.loadingModels}
+										onRefreshModels={ac.refreshModels}
+										dynamicOptions={ac.dynamicOptions}
+										loadingDynamicOptions={ac.loadingDynamicOptions}
+										onRefreshAgent={ac.refreshAgent}
+										refreshingAgent={ac.refreshingAgent}
+										isSshEnabled={!!ac.sshRemoteConfig?.enabled}
+										sshRemoteId={ac.sshRemoteConfig?.remoteId ?? undefined}
+										enableMaestroP={ac.enableMaestroP}
+										onEnableMaestroPChange={ac.setEnableMaestroP}
+										maestroPMode={ac.maestroPMode}
+										onMaestroPModeChange={ac.setMaestroPMode}
+										maestroPPath={ac.maestroPPath}
+										onMaestroPPathChange={ac.setMaestroPPath}
+										onMaestroPPathBlur={() => {
+											/* Local state only */
+										}}
+										detectedMaestroPPath={detectedMaestroPPath}
+									/>
+								</div>
+							) : (
+								<p className="text-sm" style={{ color: theme.colors.textDim }}>
+									{ac.isDetecting
+										? 'Detecting agents...'
+										: 'Choose a moderator on the General tab to set its provider options.'}
+								</p>
+							)
+						}
+					/>
 				)}
 
-				{/* Name Input (create mode: after the moderator, before the options) */}
-				{isCreate && (
-					<div className="mb-6">
-						<FormInput
-							ref={nameInputRef}
-							theme={theme}
-							label="Chat Name"
-							value={name}
-							onChange={setName}
-							onSubmit={canSubmit ? handleSubmit : undefined}
-							placeholder="e.g., Auth Feature Implementation"
-						/>
-					</div>
+				{activeTab === 'environment' && (
+					<EnvironmentTab
+						theme={theme}
+						idPrefix={TAB_ID_PREFIX}
+						toolType={ac.selectedAgent ?? undefined}
+						isSshEnabled={!!ac.sshRemoteConfig?.enabled}
+						{...envVarProps}
+					/>
 				)}
 
-				{/* Agent availability (create mode: last, below the name) */}
-				{isCreate && availabilitySection}
+				{activeTab === 'ssh' && (
+					<SshTab
+						theme={theme}
+						idPrefix={TAB_ID_PREFIX}
+						sshRemotes={ac.sshRemotes}
+						sshRemoteConfig={ac.sshRemoteConfig}
+						onSshRemoteConfigChange={ac.setSshRemoteConfig}
+					/>
+				)}
 			</div>
 		</Modal>
 	);

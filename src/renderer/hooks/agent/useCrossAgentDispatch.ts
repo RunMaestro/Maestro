@@ -31,6 +31,7 @@ import {
 	selectContextWindow,
 } from '../../../shared/crossAgentContext';
 import { parseSynopsis } from '../../../shared/synopsis';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import { settleConsultHold } from '../../services/crossAgentConsultHold';
 import {
 	buildConsultHistoryEntry,
@@ -111,6 +112,18 @@ export interface SendCrossAgentRequestOptions {
 	 * transcript BEFORE that turn, so the answer is not sent twice.
 	 */
 	handoffAnswer?: string;
+	/**
+	 * The consulted agent's place in a consult chain, when the consult was
+	 * already admitted by whoever asked for it (see `CrossAgentRequest.consultChain`).
+	 */
+	consultChain?: ConsultChain;
+	/**
+	 * The mentioning turn's own place in a consult chain, when another agent's
+	 * `maestro-cli dispatch` started that turn. Main spends one from it for this
+	 * consult; a mention the user typed carries none and goes through free (see
+	 * `CrossAgentRequest.sourceConsultChain`).
+	 */
+	sourceConsultChain?: ConsultChain;
 	/**
 	 * Called once with the finished answer. A typed `@mention` needs nothing here
 	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
@@ -520,6 +533,8 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			strategy,
 			sourceCwd: opts.sourceCwd,
 			...(opts.handoffAnswer !== undefined && { handoffAnswer: opts.handoffAnswer }),
+			...(opts.consultChain && { consultChain: opts.consultChain }),
+			...(opts.sourceConsultChain && { sourceConsultChain: opts.sourceConsultChain }),
 		})
 		.then(({ requestId }) => {
 			// The terminal chunk already landed (fast failure/short response that

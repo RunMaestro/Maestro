@@ -22,6 +22,8 @@ import {
 	truncatePath,
 	truncateCommand,
 	abbreviateGroupName,
+	groupBadgeLabel,
+	GROUP_SHORT_LABEL_MAX_LENGTH,
 	isAbsolutePath,
 	getBasename,
 	joinPath,
@@ -748,6 +750,69 @@ describe('shared/formatters', () => {
 			expect(abbreviateGroupName('[VeryLongTagName] X', { max: 5 })).toBe('VX');
 			// Pure-numbering prefix is not a tag → dropped, initials of the rest win.
 			expect(abbreviateGroupName('[1] Aleyemma/Money-Sessions')).toBe('AMS');
+		});
+
+		describe('groupBadgeLabel', () => {
+			it('returns the shortLabel the user set, in place of the abbreviation', () => {
+				expect(groupBadgeLabel({ name: '[1] Aleyemma/Money-Sessions', shortLabel: 'Money' })).toBe(
+					'Money'
+				);
+				// A short name the abbreviator would return as-is is still overridden.
+				expect(groupBadgeLabel({ name: 'Work', shortLabel: 'W' })).toBe('W');
+			});
+
+			it('returns the shortLabel verbatim: not abbreviated, not re-cased', () => {
+				// 12 characters, over the abbreviator's max of 10.
+				const label = 'Engineering!';
+				expect(label).toHaveLength(GROUP_SHORT_LABEL_MAX_LENGTH);
+				expect(groupBadgeLabel({ name: 'Backend', shortLabel: label })).toBe(label);
+				expect(groupBadgeLabel({ name: 'Backend', shortLabel: 'a & c' })).toBe('a & c');
+			});
+
+			it('trims the shortLabel', () => {
+				expect(groupBadgeLabel({ name: 'Amini & Conant', shortLabel: '  A+C  ' })).toBe('A+C');
+			});
+
+			it('falls back to the abbreviation for an empty or whitespace-only shortLabel', () => {
+				expect(groupBadgeLabel({ name: 'Amini & Conant', shortLabel: '' })).toBe('A&C');
+				expect(groupBadgeLabel({ name: 'Amini & Conant', shortLabel: '   ' })).toBe('A&C');
+				expect(groupBadgeLabel({ name: 'Amini & Conant', shortLabel: '\t\n' })).toBe('A&C');
+			});
+
+			it('matches abbreviateGroupName exactly when there is no shortLabel', () => {
+				const names = [
+					'Work',
+					'Personal',
+					'Side Gigs',
+					'TenChars10',
+					'  Work  ',
+					'',
+					'   ',
+					'AMINI & CONANT',
+					'Amini&Conant',
+					'Foo & Bar & Baz',
+					'Research and Development',
+					'Acme Corporation Limited',
+					'staging_environment_two',
+					'client-facing-team',
+					'[1] Aleyemma/Money-Sessions',
+					'(2) Research Operations',
+					'#3 backend-api-gateway',
+					'Engineering',
+					'Documentation',
+					'Pneumonoultramicroscop',
+					'[ARP] Auditoria Relatório Pessoal',
+					'[ARP]',
+				];
+				for (const name of names) {
+					expect(groupBadgeLabel({ name })).toBe(abbreviateGroupName(name));
+					expect(groupBadgeLabel({ name, shortLabel: undefined })).toBe(abbreviateGroupName(name));
+				}
+			});
+
+			it('caps a hand-picked label two characters above the abbreviator', () => {
+				expect(GROUP_SHORT_LABEL_MAX_LENGTH).toBe(12);
+			});
 		});
 	});
 

@@ -2,6 +2,10 @@ import type React from 'react';
 import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { TierTargetAgent, TierTargets } from '../../../shared/modelTiers';
+import type { PeerGrants } from '../../../shared/peerAgents';
+import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -36,6 +40,52 @@ export interface SessionSshRemoteConfig {
 	shareHistoryToProjectDir?: boolean;
 }
 
+/**
+ * What the New Agent form can be pre-filled from: the fields `loadAgents` reads
+ * off its source, all optional. An agent being duplicated (`Session`) and a
+ * group's defaults (`GroupAgentDefaults`) both satisfy it, so the form has one
+ * pre-fill path for both.
+ *
+ * A seed with no `toolType` selects no provider and fills none of the settings
+ * written for one provider's binary or API. A group default's env vars,
+ * resilience flags and SSH remote are not among those: `loadAgents` fills them
+ * for every provider. A seed with no `name` leaves the name alone. A seed gives
+ * its working directory as `cwd` (an agent) or `projectRoot` (a group default,
+ * which has no `cwd`).
+ */
+export type AgentSeed = Partial<
+	Pick<
+		Session,
+		| 'name'
+		| 'toolType'
+		| 'cwd'
+		| 'projectRoot'
+		| 'additionalDirectories'
+		| 'peerAgents'
+		| 'groupPeerAccess'
+		| 'worktreePeerAccess'
+		| 'nudgeMessage'
+		| 'newSessionMessage'
+		| 'customPath'
+		| 'customArgs'
+		| 'customEnvVars'
+		| 'customModel'
+		| 'customEffort'
+		| 'customContextWindow'
+		| 'customProviderPath'
+		| 'enableMaestroP'
+		| 'maestroPMode'
+		| 'maestroPPath'
+		| 'retryOnAvailabilityErrors'
+		| 'retryOnTokenExhaustion'
+		| 'codexAutoResetOnExhaustion'
+		| 'codexTransport'
+		| 'gatewayUrl'
+		| 'runOn'
+		| 'sessionSshRemoteConfig'
+	>
+>;
+
 export interface NewInstanceModalProps {
 	isOpen: boolean;
 	onClose: () => void;
@@ -63,7 +113,15 @@ export interface NewInstanceModalProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` sets none. */
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget,
+		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+		peerGrants?: PeerGrants,
+		/** Group defaults the create form has no control for; stamped onto the new agent. */
+		seedExtras?: GroupDefaultsCreateExtras
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -104,6 +162,14 @@ export interface EditAgentModalProps {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` clears it. */
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget,
+		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
+		tierTargets?: TierTargets,
+		/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
+		peerGrants?: PeerGrants,
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
 		migrationPlanId?: string
@@ -194,4 +260,11 @@ export interface AgentPickerGridProps {
 	/** Codex transport, per agent id. Defaults to `exec` when absent. */
 	codexTransportByAgent?: Record<string, CodexTransport>;
 	onCodexTransportChange?: (agentId: string, value: CodexTransport) => void;
+	/**
+	 * Leave env vars out of each provider's settings panel. The tabbed New Agent
+	 * form edits them on its Environment tab instead.
+	 */
+	hideEnvVars?: boolean;
+	/** Offer Auto in each provider's model field (`AgentConfigPanelProps.autoModelFor`). */
+	autoModelFor?: Pick<TierTargetAgent, 'tierTargets' | 'runOn'>;
 }

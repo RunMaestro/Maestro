@@ -3,6 +3,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 interface RemoveAgentOptions {
 	json?: boolean;
@@ -20,7 +21,7 @@ export async function removeAgent(agentId: string, options: RemoveAgentOptions):
 		} else {
 			console.error(formatError(msg));
 		}
-		return process.exit(1);
+		return exitWith(exitCodeForError(error));
 	}
 
 	try {
@@ -52,7 +53,7 @@ export async function removeAgent(agentId: string, options: RemoveAgentOptions):
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
@@ -61,6 +62,6 @@ export async function removeAgent(agentId: string, options: RemoveAgentOptions):
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

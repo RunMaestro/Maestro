@@ -18,6 +18,12 @@ import {
 	TOAST_POSITION_LABELS,
 	toastSidePanel,
 } from '../../shared/toastPosition';
+import {
+	DEFAULT_SPOKEN_NOTICE_MODE,
+	SPOKEN_NOTICES_SETTING_KEY,
+	asSpokenNoticeMode,
+	type SpokenNoticeMode,
+} from '../../shared/spokenNotices';
 import { notifyToast, useNotificationStore } from './notificationStore';
 import type { SettingsStore } from './settingsStore';
 
@@ -67,6 +73,8 @@ export interface NotificationsState {
 	notificationHistoryAutoRunTasks: boolean;
 	idleNotificationEnabled: boolean;
 	idleNotificationCommand: string;
+	/** When a finished turn is spoken about. `off` until the user opts in. */
+	spokenNotices: SpokenNoticeMode;
 }
 
 export interface NotificationsActions {
@@ -84,6 +92,7 @@ export interface NotificationsActions {
 	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setIdleNotificationEnabled: (value: boolean) => void;
 	setIdleNotificationCommand: (value: string) => void;
+	setSpokenNotices: (value: SpokenNoticeMode) => void;
 }
 
 export type NotificationsSlice = NotificationsState & NotificationsActions;
@@ -106,6 +115,7 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	notificationHistoryAutoRunTasks: false,
 	idleNotificationEnabled: false,
 	idleNotificationCommand: 'say Maestro is idle',
+	spokenNotices: DEFAULT_SPOKEN_NOTICE_MODE,
 
 	setToastWidth: (value) => {
 		set({ toastWidth: value });
@@ -185,6 +195,11 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 		set({ idleNotificationCommand: value });
 		window.maestro.settings.set('idleNotificationCommand', value);
 	},
+
+	setSpokenNotices: (value) => {
+		set({ spokenNotices: value });
+		window.maestro.settings.set(SPOKEN_NOTICES_SETTING_KEY, value);
+	},
 });
 
 /** Mutates `patch` in place with any persisted Notifications fields found in `allSettings`. */
@@ -245,4 +260,8 @@ export function hydrateNotificationsSettings(
 
 	if (allSettings['idleNotificationCommand'] !== undefined)
 		patch.idleNotificationCommand = allSettings['idleNotificationCommand'] as string;
+
+	// Speaking aloud is consent: anything that is not one of the three modes reads as off.
+	if (allSettings[SPOKEN_NOTICES_SETTING_KEY] !== undefined)
+		patch.spokenNotices = asSpokenNoticeMode(allSettings[SPOKEN_NOTICES_SETTING_KEY]);
 }

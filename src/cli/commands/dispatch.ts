@@ -7,6 +7,9 @@ import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
+import { admitCliConsult } from '../services/consult-budget-guard';
+import type { ConsultChain } from '../../shared/consultBudget';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface DispatchOptions {
 	newTab?: boolean;
@@ -53,6 +56,15 @@ export interface DispatchOptions {
 	callbackPrompt?: string;
 	/** Give up and fire a `timeout` callback after this many seconds. */
 	callbackTimeout?: string;
+	/**
+	 * Send without consulting the consult budget. For Pianola's supervisor loops
+	 * only (`pianola watch`, `pianola orchestrate`): one long-lived process
+	 * answers and assigns work for hours under its own rules and autopilot gates.
+	 * That is not a delegation made while working on one user message, and a
+	 * per-message budget would stop the loop at its 25th dispatch. Not a CLI
+	 * flag: the `dispatch` verb never sets it, so an agent cannot ask for it.
+	 */
+	skipConsultBudget?: boolean;
 }
 
 /** Hard cap mirrored from the main-process registry (24h). */
@@ -367,9 +379,33 @@ export async function runDispatch(
 	// an external script has no identity and the message goes out unchanged.
 	const caller = callerMessageFields(readCallerIdentity(process.env));
 
+	// The consult budget, checked last so a dispatch that was never going to
+	// start spends nothing. A dispatch from an agent's shell is a delegation made
+	// while working on some user message: it spends one from that message's
+	// chain, and when the chain is out it is refused here, loudly, because a
+	// silent no-op would read to the calling agent as work that was handed over.
+	// A dispatch the user runs is their own message and always passes. Either
+	// way the target's place in the chain travels in the message, on all three
+	// paths below, and the desktop applies it to the turn the prompt starts, so
+	// what THAT agent asks and delegates is counted against the same budget (see
+	// admitConsult). The spend is made before the desktop is reached, so a
+	// dispatch the desktop then refuses (a busy tab, an app that is not running)
+	// has still spent one: a caller retrying against a refusal is bounded too.
+	let chain: { consultChain?: ConsultChain } = {};
+	if (!options.skipConsultBudget) {
+		const admission = admitCliConsult();
+		if (!admission.allowed) {
+			return { success: false, error: admission.message, code: admission.code };
+		}
+		chain = { consultChain: admission.chain };
+	}
+
 	// --queue routes through the renderer's authoritative execution queue.
 	if (queue) {
-		return runQueueDispatch(agentId, message, options, background, callback.fields, caller);
+		return runQueueDispatch(agentId, message, options, background, callback.fields, {
+			...caller,
+			...chain,
+		});
 	}
 	try {
 		const dispatched = await withMaestroClient(async (client): Promise<DispatchedPrompt> => {
@@ -393,6 +429,7 @@ export async function runDispatch(
 						...(background && !options.visible ? { hidden: true } : {}),
 						...callback.fields,
 						...caller,
+						...chain,
 					},
 					'new_ai_tab_with_prompt_result'
 				);
@@ -446,6 +483,7 @@ export async function runDispatch(
 					...(background ? { background: true } : {}),
 					...callback.fields,
 					...caller,
+					...chain,
 				},
 				'command_result'
 			);
@@ -509,6 +547,7 @@ async function runQueueDispatch(
 	options: DispatchOptions,
 	background: boolean,
 	callbackFields: Record<string, unknown>,
+	/** Who is dispatching and the target's place in the consult chain. */
 	callerFields: Record<string, unknown>
 ): Promise<DispatchResponse> {
 	try {
@@ -581,7 +620,7 @@ export async function dispatch(
 
 	if (!result.success) {
 		emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 

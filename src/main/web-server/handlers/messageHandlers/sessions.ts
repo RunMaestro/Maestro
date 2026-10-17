@@ -100,6 +100,13 @@ export function handleCreateSession(
 	}
 	// autoRunFolderPath can be set outside of the agent's cwd (no confinement needed)
 	if (message.autoRunFolderPath) config.autoRunFolderPath = message.autoRunFolderPath as string;
+	if (typeof message.gatewayUrl === 'string' && message.gatewayUrl) {
+		config.gatewayUrl = message.gatewayUrl;
+	}
+	// Passed as data: the renderer validates it against the provider and the
+	// saved sources, and refuses the create for a target it cannot store.
+	if (message.runOn !== undefined && message.runOn !== null) config.runOn = message.runOn;
+	if (message.seedFromGroup === false) config.seedFromGroup = false;
 	const hasConfig = Object.keys(config).length > 0;
 
 	ctx.callbacks
@@ -116,6 +123,8 @@ export function handleCreateSession(
 				type: 'create_session_result',
 				success: !!result,
 				sessionId: result?.sessionId,
+				seededFromGroup: result?.seededFromGroup ?? null,
+				skipped: result?.skipped ?? [],
 				requestId: message.requestId,
 			});
 		})

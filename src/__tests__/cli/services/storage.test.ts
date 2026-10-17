@@ -59,7 +59,14 @@ import {
 	readSshRemotes,
 	writeSshRemotes,
 	resolveSshRemoteId,
+	loadUserLocalModels,
 } from '../../../cli/services/storage';
+import {
+	getLocalModel,
+	setUserLocalModels,
+	userLocalModels,
+} from '../../../shared/local-models/model-catalog';
+import { userLocalModelEntry } from '../../../shared/local-models/user-models';
 
 describe('storage service', () => {
 	const mockSession = (overrides: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -448,6 +455,68 @@ describe('storage service', () => {
 			const result = readSettings();
 
 			expect(result).toEqual({});
+		});
+	});
+
+	describe('loadUserLocalModels', () => {
+		const record = {
+			id: 'hf-someone-model-q4_k_m',
+			displayName: 'model-Q4_K_M',
+			repo: 'someone/model-GGUF',
+			revision: '0'.repeat(40),
+			license: { spdx: 'mit', url: 'https://huggingface.co/someone/model-GGUF' },
+			files: [{ path: 'model-Q4_K_M.gguf', sha256: 'a'.repeat(64), bytes: 1_000_000_000 }],
+			parametersB: 1.5,
+			contextLength: 8192,
+			addedAt: 0,
+		};
+
+		afterEach(() => setUserLocalModels([]));
+
+		it('puts the models the desktop saved into the catalog, from the data folder', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({ version: 1, models: [record, { ...record, id: '../escape' }] })
+			);
+
+			loadUserLocalModels();
+
+			expect(vi.mocked(fs.readFileSync).mock.calls[0][0]).toBe(
+				path.join(
+					'/Users/testuser',
+					'Library',
+					'Application Support',
+					'Maestro',
+					'local-models-user.json'
+				)
+			);
+			// The record the app would drop is dropped here too.
+			expect(userLocalModels().map((entry) => entry.id)).toEqual([record.id]);
+			expect(getLocalModel(record.id)).toMatchObject({ userAdded: true });
+		});
+
+		it('knows no added models when the file is missing or is not JSON', () => {
+			setUserLocalModels([userLocalModelEntry(record)]);
+			const missing = new Error('File not found') as NodeJS.ErrnoException;
+			missing.code = 'ENOENT';
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw missing;
+			});
+			loadUserLocalModels();
+			expect(userLocalModels()).toEqual([]);
+
+			setUserLocalModels([userLocalModelEntry(record)]);
+			vi.mocked(fs.readFileSync).mockReturnValue('{ not json');
+			loadUserLocalModels();
+			expect(userLocalModels()).toEqual([]);
+		});
+
+		it('does not hide a file it could not read', () => {
+			const denied = new Error('EACCES') as NodeJS.ErrnoException;
+			denied.code = 'EACCES';
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw denied;
+			});
+			expect(() => loadUserLocalModels()).toThrow('EACCES');
 		});
 	});
 

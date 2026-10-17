@@ -3,6 +3,8 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import type { CueSubscriptionInfo, CueActivityEntry } from '../types';
 import { composeCueSubscriptionId } from '../../../shared/cue/subscription-id';
+import { readCueGateRecord, readCueGateSetting } from '../../../shared/cue/gate';
+import { isCueRunBlocked } from '../../../shared/cue/contracts';
 import { cueTurnSettingsOf } from '../../../shared/cue/turn-settings';
 
 /** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
@@ -42,7 +44,12 @@ export function registerCueCallbacks(
 	server: WebServer,
 	deps: Pick<
 		WebServerFactoryDependencies,
-		'getCueGraphData' | 'setCueSubscriptionEnabled' | 'getCueActivityLog' | 'triggerCueSubscription'
+		| 'getCueGraphData'
+		| 'setCueSubscriptionEnabled'
+		| 'setCueSubscriptionGate'
+		| 'setCueSubscriptionInjectionScreen'
+		| 'getCueActivityLog'
+		| 'triggerCueSubscription'
 	>
 ): void {
 	// Get Cue subscriptions - calls engine directly in the main process.
@@ -66,6 +73,7 @@ export function registerCueCallbacks(
 		const subs: CueSubscriptionInfo[] = [];
 		for (const session of filtered) {
 			for (const sub of session.subscriptions) {
+				const gate = readCueGateSetting(sub);
 				subs.push({
 					// No stable per-subscription id in YAML; compose one from
 					// session + pipeline + name. Names are unique within a
@@ -84,6 +92,18 @@ export function registerCueCallbacks(
 					sessionId: session.sessionId,
 					sessionName: session.sessionName,
 					enabled: sub.enabled !== false,
+					// The read half of `set_cue_subscription_gate`: a gate that
+					// was written can be listed back and checked.
+					...(gate ? { gate: gate.condition } : {}),
+					...(gate?.onUnavailable ? { gateOnUnavailable: gate.onUnavailable } : {}),
+					// The read half of `set_cue_subscription_injection_screen`,
+					// as written: absent keys are the defaults.
+					...(typeof sub.screen_injection === 'boolean'
+						? { screenInjection: sub.screen_injection }
+						: {}),
+					...(typeof sub.injection_threshold === 'number'
+						? { injectionThreshold: sub.injection_threshold }
+						: {}),
 					// Per-subscription last-triggered / count are not yet
 					// tracked by the engine (only per-session). Leave the
 					// numeric fields zero so the CLI renders "never triggered"
@@ -108,6 +128,27 @@ export function registerCueCallbacks(
 			return false;
 		}
 		return deps.setCueSubscriptionEnabled(subscriptionId, enabled);
+	});
+
+	// Set or remove a subscription's gate - the engine writes cue.yaml, as it
+	// does for the toggle above. A missing dependency is an answer the caller
+	// can print, not a silent `false`.
+	server.setSetCueSubscriptionGateCallback(async (subscriptionId, gate) => {
+		if (!deps.setCueSubscriptionGate) {
+			logger.warn('setCueSubscriptionGate dependency not available', 'WebServer');
+			return { ok: false, error: 'Cue gate editing is not available.' };
+		}
+		return deps.setCueSubscriptionGate(subscriptionId, gate);
+	});
+
+	// Set a subscription's prompt-injection screen, through the same engine
+	// writer as the gate.
+	server.setSetCueSubscriptionInjectionScreenCallback(async (subscriptionId, setting) => {
+		if (!deps.setCueSubscriptionInjectionScreen) {
+			logger.warn('setCueSubscriptionInjectionScreen dependency not available', 'WebServer');
+			return { ok: false, error: 'Cue injection screen editing is not available.' };
+		}
+		return deps.setCueSubscriptionInjectionScreen(subscriptionId, setting);
 	});
 
 	// Get Cue activity log - calls engine directly in the main process.
@@ -149,16 +190,29 @@ export function registerCueCallbacks(
 			sessionId: r.sessionId,
 			timestamp: Date.parse(r.startedAt) || 0,
 			// Map engine-side status (`timeout` / `stopped` are terminal
-			// failure variants) onto the web-facing four-state enum.
+			// failure variants) onto the web-facing enum. `gated` keeps its own
+			// value: the event was skipped by its gate, which is neither a run
+			// that failed nor one still waiting to start. `blocked` does too: a
+			// caller has to tell a refused run from one that ran and failed.
+			// Its reason is the run's `stderr`, so `result` needs no branch.
 			status:
 				r.status === 'completed'
 					? 'completed'
 					: r.status === 'running'
 						? 'running'
-						: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
-							? 'failed'
-							: 'triggered',
-			result: r.status === 'completed' ? r.stdout || undefined : r.stderr || undefined,
+						: r.status === 'gated'
+							? 'gated'
+							: isCueRunBlocked(r.status)
+								? 'blocked'
+								: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
+									? 'failed'
+									: 'triggered',
+			result:
+				r.status === 'completed'
+					? r.stdout || undefined
+					: r.status === 'gated'
+						? readCueGateRecord(r.event.payload)?.reason || undefined
+						: r.stderr || undefined,
 			duration: r.durationMs,
 		}));
 		return entries;
