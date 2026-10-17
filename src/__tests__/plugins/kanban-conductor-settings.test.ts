@@ -52,6 +52,7 @@ interface ConductorPayload {
 	boardName: string;
 	config: ConductorConfig;
 	providers: ConductorProvider[];
+	providerSupportsDirectories: boolean | null;
 	reach: {
 		granted: ConductorReachEntry[];
 		grantedHidden: number;
@@ -67,6 +68,10 @@ interface KanbanConductorSettings {
 	activate: (maestro: unknown) => Promise<void>;
 	CONDUCTOR_REACH_LIMIT: number;
 	conductorConfigPatchFrom: (source: Record<string, unknown>) => Partial<ConductorConfig>;
+	conductorProviderSupportsDirectories: (
+		providers: ConductorProvider[],
+		agentId: string | null
+	) => boolean | null;
 }
 
 /** Fresh module state per test: main.js keeps its card and config maps in
@@ -184,6 +189,33 @@ describe('maestro-kanban conductorConfigPatchFrom', () => {
 	});
 });
 
+describe('maestro-kanban conductorProviderSupportsDirectories', () => {
+	const providers: ConductorProvider[] = [
+		{ toolType: 'claude-code', supportsAdditionalDirectories: true },
+		{ toolType: 'grok', supportsAdditionalDirectories: false },
+	];
+
+	it('is null when no provider is configured yet', () => {
+		const plugin = loadMain();
+		expect(plugin.conductorProviderSupportsDirectories(providers, null)).toBeNull();
+	});
+
+	it('is true for a configured provider that natively supports added directories', () => {
+		const plugin = loadMain();
+		expect(plugin.conductorProviderSupportsDirectories(providers, 'claude-code')).toBe(true);
+	});
+
+	it('is false for a configured provider with no native add-directory support', () => {
+		const plugin = loadMain();
+		expect(plugin.conductorProviderSupportsDirectories(providers, 'grok')).toBe(false);
+	});
+
+	it('is null for a configured provider no longer in the running agents.list, rather than guessed', () => {
+		const plugin = loadMain();
+		expect(plugin.conductorProviderSupportsDirectories(providers, 'codex')).toBeNull();
+	});
+});
+
 describe('maestro-kanban conductor settings surface', () => {
 	const projectPath = '/Users/dev/projects/widgets';
 
@@ -223,6 +255,9 @@ describe('maestro-kanban conductor settings surface', () => {
 			boardName: 'widgets',
 			config: { agentId: null, customModel: null, customEffort: null },
 			providers: [{ toolType: 'claude-code', supportsAdditionalDirectories: true }],
+			// No provider is configured on this board yet, so there is nothing
+			// to say about its directory support.
+			providerSupportsDirectories: null,
 			reach: {
 				granted: [],
 				grantedHidden: 0,
@@ -259,6 +294,27 @@ describe('maestro-kanban conductor settings surface', () => {
 			{ toolType: 'codex', supportsAdditionalDirectories: true },
 			{ toolType: 'grok', supportsAdditionalDirectories: false },
 		]);
+	});
+
+	it('reports providerSupportsDirectories for the configured provider once one is picked', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = conductorStub({
+			agentsList: () =>
+				Promise.resolve([
+					{ id: 'a1', toolType: 'claude-code', supportsAdditionalDirectories: true },
+					{ id: 'a2', toolType: 'grok', supportsAdditionalDirectories: false },
+				]),
+		});
+		await plugin.activate(maestro);
+
+		await commandHandlers.get('conductor-config')!({ boardId: projectPath, agentId: 'grok' });
+		expect(lastConductor(maestro.ui.panelPost)!.providerSupportsDirectories).toBe(false);
+
+		await commandHandlers.get('conductor-config')!({
+			boardId: projectPath,
+			agentId: 'claude-code',
+		});
+		expect(lastConductor(maestro.ui.panelPost)!.providerSupportsDirectories).toBe(true);
 	});
 
 	it('degrades to no providers when agents.list rejects, without breaking the rest of the snapshot', async () => {

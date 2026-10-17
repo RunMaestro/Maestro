@@ -3948,6 +3948,26 @@ function conductorReachForBoard() {
 }
 
 /**
+ * Whether the board's CONFIGURED provider (`config.agentId`, not the whole
+ * `providers` list) can take an added directory at all - the fact the
+ * settings surface's degraded-provider note is built from. Null means
+ * there is nothing to say yet: no provider is configured, or the
+ * configured toolType is not one of `providers` (no agent of that type is
+ * currently running, so its capability cannot be read). A plugin never
+ * guesses a capability it cannot observe; it says nothing instead.
+ * @param {{ toolType: string, supportsAdditionalDirectories: boolean }[]} providers
+ * @param {string|null} agentId
+ * @returns {boolean|null}
+ */
+function conductorProviderSupportsDirectories(providers, agentId) {
+	if (typeof agentId !== 'string' || agentId === '') return null;
+	const match = (Array.isArray(providers) ? providers : []).find(function (provider) {
+		return provider.toolType === agentId;
+	});
+	return match ? match.supportsAdditionalDirectories === true : null;
+}
+
+/**
  * Everything the settings surface paints, rebuilt fresh on every snapshot
  * the same way boardSettingsSnapshot() is - it is cheap enough, and a
  * provider picked in another window or a grant just approved from a card
@@ -3958,16 +3978,23 @@ function conductorReachForBoard() {
  * grant this plugin no longer holds (a restart, or a revoke in Settings) -
  * the panel's cue to show "conductor not connected" with an Allow Access
  * action, the same one a card's ungranted project already offers.
+ * `providerSupportsDirectories` is the board's cue to show the
+ * degraded-provider note instead of pretending the reach above means the
+ * conductor can open those files: a provider with no native add-directory
+ * support still gets handed the board snapshot, never the files themselves.
  * @returns {Promise<object>}
  */
 async function conductorSettingsSnapshot() {
 	const boardId = currentBoardId();
 	const conductorId = await resolveConductorSessionId(boardId);
+	const config = conductorConfigForBoard(boardId);
+	const providers = await conductorProviderOptions();
 	return {
 		boardId: boardId,
 		boardName: currentBoardName(),
-		config: conductorConfigForBoard(boardId),
-		providers: await conductorProviderOptions(),
+		config: config,
+		providers: providers,
+		providerSupportsDirectories: conductorProviderSupportsDirectories(providers, config.agentId),
 		reach: conductorReachForBoard(),
 		conductorId: conductorId,
 		conductorExists: conductorId !== null,
@@ -6117,6 +6144,7 @@ module.exports = {
 	conductorConfigPatchFrom: conductorConfigPatchFrom,
 	conductorProviderOptions: conductorProviderOptions,
 	conductorReachForBoard: conductorReachForBoard,
+	conductorProviderSupportsDirectories: conductorProviderSupportsDirectories,
 	conductorSettingsSnapshot: conductorSettingsSnapshot,
 	applyConductorConfig: applyConductorConfig,
 

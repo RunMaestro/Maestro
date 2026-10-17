@@ -1133,6 +1133,10 @@
 				</select>
 			</div>
 			<p class="board-settings-note">Only providers you already run an agent for appear here.</p>
+			<p id="conductor-directory-note" class="board-settings-note" hidden>
+				This provider has no way to add directories, so the conductor will work from the board
+				snapshot rather than from files.
+			</p>
 			<div class="board-settings-row">
 				<label for="conductor-model">Model</label>
 				<input id="conductor-model" type="text" placeholder="Provider default" />
@@ -2605,6 +2609,7 @@
 						effort: effort,
 						toggle: toggle,
 						scope: document.getElementById('conductor-settings-scope'),
+						directoryNote: document.getElementById('conductor-directory-note'),
 						create: document.getElementById('conductor-create'),
 						open: document.getElementById('conductor-open'),
 						allowAccess: document.getElementById('conductor-allow-access'),
@@ -2789,6 +2794,10 @@
 					if (nodes.scope) {
 						nodes.scope.textContent =
 							conductor && typeof conductor.boardName === 'string' ? conductor.boardName : '';
+					}
+					if (nodes.directoryNote) {
+						nodes.directoryNote.hidden =
+							!conductor || conductor.providerSupportsDirectories !== false;
 					}
 					var conductorExists = !!conductor && conductor.conductorExists === true;
 					var conductorConnected = conductorExists && conductor.conductorConnected === true;
