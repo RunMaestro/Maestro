@@ -355,10 +355,14 @@ export interface HostHandlerDeps {
 	/** Live verified signature from the host registry; absent means no Relay topic exception. */
 	getPluginSignature?: (pluginId: string) => PluginSignatureInfo | undefined;
 	/** Optional Phase-4 act verb: send a prompt to an agent through the brokered
-	 * high-power path. The handler enforces the closed {agentId, prompt} schema
-	 * and re-checks broker (allowlist scope) + trust + risk + guard before
-	 * calling; the sink resolves the agent id to a live session at call time. */
-	dispatch?: (agentId: string, prompt: string) => Promise<unknown>;
+	 * high-power path. The handler enforces the closed {agentId, prompt, opts}
+	 * schema and re-checks broker (allowlist scope) + trust + risk + guard before
+	 * calling; the sink resolves the agent id to a live session at call time.
+	 * `tabId`, when present, is a VISIBLE AI tab of that session the handler
+	 * already resolved through `tabsList`: it narrows where the prompt lands and
+	 * never widens what is allowed. Absent => today's behavior (no tab, so the
+	 * renderer picks the session's active one). */
+	dispatch?: (agentId: string, prompt: string, tabId?: string) => Promise<unknown>;
 	/** Headless, resumable provider turn. The host returns the provider session id. */
 	sendAgent?: (
 		agentId: string,
@@ -1644,10 +1648,19 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		const dispatch = deps.dispatch;
 		handlers['agents.dispatch'] = async (pluginId, params) => {
 			const p = asObject(params);
-			// Closed schema: {agentId, prompt} strings only. No model, permission
-			// mode, skip-permissions, cwd, or execution flag can ride along - the
-			// target agent's own configuration decides those.
-			assertClosedSchema('agents.dispatch', p, { agentId: true, prompt: true });
+			// Closed schema: {agentId, prompt} strings plus an `opts` whose ONLY
+			// member is `tabId` (mirroring how process.spawn closes its opts). No
+			// model, permission mode, skip-permissions, cwd, or execution flag can
+			// ride along - the target agent's own configuration decides those.
+			assertClosedSchema('agents.dispatch', p, { agentId: true, prompt: true, opts: true });
+			if (
+				p.opts !== undefined &&
+				(typeof p.opts !== 'object' || p.opts === null || Array.isArray(p.opts))
+			) {
+				throw new Error('agents.dispatch: opts must be an object');
+			}
+			const opts = p.opts === undefined ? {} : asObject(p.opts);
+			assertClosedSchema('agents.dispatch opts', opts, { tabId: true });
 			const agentId = p.agentId;
 			const prompt = p.prompt;
 			if (typeof agentId !== 'string' || agentId.trim() === '') {
@@ -1664,7 +1677,18 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					`agents.dispatch: prompt too long (max ${MAX_DISPATCH_PROMPT_CHARS} chars)`
 				);
 			}
+			if (
+				opts.tabId !== undefined &&
+				(typeof opts.tabId !== 'string' ||
+					opts.tabId.trim() === '' ||
+					opts.tabId.length > MAX_DISPATCH_AGENT_ID_CHARS)
+			) {
+				throw new Error('agents.dispatch: invalid tabId');
+			}
+			const tabId = typeof opts.tabId === 'string' ? opts.tabId : undefined;
 			// Broker: allowlist scope - the grant must name THIS exact agentId.
+			// `tabId` is deliberately NOT part of the scope target: it narrows where
+			// an already-authorized prompt lands and can never widen what is allowed.
 			assertBrokerAllowed(deps, pluginId, 'agents.dispatch', p);
 			// Session grants: `agentId` must be an EXACT granted session id. The
 			// broker's allowlist check already requires exact membership, but this
@@ -1691,8 +1715,27 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			}
 			assertTrustedActVerb(deps, pluginId);
 			assertLowOrMediumRisk(prompt);
+			// Tab targeting is resolved LAST, after every authorization gate, so an
+			// invalid-tab error can never be used as an existence oracle for tabs of
+			// a session the plugin is not already cleared to dispatch to. The lookup
+			// is scoped to the target session, and `projectSessionTabMetadata`
+			// already drops hidden consult tabs, so a match is a VISIBLE AI tab of
+			// exactly this session; an unknown id, a tab of another session, a
+			// terminal/file tab, and a hidden tab all fall through to the throw.
+			// Addressing by agent NAME is incompatible with `tabId` for the same
+			// reason: the sink resolves the name later, so nothing here could prove
+			// the tab belongs to whatever it resolves to.
+			if (tabId !== undefined) {
+				if (!deps.tabsList) throw new Error('agents.dispatch: tab targeting is unavailable');
+				const tab = deps.tabsList(agentId).find((candidate) => candidate.id === tabId);
+				if (!tab || tab.type !== 'ai' || tab.sessionId !== agentId) {
+					throw new Error(
+						`agents.dispatch: tabId "${tabId}" is not a visible AI tab of session "${agentId}"`
+					);
+				}
+			}
 			return underGuard(deps.actionGuard, pluginId, 'agents:dispatch', `agent:${agentId}`, () =>
-				dispatch(agentId, prompt)
+				dispatch(agentId, prompt, tabId)
 			);
 		};
 	}

@@ -452,8 +452,9 @@ What the keyword means:
 - **What a grant buys.** `agents.dispatch` to that exact session id (never an agent NAME - name resolution is off for these plugins) and `transcripts.read` of that session's History. Every other gate still applies: a trusted signature, unattended consent for dispatch, the risk ceiling, the ActionGuard rate cap, the egress conflict rule, field projection, and the per-read audit line.
 - **Revocation is the user's, any time.** The member set is the `agents:dispatch` grant's allowlist scope in the sealed ledger, so Settings -> Plugins -> Permissions (the dispatch allow list editor) removes a session, and the very next dispatch or History read for it is denied. Revoking the capability clears the whole set.
 - **Track it yourself from what the host tells you.** Never assume a grant you have not seen. Treat a session as granted only after `requestAccess` returned `{ granted: true }` or a call to it succeeded, and return it to ungranted when a call is denied.
+- **One tab, not the whole agent.** `maestro.agents.dispatch(sessionId, prompt, { tabId })` lands the prompt in one specific AI tab. `opts` is closed - `tabId` is its only member, and any other key throws - and `tabId` must name a **visible** AI tab (a hidden consult tab is not addressable) **of the session you are dispatching to**, so pair it with a session id, never an agent name. It narrows delivery and never widens reach: the grant check still runs against `sessionId`, and an unknown, hidden, other-session, or non-AI tab throws with nothing sent. Omit `opts` and the agent's own active tab receives the prompt, exactly as before.
 
-Declaring the keyword nowhere changes anything for existing plugins: ordinary scopes keep today's exact behavior.
+Declaring the keyword nowhere changes anything for existing plugins: ordinary scopes keep today's exact behavior, and `opts.tabId` is optional for everyone.
 
 The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits declarative `uiItems` into approved host-owned surfaces, `ui:panel` admits sandboxed `panels` into approved Maestro regions, and `ui:hostView` admits brokered updates/removals for declared host views. Static `hostViews` remain available to tier-0 plugins because they are host-rendered data, not plugin UI. `ui:render-unsafe` is a high-trust policy for host-approved custom UI only; it neither grants another UI capability nor bypasses trusted chrome. An enabled plugin without the matching grant contributes none of that surface.
 
@@ -511,7 +512,7 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                                       | `net:connect`                |
 | `maestro.agents.list()`                                                                               | `agents:read`                |
 | `maestro.agents.get(agentId)`                                                                         | `agents:read`                |
-| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)                          | `agents:dispatch`            |
+| `maestro.agents.dispatch(agentId, prompt, { tabId? })` (needs unattended consent)                     | `agents:dispatch`            |
 | `maestro.agents.send(agentId, prompt, { sessionId?, onProgress? })` -> response + provider session ID | `agents:dispatch`            |
 | `maestro.agents.generateTitle(agentId, firstMessage)` -> short title or `null`                        | `agents:dispatch`            |
 | `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                                      | `notifications:toast`        |

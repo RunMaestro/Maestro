@@ -15,6 +15,7 @@ import {
 	purgePluginData,
 	type HostHandlerDeps,
 	type PluginSessionMetadata,
+	type PluginTabMetadata,
 } from '../../../main/plugins/plugin-host-handlers';
 import { ActionGuard } from '../../../main/plugins/action-guard';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
@@ -2059,7 +2060,91 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
 		).resolves.toBe('dispatched');
 		expect(events).toEqual(['audit', 'sink']);
-		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary');
+		// No opts => no tab: the sink gets an explicit undefined, which is the
+		// pre-tab-targeting call (the renderer falls back to the active tab).
+		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary', undefined);
+	});
+
+	it('narrows agents.dispatch to one visible AI tab of the dispatched session and rejects anything else', async () => {
+		const tabs: PluginTabMetadata[] = [
+			{ id: 'tab-a', sessionId: 'a', type: 'ai', title: 'Work' },
+			{ id: 'term-a', sessionId: 'a', type: 'terminal', title: 'Shell' },
+			{ id: 'tab-b', sessionId: 'b', type: 'ai', title: 'Elsewhere' },
+		];
+		const tabsList = (sessionId?: string) =>
+			tabs.filter((tab) => (sessionId === undefined ? true : tab.sessionId === sessionId));
+		const dispatch = vi.fn(async () => 'dispatched');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				tabsList,
+				dispatch,
+			})
+		);
+		// A visible AI tab of the dispatched session reaches the sink as the third
+		// argument, which is what `dispatchPromptToSession` forwards to the renderer.
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'summarize', opts: { tabId: 'tab-a' } })
+		).resolves.toBe('dispatched');
+		expect(dispatch).toHaveBeenCalledWith('a', 'summarize', 'tab-a');
+		dispatch.mockClear();
+		// Unknown tab, another session's tab, a terminal tab, a malformed tabId, an
+		// unexpected opts key, and a non-object opts all deny with nothing sent.
+		for (const opts of [
+			{ tabId: 'nope' },
+			{ tabId: 'tab-b' },
+			{ tabId: 'term-a' },
+			{ tabId: '' },
+			{ tabId: 7 },
+			{ tabId: 'tab-a', inputMode: 'terminal' },
+			'tab-a',
+		]) {
+			await expect(
+				h['agents.dispatch']!('p', { agentId: 'a', prompt: 'summarize', opts })
+			).rejects.toThrow();
+		}
+		expect(dispatch).not.toHaveBeenCalled();
+		// Session grants gate the tab too: a tab of a session that is not granted is
+		// denied before the tab is ever resolved.
+		const granted = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				usesSessionGrants: () => true,
+				isSessionGranted: (_pluginId, sessionId) => sessionId === 'other',
+				tabsList,
+				dispatch,
+			})
+		);
+		await expect(
+			granted['agents.dispatch']!('p', {
+				agentId: 'a',
+				prompt: 'summarize',
+				opts: { tabId: 'tab-a' },
+			})
+		).rejects.toThrow(/not granted/);
+		// Fail closed: no tabsList wiring means no tab targeting at all, while a
+		// call WITHOUT opts keeps working exactly as before.
+		const unwired = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				tabsList: undefined,
+				dispatch,
+			})
+		);
+		await expect(
+			unwired['agents.dispatch']!('p', {
+				agentId: 'a',
+				prompt: 'summarize',
+				opts: { tabId: 'tab-a' },
+			})
+		).rejects.toThrow(/unavailable/);
+		await expect(
+			unwired['agents.dispatch']!('p', { agentId: 'a', prompt: 'summarize' })
+		).resolves.toBe('dispatched');
+		expect(dispatch).toHaveBeenCalledWith('a', 'summarize', undefined);
 	});
 
 	it('denies dispatch without the separate unattended consent even when grant + trust + low risk all pass', async () => {

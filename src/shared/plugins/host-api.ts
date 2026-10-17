@@ -45,6 +45,13 @@ import semver from 'semver';
  *    the USER (a host-owned confirmation in the main process, defaulting to
  *    Don't Allow) to add one session to that set. Only a plugin that declared
  *    the keyword may call it.
+ *  - `maestro.agents.dispatch(agentId, prompt, { tabId })`: the optional, closed
+ *    `opts` (`tabId` is its ONLY member) narrows delivery to one VISIBLE AI tab
+ *    of the session being dispatched to, resolved against `tabs.list` after
+ *    every existing gate. It never widens reach - the scope target stays
+ *    `agentId`, and a session-grant plugin still needs that session granted.
+ *    Omitting `opts` is exactly the previous behavior (the session's own active
+ *    tab), so older plugins are untouched.
  *
  * 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and

@@ -280,6 +280,10 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			// Allowlist scope target: the exact agent id the plugin wants to run.
 			// A missing/malformed id yields undefined, which an allowlist grant
 			// treats as deny (act verbs never match a target-less call).
+			// `agents.dispatch`'s optional `opts.tabId` is deliberately NOT part of
+			// the target: it narrows which tab of an already-authorized session the
+			// prompt lands in, so it can never widen what the grant covers. The
+			// handler resolves it against `tabsList` after every gate.
 			return typeof p.agentId === 'string' ? p.agentId : undefined;
 		case 'process.spawn':
 			// Allowlist scope target: the host-blessed binary NAME the plugin

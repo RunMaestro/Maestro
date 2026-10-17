@@ -2549,7 +2549,8 @@ app
 		// "dispatched" success.
 		const dispatchPromptToSession = (
 			agentId: string,
-			prompt: string
+			prompt: string,
+			tabId?: string
 		): { dispatched: true; sessionId: string } => {
 			const sessions = sessionsStore.get('sessions', []) as Array<{
 				id?: string;
@@ -2566,14 +2567,19 @@ app
 				);
 			}
 			logger.info(
-				`agents.dispatch -> session ${target.id} (requested "${agentId}", ${prompt.length} chars)`,
+				`agents.dispatch -> session ${target.id}${tabId ? ` tab ${tabId}` : ''} ` +
+					`(requested "${agentId}", ${prompt.length} chars)`,
 				'[PluginAudit]'
 			);
 			const win = mainWindow;
 			if (!win || win.isDestroyed() || !isWebContentsAvailable(win)) {
 				throw new Error('agents.dispatch: no renderer available to run the agent');
 			}
-			win.webContents.send('remote:executeCommand', target.id, prompt, 'ai');
+			// `tabId` is the renderer listener's argument after `inputMode` (see
+			// src/main/preload/process/commandRemote.ts). Undefined is exactly the
+			// pre-tab-targeting call: the renderer falls back to the session's own
+			// active tab, which is what every existing caller gets.
+			win.webContents.send('remote:executeCommand', target.id, prompt, 'ai', tabId);
 			return { dispatched: true, sessionId: target.id };
 		};
 
@@ -2850,7 +2856,7 @@ app
 						: await dialog.showMessageBox(options);
 					return answer.response === 1;
 				},
-				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				dispatch: async (agentId, prompt, tabId) => dispatchPromptToSession(agentId, prompt, tabId),
 				sendAgent: runHeadlessAgent,
 				generateTitle: async (agentId, firstMessage, signal) => {
 					const session = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
