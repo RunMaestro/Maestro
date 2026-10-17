@@ -371,4 +371,129 @@ describe('maestro-kanban main.js', () => {
 		expect(JSON.stringify(snapshot).length).toBeLessThan(64 * 1024);
 		expect(maestro.notifications.toast).toHaveBeenCalledTimes(1);
 	});
+
+	it('reports projectBoardMissing only for an active project with no board file yet', async () => {
+		const plugin = loadMain();
+		const projectPath = '/Users/dev/projects/widgets';
+		const { maestro, eventHandlers } = createStubMaestro({
+			sessionsList: () => Promise.resolve([{ id: 'session-1', title: 'Widgets', projectPath }]),
+			tabsList: () =>
+				Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath })]),
+		});
+
+		await plugin.activate(maestro);
+		const beforeActivation = maestro.ui.panelPost.mock.calls[0]![1] as {
+			activeProjectPath: string | null;
+			projectBoardMissing: boolean;
+		};
+		expect(beforeActivation.activeProjectPath).toBeNull();
+		expect(beforeActivation.projectBoardMissing).toBe(false);
+
+		maestro.ui.panelPost.mockClear();
+		emit(eventHandlers, 'session.activated', { sessionId: 'session-1' });
+		await vi.advanceTimersByTimeAsync(150 + 50);
+
+		const afterActivation = maestro.ui.panelPost.mock.calls[0]![1] as {
+			activeProjectPath: string | null;
+			projectBoardMissing: boolean;
+		};
+		expect(afterActivation.activeProjectPath).toBe(projectPath);
+		expect(afterActivation.projectBoardMissing).toBe(true);
+	});
+
+	it("does not report projectBoardMissing when the active project's board file fails to parse", async () => {
+		const plugin = loadMain();
+		const projectPath = '/Users/dev/projects/widgets';
+		const { maestro, eventHandlers } = createStubMaestro({
+			sessionsList: () => Promise.resolve([{ id: 'session-1', title: 'Widgets', projectPath }]),
+			tabsList: () =>
+				Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath })]),
+		});
+		const boardPath =
+			'~/.maestro/kanban-boards/' + (plugin.projectBoardSlug(projectPath) as string) + '.yaml';
+		maestro.fs.read = vi.fn((path: string) => {
+			if (path === boardPath) return Promise.resolve('columns:\n  - id: backlog\n    title: X\n');
+			return Promise.reject(new Error('ENOENT: no such file or directory'));
+		});
+
+		await plugin.activate(maestro);
+		emit(eventHandlers, 'session.activated', { sessionId: 'session-1' });
+		await vi.advanceTimersByTimeAsync(150 + 50);
+
+		const snapshot = maestro.ui.panelPost.mock.calls[
+			maestro.ui.panelPost.mock.calls.length - 1
+		]![1] as {
+			projectBoardMissing: boolean;
+			boardError: unknown;
+		};
+		expect(snapshot.boardError).not.toBeNull();
+		expect(snapshot.projectBoardMissing).toBe(false);
+	});
+
+	it('writes a default board file for the active project via write-default-board and reports success', async () => {
+		const plugin = loadMain();
+		const projectPath = '/Users/dev/projects/widgets';
+		const { maestro, commandHandlers } = createStubMaestro();
+		const boardPath =
+			'~/.maestro/kanban-boards/' + (plugin.projectBoardSlug(projectPath) as string) + '.yaml';
+
+		await plugin.activate(maestro);
+		maestro.ui.panelPost.mockClear();
+		maestro.notifications.toast.mockClear();
+
+		const writeDefaultBoard = commandHandlers.get('write-default-board');
+		expect(writeDefaultBoard).toBeTypeOf('function');
+		const result = await writeDefaultBoard!({ projectPath: projectPath });
+
+		expect(result).toEqual({ ok: true, path: boardPath });
+		expect(maestro.fs.write).toHaveBeenCalledTimes(1);
+		const [writtenPath, writtenText] = (maestro.fs.write as ReturnType<typeof vi.fn>).mock
+			.calls[0] as [string, string];
+		expect(writtenPath).toBe(boardPath);
+		expect(writtenText).toContain('version: 1');
+		expect(writtenText).toContain('project: ' + projectPath);
+		expect(writtenText).toContain('id: backlog');
+		expect(maestro.notifications.toast).toHaveBeenCalledWith('Wrote default board to ' + boardPath);
+		// A fresh panel push reflects the just-written board immediately.
+		expect(maestro.ui.panelPost).toHaveBeenCalledTimes(1);
+	});
+
+	it('refuses to overwrite an existing board file via write-default-board', async () => {
+		const plugin = loadMain();
+		const projectPath = '/Users/dev/projects/widgets';
+		const { maestro, commandHandlers } = createStubMaestro();
+		const boardPath =
+			'~/.maestro/kanban-boards/' + (plugin.projectBoardSlug(projectPath) as string) + '.yaml';
+		maestro.fs.read = vi.fn((path: string) => {
+			if (path === boardPath)
+				return Promise.resolve(
+					'version: 1\nproject: ' + projectPath + '\ncolumns:\n  - id: x\n    title: X\n'
+				);
+			return Promise.reject(new Error('ENOENT: no such file or directory'));
+		});
+
+		await plugin.activate(maestro);
+
+		const writeDefaultBoard = commandHandlers.get('write-default-board');
+		const result = await writeDefaultBoard!({ projectPath: projectPath });
+
+		expect(result).toEqual({
+			ok: false,
+			error: 'A board file already exists at ' + boardPath,
+		});
+		expect(maestro.fs.write).not.toHaveBeenCalled();
+	});
+
+	it('reports failure from write-default-board when no project path is supplied', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = createStubMaestro();
+
+		await plugin.activate(maestro);
+
+		const writeDefaultBoard = commandHandlers.get('write-default-board');
+		const result = await writeDefaultBoard!({});
+
+		expect(result).toEqual({ ok: false });
+		expect(maestro.fs.write).not.toHaveBeenCalled();
+	});
 });

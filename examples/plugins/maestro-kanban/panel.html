@@ -128,6 +128,20 @@
 				padding: 32px;
 				user-select: text;
 			}
+			.write-default-board-button {
+				margin-top: 16px;
+				padding: 6px 14px;
+				border: none;
+				border-radius: 6px;
+				background: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-size: 12px;
+				font-weight: 600;
+				cursor: pointer;
+			}
+			.write-default-board-button:hover {
+				opacity: 0.9;
+			}
 			#banner {
 				margin: 12px 12px 0 12px;
 				padding: 8px 10px;
@@ -272,7 +286,32 @@
 					if (totalCards === 0) {
 						var empty = document.createElement('div');
 						empty.className = 'empty-state';
-						empty.textContent = 'No agents yet. Open an AI tab in Maestro to see it appear here.';
+						var emptyText = document.createElement('div');
+						emptyText.textContent =
+							'No agents yet. Open an AI tab in Maestro to see it appear here.';
+						empty.appendChild(emptyText);
+						if (
+							snapshot &&
+							snapshot.projectBoardMissing === true &&
+							typeof snapshot.activeProjectPath === 'string' &&
+							snapshot.activeProjectPath
+						) {
+							var writeButton = document.createElement('button');
+							writeButton.type = 'button';
+							writeButton.className = 'write-default-board-button';
+							writeButton.textContent = 'Write default board for this project';
+							writeButton.addEventListener('click', function () {
+								parent.postMessage(
+									{
+										type: 'maestro:invokeCommand',
+										commandId: 'write-default-board',
+										args: { projectPath: snapshot.activeProjectPath },
+									},
+									'*'
+								);
+							});
+							empty.appendChild(writeButton);
+						}
 						board.appendChild(empty);
 						return;
 					}

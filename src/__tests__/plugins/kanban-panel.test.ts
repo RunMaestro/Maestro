@@ -64,10 +64,17 @@ const COLUMN_IDS = Object.keys(DEFAULT_COLUMN_TITLES);
 /** Builds a snapshot shaped exactly like `main.js`'s `buildSnapshot()`: every
  * default column present, in order, with its title and the requested cards
  * placed by column id. `boardError` mirrors the same field buildSnapshot()
- * emits when a board file failed to parse. */
+ * emits when a board file failed to parse; `activeProjectPath` and
+ * `projectBoardMissing` mirror the fields it emits for the write-default-board
+ * empty-state button. */
 function snapshotWith(
 	byColumn: Partial<Record<string, SnapshotCard[]>>,
-	opts: { boardError?: { message: string; path: string } | null; columns?: SnapshotColumn[] } = {}
+	opts: {
+		boardError?: { message: string; path: string } | null;
+		columns?: SnapshotColumn[];
+		activeProjectPath?: string | null;
+		projectBoardMissing?: boolean;
+	} = {}
 ) {
 	return {
 		updatedAt: Date.now(),
@@ -79,6 +86,8 @@ function snapshotWith(
 				cards: byColumn[id] ?? [],
 			})),
 		boardError: opts.boardError ?? null,
+		activeProjectPath: opts.activeProjectPath ?? null,
+		projectBoardMissing: opts.projectBoardMissing ?? false,
 	};
 }
 
@@ -290,6 +299,62 @@ describe('maestro-kanban panel.html', () => {
 		expect(emptyState).toBeTruthy();
 		expect(emptyState?.textContent).toMatch(/no agents yet/i);
 		expect(board().querySelectorAll('.column')).toHaveLength(0);
+	});
+
+	it('does not render the write-default-board button when there is no active project', () => {
+		pushSnapshot(emptySnapshot());
+
+		expect(board().querySelector('.write-default-board-button')).toBeNull();
+	});
+
+	it('does not render the write-default-board button when the active project already has a board file', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{ activeProjectPath: '/Users/dev/projects/widgets', projectBoardMissing: false }
+			)
+		);
+
+		expect(board().querySelector('.write-default-board-button')).toBeNull();
+	});
+
+	it('renders the write-default-board button in the empty state when the active project has no board file', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{ activeProjectPath: '/Users/dev/projects/widgets', projectBoardMissing: true }
+			)
+		);
+
+		const button = board().querySelector('.write-default-board-button');
+		expect(button).toBeTruthy();
+		expect(button?.closest('.empty-state')).toBeTruthy();
+	});
+
+	it('posts the write-default-board command with the active project path when the button is clicked', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{ activeProjectPath: '/Users/dev/projects/widgets', projectBoardMissing: true }
+			)
+		);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		const button = board().querySelector<HTMLButtonElement>('.write-default-board-button');
+		if (!button) throw new Error('write-default-board button did not render');
+		button.click();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'write-default-board',
+			args: { projectPath: '/Users/dev/projects/widgets' },
+		});
+		// vi.spyOn on window.postMessage is left unrestored by every test in this
+		// file that needs it (none call mockClear/mockRestore); restoring here
+		// keeps a later test's fresh vi.spyOn call from reusing this mock's
+		// already-recorded call and double-counting its own single click.
+		postMessageSpy.mockRestore();
 	});
 
 	it('posts the focus command with the right (sessionId, tabId) when a card is clicked', () => {

@@ -603,6 +603,44 @@ async function saveProjectBoard(projectPath, board) {
 	return board;
 }
 
+/**
+ * Seeds a brand-new project board file with `DEFAULT_COLUMNS`, but only when
+ * the project has no board file at all yet - unlike `saveProjectBoard`,
+ * which overwrites a parseable file on purpose, this refuses whenever
+ * anything is already at the path (valid or not), so it can never clobber a
+ * hand-edited or previously-written board. Backs the 'write-default-board'
+ * command. Resolves to the path written; throws (naming the path) if a file
+ * is already there, or if the read to check that fails for any reason other
+ * than "missing".
+ * @param {string} projectPath
+ */
+async function writeDefaultBoard(projectPath) {
+	if (typeof projectPath !== 'string' || projectPath === '') {
+		throw new Error('writeDefaultBoard requires a non-empty project path');
+	}
+	const path = boardFilePath(projectPath);
+	let fileExists = true;
+	try {
+		await sdk.fs.read(path);
+	} catch (err) {
+		if (!isFileNotFoundError(err)) throw err;
+		fileExists = false;
+	}
+	if (fileExists) {
+		throw new Error('A board file already exists at ' + path);
+	}
+	const board = {
+		version: 1,
+		project: projectPath,
+		columns: DEFAULT_COLUMNS.map(function (column) {
+			return Object.assign({}, column);
+		}),
+	};
+	await sdk.fs.write(path, serializeBoardYaml(board));
+	boardCache.set(path, { board: board, error: null });
+	return path;
+}
+
 // ===========================================================================
 // End of Phase 02 filesystem plumbing.
 // ===========================================================================
@@ -960,6 +998,13 @@ async function buildSnapshot() {
 	}
 	const boardError =
 		(activeProjectPath !== null && projectResult.error) || globalResult.error || null;
+	// True only when there is an active project and it has no board file at
+	// all yet (ENOENT, not a parse failure - that case is already covered by
+	// boardError above). Lets the panel offer "write a default board" exactly
+	// when there is a project with nothing to lose, never when one merely
+	// failed to parse.
+	const projectBoardMissing =
+		activeProjectPath !== null && projectResult.board === null && projectResult.error === null;
 	return {
 		updatedAt: Date.now(),
 		columns: resolvedColumns.map((column) => ({
@@ -969,6 +1014,8 @@ async function buildSnapshot() {
 			cards: byColumn.get(column.id) || [],
 		})),
 		boardError: boardError,
+		activeProjectPath: activeProjectPath,
+		projectBoardMissing: projectBoardMissing,
 	};
 }
 
@@ -1138,6 +1185,31 @@ function registerCommands(maestro) {
 		return seed();
 	});
 
+	// Invoked by the panel's empty-state button via parent.postMessage; no
+	// manifest `commands` entry is needed since it is never surfaced in the
+	// command palette (same reasoning as 'focus' above).
+	maestro.commands.register('write-default-board', (args) => {
+		const projectPath =
+			args && typeof args.projectPath === 'string' && args.projectPath !== ''
+				? args.projectPath
+				: undefined;
+		if (!projectPath) {
+			return safeToast('No active project to write a board file for.').then(() => ({
+				ok: false,
+			}));
+		}
+		return writeDefaultBoard(projectPath)
+			.then((path) =>
+				pushSnapshotNow().then(() =>
+					safeToast('Wrote default board to ' + path).then(() => ({ ok: true, path: path }))
+				)
+			)
+			.catch((err) => {
+				console.error('maestro-kanban: write-default-board failed: ' + String(err));
+				return safeToast(errorMessage(err)).then(() => ({ ok: false, error: errorMessage(err) }));
+			});
+	});
+
 	maestro.commands.register('clear-placements', () =>
 		clearAllPlacements()
 			.then(() => seed())
@@ -1183,6 +1255,7 @@ module.exports = {
 	loadProjectBoard: loadProjectBoard,
 	loadGlobalBoard: loadGlobalBoard,
 	saveProjectBoard: saveProjectBoard,
+	writeDefaultBoard: writeDefaultBoard,
 	invalidateBoardCache: invalidateBoardCache,
 
 	/** @param {MaestroSdk} maestro */
