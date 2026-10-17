@@ -49,6 +49,20 @@ interface AgingState {
 	expired: boolean;
 }
 
+/** What one card carries to the panel for Phase 05's Done decay, per
+ * `agingRenderState()`. Numbers only: the sentence a person reads is the
+ * panel's copy (see `kanban-panel.test.ts`), and `opacity` is the RENDER
+ * opacity, floored at AGING_RENDER_OPACITY_FLOOR rather than at the model's
+ * AGING_OPACITY_FLOOR. */
+interface CardAgingPayload {
+	opacity: number;
+	elapsedDays: number;
+	horizonDays: number;
+	daysRemaining: number;
+	expiringSoon: boolean;
+	expired: boolean;
+}
+
 interface AgingCard {
 	columnId?: string;
 	terminalColumnId?: string;
@@ -124,6 +138,9 @@ interface KanbanAging {
 	normalizeAgingSettings: (raw: unknown) => AgingSettings;
 	DEFAULT_AGING_SETTINGS: AgingSettings;
 	AGING_OPACITY_FLOOR: number;
+	AGING_RENDER_OPACITY_FLOOR: number;
+	AGING_SOON_DAYS: number;
+	agingRenderState: (state: AgingState) => CardAgingPayload | null;
 	boardFilePath: (projectPath: string | null | undefined) => string;
 	setBoardAgingSettings: (boardId: string, patch: unknown) => Promise<AgingSettings>;
 	agingSettingsForBoard: (boardId: string | null) => AgingSettings;
@@ -2272,5 +2289,237 @@ describe('maestro-kanban board settings surface', () => {
 			closeTabsOnRetire: true,
 			inherited: false,
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The Done decay as the panel receives it. agingState() above answers "how
+// far along is this card"; agingRenderState() answers "what does the board
+// draw", and the `aging` field on every card of a snapshot is how that answer
+// travels. The two floors are deliberately different numbers and the reason
+// is the whole point of this layer: the model's floor describes a card that
+// has run its horizon, the render floor is the faintest a still-clickable
+// card may be drawn.
+// ---------------------------------------------------------------------------
+
+/** Every card of the last pushed snapshot, keyed by card key, so a test can
+ * assert on the `aging` field one card arrived with. */
+function lastCardsByKey(panelPost: { mock: { calls: unknown[][] } }) {
+	const snapshot = lastSnapshot(panelPost) as {
+		columns: { cards: { key: string; aging?: CardAgingPayload }[] }[];
+	} | null;
+	const byKey = new Map<string, { key: string; aging?: CardAgingPayload }>();
+	if (!snapshot) return byKey;
+	for (const column of snapshot.columns) {
+		for (const card of column.cards) byKey.set(card.key, card);
+	}
+	return byKey;
+}
+
+describe('maestro-kanban Done decay rendering', () => {
+	const projectPath = '/Users/dev/projects/widgets';
+	const key = 'session-1::tab-1';
+
+	describe('agingRenderState', () => {
+		const enabled = { agingEnabled: true, horizonDays: 10 };
+		const stateAt = (plugin: KanbanAging, daysAgo: number, settings: unknown = enabled) =>
+			plugin.agingState(doneCard({ enteredDoneAt: NOW - daysAgo * DAY }), settings, NOW);
+
+		it('has nothing to draw for a card aging does not apply to', () => {
+			const plugin = loadMain();
+			// Aging off for this board.
+			expect(plugin.agingRenderState(stateAt(plugin, 5, { agingEnabled: false }))).toBeNull();
+			// In a column that is not Done, with aging on.
+			expect(
+				plugin.agingRenderState(
+					plugin.agingState(
+						{ columnId: 'review', terminalColumnId: 'done', enteredDoneAt: NOW - 5 * DAY },
+						enabled,
+						NOW
+					)
+				)
+			).toBeNull();
+		});
+
+		it('re-maps the same linear decay onto the readable range', () => {
+			const plugin = loadMain();
+			const floor = plugin.AGING_RENDER_OPACITY_FLOOR;
+
+			expect(plugin.agingRenderState(stateAt(plugin, 0))!.opacity).toBe(1);
+			// Half the horizon is half the ramp, exactly as it is in the model -
+			// the curve is re-scaled, never re-shaped.
+			expect(plugin.agingRenderState(stateAt(plugin, 5))!.opacity).toBe(
+				Math.round((1 - 0.5 * (1 - floor)) * 1000) / 1000
+			);
+			expect(plugin.agingRenderState(stateAt(plugin, 10))!.opacity).toBe(floor);
+			// Well past the horizon is still the floor, never below it: the card
+			// is still on this board and still a hit target.
+			expect(plugin.agingRenderState(stateAt(plugin, 90))!.opacity).toBe(floor);
+		});
+
+		it('keeps the render floor well above the model floor, so a live card stays readable', () => {
+			const plugin = loadMain();
+			expect(plugin.AGING_RENDER_OPACITY_FLOOR).toBeGreaterThan(plugin.AGING_OPACITY_FLOOR);
+			// The model is free to say "as good as gone"; the renderer is not.
+			expect(plugin.agingRenderState(stateAt(plugin, 10))!.opacity).toBeGreaterThanOrEqual(0.3);
+		});
+
+		it('counts down the days remaining and flags the last one', () => {
+			const plugin = loadMain();
+			const mid = plugin.agingRenderState(stateAt(plugin, 3))!;
+			expect(mid.daysRemaining).toBe(7);
+			expect(mid.horizonDays).toBe(10);
+			expect(mid.expiringSoon).toBe(false);
+			expect(mid.expired).toBe(false);
+
+			// Exactly AGING_SOON_DAYS left: the marker arms on the boundary
+			// rather than a tick after it.
+			const edge = plugin.agingRenderState(stateAt(plugin, 10 - plugin.AGING_SOON_DAYS))!;
+			expect(edge.daysRemaining).toBe(plugin.AGING_SOON_DAYS);
+			expect(edge.expiringSoon).toBe(true);
+			expect(edge.expired).toBe(false);
+		});
+
+		it('keeps warning about a card the sweep has not reached yet', () => {
+			const plugin = loadMain();
+			// The sweep runs on hours, so a card can be past its horizon and
+			// still on screen. That is the most urgent version of "about to go",
+			// so the countdown bottoms out at zero and the flag stays up.
+			const over = plugin.agingRenderState(stateAt(plugin, 40))!;
+			expect(over.daysRemaining).toBe(0);
+			expect(over.expiringSoon).toBe(true);
+			expect(over.expired).toBe(true);
+		});
+
+		it('restores a full-strength card when a comment restarts the clock', () => {
+			const plugin = loadMain();
+			const render = plugin.agingRenderState(
+				plugin.agingState(
+					doneCard({ enteredDoneAt: NOW - 9 * DAY, lastCommentAt: NOW }),
+					enabled,
+					NOW
+				)
+			)!;
+			expect(render.opacity).toBe(1);
+			expect(render.daysRemaining).toBe(10);
+			expect(render.expiringSoon).toBe(false);
+		});
+	});
+
+	/** A board with one card that has been in Done for `daysInDone` days and a
+	 * second card parked in Backlog, so a test can assert that only the Done
+	 * one carries a decay. */
+	function decayStub(plugin: KanbanAging, daysInDone: number, settings: Partial<AgingSettings>) {
+		const boardPath = plugin.boardFilePath(projectPath);
+		return createStubMaestro({
+			storage: {
+				'selected-board': projectPath,
+				['placements:' + boardPath]: JSON.stringify({
+					[key]: { columnId: 'done', order: 0, enteredDoneAt: Date.now() - daysInDone * DAY },
+					'session-1::tab-2': { columnId: 'backlog', order: 0 },
+				}),
+				'board-settings': JSON.stringify({ [projectPath]: settings }),
+			},
+			sessionsList: () =>
+				Promise.resolve([
+					{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
+				]),
+			tabsList: () =>
+				Promise.resolve([
+					aiTab({ projectPath, title: 'Ship the thing' }),
+					aiTab({ id: 'tab-2', projectPath, title: 'Still Working' }),
+				]),
+		});
+	}
+
+	it('stamps the decay onto the Done card of a snapshot and onto no other card', async () => {
+		const plugin = loadMain();
+		const { maestro } = decayStub(plugin, 7, { agingEnabled: true, horizonDays: 14 });
+
+		await plugin.activate(maestro);
+
+		const cards = lastCardsByKey(maestro.ui.panelPost);
+		const done = cards.get(key)!.aging!;
+		expect(done.horizonDays).toBe(14);
+		expect(done.daysRemaining).toBeCloseTo(7, 1);
+		expect(done.opacity).toBeGreaterThan(plugin.AGING_RENDER_OPACITY_FLOOR);
+		expect(done.opacity).toBeLessThan(1);
+		// The Backlog card has no clock, so it has no field - which is what the
+		// panel reads as "draw this one at full strength".
+		expect(cards.get('session-1::tab-2')!.aging).toBeUndefined();
+	});
+
+	it('sends no decay at all while aging is off, however old the card is', async () => {
+		const plugin = loadMain();
+		const { maestro } = decayStub(plugin, 400, { agingEnabled: false, horizonDays: 14 });
+
+		await plugin.activate(maestro);
+
+		const cards = lastCardsByKey(maestro.ui.panelPost);
+		// Still on the board (aging off never retires), and still drawn exactly
+		// as Phase 04 drew it.
+		expect(cards.get(key)!.aging).toBeUndefined();
+	});
+
+	it('repaints the opacities in the same push that saves a new horizon', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = decayStub(plugin, 7, {
+			agingEnabled: true,
+			horizonDays: 28,
+		});
+		await plugin.activate(maestro);
+		const before = lastCardsByKey(maestro.ui.panelPost).get(key)!.aging!;
+
+		await commandHandlers.get('board-settings')!({ boardId: projectPath, horizonDays: 14 });
+
+		// Same card, same age, half the horizon: twice as far along the ramp, so
+		// visibly fainter in the very push that stored the number. This is what
+		// "re-render immediately when the horizon changes" means on screen.
+		const after = lastCardsByKey(maestro.ui.panelPost).get(key)!.aging!;
+		expect(after.horizonDays).toBe(14);
+		expect(after.opacity).toBeLessThan(before.opacity);
+		expect(after.daysRemaining).toBeLessThan(before.daysRemaining);
+	});
+
+	it('marks a card the next sweep will retire as expired rather than hiding it', async () => {
+		const plugin = loadMain();
+		// Aging on, 14-day horizon, 20 days in Done - and the sweep cannot
+		// retire it (its archive file does not parse, see below), so it is still
+		// on the board with its horizon behind it. A card in that state with
+		// nothing on screen about it is exactly what the fade alone cannot say.
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro } = createStubMaestro({
+			storage: {
+				'selected-board': projectPath,
+				['placements:' + boardPath]: JSON.stringify({
+					[key]: { columnId: 'done', order: 0, enteredDoneAt: Date.now() - 20 * DAY },
+				}),
+				'board-settings': JSON.stringify({
+					[projectPath]: { agingEnabled: true, horizonDays: 14, closeTabsOnRetire: false },
+				}),
+			},
+			sessionsList: () =>
+				Promise.resolve([
+					{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
+				]),
+			tabsList: () => Promise.resolve([aiTab({ projectPath, title: 'Ship the thing' })]),
+			files: {
+				// An unparseable archive file, which retirement refuses to
+				// overwrite (see saveArchive). So the sweep cannot retire this
+				// card and it stays on the board with its clock already run out -
+				// the state the decay has to be able to express.
+				[plugin.archiveFilePath(projectPath)]: '{ not json',
+			},
+		});
+
+		await plugin.activate(maestro);
+
+		const card = lastCardsByKey(maestro.ui.panelPost).get(key);
+		expect(card).toBeDefined();
+		const aging = card!.aging!;
+		expect(aging.expired).toBe(true);
+		expect(aging.expiringSoon).toBe(true);
+		expect(aging.daysRemaining).toBe(0);
+		expect(aging.opacity).toBe(plugin.AGING_RENDER_OPACITY_FLOOR);
 	});
 });

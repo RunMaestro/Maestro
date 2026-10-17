@@ -43,6 +43,8 @@ import {
 	boardSettingsHorizon,
 	boardSettingsCloseTabs,
 	boardSettingsSurface,
+	cardAging,
+	makeCardAging,
 } from '../helpers/kanbanPanel';
 
 describe('maestro-kanban panel.html', () => {
@@ -2064,5 +2066,195 @@ describe('maestro-kanban panel.html', () => {
 			postMessageSpy.mock.calls.map((call) => (call[0] as { commandId: string }).commandId)
 		).toContain('close-panel');
 		postMessageSpy.mockRestore();
+	});
+
+	// -----------------------------------------------------------------------
+	// Phase 05 Done decay rendering. The sandbox sends numbers; these cover
+	// what the panel draws from them - the fade, the countdown, the last-day
+	// marker, and the floor under all of it.
+	// -----------------------------------------------------------------------
+
+	it('fades a Done card to its computed opacity and states the days remaining', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ key: 'session-1::tab-1', title: 'Fresh Tab' })],
+				done: [
+					makeCard({
+						key: 'session-2::tab-2',
+						title: 'Aging Tab',
+						aging: makeCardAging({ opacity: 0.7, elapsedDays: 7, daysRemaining: 7 }),
+					}),
+				],
+			})
+		);
+
+		const aging = cardAging('Aging Tab');
+		expect(aging.aging).toBe(true);
+		// A custom property, not an inline `opacity`: the stylesheet has to stay
+		// in charge so `.card.dragging` can still override it mid-drag.
+		expect(findCardElement('Aging Tab').style.opacity).toBe('');
+		expect(aging.opacity).toBe(0.7);
+		// The number the fade itself can never state.
+		expect(aging.marker).toBe('7 days left');
+		expect(aging.markerSoon).toBe(false);
+		expect(aging.tooltip).toBe(
+			'Retires in 7 days, against a Done horizon of 14 days. A new message or comment restarts the clock.'
+		);
+
+		// A card with no aging payload is drawn exactly as Phase 04 drew it: no
+		// class, no property, no tooltip, no countdown row.
+		const fresh = cardAging('Fresh Tab');
+		expect(fresh.aging).toBe(false);
+		expect(fresh.opacity).toBe(null);
+		expect(fresh.marker).toBe(null);
+		expect(fresh.tooltip).toBe('');
+	});
+
+	it('marks a card within a day of retirement distinctly rather than merely faintly', () => {
+		pushSnapshot(
+			snapshotWith({
+				done: [
+					makeCard({
+						key: 'session-1::tab-1',
+						title: 'Last Day',
+						aging: makeCardAging({
+							opacity: 0.43,
+							elapsedDays: 13.5,
+							daysRemaining: 0.5,
+							expiringSoon: true,
+						}),
+					}),
+				],
+			})
+		);
+
+		const soon = cardAging('Last Day');
+		expect(soon.markerSoon).toBe(true);
+		expect(soon.marker).toBe('Retires today');
+		expect(soon.tooltip).toBe(
+			'Retires in under a day, against a Done horizon of 14 days. A new message or comment restarts the clock.'
+		);
+
+		// Past its horizon and still on the board (the sweep runs on hours, not
+		// on the render): the most urgent version of the same warning, never a
+		// card that quietly stops warning.
+		pushSnapshot(
+			snapshotWith({
+				done: [
+					makeCard({
+						key: 'session-1::tab-1',
+						title: 'Last Day',
+						aging: makeCardAging({
+							opacity: 0.4,
+							elapsedDays: 20,
+							daysRemaining: 0,
+							expiringSoon: true,
+							expired: true,
+						}),
+					}),
+				],
+			})
+		);
+		const expired = cardAging('Last Day');
+		expect(expired.markerSoon).toBe(true);
+		expect(expired.marker).toBe('Retires next sweep');
+		expect(expired.tooltip).toBe(
+			'Past its Done horizon of 14 days; retires on the next sweep. A new message or comment restarts the clock.'
+		);
+	});
+
+	it('never draws a live card fainter than the readable floor', () => {
+		// A number below the floor can only come from a sandbox that disagrees
+		// with this panel about the floor. The card is still clickable and still
+		// draggable, so the panel clamps rather than rendering an invisible hit
+		// target.
+		pushSnapshot(
+			snapshotWith({
+				done: [
+					makeCard({
+						key: 'session-1::tab-1',
+						title: 'Nearly Gone',
+						aging: makeCardAging({ opacity: 0.02, daysRemaining: 0, expiringSoon: true }),
+					}),
+				],
+			})
+		);
+		expect(cardAging('Nearly Gone').opacity).toBe(0.4);
+
+		// And an out-of-range value the other way is no more welcome.
+		pushSnapshot(
+			snapshotWith({
+				done: [
+					makeCard({
+						key: 'session-1::tab-1',
+						title: 'Nearly Gone',
+						aging: makeCardAging({ opacity: 4 }),
+					}),
+				],
+			})
+		);
+		expect(cardAging('Nearly Gone').opacity).toBe(1);
+
+		// A payload that is not the shape this panel knows (a trimmed snapshot, an
+		// older sandbox) draws no decay at all rather than a broken one.
+		pushSnapshot(
+			snapshotWith({
+				done: [
+					makeCard({
+						key: 'session-1::tab-1',
+						title: 'Nearly Gone',
+						aging: { opacity: 'half' } as unknown as ReturnType<typeof makeCardAging>,
+					}),
+				],
+			})
+		);
+		expect(cardAging('Nearly Gone').aging).toBe(false);
+	});
+
+	it('still reports the drag state on a faded card', () => {
+		pushSnapshot(
+			snapshotWith({
+				done: [
+					makeCard({
+						key: 'session-1::tab-1',
+						title: 'Aging Tab',
+						aging: makeCardAging({ opacity: 0.45 }),
+					}),
+				],
+			})
+		);
+		const card = findCardElement('Aging Tab');
+		// The whole reason the opacity rides on a custom property: nothing inline
+		// outranks the `.card.dragging` rule, so the class is all the drag needs.
+		card.classList.add('dragging');
+		expect(card.style.getPropertyValue('--card-aging-opacity').trim()).toBe('0.45');
+		expect(card.style.opacity).toBe('');
+	});
+
+	it('pluralizes the countdown the same way the settings row pluralizes the horizon', () => {
+		pushSnapshot(
+			snapshotWith(
+				{
+					done: [
+						makeCard({
+							key: 'session-1::tab-1',
+							title: 'One Left',
+							aging: makeCardAging({
+								horizonDays: 1,
+								elapsedDays: 0,
+								daysRemaining: 1,
+								expiringSoon: true,
+							}),
+						}),
+					],
+				},
+				{ settings: makeBoardSettings({ agingEnabled: true, horizonDays: 1 }) }
+			)
+		);
+		expect(cardAging('One Left').tooltip).toContain('a Done horizon of 1 day');
+		boardSettingsToggle().click();
+		// One unit, named the same way in both places - the card's countdown and
+		// the surface's note cannot read as different units.
+		expect(boardSettingsSurface().horizonNote).toContain('across 1 day');
 	});
 });

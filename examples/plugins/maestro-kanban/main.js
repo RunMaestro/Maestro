@@ -880,6 +880,61 @@ function agingState(card, settings, now) {
 	};
 }
 
+/** How close to its horizon a card has to be before the board stops relying
+ * on faintness alone and draws a distinct marker. One day, so the warning
+ * lands on the last render the user is likely to see before the sweep
+ * retires it. */
+const AGING_SOON_DAYS = 1;
+
+/** The faintest a card is allowed to RENDER while it is still on the board.
+ *
+ * AGING_OPACITY_FLOOR (0.1) is the MODEL's floor and is deliberately almost
+ * invisible: it describes how far along the decay a card is, and a card that
+ * has run its whole horizon is as good as gone. It is not a drawing
+ * instruction. A card still on the board is still clickable, still draggable
+ * and still has a composer behind it, so rendering its title at 0.1 would
+ * leave a live hit target nobody can read - the opposite of what the fade is
+ * for. agingRenderState() therefore re-maps the same linear decay onto
+ * [AGING_RENDER_OPACITY_FLOOR, 1]: the ramp still runs across the whole
+ * horizon and still ends at its faintest on the last day, but the faintest
+ * it ever gets is a value the panel's 13px title is readable at. The card
+ * disappears by being retired, never by fading past legibility. */
+const AGING_RENDER_OPACITY_FLOOR = 0.4;
+
+/**
+ * What the panel needs in order to DRAW one card's decay, or null when there
+ * is nothing to draw (aging off for this board, or the card is not in the
+ * terminal column). Pure, and deliberately numbers only: the sentence a
+ * person reads is the panel's copy to write (see agingLabel/agingTooltip in
+ * panel.html), the same split every other card field holds.
+ *
+ * `daysRemaining` counts down to the horizon and bottoms out at 0 for a card
+ * the next sweep will retire; `expiringSoon` is the distinct-marker flag, and
+ * is true for an expired card too - a card past its horizon that the sweep
+ * has not reached yet is the most urgent version of "about to go", not a
+ * card that stops warning.
+ *
+ * @param {ReturnType<typeof agingState>} state
+ * @returns {{ opacity: number, elapsedDays: number, horizonDays: number, daysRemaining: number, expiringSoon: boolean, expired: boolean }|null}
+ */
+function agingRenderState(state) {
+	if (!state || state.enabled !== true) return null;
+	// Re-derived from the model's own opacity rather than recomputed from the
+	// elapsed time, so the two ramps can never drift apart: both are linear in
+	// the same progress, and reading it back out of `opacity` means there is
+	// exactly one place the decay curve is defined.
+	const progress = Math.min(1, Math.max(0, (1 - state.opacity) / (1 - AGING_OPACITY_FLOOR)));
+	const daysRemaining = Math.max(0, state.horizonDays - state.elapsedDays);
+	return {
+		opacity: roundOpacity(1 - progress * (1 - AGING_RENDER_OPACITY_FLOOR)),
+		elapsedDays: Math.round(state.elapsedDays * 100) / 100,
+		horizonDays: state.horizonDays,
+		daysRemaining: Math.round(daysRemaining * 100) / 100,
+		expiringSoon: daysRemaining <= AGING_SOON_DAYS,
+		expired: state.expired === true,
+	};
+}
+
 // ===========================================================================
 // End of Phase 05 aging model.
 // ===========================================================================
@@ -2002,6 +2057,43 @@ function agingStateForCard(card, terminalColumnId, now) {
 		agingSettingsForCard(card),
 		typeof now === 'number' && isFinite(now) ? now : Date.now()
 	);
+}
+
+/** @type {Map<string, object>} card key -> the `aging` payload cardToJson
+ * stamps on that card, as of the last refreshAgingSnapshot(). Recomputed
+ * once per snapshot rather than per card so a board full of Done cards costs
+ * one terminal-column read per distinct project, not one per card, and so
+ * every card in a single push is measured against the same clock reading -
+ * two cards that entered Done in the same millisecond must not render at
+ * different opacities because the loop took a tick to get to the second. */
+let agingByCard = new Map();
+
+/** Recomputes agingByCard for every live card. Called from buildSnapshot()
+ * before the columns are built, so the payload the panel draws from is
+ * always the same age as the board it rides on.
+ *
+ * A card with no project path has no board file, no terminal column and
+ * therefore no clock (the same exclusion cardsInTerminalColumn() makes), and
+ * a card aging says nothing about gets no entry at all rather than a
+ * null-filled one - an absent field is what the panel reads as "draw this
+ * card the way Phase 04 drew it".
+ * @param {number} [now] */
+async function refreshAgingSnapshot(now) {
+	const at = typeof now === 'number' && isFinite(now) ? now : Date.now();
+	/** @type {Map<string, string|null>} project path -> terminal column id */
+	const terminalByProject = new Map();
+	const next = new Map();
+	for (const card of cards.values()) {
+		if (typeof card.projectPath !== 'string' || card.projectPath === '') continue;
+		if (!terminalByProject.has(card.projectPath)) {
+			terminalByProject.set(card.projectPath, await terminalColumnIdForProject(card.projectPath));
+		}
+		const render = agingRenderState(
+			agingStateForCard(card, terminalByProject.get(card.projectPath), at)
+		);
+		if (render) next.set(card.key, render);
+	}
+	agingByCard = next;
 }
 
 // ===========================================================================
@@ -4307,6 +4399,9 @@ function schedulePanelPush() {
  * lastMessageOutcomes above), or `null` when nothing has ever been sent -
  * this is the only way the composer learns whether an in-flight send
  * resolved, since the panel<->sandbox bridge carries no direct reply.
+ * `aging` is agingRenderState()'s numbers for a card the terminal column is
+ * currently aging (see refreshAgingSnapshot above) and is absent for every
+ * other card, which is what the panel reads as "no decay to draw".
  * @param {object} card
  * @param {string[]} [legalColumnIds]
  */
@@ -4328,6 +4423,7 @@ function cardToJson(card, legalColumnIds) {
 		comments: note.comments,
 		lastCommentAt: note.lastCommentAt,
 		messageOutcome: lastMessageOutcomes.get(card.key) || null,
+		aging: agingByCard.get(card.key) || undefined,
 	};
 }
 
@@ -4448,6 +4544,11 @@ async function buildSnapshot() {
 	// must not ride every snapshot after the one that reports it.
 	const moveRejection = pendingMoveRejection;
 	pendingMoveRejection = null;
+	// Before the columns, because cardToJson() reads the result: every card in
+	// this push is then measured against one clock reading, and a horizon the
+	// settings surface just changed is already reflected in the opacities the
+	// same push carries.
+	await refreshAgingSnapshot();
 	const board =
 		active.view.kind === 'global'
 			? await buildGlobalBoardColumns(active)
@@ -4509,6 +4610,12 @@ function trimToBudget(snapshot) {
 			// next snapshot (see cardToJson); dropping it on a trimmed board would
 			// leave the composer waiting forever on a send that already resolved.
 			messageOutcome: c.messageOutcome,
+			// Kept: six numbers, and only on the Done cards of a board with aging
+			// on. Dropping them would render every aged card at full strength on
+			// exactly the boards big enough to need the fade most, and would take
+			// the "retires today" marker with it - a card about to leave the board
+			// with nothing on screen saying so.
+			aging: c.aging,
 		}));
 	}
 	// Then the oldest archived records, before any card: the archive view
@@ -5044,6 +5151,9 @@ module.exports = {
 	normalizeAgingSettings: normalizeAgingSettings,
 	DEFAULT_AGING_SETTINGS: DEFAULT_AGING_SETTINGS,
 	AGING_OPACITY_FLOOR: AGING_OPACITY_FLOOR,
+	AGING_RENDER_OPACITY_FLOOR: AGING_RENDER_OPACITY_FLOOR,
+	AGING_SOON_DAYS: AGING_SOON_DAYS,
+	agingRenderState: agingRenderState,
 
 	// Phase 05 aging runtime, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-aging.test.ts). Unlike the pure model
@@ -5176,6 +5286,7 @@ module.exports = {
 		pendingMoveRejection = null;
 		cardNotes = new Map();
 		boardSettings = new Map();
+		agingByCard = new Map();
 		stopRetirementTicks();
 		cardColumnTrail.clear();
 		archivedCardKeys.clear();

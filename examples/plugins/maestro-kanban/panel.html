@@ -391,6 +391,22 @@
 			.card[draggable='true'] {
 				cursor: grab;
 			}
+			/* Phase 05 Done decay. The opacity comes in as an inline custom
+			   property rather than as an inline `opacity`, for one reason: an
+			   inline `opacity` would outrank the `.card.dragging` rule below and
+			   an aged card would get no drag feedback at all. As a property it
+			   is read by this rule, which `.card.dragging` (same specificity,
+			   declared after) overrides for the length of the drag.
+
+			   The value is agingRenderState()'s, which bottoms out at
+			   AGING_RENDER_OPACITY_FLOOR (0.4) and not at the model's 0.1: a
+			   card still on this board is still clickable and draggable, so it
+			   fades toward "clearly on its way out" and never to the point where
+			   the 13px title underneath is unreadable. It leaves by being
+			   retired, not by fading away. */
+			.card.aging {
+				opacity: var(--card-aging-opacity, 1);
+			}
 			.card.dragging {
 				opacity: 0.4;
 				cursor: grabbing;
@@ -457,6 +473,28 @@
 			.card-activity {
 				flex: 0 0 auto;
 				white-space: nowrap;
+			}
+			/* The countdown every aging card carries. Rendered on all of them,
+			   not just the ones about to go: faintness on its own says "older"
+			   without ever saying how much longer, and a card the user is
+			   deciding whether to keep needs the number. */
+			.card-aging {
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				user-select: text;
+			}
+			/* The distinct marker for the last day, so a card about to be
+			   retired is not merely the faintest one in the lane. Color, weight
+			   and a border all change at once, because the one thing this card
+			   cannot rely on to be noticed is opacity. */
+			.card-aging.card-aging-soon {
+				display: inline-block;
+				padding: 1px 6px;
+				border-radius: 999px;
+				font-weight: 600;
+				color: var(--maestro-warning, #e5c07b);
+				border: 1px solid var(--maestro-warning, #e5c07b);
 			}
 			.empty-state {
 				margin: auto;
@@ -1451,6 +1489,98 @@
 					flushDeferredSnapshot();
 				}
 
+				// -------------------------------------------------------------
+				// Phase 05 Done decay. The sandbox sends numbers
+				// (agingRenderState() in main.js: the render opacity, the days
+				// left, whether the horizon has passed); the words are this
+				// panel's, the same split every other card field holds.
+				//
+				// Two signals, deliberately, because one of them is not enough:
+				// the fade carries "this has been sitting here" at a glance
+				// across a whole lane, and the countdown carries the number the
+				// fade can never state. On the last day both give way to a
+				// distinct marker - a card about to leave the board has to be
+				// noticeable, and by then it is the faintest thing on screen.
+				// -------------------------------------------------------------
+
+				/** Mirrors AGING_RENDER_OPACITY_FLOOR in main.js. The sandbox has
+				 * already floored the value it sends; this is the panel refusing
+				 * to draw a live, clickable card any fainter than this no matter
+				 * what arrives, since the one thing a decaying card may never
+				 * become is an invisible hit target. */
+				var AGING_RENDER_OPACITY_FLOOR = 0.4;
+
+				/** The `aging` payload for a card, or null for a card with no
+				 * decay to draw (not in Done, or aging off for its board). Shape
+				 * checked rather than trusted: a trimmed snapshot and an older
+				 * sandbox both reach this panel. */
+				function agingOf(card) {
+					var aging = card && card.aging;
+					if (!aging || typeof aging !== 'object') return null;
+					if (typeof aging.opacity !== 'number' || !isFinite(aging.opacity)) return null;
+					if (typeof aging.horizonDays !== 'number' || !isFinite(aging.horizonDays)) return null;
+					return aging;
+				}
+
+				/** Whole days left before the sweep retires the card. Floored, so
+				 * "2 days left" is never shown to a card with 2.9 hours on it. */
+				function agingWholeDaysLeft(aging) {
+					var remaining = typeof aging.daysRemaining === 'number' ? aging.daysRemaining : 0;
+					if (!isFinite(remaining) || remaining < 0) remaining = 0;
+					return Math.floor(remaining);
+				}
+
+				/** The short text on the card itself. `dayWord()` is the board
+				 * settings surface's, declared further down and shared rather than
+				 * copied - the countdown on a card and the horizon in the settings
+				 * row have to pluralize the same way or they read as two different
+				 * units. */
+				function agingLabel(aging) {
+					if (aging.expired === true) return 'Retires next sweep';
+					var days = agingWholeDaysLeft(aging);
+					if (days < 1) return 'Retires today';
+					return dayWord(days) + ' left';
+				}
+
+				/** The card's tooltip, and with it the accessible description a
+				 * screen reader reads off the focused card. States the days
+				 * remaining in words (which is the part the opacity cannot say),
+				 * names the horizon it is counting against, and says what resets
+				 * the clock - because "a new message or comment" is the action
+				 * available to a user who does not want this card to go. */
+				function agingTooltip(aging) {
+					var horizon = dayWord(Math.round(aging.horizonDays));
+					var reset = ' A new message or comment restarts the clock.';
+					if (aging.expired === true) {
+						return 'Past its Done horizon of ' + horizon + '; retires on the next sweep.' + reset;
+					}
+					var days = agingWholeDaysLeft(aging);
+					var lead = days < 1 ? 'Retires in under a day' : 'Retires in ' + dayWord(days);
+					return lead + ', against a Done horizon of ' + horizon + '.' + reset;
+				}
+
+				/** Paints one card's decay: the opacity as a custom property (see
+				 * `.card.aging` in the stylesheet for why it is not an inline
+				 * `opacity`), the tooltip on the card, and the countdown row. A
+				 * card with no aging payload is left exactly as Phase 04 drew it.
+				 */
+				function applyCardAging(el, card) {
+					var aging = agingOf(card);
+					if (!aging) return;
+					el.classList.add('aging');
+					// Clamped here as well as in the sandbox: this value is going
+					// straight into a style, and an out-of-range number from a
+					// future sandbox must not be able to render a live card
+					// invisible.
+					var opacity = Math.min(1, Math.max(AGING_RENDER_OPACITY_FLOOR, aging.opacity));
+					el.style.setProperty('--card-aging-opacity', String(opacity));
+					el.title = agingTooltip(aging);
+					var marker = document.createElement('div');
+					marker.className = 'card-aging' + (aging.expiringSoon === true ? ' card-aging-soon' : '');
+					marker.textContent = agingLabel(aging);
+					el.appendChild(marker);
+				}
+
 				function cardElement(card) {
 					var el = document.createElement('div');
 					el.className = 'card';
@@ -1506,6 +1636,8 @@
 					activity.textContent = relativeTime(card.lastActivityAt);
 					meta.appendChild(activity);
 					el.appendChild(meta);
+
+					applyCardAging(el, card);
 
 					el.addEventListener('click', function () {
 						if (Date.now() - dragEndedAt < CLICK_AFTER_DRAG_MS) return;

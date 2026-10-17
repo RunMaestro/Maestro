@@ -60,6 +60,24 @@ export interface SnapshotCard {
 	 * card (see `lastMessageOutcomes` in main.js), or null/absent when nothing
 	 * has ever been sent. */
 	messageOutcome?: { status: 'sent' | 'failed'; error: string | null; at: number } | null;
+	/** Phase 05 Done decay: `agingRenderState()`'s numbers in main.js. Present
+	 * only on a card the terminal column is currently aging, which is what the
+	 * panel reads as "there is a fade and a countdown to draw here"; absent on
+	 * every other card. */
+	aging?: SnapshotCardAging;
+}
+
+/** The `aging` payload one card carries, matching `agingRenderState()` in
+ * main.js. `opacity` is the RENDER opacity, already floored at
+ * AGING_RENDER_OPACITY_FLOOR (0.4) rather than the model's 0.1, so a card
+ * still on the board is never drawn past legibility. */
+export interface SnapshotCardAging {
+	opacity: number;
+	elapsedDays: number;
+	horizonDays: number;
+	daysRemaining: number;
+	expiringSoon: boolean;
+	expired: boolean;
 }
 
 export interface SnapshotColumn {
@@ -246,6 +264,22 @@ export function makeBoardSettings(
 		inheritedFrom: null,
 		minHorizonDays: 1,
 		maxHorizonDays: 365,
+		...overrides,
+	};
+}
+
+/** A card's aging payload mid-horizon: day 7 of 14, so it is plainly faded
+ * and plainly not about to go. The two interesting edges are the ends -
+ * `daysRemaining` at or under a day (the distinct marker) and `expired`
+ * (the sweep has not reached it yet) - and a test asks for those by name. */
+export function makeCardAging(overrides: Partial<SnapshotCardAging> = {}): SnapshotCardAging {
+	return {
+		opacity: 0.7,
+		elapsedDays: 7,
+		horizonDays: 14,
+		daysRemaining: 7,
+		expiringSoon: false,
+		expired: false,
 		...overrides,
 	};
 }
@@ -538,6 +572,30 @@ export function boardSettingsSurface(): {
 		warning: warning?.textContent ?? '',
 		warningArmed: warning?.classList.contains('is-armed') ?? false,
 		status: document.getElementById('board-settings-status')?.textContent ?? '',
+	};
+}
+
+/** One card's rendered decay, read the way a person sees it: how faint it is
+ * (the custom property `.card.aging` draws from - NOT an inline `opacity`,
+ * which would outrank the drag feedback), the sentence hovering it states,
+ * and the countdown row with whether it is in its distinct last-day form.
+ * `opacity` is null and `marker` is null on a card with no decay drawn. */
+export function cardAging(title: string): {
+	aging: boolean;
+	opacity: number | null;
+	tooltip: string;
+	marker: string | null;
+	markerSoon: boolean;
+} {
+	const card = findCardElement(title);
+	const raw = card.style.getPropertyValue('--card-aging-opacity').trim();
+	const marker = card.querySelector<HTMLElement>('.card-aging');
+	return {
+		aging: card.classList.contains('aging'),
+		opacity: raw === '' ? null : Number(raw),
+		tooltip: card.title,
+		marker: marker ? (marker.textContent ?? '') : null,
+		markerSoon: marker ? marker.classList.contains('card-aging-soon') : false,
 	};
 }
 
