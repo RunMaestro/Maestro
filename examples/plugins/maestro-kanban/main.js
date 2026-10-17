@@ -747,6 +747,148 @@ function isSessionAccessGranted(sessionId) {
 	return typeof sessionId === 'string' && grantedSessions.has(sessionId);
 }
 
+// ===========================================================================
+// Phase 04 History excerpt. transcripts.read returns History, not a live
+// transcript (see the host facts at the top of this phase's playbook entry),
+// and it is rate-limited and audited - so this plugin only ever calls it for
+// the one session a detail pane is actually open on, never for every card in
+// a snapshot, and caches what it reads so repeatedly opening or re-rendering
+// the same pane does not spend that budget again. The cache is invalidated by
+// that session's own agent.completed/run.completed events, not a timer: see
+// onHistoryRelevantEvent() below, which also re-reads immediately when the
+// invalidated session is the one currently open.
+// ===========================================================================
+
+/** maestro.transcripts.read only ever projects these fields - the small,
+ * labeled-as-History excerpt the detail pane shows, never the fuller
+ * fullResponse/agentSessionId/etc. a different reader might want. */
+const HISTORY_EXCERPT_FIELDS = ['summary', 'timestamp', 'type', 'success'];
+/** A small limit: the excerpt is "recent History", not a full transcript. */
+const HISTORY_EXCERPT_LIMIT = 8;
+/** Short TTL: long enough that opening the same pane twice in a row (or
+ * switching between two tabs of the same agent) does not re-read, short
+ * enough that a pane left open does not keep showing minutes-old History
+ * between completion events. */
+const HISTORY_CACHE_TTL_MS = 20000;
+
+/** @typedef {{ fetchedAt: number, rows: object[]|null, error: string|null }} HistoryCacheEntry */
+/** @type {Map<string, HistoryCacheEntry>} sessionId -> last read (or last
+ * denial) of that session's History excerpt. */
+const historyCache = new Map();
+
+/** The session the detail pane most recently asked for History on, or null
+ * when no pane has asked (or the one that asked has since closed). Drives
+ * both historyExcerptSnapshot() below and which session's
+ * agent.completed/run.completed event triggers a proactive re-read instead
+ * of a merely lazy cache invalidation. */
+let openHistorySessionId = null;
+
+/** True for the specific denial `transcripts.read` throws when a
+ * `granted-sessions` plugin's session is not (or no longer) in its grant set
+ * (see the handler in plugin-host-handlers.ts). Distinguishing this from
+ * every other denial (rate limit, egress conflict, an unsigned plugin, ...)
+ * is what lets a revoked grant drop the card back to its "not connected"
+ * state instead of rendering a generic "History not available" error.
+ * @param {string} message
+ */
+function isHistoryGrantDenial(message) {
+	return typeof message === 'string' && message.indexOf('is not granted to this plugin') !== -1;
+}
+
+/**
+ * Reads and caches one session's recent History excerpt. Serves the cached
+ * entry when it is still within HISTORY_CACHE_TTL_MS, unless `force` is set
+ * (the event-driven re-read below always forces). Never rejects: a denial is
+ * recorded as `{ error }` for historyExcerptSnapshot() to render as "History
+ * not available", except a revoked grant, which instead removes the session
+ * from grantedSessions and its cache entry and resolves to null, so the card
+ * returns to its ungranted state on the next snapshot rather than showing an
+ * error about a History it is no longer allowed to read at all.
+ * @param {string} sessionId
+ * @param {{ force?: boolean }} [options]
+ * @returns {Promise<HistoryCacheEntry|null>}
+ */
+async function readSessionHistoryExcerpt(sessionId, options) {
+	const force = !!(options && options.force);
+	const cached = historyCache.get(sessionId);
+	if (!force && cached && Date.now() - cached.fetchedAt < HISTORY_CACHE_TTL_MS) {
+		return cached;
+	}
+	try {
+		const rows = await sdk.transcripts.read({
+			sessionId: sessionId,
+			fields: HISTORY_EXCERPT_FIELDS,
+			limit: HISTORY_EXCERPT_LIMIT,
+		});
+		const result = { fetchedAt: Date.now(), rows: Array.isArray(rows) ? rows : [], error: null };
+		historyCache.set(sessionId, result);
+		return result;
+	} catch (err) {
+		const message = errorMessage(err);
+		if (isHistoryGrantDenial(message)) {
+			grantedSessions.delete(sessionId);
+			historyCache.delete(sessionId);
+			return null;
+		}
+		const result = { fetchedAt: Date.now(), rows: null, error: message };
+		historyCache.set(sessionId, result);
+		return result;
+	}
+}
+
+/** The History excerpt buildSnapshot() hands the panel: null when no pane has
+ * asked for one, or the session it last asked for is no longer granted (the
+ * access gate already covers that card; there is nothing to show). Reads the
+ * cache only - fetching is read-history's job, never buildSnapshot()'s, so
+ * pushing a snapshot for an unrelated reason (a move, a comment, an unrelated
+ * card's status changing) never itself triggers a transcripts.read. `status`
+ * is 'loading' for a session read-history has been asked about but has not
+ * resolved yet. */
+function historyExcerptSnapshot() {
+	if (openHistorySessionId === null || !isSessionAccessGranted(openHistorySessionId)) return null;
+	const cached = historyCache.get(openHistorySessionId);
+	if (!cached) {
+		return { sessionId: openHistorySessionId, status: 'loading', rows: [], error: null };
+	}
+	if (cached.error) {
+		return { sessionId: openHistorySessionId, status: 'error', rows: [], error: cached.error };
+	}
+	return {
+		sessionId: openHistorySessionId,
+		status: 'loaded',
+		rows: cached.rows || [],
+		error: null,
+	};
+}
+
+/** Besides the usual markDirty() refresh, agent.completed and run.completed
+ * also drop that session's cached History excerpt - the event the task asks
+ * this to re-read on, never a timer - and, when that session is the one the
+ * detail pane currently has open, re-read it right away and push, so an open
+ * pane's excerpt catches up with the turn that just finished without the user
+ * having to close and reopen the pane. A session nothing has ever read
+ * History for has no cache entry to invalidate, so this is a no-op for every
+ * card the user has not opened the detail pane on.
+ * @param {string} topic
+ * @param {unknown} payload
+ */
+function onHistoryRelevantEvent(topic, payload) {
+	onGenericSessionEvent(topic, payload);
+	const sessionId = sessionIdForEvent(topic, payload);
+	if (!sessionId || !historyCache.has(sessionId)) return;
+	historyCache.delete(sessionId);
+	if (sessionId !== openHistorySessionId || !isSessionAccessGranted(sessionId)) return;
+	readSessionHistoryExcerpt(sessionId, { force: true })
+		.then(() => pushSnapshotNow())
+		.catch((err) => {
+			console.error('maestro-kanban: History re-read on ' + topic + ' failed: ' + String(err));
+		});
+}
+
+// ===========================================================================
+// End of Phase 04 History excerpt.
+// ===========================================================================
+
 /** Project path of the session the host most recently reported as activated
  * via session.activated - what buildSnapshot() below treats as "the active
  * board" whose resolveColumns() output renders in the panel. null before any
@@ -2218,6 +2360,7 @@ async function buildSnapshot() {
 		boards: options.boards,
 		boardsHidden: options.hiddenCount > 0 ? options.hiddenCount : undefined,
 		moveRejection: moveRejection,
+		historyExcerpt: historyExcerptSnapshot(),
 	};
 }
 
@@ -2354,12 +2497,15 @@ function registerEventHandlers(maestro) {
 	maestro.events.on('agent.statusChanged', (payload) =>
 		onGenericSessionEvent('agent.statusChanged', payload)
 	);
+	// agent.completed and run.completed also drive the History excerpt's
+	// event-driven re-read (see onHistoryRelevantEvent) on top of the usual
+	// markDirty() refresh every topic here gets.
 	maestro.events.on('agent.completed', (payload) =>
-		onGenericSessionEvent('agent.completed', payload)
+		onHistoryRelevantEvent('agent.completed', payload)
 	);
 	maestro.events.on('agent.error', (payload) => onGenericSessionEvent('agent.error', payload));
 	maestro.events.on('agent.exited', (payload) => onGenericSessionEvent('agent.exited', payload));
-	maestro.events.on('run.completed', (payload) => onGenericSessionEvent('run.completed', payload));
+	maestro.events.on('run.completed', (payload) => onHistoryRelevantEvent('run.completed', payload));
 	maestro.events.on('usage.updated', (payload) => onGenericSessionEvent('usage.updated', payload));
 }
 
@@ -2494,6 +2640,45 @@ function registerCommands(maestro) {
 					granted: false,
 				}));
 			});
+	});
+
+	// Invoked by the panel's detail pane whenever it opens on a card, or
+	// switches to a different granted session, via parent.postMessage; no
+	// manifest `commands` entry is needed since the palette has no session in
+	// hand to read History for. This is the ONLY place this plugin calls
+	// maestro.transcripts.read - never from buildSnapshot() or any other
+	// repaint - so a card the user never opens the detail pane on costs this
+	// plugin's rate-limited/audited budget nothing. Pushes a fresh snapshot
+	// on every outcome (a cache hit, a fresh read, a denial) so the pane's
+	// History section, or its access gate, catches up with no re-open needed.
+	maestro.commands.register('read-history', (args) => {
+		const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : undefined;
+		if (!sessionId) return Promise.resolve({ ok: false });
+		openHistorySessionId = sessionId;
+		if (!isSessionAccessGranted(sessionId)) {
+			// The access gate already covers this card; nothing to read.
+			return Promise.resolve({ ok: false, error: 'not granted' });
+		}
+		return readSessionHistoryExcerpt(sessionId)
+			.then(() => pushSnapshotNow())
+			.then(() => ({ ok: true }))
+			.catch((err) => {
+				console.error('maestro-kanban: read-history failed: ' + String(err));
+				return { ok: false, error: errorMessage(err) };
+			});
+	});
+
+	// Invoked by the panel's detail pane when it closes on a granted card
+	// (Escape, the close button, or the card leaving the board), or switches
+	// to an ungranted one; no manifest `commands` entry is needed for the same
+	// reason as 'read-history' above. Stops the agent.completed/run.completed
+	// re-read this session was getting, so a closed pane does not keep
+	// spending this plugin's transcripts.read budget on History nobody is
+	// looking at. No snapshot push: closing the pane is already reflected
+	// locally in the panel, and nothing else about the board changed.
+	maestro.commands.register('close-history', () => {
+		openHistorySessionId = null;
+		return Promise.resolve({ ok: true });
 	});
 
 	// Invoked by the panel's detail-pane description field (on blur) and
@@ -2637,6 +2822,8 @@ module.exports = {
 		// mirrors that so a reactivated plugin never assumes a grant it has not
 		// seen confirmed again.
 		grantedSessions.clear();
+		historyCache.clear();
+		openHistorySessionId = null;
 		if (sdk) {
 			return sdk.events.unsubscribe().catch(() => {});
 		}

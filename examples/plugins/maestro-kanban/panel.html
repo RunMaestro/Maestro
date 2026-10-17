@@ -241,6 +241,32 @@
 			#detail-comment-add:hover {
 				opacity: 0.9;
 			}
+			/* Phase 04 History excerpt: a small, labeled read-only list in the
+			   detail pane's "Recent History" section, styled like the comment
+			   thread beside it so the two read as one family of list. */
+			#detail-history-body {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+			.detail-history-entry {
+				font-size: 12px;
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border-radius: 6px;
+				padding: 6px 8px;
+			}
+			.detail-history-summary {
+				white-space: pre-wrap;
+				word-break: break-word;
+			}
+			.detail-history-meta {
+				margin-top: 4px;
+				font-size: 10px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			.detail-history-error {
+				color: var(--maestro-error, #e06c75);
+			}
 			/* Phase 04 access state. The marker sits on every card whose session
 			   this board cannot message or read History for yet; the detail
 			   pane's gate replaces the sections that need that access with one
@@ -521,9 +547,7 @@
 					</div>
 					<div class="detail-section" id="detail-history-section">
 						<h3>Recent History</h3>
-						<div id="detail-history-body" class="detail-placeholder">
-							History excerpt arrives in a later task.
-						</div>
+						<div id="detail-history-body" class="detail-placeholder">Loading recent History...</div>
 					</div>
 					<div class="detail-section" id="detail-composer-section">
 						<h3>Message</h3>
@@ -1378,9 +1402,12 @@
 				// click, showing the title/agent/project/status this plugin
 				// already has in the snapshot, plus an explicit Open Tab
 				// action that is now the only click path to focusCard(). The
-				// description field, comment thread, and History excerpt are
-				// structural placeholders here - their own storage and host
-				// reads are later tasks in this phase, not this one.
+				// description field and comment thread read and write this
+				// plugin's own storage; the History excerpt reads the host's
+				// transcripts.read for a granted session only (see
+				// requestHistoryRead/renderHistoryExcerpt below). The message
+				// composer is still a structural placeholder - its own command
+				// is the next task in this phase, not this one.
 				// -------------------------------------------------------------
 
 				/** Key of the card the detail pane is open on, or null.
@@ -1388,8 +1415,45 @@
 				 * on while the pane stays pointed at whatever was last clicked. */
 				var detailCardKey = null;
 
+				/** sessionId that 'read-history' has already been asked about for
+				 * whichever card is open now, or null. Tracked so renderCardDetail()
+				 * asks the sandbox for History only once per session shown (not on
+				 * every re-render while the pane stays open), and so switching
+				 * between two tabs of the SAME agent never asks twice. */
+				var historyRequestedSessionId = null;
+
+				/** Tells the sandbox a detail pane has opened on `sessionId`'s
+				 * History (or switched to it): the sandbox reads and caches the
+				 * excerpt, tracks this as the session to proactively re-read on that
+				 * agent's next completed turn, and pushes a fresh snapshot with the
+				 * result. */
+				function requestHistoryRead(sessionId) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'read-history',
+							args: { sessionId: sessionId },
+						},
+						'*'
+					);
+				}
+
+				/** Tells the sandbox no pane is asking about History anymore, so it
+				 * stops spending its transcripts.read budget re-reading for a session
+				 * nobody is looking at. */
+				function requestHistoryClose() {
+					parent.postMessage(
+						{ type: 'maestro:invokeCommand', commandId: 'close-history', args: {} },
+						'*'
+					);
+				}
+
 				function closeCardDetail() {
 					detailCardKey = null;
+					if (historyRequestedSessionId !== null) {
+						historyRequestedSessionId = null;
+						requestHistoryClose();
+					}
 					var detail = document.getElementById('detail');
 					if (detail) detail.hidden = true;
 				}
@@ -1475,7 +1539,87 @@
 								requestCardAccess(card);
 							};
 						}
+						// Nothing granted to read History for anymore (or not yet): drop
+						// whatever session read-history last asked about so the sandbox
+						// stops re-reading it on that agent's completed turns.
+						if (historyRequestedSessionId !== null) {
+							historyRequestedSessionId = null;
+							requestHistoryClose();
+						}
+					} else {
+						// Ask at most once per session shown - switching back and forth
+						// between two tabs of the same agent, or a render firing for an
+						// unrelated reason, never re-asks.
+						if (historyRequestedSessionId !== card.sessionId) {
+							historyRequestedSessionId = card.sessionId;
+							requestHistoryRead(card.sessionId);
+						}
+						renderHistoryExcerpt(card);
 					}
+				}
+
+				/** Paints #detail-history-body for `card`'s session off the LIVE
+				 * snapshot's `historyExcerpt` - the one place maestro.transcripts.read
+				 * actually ran (see read-history in main.js). Labeled as the agent's
+				 * recent History, covering every tab of that agent, so it is never
+				 * mistaken for this tab's own live conversation. Shows "Loading..."
+				 * until a snapshot carrying this card's own sessionId arrives (the
+				 * excerpt in hand may still belong to whichever session the pane was
+				 * open on before), and a specific "History not available" state for
+				 * any denial other than a missing grant - never an empty box that
+				 * looks like a quiet agent. */
+				function renderHistoryExcerpt(card) {
+					var bodyEl = document.getElementById('detail-history-body');
+					if (!bodyEl) return;
+					var excerpt = currentSnapshot && currentSnapshot.historyExcerpt;
+					bodyEl.innerHTML = '';
+					if (!excerpt || excerpt.sessionId !== card.sessionId) {
+						var loading = document.createElement('div');
+						loading.className = 'detail-placeholder';
+						loading.textContent = 'Loading recent History...';
+						bodyEl.appendChild(loading);
+						return;
+					}
+					if (excerpt.status === 'error') {
+						var errorEl = document.createElement('div');
+						errorEl.className = 'detail-placeholder detail-history-error';
+						errorEl.textContent = 'History not available: ' + excerpt.error;
+						bodyEl.appendChild(errorEl);
+						return;
+					}
+					var rows = Array.isArray(excerpt.rows) ? excerpt.rows : [];
+					if (rows.length === 0) {
+						var empty = document.createElement('div');
+						empty.className = 'detail-placeholder';
+						empty.textContent = 'No recent History for this agent yet.';
+						bodyEl.appendChild(empty);
+						return;
+					}
+					var label = document.createElement('div');
+					label.className = 'detail-placeholder';
+					label.textContent = "This agent's recent History, across every tab:";
+					bodyEl.appendChild(label);
+					rows.forEach(function (entry) {
+						var item = document.createElement('div');
+						item.className = 'detail-history-entry';
+						var summary = document.createElement('div');
+						summary.className = 'detail-history-summary';
+						summary.textContent =
+							entry && typeof entry.summary === 'string' && entry.summary
+								? entry.summary
+								: '(no summary)';
+						item.appendChild(summary);
+						var meta = document.createElement('div');
+						meta.className = 'detail-history-meta';
+						var when =
+							entry && typeof entry.timestamp === 'number'
+								? new Date(entry.timestamp).toLocaleString()
+								: '';
+						var kind = entry && typeof entry.type === 'string' ? entry.type : '';
+						meta.textContent = [kind, when].filter(Boolean).join(' - ');
+						item.appendChild(meta);
+						bodyEl.appendChild(item);
+					});
 				}
 
 				/** Posts a `card-note` write to the sandbox. The panel never touches

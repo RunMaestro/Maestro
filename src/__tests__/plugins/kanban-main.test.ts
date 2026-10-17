@@ -31,6 +31,7 @@ interface StubOverrides {
 	tabsList?: () => Promise<unknown>;
 	sessionsFocus?: (sessionId: string, tabId?: string) => Promise<unknown>;
 	sessionsRequestAccess?: (sessionId: string) => Promise<unknown>;
+	transcriptsRead?: (params: unknown) => Promise<unknown>;
 }
 
 function createStubMaestro(overrides: StubOverrides = {}) {
@@ -64,6 +65,9 @@ function createStubMaestro(overrides: StubOverrides = {}) {
 		},
 		tabs: {
 			list: vi.fn(overrides.tabsList ?? (() => Promise.resolve([]))),
+		},
+		transcripts: {
+			read: vi.fn(overrides.transcriptsRead ?? (() => Promise.resolve([]))),
 		},
 		ui: {
 			panelPost: vi.fn(() => Promise.resolve({ ok: true })),
@@ -800,5 +804,187 @@ describe('maestro-kanban main.js', () => {
 
 		expect(result).toEqual({ ok: false });
 		expect(maestro.fs.write).not.toHaveBeenCalled();
+	});
+
+	// Phase 04 History excerpt: maestro.transcripts.read is only ever called
+	// through the 'read-history' command, for a session a detail pane is open
+	// on - never for every card in a snapshot, never on a timer.
+	describe('read-history command', () => {
+		it('does not call transcripts.read for an ungranted session', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+			await plugin.activate(maestro);
+
+			const readHistory = commandHandlers.get('read-history');
+			expect(readHistory).toBeTypeOf('function');
+			const result = await readHistory!({ sessionId: 'session-1' });
+
+			expect(result).toEqual({ ok: false, error: 'not granted' });
+			expect(maestro.transcripts.read).not.toHaveBeenCalled();
+		});
+
+		it('read-history with no sessionId is a no-op', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro();
+			await plugin.activate(maestro);
+
+			const readHistory = commandHandlers.get('read-history');
+			const result = await readHistory!({});
+
+			expect(result).toEqual({ ok: false });
+			expect(maestro.transcripts.read).not.toHaveBeenCalled();
+		});
+
+		it('reads the allowlisted fields for a granted session and carries the excerpt on the next snapshot', async () => {
+			const plugin = loadMain();
+			const rows = [{ summary: 'Fixed the thing', timestamp: 100, type: 'text', success: true }];
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+				transcriptsRead: () => Promise.resolve(rows),
+			});
+			await plugin.activate(maestro);
+			await commandHandlers.get('request-access')!({ sessionId: 'session-1' });
+			maestro.ui.panelPost.mockClear();
+
+			const result = await commandHandlers.get('read-history')!({ sessionId: 'session-1' });
+
+			expect(result).toEqual({ ok: true });
+			expect(maestro.transcripts.read).toHaveBeenCalledWith({
+				sessionId: 'session-1',
+				fields: ['summary', 'timestamp', 'type', 'success'],
+				limit: 8,
+			});
+			expect(maestro.ui.panelPost).toHaveBeenCalledTimes(1);
+			const snapshot = maestro.ui.panelPost.mock.calls[0]![1] as {
+				historyExcerpt: { sessionId: string; status: string; rows: unknown[]; error: null } | null;
+			};
+			expect(snapshot.historyExcerpt).toEqual({
+				sessionId: 'session-1',
+				status: 'loaded',
+				rows,
+				error: null,
+			});
+		});
+
+		it('serves the cached excerpt within the TTL instead of reading again', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+			await plugin.activate(maestro);
+			await commandHandlers.get('request-access')!({ sessionId: 'session-1' });
+
+			await commandHandlers.get('read-history')!({ sessionId: 'session-1' });
+			await commandHandlers.get('read-history')!({ sessionId: 'session-1' });
+
+			expect(maestro.transcripts.read).toHaveBeenCalledTimes(1);
+		});
+
+		it('a denial naming a revoked grant drops the card back to ungranted, with no History error rendered', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+				transcriptsRead: () =>
+					Promise.reject(
+						new Error(
+							'transcripts.read: session session-1 is not granted to this plugin ' +
+								'(the plugin must have created it, or you must approve it)'
+						)
+					),
+			});
+			await plugin.activate(maestro);
+			await commandHandlers.get('request-access')!({ sessionId: 'session-1' });
+			maestro.ui.panelPost.mockClear();
+
+			await commandHandlers.get('read-history')!({ sessionId: 'session-1' });
+
+			const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				historyExcerpt: unknown;
+				columns: { cards: { key: string; accessGranted: boolean }[] }[];
+			};
+			expect(findCard(snapshot, 'session-1::tab-1')?.card.accessGranted).toBe(false);
+			expect(snapshot.historyExcerpt).toBeNull();
+		});
+
+		it('a denial for any other reason renders a specific "History not available" state, without touching the grant', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+				transcriptsRead: () => Promise.reject(new Error('rate limited')),
+			});
+			await plugin.activate(maestro);
+			await commandHandlers.get('request-access')!({ sessionId: 'session-1' });
+			maestro.ui.panelPost.mockClear();
+
+			await commandHandlers.get('read-history')!({ sessionId: 'session-1' });
+
+			const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				historyExcerpt: { sessionId: string; status: string; error: string } | null;
+				columns: { cards: { key: string; accessGranted: boolean }[] }[];
+			};
+			expect(snapshot.historyExcerpt).toEqual({
+				sessionId: 'session-1',
+				status: 'error',
+				rows: [],
+				error: 'rate limited',
+			});
+			expect(findCard(snapshot, 'session-1::tab-1')?.card.accessGranted).toBe(true);
+		});
+
+		it("re-reads on that session's agent.completed event when its pane is open, and pushes the refreshed excerpt", async () => {
+			const plugin = loadMain();
+			let rows = [{ summary: 'First', timestamp: 1, type: 'text', success: true }];
+			const { maestro, commandHandlers, eventHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+				transcriptsRead: () => Promise.resolve(rows),
+			});
+			await plugin.activate(maestro);
+			await commandHandlers.get('request-access')!({ sessionId: 'session-1' });
+			await commandHandlers.get('read-history')!({ sessionId: 'session-1' });
+			expect(maestro.transcripts.read).toHaveBeenCalledTimes(1);
+			maestro.ui.panelPost.mockClear();
+
+			rows = [{ summary: 'Second', timestamp: 2, type: 'text', success: true }];
+			emit(eventHandlers, 'agent.completed', { sessionId: 'session-1' });
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(maestro.transcripts.read).toHaveBeenCalledTimes(2);
+			const pushed = maestro.ui.panelPost.mock.calls
+				.map((call) => call[1] as { historyExcerpt: { rows: unknown[] } | null })
+				.find((snapshot) => snapshot.historyExcerpt && snapshot.historyExcerpt.rows.length > 0);
+			expect(pushed?.historyExcerpt?.rows).toEqual(rows);
+		});
+
+		it('does not re-read on agent.completed for a session whose History has never been read', async () => {
+			const plugin = loadMain();
+			const { maestro, eventHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+			await plugin.activate(maestro);
+
+			emit(eventHandlers, 'agent.completed', { sessionId: 'session-1' });
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(maestro.transcripts.read).not.toHaveBeenCalled();
+		});
+
+		it('close-history stops the agent.completed re-read for the session the pane left', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers, eventHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+			await plugin.activate(maestro);
+			await commandHandlers.get('request-access')!({ sessionId: 'session-1' });
+			await commandHandlers.get('read-history')!({ sessionId: 'session-1' });
+			expect(maestro.transcripts.read).toHaveBeenCalledTimes(1);
+
+			await commandHandlers.get('close-history')!();
+			emit(eventHandlers, 'agent.completed', { sessionId: 'session-1' });
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(maestro.transcripts.read).toHaveBeenCalledTimes(1);
+		});
 	});
 });

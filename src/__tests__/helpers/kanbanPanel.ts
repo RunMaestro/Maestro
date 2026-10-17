@@ -83,6 +83,17 @@ export interface SnapshotMoveRejection {
 	reason: string;
 }
 
+/** Phase 04 History excerpt: the one session a detail pane has asked
+ * `read-history` about, and what main.js's cache holds for it - see
+ * `historyExcerptSnapshot()`. Null when no pane has asked (or the session it
+ * asked about is no longer granted). */
+export interface SnapshotHistoryExcerpt {
+	sessionId: string;
+	status: 'loading' | 'loaded' | 'error';
+	rows: { summary?: string; timestamp?: number; type?: string; success?: boolean }[];
+	error: string | null;
+}
+
 // id -> title, matching DEFAULT_COLUMNS in main.js (the columns rendered
 // before any project board is active).
 export const DEFAULT_COLUMN_TITLES: Record<string, string> = {
@@ -113,6 +124,7 @@ export function snapshotWith(
 		boardsHidden?: number;
 		globalBoardMissing?: boolean;
 		moveRejection?: SnapshotMoveRejection | null;
+		historyExcerpt?: SnapshotHistoryExcerpt | null;
 	} = {}
 ) {
 	return {
@@ -133,6 +145,7 @@ export function snapshotWith(
 		boardsHidden: opts.boardsHidden,
 		globalBoardMissing: opts.globalBoardMissing ?? false,
 		moveRejection: opts.moveRejection ?? null,
+		historyExcerpt: opts.historyExcerpt ?? null,
 	};
 }
 

@@ -492,8 +492,14 @@ describe('maestro-kanban panel.html', () => {
 		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
 		findCardElement('Click Me').click();
 
-		// The click itself posts nothing: it is not jumping anywhere.
-		expect(postMessageSpy).not.toHaveBeenCalled();
+		// The click opens the pane and asks for this session's History - it is
+		// not jumping to the tab (that's Open Tab's job, tested below).
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'read-history',
+			args: { sessionId: 'session-9' },
+		});
 		expect(document.getElementById('detail')?.hidden).toBe(false);
 		expect(document.getElementById('detail-title')?.textContent).toBe('Click Me');
 		expect(document.getElementById('detail-status-label')?.textContent).toBe('busy');
@@ -549,10 +555,19 @@ describe('maestro-kanban panel.html', () => {
 		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
 		press('Escape');
 
-		expect(postMessageSpy).not.toHaveBeenCalled();
+		// Escape closes the pane locally and tells the sandbox to stop tracking
+		// this session's History - it does not reach close-panel (that is the
+		// SECOND Escape press, tested elsewhere).
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'close-history',
+			args: {},
+		});
 		expect(document.getElementById('detail')?.hidden).toBe(true);
 
 		// With the detail pane now closed, Escape reaches the panel.
+		postMessageSpy.mockClear();
 		press('Escape');
 		expect(postMessageSpy).toHaveBeenCalledTimes(1);
 		expect((postMessageSpy.mock.calls[0]![0] as { commandId: string }).commandId).toBe(
@@ -861,6 +876,219 @@ describe('maestro-kanban panel.html', () => {
 				action: 'description',
 				description: 'Works even ungranted.',
 			},
+		});
+	});
+
+	// ---------------------------------------------------------------------
+	// Phase 04 History excerpt. The detail pane asks the sandbox's
+	// `read-history` command for a granted card's session the moment the pane
+	// opens on it (never for every card on the board, never on a timer), reads
+	// the result back off the snapshot's `historyExcerpt`, and tells the
+	// sandbox when it is done looking via `close-history` so a closed pane
+	// does not keep spending the host's rate-limited transcripts.read budget.
+	// ---------------------------------------------------------------------
+
+	it('posts read-history for the card session when the detail pane opens on a granted card', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [
+					makeCard({
+						key: 'session-7::tab-7',
+						sessionId: 'session-7',
+						tabId: 'tab-7',
+						title: 'Granted Seven',
+						accessGranted: true,
+					}),
+				],
+			})
+		);
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+		findCardElement('Granted Seven').click();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'read-history',
+			args: { sessionId: 'session-7' },
+		});
+	});
+
+	it('does not ask for History again when the same card is clicked a second time', () => {
+		pushSnapshot(snapshotWith({ backlog: [makeCard({ title: 'Already Open' })] }));
+		findCardElement('Already Open').click();
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+		findCardElement('Already Open').click();
+
+		expect(postMessageSpy).not.toHaveBeenCalled();
+	});
+
+	it('does not re-ask for History when switching between two cards of the same session', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [
+					makeCard({
+						key: 'session-12::tab-a',
+						sessionId: 'session-12',
+						tabId: 'tab-a',
+						title: 'Tab A',
+					}),
+					makeCard({
+						key: 'session-12::tab-b',
+						sessionId: 'session-12',
+						tabId: 'tab-b',
+						title: 'Tab B',
+					}),
+				],
+			})
+		);
+		findCardElement('Tab A').click();
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+		findCardElement('Tab B').click();
+
+		expect(postMessageSpy).not.toHaveBeenCalled();
+	});
+
+	it('does not ask for History when the detail pane opens on an ungranted card', () => {
+		pushSnapshot(
+			snapshotWith({ backlog: [makeCard({ title: 'No Access', accessGranted: false })] })
+		);
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+		findCardElement('No Access').click();
+
+		expect(postMessageSpy).not.toHaveBeenCalled();
+	});
+
+	it("shows a loading state until a snapshot carries this session's excerpt", () => {
+		pushSnapshot(
+			snapshotWith({ backlog: [makeCard({ title: 'Waiting', sessionId: 'session-9' })] })
+		);
+
+		findCardElement('Waiting').click();
+
+		expect(document.getElementById('detail-history-body')?.textContent).toContain(
+			'Loading recent History'
+		);
+	});
+
+	it('renders the History excerpt once a matching snapshot arrives, labeled as covering every tab', () => {
+		const card = makeCard({ title: 'Loaded', sessionId: 'session-3' });
+		pushSnapshot(snapshotWith({ backlog: [card] }));
+		findCardElement('Loaded').click();
+
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [card] },
+				{
+					historyExcerpt: {
+						sessionId: 'session-3',
+						status: 'loaded',
+						rows: [
+							{ summary: 'Did a thing', timestamp: 1700000000000, type: 'text', success: true },
+						],
+						error: null,
+					},
+				}
+			)
+		);
+
+		const body = document.getElementById('detail-history-body');
+		expect(body?.textContent).toContain('Did a thing');
+		expect(body?.textContent).toContain('every tab');
+	});
+
+	it('shows a specific empty state rather than a blank box when there is no recent History', () => {
+		const card = makeCard({ title: 'Empty', sessionId: 'session-6' });
+		pushSnapshot(snapshotWith({ backlog: [card] }));
+		findCardElement('Empty').click();
+
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [card] },
+				{ historyExcerpt: { sessionId: 'session-6', status: 'loaded', rows: [], error: null } }
+			)
+		);
+
+		expect(document.getElementById('detail-history-body')?.textContent).toContain(
+			'No recent History'
+		);
+	});
+
+	it('renders a specific "History not available" message naming the reason for a non-grant denial', () => {
+		const card = makeCard({ title: 'Errored', sessionId: 'session-4' });
+		pushSnapshot(snapshotWith({ backlog: [card] }));
+		findCardElement('Errored').click();
+
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [card] },
+				{
+					historyExcerpt: {
+						sessionId: 'session-4',
+						status: 'error',
+						rows: [],
+						error: 'rate limited',
+					},
+				}
+			)
+		);
+
+		expect(document.getElementById('detail-history-body')?.textContent).toBe(
+			'History not available: rate limited'
+		);
+	});
+
+	it('posts close-history when the detail pane closes on a granted card', () => {
+		pushSnapshot(
+			snapshotWith({ backlog: [makeCard({ title: 'Closing', sessionId: 'session-8' })] })
+		);
+		findCardElement('Closing').click();
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+		document.getElementById('detail-close')?.click();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'close-history',
+			args: {},
+		});
+	});
+
+	it('posts close-history when the pane switches from a granted card to an ungranted one', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [
+					makeCard({
+						key: 'session-10::tab-10',
+						sessionId: 'session-10',
+						tabId: 'tab-10',
+						title: 'Granted Ten',
+						accessGranted: true,
+					}),
+					makeCard({
+						key: 'session-11::tab-11',
+						sessionId: 'session-11',
+						tabId: 'tab-11',
+						title: 'Ungranted Eleven',
+						accessGranted: false,
+					}),
+				],
+			})
+		);
+		findCardElement('Granted Ten').click();
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+		findCardElement('Ungranted Eleven').click();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'close-history',
+			args: {},
 		});
 	});
 
