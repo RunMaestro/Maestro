@@ -44,6 +44,8 @@ Main-process runtime in `src/main/plugins/`:
 | `action-guard.ts`, `plugin-scheduler-host.ts` | write-verb rate/concurrency guard; supervised cue-trigger scheduler                               |
 | `plugin-signature.ts`, `plugin-store-main.ts` | ed25519 verify; on-disk state/grants and `pluginsDir()`                                           |
 | `plugin-panel-host.ts`                        | panel render host: per-plugin session hardening, `plugin-panel://` protocol, egress/nav denial    |
+| `plugin-session-grants.ts`                    | host-held per-session grant set (`granted-sessions`), stored as the dispatch allowlist scope      |
+| `plugin-session-fields.ts`                    | which session fields a plugin may set, the granted-root scope rule, `agents.list` entry mapping   |
 
 IPC at `src/main/ipc/handlers/plugins.ts`. Renderer at `src/renderer/components/plugins/PluginPanelFrame.tsx` plus `src/renderer/components/Settings/{PluginsPanel,PluginConsentDialog,PluginPanelHost}.tsx` and `src/renderer/hooks/usePluginContributions.ts`.
 
@@ -104,6 +106,10 @@ HostResponse { id, ok, result?, error? } <---postMessage---
   - `settings.set`: only `plugins.<id>.*` keys; same secret/proto/gate guards; value must be JSON-storable and `<= MAX_SETTINGS_VALUE_BYTES = 64 * 1024`.
   - `sessions.list` / `sessions.get`: projected through `toSessionMetadata` - metadata only, never transcript/prompt text.
   - `sessions.focus`: navigation only, gated by the narrow `sessions:focus` capability (NOT `tabs:manage`, which also carries create/close). Closed `{ sessionId, tabId? }` schema, `assertBrokerAllowed`, unknown sessionId throws. Implemented main-side like `pluginTabsFocus`: both verbs share `pluginAiFocusFields()` (`index.ts`), the main-side mirror of the renderer's `aiTabFocusFields()`, so the jump lands on the AI tab and nulls `activeGroupId` (a focused tiled group would otherwise keep owning the panel). No `tabId` -> the session's current AI tab, else its first; an explicit `tabId` that is not one of THAT session's AI tabs is rejected.
+  - **Plugin-set session fields (host API 1.26.0, `plugin-session-fields.ts`).** `sessions.create` / `sessions.update` and the `agents.list` entry mapping no longer do their own field handling in `index.ts`; the pure helpers `resolvePluginSessionCreateFields`, `resolvePluginSessionUpdateFields`, and `mapPluginAgentEntries` own it. A plugin may set `title`/`name`, `agentId`/`toolType`, `projectPath`/`cwd`, `additionalDirectories`, `customModel`, and `customEffort` - and nothing else: the builders copy from an explicit ALLOWLIST of keys, so `customPath`, `customArgs`, `customEnvVars`, `sshRemoteConfig`, and the Claude token-mode fields can never ride along (they decide which binary runs in which environment, which is `process:spawn` wearing a settings hat, and stay user-owned). Unknown keys are ignored, not rejected, matching what `sessions.create` always did with extra params.
+    `additionalDirectories` is the one that needed a security rule, because the rest of Maestro turns it into real `--add-dir` flags (`additionalDirArgs`) and into the `{{ADDITIONAL_DIRECTORIES}}` prompt block - the AGENT does the reading, so the plugin's own `fs:read` scope never applies. The host accepts exactly one kind of value: an absolute directory EQUAL to the resolved project root (`projectRoot`, else `cwd`) of a session already in this plugin's grant set (`isSessionGranted`). Relative paths, `..` segments, `~`-relative paths, a SUBDIRECTORY of a granted root (equality, never prefix - prefix matching is how scope checks leak), and the root of an existing but ungranted session are each rejected with their own message. `write: true` is refused for a session-granting plugin: a grant set is a read relationship. An empty list CLEARS the field (a real key delete) rather than persisting `[]`. Normalization goes through the canonical `normalizeAdditionalDirectories` with NO home directory, deliberately, so a `~` survives into the validator and is named rather than silently expanded. A plugin that does NOT use session grants has an empty granted set by construction, so the field is unusable for it - that is the fail-closed answer, not an oversight.
+    A create `cwd` expands a leading `~` (`expandPluginHomePath`) and is rejected when it lands in the userData tree; `isUnderProtectedPath` / `normalizeForPrefix` are imported from `permission-broker.ts` so this exclusion and the `fs:*` one cannot drift. `customModel` / `customEffort` are trimmed strings capped at 200 characters; an empty string clears the override. `pluginId` is threaded into `sessionsUpdate` the same way it already was into `sessionsCreate` - HOST-verified, never read from params, because it decides which roots are in reach.
+    **No new capability, deliberately.** These ride on `sessions:create` / `sessions:write` / `agents:read` because they convey no reach the user has not already approved: `additionalDirectories` cannot name a path outside the grant set, `customModel` / `customEffort` pick among a provider's own models for an agent the plugin may already create, and the fields that WOULD justify a new capability are refused outright instead. A capability nobody needs still costs a line in the consent window the user must read and weigh, and consent fatigue is a real security cost. Revisit only if a field here can ever point outside the grant set.
   - `transcripts.read`: PROJECTED session content - the caller declares which fields it needs and only allowlisted fields are returned (projection, not redaction). Resolves the session's REAL `projectPath` and RE-authorizes against it (the caller-claimed path is only a broker hint), refuses an untrusted plugin that also holds `net:fetch`/`net:connect`/`process:spawn` (the exfiltration combination), runs under the `ActionGuard` (high-risk rate/concurrency cap), and writes a per-read audit line. The metadata-only event bus is untouched.
   - `storage.*`: per-plugin KV via `kvStore` (values are strings).
   - `events.subscribe` / `unsubscribe`: filtered to the fixed `PLUGIN_EVENT_TOPICS` catalog. Includes `tool.executed`, a metadata-only tool-lifecycle event (tool name + timing, never arguments or results), and `session.activated` `{ sessionId, tabId? }`, emitted from the `sessions:setActiveSessionId` handler with its own 100ms trailing debounce (separate from that handler's 400ms disk-write debounce) and skipped when the focused session did not actually change.
@@ -128,12 +134,14 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 | `fs:write`            | high   | path      | re-authorized; runs under ActionGuard                                                                                                                                                                                                                           |
 | `net:fetch`           | medium | host      | egress-guarded (SSRF/rebind)                                                                                                                                                                                                                                    |
 | `net:connect`         | high   | host      | persistent outbound `wss://` socket, egress-guarded + connect-pinned, trusted-only, capped (4 sockets / 64 KB frame); frames delivered as `net.connect:<id>` events; an egress capability for the `transcripts:read` exfiltration rule                          |
-| `agents:read`         | low    | none      | list/read agent metadata                                                                                                                                                                                                                                        |
+| `agents:read`         | low    | none      | list/read agent metadata: id, name, cwd, toolType, and `supportsAdditionalDirectories` (whether the provider turns a directory grant into a real CLI flag)                                                                                                      |
 | `agents:dispatch`     | high   | allowlist | LIVE, fully gated: allowlist grant + trusted signature + Pianola risk + ActionGuard + closed schema. Direct plugin dispatch ALSO needs unattended consent. Scope is REQUIRED (unscoped = wildcard = denied): exact agent ids, or the `granted-sessions` keyword |
 | `notifications:toast` | low    | none      | raise a toast                                                                                                                                                                                                                                                   |
 | `settings:read`       | low    | none      | non-secret app settings; not the feature gate, not a peer plugin's namespace                                                                                                                                                                                    |
 | `settings:write`      | low    | none      | ONLY `plugins.<id>.*` keys                                                                                                                                                                                                                                      |
 | `sessions:read`       | medium | none      | METADATA only, never transcript text                                                                                                                                                                                                                            |
+| `sessions:create`     | high   | none      | create an agent; also carries the host-validated `additionalDirectories` (granted project roots, read-only), `customModel`, `customEffort`, and a `~`-expanding `cwd`. NEVER binary path / args / env / SSH remote / token mode                                 |
+| `sessions:write`      | high   | none      | patch an agent's metadata and the same host-validated field set; an empty `additionalDirectories` list clears the field                                                                                                                                         |
 | `sessions:focus`      | low    | none      | navigation only: switch to an EXISTING session and land on its AI tab; no tab create/close power (deliberately not `tabs:manage`)                                                                                                                               |
 | `transcripts:read`    | high   | path      | PROJECTED session content; project-scoped, re-authorized on the resolved path (or the `granted-sessions` keyword, where the grant set replaces the path match); refused with egress unless trusted; ActionGuard-bounded; audited                                |
 | `storage:read`        | low    | none      | own KV                                                                                                                                                                                                                                                          |
@@ -225,27 +233,34 @@ Bundled plugins ship trusted via a build-time signature, not a committed one. Th
 The current host is `1.26.0`; it expands a leading `~` in plugin filesystem
 paths and admits the home-relative manifest path scope `~/.maestro/<name>`
 (every other `~` form is rejected at parse time; absolute scopes are unchanged).
-`1.25.0` added resumable `agents.send`, invocation-scoped
-public progress, verified plugin-tool caller context, and isolated `agents.generateTitle`.
-All sends and title generation require exact-agent Dispatch, unattended consent,
-trusted signatures, risk and action guards. See [the Relay contract](docs/relay-host-contract.md).
-`1.24.0` added host-mediated plugin services.
-`1.23.0` added independent plugin settings cards.
-`1.17.0` added `media:tools` with the exact
-`discord-voice` scope, opaque media jobs and fixed native profiles. STT remains
-in the plugin; tools and models are not bundled. (`1.15.0` is taken by the
-Board + Profiles work on this fork, so it is skipped here.)
-Earlier: `1.16.0` added the metadata-only `session.activated` event topic, the
-`sessions.focus` method plus its narrow `sessions:focus` capability, and the
-`ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods plus the optional
-panel manifest field `size?: 'default' | 'full'`. `1.14.0` added the `tool.executed` event topic and the
-`ui.panelPost` host-to-panel push method; `1.13.0` added the
-host-mediated `PluginUiSurface` registry and trusted-chrome guard; `1.12.0`
-added the `net:connect` capability and the `net.connect` / `net.send` /
-`net.close` methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added
-`iconPacks`; `1.9.0` added `hostViews`, `ui:hostView`, and the
-`ui.hostViewUpdate` / `ui.hostViewRemove` methods. Plugins declare the
-`maestro.minHostApi` matching the lowest version whose surface they use.
+`1.26.0` also adds host-enforced per-session grants (`scope: "granted-sessions"`)
+and widens the session fields a plugin may set - `additionalDirectories`
+(granted project roots only, read-only), `customModel`, `customEffort`, a `~` in
+a create `cwd`, and `supportsAdditionalDirectories` on every `agents.list` entry
+
+- all on the existing `sessions:create` / `sessions:write` / `agents:read`
+  capabilities. See "Plugin-set session fields" below.
+  `1.25.0` added resumable `agents.send`, invocation-scoped
+  public progress, verified plugin-tool caller context, and isolated `agents.generateTitle`.
+  All sends and title generation require exact-agent Dispatch, unattended consent,
+  trusted signatures, risk and action guards. See [the Relay contract](docs/relay-host-contract.md).
+  `1.24.0` added host-mediated plugin services.
+  `1.23.0` added independent plugin settings cards.
+  `1.17.0` added `media:tools` with the exact
+  `discord-voice` scope, opaque media jobs and fixed native profiles. STT remains
+  in the plugin; tools and models are not bundled. (`1.15.0` is taken by the
+  Board + Profiles work on this fork, so it is skipped here.)
+  Earlier: `1.16.0` added the metadata-only `session.activated` event topic, the
+  `sessions.focus` method plus its narrow `sessions:focus` capability, and the
+  `ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods plus the optional
+  panel manifest field `size?: 'default' | 'full'`. `1.14.0` added the `tool.executed` event topic and the
+  `ui.panelPost` host-to-panel push method; `1.13.0` added the
+  host-mediated `PluginUiSurface` registry and trusted-chrome guard; `1.12.0`
+  added the `net:connect` capability and the `net.connect` / `net.send` /
+  `net.close` methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added
+  `iconPacks`; `1.9.0` added `hostViews`, `ui:hostView`, and the
+  `ui.hostViewUpdate` / `ui.hostViewRemove` methods. Plugins declare the
+  `maestro.minHostApi` matching the lowest version whose surface they use.
 
 ## Key invariants and gotchas (read before editing)
 

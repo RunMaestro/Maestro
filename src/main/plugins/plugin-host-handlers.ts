@@ -24,6 +24,7 @@ import type { PluginSignatureInfo } from '../../shared/plugins/plugin-registry';
 import type { PluginManifest } from '../../shared/plugins/plugin-manifest';
 import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
 import { expandPluginHomePath } from './plugin-home-path';
+import type { PluginAgentEntry } from './plugin-session-fields';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { AgentSendProgressEvent, HostMethod } from '../../shared/plugins/rpc-protocol';
@@ -191,9 +192,14 @@ export interface HostHandlerDeps {
 		params: Record<string, unknown>,
 		pluginId: string
 	) => Promise<PluginSessionMetadata>;
+	/** Patch a session. `pluginId` is the HOST-verified caller (never read from
+	 * params), exactly as on `sessionsCreate`: it decides which project roots an
+	 * `additionalDirectories` patch may name, so a forged id would be a
+	 * self-grant. */
 	sessionsUpdate?: (
 		sessionId: string,
-		patch: Record<string, unknown>
+		patch: Record<string, unknown>,
+		pluginId: string
 	) => Promise<PluginSessionMetadata | null>;
 	sessionsDelete?: (sessionId: string) => Promise<boolean>;
 	/** Move the user's focus to an existing session, landing on its AI tab.
@@ -286,8 +292,10 @@ export interface HostHandlerDeps {
 		action: 'open' | 'close' | 'toggle'
 	) => void;
 
-	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
-	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
+	/** Read-only agent listing (no secrets): id/name/cwd/toolType plus the one
+	 * provider capability flag a plugin needs to know whether an added directory
+	 * becomes a real CLI flag (`supportsAdditionalDirectories`). */
+	listAgents: () => PluginAgentEntry[];
 	/** Optional path for per-plugin private SQLite databases. */
 	storageSqlBaseDir?: string;
 	runStorageSql?: (
@@ -1021,7 +1029,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			requireSession(p.sessionId);
 			if (!deps.sessionsUpdate) throw new Error('sessions.update is unavailable');
 			return underGuard(deps.actionGuard, pluginId, 'sessions:write', p.sessionId, async () => {
-				const updated = await deps.sessionsUpdate!(p.sessionId as string, patch);
+				const updated = await deps.sessionsUpdate!(p.sessionId as string, patch, pluginId);
 				if (!updated) throw new Error(`stale sessionId: ${p.sessionId}`);
 				return toSessionMetadata(updated);
 			});

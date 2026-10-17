@@ -1593,6 +1593,21 @@ export interface MaestroSettingsApi {
 	set(key: string, value: unknown): Promise<void>;
 }
 
+/**
+ * One extra directory an agent may reach beyond its working directory
+ * (host API 1.26.0). A plugin may only name the project root of a session the
+ * host has already granted it, and only read-only: `write: true` is refused for
+ * a plugin using `granted-sessions`, and any other path - relative, `..`, `~`,
+ * a subdirectory of a granted root, or the root of a session you were never
+ * granted - is rejected with a specific error.
+ */
+export interface MaestroAdditionalDirectory {
+	path: string;
+	read: boolean;
+	write: boolean;
+	description?: string;
+}
+
 /** List/read session metadata (`sessions:read`), create sessions
  * (`sessions:create`), and update/remove session metadata (`sessions:write`).
  * NEVER raw transcript content - see MaestroTranscriptsApi for that. */
@@ -1602,8 +1617,17 @@ export interface MaestroSessionsApi {
 	create(params?: {
 		title?: string;
 		agentId?: string;
+		/** A leading `~` expands to the user's home directory. May not sit inside
+		 * Maestro's own data directory. */
 		projectPath?: string;
 		tabId?: string;
+		/** Read-only grants naming granted project roots (host API 1.26.0). */
+		additionalDirectories?: MaestroAdditionalDirectory[];
+		/** Per-agent model override. Never a binary path, argument, or env var -
+		 * those stay user-owned in Maestro's agent settings. */
+		customModel?: string;
+		/** Per-agent effort/reasoning override. */
+		customEffort?: string;
 		metadata?: Record<string, unknown>;
 	}): Promise<MaestroSessionMetadata>;
 	update(
@@ -1612,6 +1636,12 @@ export interface MaestroSessionsApi {
 			title?: string;
 			status?: string;
 			projectPath?: string;
+			/** Replaces the agent's whole list. An EMPTY array clears it. */
+			additionalDirectories?: MaestroAdditionalDirectory[];
+			/** An empty string clears the override. */
+			customModel?: string;
+			/** An empty string clears the override. */
+			customEffort?: string;
 			metadata?: Record<string, unknown>;
 		}
 	): Promise<MaestroSessionMetadata>;

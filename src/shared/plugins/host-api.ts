@@ -53,6 +53,36 @@ import semver from 'semver';
  *    Omitting `opts` is exactly the previous behavior (the session's own active
  *    tab), so older plugins are untouched.
  *
+ * 1.26.0 ALSO widens the session fields a plugin may set, on the EXISTING
+ * `sessions:create` / `sessions:write` capabilities (no new capability: the
+ * reasoning is in the module doc of `plugin-session-fields.ts`, which owns all
+ * of this). Every rule here fails closed, so a plugin declaring none of it keeps
+ * today's behavior exactly:
+ *  - `sessions.create({ additionalDirectories })` and
+ *    `sessions.update(id, { additionalDirectories })` accept the
+ *    `{ path, read, write }` shape the rest of Maestro already turns into native
+ *    provider flags and into the `{{ADDITIONAL_DIRECTORIES}}` prompt block. A
+ *    path is accepted ONLY when it is absolute and EQUAL to the resolved project
+ *    root of a session already in the plugin's host-held grant set. A relative
+ *    path, a `..` segment, a `~`-relative path, a subdirectory of a granted
+ *    root, and the root of an existing but UNGRANTED session are each rejected
+ *    with their own error, so a plugin can restate reach the user handed it but
+ *    never widen it. `write: true` is refused for a session-granting plugin (a
+ *    grant set is a read relationship). An empty list CLEARS the field rather
+ *    than persisting an empty array.
+ *  - `customModel` and `customEffort` are accepted as plain strings on create
+ *    and update; an empty string clears the override. `customPath`,
+ *    `customArgs`, `customEnvVars`, `sshRemoteConfig` and the Claude token-mode
+ *    fields are never accepted from a plugin - they decide which binary runs in
+ *    which environment and stay user-owned in Maestro's agent settings.
+ *  - a create `cwd` / `projectPath` expands a leading `~` (the sandbox cannot
+ *    learn the home directory), and a cwd inside the userData tree is rejected,
+ *    the same structural exclusion the broker already applies to `fs:*`.
+ *  - every `agents.list` / `agents.get` entry now carries
+ *    `supportsAdditionalDirectories`, read from `getAgentCapabilities`, so a
+ *    plugin can tell a natively enforced directory grant from a prompt-only one
+ *    instead of guessing at files the agent cannot open.
+ *
  * 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.

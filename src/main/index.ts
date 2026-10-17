@@ -112,6 +112,12 @@ import {
 	isSessionGranted,
 	usesSessionGrants,
 } from './plugins/plugin-session-grants';
+import {
+	mapPluginAgentEntries,
+	resolvePluginSessionCreateFields,
+	resolvePluginSessionUpdateFields,
+	type PluginSessionFieldsDeps,
+} from './plugins/plugin-session-fields';
 import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
 import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
 import {
@@ -2151,6 +2157,16 @@ app
 		const setPluginSessionsRaw = (sessions: Array<Record<string, unknown>>): void => {
 			sessionsStore.set('sessions', sessions as never);
 		};
+		// Field handling for sessions.create / sessions.update lives in
+		// plugin-session-fields.ts so the scope rule is reviewable and testable
+		// on its own. Every dep is read LIVE on each call: a Settings revoke
+		// narrows the very next create or update, not the next restart.
+		const pluginSessionFieldsDeps: PluginSessionFieldsDeps = {
+			protectedPaths: () => [app.getPath('userData')],
+			rawSessions: () => pluginSessionsRaw(),
+			isSessionGranted,
+			usesSessionGrants,
+		};
 		const pluginTabsList = (sessionId?: string): PluginTabMetadata[] => {
 			const out: PluginTabMetadata[] = [];
 			for (const session of pluginSessionsRaw()) {
@@ -2360,24 +2376,13 @@ app
 			const now = Date.now();
 			const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
 			const tabId = crypto.randomUUID();
-			const title =
-				typeof params.title === 'string'
-					? params.title
-					: typeof params.name === 'string'
-						? params.name
-						: 'Plugin Session';
-			const toolType =
-				typeof params.agentId === 'string'
-					? params.agentId
-					: typeof params.toolType === 'string'
-						? params.toolType
-						: 'claude-code';
-			const cwd =
-				typeof params.projectPath === 'string'
-					? params.projectPath
-					: typeof params.cwd === 'string'
-						? params.cwd
-						: os.homedir();
+			// Throws (before any store write) on a directory outside the plugin's
+			// grant set, a cwd inside userData, or a malformed override.
+			const { title, toolType, cwd, optional } = resolvePluginSessionCreateFields(
+				params,
+				pluginId,
+				pluginSessionFieldsDeps
+			);
 			const session = {
 				id: sessionId,
 				name: title,
@@ -2386,6 +2391,7 @@ app
 				cwd,
 				fullPath: cwd,
 				projectRoot: cwd,
+				...optional,
 				createdAt: now,
 				updatedAt: now,
 				aiLogs: [],
@@ -2459,19 +2465,25 @@ app
 		};
 		const pluginSessionsUpdate = async (
 			sessionId: string,
-			patch: Record<string, unknown>
+			patch: Record<string, unknown>,
+			pluginId: string
 		): Promise<PluginSessionMetadata | null> => {
 			const sessions = pluginSessionsRaw();
 			let updated: Record<string, unknown> | null = null;
+			// Resolved ONCE, outside the map, so a rejected patch throws before any
+			// session is touched rather than part-way through the list.
+			const fields = resolvePluginSessionUpdateFields(patch, pluginId, pluginSessionFieldsDeps);
 			const next = sessions.map((session) => {
 				if (session.id !== sessionId) return session;
-				updated = {
+				const merged: Record<string, unknown> = {
 					...session,
-					...(typeof patch.title === 'string' ? { name: patch.title } : {}),
-					...(typeof patch.name === 'string' ? { name: patch.name } : {}),
-					...(typeof patch.status === 'string' ? { state: patch.status } : {}),
+					...fields.set,
 					updatedAt: Date.now(),
 				};
+				// Deleted, not set to undefined: an empty list means "clear this",
+				// and a persisted `undefined` would survive into the store as a key.
+				for (const key of fields.clear) delete merged[key];
+				updated = merged;
 				return updated;
 			});
 			if (!updated) return null;
@@ -2792,22 +2804,10 @@ app
 				panelVisibility: (pluginId, panelId, action) => {
 					safeSend('plugins:panel-visibility', { pluginId, panelId, action });
 				},
-				listAgents: () => {
-					const sessions = sessionsStore.get('sessions', []) as Array<{
-						id?: string;
-						name?: string;
-						cwd?: string;
-						toolType?: string;
-					}>;
-					return sessions
-						.filter((s) => typeof s?.id === 'string')
-						.map((s) => ({
-							id: s.id as string,
-							name: s.name ?? '',
-							...(s.cwd ? { cwd: s.cwd } : {}),
-							...(s.toolType ? { toolType: s.toolType } : {}),
-						}));
-				},
+				// Entry mapping lives in plugin-session-fields.ts, which also stamps
+				// `supportsAdditionalDirectories` from the provider's capabilities so
+				// a plugin can tell a native directory grant from a prompt-only one.
+				listAgents: () => mapPluginAgentEntries(pluginSessionsRaw()),
 				// agents.dispatch + process.spawn (FC2, Plans/feature-complete-workplan.md):
 				// LIVE as of the FC1 trusted-to-run gate landing. Every call still
 				// traverses the full phase-4 pipeline in plugin-host-handlers:

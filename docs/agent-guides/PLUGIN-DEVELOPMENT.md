@@ -415,12 +415,14 @@ Declare one entry per scope per capability (a plugin may declare the same capabi
 | `fs:write`            | high   | path      | write files under the scope path (absolute, or `~/.maestro/<name>`)                                                                               | `{ "capability": "fs:write", "scope": "/abs/dir" }`                |
 | `net:fetch`           | medium | host      | HTTP(S) fetch to the scope host                                                                                                                   | `{ "capability": "net:fetch", "scope": "example.com" }`            |
 | `net:connect`         | high   | host      | persistent outbound `wss://` socket to the scope host (trusted-only)                                                                              | `{ "capability": "net:connect", "scope": "gateway.discord.gg" }`   |
-| `agents:read`         | low    | none      | list/read agent metadata                                                                                                                          | `{ "capability": "agents:read" }`                                  |
+| `agents:read`         | low    | none      | list/read agent metadata (id, name, cwd, toolType, `supportsAdditionalDirectories`)                                                               | `{ "capability": "agents:read" }`                                  |
 | `agents:dispatch`     | high   | allowlist | send a prompt to an agent (LIVE, gated; direct dispatch also needs unattended consent). Scope is REQUIRED: exact agent ids, or `granted-sessions` | `{ "capability": "agents:dispatch", "scope": "granted-sessions" }` |
 | `notifications:toast` | low    | none      | raise a toast                                                                                                                                     | `{ "capability": "notifications:toast" }`                          |
 | `settings:read`       | low    | none      | read non-secret app settings + own `plugins.<id>.*`                                                                                               | `{ "capability": "settings:read" }`                                |
 | `settings:write`      | low    | none      | write ONLY own `plugins.<id>.*` keys                                                                                                              | `{ "capability": "settings:write" }`                               |
 | `sessions:read`       | medium | none      | list session METADATA (never transcript)                                                                                                          | `{ "capability": "sessions:read" }`                                |
+| `sessions:create`     | high   | none      | create an agent, including its `additionalDirectories` / `customModel` / `customEffort` (see below)                                               | `{ "capability": "sessions:create" }`                              |
+| `sessions:write`      | high   | none      | patch an agent's metadata and the same host-validated field set                                                                                   | `{ "capability": "sessions:write" }`                               |
 | `sessions:focus`      | low    | none      | switch Maestro to one of the user's existing sessions (navigation only)                                                                           | `{ "capability": "sessions:focus" }`                               |
 | `transcripts:read`    | high   | path      | read PROJECTED session content (you declare fields). Scope is a project path, or `granted-sessions`                                               | `{ "capability": "transcripts:read", "scope": "/abs/project" }`    |
 | `storage:read`        | low    | none      | read own private key-value store                                                                                                                  | `{ "capability": "storage:read" }`                                 |
@@ -455,6 +457,34 @@ What the keyword means:
 - **One tab, not the whole agent.** `maestro.agents.dispatch(sessionId, prompt, { tabId })` lands the prompt in one specific AI tab. `opts` is closed - `tabId` is its only member, and any other key throws - and `tabId` must name a **visible** AI tab (a hidden consult tab is not addressable) **of the session you are dispatching to**, so pair it with a session id, never an agent name. It narrows delivery and never widens reach: the grant check still runs against `sessionId`, and an unknown, hidden, other-session, or non-AI tab throws with nothing sent. Omit `opts` and the agent's own active tab receives the prompt, exactly as before.
 
 Declaring the keyword nowhere changes anything for existing plugins: ordinary scopes keep today's exact behavior, and `opts.tabId` is optional for everyone.
+
+### Configuring an agent you created (host API 1.26.0+)
+
+`sessions.create` and `sessions.update` take a few more fields than the title and project path, so a plugin that makes an agent can finish setting it up without asking the user to go configure it by hand:
+
+```js
+const session = await maestro.sessions.create({
+	agentId: 'claude-code',
+	title: 'Board conductor',
+	cwd: '~/.maestro/my-plugin/scratch', // a leading `~` expands host-side
+	customModel: 'opus',
+	customEffort: 'high',
+});
+
+// Read-only reach, one entry per project root you have been granted.
+await maestro.sessions.update(session.id, {
+	additionalDirectories: [{ path: '/Users/you/code/api', read: true, write: false }],
+});
+```
+
+- **`additionalDirectories` is scope-checked, hard.** Maestro turns it into real provider flags (`--add-dir` and its per-provider equivalents) and into the agent's system prompt, so the AGENT does the reading and your own `fs:read` scope never applies. The host therefore accepts exactly one kind of path: an absolute directory **equal to the project root of a session already granted to you** (one you created, or one the user approved through `sessions.requestAccess`). A relative path, a `..` segment, a `~`-relative path, a _subdirectory_ of a granted root, and the project root of an agent you were never granted are each rejected with their own error. You can restate reach the user handed you; you can never widen it. `write: true` is refused outright - a session grant is a read relationship.
+- **An empty list clears the field.** `additionalDirectories: []` removes every grant rather than storing an empty array, which is how you shrink an agent's reach when a card leaves your board.
+- **`customModel` / `customEffort` are plain strings** (an empty string clears the override). They pick among the provider's own models for an agent you may already create; they are not a provider-agnostic tier name, so pass what that provider accepts.
+- **What you may never set:** `customPath`, `customArgs`, `customEnvVars`, `sshRemoteConfig`, and the Claude token-mode fields. Those decide which binary runs with which environment, and they stay the user's, set in Maestro's own agent settings. Passing them is ignored, not honored - so tell the user to open the agent's settings instead of trying.
+- **`cwd` / `projectPath` expands a leading `~`** (the sandbox cannot learn the home directory) and may not sit inside Maestro's own data directory.
+- **Check `supportsAdditionalDirectories` first.** Every `maestro.agents.list()` / `agents.get()` entry carries it. When it is `false`, that provider has no add-directory flag: the grant still reaches the agent's system prompt but nothing enforces it, so say so in your UI rather than implying the agent can open those files.
+
+None of this needs a new capability: `additionalDirectories` cannot name a path outside your grant set, and the fields that would need one are refused. `sessions:create` and `sessions:write` are enough.
 
 The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits declarative `uiItems` into approved host-owned surfaces, `ui:panel` admits sandboxed `panels` into approved Maestro regions, and `ui:hostView` admits brokered updates/removals for declared host views. Static `hostViews` remain available to tier-0 plugins because they are host-rendered data, not plugin UI. `ui:render-unsafe` is a high-trust policy for host-approved custom UI only; it neither grants another UI capability nor bypasses trusted chrome. An enabled plugin without the matching grant contributes none of that surface.
 
@@ -520,6 +550,9 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                                     | `settings:write`             |
 | `maestro.sessions.list()` (metadata only)                                                             | `sessions:read`              |
 | `maestro.sessions.get(sessionId)` (metadata only)                                                     | `sessions:read`              |
+| `maestro.sessions.create(params?)` -> session metadata (see "Configuring an agent you created")       | `sessions:create`            |
+| `maestro.sessions.update(sessionId, patch)` -> session metadata                                       | `sessions:write`             |
+| `maestro.sessions.delete(sessionId)` -> `Promise<void>`                                               | `sessions:write`             |
 | `maestro.sessions.focus(sessionId, tabId?)` -> `Promise<void>` (lands on an AI tab)                   | `sessions:focus`             |
 | `maestro.sessions.requestAccess(sessionId)` -> `{ granted }` (host-owned confirmation)                | `agents:dispatch`            |
 | `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`                       | `transcripts:read`           |

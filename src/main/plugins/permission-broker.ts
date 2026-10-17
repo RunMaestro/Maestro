@@ -54,8 +54,12 @@ export interface PermissionBrokerDeps {
 /**
  * Normalize a path for protected-prefix comparison: forward slashes, no trailing
  * separator, and case-folded on Windows (its filesystem is case-insensitive).
+ *
+ * Exported because `plugin-session-fields.ts` compares plugin-supplied
+ * directories against granted project roots and MUST agree with this module's
+ * notion of path identity - two normalizers would be two rules.
  */
-function normalizeForPrefix(p: string): string {
+export function normalizeForPrefix(p: string): string {
 	let out = p.replace(/\\/g, '/').replace(/\/+$/, '');
 	if (out === '') out = '/';
 	return process.platform === 'win32' ? out.toLowerCase() : out;
@@ -86,8 +90,11 @@ function expandPathGrants(
 }
 
 /** Is `target` equal to or inside any protected prefix? Separator-boundary
- * match so `/data/userdata-plugins` does not match prefix `/data/userdata`. */
-function isUnderProtectedPath(target: string, prefixes: readonly string[]): boolean {
+ * match so `/data/userdata-plugins` does not match prefix `/data/userdata`.
+ *
+ * Exported for `plugin-session-fields.ts`, which applies the SAME userData
+ * exclusion to the working directory of a plugin-created session. */
+export function isUnderProtectedPath(target: string, prefixes: readonly string[]): boolean {
 	const t = normalizeForPrefix(target);
 	for (const prefix of prefixes) {
 		const p = normalizeForPrefix(prefix);
