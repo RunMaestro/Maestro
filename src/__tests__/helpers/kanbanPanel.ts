@@ -462,7 +462,7 @@ export function clearDoneConfirm(): { row: HTMLElement; message: string; hidden:
 	return {
 		row,
 		message: document.getElementById('clear-done-confirm-message')?.textContent ?? '',
-		hidden: (row as HTMLElement).hidden,
+		hidden: Boolean(row.hidden),
 	};
 }
 
@@ -566,7 +566,7 @@ export function boardSettingsSurface(): {
 	if (!row) throw new Error('panel.html has no #board-settings');
 	const warning = document.getElementById('board-settings-close-tabs-warning');
 	return {
-		hidden: (row as HTMLElement).hidden,
+		hidden: Boolean(row.hidden),
 		scope: document.getElementById('board-settings-scope')?.textContent ?? '',
 		horizonNote: document.getElementById('board-settings-horizon-note')?.textContent ?? '',
 		warning: warning?.textContent ?? '',
