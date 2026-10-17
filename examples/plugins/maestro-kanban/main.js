@@ -400,11 +400,18 @@ function resolveColumns(projectBoard, globalBoard) {
  * a global column with no matching local column, so legality falls back to
  * the global board's own columns - the case Phase 03 consumes when it
  * aggregates cards from many projects onto one global board. No host calls.
+ * On the global board (`options.global`), legality is a different question
+ * entirely - which global columns the card's home project can reach - and is
+ * answered by legalGlobalColumnsFor() in the Phase 03 section below.
  * @param {{ columnId?: string } | null | undefined} card
  * @param {{ columns: object[] } | null | undefined} projectBoard
  * @param {{ columns: object[] } | null | undefined} globalBoard
+ * @param {{ global?: boolean }} [options]
  */
-function legalColumnsFor(card, projectBoard, globalBoard) {
+function legalColumnsFor(card, projectBoard, globalBoard, options) {
+	if (options && options.global === true) {
+		return legalGlobalColumnsFor(card, projectBoard, globalBoard);
+	}
 	const resolved = resolveColumns(projectBoard, globalBoard);
 	const projectColumnIds = resolved.map(function (column) {
 		return column.id;
@@ -440,6 +447,265 @@ function resolveTerminalColumn(columns) {
 
 // ===========================================================================
 // End of Phase 02 column model.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 03 global board aggregation (pure functions only - no `sdk`/`maestro`
+// calls, no I/O, nothing read out of the module-level runtime state below).
+// The global board is not a board anyone owns cards on: it is a projection of
+// every project's cards onto the global board's columns, and the card's home
+// project placement stays the only stored truth. Three rules hold that
+// projection together, and they have to agree or a drop will appear to work
+// and then revert on the next snapshot:
+//
+//   1. A project column reaches a global column through `maps_to` and through
+//      nothing else. A column with no `maps_to` is unmapped even when its id
+//      happens to match a global column id, because that is exactly the case
+//      DEFAULT_COLUMNS lands in: honoring an id match would quietly aggregate
+//      every board-less project onto the global board and the Unmapped lane
+//      would never appear for the case the phase explicitly calls out ("cards
+//      whose agent cwd has no project board at all").
+//   2. Whatever buildGlobalBoard() renders, legalGlobalColumnsFor() offers as
+//      a drop target, and projectColumnForGlobalColumn() can write back to.
+//      All three derive from the same resolveColumns() output.
+//   3. A card the projection cannot place sits in the read-only Unmapped lane
+//      and can be dragged nowhere, rather than being dropped from the board
+//      or offered a move that would snap back.
+// ===========================================================================
+
+/** The id and title of the generated lane that collects cards the projection
+ * cannot place. The id is reserved rather than validated: column ids come out
+ * of YAML unrestricted, so buildGlobalBoard() yields to a global column that
+ * declares this id instead of emitting a duplicate (see below). */
+const UNMAPPED_COLUMN_ID = '__unmapped__';
+const UNMAPPED_COLUMN_TITLE = 'Unmapped';
+
+/**
+ * One card's declared position within its column, for callers with no access
+ * to the placement store: the card's own `order` when it carries a finite
+ * one, null otherwise. The runtime's cardOrderOf() is the same question asked
+ * of persisted placements. No host calls.
+ * @param {{ order?: unknown }} card
+ * @returns {number|null}
+ */
+function declaredCardOrder(card) {
+	const order = card && card.order;
+	return typeof order === 'number' && isFinite(order) ? order : null;
+}
+
+/**
+ * Display order of two cards sitting in the same column, given a function
+ * that reports a card's explicit position. Cards the user has positioned
+ * come out in that position, in a block; a card nobody has dragged sorts
+ * above them by last activity, newest first, so a tab that just appeared is
+ * at the top of its column rather than buried at an arbitrary depth.
+ * `createdAt` and finally `key` are tiebreaks, so cards that match on every
+ * other signal still sort deterministically - which is what keeps a global
+ * column stable even though the orders it is interleaving were each numbered
+ * inside a different project's column and therefore collide freely.
+ * No host calls.
+ * @param {object} a
+ * @param {object} b
+ * @param {(card: object) => number|null} orderOf
+ */
+function compareCardsByOrder(a, b, orderOf) {
+	const aOrder = orderOf(a);
+	const bOrder = orderOf(b);
+	if (aOrder === null && bOrder !== null) return -1;
+	if (aOrder !== null && bOrder === null) return 1;
+	if (aOrder !== null && bOrder !== null && aOrder !== bOrder) return aOrder - bOrder;
+	if (a.lastActivityAt !== b.lastActivityAt) return b.lastActivityAt - a.lastActivityAt;
+	if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
+	return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+/**
+ * Looks one project's board out of the collection buildGlobalBoard() is
+ * handed. Accepts a Map or a plain object keyed by project path, whose values
+ * are either a board or the `{ board, error }` shape loadProjectBoard()
+ * resolves to - the runtime has the latter in hand, and a board object can
+ * never carry a `board` key (see KNOWN_TOP_LEVEL_KEYS), so unwrapping it is
+ * unambiguous. Returns null for "this project has no board", which is the
+ * signal that sends its cards to the Unmapped lane. No host calls.
+ * @param {Map<string, object>|Record<string, object>|null|undefined} projectBoards
+ * @param {unknown} projectPath
+ */
+function projectBoardFor(projectBoards, projectPath) {
+	if (!projectBoards || typeof projectPath !== 'string' || projectPath === '') return null;
+	let entry;
+	if (typeof (/** @type {Map<string, object>} */ (projectBoards).get) === 'function') {
+		entry = /** @type {Map<string, object>} */ (projectBoards).get(projectPath);
+	} else if (Object.prototype.hasOwnProperty.call(projectBoards, projectPath)) {
+		entry = /** @type {Record<string, object>} */ (projectBoards)[projectPath];
+	}
+	if (!entry || typeof entry !== 'object') return null;
+	if (Object.prototype.hasOwnProperty.call(entry, 'board')) {
+		const unwrapped = /** @type {{ board: object|null }} */ (entry).board;
+		return unwrapped && typeof unwrapped === 'object' ? unwrapped : null;
+	}
+	return entry;
+}
+
+/**
+ * The global column a card projects onto, or null when it cannot be placed
+ * and belongs in the Unmapped lane. Null covers all three ways that happens:
+ * the card's project has no board file at all, the card sits on a project
+ * column with no (or an orphaned) `maps_to`, and the card's stored column is
+ * no longer one its project declares. No host calls.
+ * @param {{ columnId?: string } | null | undefined} card
+ * @param {{ columns: object[] } | null | undefined} projectBoard
+ * @param {{ columns: object[] } | null | undefined} globalBoard
+ * @returns {string|null}
+ */
+function globalColumnForCard(card, projectBoard, globalBoard) {
+	if (!projectBoard) return null;
+	const columnId = card && typeof card.columnId === 'string' ? card.columnId : null;
+	if (columnId === null) return null;
+	const resolved = resolveColumns(projectBoard, globalBoard);
+	for (let i = 0; i < resolved.length; i++) {
+		if (resolved[i].id !== columnId) continue;
+		return resolved[i].globalColumn ? resolved[i].globalColumn.id : null;
+	}
+	return null;
+}
+
+/**
+ * The global column ids a card may legally be dropped on: the global columns
+ * its *home project* can reach through one of its own columns' `maps_to`,
+ * deduped and returned in the global board's own column order so the panel
+ * can compare them against what it renders. Empty for a card whose project
+ * has no board (an Unmapped-lane card can go nowhere), which is what stops a
+ * drop being offered that the move handler would only refuse. No host calls.
+ * @param {{ columnId?: string } | null | undefined} card
+ * @param {{ columns: object[] } | null | undefined} projectBoard
+ * @param {{ columns: object[] } | null | undefined} globalBoard
+ * @returns {string[]}
+ */
+function legalGlobalColumnsFor(card, projectBoard, globalBoard) {
+	if (!projectBoard) return [];
+	const globalColumns = Array.isArray(globalBoard && globalBoard.columns)
+		? globalBoard.columns
+		: [];
+	const reachable = new Set();
+	const resolved = resolveColumns(projectBoard, globalBoard);
+	for (let i = 0; i < resolved.length; i++) {
+		if (resolved[i].globalColumn) reachable.add(resolved[i].globalColumn.id);
+	}
+	const ids = [];
+	for (let i = 0; i < globalColumns.length; i++) {
+		if (reachable.has(globalColumns[i].id)) ids.push(globalColumns[i].id);
+	}
+	return ids;
+}
+
+/**
+ * Which of a project's own columns a global-board move writes back to, given
+ * the global column the card was dropped on. Returns null when the project
+ * cannot reach that global column at all (the move must be refused, not
+ * guessed at).
+ *
+ * A project is allowed to point several columns at one global column, so the
+ * choice can be genuinely ambiguous: keep the card where it already is when
+ * its current column maps to the target (dropping a card on the global column
+ * it is already projected into is a reorder, and must not silently relocate
+ * it inside its own project), otherwise take the project's first mapping. The
+ * returned `ambiguous` flag is true whenever more than one column mapped, so
+ * the caller can record the choice in the plugin log - this function stays
+ * pure and does not log itself. No host calls.
+ * @param {{ columnId?: string } | null | undefined} card
+ * @param {{ columns: object[] } | null | undefined} projectBoard
+ * @param {{ columns: object[] } | null | undefined} globalBoard
+ * @param {unknown} globalColumnId
+ * @returns {{ columnId: string, ambiguous: boolean, candidates: string[] }|null}
+ */
+function projectColumnForGlobalColumn(card, projectBoard, globalBoard, globalColumnId) {
+	if (!projectBoard || typeof globalColumnId !== 'string' || globalColumnId === '') return null;
+	const resolved = resolveColumns(projectBoard, globalBoard);
+	const candidates = [];
+	for (let i = 0; i < resolved.length; i++) {
+		if (resolved[i].globalColumn && resolved[i].globalColumn.id === globalColumnId) {
+			candidates.push(resolved[i].id);
+		}
+	}
+	if (candidates.length === 0) return null;
+	const currentColumnId = card && typeof card.columnId === 'string' ? card.columnId : null;
+	const keepsCurrent = currentColumnId !== null && candidates.indexOf(currentColumnId) !== -1;
+	return {
+		columnId: keepsCurrent ? currentColumnId : candidates[0],
+		ambiguous: candidates.length > 1,
+		candidates: candidates,
+	};
+}
+
+/**
+ * Projects every card onto the global board's columns: each card lands in the
+ * global column its home project column maps to, and everything the
+ * projection cannot place collects in the read-only Unmapped lane. The lane
+ * is appended only when it has cards, so a fully mapped set of projects does
+ * not render a permanently dead column, and it yields its id to a global
+ * column that already declares `__unmapped__` rather than emitting two
+ * columns with one id.
+ *
+ * Columns come out in the model's own shape (`wip_limit`, like
+ * resolveColumns), carrying the input card objects themselves in display
+ * order; the snapshot layer is what renames keys and runs cards through
+ * cardToJson. `options.orderOf` reports a card's explicit position and
+ * defaults to declaredCardOrder(), so a caller with a placement store can
+ * hand its own reader in. No host calls.
+ * @param {{ columns: object[] } | null | undefined} globalBoard
+ * @param {Map<string, object>|Record<string, object>|null|undefined} projectBoards
+ * @param {Iterable<object>} cards
+ * @param {{ orderOf?: (card: object) => number|null }} [options]
+ */
+function buildGlobalBoard(globalBoard, projectBoards, cards, options) {
+	const orderOf =
+		options && typeof options.orderOf === 'function' ? options.orderOf : declaredCardOrder;
+	const globalColumns = Array.isArray(globalBoard && globalBoard.columns)
+		? globalBoard.columns
+		: [];
+	const columns = globalColumns.map(function (column) {
+		return {
+			id: column.id,
+			title: column.title,
+			terminal: column.terminal === true,
+			wip_limit: typeof column.wip_limit === 'number' ? column.wip_limit : undefined,
+			readOnly: false,
+			cards: [],
+		};
+	});
+	const byId = new Map(
+		columns.map(function (column) {
+			return [column.id, column];
+		})
+	);
+	const unmapped = byId.get(UNMAPPED_COLUMN_ID) || {
+		id: UNMAPPED_COLUMN_ID,
+		title: UNMAPPED_COLUMN_TITLE,
+		terminal: false,
+		wip_limit: undefined,
+		readOnly: true,
+		cards: [],
+	};
+	for (const card of cards || []) {
+		if (!card) continue;
+		const projectBoard = projectBoardFor(projectBoards, card.projectPath);
+		const targetId = globalColumnForCard(card, projectBoard, globalBoard);
+		const target = targetId !== null ? byId.get(targetId) : undefined;
+		(target || unmapped).cards.push(card);
+	}
+	if (unmapped.cards.length > 0 && !byId.has(UNMAPPED_COLUMN_ID)) {
+		columns.push(unmapped);
+	}
+	for (let i = 0; i < columns.length; i++) {
+		columns[i].cards.sort(function (a, b) {
+			return compareCardsByOrder(a, b, orderOf);
+		});
+	}
+	return { columns: columns, unmappedColumnId: UNMAPPED_COLUMN_ID };
+}
+
+// ===========================================================================
+// End of Phase 03 global board aggregation.
 // ===========================================================================
 
 let sdk = null;
@@ -943,23 +1209,13 @@ function setCardOrder(card, order) {
 }
 
 /**
- * Display order of two cards sitting in the same column. Cards the user has
- * positioned come out in that position, in a block; a card nobody has
- * dragged sorts above them by last activity, newest first, so a tab that
- * just appeared (or just did something) is at the top of its column instead
- * of buried at an arbitrary depth. `key` is the final tiebreak so two cards
- * that match on every signal still sort deterministically - without it, a
- * snapshot could reshuffle identical-looking cards on every refresh.
+ * Display order of two cards sitting in the same column: the pure
+ * compareCardsByOrder() rule, asked of persisted placements. The global
+ * board's own projection asks the same rule of the card's declared `order`,
+ * so a column reads the same way whichever board it is rendered on.
  */
 function compareCardsInColumn(a, b) {
-	const aOrder = cardOrderOf(a);
-	const bOrder = cardOrderOf(b);
-	if (aOrder === null && bOrder !== null) return -1;
-	if (aOrder !== null && bOrder === null) return 1;
-	if (aOrder !== null && bOrder !== null && aOrder !== bOrder) return aOrder - bOrder;
-	if (a.lastActivityAt !== b.lastActivityAt) return b.lastActivityAt - a.lastActivityAt;
-	if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
-	return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+	return compareCardsByOrder(a, b, cardOrderOf);
 }
 
 /**
@@ -1540,6 +1796,19 @@ module.exports = {
 	resolveColumns: resolveColumns,
 	legalColumnsFor: legalColumnsFor,
 	resolveTerminalColumn: resolveTerminalColumn,
+
+	// Phase 03 pure global board aggregation, exported for direct unit testing
+	// (see src/__tests__/plugins/kanban-global-board.test.ts). Pure like the
+	// Phase 02 model above: no host calls, and nothing read out of the runtime
+	// state, so a test calls them without activate().
+	UNMAPPED_COLUMN_ID: UNMAPPED_COLUMN_ID,
+	UNMAPPED_COLUMN_TITLE: UNMAPPED_COLUMN_TITLE,
+	buildGlobalBoard: buildGlobalBoard,
+	globalColumnForCard: globalColumnForCard,
+	legalGlobalColumnsFor: legalGlobalColumnsFor,
+	projectColumnForGlobalColumn: projectColumnForGlobalColumn,
+	compareCardsByOrder: compareCardsByOrder,
+	declaredCardOrder: declaredCardOrder,
 
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
