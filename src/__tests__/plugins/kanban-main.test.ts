@@ -342,6 +342,217 @@ describe('maestro-kanban main.js', () => {
 		expect(maestro.sessions.requestAccess).not.toHaveBeenCalled();
 	});
 
+	// Phase 04 card notes: a description and a comment thread, stored in
+	// plugin storage keyed by card key via the `card-note` command. Unlike
+	// request-access, these never touch grantedSessions - they are this
+	// plugin's own data and work identically on a granted or ungranted card.
+	describe('card-note command', () => {
+		it('every card starts with an empty description and no comments', async () => {
+			const plugin = loadMain();
+			const { maestro } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+
+			await plugin.activate(maestro);
+
+			const snapshot = maestro.ui.panelPost.mock.calls[0]![1] as {
+				columns: {
+					id: string;
+					cards: { key: string; description: string; comments: unknown[]; lastCommentAt: null }[];
+				}[];
+			};
+			const card = findCard(snapshot, 'session-1::tab-1')?.card;
+			expect(card?.description).toBe('');
+			expect(card?.comments).toEqual([]);
+			expect(card?.lastCommentAt).toBeNull();
+		});
+
+		it('writes a description, persists it, and the next snapshot reflects it', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+
+			await plugin.activate(maestro);
+			maestro.ui.panelPost.mockClear();
+
+			const cardNote = commandHandlers.get('card-note');
+			expect(cardNote).toBeTypeOf('function');
+			const result = await cardNote!({
+				cardKey: 'session-1::tab-1',
+				action: 'description',
+				description: 'Needs a follow-up PR.',
+			});
+
+			expect(result).toEqual({ ok: true });
+			expect(maestro.storage.set).toHaveBeenCalledWith(
+				'card-notes',
+				JSON.stringify({
+					'session-1::tab-1': {
+						description: 'Needs a follow-up PR.',
+						comments: [],
+						lastCommentAt: null,
+					},
+				})
+			);
+			// Pushed with no re-click needed to see the save land.
+			expect(maestro.ui.panelPost).toHaveBeenCalledTimes(1);
+			const snapshot = maestro.ui.panelPost.mock.calls[0]![1] as {
+				columns: { id: string; cards: { key: string; description: string }[] }[];
+			};
+			expect(findCard(snapshot, 'session-1::tab-1')?.card.description).toBe(
+				'Needs a follow-up PR.'
+			);
+		});
+
+		it('appends comments in order and stamps lastCommentAt with the newest one', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+
+			await plugin.activate(maestro);
+			const cardNote = commandHandlers.get('card-note')!;
+
+			vi.setSystemTime(1000);
+			await cardNote({ cardKey: 'session-1::tab-1', action: 'comment', body: 'First' });
+			vi.setSystemTime(2000);
+			const second = await cardNote({
+				cardKey: 'session-1::tab-1',
+				action: 'comment',
+				body: '  Second  ',
+			});
+
+			expect(second).toEqual({ ok: true });
+			const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				columns: {
+					id: string;
+					cards: {
+						key: string;
+						comments: { id: string; body: string; createdAt: number }[];
+						lastCommentAt: number;
+					}[];
+				}[];
+			};
+			const card = findCard(snapshot, 'session-1::tab-1')?.card;
+			// Appended, rendered newest last: the array is in insertion order.
+			expect(card?.comments.map((c) => c.body)).toEqual(['First', 'Second']);
+			expect(card?.comments[0]!.createdAt).toBe(1000);
+			expect(card?.comments[1]!.createdAt).toBe(2000);
+			expect(card?.comments[0]!.id).not.toBe(card?.comments[1]!.id);
+			expect(card?.lastCommentAt).toBe(2000);
+		});
+
+		it('rejects a card-note call with no cardKey, and touches neither storage nor the comment thread', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+
+			await plugin.activate(maestro);
+			maestro.storage.set.mockClear();
+			const cardNote = commandHandlers.get('card-note')!;
+
+			const result = await cardNote({ action: 'comment', body: 'Orphaned' });
+
+			expect(result).toEqual({ ok: false, error: 'cardKey is required' });
+			expect(maestro.storage.set).not.toHaveBeenCalled();
+		});
+
+		it('rejects an unknown action without writing anything', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro();
+			await plugin.activate(maestro);
+			maestro.storage.set.mockClear();
+			const cardNote = commandHandlers.get('card-note')!;
+
+			const result = await cardNote({ cardKey: 'session-1::tab-1', action: 'delete-everything' });
+
+			expect(result).toEqual({ ok: false, error: 'unknown action' });
+			expect(maestro.storage.set).not.toHaveBeenCalled();
+		});
+
+		it('writes a description and a comment on a card this plugin has not been granted access to', async () => {
+			const plugin = loadMain();
+			const { maestro, commandHandlers } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+
+			await plugin.activate(maestro);
+			const cardNote = commandHandlers.get('card-note')!;
+
+			const descriptionResult = await cardNote({
+				cardKey: 'session-1::tab-1',
+				action: 'description',
+				description: 'Still works ungranted.',
+			});
+			const commentResult = await cardNote({
+				cardKey: 'session-1::tab-1',
+				action: 'comment',
+				body: 'Also works ungranted.',
+			});
+
+			expect(descriptionResult).toEqual({ ok: true });
+			expect(commentResult).toEqual({ ok: true });
+			const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				columns: {
+					id: string;
+					cards: {
+						key: string;
+						accessGranted: boolean;
+						description: string;
+						comments: unknown[];
+					}[];
+				}[];
+			};
+			const card = findCard(snapshot, 'session-1::tab-1')?.card;
+			expect(card?.accessGranted).toBe(false);
+			expect(card?.description).toBe('Still works ungranted.');
+			expect(card?.comments).toHaveLength(1);
+		});
+
+		it('notes survive a restart: a fresh activation reads back what a previous one wrote', async () => {
+			const store = new Map<string, string>();
+			const sharedStorage = {
+				get: vi.fn((key: string) => Promise.resolve(store.has(key) ? store.get(key)! : null)),
+				set: vi.fn((key: string, value: string) => {
+					store.set(key, value);
+					return Promise.resolve({ ok: true });
+				}),
+				delete: vi.fn((key: string) => {
+					store.delete(key);
+					return Promise.resolve({ ok: true });
+				}),
+				keys: vi.fn(() => Promise.resolve(Array.from(store.keys()))),
+			};
+
+			const firstPlugin = loadMain();
+			const { maestro: firstMaestro, commandHandlers: firstCommands } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+			firstMaestro.storage = sharedStorage;
+			await firstPlugin.activate(firstMaestro);
+			await firstCommands.get('card-note')!({
+				cardKey: 'session-1::tab-1',
+				action: 'description',
+				description: 'Survives restart.',
+			});
+			await firstPlugin.deactivate();
+
+			const secondPlugin = loadMain();
+			const { maestro: secondMaestro } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+			secondMaestro.storage = sharedStorage;
+			await secondPlugin.activate(secondMaestro);
+
+			const snapshot = secondMaestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				columns: { id: string; cards: { key: string; description: string }[] }[];
+			};
+			expect(findCard(snapshot, 'session-1::tab-1')?.card.description).toBe('Survives restart.');
+		});
+	});
+
 	it('does not throw out of activate when tabs.list is rejected', async () => {
 		const plugin = loadMain();
 		const { maestro } = createStubMaestro({

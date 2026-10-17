@@ -1187,6 +1187,180 @@ async function clearAllPlacements() {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 04 card notes: a description and a comment thread, kept in plugin
+// storage keyed by card key (cardKey(), the same `sessionId::tabId` identity
+// every card already carries - see the `card-note` command below). Unlike
+// the placement map above, a card's notes are never pruned when its tab
+// closes: the whole point is that they survive the tab closing and its card
+// being archived, so nothing here ever reads from or depends on `cards`.
+// They are also independent of the access-grant state in the section
+// above - the panel's own data, not something the host gates - so every
+// function here works identically on a granted or an ungranted card.
+//
+// Loaded once into memory at activate() (see loadCardNotes(), called
+// alongside loadSelectedBoard() before the first seed()), then kept
+// authoritative in memory with a write-through to storage on every change -
+// same shape as selectBoard() above, not the batched flush placements use,
+// because a note write (a blur, a posted comment) is already rare enough
+// that there is nothing to coalesce.
+// ===========================================================================
+
+const CARD_NOTES_STORAGE_KEY = 'card-notes';
+
+/** @typedef {{ id: string, body: string, createdAt: number }} CardComment */
+/** @typedef {{ description: string, comments: CardComment[], lastCommentAt: number|null }} CardNote */
+
+/** @type {Map<string, CardNote>} cardKey -> note */
+let cardNotes = new Map();
+
+/** The note a card with nothing stored yet is treated as having: never
+ * written to storage itself, but a shape every caller can rely on so nobody
+ * has to null-check `cardNotes.get(key)`. */
+function emptyCardNote() {
+	return { description: '', comments: [], lastCommentAt: null };
+}
+
+/** Reads one stored comment into its `{ id, body, createdAt }` shape, or null
+ * when it is missing a piece this plugin never wrote without. Corrupt
+ * entries are dropped rather than trusted, same reasoning as
+ * readStoredPlacement() above - a note is disposable storage, not a ledger.
+ * @param {unknown} value
+ * @returns {CardComment|null}
+ */
+function readStoredComment(value) {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	const entry = /** @type {{ id?: unknown, body?: unknown, createdAt?: unknown }} */ (value);
+	if (typeof entry.id !== 'string' || entry.id === '') return null;
+	if (typeof entry.body !== 'string' || entry.body === '') return null;
+	if (typeof entry.createdAt !== 'number' || !isFinite(entry.createdAt)) return null;
+	return { id: entry.id, body: entry.body, createdAt: entry.createdAt };
+}
+
+/** Reads one stored note value into its `CardNote` shape, or null when it is
+ * not a shape this plugin has ever written.
+ * @param {unknown} value
+ * @returns {CardNote|null}
+ */
+function readStoredCardNote(value) {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	const entry =
+		/** @type {{ description?: unknown, comments?: unknown, lastCommentAt?: unknown }} */ (value);
+	const description = typeof entry.description === 'string' ? entry.description : '';
+	const comments = Array.isArray(entry.comments)
+		? entry.comments.map(readStoredComment).filter(Boolean)
+		: [];
+	const lastCommentAt =
+		typeof entry.lastCommentAt === 'number' && isFinite(entry.lastCommentAt)
+			? entry.lastCommentAt
+			: null;
+	return {
+		description: description,
+		comments: /** @type {CardComment[]} */ (comments),
+		lastCommentAt: lastCommentAt,
+	};
+}
+
+/** Restores every card's note from storage. Called once, before activate()'s
+ * first seed(), so the very first snapshot already carries whatever was
+ * written in a previous session. A storage failure, or a value that is not
+ * the object this plugin writes, degrades to "no notes yet" rather than
+ * throwing the activation. */
+async function loadCardNotes() {
+	cardNotes = new Map();
+	try {
+		const raw = await sdk.storage.get(CARD_NOTES_STORAGE_KEY);
+		if (typeof raw === 'string' && raw !== '') {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const key of Object.keys(parsed)) {
+					const note = readStoredCardNote(parsed[key]);
+					if (note) cardNotes.set(key, note);
+				}
+			}
+		}
+	} catch (err) {
+		console.error('maestro-kanban: failed to read stored card notes: ' + String(err));
+	}
+}
+
+/** A card's note, read-only: whatever is stored, or emptyCardNote() when
+ * nothing has been written for this card key yet. Never mutates the cache -
+ * every caller that wants to change a note goes through setCardDescription()
+ * or addCardComment() below.
+ * @param {string} cardKey
+ */
+function noteFor(cardKey) {
+	return cardNotes.get(cardKey) || emptyCardNote();
+}
+
+/** Writes the whole `cardNotes` map to storage in one call. A failed write
+ * logs and moves on: the in-memory map stays authoritative for this session
+ * either way, so a transient storage failure degrades to "forgets on
+ * restart" rather than losing the note just written. */
+async function persistCardNotes() {
+	const obj = {};
+	for (const [key, note] of cardNotes) {
+		obj[key] = note;
+	}
+	try {
+		await sdk.storage.set(CARD_NOTES_STORAGE_KEY, JSON.stringify(obj));
+	} catch (err) {
+		console.error('maestro-kanban: failed to persist card notes: ' + String(err));
+	}
+}
+
+/** Sets a card's description and persists it. Backs the `card-note` command's
+ * `description` action. A no-op when the new text is exactly what is already
+ * stored, so a blur that changed nothing never schedules a redundant write.
+ * @param {string} cardKey
+ * @param {string} description
+ */
+async function setCardDescription(cardKey, description) {
+	const existing = noteFor(cardKey);
+	if (existing.description === description) return existing;
+	const updated = {
+		description: description,
+		comments: existing.comments,
+		lastCommentAt: existing.lastCommentAt,
+	};
+	cardNotes.set(cardKey, updated);
+	await persistCardNotes();
+	return updated;
+}
+
+/** 32 bits of Math.random(), base36-encoded, prefixed with the current time
+ * in the same base - unique enough for a comment id within one card's
+ * thread, which is all this ever has to be. Not cryptographic, same spirit
+ * as fnv1a32Hex() above. */
+function nextCommentId() {
+	return Date.now().toString(36) + '-' + Math.floor(Math.random() * 0x100000000).toString(36);
+}
+
+/** Appends a comment to a card's thread and persists it, stamping the card's
+ * `lastCommentAt` with the comment's own timestamp - what Phase 05's aging
+ * clock reads. Backs the `card-note` command's `comment` action. Comments
+ * are appended only: this phase never edits or removes one in place.
+ * @param {string} cardKey
+ * @param {string} body
+ */
+async function addCardComment(cardKey, body) {
+	const existing = noteFor(cardKey);
+	const comment = { id: nextCommentId(), body: body, createdAt: Date.now() };
+	const updated = {
+		description: existing.description,
+		comments: existing.comments.concat([comment]),
+		lastCommentAt: comment.createdAt,
+	};
+	cardNotes.set(cardKey, updated);
+	await persistCardNotes();
+	return updated;
+}
+
+// ===========================================================================
+// End of Phase 04 card notes.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -1893,11 +2067,16 @@ function schedulePanelPush() {
  * Global board, where a card may only be dropped on a global column its home
  * project can reach - and the panel dims every other column when it is
  * present (see legalColumnIdsFor in panel.html). Omitted on a project board,
- * where every column is reachable by definition.
+ * where every column is reachable by definition. `description`, `comments`,
+ * and `lastCommentAt` are this plugin's own storage (see noteFor() above),
+ * never gated by `accessGranted` - they are sent for every card, granted or
+ * not, and trimToBudget() already drops them first on an oversized board the
+ * same way it drops `projectPath` and `createdAt`.
  * @param {object} card
  * @param {string[]} [legalColumnIds]
  */
 function cardToJson(card, legalColumnIds) {
+	const note = noteFor(card.key);
 	return {
 		key: card.key,
 		sessionId: card.sessionId,
@@ -1910,6 +2089,9 @@ function cardToJson(card, legalColumnIds) {
 		lastActivityAt: card.lastActivityAt,
 		accessGranted: isSessionAccessGranted(card.sessionId),
 		legalColumnIds: Array.isArray(legalColumnIds) ? legalColumnIds : undefined,
+		description: note.description,
+		comments: note.comments,
+		lastCommentAt: note.lastCommentAt,
 	};
 }
 
@@ -2314,6 +2496,48 @@ function registerCommands(maestro) {
 			});
 	});
 
+	// Invoked by the panel's detail-pane description field (on blur) and
+	// comment composer (on submit) via parent.postMessage; no manifest
+	// `commands` entry is needed since the palette has no card in hand to
+	// note. The panel never touches maestro.storage itself - every write
+	// goes through here, on a granted or an ungranted card alike, since a
+	// card's own note is not something the host's session grants gate.
+	// Pushes a fresh snapshot either way so the pane shows the saved state
+	// with no re-open needed.
+	maestro.commands.register('card-note', (args) => {
+		const cardKey = args && typeof args.cardKey === 'string' ? args.cardKey : undefined;
+		const action = args && typeof args.action === 'string' ? args.action : undefined;
+		if (!cardKey) return Promise.resolve({ ok: false, error: 'cardKey is required' });
+		if (action === 'description') {
+			const description =
+				args && typeof args.description === 'string' ? args.description : undefined;
+			if (description === undefined) {
+				return Promise.resolve({ ok: false, error: 'description is required' });
+			}
+			return setCardDescription(cardKey, description)
+				.then(() => pushSnapshotNow())
+				.then(() => ({ ok: true }))
+				.catch((err) => {
+					console.error('maestro-kanban: card-note description failed: ' + String(err));
+					return { ok: false, error: errorMessage(err) };
+				});
+		}
+		if (action === 'comment') {
+			const body = args && typeof args.body === 'string' ? args.body : undefined;
+			if (!body || body.trim() === '') {
+				return Promise.resolve({ ok: false, error: 'body is required' });
+			}
+			return addCardComment(cardKey, body.trim())
+				.then(() => pushSnapshotNow())
+				.then(() => ({ ok: true }))
+				.catch((err) => {
+					console.error('maestro-kanban: card-note comment failed: ' + String(err));
+					return { ok: false, error: errorMessage(err) };
+				});
+		}
+		return Promise.resolve({ ok: false, error: 'unknown action' });
+	});
+
 	// Invoked by the panel via parent.postMessage; no manifest `commands`
 	// entry is needed since it is never surfaced in the command palette.
 	maestro.commands.register('focus', (args) => {
@@ -2384,8 +2608,10 @@ module.exports = {
 			console.error('maestro-kanban: events.subscribe failed: ' + String(err));
 		}
 		// Before seed(), so the first snapshot already renders the board the
-		// user left instead of flashing the active project's board first.
+		// user left instead of flashing the active project's board first, and
+		// already carries every card's stored description/comments.
 		await loadSelectedBoard();
+		await loadCardNotes();
 		await seed();
 		await prunePlacements();
 	},
@@ -2406,6 +2632,7 @@ module.exports = {
 		placementCache.clear();
 		dirtyPlacementBoards.clear();
 		pendingMoveRejection = null;
+		cardNotes = new Map();
 		// The host clears its own grant bookkeeping when the sandbox stops; this
 		// mirrors that so a reactivated plugin never assumes a grant it has not
 		// seen confirmed again.

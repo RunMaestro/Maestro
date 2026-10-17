@@ -51,6 +51,11 @@ export interface SnapshotCard {
 	/** Phase 04 access state: whether this plugin may message this card's
 	 * session or read its History right now. */
 	accessGranted?: boolean;
+	/** Phase 04 card notes: this plugin's own storage, keyed by card key and
+	 * never gated by accessGranted (see noteFor() in main.js). */
+	description?: string;
+	comments?: { id: string; body: string; createdAt: number }[];
+	lastCommentAt?: number | null;
 }
 
 export interface SnapshotColumn {
@@ -150,6 +155,9 @@ export function makeCard(overrides: Partial<SnapshotCard> = {}): SnapshotCard {
 		// gate landed keeps seeing the pane's ordinary History/composer
 		// sections; a test exercising the ungranted state sets this false.
 		accessGranted: true,
+		description: '',
+		comments: [],
+		lastCommentAt: null,
 		...overrides,
 	};
 }

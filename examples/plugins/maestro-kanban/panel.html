@@ -198,12 +198,48 @@
 				display: flex;
 				flex-direction: column;
 				gap: 8px;
+				margin-bottom: 8px;
 			}
 			.detail-comment {
 				font-size: 12px;
 				background: var(--maestro-bg-activity, #2d2d2d);
 				border-radius: 6px;
 				padding: 6px 8px;
+			}
+			.detail-comment-body {
+				white-space: pre-wrap;
+				word-break: break-word;
+			}
+			.detail-comment-meta {
+				margin-top: 4px;
+				font-size: 10px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#detail-comment-input {
+				width: 100%;
+				min-height: 48px;
+				resize: vertical;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				padding: 6px 8px;
+				margin-bottom: 6px;
+			}
+			#detail-comment-add {
+				padding: 5px 12px;
+				border: none;
+				border-radius: 6px;
+				background: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-size: 12px;
+				font-weight: 600;
+				cursor: pointer;
+			}
+			#detail-comment-add:hover {
+				opacity: 0.9;
 			}
 			/* Phase 04 access state. The marker sits on every card whose session
 			   this board cannot message or read History for yet; the detail
@@ -476,11 +512,7 @@
 					<button id="detail-open-tab" type="button">Open Tab</button>
 					<div class="detail-section">
 						<h3>Description</h3>
-						<textarea
-							id="detail-description-input"
-							disabled
-							placeholder="Description editing arrives in a later task."
-						></textarea>
+						<textarea id="detail-description-input" placeholder="Add a description..."></textarea>
 					</div>
 					<div class="detail-section" id="detail-access-gate" hidden>
 						<h3>Access</h3>
@@ -506,6 +538,8 @@
 						<h3>Comments</h3>
 						<div id="detail-comments-list"></div>
 						<div id="detail-comments-empty" class="detail-placeholder">No comments yet.</div>
+						<textarea id="detail-comment-input" placeholder="Add a comment..."></textarea>
+						<button id="detail-comment-add" type="button">Add Comment</button>
 					</div>
 				</div>
 			</div>
@@ -1406,6 +1440,19 @@
 						};
 					}
 
+					// Description and comments are this plugin's own storage, read
+					// straight off the snapshot (see noteFor() in main.js) and never
+					// gated by accessGranted - they work on an ungranted card too.
+					var descriptionInputEl = document.getElementById('detail-description-input');
+					if (descriptionInputEl && document.activeElement !== descriptionInputEl) {
+						// Never overwritten while focused: a render can run anytime (any
+						// other card's status changing re-renders the whole snapshot),
+						// and clobbering mid-edit text would be worse than a half-second
+						// of staleness until the field blurs and saves it.
+						descriptionInputEl.value = typeof card.description === 'string' ? card.description : '';
+					}
+					renderCardComments(card);
+
 					// Access gate: an ungranted card loses the History excerpt and the
 					// composer to one explanation and an Allow Access button, in their
 					// shared slot in the pane; a granted card gets the ordinary
@@ -1429,6 +1476,72 @@
 							};
 						}
 					}
+				}
+
+				/** Posts a `card-note` write to the sandbox. The panel never touches
+				 * maestro.storage itself; every description/comment change goes
+				 * through this one command, on a granted or an ungranted card alike. */
+				function sendCardNote(action, cardKey, extra) {
+					var args = { cardKey: cardKey, action: action };
+					for (var key in extra) {
+						if (Object.prototype.hasOwnProperty.call(extra, key)) args[key] = extra[key];
+					}
+					parent.postMessage(
+						{ type: 'maestro:invokeCommand', commandId: 'card-note', args: args },
+						'*'
+					);
+				}
+
+				/** Renders `card`'s comment thread into #detail-comments-list, in
+				 * exactly the order the snapshot carries it - appended, so the
+				 * oldest comment is first and the newest is last. */
+				function renderCardComments(card) {
+					var listEl = document.getElementById('detail-comments-list');
+					var emptyEl = document.getElementById('detail-comments-empty');
+					if (!listEl) return;
+					listEl.innerHTML = '';
+					var comments = Array.isArray(card.comments) ? card.comments : [];
+					if (emptyEl) emptyEl.hidden = comments.length > 0;
+					comments.forEach(function (comment) {
+						var item = document.createElement('div');
+						item.className = 'detail-comment';
+						var body = document.createElement('div');
+						body.className = 'detail-comment-body';
+						body.textContent = comment && typeof comment.body === 'string' ? comment.body : '';
+						item.appendChild(body);
+						var meta = document.createElement('div');
+						meta.className = 'detail-comment-meta';
+						meta.textContent =
+							comment && typeof comment.createdAt === 'number'
+								? new Date(comment.createdAt).toLocaleString()
+								: '';
+						item.appendChild(meta);
+						listEl.appendChild(item);
+					});
+				}
+
+				/** Saves the description field on blur, for whichever card the pane
+				 * is currently open on. Bound once for the panel's whole life (see
+				 * detailDescriptionEl below), so this always reads `detailCardKey`
+				 * live rather than a card captured when the listener was bound. */
+				function submitCardDescription() {
+					if (detailCardKey === null) return;
+					var input = document.getElementById('detail-description-input');
+					if (!input) return;
+					sendCardNote('description', detailCardKey, { description: input.value });
+				}
+
+				/** Posts the comment composer's text as a new comment on whichever
+				 * card the pane is currently open on, then clears the field. A blank
+				 * comment (whitespace only) is never posted. */
+				function submitCardComment() {
+					if (detailCardKey === null) return;
+					var input = document.getElementById('detail-comment-input');
+					if (!input) return;
+					var body = input.value;
+					if (!body || body.trim() === '') return;
+					sendCardNote('comment', detailCardKey, { body: body });
+					input.value = '';
 				}
 
 				/** Opens the detail pane on `card`, reading back out of the
@@ -1622,6 +1735,13 @@
 				// board switcher above.
 				var detailCloseEl = document.getElementById('detail-close');
 				if (detailCloseEl) detailCloseEl.addEventListener('click', closeCardDetail);
+
+				var detailDescriptionEl = document.getElementById('detail-description-input');
+				if (detailDescriptionEl)
+					detailDescriptionEl.addEventListener('blur', submitCardDescription);
+
+				var detailCommentAddEl = document.getElementById('detail-comment-add');
+				if (detailCommentAddEl) detailCommentAddEl.addEventListener('click', submitCardComment);
 
 				// The <select> is static markup, never replaced by a render, so the
 				// listener is bound once here rather than per snapshot.

@@ -708,6 +708,163 @@ describe('maestro-kanban panel.html', () => {
 	});
 
 	// ---------------------------------------------------------------------
+	// Phase 04 card notes. A description and a comment thread, both read
+	// straight off the snapshot and written through the sandbox's
+	// `card-note` command - the panel never touches storage itself. Neither
+	// is gated by accessGranted, so these run against makeCard()'s default
+	// (granted) card.
+	// ---------------------------------------------------------------------
+
+	it('populates the description field from the snapshot when the detail pane opens', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Noted', description: 'Already written.' })],
+			})
+		);
+
+		findCardElement('Noted').click();
+
+		const input = document.getElementById('detail-description-input') as HTMLTextAreaElement;
+		expect(input.value).toBe('Already written.');
+	});
+
+	it('posts a card-note description write when the description field blurs', () => {
+		pushSnapshot(snapshotWith({ backlog: [makeCard({ title: 'Edit Me' })] }));
+		findCardElement('Edit Me').click();
+
+		const input = document.getElementById('detail-description-input') as HTMLTextAreaElement;
+		input.value = 'New description.';
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		input.focus();
+		input.blur();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'card-note',
+			args: {
+				cardKey: 'session-1::tab-1',
+				action: 'description',
+				description: 'New description.',
+			},
+		});
+	});
+
+	it('does not overwrite the description field with a stale snapshot while it is focused', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Mid Edit', description: 'Original.' })],
+			})
+		);
+		findCardElement('Mid Edit').click();
+
+		const input = document.getElementById('detail-description-input') as HTMLTextAreaElement;
+		input.focus();
+		input.value = 'Still typing...';
+
+		// A render can run anytime - here, because an unrelated event changed
+		// the card's status - and must not clobber the in-progress edit.
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Mid Edit', description: 'Original.', status: 'busy' })],
+			})
+		);
+
+		expect(input.value).toBe('Still typing...');
+	});
+
+	it('shows the empty-comments placeholder and no comment rows when there are none', () => {
+		pushSnapshot(snapshotWith({ backlog: [makeCard({ title: 'No Comments Yet' })] }));
+		findCardElement('No Comments Yet').click();
+
+		expect(document.getElementById('detail-comments-empty')?.hidden).toBe(false);
+		expect(document.getElementById('detail-comments-list')?.children.length).toBe(0);
+	});
+
+	it('renders the comment thread in storage order, oldest first and newest last', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [
+					makeCard({
+						title: 'Discussed',
+						comments: [
+							{ id: 'c1', body: 'First comment', createdAt: 1000 },
+							{ id: 'c2', body: 'Second comment', createdAt: 2000 },
+						],
+					}),
+				],
+			})
+		);
+
+		findCardElement('Discussed').click();
+
+		expect(document.getElementById('detail-comments-empty')?.hidden).toBe(true);
+		const bodies = Array.from(
+			document.querySelectorAll('#detail-comments-list .detail-comment-body')
+		).map((el) => el.textContent);
+		expect(bodies).toEqual(['First comment', 'Second comment']);
+	});
+
+	it('posts a card-note comment write and clears the field when Add Comment is clicked', () => {
+		pushSnapshot(snapshotWith({ backlog: [makeCard({ title: 'Commentable' })] }));
+		findCardElement('Commentable').click();
+
+		const input = document.getElementById('detail-comment-input') as HTMLTextAreaElement;
+		input.value = 'A new comment';
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		document.getElementById('detail-comment-add')?.click();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'card-note',
+			args: { cardKey: 'session-1::tab-1', action: 'comment', body: 'A new comment' },
+		});
+		expect(input.value).toBe('');
+	});
+
+	it('does not post a blank comment', () => {
+		pushSnapshot(snapshotWith({ backlog: [makeCard({ title: 'No Blank Comments' })] }));
+		findCardElement('No Blank Comments').click();
+
+		const input = document.getElementById('detail-comment-input') as HTMLTextAreaElement;
+		input.value = '   ';
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		document.getElementById('detail-comment-add')?.click();
+
+		expect(postMessageSpy).not.toHaveBeenCalled();
+	});
+
+	it('works on an ungranted card: the description and comment fields are not part of the access gate', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ title: 'Ungranted But Noted', accessGranted: false })],
+			})
+		);
+		findCardElement('Ungranted But Noted').click();
+
+		expect(document.getElementById('detail-access-gate')?.hidden).toBe(false);
+		const descriptionInput = document.getElementById(
+			'detail-description-input'
+		) as HTMLTextAreaElement;
+		descriptionInput.value = 'Works even ungranted.';
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		descriptionInput.focus();
+		descriptionInput.blur();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'card-note',
+			args: {
+				cardKey: 'session-1::tab-1',
+				action: 'description',
+				description: 'Works even ungranted.',
+			},
+		});
+	});
+
+	// ---------------------------------------------------------------------
 	// Phase 03 keyboard access. The board has to be usable without a mouse,
 	// and the keyboard move has to be the SAME move a drag makes - same
 	// legality check, same `move` payload - or one of the two will rot.
