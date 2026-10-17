@@ -22,12 +22,23 @@ const require = createRequire(import.meta.url);
 const mainPath = require.resolve('../../../examples/plugins/maestro-kanban/main.js');
 
 interface KanbanSnapshot {
-	columns: { id: string; title: string; cards: { key: string }[] }[];
+	columns: {
+		id: string;
+		title: string;
+		readOnly?: boolean;
+		cards: { key: string; legalColumnIds?: string[] }[];
+	}[];
 	boardId?: string | null;
+	boardName?: string;
+	boards?: { id: string; kind: string; name: string; cardCount: number }[];
+	boardsHidden?: number;
+	globalBoardMissing?: boolean;
+	activeProjectPath?: string | null;
 	moveRejection?: { cardKey: string; reason: string } | null;
 }
 
 interface KanbanPlugin {
+	GLOBAL_BOARD_ID: string;
 	boardFilePath: (projectPath: string | null | undefined) => string;
 	loadProjectBoard: (
 		projectPath: string
@@ -616,5 +627,403 @@ describe('maestro-kanban card ordering', () => {
 		// The hole the moved card left is closed rather than leaving the last
 		// survivor stranded on order 1.
 		expect(persisted[stayed]).toEqual({ columnId: 'backlog', order: 0 });
+	});
+});
+
+describe('maestro-kanban board switcher', () => {
+	const widgets = '/Users/dev/projects/widgets';
+	const gadgets = '/Users/dev/projects/gadgets';
+	const GLOBAL_PATH = '~/.maestro/kanban.yaml';
+	/** A module instance used only for main.js's PURE helpers, so a test can
+	 * name a project's board file before activating. loadMain() purges the
+	 * require cache, so every activateWith() below still gets fresh runtime
+	 * state of its own. */
+	const pure = loadMain();
+	const GLOBAL_BOARD_ID = pure.GLOBAL_BOARD_ID;
+
+	/** A global board file: two columns, no `project` key (the parser refuses
+	 * one there). */
+	const globalYaml =
+		'version: 1\ncolumns:\n  - id: now\n    title: Now\n  - id: later\n    title: Later\n';
+
+	/** A project board file whose columns point at the global board's. */
+	function projectYaml(
+		projectPath: string,
+		columns: { id: string; title: string; maps_to?: string }[]
+	) {
+		return (
+			'version: 1\nproject: ' +
+			projectPath +
+			'\ncolumns:\n' +
+			columns
+				.map(
+					(column) =>
+						'  - id: ' +
+						column.id +
+						'\n    title: ' +
+						column.title +
+						(column.maps_to ? '\n    maps_to: ' + column.maps_to : '') +
+						'\n'
+				)
+				.join('')
+		);
+	}
+
+	function lastSnapshot(maestro: { ui: { panelPost: { mock: { calls: unknown[][] } } } }) {
+		const calls = maestro.ui.panelPost.mock.calls;
+		return calls[calls.length - 1]![1] as KanbanSnapshot;
+	}
+
+	/** Activates with `tabs` and whatever board files / stored state a test
+	 * needs, then hands back the registered command handlers. */
+	async function activateWith(options: {
+		tabs: Record<string, unknown>[];
+		files?: Record<string, string>;
+		storage?: Record<string, string>;
+	}) {
+		const plugin = loadMain();
+		const stub = createStubMaestro({
+			tabsList: () => Promise.resolve(options.tabs),
+			files: options.files,
+			storage: options.storage,
+		});
+		await plugin.activate(stub.maestro);
+		const selectBoard = stub.commandHandlers.get('select-board');
+		const move = stub.commandHandlers.get('move');
+		if (!selectBoard || !move) throw new Error('main.js did not register select-board and move');
+		return { plugin, selectBoard, move, ...stub };
+	}
+
+	it('offers the Global board plus every project that has cards, each with its card count', async () => {
+		const { maestro } = await activateWith({
+			tabs: [
+				aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath: widgets }),
+				aiTab({ id: 'tab-2', sessionId: 'session-1', projectPath: widgets }),
+				aiTab({ id: 'tab-3', sessionId: 'session-2', projectPath: gadgets }),
+			],
+		});
+
+		expect(lastSnapshot(maestro).boards).toEqual([
+			{ id: '__global__', kind: 'global', name: 'Global', projectPath: null, cardCount: 3 },
+			{
+				id: gadgets,
+				kind: 'project',
+				name: 'gadgets',
+				projectPath: gadgets,
+				cardCount: 1,
+			},
+			{
+				id: widgets,
+				kind: 'project',
+				name: 'widgets',
+				projectPath: widgets,
+				cardCount: 2,
+			},
+		]);
+	});
+
+	it('remembers the selected board in plugin storage', async () => {
+		const { selectBoard, storageStore } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+		});
+
+		await selectBoard({ boardId: widgets });
+
+		expect(storageStore.get('selected-board')).toBe(widgets);
+	});
+
+	it('restores the remembered board before the first snapshot, so the panel never flashes another one', async () => {
+		const { maestro } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+			storage: { 'selected-board': '__global__' },
+		});
+
+		const first = maestro.ui.panelPost.mock.calls[0]![1] as KanbanSnapshot;
+		expect(first.boardId).toBe('__global__');
+		expect(first.boardName).toBe('Global');
+	});
+
+	it("shows only the selected project's own cards on its board", async () => {
+		const { selectBoard, maestro } = await activateWith({
+			tabs: [
+				aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath: widgets }),
+				aiTab({ id: 'tab-2', sessionId: 'session-2', projectPath: gadgets }),
+			],
+		});
+
+		await selectBoard({ boardId: widgets });
+
+		const snapshot = lastSnapshot(maestro);
+		expect(snapshot.boardName).toBe('widgets');
+		const keys = snapshot.columns.flatMap((column) => column.cards.map((card) => card.key));
+		expect(keys).toEqual(['session-1::tab-1']);
+	});
+
+	it('keeps an emptied project selectable, with a zero count, rather than dropping it out of its own control', async () => {
+		const { selectBoard, maestro } = await activateWith({ tabs: [] });
+
+		await selectBoard({ boardId: widgets });
+
+		const snapshot = lastSnapshot(maestro);
+		expect(snapshot.boardId).toBe(widgets);
+		expect(snapshot.boards).toEqual([
+			{ id: '__global__', kind: 'global', name: 'Global', projectPath: null, cardCount: 0 },
+			{ id: widgets, kind: 'project', name: 'widgets', projectPath: widgets, cardCount: 0 },
+		]);
+	});
+
+	it("projects every project's cards onto the global board's columns", async () => {
+		const { selectBoard, maestro } = await activateWith({
+			tabs: [
+				aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath: widgets }),
+				aiTab({ id: 'tab-2', sessionId: 'session-2', projectPath: gadgets }),
+			],
+			files: {
+				[GLOBAL_PATH]: globalYaml,
+				[pure.boardFilePath(widgets)]: projectYaml(widgets, [
+					{ id: 'backlog', title: 'Backlog', maps_to: 'now' },
+				]),
+				[pure.boardFilePath(gadgets)]: projectYaml(gadgets, [
+					{ id: 'backlog', title: 'Inbox', maps_to: 'later' },
+				]),
+			},
+		});
+
+		await selectBoard({ boardId: GLOBAL_BOARD_ID });
+
+		const snapshot = lastSnapshot(maestro);
+		expect(snapshot.columns.map((column) => column.id)).toEqual(['now', 'later']);
+		expect(snapshot.columns[0]!.cards.map((card) => card.key)).toEqual(['session-1::tab-1']);
+		expect(snapshot.columns[1]!.cards.map((card) => card.key)).toEqual(['session-2::tab-2']);
+		expect(snapshot.globalBoardMissing).toBe(false);
+	});
+
+	it("tells the panel which global columns a card's project can reach, so it can dim the rest", async () => {
+		const { selectBoard, maestro } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+			files: {
+				[GLOBAL_PATH]: globalYaml,
+				[pure.boardFilePath(widgets)]: projectYaml(widgets, [
+					{ id: 'backlog', title: 'Backlog', maps_to: 'now' },
+				]),
+			},
+		});
+
+		await selectBoard({ boardId: GLOBAL_BOARD_ID });
+
+		const card = lastSnapshot(maestro).columns[0]!.cards[0]!;
+		// 'later' is a global column no widgets column maps to.
+		expect(card.legalColumnIds).toEqual(['now']);
+	});
+
+	it('collects a card whose project has no board file in a read-only Unmapped lane it can leave nowhere', async () => {
+		const { selectBoard, maestro } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+			files: { [GLOBAL_PATH]: globalYaml },
+		});
+
+		await selectBoard({ boardId: GLOBAL_BOARD_ID });
+
+		const snapshot = lastSnapshot(maestro);
+		const lane = snapshot.columns[snapshot.columns.length - 1]!;
+		expect(lane.id).toBe('__unmapped__');
+		expect(lane.title).toBe('Unmapped');
+		expect(lane.readOnly).toBe(true);
+		expect(lane.cards[0]!.legalColumnIds).toEqual([]);
+	});
+
+	it('reports a missing global board file, since every card then lands in Unmapped', async () => {
+		const { selectBoard, maestro } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+		});
+
+		await selectBoard({ boardId: GLOBAL_BOARD_ID });
+
+		const snapshot = lastSnapshot(maestro);
+		expect(snapshot.globalBoardMissing).toBe(true);
+		expect(snapshot.columns.map((column) => column.id)).toEqual(['__unmapped__']);
+	});
+
+	it('writes a global move back to the project column that maps to the target global column', async () => {
+		const boardPath = pure.boardFilePath(widgets);
+		const { selectBoard, move, maestro, storageStore } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+			files: {
+				[GLOBAL_PATH]: globalYaml,
+				[boardPath]: projectYaml(widgets, [
+					{ id: 'backlog', title: 'Backlog', maps_to: 'now' },
+					{ id: 'shipped', title: 'Shipped', maps_to: 'later' },
+				]),
+			},
+		});
+		await selectBoard({ boardId: GLOBAL_BOARD_ID });
+
+		const result = await move({
+			cardKey: 'session-1::tab-1',
+			toColumnId: 'later',
+			toIndex: 0,
+			boardId: GLOBAL_BOARD_ID,
+		});
+
+		expect(result).toEqual({
+			ok: true,
+			columnId: 'shipped',
+			globalColumnId: 'later',
+			index: 0,
+		});
+		expect(readPlacements(storageStore, boardPath)['session-1::tab-1']).toEqual({
+			columnId: 'shipped',
+			order: 0,
+		});
+		const snapshot = lastSnapshot(maestro);
+		expect(snapshot.columns[1]!.cards.map((card) => card.key)).toEqual(['session-1::tab-1']);
+	});
+
+	it("refuses a global move onto a column the card's project cannot reach", async () => {
+		const { selectBoard, move, maestro } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+			files: {
+				[GLOBAL_PATH]: globalYaml,
+				[pure.boardFilePath(widgets)]: projectYaml(widgets, [
+					{ id: 'backlog', title: 'Backlog', maps_to: 'now' },
+				]),
+			},
+		});
+		await selectBoard({ boardId: GLOBAL_BOARD_ID });
+
+		const result = await move({
+			cardKey: 'session-1::tab-1',
+			toColumnId: 'later',
+			toIndex: 0,
+			boardId: GLOBAL_BOARD_ID,
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			reason: '"later" is not a column that card\'s project can reach',
+		});
+		expect(lastSnapshot(maestro).moveRejection).toEqual({
+			cardKey: 'session-1::tab-1',
+			reason: '"later" is not a column that card\'s project can reach',
+		});
+	});
+
+	it('keeps the card on the column it is already projected into when two project columns map there', async () => {
+		const boardPath = pure.boardFilePath(widgets);
+		const { selectBoard, move, storageStore } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+			files: {
+				[GLOBAL_PATH]: globalYaml,
+				[boardPath]: projectYaml(widgets, [
+					{ id: 'backlog', title: 'Backlog', maps_to: 'now' },
+					{ id: 'triage', title: 'Triage', maps_to: 'now' },
+				]),
+			},
+		});
+		await selectBoard({ boardId: GLOBAL_BOARD_ID });
+
+		// A drop on the global column the card is already in is a reorder; it
+		// must not relocate the card inside its own project.
+		await move({
+			cardKey: 'session-1::tab-1',
+			toColumnId: 'now',
+			toIndex: 0,
+			boardId: GLOBAL_BOARD_ID,
+		});
+
+		expect(readPlacements(storageStore, boardPath)['session-1::tab-1']).toEqual({
+			columnId: 'backlog',
+			order: 0,
+		});
+	});
+
+	it("positions a global drop against the card's own project siblings, which are the only order it can store", async () => {
+		const boardPath = pure.boardFilePath(widgets);
+		const { selectBoard, move, maestro, storageStore } = await activateWith({
+			tabs: [
+				aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath: widgets, createdAt: 1 }),
+				aiTab({ id: 'tab-2', sessionId: 'session-1', projectPath: widgets, createdAt: 2 }),
+				aiTab({ id: 'tab-3', sessionId: 'session-2', projectPath: gadgets, createdAt: 3 }),
+			],
+			files: {
+				[GLOBAL_PATH]: globalYaml,
+				[pure.boardFilePath(widgets)]: projectYaml(widgets, [
+					{ id: 'backlog', title: 'Backlog', maps_to: 'now' },
+				]),
+				[pure.boardFilePath(gadgets)]: projectYaml(gadgets, [
+					{ id: 'backlog', title: 'Backlog', maps_to: 'now' },
+				]),
+			},
+		});
+		await selectBoard({ boardId: GLOBAL_BOARD_ID });
+		// All three project onto 'now' and none is positioned yet, so they sort
+		// by last activity, newest first.
+		expect(lastSnapshot(maestro).columns[0]!.cards.map((card) => card.key)).toEqual([
+			'session-2::tab-3',
+			'session-1::tab-2',
+			'session-1::tab-1',
+		]);
+
+		await move({
+			cardKey: 'session-1::tab-1',
+			toColumnId: 'now',
+			toIndex: 0,
+			boardId: GLOBAL_BOARD_ID,
+		});
+
+		// An `order` is a position inside a home-project column, so dropping on
+		// a global column can only record where the card sits among its OWN
+		// project's cards: tab-1 is now above tab-2, which is what the drop
+		// asked for. Where gadgets' card falls between them is decided by
+		// compareCardsByOrder's tiebreaks, not by the drop - it is deterministic
+		// (the same cards always read the same way) but it is not the global
+		// index the panel reported, which no store this plugin has can hold.
+		expect(readPlacements(storageStore, boardPath)).toEqual({
+			'session-1::tab-1': { columnId: 'backlog', order: 0 },
+			'session-1::tab-2': { columnId: 'backlog', order: 1 },
+		});
+		const after = lastSnapshot(maestro).columns[0]!.cards.map((card) => card.key);
+		expect(after.indexOf('session-1::tab-1')).toBeLessThan(after.indexOf('session-1::tab-2'));
+	});
+
+	it('refuses a move whose boardId is no longer the board on screen', async () => {
+		const { selectBoard, move } = await activateWith({
+			tabs: [aiTab({ projectPath: widgets })],
+		});
+		await selectBoard({ boardId: widgets });
+
+		const result = await move({
+			cardKey: 'session-1::tab-1',
+			toColumnId: 'review',
+			toIndex: 0,
+			boardId: gadgets,
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			reason: 'the board changed while the card was moving; try again',
+		});
+	});
+
+	it('refuses a move of a card that belongs to a project other than the board on screen', async () => {
+		const { selectBoard, move } = await activateWith({
+			tabs: [
+				aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath: widgets }),
+				aiTab({ id: 'tab-2', sessionId: 'session-2', projectPath: gadgets }),
+			],
+		});
+		await selectBoard({ boardId: widgets });
+
+		const result = await move({
+			cardKey: 'session-2::tab-2',
+			toColumnId: 'review',
+			toIndex: 0,
+			boardId: widgets,
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			reason: 'that card belongs to another project, not the board on screen',
+		});
 	});
 });

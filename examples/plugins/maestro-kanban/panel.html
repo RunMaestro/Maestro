@@ -26,6 +26,41 @@
 				display: flex;
 				flex-direction: column;
 			}
+			/* The board switcher lives here, outside #board, so it survives the
+			   empty state: a board with no cards must still be nameable and
+			   switchable away from. */
+			#header {
+				flex: 0 0 auto;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 10px 12px;
+				border-bottom: 1px solid var(--maestro-border, #3c3c3c);
+				user-select: none;
+			}
+			#board-name {
+				font-size: 13px;
+				font-weight: 600;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			#board-count {
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#board-switcher {
+				margin-left: auto;
+				max-width: 260px;
+				padding: 3px 6px;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
 			#board {
 				display: flex;
 				flex-direction: row;
@@ -185,6 +220,13 @@
 			#banner[hidden] {
 				display: none;
 			}
+			/* Not an error: the global board has no file yet, so nothing is
+			   mapped. Same slot, deliberately not alarm-colored. */
+			#banner.banner-notice {
+				background: var(--maestro-bg-activity, #2d2d2d);
+				color: var(--maestro-text-main, #e6e6e6);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+			}
 			.banner-path {
 				opacity: 0.85;
 				margin-left: 6px;
@@ -208,6 +250,11 @@
 		</style>
 	</head>
 	<body>
+		<div id="header">
+			<span id="board-name">Kanban Board</span>
+			<span id="board-count"></span>
+			<select id="board-switcher" aria-label="Board"></select>
+		</div>
 		<div id="banner" hidden></div>
 		<div id="toast" hidden></div>
 		<div id="board">
@@ -691,29 +738,163 @@
 					return el;
 				}
 
-				function renderBanner(boardError) {
+				function renderBanner(snapshot) {
 					var banner = document.getElementById('banner');
-					if (!boardError || typeof boardError.message !== 'string') {
-						banner.hidden = true;
-						banner.textContent = '';
+					var boardError = snapshot && snapshot.boardError;
+					banner.textContent = '';
+					banner.className = '';
+					if (boardError && typeof boardError.message === 'string') {
+						banner.hidden = false;
+						var message = document.createElement('span');
+						message.textContent = 'Board file failed to parse: ' + boardError.message;
+						banner.appendChild(message);
+						if (typeof boardError.path === 'string' && boardError.path) {
+							var pathEl = document.createElement('span');
+							pathEl.className = 'banner-path';
+							pathEl.textContent = boardError.path;
+							banner.appendChild(pathEl);
+						}
 						return;
 					}
-					banner.hidden = false;
-					banner.textContent = '';
-					var message = document.createElement('span');
-					message.textContent = 'Board file failed to parse: ' + boardError.message;
-					banner.appendChild(message);
-					if (typeof boardError.path === 'string' && boardError.path) {
-						var pathEl = document.createElement('span');
-						pathEl.className = 'banner-path';
-						pathEl.textContent = boardError.path;
-						banner.appendChild(pathEl);
+					// A Global board with no ~/.maestro/kanban.yaml has no columns to
+					// project onto, so every card lands in Unmapped. That is correct
+					// and looks broken, which is exactly when to say why.
+					if (snapshot && snapshot.globalBoardMissing === true) {
+						banner.hidden = false;
+						banner.className = 'banner-notice';
+						var notice = document.createElement('span');
+						notice.textContent =
+							'No global board yet, so nothing is mapped. Create ~/.maestro/kanban.yaml with the global columns, then point each project column at one with maps_to.';
+						banner.appendChild(notice);
+						return;
 					}
+					banner.hidden = true;
+				}
+
+				// -------------------------------------------------------------
+				// Phase 03 board switcher. The sandbox owns the selection (it is
+				// what remembers it in plugin storage), so the control posts
+				// `select-board` and waits for the snapshot that comes back rather
+				// than guessing which cards the new board holds.
+				// -------------------------------------------------------------
+
+				/** The option list last written into the <select>, so a background
+				 * snapshot push does not rebuild an identical list out from under an
+				 * open dropdown. */
+				var renderedBoardsSignature = null;
+
+				function boardsOf(snapshot) {
+					return snapshot && Array.isArray(snapshot.boards) ? snapshot.boards : [];
+				}
+
+				function boardOptionLabel(board, count) {
+					var name =
+						board && typeof board.name === 'string' && board.name ? board.name : String(board.id);
+					return name + ' (' + count + ')';
+				}
+
+				function cardCountOf(snapshot) {
+					return snapshotColumns(snapshot).reduce(function (sum, column) {
+						return sum + (column && Array.isArray(column.cards) ? column.cards.length : 0);
+					}, 0);
+				}
+
+				/** Every board the switcher offers, in the sandbox's order. The board
+				 * on screen is always one of them: before any agent has been
+				 * activated the panel is on the unnamed "all agents" board, which the
+				 * sandbox reports as a null id and does not list, so it is prepended
+				 * here - a selection missing from the control it was made in would
+				 * leave the user unable to name or leave the board they are looking
+				 * at. */
+				function switcherEntries(snapshot) {
+					var entries = boardsOf(snapshot).map(function (board) {
+						return {
+							id: typeof board.id === 'string' ? board.id : '',
+							label: boardOptionLabel(
+								board,
+								typeof board.cardCount === 'number' ? board.cardCount : 0
+							),
+							title: typeof board.projectPath === 'string' ? board.projectPath : '',
+						};
+					});
+					if (boardIdOf(snapshot) === null) {
+						entries.unshift({
+							id: '',
+							label: boardOptionLabel(
+								{ name: snapshot && snapshot.boardName, id: '' },
+								cardCountOf(snapshot)
+							),
+							title: '',
+						});
+					}
+					// The sandbox caps how many projects ride in a snapshot. Saying
+					// so is the difference between a capped list and a wrong one.
+					var hidden = snapshot && snapshot.boardsHidden;
+					if (typeof hidden === 'number' && hidden > 0) {
+						entries.push({
+							id: '',
+							label: hidden + ' more project' + (hidden === 1 ? '' : 's') + ' not shown',
+							title: '',
+							disabled: true,
+						});
+					}
+					return entries;
+				}
+
+				function renderHeader(snapshot) {
+					var nameEl = document.getElementById('board-name');
+					var countEl = document.getElementById('board-count');
+					var select = document.getElementById('board-switcher');
+					if (!nameEl || !countEl || !select) return;
+
+					var name =
+						snapshot && typeof snapshot.boardName === 'string' && snapshot.boardName
+							? snapshot.boardName
+							: 'Kanban Board';
+					var count = cardCountOf(snapshot);
+					nameEl.textContent = name;
+					nameEl.title = snapshot && snapshot.activeProjectPath ? snapshot.activeProjectPath : '';
+					countEl.textContent = count === 1 ? '1 card' : count + ' cards';
+
+					var entries = switcherEntries(snapshot);
+					var selectedId = boardIdOf(snapshot) === null ? '' : boardIdOf(snapshot);
+					var signature = entries
+						.map(function (entry) {
+							return entry.id + '\u0001' + entry.label;
+						})
+						.join('\u0002');
+					if (signature !== renderedBoardsSignature) {
+						renderedBoardsSignature = signature;
+						select.textContent = '';
+						entries.forEach(function (entry) {
+							var option = document.createElement('option');
+							option.value = entry.id;
+							option.textContent = entry.label;
+							if (entry.disabled) option.disabled = true;
+							// Two projects can share a basename; the full path tells them
+							// apart without widening the control.
+							if (entry.title) option.title = entry.title;
+							select.appendChild(option);
+						});
+					}
+					select.value = selectedId;
+				}
+
+				function onBoardSwitcherChange(event) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'select-board',
+							args: { boardId: event.target.value },
+						},
+						'*'
+					);
 				}
 
 				function render(snapshot) {
 					currentSnapshot = snapshot || null;
-					renderBanner(snapshot && snapshot.boardError);
+					renderHeader(snapshot);
+					renderBanner(snapshot);
 
 					var board = document.getElementById('board');
 					board.innerHTML = '';
@@ -824,6 +1005,11 @@
 
 				var toastEl = document.getElementById('toast');
 				if (toastEl) toastEl.addEventListener('click', hideToast);
+
+				// The <select> is static markup, never replaced by a render, so the
+				// listener is bound once here rather than per snapshot.
+				var switcherEl = document.getElementById('board-switcher');
+				if (switcherEl) switcherEl.addEventListener('change', onBoardSwitcherChange);
 
 				window.addEventListener('message', function (event) {
 					if (event.data && event.data.type === 'maestro:panelData') {

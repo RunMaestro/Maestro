@@ -6,7 +6,7 @@
 	"maestro": { "minHostApi": "1.26.0" },
 	"entry": "main.js",
 	"category": "ui",
-	"description": "A live, read-only Kanban board: every open AI tab is a card, columns reflect live agent status, and clicking a card jumps Maestro to that tab.",
+	"description": "A live Kanban board: every open AI tab is a card, cards drag between columns, a switcher moves between one project's board and a Global board of every project, and clicking a card jumps Maestro to that tab.",
 	"beta": true,
 	"permissions": [
 		{ "capability": "sessions:read", "reason": "Enumerate agents to build and label cards." },

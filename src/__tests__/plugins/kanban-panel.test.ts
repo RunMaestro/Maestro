@@ -47,7 +47,17 @@ interface SnapshotColumn {
 	id: string;
 	title: string;
 	wipLimit?: number;
+	readOnly?: boolean;
 	cards: SnapshotCard[];
+}
+
+/** One entry of the board switcher, matching `boardOptions()` in main.js. */
+interface SnapshotBoard {
+	id: string;
+	kind: 'global' | 'project';
+	name: string;
+	projectPath: string | null;
+	cardCount: number;
 }
 
 // id -> title, matching DEFAULT_COLUMNS in main.js (the columns rendered
@@ -74,6 +84,11 @@ function snapshotWith(
 		columns?: SnapshotColumn[];
 		activeProjectPath?: string | null;
 		projectBoardMissing?: boolean;
+		boardId?: string | null;
+		boardName?: string;
+		boards?: SnapshotBoard[];
+		boardsHidden?: number;
+		globalBoardMissing?: boolean;
 	} = {}
 ) {
 	return {
@@ -88,6 +103,11 @@ function snapshotWith(
 		boardError: opts.boardError ?? null,
 		activeProjectPath: opts.activeProjectPath ?? null,
 		projectBoardMissing: opts.projectBoardMissing ?? false,
+		boardId: opts.boardId ?? null,
+		boardName: opts.boardName ?? 'All Agents',
+		boards: opts.boards ?? [],
+		boardsHidden: opts.boardsHidden,
+		globalBoardMissing: opts.globalBoardMissing ?? false,
 	};
 }
 
@@ -148,6 +168,20 @@ function board(): HTMLElement {
 	const el = document.getElementById('board');
 	if (!el) throw new Error('panel.html has no #board element');
 	return el;
+}
+
+function switcher(): HTMLSelectElement {
+	const el = document.getElementById('board-switcher');
+	if (!(el instanceof HTMLSelectElement)) throw new Error('panel.html has no #board-switcher');
+	return el;
+}
+
+function switcherOptions(): { value: string; label: string; disabled: boolean }[] {
+	return Array.from(switcher().options).map((option) => ({
+		value: option.value,
+		label: option.textContent ?? '',
+		disabled: option.disabled,
+	}));
 }
 
 function findCardElement(title: string): HTMLElement {
@@ -387,6 +421,211 @@ describe('maestro-kanban panel.html', () => {
 		for (const control of Array.from(board().querySelectorAll('button'))) {
 			expect(control.closest('.card')).toBeNull();
 		}
+	});
+
+	it("shows the active board's name and card count in the header", () => {
+		pushSnapshot(
+			snapshotWith(
+				{
+					backlog: [makeCard({ key: 'session-1::tab-1', title: 'One' })],
+					review: [makeCard({ key: 'session-2::tab-2', sessionId: 'session-2', tabId: 'tab-2' })],
+				},
+				{ boardId: '/Users/dev/projects/widgets', boardName: 'widgets' }
+			)
+		);
+
+		expect(document.getElementById('board-name')?.textContent).toBe('widgets');
+		expect(document.getElementById('board-count')?.textContent).toBe('2 cards');
+	});
+
+	it('lists every board the sandbox reports with its card count, and selects the one on screen', () => {
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [makeCard({ key: 'session-1::tab-1' })] },
+				{
+					boardId: '/Users/dev/projects/widgets',
+					boardName: 'widgets',
+					boards: [
+						{ id: '__global__', kind: 'global', name: 'Global', projectPath: null, cardCount: 4 },
+						{
+							id: '/Users/dev/projects/gadgets',
+							kind: 'project',
+							name: 'gadgets',
+							projectPath: '/Users/dev/projects/gadgets',
+							cardCount: 0,
+						},
+						{
+							id: '/Users/dev/projects/widgets',
+							kind: 'project',
+							name: 'widgets',
+							projectPath: '/Users/dev/projects/widgets',
+							cardCount: 1,
+						},
+					],
+				}
+			)
+		);
+
+		// An empty project reads as "(0)" rather than being indistinguishable
+		// from a board that failed to load.
+		expect(switcherOptions()).toEqual([
+			{ value: '__global__', label: 'Global (4)', disabled: false },
+			{ value: '/Users/dev/projects/gadgets', label: 'gadgets (0)', disabled: false },
+			{ value: '/Users/dev/projects/widgets', label: 'widgets (1)', disabled: false },
+		]);
+		expect(switcher().value).toBe('/Users/dev/projects/widgets');
+	});
+
+	it('keeps the full project path on each option, since two projects can share a basename', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					boardId: '__global__',
+					boardName: 'Global',
+					boards: [
+						{ id: '__global__', kind: 'global', name: 'Global', projectPath: null, cardCount: 0 },
+						{
+							id: '/Users/dev/a/widgets',
+							kind: 'project',
+							name: 'widgets',
+							projectPath: '/Users/dev/a/widgets',
+							cardCount: 0,
+						},
+					],
+				}
+			)
+		);
+
+		const option = Array.from(switcher().options).find((o) => o.value === '/Users/dev/a/widgets');
+		expect(option?.title).toBe('/Users/dev/a/widgets');
+	});
+
+	it('posts the select-board command with the chosen board id when the switcher changes', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					boardId: '/Users/dev/projects/widgets',
+					boardName: 'widgets',
+					boards: [
+						{ id: '__global__', kind: 'global', name: 'Global', projectPath: null, cardCount: 1 },
+						{
+							id: '/Users/dev/projects/widgets',
+							kind: 'project',
+							name: 'widgets',
+							projectPath: '/Users/dev/projects/widgets',
+							cardCount: 1,
+						},
+					],
+				}
+			)
+		);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		switcher().value = '__global__';
+		switcher().dispatchEvent(new Event('change'));
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'select-board',
+			args: { boardId: '__global__' },
+		});
+		postMessageSpy.mockRestore();
+	});
+
+	it('lists the unnamed pre-activation board, so the board on screen is always in the control', () => {
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [makeCard({ key: 'session-1::tab-1' })] },
+				{
+					boardId: null,
+					boardName: 'All Agents',
+					boards: [
+						{ id: '__global__', kind: 'global', name: 'Global', projectPath: null, cardCount: 1 },
+					],
+				}
+			)
+		);
+
+		expect(switcherOptions()).toEqual([
+			{ value: '', label: 'All Agents (1)', disabled: false },
+			{ value: '__global__', label: 'Global (1)', disabled: false },
+		]);
+		expect(switcher().value).toBe('');
+	});
+
+	it('says how many projects the snapshot could not carry rather than showing a quietly short list', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					boardId: '__global__',
+					boardName: 'Global',
+					boards: [
+						{ id: '__global__', kind: 'global', name: 'Global', projectPath: null, cardCount: 0 },
+					],
+					boardsHidden: 7,
+				}
+			)
+		);
+
+		const last = switcherOptions().pop();
+		expect(last).toEqual({ value: '', label: '7 more projects not shown', disabled: true });
+	});
+
+	it('keeps the switcher in the header, never inside #board where a drag would die on it', () => {
+		pushSnapshot(
+			snapshotWith({ backlog: [makeCard({ key: 'session-1::tab-1', title: 'Draggable' })] })
+		);
+
+		expect(board().querySelector('#board-switcher')).toBeNull();
+		expect(switcher().closest('#header')).toBeTruthy();
+		expect(switcher().closest('.card')).toBeNull();
+	});
+
+	it('explains an absent global board instead of leaving a bare Unmapped lane looking broken', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					boardId: '__global__',
+					boardName: 'Global',
+					globalBoardMissing: true,
+					columns: [
+						{
+							id: '__unmapped__',
+							title: 'Unmapped',
+							readOnly: true,
+							cards: [makeCard({ key: 'session-1::tab-1' })],
+						},
+					],
+				}
+			)
+		);
+
+		const banner = document.getElementById('banner');
+		expect(banner?.hidden).toBe(false);
+		expect(banner?.className).toBe('banner-notice');
+		expect(banner?.textContent).toContain('~/.maestro/kanban.yaml');
+	});
+
+	it('prefers a parse error over the missing-global-board notice in the one banner slot', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					boardId: '__global__',
+					globalBoardMissing: true,
+					boardError: { message: 'version is required', path: '~/.maestro/kanban.yaml' },
+				}
+			)
+		);
+
+		const banner = document.getElementById('banner');
+		expect(banner?.className).toBe('');
+		expect(banner?.textContent).toContain('version is required');
 	});
 
 	it('posts the focus command with the right (sessionId, tabId) when a card is clicked', () => {

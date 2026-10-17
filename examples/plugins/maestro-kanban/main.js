@@ -1162,6 +1162,248 @@ async function clearAllPlacements() {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 03 board selection: which board the panel is rendering. There are
+// two kinds - one project's own board, and the Global board (the aggregation
+// in the pure section above) - and the user's choice is remembered in plugin
+// storage, so reopening Maestro lands on the board they left rather than
+// snapping back to whichever agent happens to be focused.
+//
+// A board has an id. The snapshot carries it, the panel echoes it back in a
+// `move` post, and handleMove() refuses a move whose id no longer matches, so
+// a drop that was aimed at a board the user has since switched away from is
+// refused instead of silently landing on the wrong board. A project board's
+// id is its project path; the Global board's is the reserved
+// GLOBAL_BOARD_ID. Project paths are absolute, so the two cannot collide.
+//
+// `null` is a third, unnamed board: nothing has been selected and no
+// session.activated event has fired yet, so there is no project to render.
+// That board shows DEFAULT_COLUMNS with every card on it, which is Phase
+// 01's behavior and is kept deliberately - it is the only board a fresh
+// install can show before the host reports a focused agent.
+// ===========================================================================
+
+const GLOBAL_BOARD_ID = '__global__';
+const GLOBAL_BOARD_NAME = 'Global';
+const SELECTED_BOARD_STORAGE_KEY = 'selected-board';
+
+/** The board the user picked in the switcher, or null when they never have
+ * (the panel then follows the active project). Restored from plugin storage
+ * at activate() time by loadSelectedBoard(). */
+let selectedBoardId = null;
+
+/**
+ * A project's name for display: the last segment of its path. Deliberately
+ * not sanitizeSlugBasename(), which lowercases and mangles a name to make it
+ * safe in a filename - this one is read by a person, so it keeps the
+ * project's own capitalization and punctuation. Two projects sharing a
+ * basename therefore read the same in the switcher; the panel carries the
+ * full path as the option's tooltip so they are still tellable apart.
+ * @param {string} projectPath
+ */
+function projectDisplayName(projectPath) {
+	const segments = String(projectPath || '')
+		.split(/[\\/]/)
+		.filter(function (segment) {
+			return segment.length > 0;
+		});
+	return segments.length > 0 ? segments[segments.length - 1] : String(projectPath || '');
+}
+
+/**
+ * The board the panel renders right now: the user's explicit selection when
+ * they have one, the active project's board otherwise. `projectPath` is null
+ * for the Global board and for the unnamed pre-activation board, which the
+ * `kind` tells apart.
+ * @returns {{ kind: 'global'|'project', projectPath: string|null }}
+ */
+function resolveBoardView() {
+	if (selectedBoardId === GLOBAL_BOARD_ID) return { kind: 'global', projectPath: null };
+	if (selectedBoardId !== null) return { kind: 'project', projectPath: selectedBoardId };
+	return { kind: 'project', projectPath: activeProjectPath };
+}
+
+/**
+ * The id of the board the panel is currently rendering, which a `move` post
+ * echoes back so a move aimed at a board the user has since switched away
+ * from can be refused instead of silently landing on the wrong board. Null
+ * only for the unnamed pre-activation board described above.
+ */
+function currentBoardId() {
+	const view = resolveBoardView();
+	return view.kind === 'global' ? GLOBAL_BOARD_ID : view.projectPath;
+}
+
+/** The cards a board shows: a project board shows that project's cards and
+ * nothing else, the Global board shows everything, and the unnamed board
+ * shows everything because it has no project to filter by. */
+function boardCards(view) {
+	const all = Array.from(cards.values());
+	if (view.kind === 'project' && view.projectPath !== null) {
+		return all.filter(function (card) {
+			return card.projectPath === view.projectPath;
+		});
+	}
+	return all;
+}
+
+/** At most this many project entries ride in a snapshot. The switcher is a
+ * list a person reads, and the snapshot has a hard byte budget (see
+ * PANEL_BUDGET_BYTES): a machine with hundreds of projects open would
+ * otherwise spend the whole budget on project paths and leave none for the
+ * cards. The ones kept are the busiest, and the panel is told how many it is
+ * not seeing rather than being left to show a quietly incomplete list. */
+const BOARD_OPTIONS_LIMIT = 48;
+
+/**
+ * Every board the switcher offers: the Global board first, then one entry
+ * per project that has cards, by name. `cardCount` is what makes an empty
+ * project obviously empty rather than looking broken, which is also why the
+ * board currently on screen is always in its own list even when its count is
+ * zero - a selection that vanished from the control it was made in would
+ * leave the panel showing a board the user cannot name or switch away from.
+ * `hiddenCount` is how many projects BOARD_OPTIONS_LIMIT cut.
+ * @returns {{ boards: { id: string, kind: 'global'|'project', name: string, projectPath: string|null, cardCount: number }[], hiddenCount: number }}
+ */
+function boardOptions() {
+	const counts = new Map();
+	let total = 0;
+	for (const card of cards.values()) {
+		total++;
+		if (typeof card.projectPath !== 'string' || card.projectPath === '') continue;
+		counts.set(card.projectPath, (counts.get(card.projectPath) || 0) + 1);
+	}
+	const view = resolveBoardView();
+	const onScreen = view.kind === 'project' ? view.projectPath : null;
+	if (onScreen !== null && !counts.has(onScreen)) counts.set(onScreen, 0);
+	const byName = function (a, b) {
+		const nameA = projectDisplayName(a);
+		const nameB = projectDisplayName(b);
+		if (nameA !== nameB) return nameA < nameB ? -1 : 1;
+		return a < b ? -1 : a > b ? 1 : 0;
+	};
+	let projects = Array.from(counts.keys());
+	let hiddenCount = 0;
+	if (projects.length > BOARD_OPTIONS_LIMIT) {
+		// Busiest first, so the cut falls on the projects with the least on
+		// them; the board on screen survives the cut whatever its count.
+		const ranked = projects.slice().sort(function (a, b) {
+			if (a === onScreen) return -1;
+			if (b === onScreen) return 1;
+			const countA = counts.get(a);
+			const countB = counts.get(b);
+			if (countA !== countB) return countB - countA;
+			return byName(a, b);
+		});
+		hiddenCount = projects.length - BOARD_OPTIONS_LIMIT;
+		projects = ranked.slice(0, BOARD_OPTIONS_LIMIT);
+	}
+	projects.sort(byName);
+	const boards = [
+		{
+			id: GLOBAL_BOARD_ID,
+			kind: 'global',
+			name: GLOBAL_BOARD_NAME,
+			projectPath: null,
+			cardCount: total,
+		},
+	];
+	for (const projectPath of projects) {
+		boards.push({
+			id: projectPath,
+			kind: 'project',
+			name: projectDisplayName(projectPath),
+			projectPath: projectPath,
+			cardCount: counts.get(projectPath),
+		});
+	}
+	return { boards: boards, hiddenCount: hiddenCount };
+}
+
+/** The name the panel header shows for the board on screen. The unnamed
+ * pre-activation board is called "All Agents", since that is literally what
+ * it renders - calling it "Global" would claim the aggregation, which it is
+ * not (it has no global columns and no Unmapped lane). */
+function currentBoardName() {
+	const view = resolveBoardView();
+	if (view.kind === 'global') return GLOBAL_BOARD_NAME;
+	if (view.projectPath === null) return 'All Agents';
+	return projectDisplayName(view.projectPath);
+}
+
+/** Restores the remembered board selection. Called once, before activate()'s
+ * first seed(), so the panel's very first snapshot already renders the board
+ * the user left rather than flashing a different one first. A storage
+ * failure degrades to "follow the active project" rather than throwing the
+ * activation. */
+async function loadSelectedBoard() {
+	try {
+		const raw = await sdk.storage.get(SELECTED_BOARD_STORAGE_KEY);
+		selectedBoardId = typeof raw === 'string' && raw !== '' ? raw : null;
+	} catch (err) {
+		console.error('maestro-kanban: failed to read the remembered board: ' + String(err));
+		selectedBoardId = null;
+	}
+	return selectedBoardId;
+}
+
+/**
+ * Switches the board and remembers the choice. Backs the panel's
+ * `select-board` command. Any non-empty id other than GLOBAL_BOARD_ID is
+ * taken as a project path and is NOT checked against boardOptions(): a
+ * project whose cards have all closed is a legitimately empty board (it
+ * renders its columns and a zero count), and refusing to show it would be
+ * worse than showing it empty. An empty or non-string id clears the
+ * selection back to "follow the active project".
+ * @param {unknown} boardId
+ */
+async function selectBoard(boardId) {
+	const next = typeof boardId === 'string' && boardId !== '' ? boardId : null;
+	if (next === selectedBoardId) {
+		await pushSnapshotNow();
+		return { ok: true, boardId: next };
+	}
+	selectedBoardId = next;
+	try {
+		if (next === null) await sdk.storage.delete(SELECTED_BOARD_STORAGE_KEY);
+		else await sdk.storage.set(SELECTED_BOARD_STORAGE_KEY, next);
+	} catch (err) {
+		// The board still switches for this session; only the memory of it is
+		// lost, which is a strictly smaller failure than refusing the switch.
+		console.error('maestro-kanban: failed to remember the selected board: ' + String(err));
+	}
+	await pushSnapshotNow();
+	return { ok: true, boardId: next };
+}
+
+/** Loads the project board of every project that has a card, for the Global
+ * board's projection. Resolves to a Map of project path -> loadProjectBoard()
+ * result, which buildGlobalBoard() unwraps itself. Reads come from boardCache
+ * after the first call, so this is one pass over the cards in the common
+ * case. */
+async function loadProjectBoardsForCards() {
+	const paths = [];
+	const seen = new Set();
+	for (const card of cards.values()) {
+		if (typeof card.projectPath !== 'string' || card.projectPath === '') continue;
+		if (seen.has(card.projectPath)) continue;
+		seen.add(card.projectPath);
+		paths.push(card.projectPath);
+	}
+	const results = await Promise.all(
+		paths.map(function (projectPath) {
+			return loadProjectBoard(projectPath);
+		})
+	);
+	const map = new Map();
+	for (let i = 0; i < paths.length; i++) map.set(paths[i], results[i]);
+	return map;
+}
+
+// ===========================================================================
+// End of Phase 03 board selection.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 move command: the single write path a drag (or a keyboard move)
 // ends in. The panel's own legality check is advisory - it exists so a drop
 // is never offered where it would fail - and this handler re-checks every
@@ -1219,18 +1461,21 @@ function compareCardsInColumn(a, b) {
 }
 
 /**
- * Buckets every live card into the active board's resolved columns, in
- * display order. The one place that mapping is decided, so the index the
- * panel reports in a drop and the index buildSnapshot() renders can never
- * drift apart. A card whose own columnId is not one of these resolved ids
- * lands in the first column rather than being dropped.
+ * Buckets a board's cards into its resolved columns, in display order. The
+ * one place that mapping is decided, so the index the panel reports in a drop
+ * and the index buildSnapshot() renders can never drift apart. A card whose
+ * own columnId is not one of these resolved ids lands in the first column
+ * rather than being dropped. `boardCardList` is the board's own cards (see
+ * boardCards) - a project board never buckets another project's cards into
+ * its columns.
  * @param {{ id: string }[]} resolvedColumns
+ * @param {object[]} boardCardList
  * @returns {Map<string, object[]>}
  */
-function groupCardsByColumn(resolvedColumns) {
+function groupCardsByColumn(resolvedColumns, boardCardList) {
 	const fallbackColumnId = resolvedColumns.length > 0 ? resolvedColumns[0].id : 'backlog';
 	const byColumn = new Map(resolvedColumns.map((column) => [column.id, []]));
-	for (const card of cards.values()) {
+	for (const card of boardCardList) {
 		const list = byColumn.get(card.columnId) || byColumn.get(fallbackColumnId);
 		if (list) list.push(card);
 	}
@@ -1239,31 +1484,27 @@ function groupCardsByColumn(resolvedColumns) {
 }
 
 /** Loads the boards buildSnapshot() and the move handler both need: the
- * active project's board, the global board, and resolveColumns()' output for
- * the pair. */
+ * board the switcher currently points at (see resolveBoardView), its project
+ * board, the global board, and resolveColumns()' output for the pair.
+ * `columns` describes the project board, so the Global view - which has its
+ * own column list from buildGlobalBoard() - does not read it. */
 async function resolveActiveBoard() {
+	const view = resolveBoardView();
+	const projectPath = view.kind === 'project' ? view.projectPath : null;
 	const [projectResult, globalResult] = await Promise.all([
-		activeProjectPath !== null
-			? loadProjectBoard(activeProjectPath)
+		projectPath !== null
+			? loadProjectBoard(projectPath)
 			: Promise.resolve({ board: null, error: null }),
 		loadGlobalBoard(),
 	]);
 	return {
+		view: view,
+		projectPath: projectPath,
+		cards: boardCards(view),
 		projectResult: projectResult,
 		globalResult: globalResult,
 		columns: resolveColumns(projectResult.board, globalResult.board),
 	};
-}
-
-/**
- * The id of the board the panel is currently rendering, which a `move` post
- * echoes back so a move aimed at a board the user has since switched away
- * from can be refused instead of silently landing on the wrong board. There
- * is exactly one board on screen today and it has no id, so this is null and
- * the panel posts null; the board switcher task is what gives a board an id.
- */
-function currentBoardId() {
-	return null;
 }
 
 /** Records a refusal for the next snapshot and reports it back to the
@@ -1274,20 +1515,25 @@ function refuseMove(key, reason) {
 	return pushSnapshotNow().then(() => ({ ok: false, reason: reason }));
 }
 
+/** Clamps a requested drop index into `[0, length]`, defaulting to the end
+ * for an index the panel did not send or sent as nonsense. */
+function clampDropIndex(index, length) {
+	const requested = typeof index === 'number' && isFinite(index) ? Math.floor(index) : length;
+	return Math.max(0, Math.min(requested, length));
+}
+
 /** Renumbers `columnId`'s cards into dense 0..n orders, with the card for
  * `key` (which may be arriving from another column) spliced in at `index`.
  * Every card in the column comes out explicitly ordered, including the ones
  * that were still sorting by last activity: once the user has arranged a
  * column by hand, a later burst of activity must not reshuffle it under
  * them. Returns the index the card actually landed on after clamping. */
-function placeInColumnOrder(resolvedColumns, columnId, key, index) {
-	const members = (groupCardsByColumn(resolvedColumns).get(columnId) || []).filter(
+function placeInColumnOrder(resolvedColumns, boardCardList, columnId, key, index) {
+	const members = (groupCardsByColumn(resolvedColumns, boardCardList).get(columnId) || []).filter(
 		(card) => card.key !== key
 	);
 	const moved = cards.get(key);
-	const requested =
-		typeof index === 'number' && isFinite(index) ? Math.floor(index) : members.length;
-	const at = Math.max(0, Math.min(requested, members.length));
+	const at = clampDropIndex(index, members.length);
 	const ordered = members.slice();
 	if (moved) ordered.splice(at, 0, moved);
 	for (let i = 0; i < ordered.length; i++) setCardOrder(ordered[i], i);
@@ -1299,15 +1545,36 @@ function placeInColumnOrder(resolvedColumns, columnId, key, index) {
  * positioned by hand keep no order, so they stay in the last-activity block
  * at the top of the column instead of being pinned by a move they had
  * nothing to do with. */
-function renumberColumnOrder(resolvedColumns, columnId) {
+function renumberColumnOrder(resolvedColumns, boardCardList, columnId) {
 	if (typeof columnId !== 'string' || columnId === '') return;
-	const members = groupCardsByColumn(resolvedColumns).get(columnId) || [];
+	const members = groupCardsByColumn(resolvedColumns, boardCardList).get(columnId) || [];
+	renumberOrderedCards(members);
+}
+
+/** The shared half of a renumber: positioned cards keep dense 0..n orders in
+ * their current display order, and a card nobody ever dragged keeps none. */
+function renumberOrderedCards(members) {
 	let next = 0;
 	for (const card of members) {
 		if (cardOrderOf(card) === null) continue;
 		setCardOrder(card, next);
 		next++;
 	}
+}
+
+/** One project's cards sitting in one of its own columns, in display order.
+ * The Global board's move path works in these terms because an `order` is
+ * only ever a position inside a home-project column - see
+ * reorderGlobalColumn(). */
+function projectColumnMembers(projectPath, columnId) {
+	const members = [];
+	for (const card of cards.values()) {
+		if (card.projectPath !== projectPath) continue;
+		if (card.columnId !== columnId) continue;
+		members.push(card);
+	}
+	members.sort(compareCardsInColumn);
+	return members;
 }
 
 /**
@@ -1345,6 +1612,20 @@ async function handleMove(args) {
 		resolveActiveBoard(),
 		loadProjectBoard(card.projectPath),
 	]);
+	if (active.view.kind === 'global') {
+		return handleGlobalMove(
+			card,
+			cardProjectResult.board,
+			active.globalResult.board,
+			toColumnId,
+			toIndex
+		);
+	}
+	if (active.projectPath !== null && card.projectPath !== active.projectPath) {
+		// A project board only renders its own project's cards, so this is a
+		// post from a panel whose snapshot predates a board switch.
+		return refuseMove(key, 'that card belongs to another project, not the board on screen');
+	}
 	const legal = legalColumnsFor(card, cardProjectResult.board, active.globalResult.board);
 	if (legal.indexOf(toColumnId) === -1) {
 		return refuseMove(key, '"' + toColumnId + '" is not a column that card can move to');
@@ -1356,11 +1637,105 @@ async function handleMove(args) {
 	const fromColumnId = card.columnId;
 	card.columnId = toColumnId;
 	setPlacement(boardFilePath(card.projectPath), key, toColumnId);
-	const landedAt = placeInColumnOrder(active.columns, toColumnId, key, toIndex);
-	if (fromColumnId !== toColumnId) renumberColumnOrder(active.columns, fromColumnId);
+	const landedAt = placeInColumnOrder(active.columns, active.cards, toColumnId, key, toIndex);
+	if (fromColumnId !== toColumnId) {
+		renumberColumnOrder(active.columns, active.cards, fromColumnId);
+	}
 	await flushDirtyPlacements();
 	await pushSnapshotNow();
 	return { ok: true, columnId: toColumnId, index: landedAt };
+}
+
+/**
+ * The Global board's half of handleMove(): the card was dropped on a *global*
+ * column, and the only thing this plugin ever stores is a home-project
+ * placement, so the move has to be translated back into the project column
+ * that maps to that global column. legalGlobalColumnsFor() gates it (a card
+ * may only land on a global column its own project can reach) and
+ * projectColumnForGlobalColumn() picks the column to write - both re-derived
+ * here from the card's own project board, never read off the panel's claim.
+ * @param {object} card
+ * @param {object|null} cardProjectBoard
+ * @param {object|null} globalBoard
+ * @param {string} toColumnId
+ * @param {number|null} toIndex
+ */
+async function handleGlobalMove(card, cardProjectBoard, globalBoard, toColumnId, toIndex) {
+	const key = card.key;
+	if (!cardProjectBoard) {
+		// An Unmapped-lane card with no board file of its own: there is no
+		// project column to write the move back to.
+		return refuseMove(key, 'that project has no board file, so the global board cannot place it');
+	}
+	const legal = legalColumnsFor(card, cardProjectBoard, globalBoard, { global: true });
+	if (legal.indexOf(toColumnId) === -1) {
+		return refuseMove(key, '"' + toColumnId + '" is not a column that card\'s project can reach');
+	}
+	const decision = projectColumnForGlobalColumn(card, cardProjectBoard, globalBoard, toColumnId);
+	if (!decision) {
+		return refuseMove(key, '"' + toColumnId + '" is not a column that card\'s project can reach');
+	}
+	if (decision.ambiguous) {
+		// The pure decision function deliberately does not log, so the forced
+		// choice is recorded here - see projectColumnForGlobalColumn().
+		console.warn(
+			'maestro-kanban: project "' +
+				card.projectPath +
+				'" maps ' +
+				decision.candidates.join(', ') +
+				' to the global column "' +
+				toColumnId +
+				'"; placed ' +
+				key +
+				' on "' +
+				decision.columnId +
+				'"' +
+				(decision.columnId === card.columnId ? ' (the column it was already on)' : ' (the first)')
+		);
+	}
+
+	const fromColumnId = card.columnId;
+	card.columnId = decision.columnId;
+	setPlacement(boardFilePath(card.projectPath), key, decision.columnId);
+	const landedAt = await reorderGlobalColumn(card, globalBoard, toColumnId, toIndex);
+	if (fromColumnId !== decision.columnId) {
+		renumberOrderedCards(projectColumnMembers(card.projectPath, fromColumnId));
+	}
+	await flushDirtyPlacements();
+	await pushSnapshotNow();
+	return { ok: true, columnId: decision.columnId, globalColumnId: toColumnId, index: landedAt };
+}
+
+/**
+ * Writes the position a drop on a *global* column implies. A stored order is
+ * a position inside one home-project column, and a global column interleaves
+ * several projects' columns, so the drop index cannot be stored verbatim:
+ * instead the global column's post-move order is projected onto the moved
+ * card's own project siblings in it, which are the only cards whose relative
+ * order this plugin can actually record. The card therefore lands after every
+ * sibling above the drop point and before every sibling below it, and cards
+ * from other projects fall where compareCardsByOrder()'s tiebreaks put them -
+ * deterministically, so the column does not reshuffle on the next snapshot.
+ * Returns the clamped index within the global column.
+ */
+async function reorderGlobalColumn(card, globalBoard, toColumnId, toIndex) {
+	const projectBoards = await loadProjectBoardsForCards();
+	const built = buildGlobalBoard(globalBoard, projectBoards, cards.values(), {
+		orderOf: cardOrderOf,
+	});
+	const column = built.columns.filter(function (candidate) {
+		return candidate.id === toColumnId;
+	})[0];
+	const members = (column ? column.cards : []).filter(function (other) {
+		return other.key !== card.key;
+	});
+	const at = clampDropIndex(toIndex, members.length);
+	members.splice(at, 0, card);
+	const siblings = members.filter(function (other) {
+		return other.projectPath === card.projectPath && other.columnId === card.columnId;
+	});
+	for (let i = 0; i < siblings.length; i++) setCardOrder(siblings[i], i);
+	return at;
 }
 
 // ===========================================================================
@@ -1488,7 +1863,16 @@ function schedulePanelPush() {
 	}, PANEL_PUSH_DEBOUNCE_MS);
 }
 
-function cardToJson(card) {
+/** One card in the panel's own shape. `legalColumnIds` is only sent when the
+ * answer is not simply "every writable column on this board" - that is the
+ * Global board, where a card may only be dropped on a global column its home
+ * project can reach - and the panel dims every other column when it is
+ * present (see legalColumnIdsFor in panel.html). Omitted on a project board,
+ * where every column is reachable by definition.
+ * @param {object} card
+ * @param {string[]} [legalColumnIds]
+ */
+function cardToJson(card, legalColumnIds) {
 	return {
 		key: card.key,
 		sessionId: card.sessionId,
@@ -1499,55 +1883,132 @@ function cardToJson(card) {
 		status: card.status,
 		createdAt: card.createdAt,
 		lastActivityAt: card.lastActivityAt,
+		legalColumnIds: Array.isArray(legalColumnIds) ? legalColumnIds : undefined,
 	};
 }
 
 /**
- * Builds the panel snapshot for "the active board": resolveColumns()'s
- * output for activeProjectPath (or DEFAULT_COLUMNS when none is active yet),
- * each column carrying its title and wip_limit so the panel never has to
- * guess either. A card whose own columnId is not one of these resolved ids -
- * its home project uses different columns than the active board, or its
- * placement predates this task's fallback-bucket logic - lands in the first
- * column rather than being dropped; real cross-project aggregation is a
- * later Phase 03 task. Within a column, cards come out in
- * groupCardsByColumn()'s order, which honors whatever a move wrote.
- * `boardError` surfaces whichever of the active project's or the global
- * board's file most recently failed to parse, so a broken file is
- * diagnosable from the board itself, and `moveRejection` carries the one
- * refused move the panel still has to be told about - see handleMove().
+ * The columns of one project's board: resolveColumns()'s output for the
+ * project the switcher points at (or DEFAULT_COLUMNS when it points at the
+ * unnamed pre-activation board), each carrying its title and wip_limit so the
+ * panel never has to guess either. A card whose own columnId is not one of
+ * these resolved ids - its placement predates a hand edit of the board file -
+ * lands in the first column rather than being dropped. Within a column,
+ * cards come out in groupCardsByColumn()'s order, which honors whatever a
+ * move wrote.
+ */
+function buildProjectBoardColumns(active) {
+	const byColumn = groupCardsByColumn(active.columns, active.cards);
+	return {
+		columns: active.columns.map((column) => ({
+			id: column.id,
+			title: column.title,
+			wipLimit: typeof column.wip_limit === 'number' ? column.wip_limit : undefined,
+			cards: (byColumn.get(column.id) || []).map((card) => cardToJson(card)),
+		})),
+		boardError:
+			(active.projectPath !== null && active.projectResult.error) ||
+			active.globalResult.error ||
+			null,
+		// True only when the board on screen is a real project's and it has no
+		// board file at all yet (ENOENT, not a parse failure - that case is
+		// already covered by boardError above). Lets the panel offer "write a
+		// default board" exactly when there is a project with nothing to lose,
+		// never when one merely failed to parse.
+		projectBoardMissing:
+			active.projectPath !== null &&
+			active.projectResult.board === null &&
+			active.projectResult.error === null,
+		globalBoardMissing: undefined,
+	};
+}
+
+/**
+ * The columns of the Global board: buildGlobalBoard()'s projection of every
+ * project's cards onto the global board's columns, plus the read-only
+ * Unmapped lane for the cards it cannot place. Every card carries the global
+ * columns its own project can reach, so the panel dims the rest during a drag
+ * rather than offering a drop handleGlobalMove() would only refuse. That
+ * answer depends on the card's project and not on the card, so it is
+ * memoized per project path. `boardError` prefers the global board file's own
+ * parse failure and falls back to the first project board that failed, since
+ * on this board either one is what the user has to go fix.
+ */
+async function buildGlobalBoardColumns(active) {
+	const globalBoard = active.globalResult.board;
+	const projectBoards = await loadProjectBoardsForCards();
+	const built = buildGlobalBoard(globalBoard, projectBoards, cards.values(), {
+		orderOf: cardOrderOf,
+	});
+	const legalByProject = new Map();
+	function legalFor(card) {
+		const projectPath = typeof card.projectPath === 'string' ? card.projectPath : '';
+		if (!legalByProject.has(projectPath)) {
+			legalByProject.set(
+				projectPath,
+				legalColumnsFor(card, projectBoardFor(projectBoards, projectPath), globalBoard, {
+					global: true,
+				})
+			);
+		}
+		return legalByProject.get(projectPath);
+	}
+	let boardError = active.globalResult.error;
+	if (!boardError) {
+		for (const result of projectBoards.values()) {
+			if (result && result.error) {
+				boardError = result.error;
+				break;
+			}
+		}
+	}
+	return {
+		columns: built.columns.map((column) => ({
+			id: column.id,
+			title: column.title,
+			wipLimit: typeof column.wip_limit === 'number' ? column.wip_limit : undefined,
+			readOnly: column.readOnly === true ? true : undefined,
+			cards: column.cards.map((card) => cardToJson(card, legalFor(card))),
+		})),
+		boardError: boardError || null,
+		projectBoardMissing: false,
+		// No global board file at all: every card falls into the Unmapped lane,
+		// which looks broken unless the panel says why.
+		globalBoardMissing: globalBoard === null && active.globalResult.error === null,
+	};
+}
+
+/**
+ * Builds the panel snapshot for the board the switcher points at (see
+ * resolveBoardView): one project's own columns, or the Global board's
+ * projection. `boards` is every board the switcher offers with its card
+ * count, `boardName` is what the panel header shows, and `boardId` is echoed
+ * back in a `move` post so a move aimed at a board the user has since
+ * switched away from is refused. `moveRejection` carries the one refused move
+ * the panel still has to be told about - see handleMove().
  */
 async function buildSnapshot() {
 	const active = await resolveActiveBoard();
-	const projectResult = active.projectResult;
-	const globalResult = active.globalResult;
-	const resolvedColumns = active.columns;
-	const byColumn = groupCardsByColumn(resolvedColumns);
 	// Drained, not copied: a refusal is a one-shot message to the panel, so it
 	// must not ride every snapshot after the one that reports it.
 	const moveRejection = pendingMoveRejection;
 	pendingMoveRejection = null;
-	const boardError =
-		(activeProjectPath !== null && projectResult.error) || globalResult.error || null;
-	// True only when there is an active project and it has no board file at
-	// all yet (ENOENT, not a parse failure - that case is already covered by
-	// boardError above). Lets the panel offer "write a default board" exactly
-	// when there is a project with nothing to lose, never when one merely
-	// failed to parse.
-	const projectBoardMissing =
-		activeProjectPath !== null && projectResult.board === null && projectResult.error === null;
+	const board =
+		active.view.kind === 'global'
+			? await buildGlobalBoardColumns(active)
+			: buildProjectBoardColumns(active);
+	const options = boardOptions();
 	return {
 		updatedAt: Date.now(),
-		columns: resolvedColumns.map((column) => ({
-			id: column.id,
-			title: column.title,
-			wipLimit: typeof column.wip_limit === 'number' ? column.wip_limit : undefined,
-			cards: (byColumn.get(column.id) || []).map(cardToJson),
-		})),
-		boardError: boardError,
-		activeProjectPath: activeProjectPath,
-		projectBoardMissing: projectBoardMissing,
+		columns: board.columns,
+		boardError: board.boardError,
+		globalBoardMissing: board.globalBoardMissing,
+		activeProjectPath: active.projectPath,
+		projectBoardMissing: board.projectBoardMissing,
 		boardId: currentBoardId(),
+		boardName: currentBoardName(),
+		boards: options.boards,
+		boardsHidden: options.hiddenCount > 0 ? options.hiddenCount : undefined,
 		moveRejection: moveRejection,
 	};
 }
@@ -1576,6 +2037,10 @@ function trimToBudget(snapshot) {
 			agentId: c.agentId,
 			status: c.status,
 			lastActivityAt: c.lastActivityAt,
+			// Kept: without it every column looks legal during a drag on the
+			// Global board, so a trimmed board would start offering drops the
+			// sandbox refuses. A handful of column ids is worth that.
+			legalColumnIds: c.legalColumnIds,
 		}));
 	}
 	let guard = 0;
@@ -1756,6 +2221,15 @@ function registerCommands(maestro) {
 			})
 	);
 
+	// Invoked by the panel's board switcher; no manifest `commands` entry is
+	// needed since the palette has no way to pick which board it would mean.
+	maestro.commands.register('select-board', (args) =>
+		selectBoard(args && args.boardId).catch((err) => {
+			console.error('maestro-kanban: select-board failed: ' + String(err));
+			return safeToast('Could not switch boards.').then(() => ({ ok: false }));
+		})
+	);
+
 	// Invoked by the panel when a drag ends in a drop (and, later, by its
 	// keyboard move); no manifest `commands` entry is needed since it is never
 	// surfaced in the command palette.
@@ -1810,6 +2284,14 @@ module.exports = {
 	compareCardsByOrder: compareCardsByOrder,
 	declaredCardOrder: declaredCardOrder,
 
+	// Phase 03 board selection. GLOBAL_BOARD_ID is the id the panel's switcher
+	// posts back for the Global board, so a test naming that board uses this
+	// rather than repeating the literal; projectDisplayName is pure and is
+	// what the switcher labels a project with.
+	GLOBAL_BOARD_ID: GLOBAL_BOARD_ID,
+	GLOBAL_BOARD_NAME: GLOBAL_BOARD_NAME,
+	projectDisplayName: projectDisplayName,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -1830,6 +2312,9 @@ module.exports = {
 		} catch (err) {
 			console.error('maestro-kanban: events.subscribe failed: ' + String(err));
 		}
+		// Before seed(), so the first snapshot already renders the board the
+		// user left instead of flashing the active project's board first.
+		await loadSelectedBoard();
 		await seed();
 		await prunePlacements();
 	},
@@ -1846,6 +2331,7 @@ module.exports = {
 		dirtySessions.clear();
 		cards = new Map();
 		activeProjectPath = null;
+		selectedBoardId = null;
 		placementCache.clear();
 		dirtyPlacementBoards.clear();
 		pendingMoveRejection = null;
