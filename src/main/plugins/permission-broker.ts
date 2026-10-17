@@ -13,6 +13,7 @@
 import {
 	isPermitted,
 	isPathScoped,
+	hasSessionGrantScope,
 	type PluginCapability,
 	type PermissionGrant,
 } from '../../shared/plugins/permissions';
@@ -131,6 +132,18 @@ export class PermissionBroker {
 			// re-authorizes the resource's real origin against the live grant. Without
 			// this, a scoped grant (the recommended form) would be denied for a
 			// missing target even though the operation is in-scope.
+			allowed = grants.some((g) => g.capability === capability);
+			reason = allowed ? undefined : `permission denied: ${capability}`;
+		} else if (isPathScoped(capability) && hasSessionGrantScope(grants, capability)) {
+			// `granted-sessions` replaces this capability's path scope with a set of
+			// session ids held in the host's sealed ledger, which the pure matcher
+			// cannot see - so a path comparison would deny every call. Confirm only
+			// that the capability is held (the HANDLER_REAUTHORIZED_METHODS posture);
+			// the handler then requires `isSessionGranted(pluginId, sessionId)` for
+			// the concrete session before it reads anything, and a Settings revoke
+			// denies on the very next call because grants are re-read every time.
+			// Allowlist-scoped verbs need no relaxation: the host rewrites their
+			// scope to the granted ids, so exact membership already enforces the set.
 			allowed = grants.some((g) => g.capability === capability);
 			reason = allowed ? undefined : `permission denied: ${capability}`;
 		} else {

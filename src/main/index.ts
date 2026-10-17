@@ -106,6 +106,12 @@ import {
 } from './plugins/first-party-bridge';
 import { FIRST_PARTY_PLUGINS, type FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import { pluginIdentity } from './plugins/plugin-identity';
+import {
+	configurePluginSessionGrants,
+	grantSession,
+	isSessionGranted,
+	usesSessionGrants,
+} from './plugins/plugin-session-grants';
 import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
 import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
 import {
@@ -1801,6 +1807,24 @@ app
 		// bound, anti-rollback) instead of the forgeable on-disk store.
 		const grantsOf = (pluginId: string) => authStore.readGrants(pluginId);
 
+		// Host-enforced per-session grants. A plugin whose manifest declares the
+		// `granted-sessions` scope may dispatch to, and read the History of, only
+		// the sessions it created itself or the user approved - the set lives in the
+		// sealed ledger as the `agents:dispatch` allowlist scope, so it is persisted,
+		// broker-checked on every call, editable in Settings, and dropped on revoke.
+		// `pluginManager` is assigned later in this function; the closure reads it
+		// lazily and reports no requested permissions until it exists, so the grant
+		// set fails closed during startup rather than guessing.
+		configurePluginSessionGrants({
+			authStore,
+			getRequestedPermissions: (pluginId) => pluginManager?.getRequestedPermissions(pluginId),
+			sessionExists: (sessionId) =>
+				(sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
+					(session) => session?.id === sessionId
+				),
+			audit: (message) => logger.info(message, '[PluginAudit]'),
+		});
+
 		// First-party plugin bridges (encore-lifts L0): one host-owned lifecycle
 		// bridge per Encore feature definition. Enable mints the definition's
 		// declared grants through the SAME sealed ledger community consents use
@@ -2330,7 +2354,8 @@ app
 		const pluginSessionsGet = (sessionId: string): PluginSessionMetadata | null =>
 			pluginSessionsList().find((s) => s.id === sessionId) ?? null;
 		const pluginSessionsCreate = async (
-			params: Record<string, unknown>
+			params: Record<string, unknown>,
+			pluginId: string
 		): Promise<PluginSessionMetadata> => {
 			const now = Date.now();
 			const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
@@ -2418,6 +2443,11 @@ app
 				}
 			}
 			sessionsStore.set('activeSessionId', sessionId);
+			// A session-granting plugin owns what it just created: it may message and
+			// read the History of this one agent with no further confirmation. Every
+			// OTHER agent still needs an explicit user approval. Done AFTER the store
+			// write so `sessionExists` can see it.
+			if (usesSessionGrants(pluginId)) grantSession(pluginId, sessionId, 'created');
 			return {
 				id: sessionId,
 				title,
@@ -2787,6 +2817,39 @@ app
 					'trusted',
 				getPluginSignature: (pluginId) =>
 					pluginManager?.getRegistry().records.find((record) => record.id === pluginId)?.signature,
+				// Host-enforced session grants (see plugin-session-grants.ts). Wired as
+				// predicates so the handler never reaches the sealed ledger itself; both
+				// read it LIVE, so a Settings revoke denies on the very next call.
+				usesSessionGrants,
+				isSessionGranted,
+				grantSession,
+				pluginDisplayName: (pluginId) =>
+					pluginManager?.getRegistry().records.find((record) => record.id === pluginId)?.manifest
+						?.name,
+				// Maestro's OWN confirmation, drawn by the main process and parented to
+				// the main window: a native message box the plugin cannot render,
+				// style, pre-answer, or suppress. Defaults to Don't Allow, and the
+				// Escape key resolves to it too (cancelId).
+				confirmSessionAccess: async (info) => {
+					const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+					const where = info.projectPath ? `\n\nProject: ${info.projectPath}` : '';
+					const options = {
+						type: 'question' as const,
+						title: 'Allow plugin access to an agent?',
+						message: `${info.pluginName} wants access to "${info.sessionTitle ?? info.sessionId}"`,
+						detail:
+							`Allowing lets ${info.pluginName} send messages to this agent and read its ` +
+							`History. It does not give access to any other agent.${where}`,
+						buttons: ["Don't Allow", 'Allow'],
+						defaultId: 0,
+						cancelId: 0,
+						noLink: true,
+					};
+					const answer = parent
+						? await dialog.showMessageBox(parent, options)
+						: await dialog.showMessageBox(options);
+					return answer.response === 1;
+				},
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
 				sendAgent: runHeadlessAgent,
 				generateTitle: async (agentId, firstMessage, signal) => {

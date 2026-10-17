@@ -236,6 +236,78 @@ export function isPathScoped(capability: PluginCapability): boolean {
 	return CAPABILITY_SCOPE_KIND[capability] === 'path';
 }
 
+/**
+ * The ONE exact scope keyword that replaces a scope the plugin author could not
+ * know with a HOST-HELD set of session ids. A plugin cannot know, at authoring
+ * time, which agents a user will have, and `agents:dispatch` requires a
+ * non-empty member list while `transcripts:read` requires a project path. This
+ * keyword says instead: "whatever sessions the host has granted me" - the
+ * sessions this plugin created itself, plus the ones the user approved in a
+ * one-time Maestro confirmation (`sessions.requestAccess`).
+ *
+ * It is an EXPLICIT scope, never the unscoped (broadest) form: a consented
+ * keyword grant starts with NO members and therefore covers nothing until the
+ * host adds one (see `parseAllowlistScope`, which drops the keyword, and
+ * `hasSessionGrantScope`, which the broker uses to hand enforcement to the
+ * handler). The member set itself lives in the sealed authorization ledger -
+ * the host rewrites the grant's scope through `setAllowlistScope` as sessions
+ * are granted and revoked, so it is persisted, user-editable in Settings, and
+ * cleared when the capability is revoked.
+ */
+export const GRANTED_SESSIONS_SCOPE = 'granted-sessions';
+
+/**
+ * Stable consent/UI wording for a {@link GRANTED_SESSIONS_SCOPE} grant. The
+ * consent page must never show the raw keyword: "granted-sessions" tells the
+ * user nothing about the blast radius, while this sentence tells them exactly
+ * which agents the plugin can reach and that they are the ones who decide.
+ */
+export const GRANTED_SESSIONS_CONSENT_TEXT =
+	'only agents this plugin creates, or that you approve when asked';
+
+/**
+ * The capabilities whose scope may be the {@link GRANTED_SESSIONS_SCOPE}
+ * keyword. Deliberately only the two verbs that act on ONE session: dispatch
+ * (send it a prompt) and transcript reads (read its History). Anything else -
+ * including `transcripts:write` and the `fs:*` path verbs - keeps its own scope
+ * kind, so the keyword can never appear where no grant set governs it.
+ */
+const SESSION_GRANT_CAPABILITIES: readonly PluginCapability[] = [
+	'agents:dispatch',
+	'transcripts:read',
+];
+
+/** May `capability` carry the `granted-sessions` scope keyword? */
+export function capabilitySupportsSessionGrants(capability: PluginCapability): boolean {
+	return SESSION_GRANT_CAPABILITIES.includes(capability);
+}
+
+/** Is `scope` exactly the `granted-sessions` keyword (not a path, host, or
+ * member list that merely contains it)? */
+export function isSessionGrantScope(scope: string | undefined): boolean {
+	return typeof scope === 'string' && scope.trim() === GRANTED_SESSIONS_SCOPE;
+}
+
+/**
+ * Does the plugin hold a `granted-sessions`-scoped grant of `capability`? The
+ * broker asks this for the PATH-scoped `transcripts:read`: the grant set is a
+ * host-side structure the pure matcher cannot see, so a path comparison would
+ * deny every call. When this is true the broker confirms only that the
+ * capability is held (the `HANDLER_REAUTHORIZED_METHODS` posture) and the
+ * handler requires the concrete session to be granted before it reads anything.
+ *
+ * Allowlist-scoped capabilities need no such relaxation: the host rewrites
+ * their scope to the granted session ids, so the ordinary exact-membership
+ * check already enforces the grant set on every call.
+ */
+export function hasSessionGrantScope(
+	grants: readonly PermissionGrant[],
+	capability: PluginCapability
+): boolean {
+	if (!capabilitySupportsSessionGrants(capability)) return false;
+	return grants.some((g) => g.capability === capability && isSessionGrantScope(g.scope));
+}
+
 export function isPluginCapability(value: unknown): value is PluginCapability {
 	return typeof value === 'string' && (PLUGIN_CAPABILITIES as readonly string[]).includes(value);
 }
@@ -346,8 +418,36 @@ export function parsePermissions(
 			out.errors.push(`capability "${capability}" scope must be a string`);
 			continue;
 		}
+		if (reason !== undefined && typeof reason !== 'string') {
+			out.errors.push(`capability "${capability}" reason must be a string`);
+			continue;
+		}
 		if (scopeKind === 'none' && typeof scope === 'string' && scope.trim() !== '') {
 			out.errors.push(`capability "${capability}" does not take a scope`);
+			continue;
+		}
+		// The `granted-sessions` keyword replaces this capability's own scope kind
+		// with the host-held grant set, so it skips both the allowlist member
+		// validation (a plugin author cannot know a session id at authoring time)
+		// and the path validation (there is no project path to name). Accepted for
+		// EXACTLY the two session-acting verbs and rejected everywhere else.
+		if (isSessionGrantScope(scope) && !capabilitySupportsSessionGrants(capability)) {
+			// Reject rather than fall through: a path-scoped verb would otherwise
+			// silently accept the keyword as a RELATIVE directory named
+			// "granted-sessions", so the author would believe the host was managing
+			// a grant set that does not exist for this capability.
+			out.errors.push(
+				`capability "${capability}" does not take the "${GRANTED_SESSIONS_SCOPE}" scope ` +
+					`(only ${SESSION_GRANT_CAPABILITIES.join(' and ')} do)`
+			);
+			continue;
+		}
+		if (isSessionGrantScope(scope)) {
+			out.requests.push({
+				capability,
+				scope: GRANTED_SESSIONS_SCOPE,
+				...(typeof reason === 'string' && reason.trim() !== '' ? { reason: reason.trim() } : {}),
+			});
 			continue;
 		}
 		if (scopeKind === 'allowlist') {
@@ -363,10 +463,6 @@ export function parsePermissions(
 				out.errors.push(err);
 				continue;
 			}
-		}
-		if (reason !== undefined && typeof reason !== 'string') {
-			out.errors.push(`capability "${capability}" reason must be a string`);
-			continue;
 		}
 		out.requests.push({
 			capability,
@@ -534,7 +630,11 @@ export function parseAllowlistScope(scope: string | undefined): readonly string[
 	const members = scope
 		.split(',')
 		.map((m) => m.trim())
-		.filter((m) => m !== '');
+		// The `granted-sessions` keyword names the host-held grant set, not a
+		// session. Dropping it here is what makes a freshly consented keyword grant
+		// cover NOTHING: the host rewrites the scope to real session ids as it
+		// grants them, and until it does there are no members to match.
+		.filter((m) => m !== '' && m !== GRANTED_SESSIONS_SCOPE);
 	if (members.length === 0) return null;
 	return members;
 }
@@ -607,6 +707,11 @@ export function isPermitted(
 			continue;
 		}
 		if (!grant.scope) return true; // unscoped grant = broadest
+		// A `granted-sessions` path scope is not a path: the member set lives in the
+		// host's sealed ledger, which this pure matcher cannot see. Deny here (never
+		// let it prefix-match a relative target) and let the broker + handler pair
+		// enforce it - see `hasSessionGrantScope`.
+		if (isSessionGrantScope(grant.scope)) continue;
 		if (target === undefined) continue; // scoped grant needs a concrete target
 		if (scopeKind === 'path' && pathScopeCovers(grant.scope, target)) return true;
 		if (scopeKind === 'host' && hostScopeCovers(grant.scope, target)) return true;

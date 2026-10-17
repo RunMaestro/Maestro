@@ -10,8 +10,14 @@ import {
 	isAllowlistScoped,
 	isPathScoped,
 	isValidAllowlistMember,
+	capabilitySupportsSessionGrants,
+	hasSessionGrantScope,
+	isSessionGrantScope,
+	parseAllowlistScope,
+	GRANTED_SESSIONS_SCOPE,
 	PLUGIN_CAPABILITIES,
 	type PermissionGrant,
+	type PluginCapability,
 } from '../../../shared/plugins/permissions';
 
 describe('parsePermissions', () => {
@@ -588,4 +594,105 @@ describe('services:call exact provider/service allowlists', () => {
 			expect(isValidAllowlistMember(target)).toBe(false);
 		}
 	);
+});
+
+describe('granted-sessions scope keyword (host-held per-session grants)', () => {
+	const keyword = { scope: GRANTED_SESSIONS_SCOPE } as const;
+
+	it.each(['agents:dispatch', 'transcripts:read'] as const)('parses for %s', (capability) => {
+		const parsed = parsePermissions([{ capability, ...keyword, reason: 'why' }]);
+		expect(parsed.errors).toEqual([]);
+		expect(parsed.requests).toEqual([{ capability, scope: GRANTED_SESSIONS_SCOPE, reason: 'why' }]);
+		expect(capabilitySupportsSessionGrants(capability)).toBe(true);
+	});
+
+	it('trims the keyword to its exact form and keeps a malformed reason loud', () => {
+		expect(
+			parsePermissions([{ capability: 'agents:dispatch', scope: `  ${GRANTED_SESSIONS_SCOPE}  ` }])
+				.requests
+		).toEqual([{ capability: 'agents:dispatch', scope: GRANTED_SESSIONS_SCOPE }]);
+		const badReason = parsePermissions([{ capability: 'agents:dispatch', ...keyword, reason: 7 }]);
+		expect(badReason.requests).toEqual([]);
+		expect(badReason.errors[0]).toMatch(/reason must be a string/);
+	});
+
+	it('is rejected for every other capability', () => {
+		const supported: readonly PluginCapability[] = ['agents:dispatch', 'transcripts:read'];
+		for (const capability of PLUGIN_CAPABILITIES) {
+			if (supported.includes(capability)) continue;
+			const parsed = parsePermissions([{ capability, ...keyword }]);
+			expect(parsed.requests, `${capability} must not accept the keyword`).toEqual([]);
+			expect(parsed.errors.length, `${capability} must report why`).toBe(1);
+			expect(capabilitySupportsSessionGrants(capability)).toBe(false);
+		}
+		// Spot-check the shapes of refusal so a reworded message still has to
+		// explain itself. A path verb and the OTHER act verb both get the specific
+		// keyword message, which names where the keyword IS accepted; a no-scope
+		// verb is caught one check earlier by the ordinary "takes no scope" rule.
+		for (const capability of ['transcripts:write', 'process:spawn', 'fs:read'] as const) {
+			expect(parsePermissions([{ capability, ...keyword }]).errors[0]).toMatch(
+				/does not take the "granted-sessions" scope \(only agents:dispatch and transcripts:read do\)/
+			);
+		}
+		expect(parsePermissions([{ capability: 'agents:read', ...keyword }]).errors[0]).toMatch(
+			/does not take a scope/
+		);
+	});
+
+	it('covers NO session when consented: the keyword is never a member', () => {
+		const grants: PermissionGrant[] = [
+			{ capability: 'agents:dispatch', scope: GRANTED_SESSIONS_SCOPE, grantedAt: 1 },
+		];
+		expect(parseAllowlistScope(GRANTED_SESSIONS_SCOPE)).toBeNull();
+		expect(parseAllowlistScope(`${GRANTED_SESSIONS_SCOPE},sess-1`)).toEqual(['sess-1']);
+		for (const target of [GRANTED_SESSIONS_SCOPE, 'sess-1', 'anything', '']) {
+			expect(isPermitted(grants, 'agents:dispatch', target)).toBe(false);
+		}
+		expect(isPermitted(grants, 'agents:dispatch')).toBe(false);
+	});
+
+	it('covers no project path either, and never prefix-matches a relative one', () => {
+		const grants: PermissionGrant[] = [
+			{ capability: 'transcripts:read', scope: GRANTED_SESSIONS_SCOPE, grantedAt: 1 },
+		];
+		for (const target of [
+			'/projects/app',
+			GRANTED_SESSIONS_SCOPE,
+			`${GRANTED_SESSIONS_SCOPE}/nested`,
+			undefined,
+		]) {
+			expect(isPermitted(grants, 'transcripts:read', target)).toBe(false);
+		}
+		// It IS reported as a session-grant scope, which is how the broker knows to
+		// hand enforcement to the handler instead of denying outright.
+		expect(hasSessionGrantScope(grants, 'transcripts:read')).toBe(true);
+		expect(hasSessionGrantScope(grants, 'transcripts:write')).toBe(false);
+		expect(hasSessionGrantScope(grants, 'agents:dispatch')).toBe(false);
+	});
+
+	it('never reports a session-grant scope for a capability that cannot hold one', () => {
+		// Defense in depth: even a forged grant (the parser rejects this manifest)
+		// must not turn a path verb into a capability-held check.
+		const forged: PermissionGrant[] = [
+			{ capability: 'fs:read', scope: GRANTED_SESSIONS_SCOPE, grantedAt: 1 },
+		];
+		expect(hasSessionGrantScope(forged, 'fs:read')).toBe(false);
+		expect(isPermitted(forged, 'fs:read', '/etc/passwd')).toBe(false);
+		expect(isPermitted(forged, 'fs:read', 'granted-sessions/escape')).toBe(false);
+	});
+
+	it('recognizes only the exact keyword', () => {
+		expect(isSessionGrantScope(GRANTED_SESSIONS_SCOPE)).toBe(true);
+		expect(isSessionGrantScope(` ${GRANTED_SESSIONS_SCOPE}\n`)).toBe(true);
+		for (const near of [
+			undefined,
+			'',
+			'granted-session',
+			'granted-sessions,sess-1',
+			'GRANTED-SESSIONS',
+			'~/granted-sessions',
+		]) {
+			expect(isSessionGrantScope(near)).toBe(false);
+		}
+	});
 });

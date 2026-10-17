@@ -370,7 +370,14 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				create: function (params) { return hostCall('sessions.create', params || {}); },
 				update: function (sessionId, patch) { return hostCall('sessions.update', { sessionId: sessionId, patch: patch }); },
 				delete: function (sessionId) { return hostCall('sessions.delete', { sessionId: sessionId }); },
-				focus: function (sessionId, tabId) { return hostCall('sessions.focus', { sessionId: sessionId, tabId: tabId }); }
+				focus: function (sessionId, tabId) { return hostCall('sessions.focus', { sessionId: sessionId, tabId: tabId }); },
+				// Ask the USER for access to one session. Maestro raises its OWN
+				// confirmation; a plugin cannot draw, style, pre-answer, or suppress
+				// it. Resolves { granted } - approved means the host added the session
+				// to this plugin's grant set, so dispatch and History reads to it now
+				// pass. Only a plugin whose manifest declares the 'granted-sessions'
+				// scope may call it.
+				requestAccess: function (sessionId) { return hostCall('sessions.requestAccess', { sessionId: sessionId }); }
 			}),
 			transcripts: Object.freeze({
 				read: function (params) { return hostCall('transcripts.read', params); },

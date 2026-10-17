@@ -184,7 +184,13 @@ export interface HostHandlerDeps {
 	groupingRegistry?: PluginGroupingRegistry;
 	isDeclaredGrouping?: (pluginId: string, localId: string) => boolean;
 	/** Optional session mutators. When omitted the handlers fail closed. */
-	sessionsCreate?: (params: Record<string, unknown>) => Promise<PluginSessionMetadata>;
+	/** Create a session. `pluginId` is the HOST-verified caller (never read from
+	 * params): the integration site uses it to put a session a session-granting
+	 * plugin just created straight into that plugin's grant set. */
+	sessionsCreate?: (
+		params: Record<string, unknown>,
+		pluginId: string
+	) => Promise<PluginSessionMetadata>;
 	sessionsUpdate?: (
 		sessionId: string,
 		patch: Record<string, unknown>
@@ -309,6 +315,40 @@ export interface HostHandlerDeps {
 	/** Supervised health for the plugin's own background services (state,
 	 * restart count, registered services). Absent => the in-memory fallback. */
 	backgroundList?: (pluginId: string) => PluginBackgroundHealth;
+	/** The plugin's human-readable manifest name, for host-owned confirmation
+	 * copy. Falls back to the plugin id when absent. */
+	pluginDisplayName?: (pluginId: string) => string | undefined;
+	/**
+	 * Does this plugin use HOST-ENFORCED SESSION GRANTS (its manifest declares the
+	 * `granted-sessions` scope keyword)? When true, `agents.dispatch` and
+	 * `transcripts.read` are confined to the sessions the host granted it -
+	 * `isSessionGranted` replaces the usual agent-name resolution and project-path
+	 * match. Injected as a predicate (mirroring `isPluginTrusted`) so the pure
+	 * handler never reaches the ledger. Absent => no plugin uses session grants,
+	 * which is exactly today's behavior for every existing plugin.
+	 */
+	usesSessionGrants?: (pluginId: string) => boolean;
+	/** Is this exact session in the plugin's host-held grant set? Read live, so a
+	 * revoke in Settings denies on the very next call. Required whenever
+	 * `usesSessionGrants` is wired: an absent predicate denies (fail closed). */
+	isSessionGranted?: (pluginId: string, sessionId: string) => boolean;
+	/** Add one session to a plugin's grant set after the USER approved it. */
+	grantSession?: (pluginId: string, sessionId: string, source: 'user-approved') => boolean;
+	/**
+	 * Raise Maestro's OWN confirmation asking the user to grant one session to a
+	 * plugin, and resolve what they chose. HOST-owned by contract: it must be
+	 * drawn by the main process and parented to the main window, so the plugin
+	 * cannot render, style, pre-answer, or suppress it. Registered only when this
+	 * is wired (fail closed, mirroring `dispatch` / `panelPost`), and injected so
+	 * tests never open a window.
+	 */
+	confirmSessionAccess?: (info: {
+		pluginId: string;
+		pluginName: string;
+		sessionId: string;
+		sessionTitle: string | null;
+		projectPath: string | null;
+	}) => Promise<boolean>;
 	/** Whether the plugin currently has a trusted signature. Required for
 	 * high-power act verbs even when the user granted the capability. */
 	isPluginTrusted?: (pluginId: string) => boolean;
@@ -777,6 +817,12 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// we count entries per plugin to enforce MAX_SOCKETS_PER_PLUGIN.
 	const netSockets = new Map<string, { pluginId: string; url: string }>();
 	const pluginRunControllers = new Map<string, Set<AbortController>>();
+	// sessions.requestAccess bookkeeping, both per running sandbox and both
+	// cleared by `cleanupPluginResources`: which plugins have a host confirmation
+	// open right now (at most one each), and which sessions the user DECLINED for
+	// a plugin (not re-prompted until the plugin restarts).
+	const sessionAccessPrompts = new Set<string>();
+	const declinedSessionAccess = new Map<string, Set<string>>();
 
 	/**
 	 * Re-authorize the symlink-resolved real path against the plugin's grant.
@@ -956,7 +1002,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertBrokerAllowed(deps, pluginId, 'sessions.create', p);
 			if (!deps.sessionsCreate) throw new Error('sessions.create is unavailable');
 			return underGuard(deps.actionGuard, pluginId, 'sessions:create', undefined, async () =>
-				toSessionMetadata(await deps.sessionsCreate!(p))
+				// The HOST-verified pluginId, never one read out of params: the
+				// integration site grants a session-granting plugin the session it
+				// just created, so a forged id here would be a self-grant.
+				toSessionMetadata(await deps.sessionsCreate!(p, pluginId))
 			);
 		},
 
@@ -1040,12 +1089,27 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				throw new Error('fields is required: declare which transcript fields to read');
 			}
 			deps.assertTranscriptReadAllowed(pluginId);
+			// Session grants replace the project-path scope with the host-held set.
+			// Checked BEFORE the session is resolved (deny-before-disclose), so a
+			// plugin probing ids learns "not granted", never "unknown session".
+			const bySessionGrant = deps.usesSessionGrants?.(pluginId) === true;
+			if (bySessionGrant && deps.isSessionGranted?.(pluginId, sessionId) !== true) {
+				throw new Error(
+					`transcripts.read: session ${sessionId} is not granted to this plugin ` +
+						'(the plugin must have created it, or you must approve it)'
+				);
+			}
 			const meta = deps.sessionsGet(sessionId);
 			if (!meta) return [];
 			const realProject = typeof meta.projectPath === 'string' ? meta.projectPath : undefined;
-			assertBrokerAllowed(deps, pluginId, 'transcripts.read', {
-				...(realProject !== undefined ? { projectPath: realProject } : {}),
-			});
+			// A path-scoped grant is re-authorized against the session's REAL project.
+			// A `granted-sessions` grant has no path to match: the broker already
+			// confirmed the capability is held and the grant check above is the scope.
+			if (!bySessionGrant) {
+				assertBrokerAllowed(deps, pluginId, 'transcripts.read', {
+					...(realProject !== undefined ? { projectPath: realProject } : {}),
+				});
+			}
 			return underGuard(deps.actionGuard, pluginId, 'transcripts:read', realProject, async () => {
 				const entries = await deps.readSessionTranscript(sessionId);
 				let rows = entries;
@@ -1508,6 +1572,74 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		handlers['ui.togglePanel'] = makeVisibilityHandler('ui.togglePanel', 'toggle');
 	}
 
+	// sessions.requestAccess: the ONE way a plugin can grow its reach, and it
+	// grows it by ASKING THE USER. Registered only when the host-owned
+	// confirmation is wired (fail closed, mirroring agents.dispatch), because a
+	// grant with no confirmation behind it would be a self-grant.
+	if (deps.confirmSessionAccess) {
+		const confirmSessionAccess = deps.confirmSessionAccess;
+		handlers['sessions.requestAccess'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('sessions.requestAccess', p, { sessionId: true });
+			const sessionId = p.sessionId;
+			if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+				throw new Error('sessionId is required');
+			}
+			if (sessionId.length > MAX_DISPATCH_AGENT_ID_CHARS) {
+				throw new Error('sessions.requestAccess: sessionId too long');
+			}
+			// The broker confirmed `agents:dispatch` is held (capability-held, since
+			// the requested session is by definition not yet in the allowlist).
+			assertBrokerAllowed(deps, pluginId, 'sessions.requestAccess', p);
+			// Only a plugin that declared `granted-sessions` has a grant set to add
+			// to. For anyone else this verb would be a request to widen an ordinary
+			// user-managed allow list, which only the user may edit in Settings.
+			if (deps.usesSessionGrants?.(pluginId) !== true) {
+				throw new Error(
+					'sessions.requestAccess requires the "granted-sessions" scope on agents:dispatch'
+				);
+			}
+			// Already granted: answer immediately, with no confirmation. Re-asking
+			// for something the user already approved must not nag them.
+			if (deps.isSessionGranted?.(pluginId, sessionId) === true) return { granted: true };
+			// A session the user already declined stays declined for the life of this
+			// sandbox, so a denied board cannot re-prompt on every click. The set is
+			// cleared when the plugin stops, crashes, or is uninstalled.
+			if (declinedSessionAccess.get(pluginId)?.has(sessionId)) return { granted: false };
+			// At most ONE confirmation per plugin at a time: a plugin must never be
+			// able to stack host dialogs. Nothing is shown and nothing is granted.
+			if (sessionAccessPrompts.has(pluginId)) {
+				throw new Error('sessions.requestAccess: a confirmation is already open for this plugin');
+			}
+			const meta = requireSession(sessionId);
+			sessionAccessPrompts.add(pluginId);
+			let approved: boolean;
+			try {
+				approved = await confirmSessionAccess({
+					pluginId,
+					pluginName: deps.pluginDisplayName?.(pluginId) ?? pluginId,
+					sessionId,
+					sessionTitle: typeof meta.title === 'string' ? meta.title : null,
+					projectPath: typeof meta.projectPath === 'string' ? meta.projectPath : null,
+				});
+			} finally {
+				sessionAccessPrompts.delete(pluginId);
+			}
+			if (!approved) {
+				const declined = declinedSessionAccess.get(pluginId) ?? new Set<string>();
+				declined.add(sessionId);
+				declinedSessionAccess.set(pluginId, declined);
+				return { granted: false };
+			}
+			// The host, not the plugin, writes the grant. A false here means the
+			// ledger refused (no consented dispatch grant, or the session vanished
+			// while the dialog was open), so report it honestly rather than claiming
+			// a grant the broker will deny on the next call.
+			const granted = deps.grantSession?.(pluginId, sessionId, 'user-approved') === true;
+			return { granted };
+		};
+	}
+
 	if (deps.dispatch) {
 		const dispatch = deps.dispatch;
 		handlers['agents.dispatch'] = async (pluginId, params) => {
@@ -1534,6 +1666,19 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			}
 			// Broker: allowlist scope - the grant must name THIS exact agentId.
 			assertBrokerAllowed(deps, pluginId, 'agents.dispatch', p);
+			// Session grants: `agentId` must be an EXACT granted session id. The
+			// broker's allowlist check already requires exact membership, but this
+			// also forbids the sink's agent-NAME resolution for these plugins - a
+			// board that addresses a card by name could otherwise be steered to a
+			// different agent by a rename. Fail closed on an absent predicate.
+			if (deps.usesSessionGrants?.(pluginId) === true) {
+				if (deps.isSessionGranted?.(pluginId, agentId) !== true) {
+					throw new Error(
+						`agents.dispatch: session ${agentId} is not granted to this plugin ` +
+							'(the plugin must have created it, or you must approve it)'
+					);
+				}
+			}
 			// Unattended gate: direct plugin dispatch is never user-present, so it
 			// requires the separate unattended consent on top of the allowlist grant.
 			// Fail CLOSED: an absent predicate denies (mirrors the net.connect trust
@@ -2064,6 +2209,12 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		void drain.catch(() => {});
 		for (const controller of pluginRunControllers.get(pluginId) ?? []) controller.abort();
 		pluginRunControllers.delete(pluginId);
+		// Forget this run's access bookkeeping. The DECLINED set is deliberately
+		// per-run: a restarted plugin may ask again (the user's "no" was about that
+		// session for this run of the plugin, not forever), and an in-flight prompt
+		// marker for a dead plugin must not block the next one.
+		sessionAccessPrompts.delete(pluginId);
+		declinedSessionAccess.delete(pluginId);
 		for (const [watchId, entry] of fsWatchers) {
 			if (entry.pluginId !== pluginId) continue;
 			try {

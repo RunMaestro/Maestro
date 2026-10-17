@@ -27,7 +27,26 @@ import semver from 'semver';
  * path scope may be home-relative in exactly the form `~/.maestro/<name>` -
  * every other `~` scope (`~`, `~/`, `~/.maestro`, `~/anything-else`,
  * `~user/...`) is rejected at manifest-parse time. Absolute path scopes are
- * unchanged, so older plugins keep working. 1.25.0 adds resumable
+ * unchanged, so older plugins keep working.
+ *
+ * 1.26.0 ALSO adds host-enforced per-session grants, all three additive (a
+ * plugin that declares none of this keeps today's behavior exactly):
+ *  - the manifest scope keyword `granted-sessions`, accepted for exactly
+ *    `agents:dispatch` and `transcripts:read`. It is an explicit scope, never
+ *    the unscoped form: a consented keyword grant starts with NO members and
+ *    covers nothing until the host adds one. The consent window shows it as
+ *    "only agents this plugin creates, or that you approve when asked".
+ *  - the grant set itself: a plugin holding the keyword may dispatch to, and
+ *    read the History of, ONLY sessions it created through `sessions.create` or
+ *    that the user approved. Members live in the sealed authorization ledger as
+ *    the `agents:dispatch` allowlist scope, so they persist, are checked by the
+ *    broker on every call, stay editable in Settings, and are dropped on revoke.
+ *  - `maestro.sessions.requestAccess(sessionId)` -> `{ granted }`, which asks
+ *    the USER (a host-owned confirmation in the main process, defaulting to
+ *    Don't Allow) to add one session to that set. Only a plugin that declared
+ *    the keyword may call it.
+ *
+ * 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
  * 1.23.0 adds independent

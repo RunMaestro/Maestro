@@ -283,12 +283,23 @@
 						head.appendChild(el('span', riskClassName(item.risk), item.risk));
 						body.appendChild(head);
 
+						// GRANTED_SESSIONS_SCOPE / GRANTED_SESSIONS_CONSENT_TEXT in
+						// shared/plugins/permissions.ts. The raw keyword tells the user
+						// nothing, so never show it: say which agents the plugin can
+						// reach and that they are the ones who decide.
+						var grantedSessions =
+							item.scope === 'granted-sessions'
+								? 'only agents this plugin creates, or that you approve when asked'
+								: null;
 						if (item.capability === 'agents:dispatch') {
 							var agents =
-								item.scope && item.scope !== 'CONFIGURE_IN_MAESTRO'
+								grantedSessions ||
+								(item.scope && item.scope !== 'CONFIGURE_IN_MAESTRO'
 									? item.scope
-									: 'none (dispatch denied until agents are selected in Maestro)';
+									: 'none (dispatch denied until agents are selected in Maestro)');
 							body.appendChild(el('div', 'cap-scope', 'Agents: ' + agents));
+						} else if (grantedSessions) {
+							body.appendChild(el('div', 'cap-scope', 'Agents: ' + grantedSessions));
 						} else if (item.scope) {
 							body.appendChild(el('div', 'cap-scope', 'scope: ' + item.scope));
 						}
