@@ -29,6 +29,9 @@ const jsdomOnlyTs = [
 	// The web-desktop electron shim constructs a BridgeClient and reads
 	// `window`/`document` at module load, so its suites need a DOM.
 	'src/__tests__/web-desktop/**/*.{test,spec}.ts',
+	// Runs the maestro-kanban panel's own inline <script> against a real DOM
+	// to exercise rendering and click-to-focus (see kanban-panel.test.ts).
+	'src/__tests__/plugins/kanban-panel.test.ts',
 ];
 
 // Variables that tell git WHERE the repository is. Git exports them to hooks and
