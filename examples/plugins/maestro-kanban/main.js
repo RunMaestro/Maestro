@@ -819,6 +819,7 @@ async function clearAllPlacements() {
 	}
 	placementCache.clear();
 	dirtyPlacementBoards.clear();
+	cardOrder.clear();
 	for (const boardPath of boardPaths) {
 		try {
 			await sdk.storage.delete(placementStorageKey(boardPath));
@@ -832,6 +833,179 @@ async function clearAllPlacements() {
 
 // ===========================================================================
 // End of Phase 02 placement persistence.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 03 move command: the single write path a drag (or a keyboard move)
+// ends in. The panel's own legality check is advisory - it exists so a drop
+// is never offered where it would fail - and this handler re-checks every
+// move against legalColumnsFor() before touching anything, because the panel
+// is untrusted renderer code and its snapshot can be stale by the time the
+// post lands.
+//
+// A refusal cannot be a reply to the post: the panel bridge is one-way (see
+// PANEL_DATA_CHANNEL in src/shared/plugins/panel-host.ts), so a refused move
+// rides the next snapshot as `moveRejection: { cardKey, reason }` and the
+// panel returns the card to its origin and shows the reason.
+// ===========================================================================
+
+/** @type {Map<string, number>} cardKey -> explicit order within its column,
+ * written by a move. A card with no entry sorts after every explicitly
+ * ordered card in the same column, oldest first. This map is in-memory only
+ * for now; persisting it (and sorting an unordered card by last activity
+ * instead) is the next task's job, which grows a stored placement from a
+ * bare column id to `{ columnId, order }`. */
+const cardOrder = new Map();
+
+/** @type {{ cardKey: string, reason: string }|null} A move the sandbox
+ * refused, handed to the panel on the next snapshot and drained there: a
+ * rejection is a one-shot message, not board state, so it must never stick
+ * to every later snapshot. */
+let pendingMoveRejection = null;
+
+/** Display order of two cards sitting in the same column. */
+function compareCardsInColumn(a, b) {
+	const aOrder = cardOrder.has(a.key) ? cardOrder.get(a.key) : Infinity;
+	const bOrder = cardOrder.has(b.key) ? cardOrder.get(b.key) : Infinity;
+	if (aOrder !== bOrder) return aOrder - bOrder;
+	return a.createdAt - b.createdAt;
+}
+
+/**
+ * Buckets every live card into the active board's resolved columns, in
+ * display order. The one place that mapping is decided, so the index the
+ * panel reports in a drop and the index buildSnapshot() renders can never
+ * drift apart. A card whose own columnId is not one of these resolved ids
+ * lands in the first column rather than being dropped.
+ * @param {{ id: string }[]} resolvedColumns
+ * @returns {Map<string, object[]>}
+ */
+function groupCardsByColumn(resolvedColumns) {
+	const fallbackColumnId = resolvedColumns.length > 0 ? resolvedColumns[0].id : 'backlog';
+	const byColumn = new Map(resolvedColumns.map((column) => [column.id, []]));
+	for (const card of cards.values()) {
+		const list = byColumn.get(card.columnId) || byColumn.get(fallbackColumnId);
+		if (list) list.push(card);
+	}
+	for (const list of byColumn.values()) list.sort(compareCardsInColumn);
+	return byColumn;
+}
+
+/** Loads the boards buildSnapshot() and the move handler both need: the
+ * active project's board, the global board, and resolveColumns()' output for
+ * the pair. */
+async function resolveActiveBoard() {
+	const [projectResult, globalResult] = await Promise.all([
+		activeProjectPath !== null
+			? loadProjectBoard(activeProjectPath)
+			: Promise.resolve({ board: null, error: null }),
+		loadGlobalBoard(),
+	]);
+	return {
+		projectResult: projectResult,
+		globalResult: globalResult,
+		columns: resolveColumns(projectResult.board, globalResult.board),
+	};
+}
+
+/**
+ * The id of the board the panel is currently rendering, which a `move` post
+ * echoes back so a move aimed at a board the user has since switched away
+ * from can be refused instead of silently landing on the wrong board. There
+ * is exactly one board on screen today and it has no id, so this is null and
+ * the panel posts null; the board switcher task is what gives a board an id.
+ */
+function currentBoardId() {
+	return null;
+}
+
+/** Records a refusal for the next snapshot and reports it back to the
+ * caller. The snapshot push is what the panel actually reacts to. */
+function refuseMove(key, reason) {
+	pendingMoveRejection = { cardKey: key, reason: reason };
+	console.warn('maestro-kanban: refused move of "' + key + '": ' + reason);
+	return pushSnapshotNow().then(() => ({ ok: false, reason: reason }));
+}
+
+/** Renumbers `columnId`'s cards into dense 0..n orders, with `key` (which
+ * may be arriving from another column) spliced in at `index`. Returns the
+ * index the card actually landed on after clamping. */
+function placeInColumnOrder(resolvedColumns, columnId, key, index) {
+	const members = (groupCardsByColumn(resolvedColumns).get(columnId) || []).filter(
+		(card) => card.key !== key
+	);
+	const requested =
+		typeof index === 'number' && isFinite(index) ? Math.floor(index) : members.length;
+	const at = Math.max(0, Math.min(requested, members.length));
+	const keys = members.map((card) => card.key);
+	keys.splice(at, 0, key);
+	for (let i = 0; i < keys.length; i++) cardOrder.set(keys[i], i);
+	return at;
+}
+
+/** Renumbers the column a card just left so its survivors keep dense orders
+ * rather than a hole where the card used to be. */
+function renumberColumnOrder(resolvedColumns, columnId) {
+	if (typeof columnId !== 'string' || columnId === '') return;
+	const members = groupCardsByColumn(resolvedColumns).get(columnId) || [];
+	for (let i = 0; i < members.length; i++) cardOrder.set(members[i].key, i);
+}
+
+/**
+ * Backs the panel's `move` command: `{ cardKey, toColumnId, toIndex,
+ * boardId }`. Re-checks legality against the card's own project board (never
+ * the panel's claim), writes the placement and the order, then pushes a
+ * fresh snapshot. Every refusal names a specific reason, since "the move did
+ * not apply" with no explanation is indistinguishable from a bug.
+ * @param {{ cardKey?: unknown, toColumnId?: unknown, toIndex?: unknown, boardId?: unknown }} args
+ */
+async function handleMove(args) {
+	const key = args && typeof args.cardKey === 'string' ? args.cardKey : '';
+	const toColumnId = args && typeof args.toColumnId === 'string' ? args.toColumnId : '';
+	const toIndex = args && typeof args.toIndex === 'number' ? args.toIndex : null;
+	const boardId =
+		args && typeof args.boardId === 'string' && args.boardId !== '' ? args.boardId : null;
+
+	if (key === '' || toColumnId === '') {
+		return refuseMove(key, 'the move was missing a card or a target column');
+	}
+	if (boardId !== null && boardId !== currentBoardId()) {
+		return refuseMove(key, 'the board changed while the card was moving; try again');
+	}
+	const card = cards.get(key);
+	if (!card) {
+		return refuseMove(key, 'that card is no longer on the board');
+	}
+	if (typeof card.projectPath !== 'string' || card.projectPath === '') {
+		// Nothing to key a placement under, so the move would survive until the
+		// next refresh and then quietly snap back. Refusing is the honest answer.
+		return refuseMove(key, 'that agent has no project folder, so the board cannot remember a move');
+	}
+
+	const [active, cardProjectResult] = await Promise.all([
+		resolveActiveBoard(),
+		loadProjectBoard(card.projectPath),
+	]);
+	const legal = legalColumnsFor(card, cardProjectResult.board, active.globalResult.board);
+	if (legal.indexOf(toColumnId) === -1) {
+		return refuseMove(key, '"' + toColumnId + '" is not a column that card can move to');
+	}
+	if (!active.columns.some((column) => column.id === toColumnId)) {
+		return refuseMove(key, '"' + toColumnId + '" is no longer a column on this board');
+	}
+
+	const fromColumnId = card.columnId;
+	card.columnId = toColumnId;
+	setPlacement(boardFilePath(card.projectPath), key, toColumnId);
+	const landedAt = placeInColumnOrder(active.columns, toColumnId, key, toIndex);
+	if (fromColumnId !== toColumnId) renumberColumnOrder(active.columns, fromColumnId);
+	await flushDirtyPlacements();
+	await pushSnapshotNow();
+	return { ok: true, columnId: toColumnId, index: landedAt };
+}
+
+// ===========================================================================
+// End of Phase 03 move command.
 // ===========================================================================
 
 function fallbackTitle(sessionId, ordinal) {
@@ -976,26 +1150,24 @@ function cardToJson(card) {
  * guess either. A card whose own columnId is not one of these resolved ids -
  * its home project uses different columns than the active board, or its
  * placement predates this task's fallback-bucket logic - lands in the first
- * column rather than being dropped; real cross-project aggregation is
- * Phase 03's job. `boardError` surfaces whichever of the active project's or
- * the global board's file most recently failed to parse, so a broken file is
- * diagnosable from the board itself.
+ * column rather than being dropped; real cross-project aggregation is a
+ * later Phase 03 task. Within a column, cards come out in
+ * groupCardsByColumn()'s order, which honors whatever a move wrote.
+ * `boardError` surfaces whichever of the active project's or the global
+ * board's file most recently failed to parse, so a broken file is
+ * diagnosable from the board itself, and `moveRejection` carries the one
+ * refused move the panel still has to be told about - see handleMove().
  */
 async function buildSnapshot() {
-	const [projectResult, globalResult] = await Promise.all([
-		activeProjectPath !== null
-			? loadProjectBoard(activeProjectPath)
-			: Promise.resolve({ board: null, error: null }),
-		loadGlobalBoard(),
-	]);
-	const resolvedColumns = resolveColumns(projectResult.board, globalResult.board);
-	const fallbackColumnId = resolvedColumns.length > 0 ? resolvedColumns[0].id : 'backlog';
-	const byColumn = new Map(resolvedColumns.map((column) => [column.id, []]));
-	const ordered = Array.from(cards.values()).sort((a, b) => a.createdAt - b.createdAt);
-	for (const card of ordered) {
-		const list = byColumn.get(card.columnId) || byColumn.get(fallbackColumnId);
-		if (list) list.push(cardToJson(card));
-	}
+	const active = await resolveActiveBoard();
+	const projectResult = active.projectResult;
+	const globalResult = active.globalResult;
+	const resolvedColumns = active.columns;
+	const byColumn = groupCardsByColumn(resolvedColumns);
+	// Drained, not copied: a refusal is a one-shot message to the panel, so it
+	// must not ride every snapshot after the one that reports it.
+	const moveRejection = pendingMoveRejection;
+	pendingMoveRejection = null;
 	const boardError =
 		(activeProjectPath !== null && projectResult.error) || globalResult.error || null;
 	// True only when there is an active project and it has no board file at
@@ -1011,11 +1183,13 @@ async function buildSnapshot() {
 			id: column.id,
 			title: column.title,
 			wipLimit: typeof column.wip_limit === 'number' ? column.wip_limit : undefined,
-			cards: byColumn.get(column.id) || [],
+			cards: (byColumn.get(column.id) || []).map(cardToJson),
 		})),
 		boardError: boardError,
 		activeProjectPath: activeProjectPath,
 		projectBoardMissing: projectBoardMissing,
+		boardId: currentBoardId(),
+		moveRejection: moveRejection,
 	};
 }
 
@@ -1220,6 +1394,19 @@ function registerCommands(maestro) {
 			})
 	);
 
+	// Invoked by the panel when a drag ends in a drop (and, later, by its
+	// keyboard move); no manifest `commands` entry is needed since it is never
+	// surfaced in the command palette.
+	maestro.commands.register('move', (args) =>
+		handleMove(args).catch((err) => {
+			console.error('maestro-kanban: move failed: ' + String(err));
+			return refuseMove(
+				args && typeof args.cardKey === 'string' ? args.cardKey : '',
+				errorMessage(err)
+			);
+		})
+	);
+
 	// Invoked by the panel via parent.postMessage; no manifest `commands`
 	// entry is needed since it is never surfaced in the command palette.
 	maestro.commands.register('focus', (args) => {
@@ -1286,6 +1473,8 @@ module.exports = {
 		activeProjectPath = null;
 		placementCache.clear();
 		dirtyPlacementBoards.clear();
+		cardOrder.clear();
+		pendingMoveRejection = null;
 		if (sdk) {
 			return sdk.events.unsubscribe().catch(() => {});
 		}

@@ -8,6 +8,11 @@
  * end-to-end through `activate()`'s resulting panel snapshot and the stub
  * `maestro.storage`/`maestro.fs`, the same style `kanban-main.test.ts` uses
  * for the rest of this plugin.
+ *
+ * Phase 03's `move` command handler is tested here too, for the same reason:
+ * it is reached through `maestro.commands.register('move', ...)` and the only
+ * thing it is observable through is the placement store plus the snapshot it
+ * pushes afterwards.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -18,6 +23,8 @@ const mainPath = require.resolve('../../../examples/plugins/maestro-kanban/main.
 
 interface KanbanSnapshot {
 	columns: { id: string; title: string; cards: { key: string }[] }[];
+	boardId?: string | null;
+	moveRejection?: { cardKey: string; reason: string } | null;
 }
 
 interface KanbanPlugin {
@@ -308,5 +315,146 @@ describe('maestro-kanban filesystem plumbing and placement persistence', () => {
 		expect(() => plugin.boardFilePath(42 as unknown as string)).toThrow(message);
 		expect(() => plugin.boardFilePath({} as unknown as string)).toThrow(message);
 		expect(() => plugin.boardFilePath([] as unknown as string)).toThrow(message);
+	});
+});
+
+describe('maestro-kanban move command', () => {
+	const projectPath = '/Users/dev/projects/widgets';
+
+	/** Activates the plugin with `tabs` in `projectPath`, then hands back the
+	 * registered `move` handler plus the stubs to assert against. */
+	async function activateWithTabs(tabs: Record<string, unknown>[]) {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const stub = createStubMaestro({ tabsList: () => Promise.resolve(tabs) });
+		await plugin.activate(stub.maestro);
+		const move = stub.commandHandlers.get('move');
+		if (!move) throw new Error('main.js never registered a "move" command');
+		return { plugin, boardPath, move, ...stub };
+	}
+
+	function lastSnapshot(maestro: { ui: { panelPost: { mock: { calls: unknown[][] } } } }) {
+		const calls = maestro.ui.panelPost.mock.calls;
+		return calls[calls.length - 1]![1] as KanbanSnapshot;
+	}
+
+	it('applies a legal move, persists the placement, and pushes a fresh snapshot', async () => {
+		const key = 'session-1::tab-1';
+		const { boardPath, move, maestro, storageStore } = await activateWithTabs([
+			aiTab({ projectPath }),
+		]);
+
+		const result = await move({ cardKey: key, toColumnId: 'review', toIndex: 0, boardId: null });
+
+		expect(result).toEqual({ ok: true, columnId: 'review', index: 0 });
+		expect(findCard(lastSnapshot(maestro), key)?.columnId).toBe('review');
+		const persisted = JSON.parse(storageStore.get('placements:' + boardPath) as string);
+		expect(persisted[key]).toBe('review');
+	});
+
+	it('honours toIndex, placing a moved card above a card already in the column', async () => {
+		const first = 'session-1::tab-1';
+		const second = 'session-1::tab-2';
+		const { move, maestro } = await activateWithTabs([
+			aiTab({ id: 'tab-1', projectPath, createdAt: 1 }),
+			aiTab({ id: 'tab-2', projectPath, createdAt: 2 }),
+		]);
+		// Both land on 'backlog' in createdAt order to start with.
+		const before = lastSnapshot(maestro).columns.find((c) => c.id === 'backlog');
+		expect(before?.cards.map((c) => c.key)).toEqual([first, second]);
+
+		await move({ cardKey: second, toColumnId: 'backlog', toIndex: 0, boardId: null });
+
+		const after = lastSnapshot(maestro).columns.find((c) => c.id === 'backlog');
+		expect(after?.cards.map((c) => c.key)).toEqual([second, first]);
+	});
+
+	it('re-checks legality itself and refuses a column the card cannot reach', async () => {
+		const key = 'session-1::tab-1';
+		const { move, maestro, storageStore, boardPath } = await activateWithTabs([
+			aiTab({ projectPath }),
+		]);
+		maestro.storage.set.mockClear();
+
+		const result = (await move({
+			cardKey: key,
+			toColumnId: 'archived',
+			toIndex: 0,
+			boardId: null,
+		})) as { ok: boolean; reason: string };
+
+		expect(result.ok).toBe(false);
+		expect(result.reason).toBe('"archived" is not a column that card can move to');
+		// The refusal rides the next snapshot, since the panel bridge is one-way.
+		expect(lastSnapshot(maestro).moveRejection).toEqual({
+			cardKey: key,
+			reason: '"archived" is not a column that card can move to',
+		});
+		// The card stayed where it was and nothing was written.
+		expect(findCard(lastSnapshot(maestro), key)?.columnId).toBe('backlog');
+		expect(maestro.storage.set).not.toHaveBeenCalled();
+		const persisted = JSON.parse(storageStore.get('placements:' + boardPath) as string);
+		expect(persisted[key]).toBe('backlog');
+	});
+
+	it('refuses a move naming a card that is no longer on the board', async () => {
+		const { move, maestro } = await activateWithTabs([aiTab({ projectPath })]);
+
+		const result = (await move({
+			cardKey: 'session-9::tab-9',
+			toColumnId: 'review',
+			toIndex: 0,
+			boardId: null,
+		})) as { ok: boolean; reason: string };
+
+		expect(result.ok).toBe(false);
+		expect(result.reason).toBe('that card is no longer on the board');
+		expect(lastSnapshot(maestro).moveRejection?.cardKey).toBe('session-9::tab-9');
+	});
+
+	it('refuses a move whose boardId names a board the panel is no longer on', async () => {
+		const key = 'session-1::tab-1';
+		const { move, maestro } = await activateWithTabs([aiTab({ projectPath })]);
+
+		const result = (await move({
+			cardKey: key,
+			toColumnId: 'review',
+			toIndex: 0,
+			boardId: 'some-other-board',
+		})) as { ok: boolean; reason: string };
+
+		expect(result.ok).toBe(false);
+		expect(result.reason).toBe('the board changed while the card was moving; try again');
+		expect(findCard(lastSnapshot(maestro), key)?.columnId).toBe('backlog');
+	});
+
+	it('refuses a move for a card whose agent has no project folder to remember it under', async () => {
+		const key = 'session-1::tab-1';
+		const { move, maestro } = await activateWithTabs([aiTab({})]);
+
+		const result = (await move({
+			cardKey: key,
+			toColumnId: 'review',
+			toIndex: 0,
+			boardId: null,
+		})) as { ok: boolean; reason: string };
+
+		expect(result.ok).toBe(false);
+		expect(result.reason).toBe(
+			'that agent has no project folder, so the board cannot remember a move'
+		);
+	});
+
+	it('drains a rejection after one snapshot rather than repeating it forever', async () => {
+		const key = 'session-1::tab-1';
+		const { move, maestro } = await activateWithTabs([aiTab({ projectPath })]);
+
+		await move({ cardKey: key, toColumnId: 'archived', toIndex: 0, boardId: null });
+		expect(lastSnapshot(maestro).moveRejection).not.toBeNull();
+
+		// A later, unrelated push must not carry the same refusal again.
+		await move({ cardKey: key, toColumnId: 'review', toIndex: 0, boardId: null });
+		expect(lastSnapshot(maestro).moveRejection).toBeNull();
+		expect(findCard(lastSnapshot(maestro), key)?.columnId).toBe('review');
 	});
 });
