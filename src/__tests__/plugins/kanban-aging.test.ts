@@ -452,6 +452,7 @@ function createStubMaestro(options: StubOptions = {}) {
 		},
 		agents: {
 			dispatch: vi.fn(() => Promise.resolve({ ok: true })),
+			list: vi.fn(() => Promise.resolve([])),
 		},
 		tabs: {
 			list: vi.fn(options.tabsList ?? (() => Promise.resolve([]))),

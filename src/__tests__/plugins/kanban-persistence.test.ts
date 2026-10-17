@@ -92,6 +92,9 @@ function createStubMaestro(options: StubOptions = {}) {
 			list: vi.fn(options.sessionsList ?? (() => Promise.resolve([]))),
 			focus: vi.fn(() => Promise.resolve({ ok: true })),
 		},
+		agents: {
+			list: vi.fn(() => Promise.resolve([])),
+		},
 		tabs: {
 			list: vi.fn(options.tabsList ?? (() => Promise.resolve([]))),
 		},

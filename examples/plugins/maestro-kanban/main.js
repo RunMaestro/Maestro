@@ -3815,6 +3815,185 @@ async function setConductorConfig(boardId, patch) {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 06 conductor settings surface: the panel section that lets a user
+// pick the configuration above, see this board's resolved reach, and learn
+// where the conductor's binary path, CLI args, env vars, SSH remote, and
+// Claude token mode actually live (Maestro's own agent settings - a plugin
+// must never set those). Nothing here calls maestro.sessions: turning this
+// configuration into a running conductor agent, and keeping its reach in
+// sync, is Phase 06's later tasks. Since no conductor can exist without that
+// work, `conductorExists` on the snapshot below is honestly always false for
+// now - it is here so the later task that starts storing a conductor session
+// id only has to start setting it, not invent the read path too.
+// ===========================================================================
+
+/**
+ * The distinct providers worth offering in the picker: one entry per
+ * toolType that at least one existing agent already runs as, in the shape
+ * `agents.list()` reports (plus whether that provider can take an added
+ * directory at all, which a later task uses to say whether the conductor
+ * will see files or only the board snapshot). A plugin cannot install a
+ * provider for the user, so the picker never claims to offer one nothing is
+ * running - "only providers you already run an agent for appear" is the
+ * literal truth, not a hedge. A failed `agents.list()` degrades to an empty
+ * list rather than breaking the rest of the snapshot.
+ * @returns {Promise<{ toolType: string, supportsAdditionalDirectories: boolean }[]>}
+ */
+async function conductorProviderOptions() {
+	let entries;
+	try {
+		entries = await sdk.agents.list();
+	} catch (err) {
+		console.error('maestro-kanban: agents.list failed: ' + String(err));
+		return [];
+	}
+	const byToolType = new Map();
+	for (const entry of Array.isArray(entries) ? entries : []) {
+		if (!entry || typeof entry.toolType !== 'string' || entry.toolType === '') continue;
+		if (byToolType.has(entry.toolType)) continue;
+		byToolType.set(entry.toolType, {
+			toolType: entry.toolType,
+			supportsAdditionalDirectories: entry.supportsAdditionalDirectories === true,
+		});
+	}
+	return Array.from(byToolType.values()).sort(function (a, b) {
+		return a.toolType < b.toolType ? -1 : a.toolType > b.toolType ? 1 : 0;
+	});
+}
+
+/** The fields of a `conductor-config` post, as a patch for
+ * setConductorConfig(). Mirrors boardSettingsPatchFrom(): an absent field
+ * stays absent, so posting one changed field never restates or resets the
+ * other two. The value itself is passed through as-is - normalizeConductorConfig
+ * already defends against the wrong type or a blank string, so there is
+ * nothing left for this function to coerce.
+ * @param {{ agentId?: unknown, customModel?: unknown, customEffort?: unknown }} source
+ * @returns {{ agentId?: unknown, customModel?: unknown, customEffort?: unknown }}
+ */
+function conductorConfigPatchFrom(source) {
+	const patch = {};
+	if (source.agentId !== undefined) patch.agentId = source.agentId;
+	if (source.customModel !== undefined) patch.customModel = source.customModel;
+	if (source.customEffort !== undefined) patch.customEffort = source.customEffort;
+	return patch;
+}
+
+/** At most this many project entries ride in each half of the conductor
+ * reach lists below. Mirrors BOARD_OPTIONS_LIMIT's reasoning: the Global
+ * board (or the unnamed pre-activation board, which shows every card) can
+ * have far more distinct projects than the panel's byte budget affords, and
+ * a quietly incomplete list is worse than one that says how much it is not
+ * showing. */
+const CONDUCTOR_REACH_LIMIT = 64;
+
+/**
+ * This board's project roots, split by whether Phase 04 access has already
+ * been granted to at least one of its cards' sessions. A project needs only
+ * one granted session to be reachable: `sessions.update()` only requires
+ * that SOME granted session resolve to the path it is given, not a specific
+ * one, so approving any single card for a project grants that project's
+ * whole reach. `sessionId` on an ungranted entry names one representative
+ * card to request access through - approving it is enough even when the
+ * project has several cards.
+ * @returns {{ granted: { projectPath: string, name: string }[], grantedHidden: number, ungranted: { projectPath: string, name: string, sessionId: string }[], ungrantedHidden: number }}
+ */
+function conductorReachForBoard() {
+	const view = resolveBoardView();
+	const granted = new Set();
+	const ungrantedRepresentative = new Map();
+	for (const card of boardCards(view)) {
+		if (typeof card.projectPath !== 'string' || card.projectPath === '') continue;
+		if (granted.has(card.projectPath)) continue;
+		if (isSessionAccessGranted(card.sessionId)) {
+			granted.add(card.projectPath);
+			ungrantedRepresentative.delete(card.projectPath);
+		} else if (!ungrantedRepresentative.has(card.projectPath)) {
+			ungrantedRepresentative.set(card.projectPath, card.sessionId);
+		}
+	}
+	const byName = function (a, b) {
+		return a.name === b.name ? 0 : a.name < b.name ? -1 : 1;
+	};
+	const grantedList = Array.from(granted)
+		.map(function (projectPath) {
+			return { projectPath: projectPath, name: projectDisplayName(projectPath) };
+		})
+		.sort(byName);
+	const ungrantedList = Array.from(ungrantedRepresentative.entries())
+		.map(function (entry) {
+			return { projectPath: entry[0], name: projectDisplayName(entry[0]), sessionId: entry[1] };
+		})
+		.sort(byName);
+	return {
+		granted: grantedList.slice(0, CONDUCTOR_REACH_LIMIT),
+		grantedHidden: Math.max(0, grantedList.length - CONDUCTOR_REACH_LIMIT),
+		ungranted: ungrantedList.slice(0, CONDUCTOR_REACH_LIMIT),
+		ungrantedHidden: Math.max(0, ungrantedList.length - CONDUCTOR_REACH_LIMIT),
+	};
+}
+
+/**
+ * Everything the settings surface paints, rebuilt fresh on every snapshot
+ * the same way boardSettingsSnapshot() is - it is cheap enough, and a
+ * provider picked in another window or a grant just approved from a card
+ * must show up here without a dedicated round trip.
+ * @returns {Promise<object>}
+ */
+async function conductorSettingsSnapshot() {
+	const boardId = currentBoardId();
+	return {
+		boardId: boardId,
+		boardName: currentBoardName(),
+		config: conductorConfigForBoard(boardId),
+		providers: await conductorProviderOptions(),
+		reach: conductorReachForBoard(),
+		// No conductor session id is stored anywhere yet (see the banner
+		// comment above); the moment a later task starts writing one, this
+		// becomes a real lookup instead of a constant.
+		conductorExists: false,
+	};
+}
+
+/**
+ * Backs the panel's `conductor-config` command: writes one or more of the
+ * three stored fields for the board the surface was drawn on, then pushes a
+ * fresh snapshot. Mirrors applyBoardSettings()'s refusals: no board on
+ * screen, a stale board id (the user switched boards before the post
+ * landed), and a post naming nothing this plugin recognizes.
+ * @param {unknown} args
+ */
+async function applyConductorConfig(args) {
+	const source = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+	const boardId =
+		typeof source.boardId === 'string' && source.boardId !== '' ? source.boardId : null;
+	if (boardId === null) {
+		const reason = 'there is no board on screen to configure a conductor for yet';
+		console.warn('maestro-kanban: refused a conductor-config post: ' + reason);
+		await safeToast('Could not save that setting: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	if (boardId !== currentBoardId()) {
+		const reason = 'the board changed before that setting was saved; try again';
+		console.warn('maestro-kanban: refused a conductor-config post: ' + reason);
+		await safeToast('Could not save that setting: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const patch = conductorConfigPatchFrom(source);
+	if (Object.keys(patch).length === 0) {
+		const reason = 'that post named no setting this board understands';
+		console.warn('maestro-kanban: refused a conductor-config post: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const config = await setConductorConfig(boardId, patch);
+	await pushSnapshotNow();
+	return { ok: true, config: config };
+}
+
+// ===========================================================================
+// End of Phase 06 conductor settings surface.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -4718,6 +4897,7 @@ async function buildSnapshot() {
 		doneCardCount: doneCards.length,
 		archive: await buildArchiveView(),
 		settings: boardSettingsSnapshot(),
+		conductor: await conductorSettingsSnapshot(),
 	};
 }
 
@@ -5047,6 +5227,21 @@ function registerCommands(maestro) {
 	maestro.commands.register('board-settings', (args) =>
 		applyBoardSettings(args).catch((err) => {
 			console.error('maestro-kanban: board-settings failed: ' + String(err));
+			return safeToast('Could not save that setting: ' + errorMessage(err)).then(() => ({
+				ok: false,
+				error: errorMessage(err),
+			}));
+		})
+	);
+
+	// Invoked by the panel's conductor settings surface, one post per field it
+	// changes; no manifest `commands` entry for the same reason board-settings
+	// has none - the palette has no board in hand to configure. `boardId` is
+	// the snapshot's id echoed back, refused if the user switched boards
+	// before the post landed.
+	maestro.commands.register('conductor-config', (args) =>
+		applyConductorConfig(args).catch((err) => {
+			console.error('maestro-kanban: conductor-config failed: ' + String(err));
 			return safeToast('Could not save that setting: ' + errorMessage(err)).then(() => ({
 				ok: false,
 				error: errorMessage(err),
@@ -5388,6 +5583,22 @@ module.exports = {
 	normalizeConductorConfig: normalizeConductorConfig,
 	conductorConfigForBoard: conductorConfigForBoard,
 	setConductorConfig: setConductorConfig,
+
+	// Phase 06 conductor settings surface, exported for direct unit testing
+	// (see src/__tests__/plugins/kanban-conductor-settings.test.ts).
+	// conductorConfigPatchFrom() and conductorReachForBoard() are pure reads
+	// of the live card/board state; conductorProviderOptions() and
+	// conductorSettingsSnapshot() call sdk.agents.list(), and
+	// applyConductorConfig() writes plugin storage, so a test calls them
+	// after activate() with a stub SDK - normally through the
+	// `conductor-config` command the panel posts, which is the only way a
+	// user reaches it.
+	CONDUCTOR_REACH_LIMIT: CONDUCTOR_REACH_LIMIT,
+	conductorConfigPatchFrom: conductorConfigPatchFrom,
+	conductorProviderOptions: conductorProviderOptions,
+	conductorReachForBoard: conductorReachForBoard,
+	conductorSettingsSnapshot: conductorSettingsSnapshot,
+	applyConductorConfig: applyConductorConfig,
 
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call

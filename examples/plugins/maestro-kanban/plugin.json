@@ -11,6 +11,10 @@
 	"permissions": [
 		{ "capability": "sessions:read", "reason": "Enumerate agents to build and label cards." },
 		{
+			"capability": "agents:read",
+			"reason": "List the toolTypes of agents you already run, so the conductor settings surface offers only a provider you can actually pick."
+		},
+		{
 			"capability": "tabs:manage",
 			"reason": "Enumerate AI tabs and their live status to build and update cards, and - only when you turn on \"close tabs when cards close\" - close a card's own tab when that card ages out of Done, never while it is busy."
 		},

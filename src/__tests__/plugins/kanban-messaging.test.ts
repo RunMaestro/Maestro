@@ -79,6 +79,7 @@ function createStubMaestro(overrides: StubOverrides = {}) {
 		},
 		agents: {
 			dispatch: vi.fn(overrides.agentsDispatch ?? (() => Promise.resolve({ ok: true }))),
+			list: vi.fn(() => Promise.resolve([])),
 		},
 		ui: {
 			panelPost: vi.fn(() => Promise.resolve({ ok: true })),

@@ -64,7 +64,10 @@ function createStubMaestro(storage: Record<string, string> = {}) {
 			focus: vi.fn(() => Promise.resolve({ ok: true })),
 			requestAccess: vi.fn(() => Promise.resolve({ granted: true })),
 		},
-		agents: { dispatch: vi.fn(() => Promise.resolve({ ok: true })) },
+		agents: {
+			dispatch: vi.fn(() => Promise.resolve({ ok: true })),
+			list: vi.fn(() => Promise.resolve([])),
+		},
 		tabs: {
 			list: vi.fn(() => Promise.resolve([])),
 			close: vi.fn(() => Promise.resolve({ ok: true })),

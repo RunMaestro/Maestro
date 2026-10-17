@@ -32,6 +32,7 @@ interface StubOverrides {
 	sessionsFocus?: (sessionId: string, tabId?: string) => Promise<unknown>;
 	sessionsRequestAccess?: (sessionId: string) => Promise<unknown>;
 	transcriptsRead?: (params: unknown) => Promise<unknown>;
+	agentsList?: () => Promise<unknown>;
 }
 
 function createStubMaestro(overrides: StubOverrides = {}) {
@@ -68,6 +69,13 @@ function createStubMaestro(overrides: StubOverrides = {}) {
 		},
 		transcripts: {
 			read: vi.fn(overrides.transcriptsRead ?? (() => Promise.resolve([]))),
+		},
+		// The conductor settings surface reads this on every snapshot (see
+		// conductorProviderOptions() in main.js); no test here exercises the
+		// provider picker itself, so an empty list is enough to keep it out of
+		// the way, same as the other no-op defaults above.
+		agents: {
+			list: vi.fn(overrides.agentsList ?? (() => Promise.resolve([]))),
 		},
 		ui: {
 			panelPost: vi.fn(() => Promise.resolve({ ok: true })),

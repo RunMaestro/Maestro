@@ -699,6 +699,136 @@
 				cursor: not-allowed;
 				opacity: 0.5;
 			}
+			/* Phase 06 conductor settings surface. Styled like the aging
+			   row above it (same row under the header, not a third mode of
+			   the panel) and sharing its .board-settings-row/-note classes;
+			   only the pieces unique to this surface - the provider select,
+			   the reach lists, and the Allow Access buttons inside them -
+			   get their own rules. */
+			#conductor-toggle {
+				flex: 0 0 auto;
+				padding: 3px 8px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			#conductor-toggle:hover {
+				border-color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#conductor-toggle[aria-pressed='true'] {
+				border-color: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-accent, #4a9eff);
+			}
+			#conductor-settings {
+				flex: 0 0 auto;
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				margin: 12px 12px 0 12px;
+				padding: 10px 12px;
+				border-radius: 6px;
+				font-size: 12px;
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				user-select: none;
+			}
+			#conductor-settings[hidden] {
+				display: none;
+			}
+			#conductor-settings-head {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			#conductor-settings-heading {
+				font-weight: 600;
+			}
+			#conductor-settings-scope {
+				flex: 1 1 auto;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			#conductor-settings-close {
+				flex: 0 0 auto;
+				padding: 0 4px;
+				font: inherit;
+				font-size: 14px;
+				line-height: 1;
+				color: var(--maestro-text-dim, #9d9d9d);
+				background: transparent;
+				border: none;
+				cursor: pointer;
+			}
+			#conductor-settings-close:hover {
+				color: var(--maestro-text-main, #e6e6e6);
+			}
+			#conductor-provider,
+			#conductor-model,
+			#conductor-effort {
+				padding: 2px 6px;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-main, #1e1e1e);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 4px;
+			}
+			#conductor-model,
+			#conductor-effort {
+				width: 120px;
+			}
+			#conductor-provider:disabled,
+			#conductor-model:disabled,
+			#conductor-effort:disabled,
+			#conductor-open:disabled {
+				cursor: not-allowed;
+				opacity: 0.5;
+			}
+			#conductor-open {
+				flex: 0 0 auto;
+				padding: 3px 10px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-main, #1e1e1e);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			#conductor-reach ul {
+				margin: 0;
+				padding: 0;
+				list-style: none;
+				display: flex;
+				flex-direction: column;
+				gap: 4px;
+			}
+			#conductor-reach li {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 8px;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+			}
+			.conductor-allow-access {
+				flex: 0 0 auto;
+				padding: 2px 8px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-main, #1e1e1e);
+				border: 1px solid var(--maestro-accent, #4a9eff);
+				border-radius: 6px;
+				cursor: pointer;
+			}
 			/* Archive Now sits beside Open Tab in the detail pane and is
 			   deliberately NOT accent-colored: it is the one control on the
 			   pane that takes the card off the board, so it reads as a
@@ -932,6 +1062,15 @@
 			>
 				Archive
 			</button>
+			<button
+				id="conductor-toggle"
+				type="button"
+				aria-pressed="false"
+				aria-controls="conductor-settings"
+				title="Conductor: which provider reads this board and thinks about it, and which of its projects it can reach."
+			>
+				Conductor
+			</button>
 			<select id="board-switcher" aria-label="Board"></select>
 		</div>
 		<div
@@ -972,6 +1111,52 @@
 				skipped for a tab that is busy.
 			</p>
 			<p id="board-settings-status" class="board-settings-note"></p>
+		</div>
+		<div id="conductor-settings" role="group" aria-labelledby="conductor-settings-heading" hidden>
+			<div id="conductor-settings-head">
+				<span id="conductor-settings-heading">Conductor</span>
+				<span id="conductor-settings-scope"></span>
+				<button id="conductor-settings-close" type="button" aria-label="Close conductor settings">
+					&times;
+				</button>
+			</div>
+			<div class="board-settings-row">
+				<label for="conductor-provider">Provider</label>
+				<select id="conductor-provider">
+					<option value="">Not configured</option>
+				</select>
+			</div>
+			<p class="board-settings-note">Only providers you already run an agent for appear here.</p>
+			<div class="board-settings-row">
+				<label for="conductor-model">Model</label>
+				<input id="conductor-model" type="text" placeholder="Provider default" />
+			</div>
+			<div class="board-settings-row">
+				<label for="conductor-effort">Effort</label>
+				<input id="conductor-effort" type="text" placeholder="Provider default" />
+			</div>
+			<p class="board-settings-note">
+				Binary path, CLI args, env vars, SSH remote, and Claude token mode are set on the conductor
+				agent in Maestro's own agent settings, not here.
+			</p>
+			<div class="board-settings-row">
+				<button id="conductor-open" type="button" disabled>Open Conductor</button>
+				<span id="conductor-status" class="board-settings-note"></span>
+			</div>
+			<div id="conductor-reach">
+				<p class="board-settings-note">This board's conductor would read, right now:</p>
+				<ul id="conductor-reach-granted"></ul>
+				<p id="conductor-reach-granted-empty" class="board-settings-note">
+					No project here is granted yet.
+				</p>
+				<p class="board-settings-note">
+					Not yet granted - that project's agent needs your OK first:
+				</p>
+				<ul id="conductor-reach-ungranted"></ul>
+				<p id="conductor-reach-ungranted-empty" class="board-settings-note">
+					Every project here is already granted.
+				</p>
+			</div>
 		</div>
 		<div id="banner" hidden></div>
 		<div id="toast" hidden></div>
@@ -1896,9 +2081,11 @@
 					// one.
 					closeCardDetail();
 					cancelClearDoneConfirm();
-					// The aging controls are about the board, which is about to be
-					// hidden: the same one-at-a-time rule openBoardSettings() keeps.
+					// The aging and conductor controls are about the board, which is
+					// about to be hidden: the same one-at-a-time rule
+					// openBoardSettings() and openConductorSettings() keep.
 					closeBoardSettings();
+					closeConductorSettings();
 					applyViewMode();
 					renderClearDone(currentSnapshot);
 					renderArchive(currentSnapshot);
@@ -2303,9 +2490,11 @@
 				function openBoardSettings() {
 					if (boardSettingsOpen) return;
 					boardSettingsOpen = true;
-					// The archive takes the board's place, and these controls are
-					// about the board: one of the two at a time.
+					// The archive takes the board's place, and the conductor
+					// surface is the same kind of row under the header: one of
+					// the three at a time.
 					closeArchiveView();
+					closeConductorSettings();
 					renderBoardSettings(currentSnapshot);
 				}
 
@@ -2369,6 +2558,292 @@
 						nodes.warning.className = nodes.closeTabs.checked ? 'is-armed' : '';
 					}
 					postBoardSettings({ closeTabsOnRetire: nodes.closeTabs.checked === true });
+				}
+
+				// -------------------------------------------------------------
+				// Phase 06 conductor settings surface. The stored choice
+				// (provider, model, effort) and the resolved reach it would run
+				// with, both carried on every snapshot the same way the aging
+				// settings above are. Nothing here can create or jump to a
+				// conductor yet - `conductorExists` is always false until a
+				// later task starts a session - so Open Conductor stays
+				// disabled and the status line says so plainly.
+				// -------------------------------------------------------------
+
+				var conductorSettingsOpen = false;
+				var conductorModelTimer = null;
+				var conductorModelDirty = false;
+				var conductorEffortTimer = null;
+				var conductorEffortDirty = false;
+
+				function conductorOf(snapshot) {
+					var conductor = snapshot && snapshot.conductor;
+					return conductor && typeof conductor === 'object' ? conductor : null;
+				}
+
+				/** Every static element of the surface, or null when the markup
+				 * is not there (a trimmed panel, or a test fixture). */
+				function conductorSettingsNodes() {
+					var row = document.getElementById('conductor-settings');
+					var provider = document.getElementById('conductor-provider');
+					var model = document.getElementById('conductor-model');
+					var effort = document.getElementById('conductor-effort');
+					var toggle = document.getElementById('conductor-toggle');
+					if (!row || !provider || !model || !effort || !toggle) return null;
+					return {
+						row: row,
+						provider: provider,
+						model: model,
+						effort: effort,
+						toggle: toggle,
+						scope: document.getElementById('conductor-settings-scope'),
+						open: document.getElementById('conductor-open'),
+						status: document.getElementById('conductor-status'),
+						grantedList: document.getElementById('conductor-reach-granted'),
+						grantedEmpty: document.getElementById('conductor-reach-granted-empty'),
+						ungrantedList: document.getElementById('conductor-reach-ungranted'),
+						ungrantedEmpty: document.getElementById('conductor-reach-ungranted-empty'),
+					};
+				}
+
+				/** Posts one or more changed conductor fields, carrying the id of
+				 * the board the surface was drawn on - the same echo
+				 * postBoardSettings() carries, so a post aimed at a board the user
+				 * has since switched away from is refused rather than landing on
+				 * the wrong one. */
+				function postConductorConfig(patch) {
+					var conductor = conductorOf(currentSnapshot);
+					var boardId =
+						conductor && typeof conductor.boardId === 'string' && conductor.boardId
+							? conductor.boardId
+							: boardIdOf(currentSnapshot);
+					var args = { boardId: boardId };
+					Object.keys(patch).forEach(function (field) {
+						args[field] = patch[field];
+					});
+					parent.postMessage(
+						{ type: 'maestro:invokeCommand', commandId: 'conductor-config', args: args },
+						'*'
+					);
+				}
+
+				/** The same `request-access` the detail pane's gate uses (see
+				 * requestCardAccess above), aimed at one of this board's ungranted
+				 * project roots instead of a clicked card - approving the
+				 * representative session the sandbox named is enough to grant that
+				 * project's whole reach. */
+				function requestConductorReachAccess(sessionId) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'request-access',
+							args: { sessionId: sessionId },
+						},
+						'*'
+					);
+				}
+
+				function conductorStatusText(conductor) {
+					if (!conductor) return '';
+					return conductor.conductorExists === true ? 'Conductor connected.' : 'No conductor yet.';
+				}
+
+				/** Paints one reach list: the granted list is read-only, the
+				 * ungranted list gets an Allow Access button per project. The
+				 * sandbox caps how many projects ride in each list (see
+				 * CONDUCTOR_REACH_LIMIT); saying so is the difference between a
+				 * capped list and a wrong one, the same reasoning the board
+				 * switcher's `boardsHidden` note uses. */
+				function renderConductorReachList(listEl, emptyEl, entries, withAllowAccess, hidden) {
+					if (!listEl) return;
+					listEl.textContent = '';
+					var items = Array.isArray(entries) ? entries : [];
+					if (emptyEl) emptyEl.hidden = items.length > 0;
+					items.forEach(function (entry) {
+						var li = document.createElement('li');
+						var name = document.createElement('span');
+						name.textContent =
+							typeof entry.name === 'string' ? entry.name : String(entry.projectPath);
+						name.title = typeof entry.projectPath === 'string' ? entry.projectPath : '';
+						li.appendChild(name);
+						if (withAllowAccess && typeof entry.sessionId === 'string' && entry.sessionId) {
+							var button = document.createElement('button');
+							button.type = 'button';
+							button.className = 'conductor-allow-access';
+							button.textContent = 'Allow Access';
+							button.addEventListener('click', function () {
+								requestConductorReachAccess(entry.sessionId);
+							});
+							li.appendChild(button);
+						}
+						listEl.appendChild(li);
+					});
+					if (typeof hidden === 'number' && hidden > 0) {
+						var more = document.createElement('li');
+						more.textContent = hidden + ' more project' + (hidden === 1 ? '' : 's') + ' not shown';
+						listEl.appendChild(more);
+					}
+				}
+
+				/** Paints the surface off the live snapshot. The model and effort
+				 * fields are never written while the user is in them - the same
+				 * trap the horizon field avoids above. */
+				function renderConductorSettings(snapshot) {
+					var nodes = conductorSettingsNodes();
+					if (!nodes) return;
+					nodes.toggle.setAttribute('aria-pressed', conductorSettingsOpen ? 'true' : 'false');
+					nodes.row.hidden = !conductorSettingsOpen;
+					if (!conductorSettingsOpen) return;
+
+					var conductor = conductorOf(snapshot);
+					var configurable = !!conductor && conductor.boardId !== null;
+					nodes.provider.disabled = !configurable;
+					nodes.model.disabled = !configurable;
+					nodes.effort.disabled = !configurable;
+
+					var providers =
+						conductor && Array.isArray(conductor.providers) ? conductor.providers : [];
+					var config = (conductor && conductor.config) || {};
+					var wantedProvider = typeof config.agentId === 'string' ? config.agentId : '';
+					var signature = providers
+						.map(function (provider) {
+							return provider.toolType;
+						})
+						.join(',');
+					if (nodes.provider.getAttribute('data-signature') !== signature) {
+						nodes.provider.textContent = '';
+						var blank = document.createElement('option');
+						blank.value = '';
+						blank.textContent =
+							providers.length > 0 ? 'Not configured' : 'No providers running yet';
+						nodes.provider.appendChild(blank);
+						providers.forEach(function (provider) {
+							var option = document.createElement('option');
+							option.value = provider.toolType;
+							option.textContent = provider.toolType;
+							nodes.provider.appendChild(option);
+						});
+						nodes.provider.setAttribute('data-signature', signature);
+					}
+					if (document.activeElement !== nodes.provider) {
+						nodes.provider.value = providers.some(function (provider) {
+							return provider.toolType === wantedProvider;
+						})
+							? wantedProvider
+							: '';
+					}
+
+					var editingModel = document.activeElement === nodes.model || conductorModelTimer !== null;
+					if (!editingModel) {
+						nodes.model.value = typeof config.customModel === 'string' ? config.customModel : '';
+						conductorModelDirty = false;
+					}
+					var editingEffort =
+						document.activeElement === nodes.effort || conductorEffortTimer !== null;
+					if (!editingEffort) {
+						nodes.effort.value = typeof config.customEffort === 'string' ? config.customEffort : '';
+						conductorEffortDirty = false;
+					}
+
+					if (nodes.scope) {
+						nodes.scope.textContent =
+							conductor && typeof conductor.boardName === 'string' ? conductor.boardName : '';
+					}
+					if (nodes.open) nodes.open.disabled = !(conductor && conductor.conductorExists === true);
+					if (nodes.status) nodes.status.textContent = conductorStatusText(conductor);
+
+					var reach = (conductor && conductor.reach) || {};
+					renderConductorReachList(
+						nodes.grantedList,
+						nodes.grantedEmpty,
+						reach.granted,
+						false,
+						reach.grantedHidden
+					);
+					renderConductorReachList(
+						nodes.ungrantedList,
+						nodes.ungrantedEmpty,
+						reach.ungranted,
+						true,
+						reach.ungrantedHidden
+					);
+				}
+
+				function openConductorSettings() {
+					if (conductorSettingsOpen) return;
+					conductorSettingsOpen = true;
+					// One of the three surfaces under the header at a time, the
+					// same rule openBoardSettings() and openArchiveView() keep.
+					closeArchiveView();
+					closeBoardSettings();
+					renderConductorSettings(currentSnapshot);
+				}
+
+				function closeConductorSettings() {
+					if (!conductorSettingsOpen) return;
+					conductorSettingsOpen = false;
+					// Anything typed and not yet posted is posted on the way out,
+					// the same rule closeBoardSettings() keeps for the horizon.
+					flushConductorModel();
+					flushConductorEffort();
+					renderConductorSettings(currentSnapshot);
+				}
+
+				function toggleConductorSettings() {
+					if (conductorSettingsOpen) closeConductorSettings();
+					else openConductorSettings();
+				}
+
+				function flushConductorModel() {
+					if (conductorModelTimer) {
+						clearTimeout(conductorModelTimer);
+						conductorModelTimer = null;
+					}
+					if (!conductorModelDirty) return;
+					conductorModelDirty = false;
+					var nodes = conductorSettingsNodes();
+					if (!nodes || nodes.model.disabled) return;
+					postConductorConfig({ customModel: nodes.model.value });
+				}
+
+				function onConductorModelInput() {
+					if (!conductorSettingsOpen) return;
+					conductorModelDirty = true;
+					if (conductorModelTimer) clearTimeout(conductorModelTimer);
+					conductorModelTimer = setTimeout(function () {
+						conductorModelTimer = null;
+						flushConductorModel();
+					}, HORIZON_DEBOUNCE_MS);
+				}
+
+				function flushConductorEffort() {
+					if (conductorEffortTimer) {
+						clearTimeout(conductorEffortTimer);
+						conductorEffortTimer = null;
+					}
+					if (!conductorEffortDirty) return;
+					conductorEffortDirty = false;
+					var nodes = conductorSettingsNodes();
+					if (!nodes || nodes.effort.disabled) return;
+					postConductorConfig({ customEffort: nodes.effort.value });
+				}
+
+				function onConductorEffortInput() {
+					if (!conductorSettingsOpen) return;
+					conductorEffortDirty = true;
+					if (conductorEffortTimer) clearTimeout(conductorEffortTimer);
+					conductorEffortTimer = setTimeout(function () {
+						conductorEffortTimer = null;
+						flushConductorEffort();
+					}, HORIZON_DEBOUNCE_MS);
+				}
+
+				function onConductorProviderChanged() {
+					var nodes = conductorSettingsNodes();
+					if (!nodes) return;
+					postConductorConfig({
+						agentId: nodes.provider.value === '' ? null : nodes.provider.value,
+					});
 				}
 
 				// -------------------------------------------------------------
@@ -3095,6 +3570,10 @@
 					// rides them all, so a horizon saved from this panel (or from
 					// another window on the same board) is on screen immediately.
 					renderBoardSettings(snapshot);
+					// Same reasoning for the conductor surface: a provider picked
+					// elsewhere, or a reach grant approved from a card, shows up
+					// here without a dedicated re-open.
+					renderConductorSettings(snapshot);
 					renderBanner(snapshot);
 
 					var board = document.getElementById('board');
@@ -3210,14 +3689,15 @@
 						// stays open, so one key press never does both. Then the
 						// Clear Done confirm, which is a question on screen waiting
 						// for an answer and must be answerable with the key that
-						// means "no"; then the aging settings row, which is the
-						// other transient surface under the header; then the detail
-						// pane; then the archive view, which Escape backs out of to
-						// the board. Only once none of those is up does Escape reach
-						// the panel itself.
+						// means "no"; then the aging and conductor settings rows,
+						// the other transient surfaces under the header; then the
+						// detail pane; then the archive view, which Escape backs
+						// out of to the board. Only once none of those is up does
+						// Escape reach the panel itself.
 						if (dragState) cancelDrag();
 						else if (clearDoneConfirming) cancelClearDoneConfirm();
 						else if (boardSettingsOpen) closeBoardSettings();
+						else if (conductorSettingsOpen) closeConductorSettings();
 						else if (detailCardKey !== null) closeCardDetail();
 						else if (archiveOpen) closeArchiveView();
 						else requestClosePanel();
@@ -3344,6 +3824,43 @@
 						if (event.key !== 'Enter') return;
 						event.preventDefault();
 						flushHorizon();
+					});
+				}
+
+				// Phase 06 conductor settings surface: static markup as well. The
+				// provider select posts on `change`; the model and effort text
+				// fields debounce their `input` and commit on `change` (blur) and
+				// on Enter explicitly, the same rhythm the horizon field above
+				// uses.
+				var conductorToggleEl = document.getElementById('conductor-toggle');
+				if (conductorToggleEl) conductorToggleEl.addEventListener('click', toggleConductorSettings);
+
+				var conductorCloseEl = document.getElementById('conductor-settings-close');
+				if (conductorCloseEl) conductorCloseEl.addEventListener('click', closeConductorSettings);
+
+				var conductorProviderEl = document.getElementById('conductor-provider');
+				if (conductorProviderEl)
+					conductorProviderEl.addEventListener('change', onConductorProviderChanged);
+
+				var conductorModelEl = document.getElementById('conductor-model');
+				if (conductorModelEl) {
+					conductorModelEl.addEventListener('input', onConductorModelInput);
+					conductorModelEl.addEventListener('change', flushConductorModel);
+					conductorModelEl.addEventListener('keydown', function (event) {
+						if (event.key !== 'Enter') return;
+						event.preventDefault();
+						flushConductorModel();
+					});
+				}
+
+				var conductorEffortEl = document.getElementById('conductor-effort');
+				if (conductorEffortEl) {
+					conductorEffortEl.addEventListener('input', onConductorEffortInput);
+					conductorEffortEl.addEventListener('change', flushConductorEffort);
+					conductorEffortEl.addEventListener('keydown', function (event) {
+						if (event.key !== 'Enter') return;
+						event.preventDefault();
+						flushConductorEffort();
 					});
 				}
 
