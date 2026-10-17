@@ -546,6 +546,121 @@
 				background: transparent;
 				border: 1px solid var(--maestro-border, #3c3c3c);
 			}
+			/* Phase 05 board settings surface. It is a ROW under the header,
+			   like the Clear Done confirm above, and deliberately not a third
+			   mode of this panel: changing the horizon is something a person
+			   does in order to watch the Done cards shift opacity, so the
+			   board has to stay on screen behind it. (The archive replaces
+			   the board, which is why the two close each other.) */
+			#board-settings-toggle {
+				flex: 0 0 auto;
+				padding: 3px 8px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			#board-settings-toggle:hover {
+				border-color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#board-settings-toggle[aria-pressed='true'] {
+				border-color: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-accent, #4a9eff);
+			}
+			#board-settings {
+				flex: 0 0 auto;
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				margin: 12px 12px 0 12px;
+				padding: 10px 12px;
+				border-radius: 6px;
+				font-size: 12px;
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				user-select: none;
+			}
+			#board-settings[hidden] {
+				display: none;
+			}
+			#board-settings-head {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			#board-settings-heading {
+				font-weight: 600;
+			}
+			#board-settings-scope {
+				flex: 1 1 auto;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			#board-settings-close {
+				flex: 0 0 auto;
+				padding: 0 4px;
+				font: inherit;
+				font-size: 14px;
+				line-height: 1;
+				color: var(--maestro-text-dim, #9d9d9d);
+				background: transparent;
+				border: none;
+				cursor: pointer;
+			}
+			#board-settings-close:hover {
+				color: var(--maestro-text-main, #e6e6e6);
+			}
+			.board-settings-row {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+			}
+			.board-settings-row input[type='checkbox'] {
+				margin: 0;
+				cursor: pointer;
+			}
+			#board-settings-horizon {
+				width: 64px;
+				padding: 2px 6px;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-main, #1e1e1e);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 4px;
+			}
+			.board-settings-note {
+				margin: 0;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			/* The close-tabs warning is rendered WHENEVER the surface is open,
+			   not only once the box is ticked: the sentence is what a person
+			   needs in order to decide, so it cannot be the reward for having
+			   already decided. It gets the error color once the setting is
+			   actually armed. */
+			#board-settings-close-tabs-warning {
+				margin: 0;
+				padding-left: 8px;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				border-left: 2px solid var(--maestro-border, #3c3c3c);
+			}
+			#board-settings-close-tabs-warning.is-armed {
+				color: var(--maestro-error, #e06c75);
+				border-left-color: var(--maestro-error, #e06c75);
+			}
+			.board-settings-row input:disabled,
+			#board-settings-horizon:disabled {
+				cursor: not-allowed;
+				opacity: 0.5;
+			}
 			/* Archive Now sits beside Open Tab in the detail pane and is
 			   deliberately NOT accent-colored: it is the one control on the
 			   pane that takes the card off the board, so it reads as a
@@ -763,6 +878,15 @@
 			<span id="board-count"></span>
 			<button id="clear-done" type="button" hidden>Clear Done</button>
 			<button
+				id="board-settings-toggle"
+				type="button"
+				aria-pressed="false"
+				aria-controls="board-settings"
+				title="Aging settings for this board: whether Done cards age out, how long that takes, and whether their tabs are closed."
+			>
+				Aging
+			</button>
+			<button
 				id="archive-toggle"
 				type="button"
 				aria-pressed="false"
@@ -781,6 +905,35 @@
 			<span id="clear-done-confirm-message"></span>
 			<button id="clear-done-confirm-yes" type="button">Retire them</button>
 			<button id="clear-done-confirm-no" type="button">Cancel</button>
+		</div>
+		<div id="board-settings" role="group" aria-labelledby="board-settings-heading" hidden>
+			<div id="board-settings-head">
+				<span id="board-settings-heading">Done aging</span>
+				<span id="board-settings-scope"></span>
+				<button id="board-settings-close" type="button" aria-label="Close aging settings">
+					&times;
+				</button>
+			</div>
+			<label class="board-settings-row">
+				<input id="board-settings-aging" type="checkbox" />
+				<span>Age cards out of Done</span>
+			</label>
+			<div class="board-settings-row">
+				<label for="board-settings-horizon">Fade and retire after</label>
+				<input id="board-settings-horizon" type="number" min="1" max="365" step="1" />
+				<span>days in Done</span>
+			</div>
+			<p id="board-settings-horizon-note" class="board-settings-note"></p>
+			<label class="board-settings-row">
+				<input id="board-settings-close-tabs" type="checkbox" />
+				<span>Close a card's tab when it ages out</span>
+			</label>
+			<p id="board-settings-close-tabs-warning">
+				This closes the real Maestro tab and its transcript, which nothing in this plugin can bring
+				back. It is off by default, it never fires on a card you clear or archive by hand, and it is
+				skipped for a tab that is busy.
+			</p>
+			<p id="board-settings-status" class="board-settings-note"></p>
 		</div>
 		<div id="banner" hidden></div>
 		<div id="toast" hidden></div>
@@ -1611,6 +1764,9 @@
 					// one.
 					closeCardDetail();
 					cancelClearDoneConfirm();
+					// The aging controls are about the board, which is about to be
+					// hidden: the same one-at-a-time rule openBoardSettings() keeps.
+					closeBoardSettings();
 					applyViewMode();
 					renderClearDone(currentSnapshot);
 					renderArchive(currentSnapshot);
@@ -1836,6 +1992,251 @@
 							? 'No retired card matches "' + filter + '".'
 							: 'Nothing has been retired from this board yet. Cards you clear out of Done, and cards that age out of it, land here - and nothing is ever deleted.';
 					}
+				}
+
+				// -------------------------------------------------------------
+				// Phase 05 board settings surface. The three aging controls, as
+				// a ROW under the header rather than a third mode of this panel:
+				// changing the horizon is something a person does in order to
+				// watch the Done cards shift opacity, so the board has to stay
+				// on screen behind it. The archive replaces the board, which is
+				// why opening either one closes the other.
+				//
+				// The values come from the snapshot's `settings` payload, which
+				// rides EVERY push (answering it is a Map lookup in the sandbox,
+				// not a file read), so the surface opens on the real values with
+				// no round trip. Every change is one post naming the board it
+				// was drawn for; the sandbox saves it and pushes the snapshot
+				// that writes the controls back, so a refused toggle snaps back
+				// to the truth rather than sitting there showing a setting that
+				// was never saved.
+				// -------------------------------------------------------------
+
+				/** How long the horizon field waits before posting. A number
+				 * input is typed one digit at a time, and "1", "12" and "120"
+				 * are each a horizon the sandbox would save and repaint the
+				 * whole board at. Committing (blur, Enter, the spinner) skips
+				 * the wait. */
+				var HORIZON_DEBOUNCE_MS = 500;
+
+				var boardSettingsOpen = false;
+				var horizonTimer = null;
+				/** Whether the horizon field holds something the user typed and
+				 * this panel has not posted yet. `change` fires on blur whether
+				 * or not anything was typed, so without this a click through the
+				 * field would post a horizon nobody changed and repaint the whole
+				 * board for it. */
+				var horizonDirty = false;
+
+				function settingsOf(snapshot) {
+					var settings = snapshot && snapshot.settings;
+					return settings && typeof settings === 'object' ? settings : null;
+				}
+
+				/** Every static element of the surface, or null when the markup
+				 * is not there (a trimmed panel, or a test fixture). */
+				function boardSettingsNodes() {
+					var row = document.getElementById('board-settings');
+					var aging = document.getElementById('board-settings-aging');
+					var horizon = document.getElementById('board-settings-horizon');
+					var closeTabs = document.getElementById('board-settings-close-tabs');
+					var toggle = document.getElementById('board-settings-toggle');
+					if (!row || !aging || !horizon || !closeTabs || !toggle) return null;
+					return {
+						row: row,
+						aging: aging,
+						horizon: horizon,
+						closeTabs: closeTabs,
+						toggle: toggle,
+						scope: document.getElementById('board-settings-scope'),
+						horizonNote: document.getElementById('board-settings-horizon-note'),
+						warning: document.getElementById('board-settings-close-tabs-warning'),
+						status: document.getElementById('board-settings-status'),
+					};
+				}
+
+				/** Posts one or more changed settings, carrying the id of the
+				 * board the surface was drawn on so the sandbox can refuse one
+				 * aimed at a board the user has since switched away from (the
+				 * same echo a `move` and a Clear Done post carry). */
+				function postBoardSettings(patch) {
+					var settings = settingsOf(currentSnapshot);
+					var boardId =
+						settings && typeof settings.boardId === 'string' && settings.boardId
+							? settings.boardId
+							: boardIdOf(currentSnapshot);
+					var args = { boardId: boardId };
+					Object.keys(patch).forEach(function (field) {
+						args[field] = patch[field];
+					});
+					parent.postMessage(
+						{ type: 'maestro:invokeCommand', commandId: 'board-settings', args: args },
+						'*'
+					);
+				}
+
+				function dayWord(days) {
+					return days === 1 ? '1 day' : days + ' days';
+				}
+
+				/** What this board's aging does right now, in one sentence. */
+				function horizonNoteText(settings) {
+					if (!settings) return '';
+					var days = typeof settings.horizonDays === 'number' ? settings.horizonDays : 14;
+					if (settings.agingEnabled !== true) {
+						return (
+							'Aging is off: cards stay in Done at full strength until you move or clear them. ' +
+							'Turned on, they would fade over ' +
+							dayWord(days) +
+							'.'
+						);
+					}
+					return (
+						'A card fades out across ' +
+						dayWord(days) +
+						' in Done and then retires to the archive. Any new message or comment on it starts the clock again.'
+					);
+				}
+
+				/** Where this board's numbers come from: its own saved settings,
+				 * the Global board's, or the defaults. Said out loud because the
+				 * first change a user makes to an inheriting board writes all
+				 * three fields as that board's own. */
+				function scopeText(settings) {
+					if (!settings) return '';
+					var name =
+						typeof settings.boardName === 'string' && settings.boardName
+							? settings.boardName
+							: 'this board';
+					if (settings.boardId === null) return 'No board on screen yet';
+					if (settings.inherited !== true) return name;
+					if (typeof settings.inheritedFrom === 'string' && settings.inheritedFrom) {
+						return name + ' - using ' + settings.inheritedFrom + "'s settings";
+					}
+					return name + ' - using the defaults';
+				}
+
+				function statusText(settings) {
+					if (!settings) return '';
+					if (settings.boardId === null) {
+						return 'There is no board to configure yet. Open an agent in a project, or pick a board above.';
+					}
+					if (settings.inherited === true) {
+						return "Changing anything here saves all three settings as this board's own.";
+					}
+					return '';
+				}
+
+				/** Paints the surface off the live snapshot. The horizon field is
+				 * never written while the user is in it - the same trap the
+				 * archive filter avoids: a background push would otherwise
+				 * rewrite the digits mid-keystroke. */
+				function renderBoardSettings(snapshot) {
+					var nodes = boardSettingsNodes();
+					if (!nodes) return;
+					nodes.toggle.setAttribute('aria-pressed', boardSettingsOpen ? 'true' : 'false');
+					nodes.row.hidden = !boardSettingsOpen;
+					if (!boardSettingsOpen) return;
+
+					var settings = settingsOf(snapshot);
+					var configurable = !!settings && settings.boardId !== null;
+					nodes.aging.disabled = !configurable;
+					nodes.horizon.disabled = !configurable;
+					nodes.closeTabs.disabled = !configurable;
+					nodes.aging.checked = !!(settings && settings.agingEnabled === true);
+					nodes.closeTabs.checked = !!(settings && settings.closeTabsOnRetire === true);
+					if (settings) {
+						if (typeof settings.minHorizonDays === 'number') {
+							nodes.horizon.min = String(settings.minHorizonDays);
+						}
+						if (typeof settings.maxHorizonDays === 'number') {
+							nodes.horizon.max = String(settings.maxHorizonDays);
+						}
+					}
+					var editing = document.activeElement === nodes.horizon || horizonTimer !== null;
+					if (!editing && settings && typeof settings.horizonDays === 'number') {
+						nodes.horizon.value = String(settings.horizonDays);
+						horizonDirty = false;
+					}
+					if (nodes.scope) nodes.scope.textContent = scopeText(settings);
+					if (nodes.horizonNote) nodes.horizonNote.textContent = horizonNoteText(settings);
+					if (nodes.warning) {
+						// The sentence is always on screen (see the stylesheet); only
+						// its weight changes once the setting is actually armed.
+						nodes.warning.className = nodes.closeTabs.checked ? 'is-armed' : '';
+					}
+					if (nodes.status) nodes.status.textContent = statusText(settings);
+				}
+
+				function openBoardSettings() {
+					if (boardSettingsOpen) return;
+					boardSettingsOpen = true;
+					// The archive takes the board's place, and these controls are
+					// about the board: one of the two at a time.
+					closeArchiveView();
+					renderBoardSettings(currentSnapshot);
+				}
+
+				function closeBoardSettings() {
+					if (!boardSettingsOpen) return;
+					boardSettingsOpen = false;
+					// Anything typed and not yet posted is posted on the way out,
+					// so closing the surface never silently drops a horizon the
+					// user had finished typing.
+					flushHorizon();
+					renderBoardSettings(currentSnapshot);
+				}
+
+				function toggleBoardSettings() {
+					if (boardSettingsOpen) closeBoardSettings();
+					else openBoardSettings();
+				}
+
+				/** Posts whatever the horizon field currently holds, cancelling
+				 * any pending debounce. A blank or unparseable field posts
+				 * nothing: the sandbox clamps a number it is given, but it
+				 * cannot clamp an absence into an intention. */
+				function flushHorizon() {
+					if (horizonTimer) {
+						clearTimeout(horizonTimer);
+						horizonTimer = null;
+					}
+					if (!horizonDirty) return;
+					horizonDirty = false;
+					var nodes = boardSettingsNodes();
+					if (!nodes || nodes.horizon.disabled) return;
+					var raw = nodes.horizon.value;
+					if (typeof raw !== 'string' || raw.trim() === '') return;
+					var parsed = Number(raw);
+					if (!isFinite(parsed)) return;
+					postBoardSettings({ horizonDays: parsed });
+				}
+
+				function onHorizonInput() {
+					if (!boardSettingsOpen) return;
+					horizonDirty = true;
+					if (horizonTimer) clearTimeout(horizonTimer);
+					horizonTimer = setTimeout(function () {
+						horizonTimer = null;
+						flushHorizon();
+					}, HORIZON_DEBOUNCE_MS);
+				}
+
+				function onAgingToggled() {
+					var nodes = boardSettingsNodes();
+					if (!nodes) return;
+					postBoardSettings({ agingEnabled: nodes.aging.checked === true });
+				}
+
+				function onCloseTabsToggled() {
+					var nodes = boardSettingsNodes();
+					if (!nodes) return;
+					// Repainted before the post so the warning goes red on the
+					// click rather than a round trip later.
+					if (nodes.warning) {
+						nodes.warning.className = nodes.closeTabs.checked ? 'is-armed' : '';
+					}
+					postBoardSettings({ closeTabsOnRetire: nodes.closeTabs.checked === true });
 				}
 
 				// -------------------------------------------------------------
@@ -2558,6 +2959,10 @@
 					// board hidden underneath while it is up.
 					applyViewMode();
 					renderArchive(snapshot);
+					// Every push repaints the aging controls: the settings payload
+					// rides them all, so a horizon saved from this panel (or from
+					// another window on the same board) is on screen immediately.
+					renderBoardSettings(snapshot);
 					renderBanner(snapshot);
 
 					var board = document.getElementById('board');
@@ -2673,11 +3078,14 @@
 						// stays open, so one key press never does both. Then the
 						// Clear Done confirm, which is a question on screen waiting
 						// for an answer and must be answerable with the key that
-						// means "no"; then the detail pane; then the archive view,
-						// which Escape backs out of to the board. Only once none of
-						// those is up does Escape reach the panel itself.
+						// means "no"; then the aging settings row, which is the
+						// other transient surface under the header; then the detail
+						// pane; then the archive view, which Escape backs out of to
+						// the board. Only once none of those is up does Escape reach
+						// the panel itself.
 						if (dragState) cancelDrag();
 						else if (clearDoneConfirming) cancelClearDoneConfirm();
+						else if (boardSettingsOpen) closeBoardSettings();
 						else if (detailCardKey !== null) closeCardDetail();
 						else if (archiveOpen) closeArchiveView();
 						else requestClosePanel();
@@ -2772,6 +3180,38 @@
 							archiveFilterTimer = null;
 						}
 						postArchiveView(true, archiveFilterEl.value);
+					});
+				}
+
+				// Phase 05 board settings surface: static markup as well. The two
+				// checkboxes post on `change`, which is the event a keyboard and a
+				// click both produce. The horizon field debounces its `input` and
+				// commits on `change` (blur, Enter in most engines, and the number
+				// spinner) and on Enter explicitly, so a typed horizon is never
+				// left unsaved and a held key is not one post per digit.
+				var boardSettingsToggleEl = document.getElementById('board-settings-toggle');
+				if (boardSettingsToggleEl)
+					boardSettingsToggleEl.addEventListener('click', toggleBoardSettings);
+
+				var boardSettingsCloseEl = document.getElementById('board-settings-close');
+				if (boardSettingsCloseEl)
+					boardSettingsCloseEl.addEventListener('click', closeBoardSettings);
+
+				var boardSettingsAgingEl = document.getElementById('board-settings-aging');
+				if (boardSettingsAgingEl) boardSettingsAgingEl.addEventListener('change', onAgingToggled);
+
+				var boardSettingsCloseTabsEl = document.getElementById('board-settings-close-tabs');
+				if (boardSettingsCloseTabsEl)
+					boardSettingsCloseTabsEl.addEventListener('change', onCloseTabsToggled);
+
+				var boardSettingsHorizonEl = document.getElementById('board-settings-horizon');
+				if (boardSettingsHorizonEl) {
+					boardSettingsHorizonEl.addEventListener('input', onHorizonInput);
+					boardSettingsHorizonEl.addEventListener('change', flushHorizon);
+					boardSettingsHorizonEl.addEventListener('keydown', function (event) {
+						if (event.key !== 'Enter') return;
+						event.preventDefault();
+						flushHorizon();
 					});
 				}
 

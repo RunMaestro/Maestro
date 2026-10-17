@@ -37,6 +37,12 @@ import {
 	archiveStatus,
 	archiveSnapshotPayload,
 	makeArchiveRecord,
+	makeBoardSettings,
+	boardSettingsToggle,
+	boardSettingsAging,
+	boardSettingsHorizon,
+	boardSettingsCloseTabs,
+	boardSettingsSurface,
 } from '../helpers/kanbanPanel';
 
 describe('maestro-kanban panel.html', () => {
@@ -1809,6 +1815,254 @@ describe('maestro-kanban panel.html', () => {
 		expect(
 			postMessageSpy.mock.calls.map((call) => (call[0] as { commandId: string }).commandId)
 		).toEqual(['archive-view', 'close-panel']);
+		postMessageSpy.mockRestore();
+	});
+
+	// ---------------------------------------------------------------------
+	// Phase 05 board settings surface. A ROW under the header, not a third
+	// mode: the board stays on screen behind it, because watching the Done
+	// cards shift opacity is the reason to change the horizon at all. The
+	// values come off the snapshot's `settings` payload, and every change is
+	// one post naming the board it was drawn for.
+	// ---------------------------------------------------------------------
+
+	it('opens the aging surface on the board settings the snapshot reports, with the board still visible', () => {
+		pushSnapshot(
+			snapshotWith(
+				{ done: [makeCard({ key: 'session-1::tab-1', title: 'In Done' })] },
+				{
+					doneCardCount: 1,
+					settings: makeBoardSettings({
+						boardName: 'widgets',
+						agingEnabled: true,
+						horizonDays: 10,
+						closeTabsOnRetire: false,
+						inherited: false,
+					}),
+				}
+			)
+		);
+		expect(boardSettingsSurface().hidden).toBe(true);
+
+		boardSettingsToggle().click();
+
+		const surface = boardSettingsSurface();
+		expect(surface.hidden).toBe(false);
+		// The board is NOT replaced: a horizon change has to be visible against
+		// the cards it applies to.
+		expect(board().hidden).toBe(false);
+		expect(boardSettingsToggle().getAttribute('aria-pressed')).toBe('true');
+		expect(boardSettingsAging().checked).toBe(true);
+		expect(boardSettingsHorizon().value).toBe('10');
+		expect(boardSettingsCloseTabs().checked).toBe(false);
+		expect(surface.scope).toBe('widgets');
+		expect(surface.horizonNote).toContain('fades out across 10 days');
+		// Opening it costs no post at all: the payload was already here.
+		expect(boardSettingsHorizon().min).toBe('1');
+		expect(boardSettingsHorizon().max).toBe('365');
+	});
+
+	it('posts each toggle for the board it was drawn on, and says what aging is doing either way', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					boardId: '/Users/dev/projects/widgets',
+					settings: makeBoardSettings({
+						boardId: '/Users/dev/projects/widgets',
+						boardName: 'widgets',
+						agingEnabled: false,
+						horizonDays: 14,
+					}),
+				}
+			)
+		);
+		boardSettingsToggle().click();
+		expect(boardSettingsSurface().horizonNote).toContain('Aging is off');
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		boardSettingsAging().checked = true;
+		boardSettingsAging().dispatchEvent(new Event('change', { bubbles: true }));
+
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'board-settings',
+			args: { boardId: '/Users/dev/projects/widgets', agingEnabled: true },
+		});
+
+		boardSettingsCloseTabs().checked = true;
+		boardSettingsCloseTabs().dispatchEvent(new Event('change', { bubbles: true }));
+		expect(postMessageSpy.mock.calls[1]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'board-settings',
+			args: { boardId: '/Users/dev/projects/widgets', closeTabsOnRetire: true },
+		});
+		// One control per post: a toggle never restates the other two, so it
+		// cannot reset a setting the user did not touch.
+		postMessageSpy.mockRestore();
+	});
+
+	it('warns inline that closing tabs destroys real tabs and transcripts, before the box is ticked', () => {
+		pushSnapshot(snapshotWith({}, { settings: makeBoardSettings() }));
+		boardSettingsToggle().click();
+
+		const before = boardSettingsSurface();
+		// The sentence a person needs in order to decide cannot be the reward
+		// for having already decided, so it is on screen while the box is off.
+		expect(before.warning).toContain('closes the real Maestro tab and its transcript');
+		expect(before.warning).toContain('off by default');
+		expect(before.warningArmed).toBe(false);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		boardSettingsCloseTabs().checked = true;
+		boardSettingsCloseTabs().dispatchEvent(new Event('change', { bubbles: true }));
+		// Armed on the click, not a round trip later.
+		expect(boardSettingsSurface().warningArmed).toBe(true);
+		postMessageSpy.mockRestore();
+
+		pushSnapshot(snapshotWith({}, { settings: makeBoardSettings({ closeTabsOnRetire: true }) }));
+		expect(boardSettingsSurface().warningArmed).toBe(true);
+	});
+
+	it('debounces a typed horizon into one post, and commits it on Enter and on blur', () => {
+		vi.useFakeTimers();
+		try {
+			pushSnapshot(snapshotWith({}, { settings: makeBoardSettings({ horizonDays: 14 }) }));
+			boardSettingsToggle().click();
+
+			const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+			const horizon = boardSettingsHorizon();
+			horizon.value = '1';
+			horizon.dispatchEvent(new Event('input', { bubbles: true }));
+			horizon.value = '10';
+			horizon.dispatchEvent(new Event('input', { bubbles: true }));
+			// Nothing has gone out yet: "1" on the way to "10" is a legal horizon
+			// the sandbox would have saved and repainted the whole board at.
+			expect(postMessageSpy).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(500);
+			expect(postMessageSpy).toHaveBeenCalledTimes(1);
+			expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+				type: 'maestro:invokeCommand',
+				commandId: 'board-settings',
+				args: { boardId: '/Users/dev/projects/maestro', horizonDays: 10 },
+			});
+
+			// Enter skips the wait for someone who types and expects an answer now.
+			horizon.value = '30';
+			horizon.dispatchEvent(new Event('input', { bubbles: true }));
+			press('Enter', {}, horizon);
+			expect(postMessageSpy).toHaveBeenCalledTimes(2);
+			expect(
+				(postMessageSpy.mock.calls[1]![0] as { args: { horizonDays: number } }).args.horizonDays
+			).toBe(30);
+
+			// A blur with nothing typed posts nothing: `change` fires whether or
+			// not the field was edited, and a repaint of the whole board is not
+			// something to spend on a click through the control.
+			horizon.dispatchEvent(new Event('change', { bubbles: true }));
+			expect(postMessageSpy).toHaveBeenCalledTimes(2);
+			postMessageSpy.mockRestore();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('never rewrites the horizon field out from under the user, and snaps it back once they leave it', () => {
+		pushSnapshot(snapshotWith({}, { settings: makeBoardSettings({ horizonDays: 14 }) }));
+		boardSettingsToggle().click();
+		const horizon = boardSettingsHorizon();
+		horizon.focus();
+		horizon.value = '7';
+
+		// A background push (another window, a card finishing) arrives mid-type.
+		pushSnapshot(snapshotWith({}, { settings: makeBoardSettings({ horizonDays: 14 }) }));
+		expect(horizon.value).toBe('7');
+
+		horizon.blur();
+		// The sandbox is the authority on what was actually saved, so once the
+		// field is no longer being edited the snapshot writes it back - which is
+		// also how a clamped or refused value stops reading as if it had stuck.
+		pushSnapshot(snapshotWith({}, { settings: makeBoardSettings({ horizonDays: 14 }) }));
+		expect(horizon.value).toBe('14');
+	});
+
+	it('names where an inheriting board got its numbers, and refuses to configure a board that does not exist yet', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					settings: makeBoardSettings({
+						boardName: 'widgets',
+						inherited: true,
+						inheritedFrom: 'Global',
+						agingEnabled: true,
+						horizonDays: 21,
+					}),
+				}
+			)
+		);
+		boardSettingsToggle().click();
+		expect(boardSettingsSurface().scope).toBe("widgets - using Global's settings");
+		expect(boardSettingsSurface().status).toContain('saves all three settings');
+		expect(boardSettingsAging().disabled).toBe(false);
+
+		// The unnamed pre-activation board has nowhere to store settings, so the
+		// three controls are read-only rather than silently unsaveable.
+		pushSnapshot(
+			snapshotWith({}, { settings: makeBoardSettings({ boardId: null, boardName: 'All Agents' }) })
+		);
+		expect(boardSettingsAging().disabled).toBe(true);
+		expect(boardSettingsHorizon().disabled).toBe(true);
+		expect(boardSettingsCloseTabs().disabled).toBe(true);
+		expect(boardSettingsSurface().scope).toBe('No board on screen yet');
+		expect(boardSettingsSurface().status).toContain('no board to configure yet');
+	});
+
+	it('closes the archive when the aging surface opens, and the other way round', () => {
+		pushSnapshot(snapshotWith({}, { settings: makeBoardSettings() }));
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+		archiveToggle().click();
+		expect(board().hidden).toBe(true);
+
+		boardSettingsToggle().click();
+		// The aging controls are about the board, so the board comes back.
+		expect(board().hidden).toBe(false);
+		expect(boardSettingsSurface().hidden).toBe(false);
+		expect(
+			postMessageSpy.mock.calls.map((call) => (call[0] as { commandId: string }).commandId)
+		).toEqual(['archive-view', 'archive-view']);
+
+		archiveToggle().click();
+		expect(boardSettingsSurface().hidden).toBe(true);
+		expect(board().hidden).toBe(true);
+		postMessageSpy.mockRestore();
+	});
+
+	it('backs out of the aging surface on Escape before the detail pane or the panel', () => {
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [makeCard({ key: 'session-1::tab-1', title: 'On The Board' })] },
+				{ settings: makeBoardSettings() }
+			)
+		);
+		findCardElement('On The Board').click();
+		boardSettingsToggle().click();
+		expect(boardSettingsSurface().hidden).toBe(false);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		press('Escape');
+		expect(boardSettingsSurface().hidden).toBe(true);
+		// The detail pane is still up: one key press backs out one level.
+		expect(document.getElementById('detail')?.hidden).toBe(false);
+
+		press('Escape');
+		expect(document.getElementById('detail')?.hidden).toBe(true);
+		press('Escape');
+		expect(
+			postMessageSpy.mock.calls.map((call) => (call[0] as { commandId: string }).commandId)
+		).toContain('close-panel');
 		postMessageSpy.mockRestore();
 	});
 });

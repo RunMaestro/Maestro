@@ -103,6 +103,22 @@ interface ArchiveView {
 	tabsUnknown: boolean;
 }
 
+/** The Phase 05 board settings payload, per `boardSettingsSnapshot()`. It
+ * rides EVERY snapshot, unlike the archive view's: answering it is a Map
+ * lookup rather than a file read, so there is nothing to gate behind an
+ * "open" post. */
+interface BoardSettingsPayload {
+	boardId: string | null;
+	boardName: string;
+	agingEnabled: boolean;
+	horizonDays: number;
+	closeTabsOnRetire: boolean;
+	inherited: boolean;
+	inheritedFrom: string | null;
+	minHorizonDays: number;
+	maxHorizonDays: number;
+}
+
 interface KanbanAging {
 	agingState: (card: AgingCard, settings: unknown, now: number) => AgingState;
 	normalizeAgingSettings: (raw: unknown) => AgingSettings;
@@ -155,6 +171,13 @@ interface KanbanAging {
 		cardKey: unknown,
 		boardId?: unknown
 	) => Promise<{ ok: boolean; reason?: string; readOnly?: boolean; columnId?: string | null }>;
+	MIN_HORIZON_DAYS: number;
+	MAX_HORIZON_DAYS: number;
+	boardSettingsPatchFrom: (source: Record<string, unknown>) => Partial<AgingSettings>;
+	boardSettingsSnapshot: () => BoardSettingsPayload;
+	applyBoardSettings: (
+		args: unknown
+	) => Promise<{ ok: boolean; reason?: string; settings?: AgingSettings }>;
 	GLOBAL_BOARD_ID: string;
 	activate: (maestro: unknown) => Promise<void>;
 }
@@ -1996,5 +2019,258 @@ describe('maestro-kanban archive view', () => {
 		await next.activate(second.maestro);
 
 		expect(snapshotKeys(second.maestro.ui.panelPost)).toEqual([key]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The board settings surface: what the panel draws the three aging controls
+// from, and what its `board-settings` posts actually write.
+// ---------------------------------------------------------------------------
+
+/** The settings payload of the last panel push. */
+function lastSettings(panelPost: { mock: { calls: unknown[][] } }) {
+	const calls = panelPost.mock.calls;
+	if (calls.length === 0) return null;
+	return (calls[calls.length - 1]![1] as { settings?: BoardSettingsPayload }).settings ?? null;
+}
+
+describe('maestro-kanban board settings surface', () => {
+	const projectPath = '/Users/dev/projects/widgets';
+	const key = 'session-1::tab-1';
+
+	/** One Done card on a named project board, so `currentBoardId()` has an
+	 * answer and the settings surface has something to configure. */
+	function settingsStub(plugin: KanbanAging, extra: StubOptions = {}) {
+		const boardPath = plugin.boardFilePath(projectPath);
+		return createStubMaestro({
+			storage: {
+				'selected-board': projectPath,
+				['placements:' + boardPath]: JSON.stringify({
+					[key]: { columnId: 'done', order: 0, enteredDoneAt: Date.now() - 2 * DAY },
+				}),
+				...(extra.storage ?? {}),
+			},
+			files: extra.files,
+			sessionsList: () =>
+				Promise.resolve([
+					{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
+				]),
+			tabsList:
+				extra.tabsList ??
+				(() => Promise.resolve([aiTab({ projectPath, title: 'Ship the thing' })])),
+		});
+	}
+
+	describe('boardSettingsPatchFrom', () => {
+		it('keeps an absent field absent, so one control never restates the other two', () => {
+			const plugin = loadMain();
+			expect(plugin.boardSettingsPatchFrom({ agingEnabled: true })).toEqual({ agingEnabled: true });
+			expect(plugin.boardSettingsPatchFrom({})).toEqual({});
+		});
+
+		it('takes a horizon as a number or as the string a number input hands over', () => {
+			const plugin = loadMain();
+			expect(plugin.boardSettingsPatchFrom({ horizonDays: 10 })).toEqual({ horizonDays: 10 });
+			expect(plugin.boardSettingsPatchFrom({ horizonDays: '10' })).toEqual({ horizonDays: 10 });
+			// Not a number anyone meant: dropped rather than guessed. Clamping a
+			// number that IS meant is normalizeAgingSettings()'s job, not this
+			// one's, so an out-of-range value still rides through.
+			expect(plugin.boardSettingsPatchFrom({ horizonDays: '' })).toEqual({});
+			expect(plugin.boardSettingsPatchFrom({ horizonDays: 'soon' })).toEqual({});
+			expect(plugin.boardSettingsPatchFrom({ horizonDays: 0 })).toEqual({ horizonDays: 0 });
+		});
+
+		it('treats anything but a literal true as off for both toggles', () => {
+			const plugin = loadMain();
+			expect(plugin.boardSettingsPatchFrom({ agingEnabled: 'yes', closeTabsOnRetire: 1 })).toEqual({
+				agingEnabled: false,
+				closeTabsOnRetire: false,
+			});
+		});
+	});
+
+	it('rides the settings payload on every snapshot, with the bounds the panel clamps to', async () => {
+		const plugin = loadMain();
+		const { maestro } = settingsStub(plugin);
+
+		await plugin.activate(maestro);
+
+		expect(lastSettings(maestro.ui.panelPost)).toEqual({
+			boardId: projectPath,
+			boardName: 'widgets',
+			agingEnabled: false,
+			horizonDays: 14,
+			closeTabsOnRetire: false,
+			// Nothing stored for this board and nothing stored for Global, so
+			// these are the shipped defaults and there is no board to name.
+			inherited: true,
+			inheritedFrom: null,
+			minHorizonDays: plugin.MIN_HORIZON_DAYS,
+			maxHorizonDays: plugin.MAX_HORIZON_DAYS,
+		});
+	});
+
+	it('names the Global board when a project board is running on its settings, and stops once it has its own', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = settingsStub(plugin, {
+			storage: {
+				'board-settings': JSON.stringify({
+					[plugin.GLOBAL_BOARD_ID]: {
+						agingEnabled: true,
+						horizonDays: 21,
+						closeTabsOnRetire: false,
+					},
+				}),
+			},
+		});
+
+		await plugin.activate(maestro);
+
+		const inherited = lastSettings(maestro.ui.panelPost)!;
+		expect(inherited.inherited).toBe(true);
+		expect(inherited.inheritedFrom).toBe('Global');
+		// The VALUES are Global's, which is exactly why the surface has to say
+		// where they came from rather than presenting them as this board's own.
+		expect(inherited.agingEnabled).toBe(true);
+		expect(inherited.horizonDays).toBe(21);
+
+		await commandHandlers.get('board-settings')!({ boardId: projectPath, horizonDays: 7 });
+
+		const own = lastSettings(maestro.ui.panelPost)!;
+		expect(own.inherited).toBe(false);
+		expect(own.inheritedFrom).toBeNull();
+		// The first change writes all three: a board stops inheriting the
+		// moment it is configured, so the other two are saved as they stood.
+		expect(own).toMatchObject({ agingEnabled: true, horizonDays: 7, closeTabsOnRetire: false });
+	});
+
+	it('persists each setting, clamps the horizon, and repaints the board in the same push', async () => {
+		const plugin = loadMain();
+		const { maestro, storageStore, commandHandlers } = settingsStub(plugin);
+		await plugin.activate(maestro);
+		const pushesBefore = maestro.ui.panelPost.mock.calls.length;
+
+		const result = (await commandHandlers.get('board-settings')!({
+			boardId: projectPath,
+			agingEnabled: true,
+		})) as { ok: boolean; settings: AgingSettings };
+		expect(result.ok).toBe(true);
+		expect(result.settings.agingEnabled).toBe(true);
+
+		await commandHandlers.get('board-settings')!({ boardId: projectPath, horizonDays: 10_000 });
+
+		const stored = JSON.parse(storageStore.get('board-settings') as string) as Record<
+			string,
+			AgingSettings
+		>;
+		expect(stored[projectPath]).toEqual({
+			agingEnabled: true,
+			// Clamped rather than refused, so a hand-typed 10000 cannot wedge
+			// the board.
+			horizonDays: 365,
+			closeTabsOnRetire: false,
+		});
+		// Every accepted change pushes: the point of changing a horizon is
+		// seeing the Done cards shift along it right away.
+		expect(maestro.ui.panelPost.mock.calls.length).toBe(pushesBefore + 2);
+		expect(lastSettings(maestro.ui.panelPost)!.horizonDays).toBe(365);
+		// A settings write is bookkeeping: nothing here touches a tab.
+		expect(maestro.tabs.close).not.toHaveBeenCalled();
+	});
+
+	it('refuses a post aimed at a board the user has switched away from', async () => {
+		const plugin = loadMain();
+		const { maestro, storageStore, commandHandlers } = settingsStub(plugin);
+		await plugin.activate(maestro);
+
+		const result = (await commandHandlers.get('board-settings')!({
+			boardId: '/Users/dev/projects/other',
+			closeTabsOnRetire: true,
+		})) as { ok: boolean; reason: string };
+
+		expect(result.ok).toBe(false);
+		expect(result.reason).toContain('the board changed');
+		expect(maestro.notifications.toast).toHaveBeenCalled();
+		// Nothing was written, least of all the setting that closes tabs.
+		expect(storageStore.get('board-settings')).toBeUndefined();
+	});
+
+	it('refuses a post with no board and one that names no setting it understands', async () => {
+		const plugin = loadMain();
+		const { maestro, storageStore, commandHandlers } = settingsStub(plugin);
+		await plugin.activate(maestro);
+		const boardSettings = commandHandlers.get('board-settings')!;
+
+		const noBoard = (await boardSettings({ agingEnabled: true })) as {
+			ok: boolean;
+			reason: string;
+		};
+		expect(noBoard.ok).toBe(false);
+		expect(noBoard.reason).toContain('no board on screen');
+
+		const nothing = (await boardSettings({ boardId: projectPath, horizonDays: 'soon' })) as {
+			ok: boolean;
+			reason: string;
+		};
+		expect(nothing.ok).toBe(false);
+		expect(nothing.reason).toContain('no setting');
+		expect(storageStore.get('board-settings')).toBeUndefined();
+	});
+
+	it('does not retire anything on the click that turns aging on', async () => {
+		const plugin = loadMain();
+		const { maestro, files, commandHandlers } = settingsStub(plugin, {
+			storage: {
+				['placements:' + plugin.boardFilePath(projectPath)]: JSON.stringify({
+					// Long past any horizon anyone would pick.
+					[key]: { columnId: 'done', order: 0, enteredDoneAt: Date.now() - 400 * DAY },
+				}),
+			},
+		});
+		await plugin.activate(maestro);
+
+		await commandHandlers.get('board-settings')!({ boardId: projectPath, agingEnabled: true });
+
+		// One checkbox must not empty a Done column: nothing was archived and
+		// the card is still on the board. Clear Done is the control that
+		// retires on demand, and it asks first; the retirement tick is what
+		// eventually acts on the clock.
+		expect(files.size).toBe(0);
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+		expect(maestro.tabs.close).not.toHaveBeenCalled();
+	});
+
+	it('keeps a board settings change across a restart', async () => {
+		const first = loadMain();
+		const { maestro, storageStore, commandHandlers } = settingsStub(first);
+		await first.activate(maestro);
+		await commandHandlers.get('board-settings')!({
+			boardId: projectPath,
+			agingEnabled: true,
+			horizonDays: 10,
+			closeTabsOnRetire: true,
+		});
+
+		const second = loadMain();
+		const next = settingsStub(second, {
+			storage: Object.fromEntries(storageStore),
+			// The card is gone by now, so the restart cannot retire it and the
+			// stored settings are the only thing under test.
+			tabsList: () => Promise.resolve([]),
+		});
+		await second.activate(next.maestro);
+
+		expect(second.agingSettingsForBoard(projectPath)).toEqual({
+			agingEnabled: true,
+			horizonDays: 10,
+			closeTabsOnRetire: true,
+		});
+		expect(lastSettings(next.maestro.ui.panelPost)).toMatchObject({
+			boardId: projectPath,
+			agingEnabled: true,
+			horizonDays: 10,
+			closeTabsOnRetire: true,
+			inherited: false,
+		});
 	});
 });

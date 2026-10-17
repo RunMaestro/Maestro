@@ -3412,6 +3412,170 @@ async function restoreArchivedCard(cardKeyArg, boardIdArg) {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 05 board settings surface: the three controls that decide whether
+// aging happens at all, how fast it happens, and whether it is ever allowed
+// to close a tab. The stateful half - the stored per-board map and the
+// fallback chain a card reads its settings through - is the aging runtime
+// section above; this is the half the panel draws and posts back to.
+//
+// Four properties worth knowing:
+//
+//   1. The payload rides on EVERY snapshot, unlike the archive view's.
+//      Answering it is a Map lookup, not a filesystem read, so there is
+//      nothing to gate behind an "open" post: the panel draws the real
+//      values the moment the surface opens, with no round trip, and a
+//      horizon change repaints the board in the very push that saves it.
+//   2. A board that has never been configured says so. Because
+//      agingSettingsForBoard() falls back to the Global board, a project
+//      board with nothing stored of its own runs on Global's settings - so
+//      the payload reports `inherited` and where the numbers came from
+//      rather than presenting another board's horizon as this board's own.
+//      The first change a user makes to such a board writes all three
+//      fields, which is what setBoardAgingSettings()'s merge already does.
+//   3. A post names the board it was drawn for, and a stale one is refused -
+//      the same echo guard `move` and Clear Done carry. Switching boards
+//      mid-click and landing "close tabs when cards close" on the board the
+//      user just left is exactly the accident that guard exists for.
+//   4. Turning aging on does not retire anything on the spot. It changes how
+//      the board renders and lets the next retirement tick (or the next
+//      activate) do the retiring, so one click on a checkbox never empties a
+//      Done column that nobody confirmed emptying - Clear Done is the
+//      control that does that, and it asks first.
+// ===========================================================================
+
+/**
+ * The settings payload for the board on screen: its effective values,
+ * whether they are this board's own or inherited, and the bounds the panel's
+ * horizon control clamps to. Called from buildSnapshot() on every push.
+ *
+ * `boardId` is null only for the unnamed pre-activation board (see
+ * currentBoardId()), which has no board file and nothing to store settings
+ * under; the panel renders the surface read-only and says so rather than
+ * offering three controls that cannot be saved.
+ *
+ * @returns {{ boardId: string|null, boardName: string, agingEnabled: boolean, horizonDays: number, closeTabsOnRetire: boolean, inherited: boolean, inheritedFrom: string|null, minHorizonDays: number, maxHorizonDays: number }}
+ */
+function boardSettingsSnapshot() {
+	const boardId = currentBoardId();
+	const own = storedBoardSettings(boardId);
+	const effective = agingSettingsForBoard(boardId);
+	// Inherited from the Global board only when that board actually has
+	// stored settings AND this is not the Global board itself; otherwise the
+	// values are DEFAULT_AGING_SETTINGS and there is no other board to name.
+	const inheritedFrom =
+		own === null && boardId !== GLOBAL_BOARD_ID && storedBoardSettings(GLOBAL_BOARD_ID) !== null
+			? GLOBAL_BOARD_NAME
+			: null;
+	return {
+		boardId: boardId,
+		boardName: currentBoardName(),
+		agingEnabled: effective.agingEnabled,
+		horizonDays: effective.horizonDays,
+		closeTabsOnRetire: effective.closeTabsOnRetire,
+		inherited: own === null,
+		inheritedFrom: inheritedFrom,
+		minHorizonDays: MIN_HORIZON_DAYS,
+		maxHorizonDays: MAX_HORIZON_DAYS,
+	};
+}
+
+/** The fields of a `board-settings` post, as a patch for
+ * setBoardAgingSettings(). Absent fields stay absent, so a surface that
+ * posts one toggle never restates (or accidentally resets) the other two.
+ * A horizon arrives as a number or as the string a number input hands over;
+ * anything else is dropped rather than guessed, and the clamping itself is
+ * normalizeAgingSettings()'s job.
+ * @param {{ agingEnabled?: unknown, horizonDays?: unknown, closeTabsOnRetire?: unknown }} source
+ * @returns {{ agingEnabled?: boolean, horizonDays?: number, closeTabsOnRetire?: boolean }} */
+function boardSettingsPatchFrom(source) {
+	/** @type {{ agingEnabled?: boolean, horizonDays?: number, closeTabsOnRetire?: boolean }} */
+	const patch = {};
+	if (source.agingEnabled !== undefined) patch.agingEnabled = source.agingEnabled === true;
+	if (source.closeTabsOnRetire !== undefined) {
+		patch.closeTabsOnRetire = source.closeTabsOnRetire === true;
+	}
+	if (source.horizonDays !== undefined) {
+		const raw = source.horizonDays;
+		const parsed =
+			typeof raw === 'number'
+				? raw
+				: typeof raw === 'string' && raw.trim() !== ''
+					? Number(raw)
+					: Number.NaN;
+		if (isFinite(parsed)) patch.horizonDays = parsed;
+	}
+	return patch;
+}
+
+/**
+ * Backs the panel's `board-settings` command: writes one or more of the
+ * three settings for the board the surface was drawn on, then pushes a fresh
+ * snapshot so the board repaints at the new horizon immediately rather than
+ * waiting for the next refresh.
+ *
+ * Refused, with a toast naming which, when there is no board to configure,
+ * when the posted board is not the one on screen any more, and when the post
+ * carries nothing this plugin recognizes as a change.
+ * @param {unknown} args
+ */
+async function applyBoardSettings(args) {
+	const source = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+	const boardId =
+		typeof source.boardId === 'string' && source.boardId !== '' ? source.boardId : null;
+	if (boardId === null) {
+		const reason = 'there is no board on screen to configure yet';
+		console.warn('maestro-kanban: refused a board-settings post: ' + reason);
+		await safeToast('Could not save that setting: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	if (boardId !== currentBoardId()) {
+		const reason = 'the board changed before that setting was saved; try again';
+		console.warn('maestro-kanban: refused a board-settings post: ' + reason);
+		await safeToast('Could not save that setting: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const patch = boardSettingsPatchFrom(source);
+	if (Object.keys(patch).length === 0) {
+		const reason = 'that post named no setting this board understands';
+		console.warn('maestro-kanban: refused a board-settings post: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const before = agingSettingsForBoard(boardId);
+	const settings = await setBoardAgingSettings(boardId, patch);
+	// Logged at warn, with the board named, because it is the one setting in
+	// this plugin that can destroy something a person cannot get back: every
+	// tab this board ever closes is traceable to this line (see
+	// closeTabsForRetiredCards(), which logs the closes themselves).
+	if (settings.closeTabsOnRetire && !before.closeTabsOnRetire) {
+		console.warn(
+			'maestro-kanban: "' +
+				boardId +
+				'" turned ON closing a card\'s tab when it ages out of Done; retirement may now close real tabs and their transcripts'
+		);
+	} else {
+		console.log(
+			'maestro-kanban: "' +
+				boardId +
+				'" board settings saved: aging ' +
+				(settings.agingEnabled ? 'on' : 'off') +
+				', horizon ' +
+				settings.horizonDays +
+				'd, close tabs ' +
+				(settings.closeTabsOnRetire ? 'on' : 'off')
+		);
+	}
+	// The repaint is the point of pushing here: a shorter horizon means every
+	// Done card is further along it, and the user changed the number to see
+	// exactly that.
+	await pushSnapshotNow();
+	return { ok: true, settings: settings };
+}
+
+// ===========================================================================
+// End of Phase 05 board settings surface.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -4305,6 +4469,7 @@ async function buildSnapshot() {
 		historyExcerpt: historyExcerptSnapshot(),
 		doneCardCount: doneCards.length,
 		archive: await buildArchiveView(),
+		settings: boardSettingsSnapshot(),
 	};
 }
 
@@ -4618,6 +4783,23 @@ function registerCommands(maestro) {
 		});
 	});
 
+	// Invoked by the panel's board settings surface, one post per control it
+	// changes; no manifest `commands` entry is needed since the palette has
+	// no board in hand to configure and no value to set. `boardId` is the
+	// snapshot's id echoed back, so a setting aimed at a board the user has
+	// since switched away from is refused rather than landing on the wrong
+	// board - which matters most for `closeTabsOnRetire`, the one setting
+	// here that can cost someone a tab and its transcript.
+	maestro.commands.register('board-settings', (args) =>
+		applyBoardSettings(args).catch((err) => {
+			console.error('maestro-kanban: board-settings failed: ' + String(err));
+			return safeToast('Could not save that setting: ' + errorMessage(err)).then(() => ({
+				ok: false,
+				error: errorMessage(err),
+			}));
+		})
+	);
+
 	// Invoked by the panel when a drag ends in a drop (and, later, by its
 	// keyboard move); no manifest `commands` entry is needed since it is never
 	// surfaced in the command palette.
@@ -4926,6 +5108,18 @@ module.exports = {
 	buildArchiveView: buildArchiveView,
 	setArchiveView: setArchiveView,
 	restoreArchivedCard: restoreArchivedCard,
+
+	// Phase 05 board settings surface, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-aging.test.ts). boardSettingsPatchFrom()
+	// is pure; boardSettingsSnapshot() and applyBoardSettings() read the live
+	// board selection and write plugin storage, so a test calls them after
+	// activate() with a stub SDK - normally through the `board-settings`
+	// command the panel posts, which is the only way a user reaches them.
+	MIN_HORIZON_DAYS: MIN_HORIZON_DAYS,
+	MAX_HORIZON_DAYS: MAX_HORIZON_DAYS,
+	boardSettingsPatchFrom: boardSettingsPatchFrom,
+	boardSettingsSnapshot: boardSettingsSnapshot,
+	applyBoardSettings: applyBoardSettings,
 
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call

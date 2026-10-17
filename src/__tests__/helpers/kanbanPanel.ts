@@ -126,6 +126,25 @@ export interface SnapshotArchive {
 	tabsUnknown: boolean;
 }
 
+/** Phase 05 board settings payload, matching `boardSettingsSnapshot()` in
+ * main.js. Unlike the archive payload it rides EVERY snapshot (answering it
+ * is a Map lookup in the sandbox, not a file read), so the panel's surface
+ * opens on real values with no round trip. `boardId` null is the unnamed
+ * pre-activation board, which has nowhere to store settings. */
+export interface SnapshotBoardSettings {
+	boardId: string | null;
+	boardName: string;
+	agingEnabled: boolean;
+	horizonDays: number;
+	closeTabsOnRetire: boolean;
+	/** True when this board has nothing stored of its own, so the values came
+	 * from `inheritedFrom` (the Global board) or the defaults. */
+	inherited: boolean;
+	inheritedFrom: string | null;
+	minHorizonDays: number;
+	maxHorizonDays: number;
+}
+
 export interface SnapshotHistoryExcerpt {
 	sessionId: string;
 	status: 'loading' | 'loaded' | 'error';
@@ -175,6 +194,10 @@ export function snapshotWith(
 		 * which is also what a snapshot pushed before the open post came back
 		 * looks like). */
 		archive?: SnapshotArchive | null;
+		/** Phase 05: the board settings payload. Defaults to the board named by
+		 * `boardId`/`boardName` running on the shipped defaults, which is what
+		 * a board nobody has configured looks like. */
+		settings?: SnapshotBoardSettings | null;
 	} = {}
 ) {
 	return {
@@ -198,6 +221,32 @@ export function snapshotWith(
 		historyExcerpt: opts.historyExcerpt ?? null,
 		doneCardCount: opts.doneCardCount ?? 0,
 		archive: opts.archive ?? null,
+		settings:
+			opts.settings === undefined
+				? makeBoardSettings({
+						boardId: opts.boardId ?? null,
+						boardName: opts.boardName ?? 'All Agents',
+					})
+				: opts.settings,
+	};
+}
+
+/** The board settings payload for a board nobody has configured: aging off,
+ * the 14-day default horizon, tabs left alone. */
+export function makeBoardSettings(
+	overrides: Partial<SnapshotBoardSettings> = {}
+): SnapshotBoardSettings {
+	return {
+		boardId: '/Users/dev/projects/maestro',
+		boardName: 'maestro',
+		agingEnabled: false,
+		horizonDays: 14,
+		closeTabsOnRetire: false,
+		inherited: true,
+		inheritedFrom: null,
+		minHorizonDays: 1,
+		maxHorizonDays: 365,
+		...overrides,
 	};
 }
 
@@ -439,6 +488,56 @@ export function archiveStatus(): { count: string; empty: string | null; error: s
 		count: document.getElementById('archive-count')?.textContent ?? '',
 		empty: empty && !empty.hidden ? (empty.textContent ?? '') : null,
 		error: error && !error.hidden ? (error.textContent ?? '') : null,
+	};
+}
+
+/** The header's Phase 05 Aging toggle. */
+export function boardSettingsToggle(): HTMLButtonElement {
+	const el = document.getElementById('board-settings-toggle');
+	if (!(el instanceof HTMLButtonElement))
+		throw new Error('panel.html has no #board-settings-toggle');
+	return el;
+}
+
+function settingsCheckbox(id: string): HTMLInputElement {
+	const el = document.getElementById(id);
+	if (!(el instanceof HTMLInputElement)) throw new Error(`panel.html has no #${id}`);
+	return el;
+}
+
+export function boardSettingsAging(): HTMLInputElement {
+	return settingsCheckbox('board-settings-aging');
+}
+
+export function boardSettingsHorizon(): HTMLInputElement {
+	return settingsCheckbox('board-settings-horizon');
+}
+
+export function boardSettingsCloseTabs(): HTMLInputElement {
+	return settingsCheckbox('board-settings-close-tabs');
+}
+
+/** The settings row read the way a person reads it: whether it is up, which
+ * board it says it is configuring, what it says the horizon does, and the
+ * close-tabs warning (plus whether that warning is in its armed state). */
+export function boardSettingsSurface(): {
+	hidden: boolean;
+	scope: string;
+	horizonNote: string;
+	warning: string;
+	warningArmed: boolean;
+	status: string;
+} {
+	const row = document.getElementById('board-settings');
+	if (!row) throw new Error('panel.html has no #board-settings');
+	const warning = document.getElementById('board-settings-close-tabs-warning');
+	return {
+		hidden: (row as HTMLElement).hidden,
+		scope: document.getElementById('board-settings-scope')?.textContent ?? '',
+		horizonNote: document.getElementById('board-settings-horizon-note')?.textContent ?? '',
+		warning: warning?.textContent ?? '',
+		warningArmed: warning?.classList.contains('is-armed') ?? false,
+		status: document.getElementById('board-settings-status')?.textContent ?? '',
 	};
 }
 
