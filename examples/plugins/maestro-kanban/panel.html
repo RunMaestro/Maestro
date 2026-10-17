@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Kanban Board</title>
+		<style>
+			:root {
+				color-scheme: light dark;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			html,
+			body {
+				margin: 0;
+				padding: 0;
+				height: 100%;
+			}
+			body {
+				font-family:
+					-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+				background: var(--maestro-bg-main, #1e1e1e);
+				color: var(--maestro-text-main, #e6e6e6);
+				height: 100%;
+				overflow: hidden;
+			}
+			#board {
+				display: flex;
+				flex-direction: row;
+				align-items: stretch;
+				gap: 12px;
+				padding: 12px;
+				height: 100%;
+				overflow-x: auto;
+				user-select: none;
+			}
+			.column {
+				flex: 0 0 240px;
+				display: flex;
+				flex-direction: column;
+				background: var(--maestro-bg-sidebar, #252526);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 8px;
+				min-height: 0;
+				max-height: 100%;
+			}
+			.column-header {
+				padding: 8px 10px;
+				font-weight: 600;
+				font-size: 12px;
+				text-transform: uppercase;
+				letter-spacing: 0.04em;
+				color: var(--maestro-text-dim, #9d9d9d);
+				border-bottom: 1px solid var(--maestro-border, #3c3c3c);
+				display: flex;
+				justify-content: space-between;
+				flex: 0 0 auto;
+			}
+			.column-count {
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border-radius: 10px;
+				padding: 0 6px;
+				font-size: 11px;
+			}
+			.column-body {
+				flex: 1;
+				overflow-y: auto;
+				padding: 8px;
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+			.card {
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				padding: 8px 10px;
+				cursor: pointer;
+			}
+			.card:hover {
+				border-color: var(--maestro-accent, #4a9eff);
+			}
+			.card-title {
+				font-size: 13px;
+				font-weight: 500;
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				user-select: text;
+			}
+			.status-dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				flex: 0 0 auto;
+			}
+			.card-meta {
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				display: flex;
+				justify-content: space-between;
+				gap: 8px;
+				user-select: text;
+			}
+			.card-project {
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.card-activity {
+				flex: 0 0 auto;
+				white-space: nowrap;
+			}
+			.empty-state {
+				margin: auto;
+				max-width: 320px;
+				text-align: center;
+				color: var(--maestro-text-dim, #9d9d9d);
+				padding: 32px;
+				user-select: text;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="board">
+			<div class="empty-state">
+				Waiting for the board to load. Open an AI tab in Maestro to see it appear here.
+			</div>
+		</div>
+		<script>
+			(function () {
+				var COLUMN_TITLES = {
+					backlog: 'Backlog',
+					'in-progress': 'In Progress',
+					review: 'Review',
+					blocked: 'Blocked',
+					done: 'Done',
+				};
+
+				// Maestro's state colors (see CLAUDE.md "Agent States"): green ready,
+				// yellow thinking/busy, red error, orange connecting. There is no
+				// single host-injected "connecting" variable (the real app derives it
+				// by blending warning and error), so it is approximated the same way
+				// with color-mix, falling back to a plain hex on older engines.
+				var READY_COLOR = 'var(--maestro-success, #98c379)';
+				var BUSY_COLOR = 'var(--maestro-warning, #e5c07b)';
+				var ERROR_COLOR = 'var(--maestro-error, #e06c75)';
+				var CONNECTING_COLOR =
+					'color-mix(in srgb, var(--maestro-warning, #e5c07b), var(--maestro-error, #e06c75) 55%)';
+
+				function statusColor(status) {
+					if (status === 'error') return ERROR_COLOR;
+					if (status === 'connecting') return CONNECTING_COLOR;
+					if (status === 'busy' || status === 'thinking') return BUSY_COLOR;
+					return READY_COLOR;
+				}
+
+				function basename(path) {
+					if (typeof path !== 'string' || !path) return '';
+					var trimmed = path.replace(/[\\/]+$/, '');
+					var parts = trimmed.split(/[\\/]/);
+					return parts[parts.length - 1] || trimmed;
+				}
+
+				function relativeTime(ms) {
+					if (typeof ms !== 'number' || !isFinite(ms)) return '';
+					var diff = Date.now() - ms;
+					if (diff < 0) diff = 0;
+					var sec = Math.round(diff / 1000);
+					if (sec < 5) return 'just now';
+					if (sec < 60) return sec + 's ago';
+					var min = Math.round(sec / 60);
+					if (min < 60) return min + 'm ago';
+					var hr = Math.round(min / 60);
+					if (hr < 24) return hr + 'h ago';
+					var day = Math.round(hr / 24);
+					return day + 'd ago';
+				}
+
+				function cardElement(card) {
+					var el = document.createElement('div');
+					el.className = 'card';
+
+					var title = document.createElement('div');
+					title.className = 'card-title';
+					var dot = document.createElement('span');
+					dot.className = 'status-dot';
+					dot.style.background = statusColor(card.status);
+					title.appendChild(dot);
+					var titleText = document.createElement('span');
+					titleText.textContent = card.title || 'Untitled';
+					title.appendChild(titleText);
+					el.appendChild(title);
+
+					var meta = document.createElement('div');
+					meta.className = 'card-meta';
+					var project = document.createElement('span');
+					project.className = 'card-project';
+					project.textContent = [card.agentId, basename(card.projectPath)]
+						.filter(Boolean)
+						.join(' | ');
+					meta.appendChild(project);
+					var activity = document.createElement('span');
+					activity.className = 'card-activity';
+					activity.textContent = relativeTime(card.lastActivityAt);
+					meta.appendChild(activity);
+					el.appendChild(meta);
+
+					el.addEventListener('click', function () {
+						parent.postMessage(
+							{
+								type: 'maestro:invokeCommand',
+								commandId: 'focus',
+								args: { sessionId: card.sessionId, tabId: card.tabId },
+							},
+							'*'
+						);
+					});
+
+					return el;
+				}
+
+				function render(snapshot) {
+					var board = document.getElementById('board');
+					board.innerHTML = '';
+
+					var columns = snapshot && Array.isArray(snapshot.columns) ? snapshot.columns : [];
+					var totalCards = columns.reduce(function (sum, column) {
+						return sum + (column && Array.isArray(column.cards) ? column.cards.length : 0);
+					}, 0);
+
+					if (totalCards === 0) {
+						var empty = document.createElement('div');
+						empty.className = 'empty-state';
+						empty.textContent = 'No agents yet. Open an AI tab in Maestro to see it appear here.';
+						board.appendChild(empty);
+						return;
+					}
+
+					columns.forEach(function (column) {
+						if (!column || typeof column.id !== 'string') return;
+						var cards = Array.isArray(column.cards) ? column.cards : [];
+
+						var col = document.createElement('div');
+						col.className = 'column';
+
+						var header = document.createElement('div');
+						header.className = 'column-header';
+						var label = document.createElement('span');
+						label.textContent = COLUMN_TITLES[column.id] || column.id;
+						header.appendChild(label);
+						var count = document.createElement('span');
+						count.className = 'column-count';
+						count.textContent = String(cards.length);
+						header.appendChild(count);
+						col.appendChild(header);
+
+						var body = document.createElement('div');
+						body.className = 'column-body';
+						cards.forEach(function (card) {
+							if (!card || typeof card.sessionId !== 'string' || typeof card.tabId !== 'string')
+								return;
+							body.appendChild(cardElement(card));
+						});
+						col.appendChild(body);
+
+						board.appendChild(col);
+					});
+				}
+
+				window.addEventListener('message', function (event) {
+					if (event.data && event.data.type === 'maestro:panelData') {
+						render(event.data.data);
+					}
+				});
+			})();
+		</script>
+	</body>
+</html>
