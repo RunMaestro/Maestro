@@ -730,10 +730,9 @@ const dirtySessions = new Set();
 // session starts OUTSIDE grantedSessions and only enters it when
 // sessions.requestAccess() resolves { granted: true } - never assumed from
 // the session merely existing on the board. A dispatch or History read the
-// host later denies for a revoked grant must drop the session back out of
-// this set so the card returns to its "not connected" state; neither call
-// exists in this plugin yet (they land in later tasks of this phase), so
-// nothing does that yet.
+// host later denies for a revoked grant drops the session back out of this
+// set (see isGrantDenial() below and its two call sites) so the card returns
+// to its "not connected" state.
 // ===========================================================================
 
 /** @type {Set<string>} sessionId -> granted to message or read History for */
@@ -745,6 +744,19 @@ const grantedSessions = new Set();
  * reads as not granted rather than assuming the best. */
 function isSessionAccessGranted(sessionId) {
 	return typeof sessionId === 'string' && grantedSessions.has(sessionId);
+}
+
+/** True for the specific denial `transcripts.read` and `agents.dispatch` both
+ * throw when a `granted-sessions` plugin's session is not (or no longer) in
+ * its grant set (see the two handlers in plugin-host-handlers.ts - they share
+ * this exact substring). Distinguishing this from every other denial (rate
+ * limit, egress conflict, an unsigned plugin, no unattended consent, ...) is
+ * what lets a revoked grant drop the card back to its "not connected" state
+ * instead of rendering a generic error.
+ * @param {string} message
+ */
+function isGrantDenial(message) {
+	return typeof message === 'string' && message.indexOf('is not granted to this plugin') !== -1;
 }
 
 // ===========================================================================
@@ -783,18 +795,6 @@ const historyCache = new Map();
  * of a merely lazy cache invalidation. */
 let openHistorySessionId = null;
 
-/** True for the specific denial `transcripts.read` throws when a
- * `granted-sessions` plugin's session is not (or no longer) in its grant set
- * (see the handler in plugin-host-handlers.ts). Distinguishing this from
- * every other denial (rate limit, egress conflict, an unsigned plugin, ...)
- * is what lets a revoked grant drop the card back to its "not connected"
- * state instead of rendering a generic "History not available" error.
- * @param {string} message
- */
-function isHistoryGrantDenial(message) {
-	return typeof message === 'string' && message.indexOf('is not granted to this plugin') !== -1;
-}
-
 /**
  * Reads and caches one session's recent History excerpt. Serves the cached
  * entry when it is still within HISTORY_CACHE_TTL_MS, unless `force` is set
@@ -825,7 +825,7 @@ async function readSessionHistoryExcerpt(sessionId, options) {
 		return result;
 	} catch (err) {
 		const message = errorMessage(err);
-		if (isHistoryGrantDenial(message)) {
+		if (isGrantDenial(message)) {
 			grantedSessions.delete(sessionId);
 			historyCache.delete(sessionId);
 			return null;
@@ -887,6 +887,62 @@ function onHistoryRelevantEvent(topic, payload) {
 
 // ===========================================================================
 // End of Phase 04 History excerpt.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 04 messaging. maestro.agents.dispatch(sessionId, prompt, { tabId }) -
+// nothing else in the payload, since both the outer and the `opts` schema are
+// closed and an extra key throws - is the only way this plugin ever sends a
+// prompt to an agent's tab, and the `send-message` command below is the only
+// place it is called. The command never rejects: it always resolves and
+// always pushes a fresh snapshot, because the panel<->sandbox bridge is one
+// way (see ui.panelPost) and the snapshot's `messageOutcome` on the card (see
+// cardToJson) is the only channel the composer has for learning whether its
+// send resolved or failed. `lastMessageOutcomes` is this plugin's own
+// in-memory bookkeeping of that outcome, never persisted - unlike
+// description/comments, a send attempt is not data the user asked this board
+// to remember across a restart.
+// ===========================================================================
+
+/** @typedef {{ status: 'sent'|'failed', error: string|null, at: number }} MessageOutcome */
+/** @type {Map<string, MessageOutcome>} cardKey -> the last send-message
+ * attempt's outcome, read by cardToJson() so the composer can tell a send it
+ * is still waiting on apart from one the host has already answered. */
+const lastMessageOutcomes = new Map();
+
+/**
+ * Calls `agents.dispatch` for one already-granted session/tab and never
+ * rejects: resolves `{ ok: true, error: null }` on success, or
+ * `{ ok: false, error }` with the host's own message on any denial. A denial
+ * for a revoked grant additionally drops the session out of grantedSessions
+ * and its History cache - the same recovery readSessionHistoryExcerpt()
+ * already does - so the card returns to its ungranted state on the snapshot
+ * the caller pushes; every other denial (unsigned, no unattended consent, the
+ * rate cap, an unknown tab) is returned as-is, naming what is missing in the
+ * host's own words rather than a guess this plugin would have to maintain.
+ * @param {string} sessionId
+ * @param {string} tabId
+ * @param {string} prompt
+ * @returns {Promise<{ ok: boolean, error: string|null }>}
+ */
+async function dispatchCardMessage(sessionId, tabId, prompt) {
+	try {
+		await sdk.agents.dispatch(sessionId, prompt, { tabId: tabId });
+		return { ok: true, error: null };
+	} catch (err) {
+		const message = errorMessage(err);
+		if (isGrantDenial(message)) {
+			grantedSessions.delete(sessionId);
+			historyCache.delete(sessionId);
+		} else {
+			console.error('maestro-kanban: agents.dispatch failed: ' + String(err));
+		}
+		return { ok: false, error: message };
+	}
+}
+
+// ===========================================================================
+// End of Phase 04 messaging.
 // ===========================================================================
 
 /** Project path of the session the host most recently reported as activated
@@ -2213,7 +2269,11 @@ function schedulePanelPush() {
  * and `lastCommentAt` are this plugin's own storage (see noteFor() above),
  * never gated by `accessGranted` - they are sent for every card, granted or
  * not, and trimToBudget() already drops them first on an oversized board the
- * same way it drops `projectPath` and `createdAt`.
+ * same way it drops `projectPath` and `createdAt`. `messageOutcome` is the
+ * last `send-message` attempt's result for this card (see
+ * lastMessageOutcomes above), or `null` when nothing has ever been sent -
+ * this is the only way the composer learns whether an in-flight send
+ * resolved, since the panel<->sandbox bridge carries no direct reply.
  * @param {object} card
  * @param {string[]} [legalColumnIds]
  */
@@ -2234,6 +2294,7 @@ function cardToJson(card, legalColumnIds) {
 		description: note.description,
 		comments: note.comments,
 		lastCommentAt: note.lastCommentAt,
+		messageOutcome: lastMessageOutcomes.get(card.key) || null,
 	};
 }
 
@@ -2396,6 +2457,10 @@ function trimToBudget(snapshot) {
 			// regardless of its real access state, which is the opposite of the
 			// honesty this field exists for.
 			accessGranted: c.accessGranted,
+			// Kept: an in-flight send's only feedback channel is this field on the
+			// next snapshot (see cardToJson); dropping it on a trimmed board would
+			// leave the composer waiting forever on a send that already resolved.
+			messageOutcome: c.messageOutcome,
 		}));
 	}
 	let guard = 0;
@@ -2723,6 +2788,59 @@ function registerCommands(maestro) {
 		return Promise.resolve({ ok: false, error: 'unknown action' });
 	});
 
+	// Invoked by the panel's detail-pane message composer via
+	// parent.postMessage; no manifest `commands` entry is needed since the
+	// palette has no card, tab, or text in hand to send. This is the only
+	// place this plugin ever calls maestro.agents.dispatch. On an already-
+	// granted session it dispatches straight away; on an ungranted one it
+	// asks for the same one-time sessions.requestAccess() confirmation the
+	// detail pane's "Allow Access" button uses, and only dispatches once that
+	// resolves `{ granted: true }` - a decline leaves the prompt unsent with
+	// an "access not granted" outcome rather than a guessed message. Every
+	// outcome (sent, a declined request, or a dispatch denial) is recorded in
+	// lastMessageOutcomes and a fresh snapshot is always pushed, since the
+	// bridge carries no reply the composer could otherwise wait on. The
+	// panel enforces one in-flight send per card and one in-flight
+	// requestAccess per session client-side; this handler does not need its
+	// own copy of that guard.
+	maestro.commands.register('send-message', (args) => {
+		const cardKey = args && typeof args.cardKey === 'string' ? args.cardKey : undefined;
+		const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : undefined;
+		const tabId = args && typeof args.tabId === 'string' ? args.tabId : undefined;
+		const prompt = args && typeof args.prompt === 'string' ? args.prompt : undefined;
+		if (!cardKey || !sessionId || !tabId || !prompt || prompt.trim() === '') {
+			return Promise.resolve({
+				ok: false,
+				error: 'cardKey, sessionId, tabId and prompt are required',
+			});
+		}
+		const recordOutcome = (status, error) => {
+			lastMessageOutcomes.set(cardKey, { status: status, error: error || null, at: Date.now() });
+			return pushSnapshotNow().then(() => ({ ok: status === 'sent', error: error || null }));
+		};
+		if (isSessionAccessGranted(sessionId)) {
+			return dispatchCardMessage(sessionId, tabId, prompt).then((result) =>
+				recordOutcome(result.ok ? 'sent' : 'failed', result.error)
+			);
+		}
+		return maestro.sessions
+			.requestAccess(sessionId)
+			.then((accessResult) => {
+				const granted = !!(accessResult && accessResult.granted === true);
+				if (!granted) return recordOutcome('failed', 'access not granted');
+				grantedSessions.add(sessionId);
+				return dispatchCardMessage(sessionId, tabId, prompt).then((result) =>
+					recordOutcome(result.ok ? 'sent' : 'failed', result.error)
+				);
+			})
+			.catch((err) => {
+				console.error(
+					'maestro-kanban: sessions.requestAccess (from send-message) failed: ' + String(err)
+				);
+				return recordOutcome('failed', 'Could not request access to that agent.');
+			});
+	});
+
 	// Invoked by the panel via parent.postMessage; no manifest `commands`
 	// entry is needed since it is never surfaced in the command palette.
 	maestro.commands.register('focus', (args) => {
@@ -2824,6 +2942,7 @@ module.exports = {
 		grantedSessions.clear();
 		historyCache.clear();
 		openHistorySessionId = null;
+		lastMessageOutcomes.clear();
 		if (sdk) {
 			return sdk.events.unsubscribe().catch(() => {});
 		}

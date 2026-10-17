@@ -325,6 +325,12 @@
 				opacity: 0.5;
 				cursor: default;
 			}
+			#detail-composer-status {
+				margin-bottom: 6px;
+			}
+			.detail-message-error {
+				color: var(--maestro-error, #e06c75);
+			}
 			.column {
 				flex: 0 0 240px;
 				display: flex;
@@ -553,10 +559,10 @@
 						<h3>Message</h3>
 						<textarea
 							id="detail-composer-input"
-							disabled
-							placeholder="Messaging arrives in a later task."
+							placeholder="Message this agent's tab..."
 						></textarea>
-						<button id="detail-composer-send" type="button" disabled>Send</button>
+						<div id="detail-composer-status" class="detail-placeholder" hidden></div>
+						<button id="detail-composer-send" type="button">Send</button>
 					</div>
 					<div class="detail-section">
 						<h3>Comments</h3>
@@ -1422,6 +1428,23 @@
 				 * between two tabs of the SAME agent never asks twice. */
 				var historyRequestedSessionId = null;
 
+				/** cardKey -> { sending, error, lastOutcomeAt } for a card's message
+				 * composer. Absent until the first send attempt for that card this
+				 * panel session. `lastOutcomeAt` is the `messageOutcome.at` the
+				 * composer had already seen (or null) at the moment it posted
+				 * `send-message`, so renderComposer() below can tell "the sandbox has
+				 * not answered this send yet" apart from "this is an older outcome
+				 * from before this send" - the bridge carries no direct reply, so the
+				 * next snapshot carrying a NEW `at` is the only signal a send has
+				 * resolved. See submitCardMessage() and renderComposer(). */
+				var composerState = Object.create(null);
+
+				/** sessionId -> true while an ungranted card's send is waiting on
+				 * sessions.requestAccess() to resolve. One in-flight requestAccess per
+				 * session, client-side: two cards that are tabs of the same session
+				 * could otherwise each trigger their own request at once. */
+				var sessionsRequestingAccess = Object.create(null);
+
 				/** Tells the sandbox a detail pane has opened on `sessionId`'s
 				 * History (or switched to it): the sandbox reads and caches the
 				 * excerpt, tracks this as the session to proactively re-read on that
@@ -1518,11 +1541,13 @@
 					renderCardComments(card);
 
 					// Access gate: an ungranted card loses the History excerpt and the
-					// composer to one explanation and an Allow Access button, in their
-					// shared slot in the pane; a granted card gets the ordinary
-					// sections back. Both sections already read "arrives in a later
-					// task" for every card today - the gate only decides which one of
-					// the three is shown, not what a granted card's sections say yet.
+					// message composer to one explanation and an Allow Access button,
+					// in their shared slot in the pane; a granted card gets the
+					// ordinary sections back. The composer's own "first Send on an
+					// ungranted card" path (see the send-message command in main.js)
+					// is reached only once this gate has already let the composer
+					// through - the Allow Access button above is this pane's one
+					// user-facing way to grant access to a card with nothing sent yet.
 					var accessGranted = card.accessGranted === true;
 					var accessGateEl = document.getElementById('detail-access-gate');
 					if (accessGateEl) accessGateEl.hidden = accessGranted;
@@ -1556,6 +1581,7 @@
 						}
 						renderHistoryExcerpt(card);
 					}
+					renderComposer(card);
 				}
 
 				/** Paints #detail-history-body for `card`'s session off the LIVE
@@ -1686,6 +1712,95 @@
 					if (!body || body.trim() === '') return;
 					sendCardNote('comment', detailCardKey, { body: body });
 					input.value = '';
+				}
+
+				/** Posts the composer's text as a `send-message` command for
+				 * whichever card the pane is currently open on. Rate-limited
+				 * client-side to one in-flight send per card (a double Enter or a
+				 * fast double-click on Send is a no-op while one is outstanding) and,
+				 * when the card is not yet granted, one in-flight requestAccess per
+				 * session. The sandbox handles the whole "ask for access, then
+				 * dispatch" flow for an ungranted card itself (see send-message in
+				 * main.js); this only has to avoid firing it twice. The text stays in
+				 * the field until a `sent` outcome clears it, so a failure (including
+				 * a declined access request) leaves the message right where Retry
+				 * can resend it. */
+				function submitCardMessage() {
+					if (detailCardKey === null) return;
+					var located = locateCard(currentSnapshot, detailCardKey);
+					if (!located) return;
+					var card = located.card;
+					var input = document.getElementById('detail-composer-input');
+					if (!input) return;
+					var prompt = input.value;
+					if (!prompt || prompt.trim() === '') return;
+					var existing = composerState[card.key];
+					if (existing && existing.sending) return;
+					var accessGranted = card.accessGranted === true;
+					if (!accessGranted && sessionsRequestingAccess[card.sessionId]) return;
+					composerState[card.key] = {
+						sending: true,
+						error: null,
+						lastOutcomeAt: card.messageOutcome ? card.messageOutcome.at : null,
+					};
+					if (!accessGranted) sessionsRequestingAccess[card.sessionId] = true;
+					renderCardDetail();
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'send-message',
+							args: {
+								cardKey: card.key,
+								sessionId: card.sessionId,
+								tabId: card.tabId,
+								prompt: prompt,
+							},
+						},
+						'*'
+					);
+				}
+
+				/** Paints the message composer for `card` off the LIVE snapshot's
+				 * `messageOutcome`, the only channel a send has back to this panel
+				 * (see cardToJson/send-message in main.js - the bridge carries no
+				 * direct reply). While `composerState[card.key].sending` is true, the
+				 * field and button stay disabled and show "Sending..." until a
+				 * snapshot arrives whose `messageOutcome.at` differs from the one the
+				 * composer had already seen when it sent - that is this send's own
+				 * answer, resolved exactly once. A `sent` outcome clears the field; a
+				 * `failed` one (not granted, revoked, unsigned, no unattended consent,
+				 * the rate cap - whatever the host said) leaves the text in place and
+				 * turns the button into Retry. */
+				function renderComposer(card) {
+					var inputEl = document.getElementById('detail-composer-input');
+					var sendButton = document.getElementById('detail-composer-send');
+					var statusEl = document.getElementById('detail-composer-status');
+					if (!inputEl || !sendButton || !statusEl) return;
+					var state = composerState[card.key];
+					var outcome = card.messageOutcome;
+					if (state && state.sending && outcome && outcome.at !== state.lastOutcomeAt) {
+						state.sending = false;
+						state.lastOutcomeAt = outcome.at;
+						state.error = outcome.status === 'failed' ? outcome.error : null;
+						if (outcome.status === 'sent') inputEl.value = '';
+						delete sessionsRequestingAccess[card.sessionId];
+					}
+					var sending = !!(state && state.sending);
+					inputEl.disabled = sending;
+					sendButton.disabled = sending;
+					sendButton.textContent = state && state.error ? 'Retry' : 'Send';
+					if (sending) {
+						statusEl.hidden = false;
+						statusEl.className = 'detail-placeholder';
+						statusEl.textContent = 'Sending...';
+					} else if (state && state.error) {
+						statusEl.hidden = false;
+						statusEl.className = 'detail-placeholder detail-message-error';
+						statusEl.textContent = state.error;
+					} else {
+						statusEl.hidden = true;
+						statusEl.textContent = '';
+					}
 				}
 
 				/** Opens the detail pane on `card`, reading back out of the
@@ -1886,6 +2001,9 @@
 
 				var detailCommentAddEl = document.getElementById('detail-comment-add');
 				if (detailCommentAddEl) detailCommentAddEl.addEventListener('click', submitCardComment);
+
+				var detailComposerSendEl = document.getElementById('detail-composer-send');
+				if (detailComposerSendEl) detailComposerSendEl.addEventListener('click', submitCardMessage);
 
 				// The <select> is static markup, never replaced by a render, so the
 				// listener is bound once here rather than per snapshot.
