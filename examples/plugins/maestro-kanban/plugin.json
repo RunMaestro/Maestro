@@ -49,6 +49,16 @@
 			"capability": "fs:write",
 			"scope": "~/.maestro/kanban-boards",
 			"reason": "Write a project's own board file. Only writes its own board files under ~/.maestro and never touches a project folder."
+		},
+		{
+			"capability": "transcripts:read",
+			"scope": "granted-sessions",
+			"reason": "Shows recent History only for agents it created or you approved, and can therefore never reach the network."
+		},
+		{
+			"capability": "agents:dispatch",
+			"scope": "granted-sessions",
+			"reason": "Messages typed on a card go only to that card's agent and tab, and only after you approve that agent once or if the board created it."
 		}
 	],
 	"contributes": {
