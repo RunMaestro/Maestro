@@ -37,6 +37,7 @@
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
+		"plugin:dev": "node scripts/install-dev-plugin.mjs",
 		"gen:og-image": "node scripts/generate-og-image.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:maestro-lib-run": "node scripts/build-maestro-lib-run.mjs",
