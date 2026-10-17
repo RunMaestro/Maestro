@@ -464,7 +464,43 @@ describe('maestro-kanban panel.html', () => {
 		expect(banner?.textContent).toContain('version is required');
 	});
 
-	it('posts the focus command with the right (sessionId, tabId) when a card is clicked', () => {
+	// ---------------------------------------------------------------------
+	// Phase 04 card detail pane. A click now opens the detail pane beside
+	// the board instead of jumping straight to the agent's tab; Open Tab on
+	// that pane is the explicit path to the `focus` command a click used to
+	// post directly (see the superseded "posts the focus command ... when a
+	// card is clicked" test this replaces).
+	// ---------------------------------------------------------------------
+
+	it('opens the card detail pane instead of jumping away when a card is clicked', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [
+					makeCard({
+						key: 'session-9::tab-9',
+						sessionId: 'session-9',
+						tabId: 'tab-9',
+						title: 'Click Me',
+						agentId: 'claude-code',
+						projectPath: '/Users/dev/projects/widgets',
+						status: 'busy',
+					}),
+				],
+			})
+		);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		findCardElement('Click Me').click();
+
+		// The click itself posts nothing: it is not jumping anywhere.
+		expect(postMessageSpy).not.toHaveBeenCalled();
+		expect(document.getElementById('detail')?.hidden).toBe(false);
+		expect(document.getElementById('detail-title')?.textContent).toBe('Click Me');
+		expect(document.getElementById('detail-status-label')?.textContent).toBe('busy');
+		expect(document.getElementById('detail-meta')?.textContent).toBe('claude-code | widgets');
+	});
+
+	it('posts the focus command only once Open Tab is clicked on the open detail pane', () => {
 		pushSnapshot(
 			snapshotWith({
 				backlog: [
@@ -478,8 +514,9 @@ describe('maestro-kanban panel.html', () => {
 			})
 		);
 
-		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
 		findCardElement('Click Me').click();
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		document.getElementById('detail-open-tab')?.click();
 
 		expect(postMessageSpy).toHaveBeenCalledTimes(1);
 		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
@@ -487,6 +524,80 @@ describe('maestro-kanban panel.html', () => {
 			commandId: 'focus',
 			args: { sessionId: 'session-9', tabId: 'tab-9' },
 		});
+	});
+
+	it('closes the detail pane with its own close button', () => {
+		pushSnapshot(
+			snapshotWith({ backlog: [makeCard({ key: 'session-1::tab-1', title: 'Closable' })] })
+		);
+
+		findCardElement('Closable').click();
+		expect(document.getElementById('detail')?.hidden).toBe(false);
+
+		document.getElementById('detail-close')?.click();
+		expect(document.getElementById('detail')?.hidden).toBe(true);
+	});
+
+	it('closes the detail pane on Escape before closing the panel itself', () => {
+		pushSnapshot(
+			snapshotWith({ backlog: [makeCard({ key: 'session-1::tab-1', title: 'Detail Card' })] })
+		);
+
+		findCardElement('Detail Card').click();
+		expect(document.getElementById('detail')?.hidden).toBe(false);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		press('Escape');
+
+		expect(postMessageSpy).not.toHaveBeenCalled();
+		expect(document.getElementById('detail')?.hidden).toBe(true);
+
+		// With the detail pane now closed, Escape reaches the panel.
+		press('Escape');
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect((postMessageSpy.mock.calls[0]![0] as { commandId: string }).commandId).toBe(
+			'close-panel'
+		);
+	});
+
+	it('keeps the open detail pane in sync with the next snapshot', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ key: 'session-1::tab-1', title: 'Original Title', status: 'idle' })],
+			})
+		);
+		findCardElement('Original Title').click();
+		expect(document.getElementById('detail-title')?.textContent).toBe('Original Title');
+
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ key: 'session-1::tab-1', title: 'Renamed', status: 'busy' })],
+			})
+		);
+		expect(document.getElementById('detail-title')?.textContent).toBe('Renamed');
+		expect(document.getElementById('detail-status-label')?.textContent).toBe('busy');
+	});
+
+	it('closes the detail pane automatically when its card leaves the board', () => {
+		pushSnapshot(
+			snapshotWith({ backlog: [makeCard({ key: 'session-1::tab-1', title: 'Going Away' })] })
+		);
+		findCardElement('Going Away').click();
+		expect(document.getElementById('detail')?.hidden).toBe(false);
+
+		pushSnapshot(
+			snapshotWith({
+				backlog: [
+					makeCard({
+						key: 'session-2::tab-2',
+						sessionId: 'session-2',
+						tabId: 'tab-2',
+						title: 'New Card',
+					}),
+				],
+			})
+		);
+		expect(document.getElementById('detail')?.hidden).toBe(true);
 	});
 
 	// ---------------------------------------------------------------------
@@ -566,7 +677,7 @@ describe('maestro-kanban panel.html', () => {
 		expect(selectedCardTitle()).toBe('Only Backlog');
 	});
 
-	it("opens the selected card's tab on Enter with the payload a click posts", () => {
+	it("opens the selected card's tab directly on Enter, the same focus payload Open Tab posts", () => {
 		pushSnapshot(
 			snapshotWith({
 				backlog: [

@@ -61,6 +61,18 @@
 				border-radius: 6px;
 				cursor: pointer;
 			}
+			/* Phase 04 card detail. #main is the flex ROW that holds the board
+			   and the detail pane side by side ("beside or over the board");
+			   #board keeps its own flex: 1 so it fills whatever #detail
+			   leaves behind, open or closed. */
+			#main {
+				display: flex;
+				flex-direction: row;
+				align-items: stretch;
+				flex: 1;
+				min-height: 0;
+				overflow: hidden;
+			}
 			#board {
 				display: flex;
 				flex-direction: row;
@@ -71,6 +83,127 @@
 				min-height: 0;
 				overflow-x: auto;
 				user-select: none;
+			}
+			/* The card detail pane. It opens beside the board, never over it,
+			   so the board stays visible and the drag/keyboard affordances
+			   above keep working unmodified while a card is being read. */
+			#detail {
+				flex: 0 0 340px;
+				max-width: 420px;
+				min-height: 0;
+				display: flex;
+				flex-direction: column;
+				border-left: 1px solid var(--maestro-border, #3c3c3c);
+				background: var(--maestro-bg-sidebar, #252526);
+			}
+			#detail[hidden] {
+				display: none;
+			}
+			#detail-header {
+				flex: 0 0 auto;
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				padding: 10px 12px;
+				font-size: 12px;
+				font-weight: 600;
+				border-bottom: 1px solid var(--maestro-border, #3c3c3c);
+				user-select: none;
+			}
+			#detail-close {
+				border: none;
+				background: transparent;
+				color: inherit;
+				font-size: 15px;
+				line-height: 1;
+				cursor: pointer;
+				padding: 2px 6px;
+				border-radius: 4px;
+			}
+			#detail-close:hover {
+				background: var(--maestro-bg-activity, #2d2d2d);
+			}
+			/* The detail body is content a person reads and copies from
+			   (title, paths, History text, comments), unlike the board root
+			   above it, which is select-none because it is click/drag
+			   surface only. */
+			#detail-body {
+				flex: 1;
+				min-height: 0;
+				overflow-y: auto;
+				padding: 12px;
+				user-select: text;
+			}
+			#detail-title {
+				margin: 0 0 4px 0;
+				font-size: 14px;
+				font-weight: 600;
+				word-break: break-word;
+			}
+			#detail-status {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				font-size: 11px;
+				text-transform: capitalize;
+				margin-bottom: 4px;
+			}
+			#detail-meta {
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				margin-bottom: 12px;
+			}
+			#detail-open-tab {
+				margin-bottom: 16px;
+				padding: 5px 12px;
+				border: none;
+				border-radius: 6px;
+				background: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-size: 12px;
+				font-weight: 600;
+				cursor: pointer;
+			}
+			#detail-open-tab:hover {
+				opacity: 0.9;
+			}
+			.detail-section {
+				margin-bottom: 16px;
+			}
+			.detail-section h3 {
+				margin: 0 0 6px 0;
+				font-size: 11px;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.04em;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#detail-description-input {
+				width: 100%;
+				min-height: 60px;
+				resize: vertical;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				padding: 6px 8px;
+			}
+			.detail-placeholder {
+				font-size: 12px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#detail-comments-list {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+			.detail-comment {
+				font-size: 12px;
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border-radius: 6px;
+				padding: 6px 8px;
 			}
 			.column {
 				flex: 0 0 240px;
@@ -264,9 +397,45 @@
 		</div>
 		<div id="banner" hidden></div>
 		<div id="toast" hidden></div>
-		<div id="board">
-			<div class="empty-state">
-				Waiting for the board to load. Open an AI tab in Maestro to see it appear here.
+		<div id="main">
+			<div id="board">
+				<div class="empty-state">
+					Waiting for the board to load. Open an AI tab in Maestro to see it appear here.
+				</div>
+			</div>
+			<div id="detail" hidden>
+				<div id="detail-header">
+					<span>Card Detail</span>
+					<button id="detail-close" type="button" aria-label="Close detail">&times;</button>
+				</div>
+				<div id="detail-body">
+					<h2 id="detail-title"></h2>
+					<div id="detail-status">
+						<span class="status-dot" id="detail-status-dot"></span>
+						<span id="detail-status-label"></span>
+					</div>
+					<div id="detail-meta"></div>
+					<button id="detail-open-tab" type="button">Open Tab</button>
+					<div class="detail-section">
+						<h3>Description</h3>
+						<textarea
+							id="detail-description-input"
+							disabled
+							placeholder="Description editing arrives in a later task."
+						></textarea>
+					</div>
+					<div class="detail-section">
+						<h3>Recent History</h3>
+						<div id="detail-history-body" class="detail-placeholder">
+							History excerpt arrives in a later task.
+						</div>
+					</div>
+					<div class="detail-section">
+						<h3>Comments</h3>
+						<div id="detail-comments-list"></div>
+						<div id="detail-comments-empty" class="detail-placeholder">No comments yet.</div>
+					</div>
+				</div>
 			</div>
 		</div>
 		<script>
@@ -764,7 +933,11 @@
 						// Clicking is also pointing: arrowing on from the card you
 						// just clicked is the obvious next move.
 						selectCard(card.key);
-						focusCard(card);
+						// Phase 04: a click opens the detail pane rather than
+						// jumping straight to the agent's tab. Open Tab in that
+						// pane is the explicit way to do what this used to do
+						// on every click.
+						openCardDetail(card);
 					});
 
 					return el;
@@ -1063,6 +1236,81 @@
 					);
 				}
 
+				// -------------------------------------------------------------
+				// Phase 04 card detail pane. Opens beside the board on a card
+				// click, showing the title/agent/project/status this plugin
+				// already has in the snapshot, plus an explicit Open Tab
+				// action that is now the only click path to focusCard(). The
+				// description field, comment thread, and History excerpt are
+				// structural placeholders here - their own storage and host
+				// reads are later tasks in this phase, not this one.
+				// -------------------------------------------------------------
+
+				/** Key of the card the detail pane is open on, or null.
+				 * Independent of `selectedKey`: the keyboard selection can move
+				 * on while the pane stays pointed at whatever was last clicked. */
+				var detailCardKey = null;
+
+				function closeCardDetail() {
+					detailCardKey = null;
+					var detail = document.getElementById('detail');
+					if (detail) detail.hidden = true;
+				}
+
+				/** Paints the detail pane for `detailCardKey` off the LIVE
+				 * snapshot rather than a copy taken when the pane opened, so a
+				 * status change or rename while it is open shows up without a
+				 * re-click. Closes the pane itself once the card is no longer
+				 * on the board (closed tab, board switch) rather than leaving
+				 * it open on stale data. */
+				function renderCardDetail() {
+					var detail = document.getElementById('detail');
+					if (!detail) return;
+					if (detailCardKey === null) {
+						detail.hidden = true;
+						return;
+					}
+					var located = locateCard(currentSnapshot, detailCardKey);
+					if (!located) {
+						closeCardDetail();
+						return;
+					}
+					var card = located.card;
+					detail.hidden = false;
+
+					var titleEl = document.getElementById('detail-title');
+					if (titleEl) titleEl.textContent = card.title || 'Untitled';
+
+					var statusDotEl = document.getElementById('detail-status-dot');
+					if (statusDotEl) statusDotEl.style.background = statusColor(card.status);
+					var statusLabelEl = document.getElementById('detail-status-label');
+					if (statusLabelEl) {
+						statusLabelEl.textContent =
+							typeof card.status === 'string' && card.status ? card.status : 'idle';
+					}
+
+					var metaEl = document.getElementById('detail-meta');
+					if (metaEl) {
+						metaEl.textContent = [card.agentId, basename(card.projectPath)]
+							.filter(Boolean)
+							.join(' | ');
+					}
+
+					var openTabButton = document.getElementById('detail-open-tab');
+					if (openTabButton) {
+						openTabButton.onclick = function () {
+							focusCard(card);
+						};
+					}
+				}
+
+				/** Opens the detail pane on `card`, reading back out of the
+				 * snapshot on every subsequent render() via detailCardKey. */
+				function openCardDetail(card) {
+					detailCardKey = card.key;
+					renderCardDetail();
+				}
+
 				/** Escape with no drag in flight closes the panel. The panel cannot
 				 * close itself - the bridge carries commands only, one way - so the
 				 * sandbox does it with maestro.ui.closePanel(), which the board's
@@ -1134,6 +1382,7 @@
 						// No cards left to point at, so the selection is dropped
 						// rather than left naming a card nobody can see.
 						applySelection();
+						renderCardDetail();
 						return;
 					}
 
@@ -1188,6 +1437,8 @@
 					// cancelled card back; re-apply the dim/highlight so the
 					// rebuilt columns are not left looking inert mid-drag.
 					if (dragState) markDragTargets();
+
+					renderCardDetail();
 				}
 
 				document.addEventListener('keydown', function (event) {
@@ -1195,8 +1446,11 @@
 						event.preventDefault();
 						event.stopPropagation();
 						// A live drag owns Escape: it cancels the drag and the panel
-						// stays open, so one key press never does both.
+						// stays open, so one key press never does both. The detail
+						// pane is the next thing Escape owns, so a second press is
+						// what reaches the panel itself.
 						if (dragState) cancelDrag();
+						else if (detailCardKey !== null) closeCardDetail();
 						else requestClosePanel();
 						return;
 					}
@@ -1236,6 +1490,11 @@
 
 				var toastEl = document.getElementById('toast');
 				if (toastEl) toastEl.addEventListener('click', hideToast);
+
+				// Static markup, bound once here, same as the toast and the
+				// board switcher above.
+				var detailCloseEl = document.getElementById('detail-close');
+				if (detailCloseEl) detailCloseEl.addEventListener('click', closeCardDetail);
 
 				// The <select> is static markup, never replaced by a render, so the
 				// listener is bound once here rather than per snapshot.
