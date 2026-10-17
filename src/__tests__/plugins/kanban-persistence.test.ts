@@ -98,6 +98,7 @@ function createStubMaestro(options: StubOptions = {}) {
 		ui: {
 			panelPost: vi.fn(() => Promise.resolve({ ok: true })),
 			togglePanel: vi.fn(() => Promise.resolve({ ok: true })),
+			closePanel: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		notifications: {
 			toast: vi.fn(() => Promise.resolve({ ok: true })),
@@ -1025,5 +1026,32 @@ describe('maestro-kanban board switcher', () => {
 			ok: false,
 			reason: 'that card belongs to another project, not the board on screen',
 		});
+	});
+});
+
+describe('maestro-kanban close-panel command', () => {
+	it("dismisses the board panel on the panel's Escape, which cannot close itself", async () => {
+		const plugin = loadMain();
+		const stub = createStubMaestro({ tabsList: () => Promise.resolve([aiTab()]) });
+		await plugin.activate(stub.maestro);
+
+		const closePanel = stub.commandHandlers.get('close-panel');
+		if (!closePanel) throw new Error('main.js did not register close-panel');
+		await expect(closePanel({})).resolves.toEqual({ ok: true });
+
+		// The board panel's own id, not a panel id the panel sent: a close
+		// command that took one would let any post dismiss another surface.
+		expect(stub.maestro.ui.closePanel).toHaveBeenCalledWith('board');
+	});
+
+	it('reports a failed close rather than throwing out of the command', async () => {
+		const plugin = loadMain();
+		const stub = createStubMaestro({ tabsList: () => Promise.resolve([aiTab()]) });
+		stub.maestro.ui.closePanel.mockRejectedValueOnce(new Error('panel is not open'));
+		await plugin.activate(stub.maestro);
+
+		const closePanel = stub.commandHandlers.get('close-panel');
+		if (!closePanel) throw new Error('main.js did not register close-panel');
+		await expect(closePanel({})).resolves.toEqual({ ok: false });
 	});
 });

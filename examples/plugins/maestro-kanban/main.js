@@ -2243,6 +2243,21 @@ function registerCommands(maestro) {
 		})
 	);
 
+	// Invoked by the panel when Escape is pressed with no drag in flight. The
+	// panel cannot dismiss itself - the bridge carries commands one way - so
+	// closing is a command, and ui.closePanel() accepts it because the board
+	// panel's placement is `modal`. No manifest `commands` entry: the palette
+	// has no reason to offer "close the board I am not looking at".
+	maestro.commands.register('close-panel', () =>
+		maestro.ui
+			.closePanel('board')
+			.then(() => ({ ok: true }))
+			.catch((err) => {
+				console.error('maestro-kanban: close-panel failed: ' + String(err));
+				return { ok: false };
+			})
+	);
+
 	// Invoked by the panel via parent.postMessage; no manifest `commands`
 	// entry is needed since it is never surfaced in the command palette.
 	maestro.commands.register('focus', (args) => {

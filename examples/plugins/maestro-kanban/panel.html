@@ -130,6 +130,13 @@
 				opacity: 0.4;
 				cursor: grabbing;
 			}
+			/* The keyboard's selection. An outline rather than a border color so
+			   it reads on top of the hover border and cannot shift the card's
+			   layout when it appears. */
+			.card.selected {
+				outline: 2px solid var(--maestro-accent, #4a9eff);
+				outline-offset: 1px;
+			}
 			/* A legal drop target lights up; an illegal one dims to a clearly
 			   non-interactive state. Dimming is the only signal the user gets
 			   that the drop will be refused, so it is deliberately heavy. */
@@ -377,6 +384,17 @@
 						}
 					}
 					return null;
+				}
+
+				/** The cards of a column the panel actually draws. A card with no
+				 * sessionId/tabId cannot be focused or moved, so render() skips it -
+				 * and the keyboard reads this same list, so it can never select a
+				 * card that is not on screen. */
+				function renderableCards(column) {
+					var list = column && Array.isArray(column.cards) ? column.cards : [];
+					return list.filter(function (card) {
+						return card && typeof card.sessionId === 'string' && typeof card.tabId === 'string';
+					});
 				}
 
 				function boardIdOf(snapshot) {
@@ -664,7 +682,18 @@
 						flushDeferredSnapshot();
 						return;
 					}
-					pendingMove = { key: key, toColumnId: columnId, toIndex: toIndex, at: Date.now() };
+					commitMove(key, columnId, toIndex);
+				}
+
+				/** Applies a move optimistically and posts it. The single path a
+				 * drop and a keyboard move share, so the `move` payload the sandbox
+				 * sees is byte-identical whichever one produced it and the two can
+				 * never drift apart. `toIndex` is an insertion point in the target
+				 * column's FINAL order, with the moved card already removed from
+				 * wherever it came from. */
+				function commitMove(key, toColumnId, toIndex) {
+					pendingMove = { key: key, toColumnId: toColumnId, toIndex: toIndex, at: Date.now() };
+					var boardId = boardIdOf(currentSnapshot);
 					render(projectMove(currentSnapshot, pendingMove));
 					parent.postMessage(
 						{
@@ -672,9 +701,9 @@
 							commandId: 'move',
 							args: {
 								cardKey: key,
-								toColumnId: columnId,
+								toColumnId: toColumnId,
 								toIndex: toIndex,
-								boardId: boardIdOf(currentSnapshot),
+								boardId: boardId,
 							},
 						},
 						'*'
@@ -688,6 +717,13 @@
 					if (typeof card.key === 'string' && card.key !== '') {
 						cardNodes[card.key] = el;
 						el.draggable = true;
+						// Focusable so the keyboard's selection can take real focus
+						// (which is what scrolls it into view and announces it), but
+						// NOT tab-reachable: the board is navigated with the arrow
+						// keys, not by tabbing through every card. A tabindex is safe
+						// on a draggable surface - it is a form CONTROL that kills an
+						// HTML5 drag, not focusability.
+						el.tabIndex = -1;
 						el.addEventListener('dragstart', function (event) {
 							onCardDragStart(event, card);
 						});
@@ -725,14 +761,10 @@
 
 					el.addEventListener('click', function () {
 						if (Date.now() - dragEndedAt < CLICK_AFTER_DRAG_MS) return;
-						parent.postMessage(
-							{
-								type: 'maestro:invokeCommand',
-								commandId: 'focus',
-								args: { sessionId: card.sessionId, tabId: card.tabId },
-							},
-							'*'
-						);
+						// Clicking is also pointing: arrowing on from the card you
+						// just clicked is the obvious next move.
+						selectCard(card.key);
+						focusCard(card);
 					});
 
 					return el;
@@ -891,6 +923,166 @@
 					);
 				}
 
+				// -------------------------------------------------------------
+				// Phase 03 keyboard access. A board that only works with a mouse is
+				// half a board, so every pointer affordance has a key:
+				//
+				//   Arrow keys         move the selection between cards and columns
+				//   Enter              opens the selected card's tab
+				//   Alt + Left/Right   moves the selected card one column over
+				//   Escape             closes the panel (cancels a live drag first)
+				//
+				// Alt is the modifier because the alternatives are taken: Cmd or
+				// Ctrl plus an arrow is an OS or browser binding, and Shift plus an
+				// arrow is text selection. The keyboard move runs the SAME legality
+				// check a drag does (legalColumnIdsFor) and goes through the SAME
+				// commitMove(), so the sandbox cannot tell a keyboard move from a
+				// drop and the two cannot diverge.
+				// -------------------------------------------------------------
+
+				/** Key of the card the keyboard is pointing at, or null. The
+				 * selection follows the card BY KEY across re-renders, so an
+				 * incoming snapshot or an optimistic move does not drop it. */
+				var selectedKey = null;
+
+				/** The board as the keyboard sees it: the rendered columns, each
+				 * carrying the cards actually drawn in it, in display order. Reading
+				 * the same renderableCards() render() does is what keeps the
+				 * keyboard from selecting a card that is not on screen. */
+				function keyboardGrid() {
+					var grid = [];
+					snapshotColumns(currentSnapshot).forEach(function (column) {
+						if (!column || typeof column.id !== 'string') return;
+						grid.push({
+							id: column.id,
+							title: typeof column.title === 'string' && column.title ? column.title : column.id,
+							cards: renderableCards(column),
+						});
+					});
+					return grid;
+				}
+
+				function locateSelection(grid) {
+					for (var i = 0; i < grid.length; i++) {
+						for (var j = 0; j < grid[i].cards.length; j++) {
+							if (grid[i].cards[j].key === selectedKey) return { col: i, row: j };
+						}
+					}
+					return null;
+				}
+
+				/** Paints the selection, and on `reveal` gives the card real focus
+				 * so the engine scrolls it into view and a screen reader announces
+				 * it. A selection whose card is gone (closed tab, board switch) is
+				 * dropped rather than left pointing at nothing. */
+				function applySelection(options) {
+					if (selectedKey !== null && !cardNodes[selectedKey]) selectedKey = null;
+					Object.keys(cardNodes).forEach(function (key) {
+						var selected = key === selectedKey;
+						cardNodes[key].classList.toggle('selected', selected);
+						cardNodes[key].setAttribute('aria-selected', selected ? 'true' : 'false');
+					});
+					var node = selectedKey !== null ? cardNodes[selectedKey] : null;
+					if (!node || !options || options.reveal !== true) return;
+					if (typeof node.focus === 'function') node.focus();
+					// jsdom has no scrollIntoView, and an older engine may not either.
+					if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' });
+				}
+
+				function selectCard(key) {
+					selectedKey = typeof key === 'string' && key !== '' ? key : null;
+					applySelection({ reveal: true });
+				}
+
+				/** Arrow-key selection. Up/Down walk the column; Left/Right cross to
+				 * the nearest column in that direction THAT HAS CARDS, skipping the
+				 * empty ones - a column with nothing in it has nothing to select, and
+				 * stopping on it would read as a dead key. Neither direction wraps, so
+				 * the edge of the board is a wall rather than a teleport to the far
+				 * side. With nothing selected yet, the first press lands on the first
+				 * card on the board. */
+				function moveSelection(columnDelta, rowDelta) {
+					var grid = keyboardGrid();
+					var at = locateSelection(grid);
+					if (!at) {
+						for (var i = 0; i < grid.length; i++) {
+							if (grid[i].cards.length === 0) continue;
+							selectCard(grid[i].cards[0].key);
+							return;
+						}
+						return;
+					}
+					if (rowDelta !== 0) {
+						var row = at.row + rowDelta;
+						var column = grid[at.col];
+						if (row < 0 || row >= column.cards.length) return;
+						selectCard(column.cards[row].key);
+						return;
+					}
+					for (var c = at.col + columnDelta; c >= 0 && c < grid.length; c += columnDelta) {
+						if (grid[c].cards.length === 0) continue;
+						selectCard(grid[c].cards[Math.min(at.row, grid[c].cards.length - 1)].key);
+						return;
+					}
+				}
+
+				/** Alt + Left/Right: the selected card moves one column over,
+				 * through the drag's own legality check. The ADJACENT column is the
+				 * target even when it is illegal - skipping ahead to the next legal
+				 * one would move the card two columns on a single key press - and an
+				 * illegal one says so in a toast rather than eating the key, since a
+				 * dead key and a broken board look identical from the outside. */
+				function moveSelectedCard(columnDelta) {
+					var grid = keyboardGrid();
+					var at = locateSelection(grid);
+					if (!at) return;
+					var card = grid[at.col].cards[at.row];
+					var target = grid[at.col + columnDelta];
+					if (!target) return;
+					if (legalColumnIdsFor(currentSnapshot, card).indexOf(target.id) === -1) {
+						showToast('Cannot move "' + (card.title || 'that card') + '" to ' + target.title + '.');
+						return;
+					}
+					// The same vertical slot in the new column, so the card reads as
+					// sliding sideways. It is an insertion point in the target's final
+					// order, exactly as a drop reports one.
+					commitMove(card.key, target.id, Math.min(at.row, target.cards.length));
+					applySelection({ reveal: true });
+				}
+
+				/** Jumps Maestro to the tab behind a card. Shared by the click and
+				 * by Enter, so the two post the identical `focus` command. */
+				function focusCard(card) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'focus',
+							args: { sessionId: card.sessionId, tabId: card.tabId },
+						},
+						'*'
+					);
+				}
+
+				/** Escape with no drag in flight closes the panel. The panel cannot
+				 * close itself - the bridge carries commands only, one way - so the
+				 * sandbox does it with maestro.ui.closePanel(), which the board's
+				 * `modal` placement is what makes legal. */
+				function requestClosePanel() {
+					parent.postMessage(
+						{ type: 'maestro:invokeCommand', commandId: 'close-panel', args: {} },
+						'*'
+					);
+				}
+
+				/** Does this keystroke belong to a control that owns these keys
+				 * itself? The board switcher is a <select>: arrows change its value
+				 * and Enter commits it, so the board must not also act on them. */
+				function ownsItsOwnKeys(target) {
+					if (!target || typeof target.tagName !== 'string') return false;
+					var tag = target.tagName.toLowerCase();
+					return tag === 'select' || tag === 'input' || tag === 'textarea' || tag === 'button';
+				}
+
 				function render(snapshot) {
 					currentSnapshot = snapshot || null;
 					renderHeader(snapshot);
@@ -939,6 +1131,9 @@
 							empty.appendChild(writeButton);
 						}
 						board.appendChild(empty);
+						// No cards left to point at, so the selection is dropped
+						// rather than left naming a card nobody can see.
+						applySelection();
 						return;
 					}
 
@@ -977,9 +1172,7 @@
 						var body = document.createElement('div');
 						body.className = 'column-body';
 						columnBodies[column.id] = body;
-						cards.forEach(function (card) {
-							if (!card || typeof card.sessionId !== 'string' || typeof card.tabId !== 'string')
-								return;
+						renderableCards(column).forEach(function (card) {
 							body.appendChild(cardElement(card));
 						});
 						col.appendChild(body);
@@ -987,20 +1180,58 @@
 						board.appendChild(col);
 					});
 
+					// Every node the selection pointed at was just discarded with
+					// board.innerHTML, so the class is re-applied to the new one.
+					applySelection();
+
 					// A drag is still live only when render() was called to put a
 					// cancelled card back; re-apply the dim/highlight so the
 					// rebuilt columns are not left looking inert mid-drag.
 					if (dragState) markDragTargets();
 				}
 
-				// Escape during a drag cancels the drag and returns the card.
-				// Closing the panel on Escape belongs to this phase's keyboard
-				// access task, so this handler only claims the key mid-drag.
 				document.addEventListener('keydown', function (event) {
-					if (event.key !== 'Escape' || !dragState) return;
-					event.preventDefault();
-					event.stopPropagation();
-					cancelDrag();
+					if (event.key === 'Escape') {
+						event.preventDefault();
+						event.stopPropagation();
+						// A live drag owns Escape: it cancels the drag and the panel
+						// stays open, so one key press never does both.
+						if (dragState) cancelDrag();
+						else requestClosePanel();
+						return;
+					}
+					// Mid-drag the pointer owns the board; only Escape applies.
+					if (dragState) return;
+					if (ownsItsOwnKeys(event.target)) return;
+					// Cmd/Ctrl combinations belong to the OS and the engine.
+					if (event.metaKey || event.ctrlKey) return;
+
+					if (event.key === 'Enter') {
+						var grid = keyboardGrid();
+						var at = locateSelection(grid);
+						if (!at) return;
+						event.preventDefault();
+						focusCard(grid[at.col].cards[at.row]);
+						return;
+					}
+					if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+						var columnDelta = event.key === 'ArrowLeft' ? -1 : 1;
+						event.preventDefault();
+						if (event.altKey) moveSelectedCard(columnDelta);
+						else moveSelection(columnDelta, 0);
+						return;
+					}
+					if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+						// Alt is the move modifier, and only left/right move a card:
+						// a stored order is a position inside one column, but which
+						// column a card sits in is the thing a board is about. So
+						// Alt+Up/Down is left unclaimed rather than given a meaning
+						// the task did not ask for.
+						if (event.altKey) return;
+						event.preventDefault();
+						moveSelection(0, event.key === 'ArrowUp' ? -1 : 1);
+						return;
+					}
 				});
 
 				var toastEl = document.getElementById('toast');
