@@ -111,6 +111,13 @@ interface KanbanAging {
 		reason: string,
 		now?: number
 	) => Promise<{ retired: string[]; failed: string[] }>;
+	RETIREMENT_REASON_CLEARED: string;
+	RETIREMENT_REASON_ARCHIVED: string;
+	cardsInTerminalColumn: () => Promise<{ key: string }[]>;
+	clearDoneColumn: (
+		boardId: string | null
+	) => Promise<{ ok: boolean; retired: number; failed?: number; reason?: string }>;
+	archiveCardNow: (cardKey: string) => Promise<{ ok: boolean; retired?: number; reason?: string }>;
 	saveArchive: (boardId: string, records: ArchiveRecord[]) => Promise<ArchiveRecord[]>;
 	appendToArchive: (boardId: string, additions: ArchiveRecord[]) => Promise<ArchiveRecord[]>;
 	GLOBAL_BOARD_ID: string;
@@ -1324,5 +1331,232 @@ describe('maestro-kanban retirement', () => {
 			expect(plan.retire.map((card) => card.key).sort()).toEqual(['a', 'b']);
 			expect(plan.deferred).toEqual([]);
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 05 manual Done maintenance: Clear Done and Archive Now. Both are the
+// same retireCards() the clock uses, so what these tests are really about is
+// everything AROUND that call - which cards each one picks, that neither
+// needs aging to be switched on, that a stale board id is refused, and that
+// neither can close a tab even on a board that opted into closing them (the
+// opt-in close belongs to age-out alone).
+// ---------------------------------------------------------------------------
+
+/** The `doneCardCount` the panel's confirm would name, off the last push. */
+function lastDoneCount(panelPost: { mock: { calls: unknown[][] } }) {
+	const calls = panelPost.mock.calls;
+	if (calls.length === 0) return null;
+	return (calls[calls.length - 1]![1] as { doneCardCount?: number }).doneCardCount ?? null;
+}
+
+describe('maestro-kanban manual Done maintenance', () => {
+	const projectPath = '/Users/dev/projects/widgets';
+	const firstDone = 'session-1::tab-1';
+	const secondDone = 'session-1::tab-2';
+	const inProgress = 'session-1::tab-3';
+
+	/** One project board on screen with two cards parked in Done and one still
+	 * in progress. Aging is switched OFF and "close tabs when cards close" is
+	 * switched ON, which is the combination both manual actions have to be
+	 * right about: they work with no aging configured at all, and they still
+	 * never touch a tab. */
+	function manualStub(plugin: KanbanAging, extra: StubOptions = {}) {
+		const boardPath = plugin.boardFilePath(projectPath);
+		return createStubMaestro({
+			storage: {
+				'selected-board': projectPath,
+				['placements:' + boardPath]: JSON.stringify({
+					[firstDone]: { columnId: 'done', order: 0 },
+					[secondDone]: { columnId: 'done', order: 1 },
+					[inProgress]: { columnId: 'in-progress', order: 0 },
+				}),
+				'board-settings': JSON.stringify({
+					[projectPath]: { agingEnabled: false, horizonDays: 14, closeTabsOnRetire: true },
+				}),
+				'card-notes': JSON.stringify({
+					[firstDone]: {
+						description: 'Shipped it.',
+						comments: [{ id: 'c1', body: 'reviewed', createdAt: Date.now() - 2 * DAY }],
+					},
+				}),
+				...(extra.storage ?? {}),
+			},
+			files: extra.files,
+			sessionsList: () =>
+				Promise.resolve([
+					{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
+				]),
+			tabsList:
+				extra.tabsList ??
+				(() =>
+					Promise.resolve([
+						aiTab({ id: 'tab-1', projectPath, title: 'First Done' }),
+						aiTab({ id: 'tab-2', projectPath, title: 'Second Done' }),
+						aiTab({ id: 'tab-3', projectPath, title: 'Still Going' }),
+					])),
+		});
+	}
+
+	it('reports the count the panel confirm names, and only the cards in Done', async () => {
+		const plugin = loadMain();
+		const { maestro } = manualStub(plugin);
+
+		await plugin.activate(maestro);
+
+		expect(lastDoneCount(maestro.ui.panelPost)).toBe(2);
+		expect((await plugin.cardsInTerminalColumn()).map((card) => card.key).sort()).toEqual([
+			firstDone,
+			secondDone,
+		]);
+	});
+
+	it('clears every card in Done, with aging off, and leaves the other columns alone', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, files, storageStore, commandHandlers } = manualStub(plugin);
+		await plugin.activate(maestro);
+
+		const result = await commandHandlers.get('clear-done')!({ boardId: projectPath });
+
+		expect(result).toEqual({ ok: true, retired: 2, failed: 0 });
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.records.map((record) => record.key).sort()).toEqual([firstDone, secondDone]);
+		// Stamped as a person's doing, not the horizon's.
+		expect(archive.records.map((record) => record.reason)).toEqual([
+			plugin.RETIREMENT_REASON_CLEARED,
+			plugin.RETIREMENT_REASON_CLEARED,
+		]);
+		// The same complete record the clock writes, from the same code.
+		const cleared = archive.records.find((record) => record.key === firstDone)!;
+		expect(cleared.title).toBe('First Done');
+		expect(cleared.agentName).toBe('Widget Agent');
+		expect(cleared.columnHistory).toEqual(['done']);
+		expect(cleared.description).toBe('Shipped it.');
+		expect(cleared.comments).toHaveLength(1);
+		// One archive file, that board's own.
+		expect(Array.from(files.keys())).toEqual([plugin.archiveFilePath(projectPath)]);
+		// The in-progress card kept its placement and its place on the board.
+		const placements = readPlacements(storageStore, boardPath);
+		expect(placements[firstDone]).toBeUndefined();
+		expect(placements[secondDone]).toBeUndefined();
+		expect(placements[inProgress]!.columnId).toBe('in-progress');
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([inProgress]);
+		expect(lastDoneCount(maestro.ui.panelPost)).toBe(0);
+	});
+
+	it('never closes a tab, even on a board with "close tabs when cards close" on', async () => {
+		const plugin = loadMain();
+		const { maestro, commandHandlers } = manualStub(plugin);
+		await plugin.activate(maestro);
+
+		await commandHandlers.get('clear-done')!({ boardId: projectPath });
+		await commandHandlers.get('archive-card')!({ cardKey: inProgress });
+
+		// Both cards are retired, and all three tabs are untouched: the opt-in
+		// close belongs to age-out alone.
+		expect((await plugin.loadArchive(projectPath)).records).toHaveLength(3);
+		expect(maestro.tabs.close).not.toHaveBeenCalled();
+	});
+
+	it('refuses a clear aimed at a board the user has switched away from', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, files, storageStore, commandHandlers } = manualStub(plugin);
+		await plugin.activate(maestro);
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			const result = (await commandHandlers.get('clear-done')!({
+				boardId: '/Users/dev/projects/other',
+			})) as { ok: boolean; retired: number };
+			expect(result.ok).toBe(false);
+			expect(result.retired).toBe(0);
+		} finally {
+			warn.mockRestore();
+		}
+
+		// Nothing archived, nothing moved, and the user was told.
+		expect(files.size).toBe(0);
+		expect(readPlacements(storageStore, boardPath)[firstDone]!.columnId).toBe('done');
+		expect(maestro.notifications.toast).toHaveBeenCalledWith(
+			expect.stringContaining('the board changed')
+		);
+	});
+
+	it('treats an already-empty Done as nothing to do rather than a failure', async () => {
+		const plugin = loadMain();
+		const { maestro, files, commandHandlers } = manualStub(plugin, {
+			tabsList: () => Promise.resolve([aiTab({ id: 'tab-3', projectPath, title: 'Still Going' })]),
+		});
+		await plugin.activate(maestro);
+
+		expect(await commandHandlers.get('clear-done')!({ boardId: projectPath })).toEqual({
+			ok: true,
+			retired: 0,
+			failed: 0,
+		});
+		expect(files.size).toBe(0);
+	});
+
+	it('archives one card from the detail pane, wherever it sits, and leaves the rest', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, storageStore, commandHandlers } = manualStub(plugin);
+		await plugin.activate(maestro);
+
+		// Deliberately the card that is NOT in Done: Archive Now is a per-card
+		// action on the pane, not a second Clear Done.
+		expect(await commandHandlers.get('archive-card')!({ cardKey: inProgress })).toEqual({
+			ok: true,
+			retired: 1,
+		});
+
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.records).toHaveLength(1);
+		expect(archive.records[0]!.key).toBe(inProgress);
+		expect(archive.records[0]!.reason).toBe(plugin.RETIREMENT_REASON_ARCHIVED);
+		expect(readPlacements(storageStore, boardPath)[inProgress]).toBeUndefined();
+		expect(snapshotKeys(maestro.ui.panelPost).sort()).toEqual([firstDone, secondDone]);
+		// Still two cards in Done, untouched by a single-card archive.
+		expect(lastDoneCount(maestro.ui.panelPost)).toBe(2);
+	});
+
+	it('refuses Archive Now for a card that is no longer on the board', async () => {
+		const plugin = loadMain();
+		const { maestro, files, commandHandlers } = manualStub(plugin);
+		await plugin.activate(maestro);
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			const result = (await commandHandlers.get('archive-card')!({
+				cardKey: 'session-9::tab-9',
+			})) as { ok: boolean };
+			expect(result.ok).toBe(false);
+		} finally {
+			warn.mockRestore();
+		}
+
+		expect(files.size).toBe(0);
+		expect(maestro.notifications.toast).toHaveBeenCalledWith(
+			expect.stringContaining('no longer on the board')
+		);
+	});
+
+	it('keeps a manually archived card off the board across a restart', async () => {
+		const plugin = loadMain();
+		const first = manualStub(plugin);
+		await plugin.activate(first.maestro);
+		await first.commandHandlers.get('clear-done')!({ boardId: projectPath });
+
+		// The tabs are all still open (nothing closed one), so the archive is
+		// the only thing keeping the cleared cards off the rebuilt board.
+		const second = loadMain();
+		const next = manualStub(second, {
+			storage: Object.fromEntries(first.storageStore),
+			files: Object.fromEntries(first.files),
+		});
+		await second.activate(next.maestro);
+
+		expect(snapshotKeys(next.maestro.ui.panelPost)).toEqual([inProgress]);
+		expect((await second.loadArchive(projectPath)).records).toHaveLength(2);
 	});
 });

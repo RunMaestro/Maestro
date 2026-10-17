@@ -129,6 +129,12 @@ export function snapshotWith(
 		globalBoardMissing?: boolean;
 		moveRejection?: SnapshotMoveRejection | null;
 		historyExcerpt?: SnapshotHistoryExcerpt | null;
+		/** Phase 05: how many cards Clear Done would retire right now, per
+		 * `cardsInTerminalColumn()` in main.js. The panel's confirm names this
+		 * number and the control is hidden when it is zero, so it is NOT
+		 * derived from the columns above - on the Global board the two are
+		 * deliberately different things. */
+		doneCardCount?: number;
 	} = {}
 ) {
 	return {
@@ -150,6 +156,7 @@ export function snapshotWith(
 		globalBoardMissing: opts.globalBoardMissing ?? false,
 		moveRejection: opts.moveRejection ?? null,
 		historyExcerpt: opts.historyExcerpt ?? null,
+		doneCardCount: opts.doneCardCount ?? 0,
 	};
 }
 
@@ -272,6 +279,24 @@ export function pushSnapshot(snapshot: unknown) {
 	messageHandler(
 		new MessageEvent('message', { data: { type: 'maestro:panelData', data: snapshot } })
 	);
+}
+
+/** The header's Phase 05 Clear Done button. */
+export function clearDoneButton(): HTMLButtonElement {
+	const el = document.getElementById('clear-done');
+	if (!(el instanceof HTMLButtonElement)) throw new Error('panel.html has no #clear-done');
+	return el;
+}
+
+/** The in-panel Clear Done confirm row, with the text it is asking. */
+export function clearDoneConfirm(): { row: HTMLElement; message: string; hidden: boolean } {
+	const row = document.getElementById('clear-done-confirm');
+	if (!row) throw new Error('panel.html has no #clear-done-confirm');
+	return {
+		row,
+		message: document.getElementById('clear-done-confirm-message')?.textContent ?? '',
+		hidden: (row as HTMLElement).hidden,
+	};
 }
 
 export function board(): HTMLElement {

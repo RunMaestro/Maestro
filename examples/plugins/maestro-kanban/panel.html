@@ -474,6 +474,91 @@
 			.write-default-board-button:hover {
 				opacity: 0.9;
 			}
+			/* Phase 05 manual Done maintenance. The Clear Done control lives in
+			   the header rather than in the Done column, because what it
+			   clears is defined by the SANDBOX (every card in its own
+			   project's terminal column - see cardsInTerminalColumn()) and on
+			   the Global board that set is not the same thing as the Done lane
+			   the board happens to draw. Its confirm is an in-panel row under
+			   the header, never a browser confirm(): a sandboxed panel's
+			   confirm() is the host's modal to allow or not, and a board that
+			   quietly fails to ask before retiring 40 cards is exactly the
+			   failure this phase is written to avoid. */
+			#clear-done {
+				flex: 0 0 auto;
+				padding: 3px 8px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			#clear-done:hover {
+				border-color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#clear-done[hidden] {
+				display: none;
+			}
+			#clear-done-confirm {
+				flex: 0 0 auto;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin: 12px 12px 0 12px;
+				padding: 8px 10px;
+				border-radius: 6px;
+				font-size: 12px;
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-warning, #e5c07b);
+				user-select: none;
+			}
+			#clear-done-confirm[hidden] {
+				display: none;
+			}
+			#clear-done-confirm-message {
+				flex: 1 1 auto;
+			}
+			#clear-done-confirm-yes,
+			#clear-done-confirm-no {
+				flex: 0 0 auto;
+				padding: 4px 10px;
+				font: inherit;
+				font-size: 11px;
+				font-weight: 600;
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			#clear-done-confirm-yes {
+				border: none;
+				background: var(--maestro-warning, #e5c07b);
+				color: var(--maestro-bg-main, #1e1e1e);
+			}
+			#clear-done-confirm-no {
+				color: var(--maestro-text-main, #e6e6e6);
+				background: transparent;
+				border: 1px solid var(--maestro-border, #3c3c3c);
+			}
+			/* Archive Now sits beside Open Tab in the detail pane and is
+			   deliberately NOT accent-colored: it is the one control on the
+			   pane that takes the card off the board, so it reads as a
+			   secondary action rather than the thing to click by default. */
+			#detail-archive-now {
+				margin-left: 8px;
+				margin-bottom: 16px;
+				padding: 5px 12px;
+				border-radius: 6px;
+				font-size: 12px;
+				font-weight: 600;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				cursor: pointer;
+			}
+			#detail-archive-now:hover {
+				border-color: var(--maestro-text-dim, #9d9d9d);
+			}
 			#banner {
 				margin: 12px 12px 0 12px;
 				padding: 8px 10px;
@@ -519,7 +604,18 @@
 		<div id="header">
 			<span id="board-name">Kanban Board</span>
 			<span id="board-count"></span>
+			<button id="clear-done" type="button" hidden>Clear Done</button>
 			<select id="board-switcher" aria-label="Board"></select>
+		</div>
+		<div
+			id="clear-done-confirm"
+			role="alertdialog"
+			aria-labelledby="clear-done-confirm-message"
+			hidden
+		>
+			<span id="clear-done-confirm-message"></span>
+			<button id="clear-done-confirm-yes" type="button">Retire them</button>
+			<button id="clear-done-confirm-no" type="button">Cancel</button>
 		</div>
 		<div id="banner" hidden></div>
 		<div id="toast" hidden></div>
@@ -542,6 +638,13 @@
 					</div>
 					<div id="detail-meta"></div>
 					<button id="detail-open-tab" type="button">Open Tab</button>
+					<button
+						id="detail-archive-now"
+						type="button"
+						title="Retire this card to the archive. Its tab stays open, and you can restore it from the archive."
+					>
+						Archive Now
+					</button>
 					<div class="detail-section">
 						<h3>Description</h3>
 						<textarea id="detail-description-input" placeholder="Add a description..."></textarea>
@@ -1118,6 +1221,126 @@
 						return;
 					}
 					banner.hidden = true;
+				}
+
+				// -------------------------------------------------------------
+				// Phase 05 manual Done maintenance. Two controls, one path: the
+				// header's Clear Done (every card the sandbox counts as being in
+				// Done) and the detail pane's Archive Now (just the card the pane
+				// is open on). Both post a command and wait for the snapshot that
+				// comes back, exactly like the board switcher - the panel never
+				// guesses that a card left the board.
+				//
+				// The confirm is drawn HERE, in the panel, rather than with
+				// window.confirm(): a sandboxed panel's confirm() is the host's
+				// to allow or ignore, and "the board retired 40 cards without
+				// asking" is the one outcome this phase cannot have. It names the
+				// count off the snapshot (`doneCardCount`), which is the only way
+				// a count can reach the panel at all - the bridge carries no
+				// reply to a post, so a number the panel asked for would arrive
+				// after the click it was meant to describe. The sandbox
+				// recomputes the list when the command runs, so a card that
+				// landed in Done between the confirm and the click is included
+				// and one dragged out is not; the count retired is reported by
+				// the log and a toast, not guessed at here.
+				// -------------------------------------------------------------
+
+				/** True only between a Clear Done click and the answer to its
+				 * confirm. Panel-local: a snapshot arriving mid-confirm re-renders
+				 * the row with the live count rather than dismissing it. */
+				var clearDoneConfirming = false;
+
+				/** How many cards Clear Done would retire, per the sandbox. Absent
+				 * or nonsense reads as zero, which hides the control entirely -
+				 * better than offering to clear a column the panel cannot count. */
+				function doneCountOf(snapshot) {
+					var count = snapshot && snapshot.doneCardCount;
+					if (typeof count !== 'number' || !isFinite(count) || count < 1) return 0;
+					return Math.floor(count);
+				}
+
+				function cardWord(count) {
+					return count === 1 ? '1 card' : count + ' cards';
+				}
+
+				/** Paints the Clear Done control and its confirm row off the live
+				 * snapshot. Called from render(), so the count on the button and in
+				 * the confirm is never older than the board beside it. */
+				function renderClearDone(snapshot) {
+					var button = document.getElementById('clear-done');
+					var confirmRow = document.getElementById('clear-done-confirm');
+					var messageEl = document.getElementById('clear-done-confirm-message');
+					if (!button || !confirmRow || !messageEl) return;
+					var count = doneCountOf(snapshot);
+					// Done emptied itself while the confirm was up (an aged-out card,
+					// a drag, a board switch): the question no longer has an answer,
+					// so it is withdrawn rather than left naming a stale count.
+					if (count === 0) clearDoneConfirming = false;
+					button.hidden = count === 0;
+					button.textContent = 'Clear Done (' + count + ')';
+					button.title =
+						'Retire every card in Done to the archive. The tabs behind them stay open.';
+					confirmRow.hidden = !clearDoneConfirming;
+					messageEl.textContent = clearDoneConfirming
+						? 'Retire ' +
+							cardWord(count) +
+							' from Done to the archive? ' +
+							(count === 1 ? 'Its tab stays' : 'Their tabs stay') +
+							' open, and you can restore ' +
+							(count === 1 ? 'it' : 'them') +
+							' from the archive.'
+						: '';
+				}
+
+				function startClearDoneConfirm() {
+					if (doneCountOf(currentSnapshot) === 0) return;
+					clearDoneConfirming = true;
+					renderClearDone(currentSnapshot);
+					// Cancel takes the focus, not Retire: a question this size has to
+					// be answerable from the keyboard, and the key a keyboard user
+					// lands on first must not be the one that empties Done.
+					var cancel = document.getElementById('clear-done-confirm-no');
+					if (cancel && typeof cancel.focus === 'function') cancel.focus();
+				}
+
+				function cancelClearDoneConfirm() {
+					if (!clearDoneConfirming) return;
+					clearDoneConfirming = false;
+					renderClearDone(currentSnapshot);
+				}
+
+				/** Posts the confirmed clear, carrying the id of the board the
+				 * confirm was shown on so the sandbox can refuse one aimed at a
+				 * board the user has since switched away from (the same echo a
+				 * `move` post carries). */
+				function commitClearDone() {
+					if (!clearDoneConfirming) return;
+					clearDoneConfirming = false;
+					renderClearDone(currentSnapshot);
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'clear-done',
+							args: { boardId: boardIdOf(currentSnapshot) },
+						},
+						'*'
+					);
+				}
+
+				/** Posts Archive Now for whichever card the detail pane is open on.
+				 * The pane is not closed here: the card leaving the board on the
+				 * next snapshot is what closes it (see renderCardDetail), so a
+				 * refused archive leaves the pane exactly where it was. */
+				function archiveOpenCard() {
+					if (detailCardKey === null) return;
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'archive-card',
+							args: { cardKey: detailCardKey },
+						},
+						'*'
+					);
 				}
 
 				// -------------------------------------------------------------
@@ -1833,6 +2056,7 @@
 				function render(snapshot) {
 					currentSnapshot = snapshot || null;
 					renderHeader(snapshot);
+					renderClearDone(snapshot);
 					renderBanner(snapshot);
 
 					var board = document.getElementById('board');
@@ -1945,10 +2169,13 @@
 						event.preventDefault();
 						event.stopPropagation();
 						// A live drag owns Escape: it cancels the drag and the panel
-						// stays open, so one key press never does both. The detail
-						// pane is the next thing Escape owns, so a second press is
-						// what reaches the panel itself.
+						// stays open, so one key press never does both. Then the
+						// Clear Done confirm, which is a question on screen waiting
+						// for an answer and must be answerable with the key that
+						// means "no"; then the detail pane. Only once none of those
+						// is up does Escape reach the panel itself.
 						if (dragState) cancelDrag();
+						else if (clearDoneConfirming) cancelClearDoneConfirm();
 						else if (detailCardKey !== null) closeCardDetail();
 						else requestClosePanel();
 						return;
@@ -2004,6 +2231,21 @@
 
 				var detailComposerSendEl = document.getElementById('detail-composer-send');
 				if (detailComposerSendEl) detailComposerSendEl.addEventListener('click', submitCardMessage);
+
+				// Phase 05 manual Done maintenance: all four controls are static
+				// markup too, so they are bound once here and read `detailCardKey`
+				// and `currentSnapshot` live when clicked.
+				var clearDoneEl = document.getElementById('clear-done');
+				if (clearDoneEl) clearDoneEl.addEventListener('click', startClearDoneConfirm);
+
+				var clearDoneYesEl = document.getElementById('clear-done-confirm-yes');
+				if (clearDoneYesEl) clearDoneYesEl.addEventListener('click', commitClearDone);
+
+				var clearDoneNoEl = document.getElementById('clear-done-confirm-no');
+				if (clearDoneNoEl) clearDoneNoEl.addEventListener('click', cancelClearDoneConfirm);
+
+				var detailArchiveEl = document.getElementById('detail-archive-now');
+				if (detailArchiveEl) detailArchiveEl.addEventListener('click', archiveOpenCard);
 
 				// The <select> is static markup, never replaced by a render, so the
 				// listener is bound once here rather than per snapshot.

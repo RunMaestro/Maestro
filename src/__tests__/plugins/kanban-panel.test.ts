@@ -29,6 +29,8 @@ import {
 	switcher,
 	switcherOptions,
 	teardownPanel,
+	clearDoneButton,
+	clearDoneConfirm,
 } from '../helpers/kanbanPanel';
 
 describe('maestro-kanban panel.html', () => {
@@ -1413,5 +1415,151 @@ describe('maestro-kanban panel.html', () => {
 			})
 		);
 		expect(selectedCardTitle()).toBeNull();
+	});
+
+	// ---------------------------------------------------------------------
+	// Phase 05 manual Done maintenance. The header's Clear Done asks before
+	// it retires anything, in the panel rather than with window.confirm(),
+	// and names the count the sandbox reported; the detail pane's Archive Now
+	// retires the one card the pane is open on. Both only ever post a
+	// command - the panel never takes a card off the board itself.
+	// ---------------------------------------------------------------------
+
+	it('hides Clear Done while nothing is in Done and names the count once something is', () => {
+		pushSnapshot(snapshotWith({ backlog: [makeCard({ key: 'session-1::tab-1' })] }));
+		expect(clearDoneButton().hidden).toBe(true);
+
+		pushSnapshot(
+			snapshotWith(
+				{ done: [makeCard({ key: 'session-1::tab-1' }), makeCard({ key: 'session-2::tab-2' })] },
+				{ doneCardCount: 2 }
+			)
+		);
+		expect(clearDoneButton().hidden).toBe(false);
+		expect(clearDoneButton().textContent).toBe('Clear Done (2)');
+	});
+
+	it('asks in the panel, naming the count, and retires nothing until the confirm is answered', () => {
+		pushSnapshot(
+			snapshotWith(
+				{ done: [makeCard({ key: 'session-1::tab-1' }), makeCard({ key: 'session-2::tab-2' })] },
+				{ boardId: '/Users/dev/projects/widgets', doneCardCount: 2 }
+			)
+		);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		clearDoneButton().click();
+
+		// The click asks; it does not clear. Nothing has been posted yet.
+		expect(postMessageSpy).not.toHaveBeenCalled();
+		const asked = clearDoneConfirm();
+		expect(asked.hidden).toBe(false);
+		expect(asked.message).toContain('2 cards');
+		// The one thing a person needs to know before answering: this does not
+		// cost them their tabs.
+		expect(asked.message).toContain('Their tabs stay open');
+
+		document.getElementById('clear-done-confirm-yes')?.click();
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'clear-done',
+			// Echoed back so the sandbox can refuse a clear aimed at a board the
+			// user has since switched away from.
+			args: { boardId: '/Users/dev/projects/widgets' },
+		});
+		// The question is answered, so it is gone.
+		expect(clearDoneConfirm().hidden).toBe(true);
+		postMessageSpy.mockRestore();
+	});
+
+	it('says "1 card" rather than "1 cards" for a single Done card', () => {
+		pushSnapshot(
+			snapshotWith({ done: [makeCard({ key: 'session-1::tab-1' })] }, { doneCardCount: 1 })
+		);
+		clearDoneButton().click();
+		expect(clearDoneConfirm().message).toContain('1 card from Done');
+		expect(clearDoneConfirm().message).toContain('Its tab stays open');
+	});
+
+	it('posts nothing when the confirm is cancelled, by button or by Escape', () => {
+		pushSnapshot(
+			snapshotWith({ done: [makeCard({ key: 'session-1::tab-1' })] }, { doneCardCount: 1 })
+		);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		clearDoneButton().click();
+		// The keyboard lands on Cancel, never on the button that empties Done.
+		expect(document.activeElement?.id).toBe('clear-done-confirm-no');
+		document.getElementById('clear-done-confirm-no')?.click();
+		expect(clearDoneConfirm().hidden).toBe(true);
+		expect(postMessageSpy).not.toHaveBeenCalled();
+
+		// Escape is the key that means "no", so it answers the confirm before
+		// it reaches the detail pane or the panel itself.
+		clearDoneButton().click();
+		expect(clearDoneConfirm().hidden).toBe(false);
+		press('Escape');
+		expect(clearDoneConfirm().hidden).toBe(true);
+		expect(postMessageSpy).not.toHaveBeenCalled();
+
+		// With the confirm gone, Escape reaches the panel again.
+		press('Escape');
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect((postMessageSpy.mock.calls[0]![0] as { commandId: string }).commandId).toBe(
+			'close-panel'
+		);
+		postMessageSpy.mockRestore();
+	});
+
+	it('withdraws an open confirm once Done has emptied itself', () => {
+		pushSnapshot(
+			snapshotWith({ done: [makeCard({ key: 'session-1::tab-1' })] }, { doneCardCount: 1 })
+		);
+		clearDoneButton().click();
+		expect(clearDoneConfirm().hidden).toBe(false);
+
+		// The card aged out (or was dragged away) while the question was up:
+		// a confirm naming a count that is now zero has no answer.
+		pushSnapshot(snapshotWith({}, { doneCardCount: 0 }));
+		expect(clearDoneConfirm().hidden).toBe(true);
+		expect(clearDoneButton().hidden).toBe(true);
+	});
+
+	it('posts archive-card for the card the detail pane is open on, and leaves the pane to the next snapshot', () => {
+		pushSnapshot(
+			snapshotWith(
+				{
+					done: [
+						makeCard({
+							key: 'session-9::tab-9',
+							sessionId: 'session-9',
+							tabId: 'tab-9',
+							title: 'Archive Me',
+						}),
+					],
+				},
+				{ doneCardCount: 1 }
+			)
+		);
+		findCardElement('Archive Me').click();
+		expect(document.getElementById('detail')?.hidden).toBe(false);
+
+		const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		document.getElementById('detail-archive-now')?.click();
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1);
+		expect(postMessageSpy.mock.calls[0]![0]).toEqual({
+			type: 'maestro:invokeCommand',
+			commandId: 'archive-card',
+			args: { cardKey: 'session-9::tab-9' },
+		});
+		// The pane stays until the card actually leaves the board, so a refused
+		// archive does not look like a successful one.
+		expect(document.getElementById('detail')?.hidden).toBe(false);
+
+		pushSnapshot(snapshotWith({}, { doneCardCount: 0 }));
+		expect(document.getElementById('detail')?.hidden).toBe(true);
+		postMessageSpy.mockRestore();
 	});
 });

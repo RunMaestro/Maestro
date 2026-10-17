@@ -2829,6 +2829,151 @@ async function closeTabsForRetiredCards(candidates, retiredKeys, reason) {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 05 manual Done maintenance: the two ways a PERSON retires a card, as
+// opposed to the clock doing it. Clear Done empties the terminal column of
+// the board on screen; Archive Now retires the one card the detail pane is
+// open on. Neither is a second implementation of anything: both assemble a
+// list of live cards and hand it to retireCards(), so there is exactly one
+// place that knows how a card leaves the board, one place that writes an
+// archive record, and one shape of record in the file whoever triggered it.
+//
+// Four properties worth knowing:
+//
+//   1. "In Done" means the same thing it means to aging: the card sits in
+//      its OWN project board's terminal column. Clearing the board on screen
+//      therefore retires exactly the cards that board would have faded out
+//      by itself, and a card projected onto the Global board's Done lane
+//      from some other project column is never swept up with them.
+//   2. The sandbox recomputes that list at click time and never trusts the
+//      panel's. The panel's count is what the confirm NAMES (it can only
+//      come from a snapshot - the panel bridge carries no reply), and the
+//      count actually retired is what the log and the toast report.
+//   3. Neither path can touch a tab. They call retireCards(), which cannot
+//      reach one, and neither calls into the opt-in close layer at all -
+//      `closeTabsOnRetire` is read nowhere in this section. A tab is only
+//      ever closed at age-out, which is what "only at age-out" means in
+//      code rather than in a comment.
+//   4. Neither is a palette command. Clear Done's whole safety property is
+//      the in-panel confirm naming the count, and a palette entry would be a
+//      way to run it without ever seeing that confirm.
+// ===========================================================================
+
+/** The reason stamped on a card a person cleared out of Done by hand, as
+ * opposed to RETIREMENT_REASON_AGED for one the horizon retired. A sentence
+ * fragment the archive view shows a person, not a code. */
+const RETIREMENT_REASON_CLEARED = 'cleared out of Done by hand';
+
+/** The reason stamped on the single card a person archived from the detail
+ * pane. Distinct from RETIREMENT_REASON_CLEARED so the archive can say which
+ * of the two actions a record came from. */
+const RETIREMENT_REASON_ARCHIVED = 'archived by hand';
+
+/**
+ * Every card the board on screen counts as being in Done: the cards that
+ * board shows (one project's, or everything on the Global and the unnamed
+ * board) sitting in their own project board's terminal column. The same
+ * definition agingState() ages a card under, so Clear Done retires exactly
+ * the set that would have aged out and nothing else. A card with no project
+ * path has no board file, no terminal column and no archive, so it is never
+ * in this list.
+ * @returns {Promise<object[]>}
+ */
+async function cardsInTerminalColumn() {
+	const view = resolveBoardView();
+	/** @type {Map<string, string|null>} project path -> terminal column id */
+	const terminalByProject = new Map();
+	const members = [];
+	for (const card of boardCards(view)) {
+		if (typeof card.projectPath !== 'string' || card.projectPath === '') continue;
+		if (!terminalByProject.has(card.projectPath)) {
+			terminalByProject.set(card.projectPath, await terminalColumnIdForProject(card.projectPath));
+		}
+		const terminalId = terminalByProject.get(card.projectPath);
+		if (terminalId !== null && card.columnId === terminalId) members.push(card);
+	}
+	return members;
+}
+
+/**
+ * Backs the panel's `clear-done` command, which the panel only posts once
+ * the user has answered its own confirm naming the count. `boardId` is
+ * echoed back from the snapshot that confirm was shown on, so a clear aimed
+ * at a board the user has since switched away from is refused rather than
+ * emptying the Done column of whichever board is on screen now - the same
+ * guard handleMove() holds over a drop.
+ *
+ * Retires nothing and says so when the column is already empty: a clear that
+ * found nothing is not a failure, and the panel's own button is hidden in
+ * that state anyway.
+ * @param {string|null} boardId
+ */
+async function clearDoneColumn(boardId) {
+	if (boardId !== null && boardId !== currentBoardId()) {
+		const reason = 'the board changed before Clear Done ran; try again';
+		console.warn('maestro-kanban: refused Clear Done: ' + reason);
+		await safeToast('Clear Done was not run: ' + reason);
+		return { ok: false, reason: reason, retired: 0, failed: 0 };
+	}
+	const targets = await cardsInTerminalColumn();
+	if (targets.length === 0) {
+		console.log('maestro-kanban: Clear Done found no cards in Done; nothing retired');
+		return { ok: true, retired: 0, failed: 0 };
+	}
+	const result = await retireCards(targets, RETIREMENT_REASON_CLEARED);
+	console.log(
+		'maestro-kanban: Clear Done retired ' +
+			result.retired.length +
+			' of ' +
+			targets.length +
+			' card(s) in Done' +
+			(result.failed.length > 0 ? ', leaving ' + result.failed.length + ' on the board' : '')
+	);
+	await pushSnapshotNow();
+	if (result.failed.length > 0) {
+		await safeToast(
+			'Cleared ' +
+				result.retired.length +
+				' card(s) from Done. ' +
+				result.failed.length +
+				' could not be archived and stayed on the board.'
+		);
+	}
+	return { ok: true, retired: result.retired.length, failed: result.failed.length };
+}
+
+/**
+ * Backs the detail pane's `archive-card` command: retires the one card the
+ * pane is open on, wherever it sits, through the same retireCards() the
+ * clock uses. A card that is no longer on the board, or one whose agent has
+ * no project folder to archive it under, is refused with a toast that says
+ * which - an action that silently does nothing is indistinguishable from a
+ * bug.
+ * @param {string} cardKey
+ */
+async function archiveCardNow(cardKey) {
+	const card = typeof cardKey === 'string' ? cards.get(cardKey) : undefined;
+	if (!card) {
+		const reason = 'that card is no longer on the board';
+		console.warn('maestro-kanban: refused Archive Now for "' + cardKey + '": ' + reason);
+		await safeToast('Could not archive that card: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const result = await retireCards([card], RETIREMENT_REASON_ARCHIVED);
+	if (result.retired.length === 0) {
+		// retireCards() has already logged why (an unreadable archive file, or
+		// an agent with no project folder); this is the user-facing half.
+		await safeToast('Could not archive "' + archiveString(card.title) + '" - see the plugin log.');
+		return { ok: false, reason: 'that card could not be archived' };
+	}
+	await pushSnapshotNow();
+	return { ok: true, retired: result.retired.length };
+}
+
+// ===========================================================================
+// End of Phase 05 manual Done maintenance.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -3683,6 +3828,13 @@ async function buildGlobalBoardColumns(active) {
  * back in a `move` post so a move aimed at a board the user has since
  * switched away from is refused. `moveRejection` carries the one refused move
  * the panel still has to be told about - see handleMove().
+ *
+ * `doneCardCount` is how many cards Clear Done would retire right now, in
+ * the sandbox's own terms (see cardsInTerminalColumn()) rather than the
+ * panel's reading of a column. It is the number the panel's confirm names,
+ * and it can only reach the panel this way: the bridge carries no reply to a
+ * post, so a count the panel asked for would arrive after the click it was
+ * meant to describe.
  */
 async function buildSnapshot() {
 	const active = await resolveActiveBoard();
@@ -3695,6 +3847,7 @@ async function buildSnapshot() {
 			? await buildGlobalBoardColumns(active)
 			: buildProjectBoardColumns(active);
 	const options = boardOptions();
+	const doneCards = await cardsInTerminalColumn();
 	return {
 		updatedAt: Date.now(),
 		columns: board.columns,
@@ -3708,6 +3861,7 @@ async function buildSnapshot() {
 		boardsHidden: options.hiddenCount > 0 ? options.hiddenCount : undefined,
 		moveRejection: moveRejection,
 		historyExcerpt: historyExcerptSnapshot(),
+		doneCardCount: doneCards.length,
 	};
 }
 
@@ -3938,6 +4092,43 @@ function registerCommands(maestro) {
 			return safeToast('Could not switch boards.').then(() => ({ ok: false }));
 		})
 	);
+
+	// Invoked by the panel's header Clear Done control, and ONLY after the
+	// panel's own in-panel confirm named the count - that confirm is the whole
+	// safety property of this action, which is why there is deliberately no
+	// manifest `commands` entry: a palette entry would be a way to empty Done
+	// without ever seeing it. The card list is recomputed here rather than
+	// taken from the post (see cardsInTerminalColumn()), and `boardId` is the
+	// snapshot's id echoed back so a clear aimed at a board the user has since
+	// switched away from is refused.
+	maestro.commands.register('clear-done', (args) => {
+		const boardId =
+			args && typeof args.boardId === 'string' && args.boardId !== '' ? args.boardId : null;
+		return clearDoneColumn(boardId).catch((err) => {
+			console.error('maestro-kanban: clear-done failed: ' + String(err));
+			return safeToast('Could not clear Done: ' + errorMessage(err)).then(() => ({
+				ok: false,
+				error: errorMessage(err),
+			}));
+		});
+	});
+
+	// Invoked by the detail pane's Archive Now button; no manifest `commands`
+	// entry is needed since the palette has no card in hand to archive. Goes
+	// through the same retireCards() the aging sweep does, so a card archived
+	// by hand lands in the same file, in the same shape, and keeps its tab
+	// exactly as a card that aged out does.
+	maestro.commands.register('archive-card', (args) => {
+		const cardKey = args && typeof args.cardKey === 'string' ? args.cardKey : undefined;
+		if (!cardKey) return Promise.resolve({ ok: false, error: 'cardKey is required' });
+		return archiveCardNow(cardKey).catch((err) => {
+			console.error('maestro-kanban: archive-card failed: ' + String(err));
+			return safeToast('Could not archive that card: ' + errorMessage(err)).then(() => ({
+				ok: false,
+				error: errorMessage(err),
+			}));
+		});
+	});
 
 	// Invoked by the panel when a drag ends in a drop (and, later, by its
 	// keyboard move); no manifest `commands` entry is needed since it is never
@@ -4223,6 +4414,17 @@ module.exports = {
 	// caller of closeTabsForRetiredCards() is the aging sweep.
 	isTabStatusBusy: isTabStatusBusy,
 	planRetirementTabCloses: planRetirementTabCloses,
+
+	// Phase 05 manual Done maintenance, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-aging.test.ts). Both read the live card
+	// model and write the archive, so a test calls them after activate() with
+	// a stub SDK - normally through the `clear-done` / `archive-card` commands
+	// the panel posts, which is the only way a user reaches them.
+	RETIREMENT_REASON_CLEARED: RETIREMENT_REASON_CLEARED,
+	RETIREMENT_REASON_ARCHIVED: RETIREMENT_REASON_ARCHIVED,
+	cardsInTerminalColumn: cardsInTerminalColumn,
+	clearDoneColumn: clearDoneColumn,
+	archiveCardNow: archiveCardNow,
 
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
