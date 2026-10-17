@@ -457,6 +457,145 @@ const dirtySessions = new Set();
 let refreshTimer = null;
 let panelTimer = null;
 
+// ===========================================================================
+// Phase 02 filesystem plumbing: reads and writes the board files under
+// ~/.maestro/kanban.yaml and ~/.maestro/kanban-boards/<slug>.yaml through
+// maestro.fs.*. Every path this plugin ever touches is produced by
+// boardFilePath() below; nothing else is ever handed to maestro.fs.*. Parsed
+// boards are cached in memory keyed by path - there is no polling, so the
+// cache is only cleared by invalidateBoardCache(), called on the 'refresh'
+// command and when the panel is opened (see registerCommands below).
+// ===========================================================================
+
+const GLOBAL_BOARD_PATH = '~/.maestro/kanban.yaml';
+const PROJECT_BOARDS_DIR = '~/.maestro/kanban-boards';
+
+/** @type {Map<string, { board: object|null, error: { message: string, path: string }|null }>} */
+const boardCache = new Map();
+
+/**
+ * The one place a board file path is produced. `null`/`undefined` names the
+ * global board; any other value must be a non-empty project path, which maps
+ * to that project's board file. The leading `~` is left in place for the
+ * host to expand (see plugin-home-path.ts) - this plugin never resolves it
+ * itself. Throws on anything else, so a caller cannot smuggle an arbitrary
+ * path into maestro.fs.* through this helper.
+ * @param {string|null|undefined} projectPath
+ */
+function boardFilePath(projectPath) {
+	if (projectPath === null || projectPath === undefined) {
+		return GLOBAL_BOARD_PATH;
+	}
+	if (typeof projectPath !== 'string' || projectPath === '') {
+		throw new Error(
+			'boardFilePath requires a non-empty project path, or null for the global board'
+		);
+	}
+	return PROJECT_BOARDS_DIR + '/' + projectBoardSlug(projectPath) + '.yaml';
+}
+
+/** True for the "file does not exist" failure maestro.fs.read rejects with
+ * (the host's fs.statSync/readFileSync surface Node's ENOENT, and the RPC
+ * boundary preserves only the error message, not Node's `err.code`). */
+function isFileNotFoundError(err) {
+	return !!err && typeof err.message === 'string' && err.message.indexOf('ENOENT') !== -1;
+}
+
+function errorMessage(err) {
+	return err && err.message ? String(err.message) : String(err);
+}
+
+/**
+ * Reads and parses one board file. Never rejects: a missing file resolves to
+ * `{ board: null, error: null }` ("use defaults"); a file that exists but
+ * fails to parse, or whose `project` key names a path other than
+ * `expectedProjectPath`, resolves to `{ board: null, error }` so the caller
+ * can surface the failure instead of silently falling back to defaults.
+ * @param {string} path
+ * @param {string|null} expectedProjectPath
+ */
+async function readBoardFile(path, expectedProjectPath) {
+	let text;
+	try {
+		text = await sdk.fs.read(path);
+	} catch (err) {
+		if (isFileNotFoundError(err)) return { board: null, error: null };
+		return { board: null, error: { message: errorMessage(err), path: path } };
+	}
+	try {
+		const board = parseBoardYaml(text, { expectProject: expectedProjectPath !== null });
+		if (expectedProjectPath !== null && board.project !== expectedProjectPath) {
+			throw boardParseError(
+				"board's project (" +
+					board.project +
+					') does not match the file it was read from (' +
+					expectedProjectPath +
+					')'
+			);
+		}
+		return { board: board, error: null };
+	} catch (err) {
+		return { board: null, error: { message: errorMessage(err), path: path } };
+	}
+}
+
+async function loadBoard(path, expectedProjectPath) {
+	if (boardCache.has(path)) return boardCache.get(path);
+	const result = await readBoardFile(path, expectedProjectPath);
+	boardCache.set(path, result);
+	return result;
+}
+
+/** Loads one project's board file, from cache when present. Resolves to
+ * `{ board, error }` - see readBoardFile. `board` is `null` when the file
+ * does not exist, meaning "use DEFAULT_COLUMNS".
+ * @param {string} projectPath */
+function loadProjectBoard(projectPath) {
+	return loadBoard(boardFilePath(projectPath), projectPath);
+}
+
+/** Loads the global board file the same way loadProjectBoard loads a
+ * project's. Resolves to `{ board, error }` - see readBoardFile. */
+function loadGlobalBoard() {
+	return loadBoard(boardFilePath(null), null);
+}
+
+/** Drops every cached board so the next load re-reads from disk. Called on
+ * the 'refresh' command and when the panel is opened; nothing polls. */
+function invalidateBoardCache() {
+	boardCache.clear();
+}
+
+/**
+ * Writes `board` to the project's board file. Reads the current file first
+ * and refuses to overwrite one the parser could not read (an ENOENT is fine
+ * - there is nothing to protect - but a parse failure aborts the write), so
+ * a hand-edit this plugin does not understand is never silently destroyed.
+ * @param {string} projectPath
+ * @param {object} board
+ */
+async function saveProjectBoard(projectPath, board) {
+	const path = boardFilePath(projectPath);
+	let existingText = null;
+	try {
+		existingText = await sdk.fs.read(path);
+	} catch (err) {
+		if (!isFileNotFoundError(err)) throw err;
+	}
+	if (existingText !== null) {
+		// Throws (and aborts the write below) if the existing file does not
+		// parse; the raised error is the parser's own message.
+		parseBoardYaml(existingText, { expectProject: true });
+	}
+	await sdk.fs.write(path, serializeBoardYaml(board));
+	boardCache.set(path, { board: board, error: null });
+	return board;
+}
+
+// ===========================================================================
+// End of Phase 02 filesystem plumbing.
+// ===========================================================================
+
 function cardKey(sessionId, tabId) {
 	return sessionId + '::' + tabId;
 }
@@ -753,7 +892,10 @@ async function seed() {
 }
 
 function registerCommands(maestro) {
-	maestro.commands.register('open', () => maestro.ui.togglePanel('board').catch(() => {}));
+	maestro.commands.register('open', () => {
+		invalidateBoardCache();
+		return maestro.ui.togglePanel('board').catch(() => {});
+	});
 
 	maestro.commands.register('refresh', () => {
 		if (refreshTimer) {
@@ -761,6 +903,7 @@ function registerCommands(maestro) {
 			refreshTimer = null;
 		}
 		dirtySessions.clear();
+		invalidateBoardCache();
 		return seed();
 	});
 
@@ -794,6 +937,15 @@ module.exports = {
 	resolveColumns: resolveColumns,
 	legalColumnsFor: legalColumnsFor,
 	resolveTerminalColumn: resolveTerminalColumn,
+
+	// Phase 02 filesystem plumbing, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-persistence.test.ts). These call
+	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
+	boardFilePath: boardFilePath,
+	loadProjectBoard: loadProjectBoard,
+	loadGlobalBoard: loadGlobalBoard,
+	saveProjectBoard: saveProjectBoard,
+	invalidateBoardCache: invalidateBoardCache,
 
 	/** @param {MaestroSdk} maestro */
 	async activate(maestro) {
