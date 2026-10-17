@@ -357,6 +357,38 @@ describe('maestro-kanban panel.html', () => {
 		postMessageSpy.mockRestore();
 	});
 
+	it('makes the card surface itself the drag handle', () => {
+		pushSnapshot(
+			snapshotWith({
+				backlog: [makeCard({ key: 'session-1::tab-1', title: 'Draggable Tab' })],
+			})
+		);
+
+		expect(findCardElement('Draggable Tab').getAttribute('draggable')).toBe('true');
+	});
+
+	it('keeps form controls out of the draggable surface, since one silently kills an HTML5 drag', () => {
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [makeCard({ key: 'session-1::tab-1', title: 'No Controls' })] },
+				{ activeProjectPath: '/Users/dev/projects/widgets', projectBoardMissing: true }
+			)
+		);
+
+		const cards = Array.from(board().querySelectorAll<HTMLElement>('.card'));
+		expect(cards).toHaveLength(1);
+		for (const card of cards) {
+			expect(card.querySelectorAll('button, input, select, textarea, label, a[href]')).toHaveLength(
+				0
+			);
+		}
+		// The one <button> the panel does render lives in the empty state, which
+		// is never inside a draggable card.
+		for (const control of Array.from(board().querySelectorAll('button'))) {
+			expect(control.closest('.card')).toBeNull();
+		}
+	});
+
 	it('posts the focus command with the right (sessionId, tabId) when a card is clicked', () => {
 		pushSnapshot(
 			snapshotWith({

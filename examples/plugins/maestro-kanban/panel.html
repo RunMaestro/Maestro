@@ -88,6 +88,37 @@
 			.card:hover {
 				border-color: var(--maestro-accent, #4a9eff);
 			}
+			.card[draggable='true'] {
+				cursor: grab;
+			}
+			.card.dragging {
+				opacity: 0.4;
+				cursor: grabbing;
+			}
+			/* A legal drop target lights up; an illegal one dims to a clearly
+			   non-interactive state. Dimming is the only signal the user gets
+			   that the drop will be refused, so it is deliberately heavy. */
+			.column.drop-legal {
+				border-color: var(--maestro-accent, #4a9eff);
+			}
+			.column.drop-illegal {
+				opacity: 0.3;
+				filter: grayscale(1);
+			}
+			.column.drop-illegal .card {
+				cursor: not-allowed;
+			}
+			.column.read-only .column-header {
+				font-style: italic;
+			}
+			/* Where the card would land, shown while the drag is still in
+			   flight rather than inferred after the drop. */
+			.drop-placeholder {
+				flex: 0 0 auto;
+				height: 3px;
+				border-radius: 2px;
+				background: var(--maestro-accent, #4a9eff);
+			}
 			.card-title {
 				font-size: 13px;
 				font-weight: 500;
@@ -158,10 +189,27 @@
 				opacity: 0.85;
 				margin-left: 6px;
 			}
+			#toast {
+				position: fixed;
+				left: 12px;
+				right: 12px;
+				bottom: 12px;
+				padding: 8px 10px;
+				border-radius: 6px;
+				background: var(--maestro-error, #e06c75);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-size: 12px;
+				cursor: pointer;
+				user-select: text;
+			}
+			#toast[hidden] {
+				display: none;
+			}
 		</style>
 	</head>
 	<body>
 		<div id="banner" hidden></div>
+		<div id="toast" hidden></div>
 		<div id="board">
 			<div class="empty-state">
 				Waiting for the board to load. Open an AI tab in Maestro to see it appear here.
@@ -209,9 +257,399 @@
 					return day + 'd ago';
 				}
 
+				// -------------------------------------------------------------
+				// Phase 03 drag and drop.
+				//
+				// The drag handle is the card surface itself, and a card carries
+				// no <button>, <input>, or other form control on purpose: a form
+				// control under the cursor kills an HTML5 drag outright, so a card
+				// stays a plain stack of <div>/<span> (the empty state's
+				// write-default-board <button> is fine - it is never inside a
+				// draggable surface, and the invariant is asserted in
+				// src/__tests__/plugins/kanban-panel.test.ts).
+				//
+				// The panel's own legality check is advisory. It dims the columns
+				// a card cannot reach and refuses their drops so a drop is never
+				// offered where it would fail, but the sandbox re-checks every
+				// move and can still reject one. A rejection arrives on the next
+				// snapshot as `moveRejection`, never as a reply to the post: the
+				// panel bridge is one-way by design (see PANEL_DATA_CHANNEL in
+				// src/shared/plugins/panel-host.ts).
+				// -------------------------------------------------------------
+
+				var DRAG_MIME = 'application/x-maestro-kanban-card';
+				// How long an un-acknowledged optimistic move keeps overriding
+				// incoming snapshots before the panel gives up and trusts the
+				// sandbox, so a dropped command cannot strand a card forever.
+				var PENDING_MOVE_TTL_MS = 8000;
+				var TOAST_MS = 6000;
+				// A real browser does not fire `click` after a drag, but a drag
+				// cancelled before it ever left the card can, and that click must
+				// not jump the user to the agent they were only trying to move.
+				var CLICK_AFTER_DRAG_MS = 250;
+
+				/** Last snapshot actually rendered, including any optimistic move
+				 * projected onto it. Every legality and index decision reads this
+				 * rather than the DOM. */
+				var currentSnapshot = null;
+				/** Non-null only between dragstart and dragend/drop. */
+				var dragState = null;
+				/** The one outstanding optimistic move awaiting reconciliation. */
+				var pendingMove = null;
+				/** A snapshot that arrived mid-drag; applied once the drag ends so
+				 * a refresh can never yank the card out from under the cursor. */
+				var deferredSnapshot = null;
+				var toastTimer = null;
+				var dragEndedAt = 0;
+				/** cardKey -> .card element, rebuilt by every render(). */
+				var cardNodes = Object.create(null);
+				/** columnId -> .column element / .column-body element. */
+				var columnNodes = Object.create(null);
+				var columnBodies = Object.create(null);
+
+				function snapshotColumns(snapshot) {
+					return snapshot && Array.isArray(snapshot.columns) ? snapshot.columns : [];
+				}
+
+				function columnById(snapshot, columnId) {
+					var columns = snapshotColumns(snapshot);
+					for (var i = 0; i < columns.length; i++) {
+						if (columns[i] && columns[i].id === columnId) return columns[i];
+					}
+					return null;
+				}
+
+				function locateCard(snapshot, key) {
+					var columns = snapshotColumns(snapshot);
+					for (var i = 0; i < columns.length; i++) {
+						var cards = columns[i] && Array.isArray(columns[i].cards) ? columns[i].cards : [];
+						for (var j = 0; j < cards.length; j++) {
+							if (cards[j] && cards[j].key === key) {
+								return { columnId: columns[i].id, index: j, card: cards[j] };
+							}
+						}
+					}
+					return null;
+				}
+
+				function boardIdOf(snapshot) {
+					return snapshot && typeof snapshot.boardId === 'string' && snapshot.boardId
+						? snapshot.boardId
+						: null;
+				}
+
+				/** The column ids this card may be dropped on: the sandbox's own
+				 * `card.legalColumnIds` when the snapshot carries one, every
+				 * writable column otherwise. A read-only column (the global
+				 * board's Unmapped lane) is never a legal target. */
+				function legalColumnIdsFor(snapshot, card) {
+					var declared = card && Array.isArray(card.legalColumnIds) ? card.legalColumnIds : null;
+					var ids = [];
+					snapshotColumns(snapshot).forEach(function (column) {
+						if (!column || typeof column.id !== 'string') return;
+						if (column.readOnly === true) return;
+						if (declared && declared.indexOf(column.id) === -1) return;
+						ids.push(column.id);
+					});
+					return ids;
+				}
+
+				function hideToast() {
+					var toast = document.getElementById('toast');
+					if (!toast) return;
+					toast.hidden = true;
+					toast.textContent = '';
+				}
+
+				function showToast(message) {
+					var toast = document.getElementById('toast');
+					if (!toast) return;
+					toast.textContent = message;
+					toast.hidden = false;
+					if (toastTimer) clearTimeout(toastTimer);
+					toastTimer = setTimeout(function () {
+						toastTimer = null;
+						hideToast();
+					}, TOAST_MS);
+				}
+
+				function removePlaceholder() {
+					var el = document.getElementById('drop-placeholder');
+					if (el && el.parentNode) el.parentNode.removeChild(el);
+				}
+
+				function placeholderElement() {
+					var el = document.getElementById('drop-placeholder');
+					if (!el) {
+						el = document.createElement('div');
+						el.id = 'drop-placeholder';
+						el.className = 'drop-placeholder';
+					}
+					return el;
+				}
+
+				/** The cards currently drawn in a column, excluding the one being
+				 * dragged (it is about to leave) and the placeholder. */
+				function cardNodesIn(columnId) {
+					var body = columnBodies[columnId];
+					var out = [];
+					if (!body) return out;
+					for (var i = 0; i < body.children.length; i++) {
+						var child = body.children[i];
+						if (!child.classList || !child.classList.contains('card')) continue;
+						if (child.classList.contains('dragging')) continue;
+						out.push(child);
+					}
+					return out;
+				}
+
+				/** Where the card would land in `columnId`, expressed in that
+				 * column's FINAL order (the dragged card already removed from
+				 * wherever it came from). Anchors on the card under the cursor
+				 * when there is one - before it in its top half, after it in its
+				 * bottom half - and otherwise scans the column's card midpoints,
+				 * which is the empty-space-below-the-last-card case. */
+				function insertionIndexAt(columnId, event) {
+					var nodes = cardNodesIn(columnId);
+					var clientY = event && typeof event.clientY === 'number' ? event.clientY : null;
+					var target =
+						event && event.target && typeof event.target.closest === 'function'
+							? event.target.closest('.card')
+							: null;
+					for (var i = 0; i < nodes.length; i++) {
+						if (nodes[i] !== target) continue;
+						var rect = nodes[i].getBoundingClientRect();
+						return clientY !== null && clientY < rect.top + rect.height / 2 ? i : i + 1;
+					}
+					if (clientY === null) return nodes.length;
+					for (var k = 0; k < nodes.length; k++) {
+						var bounds = nodes[k].getBoundingClientRect();
+						if (clientY < bounds.top + bounds.height / 2) return k;
+					}
+					return nodes.length;
+				}
+
+				function showPlaceholder(columnId, index) {
+					var body = columnBodies[columnId];
+					if (!body) return;
+					var nodes = cardNodesIn(columnId);
+					var el = placeholderElement();
+					if (index < nodes.length) body.insertBefore(el, nodes[index]);
+					else body.appendChild(el);
+				}
+
+				function markDragTargets() {
+					Object.keys(columnNodes).forEach(function (columnId) {
+						var legal = !!dragState && dragState.legal.indexOf(columnId) !== -1;
+						columnNodes[columnId].classList.toggle('drop-legal', legal);
+						columnNodes[columnId].classList.toggle('drop-illegal', !legal);
+					});
+				}
+
+				function clearDragVisuals() {
+					removePlaceholder();
+					Object.keys(columnNodes).forEach(function (columnId) {
+						columnNodes[columnId].classList.remove('drop-legal');
+						columnNodes[columnId].classList.remove('drop-illegal');
+					});
+					Object.keys(cardNodes).forEach(function (key) {
+						cardNodes[key].classList.remove('dragging');
+					});
+				}
+
+				function endDrag() {
+					clearDragVisuals();
+					dragState = null;
+					dragEndedAt = Date.now();
+				}
+
+				/** Escape, or the engine's own drag cancel: the card goes back
+				 * where it was, which is just "re-render the snapshot" - an
+				 * optimistic move is only ever applied once a drop lands. */
+				function cancelDrag() {
+					if (!dragState) return;
+					endDrag();
+					render(currentSnapshot);
+					flushDeferredSnapshot();
+				}
+
+				function flushDeferredSnapshot() {
+					if (dragState || deferredSnapshot === null) return;
+					var next = deferredSnapshot;
+					deferredSnapshot = null;
+					render(reconcile(next));
+				}
+
+				/** A copy of `snapshot` with `move` applied: the card pulled out of
+				 * whatever column holds it and spliced into `toColumnId` at
+				 * `toIndex`. The incoming object is never mutated, so the sandbox's
+				 * own snapshot stays intact for the next reconcile. */
+				function projectMove(snapshot, move) {
+					var located = locateCard(snapshot, move.key);
+					if (!located || !columnById(snapshot, move.toColumnId)) return snapshot;
+					var columns = snapshotColumns(snapshot).map(function (column) {
+						var copy = {};
+						Object.keys(column).forEach(function (field) {
+							copy[field] = column[field];
+						});
+						copy.cards = Array.isArray(column.cards) ? column.cards.slice() : [];
+						return copy;
+					});
+					var card = null;
+					var target = null;
+					columns.forEach(function (column) {
+						if (column.id === located.columnId) card = column.cards.splice(located.index, 1)[0];
+						if (column.id === move.toColumnId) target = column;
+					});
+					if (!card || !target) return snapshot;
+					var index = Math.max(0, Math.min(move.toIndex, target.cards.length));
+					target.cards.splice(index, 0, card);
+					var out = {};
+					Object.keys(snapshot).forEach(function (field) {
+						out[field] = snapshot[field];
+					});
+					out.columns = columns;
+					return out;
+				}
+
+				function rejectionMessage(rejection) {
+					var reason =
+						rejection && typeof rejection.reason === 'string' && rejection.reason
+							? rejection.reason
+							: 'the board rejected it';
+					return 'Move not applied: ' + reason;
+				}
+
+				/** Folds an incoming snapshot together with the outstanding
+				 * optimistic move. The sandbox is the authority: once its snapshot
+				 * shows the card on the target column the pending move is settled,
+				 * and a `moveRejection` naming that card puts the card back where
+				 * the sandbox says it is and explains why. Until either happens the
+				 * optimistic position is kept, so an unrelated snapshot (a status
+				 * change landing between the drop and the move's own push) cannot
+				 * make the card jump back and then forward again. */
+				function reconcile(snapshot) {
+					if (!pendingMove) return snapshot;
+					var rejection = snapshot && snapshot.moveRejection ? snapshot.moveRejection : null;
+					if (rejection && rejection.cardKey === pendingMove.key) {
+						showToast(rejectionMessage(rejection));
+						pendingMove = null;
+						return snapshot;
+					}
+					if (Date.now() - pendingMove.at > PENDING_MOVE_TTL_MS) {
+						pendingMove = null;
+						return snapshot;
+					}
+					var located = locateCard(snapshot, pendingMove.key);
+					if (!located || located.columnId === pendingMove.toColumnId) {
+						pendingMove = null;
+						return snapshot;
+					}
+					return projectMove(snapshot, pendingMove);
+				}
+
+				function onCardDragStart(event, card) {
+					var located = locateCard(currentSnapshot, card.key);
+					dragState = {
+						key: card.key,
+						fromColumnId: located ? located.columnId : null,
+						fromIndex: located ? located.index : 0,
+						legal: legalColumnIdsFor(currentSnapshot, card),
+						toColumnId: null,
+						toIndex: null,
+					};
+					if (event.dataTransfer) {
+						try {
+							event.dataTransfer.setData(DRAG_MIME, card.key);
+							event.dataTransfer.setData('text/plain', card.key);
+						} catch (err) {
+							// Some engines refuse a custom type mid-drag; the drag
+							// still works, since dragState carries the payload.
+						}
+						event.dataTransfer.effectAllowed = 'move';
+					}
+					if (cardNodes[card.key]) cardNodes[card.key].classList.add('dragging');
+					markDragTargets();
+				}
+
+				function onColumnDragOver(event, columnId) {
+					if (!dragState) return;
+					if (dragState.legal.indexOf(columnId) === -1) {
+						// Deliberately no preventDefault: an illegal column refuses
+						// the drop, and no insertion line appears over a column that
+						// could not take the card anyway.
+						return;
+					}
+					event.preventDefault();
+					if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+					var index = insertionIndexAt(columnId, event);
+					dragState.toColumnId = columnId;
+					dragState.toIndex = index;
+					showPlaceholder(columnId, index);
+				}
+
+				function onColumnDragLeave(event, columnId, columnNode) {
+					if (!dragState || dragState.toColumnId !== columnId) return;
+					// dragleave also fires when the cursor crosses into one of the
+					// column's own children, which is not leaving the column.
+					if (event.relatedTarget && columnNode.contains(event.relatedTarget)) return;
+					dragState.toColumnId = null;
+					dragState.toIndex = null;
+					removePlaceholder();
+				}
+
+				function onColumnDrop(event, columnId) {
+					if (!dragState) return;
+					if (dragState.legal.indexOf(columnId) === -1) return;
+					event.preventDefault();
+					var key = dragState.key;
+					var fromColumnId = dragState.fromColumnId;
+					var fromIndex = dragState.fromIndex;
+					var toIndex =
+						dragState.toColumnId === columnId && typeof dragState.toIndex === 'number'
+							? dragState.toIndex
+							: insertionIndexAt(columnId, event);
+					endDrag();
+					if (columnId === fromColumnId && toIndex === fromIndex) {
+						// Dropped back on its own slot: not a move, so nothing is
+						// posted and the sandbox is never asked to write a no-op.
+						render(currentSnapshot);
+						flushDeferredSnapshot();
+						return;
+					}
+					pendingMove = { key: key, toColumnId: columnId, toIndex: toIndex, at: Date.now() };
+					render(projectMove(currentSnapshot, pendingMove));
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'move',
+							args: {
+								cardKey: key,
+								toColumnId: columnId,
+								toIndex: toIndex,
+								boardId: boardIdOf(currentSnapshot),
+							},
+						},
+						'*'
+					);
+					flushDeferredSnapshot();
+				}
+
 				function cardElement(card) {
 					var el = document.createElement('div');
 					el.className = 'card';
+					if (typeof card.key === 'string' && card.key !== '') {
+						cardNodes[card.key] = el;
+						el.draggable = true;
+						el.addEventListener('dragstart', function (event) {
+							onCardDragStart(event, card);
+						});
+						el.addEventListener('dragend', function () {
+							// Fires for a cancelled drag too (Escape, or a drop on
+							// nothing), so this is the catch-all that returns the card.
+							if (dragState) cancelDrag();
+						});
+					}
 
 					var title = document.createElement('div');
 					title.className = 'card-title';
@@ -239,6 +677,7 @@
 					el.appendChild(meta);
 
 					el.addEventListener('click', function () {
+						if (Date.now() - dragEndedAt < CLICK_AFTER_DRAG_MS) return;
 						parent.postMessage(
 							{
 								type: 'maestro:invokeCommand',
@@ -273,10 +712,16 @@
 				}
 
 				function render(snapshot) {
+					currentSnapshot = snapshot || null;
 					renderBanner(snapshot && snapshot.boardError);
 
 					var board = document.getElementById('board');
 					board.innerHTML = '';
+					// Node maps are rebuilt from scratch: every element they point
+					// at was just discarded with board.innerHTML.
+					cardNodes = Object.create(null);
+					columnNodes = Object.create(null);
+					columnBodies = Object.create(null);
 
 					var columns = snapshot && Array.isArray(snapshot.columns) ? snapshot.columns : [];
 					var totalCards = columns.reduce(function (sum, column) {
@@ -323,7 +768,19 @@
 						var overLimit = typeof wipLimit === 'number' && cards.length > wipLimit;
 
 						var col = document.createElement('div');
-						col.className = 'column';
+						col.className = column.readOnly === true ? 'column read-only' : 'column';
+						columnNodes[column.id] = col;
+						if (column.readOnly !== true) {
+							col.addEventListener('dragover', function (event) {
+								onColumnDragOver(event, column.id);
+							});
+							col.addEventListener('drop', function (event) {
+								onColumnDrop(event, column.id);
+							});
+							col.addEventListener('dragleave', function (event) {
+								onColumnDragLeave(event, column.id, col);
+							});
+						}
 
 						var header = document.createElement('div');
 						header.className = 'column-header';
@@ -338,6 +795,7 @@
 
 						var body = document.createElement('div');
 						body.className = 'column-body';
+						columnBodies[column.id] = body;
 						cards.forEach(function (card) {
 							if (!card || typeof card.sessionId !== 'string' || typeof card.tabId !== 'string')
 								return;
@@ -347,11 +805,35 @@
 
 						board.appendChild(col);
 					});
+
+					// A drag is still live only when render() was called to put a
+					// cancelled card back; re-apply the dim/highlight so the
+					// rebuilt columns are not left looking inert mid-drag.
+					if (dragState) markDragTargets();
 				}
+
+				// Escape during a drag cancels the drag and returns the card.
+				// Closing the panel on Escape belongs to this phase's keyboard
+				// access task, so this handler only claims the key mid-drag.
+				document.addEventListener('keydown', function (event) {
+					if (event.key !== 'Escape' || !dragState) return;
+					event.preventDefault();
+					event.stopPropagation();
+					cancelDrag();
+				});
+
+				var toastEl = document.getElementById('toast');
+				if (toastEl) toastEl.addEventListener('click', hideToast);
 
 				window.addEventListener('message', function (event) {
 					if (event.data && event.data.type === 'maestro:panelData') {
-						render(event.data.data);
+						if (dragState) {
+							// Never re-render under the cursor: the snapshot is held
+							// until the drag ends (flushDeferredSnapshot).
+							deferredSnapshot = event.data.data;
+							return;
+						}
+						render(reconcile(event.data.data));
 					}
 				});
 			})();
