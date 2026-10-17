@@ -1,0 +1,51 @@
+{
+	"id": "maestro-kanban",
+	"name": "Kanban Board",
+	"version": "0.1.0",
+	"tier": 2,
+	"maestro": { "minHostApi": "1.16.0" },
+	"entry": "main.js",
+	"category": "ui",
+	"description": "A live, read-only Kanban board: every open AI tab is a card, columns reflect live agent status, and clicking a card jumps Maestro to that tab.",
+	"beta": true,
+	"permissions": [
+		{ "capability": "sessions:read", "reason": "Enumerate agents to build and label cards." },
+		{
+			"capability": "tabs:manage",
+			"reason": "Enumerate AI tabs and their live status to build and update cards."
+		},
+		{ "capability": "sessions:focus", "reason": "Jump Maestro to the tab behind a clicked card." },
+		{
+			"capability": "events:subscribe",
+			"reason": "Keep the board live as agents and tabs change."
+		},
+		{ "capability": "ui:panel", "reason": "Render the Kanban board panel." },
+		{
+			"capability": "ui:command",
+			"reason": "Offer open, refresh, and clear-placements as commands."
+		},
+		{ "capability": "storage:read", "reason": "Remember where a card was placed." },
+		{ "capability": "storage:write", "reason": "Remember where a card was placed." },
+		{
+			"capability": "notifications:toast",
+			"reason": "Surface failures, such as a trimmed or failed board update."
+		}
+	],
+	"contributes": {
+		"panels": [
+			{
+				"id": "board",
+				"title": "Kanban Board",
+				"entry": "panel.html",
+				"placement": "modal",
+				"size": "full"
+			}
+		],
+		"commands": [
+			{ "id": "open", "title": "Kanban: Open Board" },
+			{ "id": "refresh", "title": "Kanban: Refresh Board" },
+			{ "id": "clear-placements", "title": "Kanban: Clear Card Placements" }
+		],
+		"keybindings": [{ "id": "open", "key": "Alt+Shift+K", "command": "open" }]
+	}
+}
