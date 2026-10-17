@@ -69,6 +69,7 @@ import {
 	type PluginSessionMetadata,
 	type PluginTabMetadata,
 } from './plugins/plugin-host-handlers';
+import { projectSessionTabMetadata } from './plugins/plugin-tab-metadata';
 import { createCadenzaDelivery, registerCadenzaIpcHandlers } from './cadenza-bridge';
 import { createPluginHostViewBridge } from './plugin-host-view-bridge';
 import { ActionGuard } from './plugins/action-guard';
@@ -2130,43 +2131,7 @@ app
 			const out: PluginTabMetadata[] = [];
 			for (const session of pluginSessionsRaw()) {
 				if (sessionId && session.id !== sessionId) continue;
-				const projectPath =
-					typeof session.cwd === 'string'
-						? session.cwd
-						: typeof session.projectRoot === 'string'
-							? session.projectRoot
-							: undefined;
-				for (const tab of Array.isArray(session.aiTabs) ? session.aiTabs : []) {
-					if (!tab || typeof tab !== 'object') continue;
-					const rec = tab as Record<string, unknown>;
-					if (typeof rec.id !== 'string') continue;
-					out.push({
-						id: rec.id,
-						sessionId: session.id as string,
-						type: 'ai',
-						...(typeof rec.name === 'string' ? { title: rec.name } : {}),
-						...(typeof rec.state === 'string' ? { status: rec.state } : {}),
-						...(typeof rec.createdAt === 'number' ? { createdAt: rec.createdAt } : {}),
-						...(rec.agentSessionId === null || typeof rec.agentSessionId === 'string'
-							? { agentSessionId: rec.agentSessionId as string | null }
-							: {}),
-						...(projectPath ? { projectPath } : {}),
-					});
-				}
-				for (const tab of Array.isArray(session.terminalTabs) ? session.terminalTabs : []) {
-					if (!tab || typeof tab !== 'object') continue;
-					const rec = tab as Record<string, unknown>;
-					if (typeof rec.id !== 'string') continue;
-					out.push({
-						id: rec.id,
-						sessionId: session.id as string,
-						type: 'terminal',
-						...(typeof rec.name === 'string' ? { title: rec.name } : {}),
-						...(typeof rec.state === 'string' ? { status: rec.state } : {}),
-						...(typeof rec.createdAt === 'number' ? { createdAt: rec.createdAt } : {}),
-						...(projectPath ? { projectPath } : {}),
-					});
-				}
+				out.push(...projectSessionTabMetadata(session));
 			}
 			return out;
 		};
