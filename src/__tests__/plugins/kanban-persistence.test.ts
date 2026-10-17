@@ -154,7 +154,7 @@ function aiTab(overrides: Record<string, unknown> = {}) {
 function readPlacements(storageStore: Map<string, string>, boardPath: string) {
 	return JSON.parse(storageStore.get('placements:' + boardPath) as string) as Record<
 		string,
-		{ columnId: string; order?: number } | string
+		{ columnId: string; order?: number; enteredDoneAt?: number } | string
 	>;
 }
 
@@ -874,9 +874,13 @@ describe('maestro-kanban board switcher', () => {
 			globalColumnId: 'later',
 			index: 0,
 		});
+		// 'shipped' is the last column this project declares and so is its
+		// terminal column, which is why the write carries a Phase 05 Done
+		// clock alongside the position.
 		expect(readPlacements(storageStore, boardPath)['session-1::tab-1']).toEqual({
 			columnId: 'shipped',
 			order: 0,
+			enteredDoneAt: expect.any(Number),
 		});
 		const snapshot = lastSnapshot(maestro);
 		expect(snapshot.columns[1]!.cards.map((card) => card.key)).toEqual(['session-1::tab-1']);
@@ -981,9 +985,14 @@ describe('maestro-kanban board switcher', () => {
 		// compareCardsByOrder's tiebreaks, not by the drop - it is deterministic
 		// (the same cards always read the same way) but it is not the global
 		// index the panel reported, which no store this plugin has can hold.
+		// 'backlog' is the only column these boards declare, so it is also
+		// their terminal column (resolveTerminalColumn falls back to the last
+		// one) and Phase 05 stamps each card's Done clock alongside its
+		// position. The stamp is a wall-clock reading, so it is matched by
+		// type rather than by value.
 		expect(readPlacements(storageStore, boardPath)).toEqual({
-			'session-1::tab-1': { columnId: 'backlog', order: 0 },
-			'session-1::tab-2': { columnId: 'backlog', order: 1 },
+			'session-1::tab-1': { columnId: 'backlog', order: 0, enteredDoneAt: expect.any(Number) },
+			'session-1::tab-2': { columnId: 'backlog', order: 1, enteredDoneAt: expect.any(Number) },
 		});
 		const after = lastSnapshot(maestro).columns[0]!.cards.map((card) => card.key);
 		expect(after.indexOf('session-1::tab-1')).toBeLessThan(after.indexOf('session-1::tab-2'));

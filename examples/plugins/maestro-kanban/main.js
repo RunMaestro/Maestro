@@ -708,6 +708,182 @@ function buildGlobalBoard(globalBoard, projectBoards, cards, options) {
 // End of Phase 03 global board aggregation.
 // ===========================================================================
 
+// ===========================================================================
+// Phase 05 aging model (pure functions only - no `sdk`/`maestro` calls, no
+// I/O, nothing read out of the runtime state below). A Done column that only
+// grows stops being information, so a card that has sat in the terminal
+// column long enough fades and is eventually retired to the archive. Three
+// rules keep that from ever being a surprise:
+//
+//   1. Aging is opt-in. `agingEnabled` defaults to false, and with it off
+//      every card renders at opacity 1 and nothing ever expires, no matter
+//      how long it has been sitting there.
+//   2. Only the terminal column ages. A card dragged back out of Done has no
+//      aging state at all (setPlacement() below drops the stamp on any
+//      column change), and dragging it back in starts a fresh clock rather
+//      than resuming the old one.
+//   3. Any new message or comment on the card restarts the clock. "Done but
+//      still being talked about" is not stale, so the newest of the two
+//      timestamps wins over the moment the card entered Done.
+//
+// Nothing here closes a tab, writes a file, or removes a card: this layer
+// only answers "how faint is this card, and is it past its horizon". The
+// retirement that acts on `expired` is a separate, later step.
+// ===========================================================================
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Opacity of a card that has reached its horizon. Deliberately above zero:
+ * a card that is still on the board is still actionable, so it fades to
+ * "nearly gone" and then disappears by being retired, never by rendering as
+ * an invisible hit target the user cannot see but can still click. */
+const AGING_OPACITY_FLOOR = 0.1;
+
+/** A horizon of less than a day would retire cards faster than the
+ * low-frequency retirement tick runs, and anything past a year is
+ * indistinguishable from "off" - both ends are clamped rather than refused,
+ * so a hand-edited stored value can never wedge the board. */
+const MIN_HORIZON_DAYS = 1;
+const MAX_HORIZON_DAYS = 365;
+
+/** @typedef {{ agingEnabled: boolean, horizonDays: number, closeTabsOnRetire: boolean }} AgingSettings */
+
+/** The settings a board with nothing stored runs under. Aging off and tab
+ * closing off are both load-bearing defaults: a board the user has never
+ * configured must behave exactly like Phase 04's did, and must never close
+ * an AI tab (and its transcript) as a side effect of a board setting. */
+const DEFAULT_AGING_SETTINGS = { agingEnabled: false, horizonDays: 14, closeTabsOnRetire: false };
+
+/**
+ * Reads whatever is stored (or posted by the panel) into a complete
+ * `AgingSettings`. Every field falls back to its default independently, so a
+ * partial patch from the settings surface and a half-written storage value
+ * both land on the same safe shape; `horizonDays` is rounded and clamped
+ * into [MIN_HORIZON_DAYS, MAX_HORIZON_DAYS] rather than rejected.
+ * @param {unknown} raw
+ * @returns {AgingSettings}
+ */
+function normalizeAgingSettings(raw) {
+	const value =
+		raw && typeof raw === 'object' && !Array.isArray(raw)
+			? /** @type {{ agingEnabled?: unknown, horizonDays?: unknown, closeTabsOnRetire?: unknown }} */ (
+					raw
+				)
+			: {};
+	const horizonRaw = value.horizonDays;
+	let horizonDays = DEFAULT_AGING_SETTINGS.horizonDays;
+	if (typeof horizonRaw === 'number' && isFinite(horizonRaw)) {
+		horizonDays = Math.min(MAX_HORIZON_DAYS, Math.max(MIN_HORIZON_DAYS, Math.round(horizonRaw)));
+	}
+	return {
+		agingEnabled: value.agingEnabled === true,
+		horizonDays: horizonDays,
+		closeTabsOnRetire: value.closeTabsOnRetire === true,
+	};
+}
+
+/** A timestamp this plugin is willing to treat as a clock reading, or null.
+ * @param {unknown} value */
+function finiteTimestamp(value) {
+	return typeof value === 'number' && isFinite(value) ? value : null;
+}
+
+/** Rounds an opacity to three decimals so the same elapsed time always
+ * renders the same string, instead of 0.5499999999999999 one tick and 0.55
+ * the next. @param {number} value */
+function roundOpacity(value) {
+	return Math.round(value * 1000) / 1000;
+}
+
+/**
+ * The whole aging picture for one card, as a value: whether aging applies to
+ * it at all, when its clock started, how far along it is, how faint it
+ * should render, and whether it is past its horizon.
+ *
+ * `card` carries what this layer needs and nothing more:
+ *   - `columnId` and `terminalColumnId`: aging applies only when they match,
+ *     so a card sitting anywhere but Done is reported as not aging even if a
+ *     stale stamp survived somewhere.
+ *   - `enteredDoneAt`: when the card entered the terminal column, or null
+ *     for a card that has never been there (the caller stores this on the
+ *     card's placement - see setPlacement()/setPlacementDoneSince() below).
+ *   - `lastCommentAt` and `lastMessageAt`: the newest of the two restarts
+ *     the clock when it is later than `enteredDoneAt`.
+ *
+ * A disabled board still reports the real `enteredDoneAt`/`elapsedDays` -
+ * the panel's settings surface shows how old the Done cards already are
+ * before anyone turns aging on - but reports `opacity: 1` and
+ * `expired: false`, which is what "aging is opt-in" means in practice.
+ *
+ * @param {{ columnId?: unknown, terminalColumnId?: unknown, enteredDoneAt?: unknown, lastCommentAt?: unknown, lastMessageAt?: unknown }} card
+ * @param {unknown} settings
+ * @param {number} now
+ * @returns {{ enabled: boolean, enteredDoneAt: number|null, resetAt: number|null, elapsedDays: number, horizonDays: number, opacity: number, expired: boolean }}
+ */
+function agingState(card, settings, now) {
+	const resolved = normalizeAgingSettings(settings);
+	const horizonDays = resolved.horizonDays;
+	const source = card && typeof card === 'object' ? card : {};
+	const columnId = typeof source.columnId === 'string' ? source.columnId : null;
+	const terminalColumnId =
+		typeof source.terminalColumnId === 'string' ? source.terminalColumnId : null;
+	const inTerminalColumn =
+		columnId !== null && terminalColumnId !== null && columnId === terminalColumnId;
+	const enteredDoneAt = inTerminalColumn ? finiteTimestamp(source.enteredDoneAt) : null;
+	const idle = {
+		enabled: false,
+		enteredDoneAt: enteredDoneAt,
+		resetAt: null,
+		elapsedDays: 0,
+		horizonDays: horizonDays,
+		opacity: 1,
+		expired: false,
+	};
+	// Not in Done, or in Done but not stamped yet (the stamp lands on the
+	// next reconcile): either way there is no clock to read.
+	if (!inTerminalColumn || enteredDoneAt === null) return idle;
+
+	const lastCommentAt = finiteTimestamp(source.lastCommentAt);
+	const lastMessageAt = finiteTimestamp(source.lastMessageAt);
+	let newestTouch = null;
+	if (lastCommentAt !== null) newestTouch = lastCommentAt;
+	if (lastMessageAt !== null && (newestTouch === null || lastMessageAt > newestTouch)) {
+		newestTouch = lastMessageAt;
+	}
+	const resetAt = newestTouch !== null && newestTouch > enteredDoneAt ? newestTouch : null;
+	const clockStart = resetAt === null ? enteredDoneAt : resetAt;
+	// A clock start in the future (a clock skew, or a comment stamped ahead)
+	// reads as "just now" rather than as negative age.
+	const elapsedDays = Math.max(0, (now - clockStart) / MS_PER_DAY);
+
+	if (!resolved.agingEnabled) {
+		return {
+			enabled: false,
+			enteredDoneAt: enteredDoneAt,
+			resetAt: resetAt,
+			elapsedDays: elapsedDays,
+			horizonDays: horizonDays,
+			opacity: 1,
+			expired: false,
+		};
+	}
+
+	const progress = Math.min(1, Math.max(0, elapsedDays / horizonDays));
+	return {
+		enabled: true,
+		enteredDoneAt: enteredDoneAt,
+		resetAt: resetAt,
+		elapsedDays: elapsedDays,
+		horizonDays: horizonDays,
+		opacity: roundOpacity(1 - progress * (1 - AGING_OPACITY_FLOOR)),
+		expired: elapsedDays >= horizonDays,
+	};
+}
+
+// ===========================================================================
+// End of Phase 05 aging model.
+// ===========================================================================
+
 let sdk = null;
 /** @type {Map<string, object>} card key -> card */
 let cards = new Map();
@@ -1173,9 +1349,19 @@ function deriveColumn(card) {
 // column-id string per card, so a string is still read as
 // { columnId: <string>, order: null }: a user upgrading the plugin keeps
 // every column they had, and loses only positions that were never recorded.
+//
+// Phase 05 adds a third field, `enteredDoneAt`: the moment the card landed
+// in the terminal column, which is where the aging clock starts. It lives on
+// the placement rather than in a map of its own precisely so that a column
+// change cannot leave it behind - setPlacement() writes a fresh record on
+// every column change, so a card dragged out of Done loses its aging state
+// in the same write that moves it, and dragging it back in starts a new
+// clock instead of resuming the old one. It is absent (null) for every card
+// that is not in Done, and for a card whose stamp has not been reconciled
+// yet (see reconcileAgingClocks() below).
 // ===========================================================================
 
-/** @typedef {{ columnId: string, order: number|null }} Placement */
+/** @typedef {{ columnId: string, order: number|null, enteredDoneAt: number|null }} Placement */
 /** @type {Map<string, Map<string, Placement>>} boardFilePath() -> (cardKey -> Placement) */
 const placementCache = new Map();
 /** @type {Set<string>} board paths whose in-memory placement map changed and
@@ -1187,25 +1373,30 @@ function placementStorageKey(boardPath) {
 }
 
 /**
- * Reads one stored placement value into the { columnId, order } shape, or
- * null when it is neither shape this plugin has ever written. A bare string
- * is the pre-ordering format and keeps the column it names with no position;
- * an `order` that is not a finite number is dropped rather than trusted,
- * since a NaN order would poison every comparison in its column.
+ * Reads one stored placement value into the { columnId, order,
+ * enteredDoneAt } shape, or null when it is neither shape this plugin has
+ * ever written. A bare string is the pre-ordering format and keeps the
+ * column it names with no position; an `order` that is not a finite number
+ * is dropped rather than trusted, since a NaN order would poison every
+ * comparison in its column, and the same goes for a non-finite
+ * `enteredDoneAt`, which would make every elapsed-time comparison NaN.
  * @param {unknown} value
  * @returns {Placement|null}
  */
 function readStoredPlacement(value) {
 	if (typeof value === 'string') {
-		return value === '' ? null : { columnId: value, order: null };
+		return value === '' ? null : { columnId: value, order: null, enteredDoneAt: null };
 	}
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-	const entry = /** @type {{ columnId?: unknown, order?: unknown }} */ (value);
+	const entry = /** @type {{ columnId?: unknown, order?: unknown, enteredDoneAt?: unknown }} */ (
+		value
+	);
 	if (typeof entry.columnId !== 'string' || entry.columnId === '') return null;
 	const hasOrder = typeof entry.order === 'number' && isFinite(entry.order);
 	return {
 		columnId: entry.columnId,
 		order: hasOrder ? Math.floor(/** @type {number} */ (entry.order)) : null,
+		enteredDoneAt: finiteTimestamp(entry.enteredDoneAt),
 	};
 }
 
@@ -1249,8 +1440,33 @@ function setPlacement(boardPath, key, columnId) {
 	const map = placementCache.get(boardPath) || new Map();
 	const existing = map.get(key);
 	if (existing && existing.columnId === columnId) return;
-	map.set(key, { columnId: columnId, order: existing ? existing.order : null });
+	// A column change always drops the aging stamp: a card leaving Done has
+	// no aging state at all, and one arriving in Done gets a fresh clock from
+	// reconcileAgingClocks() rather than inheriting a stamp from the last
+	// time it was there.
+	map.set(key, {
+		columnId: columnId,
+		order: existing ? existing.order : null,
+		enteredDoneAt: null,
+	});
 	placementCache.set(boardPath, map);
+	dirtyPlacementBoards.add(boardPath);
+}
+
+/** Stamps (or clears) the moment a card entered the terminal column. Only
+ * ever called by reconcileAgingClocks() below, and only for a card that
+ * already has a placement - the column is the thing being timed, so a stamp
+ * with no column to hang off is not written.
+ * @param {string} boardPath
+ * @param {string} key
+ * @param {number|null} at
+ */
+function setPlacementDoneSince(boardPath, key, at) {
+	const map = placementCache.get(boardPath);
+	const existing = map && map.get(key);
+	if (!existing) return;
+	if (existing.enteredDoneAt === at) return;
+	map.set(key, { columnId: existing.columnId, order: existing.order, enteredDoneAt: at });
 	dirtyPlacementBoards.add(boardPath);
 }
 
@@ -1263,7 +1479,11 @@ function setPlacementOrder(boardPath, key, order) {
 	const existing = map && map.get(key);
 	if (!existing) return;
 	if (existing.order === order) return;
-	map.set(key, { columnId: existing.columnId, order: order });
+	map.set(key, {
+		columnId: existing.columnId,
+		order: order,
+		enteredDoneAt: existing.enteredDoneAt,
+	});
 	dirtyPlacementBoards.add(boardPath);
 }
 
@@ -1279,10 +1499,11 @@ async function flushDirtyPlacements() {
 		const map = placementCache.get(boardPath) || new Map();
 		const obj = {};
 		for (const [key, placement] of map) {
-			obj[key] =
-				placement.order === null
-					? { columnId: placement.columnId }
-					: { columnId: placement.columnId, order: placement.order };
+			/** @type {{ columnId: string, order?: number, enteredDoneAt?: number }} */
+			const stored = { columnId: placement.columnId };
+			if (placement.order !== null) stored.order = placement.order;
+			if (placement.enteredDoneAt !== null) stored.enteredDoneAt = placement.enteredDoneAt;
+			obj[key] = stored;
 		}
 		try {
 			await sdk.storage.set(placementStorageKey(boardPath), JSON.stringify(obj));
@@ -1556,6 +1777,218 @@ async function addCardComment(cardKey, body) {
 
 // ===========================================================================
 // End of Phase 04 card notes.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 05 aging runtime: the stateful half of the aging model above. Three
+// pieces, in the order a card meets them.
+//
+//   1. Board settings. `{ agingEnabled, horizonDays, closeTabsOnRetire }`
+//      stored per board id - the same ids the switcher uses, so a project
+//      path or GLOBAL_BOARD_ID - in one storage value, loaded once at
+//      activate() and written through on every change (the same shape the
+//      card notes above use, and for the same reason: a settings write is a
+//      click, not something to coalesce).
+//   2. Which settings a given card runs under. A card ages in its own
+//      project's Done column, so its own project board's settings win; the
+//      Global board's settings stand in as the default for every project
+//      that has none of its own, which is what makes the Global board's
+//      settings surface mean something. Neither stored means
+//      DEFAULT_AGING_SETTINGS, which is aging off.
+//   3. The clock stamp. reconcileAgingClocks() runs after every card rebuild
+//      and is the only writer of `enteredDoneAt`: it stamps a card that is
+//      in its board's terminal column and has no stamp, and clears one that
+//      is stamped but no longer in Done. setPlacement() already drops the
+//      stamp on a column change, so the clear is a repair for stored state
+//      written before this phase existed, not the normal path.
+//
+// Nothing here closes a tab or deletes a card. agingStateForCard() answers
+// "how faint, how old, expired yet"; acting on `expired` is a later step.
+// ===========================================================================
+
+const BOARD_SETTINGS_STORAGE_KEY = 'board-settings';
+
+/** @type {Map<string, AgingSettings>} board id -> that board's settings */
+let boardSettings = new Map();
+
+/** Restores every board's settings from storage. Called once, alongside
+ * loadCardNotes(), before activate()'s first seed(), so the first snapshot
+ * already renders at the right opacity instead of flashing full-strength
+ * cards. A storage failure, or a value that is not the object this plugin
+ * writes, degrades to "every board on defaults" (aging off) rather than
+ * throwing the activation. */
+async function loadBoardSettings() {
+	boardSettings = new Map();
+	try {
+		const raw = await sdk.storage.get(BOARD_SETTINGS_STORAGE_KEY);
+		if (typeof raw === 'string' && raw !== '') {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const key of Object.keys(parsed)) {
+					boardSettings.set(key, normalizeAgingSettings(parsed[key]));
+				}
+			}
+		}
+	} catch (err) {
+		console.error('maestro-kanban: failed to read stored board settings: ' + String(err));
+	}
+}
+
+/** Writes every board's settings in one call. A failed write logs and moves
+ * on: the in-memory map stays authoritative for this session, so the failure
+ * degrades to "forgets on restart" rather than refusing the change. */
+async function persistBoardSettings() {
+	const obj = {};
+	for (const [boardId, settings] of boardSettings) {
+		obj[boardId] = settings;
+	}
+	try {
+		await sdk.storage.set(BOARD_SETTINGS_STORAGE_KEY, JSON.stringify(obj));
+	} catch (err) {
+		console.error('maestro-kanban: failed to persist board settings: ' + String(err));
+	}
+}
+
+/** One board's stored settings, or null when that board has never been
+ * configured. Callers that want an answer either way use
+ * agingSettingsForBoard() below.
+ * @param {string|null} boardId */
+function storedBoardSettings(boardId) {
+	if (typeof boardId !== 'string' || boardId === '') return null;
+	return boardSettings.get(boardId) || null;
+}
+
+/** The settings a board runs under: its own when it has them, the Global
+ * board's when it does not, and DEFAULT_AGING_SETTINGS when neither exists.
+ * @param {string|null} boardId
+ * @returns {AgingSettings} */
+function agingSettingsForBoard(boardId) {
+	return (
+		storedBoardSettings(boardId) ||
+		storedBoardSettings(GLOBAL_BOARD_ID) ||
+		normalizeAgingSettings(DEFAULT_AGING_SETTINGS)
+	);
+}
+
+/** Records one board's settings and persists the whole map. `patch` is
+ * merged over whatever that board already has, so the settings surface can
+ * post a single toggle without restating the other two.
+ * @param {string} boardId
+ * @param {unknown} patch
+ * @returns {Promise<AgingSettings>} */
+async function setBoardAgingSettings(boardId, patch) {
+	const current = storedBoardSettings(boardId) || agingSettingsForBoard(boardId);
+	const merged = normalizeAgingSettings(
+		Object.assign({}, current, patch && typeof patch === 'object' ? patch : {})
+	);
+	const existing = storedBoardSettings(boardId);
+	if (
+		existing &&
+		existing.agingEnabled === merged.agingEnabled &&
+		existing.horizonDays === merged.horizonDays &&
+		existing.closeTabsOnRetire === merged.closeTabsOnRetire
+	) {
+		return existing;
+	}
+	boardSettings.set(boardId, merged);
+	await persistBoardSettings();
+	return merged;
+}
+
+/** The settings one card ages under: its own project board's, per the
+ * fallback chain in agingSettingsForBoard(). A card with no project path has
+ * no board to read settings off and runs on the Global board's (or the
+ * defaults).
+ * @param {{ projectPath?: string }} card */
+function agingSettingsForCard(card) {
+	const projectPath =
+		card && typeof card.projectPath === 'string' && card.projectPath !== ''
+			? card.projectPath
+			: null;
+	return agingSettingsForBoard(projectPath);
+}
+
+/** A card's stored placement, synchronously, or null. Safe to read without
+ * awaiting loadPlacements() because every live card has already been through
+ * resolveCardColumnId(), which loads its board's map before returning.
+ * @param {{ key: string, projectPath?: string }} card */
+function placementForCard(card) {
+	if (!card || typeof card.projectPath !== 'string' || card.projectPath === '') return null;
+	const map = placementCache.get(boardFilePath(card.projectPath));
+	return (map && map.get(card.key)) || null;
+}
+
+/** The terminal column id of one project's board, or null when that project
+ * resolves to no columns at all. Reads come from boardCache after the first
+ * call, so a whole reconcile pass is one board read per distinct project.
+ * @param {string} projectPath */
+async function terminalColumnIdForProject(projectPath) {
+	const projectBoardResult = await loadProjectBoard(projectPath);
+	const terminal = resolveTerminalColumn(resolveColumns(projectBoardResult.board, null));
+	return terminal ? terminal.id : null;
+}
+
+/** Stamps every card that is sitting in its board's terminal column without
+ * a clock, and clears the stamp on every card that has one but is no longer
+ * in Done. Called from rebuildCardsFromTabs() before the placement flush, so
+ * a stamp rides out to storage in the same write as the placement it belongs
+ * to. Never closes a tab, never removes a card: this only moves the clock.
+ * @param {number} [now] */
+async function reconcileAgingClocks(now) {
+	const at = typeof now === 'number' && isFinite(now) ? now : Date.now();
+	/** @type {Map<string, string|null>} project path -> terminal column id */
+	const terminalByProject = new Map();
+	for (const card of cards.values()) {
+		if (typeof card.projectPath !== 'string' || card.projectPath === '') continue;
+		if (!terminalByProject.has(card.projectPath)) {
+			terminalByProject.set(card.projectPath, await terminalColumnIdForProject(card.projectPath));
+		}
+		const terminalId = terminalByProject.get(card.projectPath);
+		const boardPath = boardFilePath(card.projectPath);
+		const placement = placementForCard(card);
+		if (!placement) continue;
+		const inTerminal = terminalId !== null && placement.columnId === terminalId;
+		if (inTerminal && placement.enteredDoneAt === null) {
+			setPlacementDoneSince(boardPath, card.key, at);
+		} else if (!inTerminal && placement.enteredDoneAt !== null) {
+			setPlacementDoneSince(boardPath, card.key, null);
+		}
+	}
+}
+
+/** The last time a message this plugin sent for a card actually landed, or
+ * null. A failed send is not a message on the card, so it does not restart
+ * the aging clock.
+ * @param {string} key */
+function lastSentMessageAt(key) {
+	const outcome = lastMessageOutcomes.get(key);
+	return outcome && outcome.status === 'sent' ? outcome.at : null;
+}
+
+/** agingState() for one live card, assembled from the runtime state the pure
+ * function deliberately knows nothing about: the card's stored stamp, its
+ * note's newest comment, the newest message sent through its composer, and
+ * its board's settings.
+ * @param {object} card
+ * @param {string|null} terminalColumnId
+ * @param {number} [now] */
+function agingStateForCard(card, terminalColumnId, now) {
+	const placement = placementForCard(card);
+	return agingState(
+		{
+			columnId: card.columnId,
+			terminalColumnId: terminalColumnId,
+			enteredDoneAt: placement ? placement.enteredDoneAt : null,
+			lastCommentAt: noteFor(card.key).lastCommentAt,
+			lastMessageAt: lastSentMessageAt(card.key),
+		},
+		agingSettingsForCard(card),
+		typeof now === 'number' && isFinite(now) ? now : Date.now()
+	);
+}
+
+// ===========================================================================
+// End of Phase 05 aging runtime.
 // ===========================================================================
 
 // ===========================================================================
@@ -2038,6 +2471,10 @@ async function handleMove(args) {
 	if (fromColumnId !== toColumnId) {
 		renumberColumnOrder(active.columns, active.cards, fromColumnId);
 	}
+	// A drop into Done starts that card's aging clock now rather than
+	// whenever the next event happens to trigger a rebuild; a drop out of
+	// Done has already lost its stamp inside setPlacement().
+	await reconcileAgingClocks();
 	await flushDirtyPlacements();
 	await pushSnapshotNow();
 	return { ok: true, columnId: toColumnId, index: landedAt };
@@ -2098,6 +2535,7 @@ async function handleGlobalMove(card, cardProjectBoard, globalBoard, toColumnId,
 	if (fromColumnId !== decision.columnId) {
 		renumberOrderedCards(projectColumnMembers(card.projectPath, fromColumnId));
 	}
+	await reconcileAgingClocks();
 	await flushDirtyPlacements();
 	await pushSnapshotNow();
 	return { ok: true, columnId: decision.columnId, globalColumnId: toColumnId, index: landedAt };
@@ -2223,6 +2661,9 @@ async function rebuildCardsFromTabs(tabs) {
 		next.set(card.key, card);
 	}
 	cards = next;
+	// Stamp/clear the Done clocks before the flush so an aging stamp rides
+	// out to storage in the same write as the placement it belongs to.
+	await reconcileAgingClocks();
 	await flushDirtyPlacements();
 }
 
@@ -2890,6 +3331,22 @@ module.exports = {
 	GLOBAL_BOARD_NAME: GLOBAL_BOARD_NAME,
 	projectDisplayName: projectDisplayName,
 
+	// Phase 05 pure aging model, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-aging.test.ts). Pure like the Phase 02 and
+	// Phase 03 models above: a test calls them without activate().
+	agingState: agingState,
+	normalizeAgingSettings: normalizeAgingSettings,
+	DEFAULT_AGING_SETTINGS: DEFAULT_AGING_SETTINGS,
+	AGING_OPACITY_FLOOR: AGING_OPACITY_FLOOR,
+
+	// Phase 05 aging runtime, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-aging.test.ts). Unlike the pure model
+	// above these read the runtime state and call sdk.storage, so a test must
+	// call activate() with a stub SDK first.
+	setBoardAgingSettings: setBoardAgingSettings,
+	agingSettingsForBoard: agingSettingsForBoard,
+	agingStateForCard: agingStateForCard,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -2915,6 +3372,7 @@ module.exports = {
 		// already carries every card's stored description/comments.
 		await loadSelectedBoard();
 		await loadCardNotes();
+		await loadBoardSettings();
 		await seed();
 		await prunePlacements();
 	},
@@ -2936,6 +3394,7 @@ module.exports = {
 		dirtyPlacementBoards.clear();
 		pendingMoveRejection = null;
 		cardNotes = new Map();
+		boardSettings = new Map();
 		// The host clears its own grant bookkeeping when the sandbox stops; this
 		// mirrors that so a reactivated plugin never assumes a grant it has not
 		// seen confirmed again.
