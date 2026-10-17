@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                                                                                                                                                                       |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                                                                                                                                                                                |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                                                                                                                                                                              |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.25.0`)                                                                                                                                                                        |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.26.0`)                                                                                                                                                                        |
 | `description` | string                   | no        |                                                                                                                                                                                                                    |
 | `author`      | string                   | no        |                                                                                                                                                                                                                    |
 | `license`     | string                   | no        |                                                                                                                                                                                                                    |
@@ -395,10 +395,24 @@ host controls the frame, icon mapping, tooltip, and non-suppressible plugin prov
 
 Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` narrows `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); absent means the broad form. `reason` shows at the consent prompt.
 
+**Paths under the user's home (`~`), host API 1.26.0+.** Your plugin has no `process` and no `os`, so it cannot learn where home is. Pass the literal `~` instead and the host expands it: `maestro.fs.read('~/.maestro/my-plugin/state.yaml')` resolves under the real home directory. Exactly `~` and a leading `~/` expand; `~user/...` does not, and a `~` anywhere but the first character is an ordinary filename character.
+
+A home-relative `fs:*` **scope** is accepted in exactly one form: `~/.maestro/<name>[/<more>]`. These are rejected when the manifest is parsed, each with its own message: `~` and `~/` (the whole home directory), `~/.maestro` (the directory itself), `~/anything-else` (outside Maestro's own directory), `~user/...` (never expanded), and any empty, `.`, or `..` segment. So keep your plugin's files under `~/.maestro/<your-plugin>/` and scope to that:
+
+```json
+{
+	"capability": "fs:write",
+	"scope": "~/.maestro/my-plugin",
+	"reason": "Stores only its own files under ~/.maestro; never touches a project folder."
+}
+```
+
+Declare one entry per scope per capability (a plugin may declare the same capability more than once, and any covering grant authorizes the call) rather than widening one scope to cover both. Absolute scopes behave exactly as before, and the host still resolves symlinks and re-authorizes the real path, so a `~` scope cannot be used to escape through a link.
+
 | Capability            | Risk   | Scope | What it allows                                                                         | How to request                                                   |
 | --------------------- | ------ | ----- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `fs:read`             | medium | path  | read files under the scope path                                                        | `{ "capability": "fs:read", "scope": "/abs/dir" }`               |
-| `fs:write`            | high   | path  | write files under the scope path                                                       | `{ "capability": "fs:write", "scope": "/abs/dir" }`              |
+| `fs:read`             | medium | path  | read files under the scope path (absolute, or `~/.maestro/<name>`)                     | `{ "capability": "fs:read", "scope": "/abs/dir" }`               |
+| `fs:write`            | high   | path  | write files under the scope path (absolute, or `~/.maestro/<name>`)                    | `{ "capability": "fs:write", "scope": "/abs/dir" }`              |
 | `net:fetch`           | medium | host  | HTTP(S) fetch to the scope host                                                        | `{ "capability": "net:fetch", "scope": "example.com" }`          |
 | `net:connect`         | high   | host  | persistent outbound `wss://` socket to the scope host (trusted-only)                   | `{ "capability": "net:connect", "scope": "gateway.discord.gg" }` |
 | `agents:read`         | low    | none  | list/read agent metadata                                                               | `{ "capability": "agents:read" }`                                |
@@ -471,8 +485,8 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | SDK method                                                                                            | Capability                   |
 | ----------------------------------------------------------------------------------------------------- | ---------------------------- |
 | `maestro.pluginId` (string)                                                                           | -                            |
-| `maestro.fs.read(path)` -> `Promise<string>`                                                          | `fs:read`                    |
-| `maestro.fs.write(path, contents)` -> `Promise<void>`                                                 | `fs:write`                   |
+| `maestro.fs.read(path)` -> `Promise<string>` (a leading `~` expands)                                  | `fs:read`                    |
+| `maestro.fs.write(path, contents)` -> `Promise<void>` (a leading `~` expands)                         | `fs:write`                   |
 | `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                                                 | `net:fetch`                  |
 | `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)                          | `net:connect`                |
 | `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                                         | `net:connect`                |

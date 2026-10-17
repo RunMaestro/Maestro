@@ -224,6 +224,18 @@ export function isAllowlistScoped(capability: PluginCapability): boolean {
 	return CAPABILITY_SCOPE_KIND[capability] === 'allowlist';
 }
 
+/**
+ * Does this capability take a filesystem path scope (`fs:*`, `transcripts:*`)?
+ * The main-process broker uses this to decide where to expand a leading `~`
+ * (see `expandPluginHomePath`): a path scope and a path target both expand, a
+ * host or allowlist scope never does, so a `~`-prefixed hostname or exact
+ * allowlist member keeps its literal identity. Exposes the module-private
+ * scope-kind map so the broker does not keep a second copy of it.
+ */
+export function isPathScoped(capability: PluginCapability): boolean {
+	return CAPABILITY_SCOPE_KIND[capability] === 'path';
+}
+
 export function isPluginCapability(value: unknown): value is PluginCapability {
 	return typeof value === 'string' && (PLUGIN_CAPABILITIES as readonly string[]).includes(value);
 }
@@ -282,6 +294,24 @@ export interface PermissionParseResult {
 	errors: string[];
 }
 
+export interface PermissionParseOptions {
+	/**
+	 * Parse HOST-AUTHORED first-party definitions
+	 * (`FIRST_PARTY_PLUGIN_DEFINITIONS` in `first-party.ts`) rather than a
+	 * third-party `plugin.json`. Its ONLY effect is that a home-relative (`~`)
+	 * path scope is not confined to `~/.maestro/`: the shipped Coworking and
+	 * MaestroRun features legitimately name `~/.claude.json`,
+	 * `~/.codex/config.toml` and `~/Applications/MaestroRun.app`, which are
+	 * reviewed in this repository rather than chosen by a plugin author.
+	 *
+	 * Every other rule still applies, including the `~/` prefix requirement
+	 * (`~`, `~/` and `~user/...` stay rejected) and the ban on empty, `.` and
+	 * `..` segments. Manifest validation never passes this, so a third-party
+	 * plugin cannot reach the relaxed form.
+	 */
+	firstParty?: boolean;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -291,7 +321,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * malformed entries are rejected (collected as errors) rather than dropped
  * silently, because a permission typo must never degrade to "no restriction".
  */
-export function parsePermissions(input: unknown): PermissionParseResult {
+export function parsePermissions(
+	input: unknown,
+	options?: PermissionParseOptions
+): PermissionParseResult {
 	const out: PermissionParseResult = { requests: [], errors: [] };
 	if (input === undefined) return out;
 	if (!Array.isArray(input)) {
@@ -319,6 +352,13 @@ export function parsePermissions(input: unknown): PermissionParseResult {
 		}
 		if (scopeKind === 'allowlist') {
 			const err = validateAllowlistScope(capability, scope);
+			if (err) {
+				out.errors.push(err);
+				continue;
+			}
+		}
+		if (scopeKind === 'path' && typeof scope === 'string') {
+			const err = validateHomePathScope(capability, scope.trim(), options?.firstParty !== true);
 			if (err) {
 				out.errors.push(err);
 				continue;
@@ -386,6 +426,70 @@ function pathScopeCovers(scope: string, target: string): boolean {
 	const t = normalizePath(target);
 	if (s === '/') return true;
 	return t === s || t.startsWith(`${s}/`);
+}
+
+/**
+ * The ONLY home directory a plugin may name in a path scope. A plugin needs
+ * somewhere under the user's home to keep its own files (the sandbox cannot
+ * learn the home path, so `~` is the only way to say it), but a scope of `~`
+ * or `~/` would be the whole home directory - every repository, every dotfile,
+ * every key. So a home-relative scope must name something INSIDE `~/.maestro/`,
+ * which is Maestro's own directory, and must name a child of it rather than the
+ * directory itself.
+ */
+const HOME_SCOPE_PREFIX = '~/';
+const HOME_SCOPE_ROOT = '.maestro';
+
+/**
+ * Validate a home-relative path scope. Returns an error message when `scope`
+ * starts with `~` in a form the host could not expand safely, and null for an
+ * accepted home scope or for any scope that is not home-relative at all (an
+ * absolute path keeps its existing behavior - this adds a rule, it does not
+ * change one).
+ *
+ * `confineToMaestroRoot` is the third-party rule and the default: a manifest
+ * may only name something inside `~/.maestro/`. Host-authored first-party
+ * definitions pass false, because the shipped Coworking and MaestroRun features
+ * write agent config files like `~/.codex/config.toml` that live elsewhere under
+ * the home directory. Both principals still require a leading `~/` and reject
+ * empty, `.` and `..` segments.
+ *
+ * The main process expands the accepted form with `expandPluginHomePath()`
+ * before matching; everything rejected here could never be expanded safely.
+ */
+function validateHomePathScope(
+	capability: PluginCapability,
+	scope: string,
+	confineToMaestroRoot: boolean
+): string | null {
+	if (!scope.startsWith('~')) return null;
+	const where = `capability "${capability}" path scope "${scope}"`;
+	const root = confineToMaestroRoot ? `${HOME_SCOPE_PREFIX}${HOME_SCOPE_ROOT}/` : HOME_SCOPE_PREFIX;
+	if (!scope.startsWith(HOME_SCOPE_PREFIX)) {
+		// `~`, `~user/...`: only a leading `~/` is ever expanded, so anything else
+		// would be matched as a literal directory named `~` and silently never hit.
+		return `${where} must start with "${root}" (a bare "~" and "~user/..." are not expanded)`;
+	}
+	const segments = scope.slice(HOME_SCOPE_PREFIX.length).split('/');
+	if (confineToMaestroRoot) {
+		if (segments[0] !== HOME_SCOPE_ROOT) {
+			return `${where} must be inside "${root}" (a plugin may not scope to the rest of the home directory)`;
+		}
+		if (segments.length < 2) {
+			return `${where} must name a file or directory inside "${root}" (the directory itself is too broad)`;
+		}
+	}
+	// Every name the scope spells out must be a real one. An empty segment means
+	// a bare `~/` or a `//`, and `.` / `..` are segments `normalizePath` would
+	// silently rewrite at match time - so the scope the user consented to would
+	// not be the scope that gets enforced. (When confined, segment 0 is
+	// `.maestro` and was just matched exactly.)
+	for (const segment of segments.slice(confineToMaestroRoot ? 1 : 0)) {
+		if (segment === '' || segment === '.' || segment === '..') {
+			return `${where} must not contain empty, "." or ".." path segments`;
+		}
+	}
+	return null;
 }
 
 /** Does host `scope` cover `target`? Exact host, or `target` is a subdomain of

@@ -34,6 +34,33 @@ import { RELAY_PUBLISHER_KEY } from '../../../shared/plugins/relay-identity';
 import relayRelease from '../../shared/plugins/fixtures/relay-release-question.json';
 import type { AgentSendProgressEvent } from '../../../shared/plugins/rpc-protocol';
 
+// `~` expansion in plugin fs paths reads os.homedir(). Stub it to a throwaway
+// temp directory so nothing in this file can read or write the real home folder.
+// Minted lazily on the FIRST call and remembered, so even a module-load-time
+// caller gets the stub rather than an empty string.
+const home = vi.hoisted(() => ({ dir: '' }));
+vi.mock('os', async () => {
+	const actual = await vi.importActual<typeof import('os')>('os');
+	const fsActual = await vi.importActual<typeof import('fs')>('fs');
+	const pathActual = await vi.importActual<typeof import('path')>('path');
+	return {
+		...actual,
+		homedir: () => {
+			if (!home.dir) {
+				// realpathSync: on macOS os.tmpdir() is /var/..., a symlink to
+				// /private/var/..., and the fs handlers re-authorize the
+				// symlink-RESOLVED path against the grant. A real home directory is
+				// not a symlink, so resolving here keeps the stub faithful instead of
+				// testing a tmpdir artifact.
+				home.dir = fsActual.realpathSync(
+					fsActual.mkdtempSync(pathActual.join(actual.tmpdir(), 'maestro-hh-home-'))
+				);
+			}
+			return home.dir;
+		},
+	};
+});
+
 let kvBase: string;
 let kv: PluginKvStore;
 
@@ -696,6 +723,142 @@ describe('net.fetch egress + fs.write guarding', () => {
 		});
 		expect(fs.readFileSync(target, 'utf-8')).toBe('hello');
 		fs.rmSync(tmp, { recursive: true, force: true });
+	});
+});
+
+describe('fs.read / fs.write with home-relative (~) paths', () => {
+	// The maestro-kanban grant set: one entry per scope per capability, naming
+	// exactly the files and directories the plugin owns under ~/.maestro.
+	const KANBAN_SCOPES = [
+		'~/.maestro/kanban.yaml',
+		'~/.maestro/kanban-boards',
+		'~/.maestro/kanban-conductor',
+		'~/.maestro/kanban-archive',
+	];
+	const kanbanGrants = (): PermissionGrant[] =>
+		(['fs:read', 'fs:write'] as const).flatMap((capability) =>
+			KANBAN_SCOPES.map((scope) => ({ capability, scope, grantedAt: 1 }) as PermissionGrant)
+		);
+
+	let homeDir: string;
+	let boards: string;
+
+	beforeEach(() => {
+		homeDir = os.homedir(); // the stubbed temp home, minted on first use
+		boards = path.join(homeDir, '.maestro', 'kanban-boards');
+		fs.mkdirSync(boards, { recursive: true });
+	});
+	afterEach(() => fs.rmSync(path.join(homeDir, '.maestro'), { recursive: true, force: true }));
+
+	/** Handlers wired to the REAL broker, so the grant scopes do the deciding. */
+	function handlers(protectedPaths?: readonly string[]) {
+		return buildHostCallHandlers(
+			makeDeps({
+				broker: new PermissionBroker({
+					getGrants: kanbanGrants,
+					...(protectedPaths ? { protectedPaths: () => protectedPaths } : {}),
+				}),
+			})
+		);
+	}
+
+	it('writes and reads a board file under the stubbed home', async () => {
+		const h = handlers();
+		const p = '~/.maestro/kanban-boards/my-app-1a2b3c4d.yaml';
+		await expect(h['fs.write']!('p', { path: p, contents: 'version: 1\n' })).resolves.toEqual({
+			ok: true,
+		});
+		expect(fs.readFileSync(path.join(boards, 'my-app-1a2b3c4d.yaml'), 'utf-8')).toBe(
+			'version: 1\n'
+		);
+		await expect(h['fs.read']!('p', { path: p })).resolves.toBe('version: 1\n');
+	});
+
+	it('creates missing parent directories for a ~ write (kanban-conductor does not exist yet)', async () => {
+		const h = handlers();
+		await expect(
+			h['fs.write']!('p', { path: '~/.maestro/kanban-conductor/run/notes.md', contents: 'hi' })
+		).resolves.toEqual({ ok: true });
+		expect(
+			fs.readFileSync(path.join(homeDir, '.maestro/kanban-conductor/run/notes.md'), 'utf-8')
+		).toBe('hi');
+	});
+
+	it('reads and writes the single-file scope ~/.maestro/kanban.yaml', async () => {
+		const h = handlers();
+		await expect(
+			h['fs.write']!('p', { path: '~/.maestro/kanban.yaml', contents: 'version: 1\n' })
+		).resolves.toEqual({ ok: true });
+		await expect(h['fs.read']!('p', { path: '~/.maestro/kanban.yaml' })).resolves.toBe(
+			'version: 1\n'
+		);
+	});
+
+	it('denies a home path outside the granted ~/.maestro/kanban* scopes', async () => {
+		const h = handlers();
+		fs.writeFileSync(path.join(homeDir, '.maestro', 'other.yaml'), 'secret');
+		fs.writeFileSync(path.join(homeDir, 'notes.txt'), 'secret');
+		await expect(h['fs.read']!('p', { path: '~/.maestro/other.yaml' })).rejects.toThrow(
+			/permission denied/
+		);
+		await expect(h['fs.read']!('p', { path: '~/notes.txt' })).rejects.toThrow(/permission denied/);
+		await expect(
+			h['fs.write']!('p', { path: '~/.maestro/other.yaml', contents: 'clobbered' })
+		).rejects.toThrow(/permission denied/);
+		await expect(
+			h['fs.write']!('p', { path: '~/evil.txt', contents: 'clobbered' })
+		).rejects.toThrow(/permission denied/);
+		expect(fs.readFileSync(path.join(homeDir, '.maestro', 'other.yaml'), 'utf-8')).toBe('secret');
+		expect(fs.existsSync(path.join(homeDir, 'evil.txt'))).toBe(false);
+	});
+
+	it('denies a .. escape out of a ~ scope', async () => {
+		const h = handlers();
+		const escape = '~/.maestro/kanban-boards/../../.ssh/id_rsa';
+		await expect(h['fs.read']!('p', { path: escape })).rejects.toThrow(/permission denied/);
+		await expect(h['fs.write']!('p', { path: escape, contents: 'k' })).rejects.toThrow(
+			/permission denied/
+		);
+		expect(fs.existsSync(path.join(homeDir, '.ssh'))).toBe(false);
+	});
+
+	it('denies a symlink inside a ~ scope that points outside it (real-path re-authorization)', async () => {
+		const h = handlers();
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'kanban-outside-'));
+		fs.writeFileSync(path.join(outside, 'secret.yaml'), 'secret');
+		fs.symlinkSync(outside, path.join(boards, 'link'));
+		await expect(
+			h['fs.read']!('p', { path: '~/.maestro/kanban-boards/link/secret.yaml' })
+		).rejects.toThrow(/permission denied/);
+		await expect(
+			h['fs.write']!('p', { path: '~/.maestro/kanban-boards/link/new.yaml', contents: 'x' })
+		).rejects.toThrow(/permission denied/);
+		expect(fs.existsSync(path.join(outside, 'new.yaml'))).toBe(false);
+		fs.rmSync(outside, { recursive: true, force: true });
+	});
+
+	it('does not expand ~user/... (it stays a literal path and is denied)', async () => {
+		const h = handlers();
+		await expect(h['fs.read']!('p', { path: '~root/.maestro/kanban.yaml' })).rejects.toThrow(
+			/permission denied/
+		);
+		// Nothing was created under the stubbed home for the unexpanded form.
+		expect(fs.existsSync(path.join(homeDir, '.maestro', 'kanban.yaml'))).toBe(false);
+	});
+
+	it('still denies a ~ path that resolves inside the userData tree', async () => {
+		const userData = path.join(boards, 'userData');
+		const h = handlers([userData]);
+		await expect(
+			h['fs.write']!('p', {
+				path: '~/.maestro/kanban-boards/userData/plugin-grants.json',
+				contents: '{}',
+			})
+		).rejects.toThrow(/protected location/);
+		await expect(h['fs.read']!('p', { path: '~/.maestro/kanban-boards/userData' })).rejects.toThrow(
+			/protected location/
+		);
+		expect(fs.existsSync(path.join(userData, 'plugin-grants.json'))).toBe(false);
 	});
 });
 

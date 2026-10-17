@@ -8,6 +8,7 @@ import {
 	describeCapability,
 	isPluginCapability,
 	isAllowlistScoped,
+	isPathScoped,
 	isValidAllowlistMember,
 	PLUGIN_CAPABILITIES,
 	type PermissionGrant,
@@ -66,6 +67,134 @@ describe('parsePermissions', () => {
 		const r = parsePermissions([{ capability: 'fs:read', scope: '/data', reason: 'read config' }]);
 		expect(r.errors).toEqual([]);
 		expect(r.requests[0]).toEqual({ capability: 'fs:read', scope: '/data', reason: 'read config' });
+	});
+});
+
+describe('parsePermissions home-relative (~) path scopes', () => {
+	it('accepts a scope inside ~/.maestro/ and keeps the literal ~ (the main process expands it)', () => {
+		const r = parsePermissions([
+			{ capability: 'fs:write', scope: '~/.maestro/kanban-boards', reason: 'own board files' },
+		]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests[0]).toEqual({
+			capability: 'fs:write',
+			scope: '~/.maestro/kanban-boards',
+			reason: 'own board files',
+		});
+	});
+
+	it('accepts a deeper path and a single file inside ~/.maestro/', () => {
+		const r = parsePermissions([
+			{ capability: 'fs:read', scope: '~/.maestro/kanban.yaml' },
+			{ capability: 'fs:read', scope: '~/.maestro/kanban-boards/archive/old' },
+		]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests.map((x) => x.scope)).toEqual([
+			'~/.maestro/kanban.yaml',
+			'~/.maestro/kanban-boards/archive/old',
+		]);
+	});
+
+	it('rejects a bare ~ (the whole home directory)', () => {
+		const r = parsePermissions([{ capability: 'fs:read', scope: '~' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors).toHaveLength(1);
+		expect(r.errors[0]).toContain('"~/.maestro/"');
+		expect(r.errors[0]).toMatch(/bare "~"/);
+	});
+
+	it('rejects ~/ (the whole home directory, trailing slash)', () => {
+		const r = parsePermissions([{ capability: 'fs:write', scope: '~/' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors[0]).toMatch(/must be inside "~\/\.maestro\/"/);
+	});
+
+	it('rejects ~/.maestro itself (too broad)', () => {
+		const r = parsePermissions([{ capability: 'fs:write', scope: '~/.maestro' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors[0]).toMatch(/must name a file or directory inside/);
+	});
+
+	it('rejects a home path outside ~/.maestro/', () => {
+		const r = parsePermissions([{ capability: 'fs:read', scope: '~/notes.txt' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors[0]).toMatch(/must be inside "~\/\.maestro\/"/);
+	});
+
+	it('rejects ~user/... (another home directory is never expanded)', () => {
+		const r = parsePermissions([{ capability: 'fs:read', scope: '~root/.maestro/kanban.yaml' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors[0]).toMatch(/"~user\/\.\.\." are not expanded/);
+	});
+
+	it('rejects empty, "." and ".." segments inside an accepted root', () => {
+		for (const scope of [
+			'~/.maestro/kanban-boards/',
+			'~/.maestro/kanban-boards//x',
+			'~/.maestro/./kanban.yaml',
+			'~/.maestro/kanban-boards/../../.ssh/id_rsa',
+		]) {
+			const r = parsePermissions([{ capability: 'fs:write', scope }]);
+			expect(r.requests, scope).toEqual([]);
+			expect(r.errors[0], scope).toMatch(/must not contain empty, "\." or "\.\." path segments/);
+		}
+	});
+
+	it('names the offending capability and scope in every message', () => {
+		const r = parsePermissions([{ capability: 'fs:watch', scope: '~/evil' }]);
+		expect(r.errors[0]).toContain('capability "fs:watch"');
+		expect(r.errors[0]).toContain('"~/evil"');
+	});
+
+	it('leaves absolute path scopes alone (this adds a rule, it does not change one)', () => {
+		const r = parsePermissions([
+			{ capability: 'fs:read', scope: '/data/sub' },
+			{ capability: 'fs:read', scope: '/data/../etc' },
+			{ capability: 'fs:read', scope: 'relative/dir' },
+		]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests).toHaveLength(3);
+	});
+
+	it('does not police ~ on host or allowlist scopes (only path scopes expand)', () => {
+		const r = parsePermissions([{ capability: 'net:fetch', scope: '~weird.example.com' }]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests[0]?.scope).toBe('~weird.example.com');
+	});
+
+	describe('firstParty: host-authored definitions are not confined to ~/.maestro/', () => {
+		// FIRST_PARTY_PLUGIN_DEFINITIONS are reviewed in this repository, and the
+		// shipped Coworking / MaestroRun features write agent config files that do
+		// not live under ~/.maestro. Manifest validation never passes this option.
+		it('accepts the shipped first-party home scopes', () => {
+			const scopes = [
+				'~/.claude.json',
+				'~/.codex/config.toml',
+				'~/.config/opencode/opencode.json',
+				'~/.factory/mcp.json',
+				'~/Applications/MaestroRun.app',
+			];
+			const r = parsePermissions(
+				scopes.map((scope) => ({ capability: 'fs:write', scope })),
+				{ firstParty: true }
+			);
+			expect(r.errors).toEqual([]);
+			expect(r.requests.map((x) => x.scope)).toEqual(scopes);
+		});
+
+		it('rejects those same scopes for a third-party manifest (the default)', () => {
+			const r = parsePermissions([{ capability: 'fs:write', scope: '~/.claude.json' }]);
+			expect(r.requests).toEqual([]);
+			expect(r.errors[0]).toMatch(/must be inside "~\/\.maestro\/"/);
+		});
+
+		it('still requires a leading ~/ and bans empty, "." and ".." segments', () => {
+			for (const scope of ['~', '~/', '~root/.codex/config.toml', '~/../etc/passwd', '~/a//b']) {
+				const r = parsePermissions([{ capability: 'fs:write', scope }], { firstParty: true });
+				expect(r.requests, scope).toEqual([]);
+				expect(r.errors, scope).toHaveLength(1);
+			}
+		});
 	});
 });
 
@@ -220,6 +349,25 @@ describe('isAllowlistScoped', () => {
 		expect(isAllowlistScoped('net:fetch')).toBe(false);
 		expect(isAllowlistScoped('agents:read')).toBe(false);
 		expect(isAllowlistScoped('transcripts:read')).toBe(false);
+	});
+});
+
+describe('isPathScoped (which capabilities expand a leading ~)', () => {
+	it('is true only for the filesystem/path-scoped capabilities', () => {
+		expect(isPathScoped('fs:read')).toBe(true);
+		expect(isPathScoped('fs:write')).toBe(true);
+		expect(isPathScoped('fs:watch')).toBe(true);
+		expect(isPathScoped('transcripts:read')).toBe(true);
+		expect(isPathScoped('transcripts:write')).toBe(true);
+	});
+
+	it('is false for host / allowlist / none scoped capabilities', () => {
+		expect(isPathScoped('net:fetch')).toBe(false);
+		expect(isPathScoped('net:connect')).toBe(false);
+		expect(isPathScoped('shell:openExternal')).toBe(false);
+		expect(isPathScoped('agents:dispatch')).toBe(false);
+		expect(isPathScoped('process:spawn')).toBe(false);
+		expect(isPathScoped('storage:read')).toBe(false);
 	});
 });
 

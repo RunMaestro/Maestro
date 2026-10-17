@@ -23,6 +23,7 @@ import { RELAY_PLUGIN_ID, isRelayConversationIdentity } from '../../shared/plugi
 import type { PluginSignatureInfo } from '../../shared/plugins/plugin-registry';
 import type { PluginManifest } from '../../shared/plugins/plugin-manifest';
 import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
+import { expandPluginHomePath } from './plugin-home-path';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { AgentSendProgressEvent, HostMethod } from '../../shared/plugins/rpc-protocol';
@@ -715,9 +716,13 @@ function validateSpawnArgs(raw: unknown): string[] {
  * deepest existing ancestor (so a not-yet-created file still resolves through a
  * symlinked parent). Used to re-authorize the TRUE path against the grant after
  * the broker's string-based check, closing symlink/`..` escapes.
+ *
+ * A leading `~` is expanded FIRST (`path.resolve` would otherwise keep it as a
+ * literal directory name), so the real-path re-authorization and the
+ * userData/config-tree exclusion both see the path the OS will actually touch.
  */
 function resolveRealPath(target: string): string {
-	const abs = path.resolve(target);
+	const abs = path.resolve(expandPluginHomePath(target));
 	const missing: string[] = [];
 	let cursor = abs;
 	while (!fs.existsSync(cursor)) {

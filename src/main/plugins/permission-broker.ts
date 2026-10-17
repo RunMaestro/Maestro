@@ -12,9 +12,11 @@
 
 import {
 	isPermitted,
+	isPathScoped,
 	type PluginCapability,
 	type PermissionGrant,
 } from '../../shared/plugins/permissions';
+import { expandPluginHomePath } from './plugin-home-path';
 import {
 	HOST_METHOD_CAPABILITY,
 	HANDLER_REAUTHORIZED_METHODS,
@@ -58,6 +60,30 @@ function normalizeForPrefix(p: string): string {
 	return process.platform === 'win32' ? out.toLowerCase() : out;
 }
 
+/**
+ * Expand a leading `~` on both sides of a path comparison, so a grant scoped to
+ * `~/.maestro/kanban-boards` covers a call targeting `~/.maestro/kanban-boards/x.yaml`
+ * AND covers the already-expanded real path the fs handlers re-authorize with.
+ * Only path-scoped capabilities expand (see `isPathScoped`): a host scope or an
+ * exact allowlist member keeps its literal identity. Expansion is a no-op on
+ * every string that does not start with `~`, so an absolute scope is untouched.
+ */
+function expandPathGrants(
+	grants: readonly PermissionGrant[],
+	capability: PluginCapability
+): readonly PermissionGrant[] {
+	if (!isPathScoped(capability)) return grants;
+	let changed = false;
+	const expanded = grants.map((g) => {
+		if (g.capability !== capability || !g.scope) return g;
+		const scope = expandPluginHomePath(g.scope);
+		if (scope === g.scope) return g;
+		changed = true;
+		return { ...g, scope };
+	});
+	return changed ? expanded : grants;
+}
+
 /** Is `target` equal to or inside any protected prefix? Separator-boundary
  * match so `/data/userdata-plugins` does not match prefix `/data/userdata`. */
 function isUnderProtectedPath(target: string, prefixes: readonly string[]): boolean {
@@ -84,8 +110,15 @@ export class PermissionBroker {
 		options?: { audit?: boolean }
 	): BrokerDecision {
 		const capability = HOST_METHOD_CAPABILITY[method];
-		const target = extractTarget(method, params);
-		const grants = this.deps.getGrants(pluginId);
+		const rawTarget = extractTarget(method, params);
+		// Expand `~` on both sides BEFORE anything compares them, and report the
+		// expanded target in the decision: it is the path the host would actually
+		// touch, so it is what the audit log and the deny reason should name.
+		const target =
+			rawTarget !== undefined && isPathScoped(capability)
+				? expandPluginHomePath(rawTarget)
+				: rawTarget;
+		const grants = expandPathGrants(this.deps.getGrants(pluginId), capability);
 		let allowed: boolean;
 		let reason: string | undefined;
 		if (method === 'media.close' || method === 'services.cancel' || method === 'services.status') {
