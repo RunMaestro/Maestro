@@ -479,7 +479,7 @@ describe('maestro-kanban move command', () => {
 
 	it('refuses a move for a card whose agent has no project folder to remember it under', async () => {
 		const key = 'session-1::tab-1';
-		const { move, maestro } = await activateWithTabs([aiTab({})]);
+		const { move } = await activateWithTabs([aiTab({})]);
 
 		const result = (await move({
 			cardKey: key,

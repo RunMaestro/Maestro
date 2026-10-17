@@ -627,7 +627,7 @@
 						try {
 							event.dataTransfer.setData(DRAG_MIME, card.key);
 							event.dataTransfer.setData('text/plain', card.key);
-						} catch (err) {
+						} catch {
 							// Some engines refuse a custom type mid-drag; the drag
 							// still works, since dragState carries the payload.
 						}
