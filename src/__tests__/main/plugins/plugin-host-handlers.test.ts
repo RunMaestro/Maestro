@@ -1045,6 +1045,124 @@ describe('transcripts.read', () => {
 			h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'], limit: 1 })
 		).resolves.toEqual([{ summary: 's2' }]);
 	});
+
+	describe('under a granted-sessions grant', () => {
+		/** A board-shaped plugin: the host's grant set decides which sessions it may
+		 * read, replacing the project-path scope entirely. The broker here DENIES
+		 * every path, which is the production shape for a keyword grant (it has no
+		 * path to match), so a passing read proves the grant is the only scope. */
+		const grantDeps = (granted: readonly string[], over: Partial<HostHandlerDeps> = {}) =>
+			makeDeps({
+				readSessionTranscript,
+				sessionsGet,
+				broker: brokerFor(() => [grant('transcripts:read')]),
+				usesSessionGrants: () => true,
+				isSessionGranted: (_pluginId, sessionId) => granted.includes(sessionId),
+				...over,
+			});
+
+		it('denies a non-granted session and never touches the transcript', async () => {
+			const read = vi.fn(readSessionTranscript);
+			const audit = vi.fn();
+			const h = buildHostCallHandlers(
+				grantDeps([], { readSessionTranscript: read, auditTranscriptRead: audit })
+			);
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+			).rejects.toThrow(/session s1 is not granted to this plugin/);
+			// Nothing was read and nothing was audited: a denial is not a read.
+			expect(read).not.toHaveBeenCalled();
+			expect(audit).not.toHaveBeenCalled();
+		});
+
+		it('returns projected rows for a granted session, with the read audited', async () => {
+			const audit = vi.fn();
+			const h = buildHostCallHandlers(grantDeps(['s1'], { auditTranscriptRead: audit }));
+			await expect(
+				h['transcripts.read']!('p', {
+					sessionId: 's1',
+					fields: ['summary', 'timestamp', 'type', 'success'],
+				})
+			).resolves.toEqual([
+				{ summary: 's1', timestamp: 100, type: 'USER' },
+				{ summary: 's2', timestamp: 200, type: 'AUTO' },
+			]);
+			expect(audit).toHaveBeenCalledWith(
+				'p',
+				expect.objectContaining({ sessionId: 's1', projectPath: '/repo/a', count: 2 })
+			);
+		});
+
+		it('is a grant check, not a project match: a granted session OUTSIDE any path scope reads', async () => {
+			// The same call under a path-scoped plugin is denied by the broker (see
+			// the re-authorization test above). The grant set is what replaces it.
+			const h = buildHostCallHandlers(
+				makeDeps({
+					readSessionTranscript,
+					sessionsGet,
+					broker: {
+						authorize: () => ({
+							allowed: false,
+							capability: 'transcripts:read',
+							reason: 'permission denied: transcripts:read (/repo/a)',
+						}),
+					} as unknown as HostHandlerDeps['broker'],
+					usesSessionGrants: () => true,
+					isSessionGranted: () => true,
+				})
+			);
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+			).resolves.toEqual([{ summary: 's1' }, { summary: 's2' }]);
+		});
+
+		it('denies before disclosing, so an unknown id is not an existence oracle', async () => {
+			// A path-scoped plugin gets [] for an unknown session (see above). A
+			// grant-set plugin must get the SAME "not granted" answer for a session
+			// that exists and one that does not, or the error text would leak which
+			// ids are real to a plugin that may read none of them.
+			const h = buildHostCallHandlers(grantDeps([]));
+			for (const sessionId of ['s1', 'nope']) {
+				await expect(
+					h['transcripts.read']!('p', { sessionId, fields: ['summary'] })
+				).rejects.toThrow(/is not granted to this plugin/);
+			}
+		});
+
+		it('fails closed when the grant predicate is unwired', async () => {
+			const h = buildHostCallHandlers(
+				grantDeps([], { isSessionGranted: undefined, readSessionTranscript })
+			);
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+			).rejects.toThrow(/is not granted to this plugin/);
+		});
+
+		it('keeps every other gate: the egress conflict and the field allowlist', async () => {
+			// A grant is not a bypass. The untrusted content+egress exclusion still
+			// refuses the read outright...
+			const conflicted = buildHostCallHandlers(
+				grantDeps(['s1'], {
+					assertTranscriptReadAllowed: () => {
+						throw new Error('transcripts:read cannot be combined with net:fetch');
+					},
+				})
+			);
+			await expect(
+				conflicted['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+			).rejects.toThrow(/cannot be combined with net:fetch/);
+
+			// ...and a granted session still cannot project a field off the allowlist
+			// or skip the projection entirely.
+			const h = buildHostCallHandlers(grantDeps(['s1']));
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['hostname'] })
+			).rejects.toThrow(/fields is required/);
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary', 'hostname'] })
+			).resolves.toEqual([{ summary: 's1' }, { summary: 's2' }]);
+		});
+	});
 });
 
 describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
@@ -2124,6 +2242,37 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				opts: { tabId: 'tab-a' },
 			})
 		).rejects.toThrow(/not granted/);
+		expect(dispatch).not.toHaveBeenCalled();
+		// The SAME call once that session is granted: the tab target reaches the
+		// sink. A grant does not widen which tab is addressable, so the other
+		// session's tab is still refused even though its own session is granted.
+		const allowed = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				usesSessionGrants: () => true,
+				isSessionGranted: (_pluginId, sessionId) => sessionId === 'a',
+				tabsList,
+				dispatch,
+			})
+		);
+		await expect(
+			allowed['agents.dispatch']!('p', {
+				agentId: 'a',
+				prompt: 'summarize',
+				opts: { tabId: 'tab-a' },
+			})
+		).resolves.toBe('dispatched');
+		expect(dispatch).toHaveBeenCalledWith('a', 'summarize', 'tab-a');
+		dispatch.mockClear();
+		await expect(
+			allowed['agents.dispatch']!('p', {
+				agentId: 'a',
+				prompt: 'summarize',
+				opts: { tabId: 'tab-b' },
+			})
+		).rejects.toThrow();
+		expect(dispatch).not.toHaveBeenCalled();
 		// Fail closed: no tabsList wiring means no tab targeting at all, while a
 		// call WITHOUT opts keeps working exactly as before.
 		const unwired = buildHostCallHandlers(

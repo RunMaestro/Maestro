@@ -362,3 +362,177 @@ describe('production net:connect wiring (persistent socket sink)', () => {
 		expect(source).toMatch(/maxPayload:/);
 	});
 });
+
+describe('production session-grant wiring (host-held per-session access)', () => {
+	const keys = depsObjectKeys();
+
+	it('wires the grant-set predicates TOGETHER with the writer and the host-owned confirmation', () => {
+		// These four are a unit. `grantSession` wired without `usesSessionGrants`
+		// would let the writer run for a plugin that never asked to be governed by
+		// a grant set; without `isSessionGranted` the dispatch and History gates
+		// both fail open-ish (the handler's `?.() !== true` denies, so the verbs
+		// would simply be dead); without `confirmSessionAccess` the only way into
+		// the set is self-creation, silently dropping user approval. Pin the set so
+		// removing any one of them fails the build and forces a security review.
+		for (const key of [
+			'usesSessionGrants',
+			'isSessionGranted',
+			'grantSession',
+			'confirmSessionAccess',
+		]) {
+			expect(keys).toContain(key);
+		}
+		// The confirmation names the plugin, so the human sees a name rather than
+		// an opaque id when deciding.
+		expect(keys).toContain('pluginDisplayName');
+	});
+
+	it('grants ONLY the session the plugin just created, and only for a granting plugin', () => {
+		// Exactly one `grantSession(...)` call may exist in the production host, it
+		// must be the created-session grant, and it must sit behind
+		// `usesSessionGrants`. A second call site would be a new way into the set
+		// that bypasses both self-creation and the user's confirmation.
+		let calls = 0;
+		let guarded: string | null = null;
+		const visit = (node: ts.Node): void => {
+			if (
+				ts.isCallExpression(node) &&
+				ts.isIdentifier(node.expression) &&
+				node.expression.text === 'grantSession'
+			) {
+				calls += 1;
+			}
+			if (
+				ts.isIfStatement(node) &&
+				node.expression.getText(sf) === 'usesSessionGrants(pluginId)' &&
+				node.thenStatement.getText(sf).includes('grantSession(')
+			) {
+				guarded = node.thenStatement.getText(sf);
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+		expect(calls).toBe(1);
+		// The source recorded is 'created' (never 'user-approved', which only the
+		// host-owned confirmation may claim), and the id granted is the session the
+		// store just wrote - not anything read out of the plugin's params.
+		expect(guarded).toMatch(/grantSession\(pluginId, sessionId, 'created'\)/);
+		// The host-verified pluginId reaches the create sink as its own argument,
+		// so a forged `pluginId` in the params cannot become a self-grant.
+		expect(source).toMatch(
+			/const pluginSessionsCreate = async \(\s*params: Record<string, unknown>,\s*pluginId: string/
+		);
+	});
+
+	it("the host-owned confirmation defaults to Don't Allow and grants only on Allow", async () => {
+		// Extract the PRODUCTION confirmation and run it, rather than regexing its
+		// text: this proves the default button, the Escape path, and the
+		// response-to-boolean mapping, which is where a quiet "defaultId: 1" edit
+		// would turn a deliberate approval into a reflex one.
+		let callback: ts.ArrowFunction | undefined;
+		const visit = (node: ts.Node): void => {
+			if (
+				ts.isPropertyAssignment(node) &&
+				node.name.getText(sf) === 'confirmSessionAccess' &&
+				ts.isArrowFunction(node.initializer)
+			) {
+				callback = node.initializer;
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+		expect(callback, 'confirmSessionAccess not found in index.ts').toBeDefined();
+
+		const js = ts.transpileModule(`const confirm = ${callback!.getText(sf)}`, {
+			compilerOptions: { target: ts.ScriptTarget.ES2024 },
+		}).outputText;
+		const shown: Array<Record<string, unknown>> = [];
+		const parented: boolean[] = [];
+		const build = (response: number, windowAlive: boolean) =>
+			new Function('mainWindow', 'dialog', `${js}\nreturn confirm;`)(
+				windowAlive ? { isDestroyed: () => false } : { isDestroyed: () => true },
+				{
+					showMessageBox: async (a: unknown, b?: unknown) => {
+						shown.push((b ?? a) as Record<string, unknown>);
+						parented.push(b !== undefined);
+						return { response };
+					},
+				}
+			) as (info: Record<string, unknown>) => Promise<boolean>;
+
+		const info = {
+			pluginId: 'maestro-kanban',
+			pluginName: 'Kanban Board',
+			sessionId: 'sess-2',
+			sessionTitle: 'Other agent',
+			projectPath: '/projects/other',
+		};
+		// Button 0 is both the default and the cancel (Escape) answer, and it does
+		// NOT grant. Button 1 is the only answer that does.
+		await expect(build(0, true)(info)).resolves.toBe(false);
+		await expect(build(1, true)(info)).resolves.toBe(true);
+		// Any other response (a closed dialog on some platforms) is not a grant.
+		await expect(build(-1, true)(info)).resolves.toBe(false);
+
+		const options = shown[0]!;
+		expect(options.buttons).toEqual(["Don't Allow", 'Allow']);
+		expect(options.defaultId).toBe(0);
+		expect(options.cancelId).toBe(0);
+		// The text has to name the plugin, the agent, and both powers being
+		// granted, so the human is not approving a blank cheque.
+		expect(options.message).toContain('Kanban Board');
+		expect(options.message).toContain('Other agent');
+		expect(String(options.detail)).toMatch(/send messages to this agent and read its History/);
+		expect(String(options.detail)).toMatch(/does not give access to any other agent/);
+		expect(String(options.detail)).toContain('/projects/other');
+		// Parented to the main window when one is alive, and still shown (never
+		// silently skipped, which would deny access with no explanation) when not.
+		expect(parented).toEqual([true, true, true]);
+		shown.length = 0;
+		parented.length = 0;
+		await expect(build(1, false)(info)).resolves.toBe(true);
+		expect(parented).toEqual([false]);
+	});
+
+	it('forwards the tab target into the dispatch sink', () => {
+		// `tabId` narrows where a dispatched prompt lands. A sink that dropped it
+		// would silently widen every tab-targeted send back to the active tab.
+		expect(source).toMatch(
+			/dispatch: async \(agentId, prompt, tabId\) =>\s*dispatchPromptToSession\(agentId, prompt, tabId\)/
+		);
+	});
+
+	it('installs the grant set over the sealed ledger, keyed on a LIVE session check', () => {
+		let installed: ts.ObjectLiteralExpression | undefined;
+		const visit = (node: ts.Node): void => {
+			if (
+				!installed &&
+				ts.isCallExpression(node) &&
+				ts.isIdentifier(node.expression) &&
+				node.expression.text === 'configurePluginSessionGrants'
+			) {
+				const arg = node.arguments[0];
+				if (arg && ts.isObjectLiteralExpression(arg)) installed = arg;
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+		expect(installed, 'configurePluginSessionGrants({...}) not found in index.ts').toBeDefined();
+		const text = installed!.getText(sf);
+		// The sealed authorization ledger owns the member set: no separate store,
+		// so a grant is sealed, epoch-bumped, broker-checked, and revocable in
+		// Settings for free.
+		expect(text).toMatch(/authStore,/);
+		// The keyword is read off the MANIFEST, never the ledger (the host rewrites
+		// the ledger scope to real ids as it grants).
+		expect(text).toMatch(
+			/getRequestedPermissions: \(pluginId\) => pluginManager\?\.getRequestedPermissions\(pluginId\)/
+		);
+		// Only a live session id may be granted, checked against the session store
+		// at grant time: this is what stops an agent NAME from entering the set.
+		expect(text).toMatch(/sessionExists: \(sessionId\) =>/);
+		expect(text).toMatch(/sessionsStore\.get\('sessions', \[\]\)/);
+		// Every grant and revoke is audited.
+		expect(text).toMatch(/audit: \(message\) =>/);
+	});
+});
