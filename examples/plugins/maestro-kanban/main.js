@@ -1059,6 +1059,7 @@ async function readSessionHistoryExcerpt(sessionId, options) {
 		if (isGrantDenial(message)) {
 			grantedSessions.delete(sessionId);
 			historyCache.delete(sessionId);
+			scheduleReachSync();
 			return null;
 		}
 		const result = { fetchedAt: Date.now(), rows: null, error: message };
@@ -1165,6 +1166,7 @@ async function dispatchCardMessage(sessionId, tabId, prompt) {
 		if (isGrantDenial(message)) {
 			grantedSessions.delete(sessionId);
 			historyCache.delete(sessionId);
+			scheduleReachSync();
 		} else {
 			console.error('maestro-kanban: agents.dispatch failed: ' + String(err));
 		}
@@ -4254,14 +4256,17 @@ async function createConductor(args) {
 	// reads true for it without a round trip.
 	grantedSessions.add(conductorId);
 	await setConductorId(boardId, conductorId);
-	const directories = conductorDirectoryGrants();
-	if (directories.length > 0) {
-		try {
-			await sdk.sessions.update(conductorId, { additionalDirectories: directories });
-		} catch (err) {
-			console.error('maestro-kanban: sessions.update (conductor reach) failed: ' + String(err));
-			await safeToast("Conductor created, but could not grant it this board's projects yet.");
-		}
+	// The conductor's initial grant is itself a reach change (from nothing to
+	// whatever is granted right now), so it goes through the same
+	// syncConductorReach() the rest of this section's triggers use rather than
+	// a separate sessions.update() call here - that is what gets it logged,
+	// and what seeds lastSyncedReach so the very next trigger does not
+	// re-detect this same grant as a fresh change. `boardId === currentBoardId()`
+	// is already guaranteed by the refusal above, which is the one precondition
+	// syncConductorReach() relies on to know which board it is syncing.
+	const result = await syncConductorReach();
+	if (result.changed && !result.ok) {
+		await safeToast("Conductor created, but could not grant it this board's projects yet.");
 	}
 	await pushSnapshotNow();
 	return { ok: true, conductorId: conductorId };
@@ -4269,6 +4274,206 @@ async function createConductor(args) {
 
 // ===========================================================================
 // End of Phase 06 conductor session creation.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 06 conductor reach sync: once a board has a conductor, this section
+// is what keeps maestro.sessions.update()'s additionalDirectories matching
+// boardReachLists().granted for the board currently on screen - the same
+// board createConductor() and the settings surface already scope every
+// reach read to (see currentBoardId()). A board nobody is looking at is not
+// watched between visits; the invariant is simply restored the moment the
+// user switches back to it (see onSessionActivated()/selectBoard()'s hook
+// below), which is cheap enough to run on every switch and keeps a board's
+// conductor from staying stale for longer than the user is away from it.
+//
+// Every trigger this section answers to - a card appearing or disappearing
+// (rebuildCardsFromTabs(), onSessionRemoved()), a session's grant being
+// approved or found revoked (the two grantedSessions.add() call sites and
+// the two isGrantDenial() call sites), and a board switch - calls the same
+// debounced scheduleReachSync() rather than syncConductorReach() directly,
+// so a burst of these events (a tabs.list() rebuild touching a dozen
+// sessions, several grants approved in a row, ...) produces exactly one
+// sessions.update() call and one log entry, never one per event.
+//
+// syncConductorReach() only calls sessions.update() when
+// conductorDirectoryGrants() actually differs from the set it last
+// confirmed with the host (lastSyncedReach) - never on a sync that finds the
+// same set it already pushed, the same "push only on an actual change" rule
+// runRetirementSweep() follows. A denial because the conductor's OWN grant
+// was revoked (isGrantDenial()) drops it out of grantedSessions, the same
+// recovery readSessionHistoryExcerpt()/dispatchCardMessage() already do for
+// a card, so the next snapshot reads "conductor not connected" instead of a
+// generic error.
+// ===========================================================================
+
+/** How long a burst of the events this section answers to is allowed to
+ * settle before syncConductorReach() runs once for all of them. */
+const REACH_SYNC_DEBOUNCE_MS = 400;
+
+const CONDUCTOR_REACH_LOG_STORAGE_KEY = 'conductor-reach-log';
+
+/** At most this many entries are kept per board, oldest first pruned. Phase
+ * 07's board activity feed folds "reach changes from Phase 06" into a single
+ * unified log capped the same way, so this log already follows the rule it
+ * will be read into. */
+const REACH_LOG_LIMIT_PER_BOARD = 50;
+
+/** @typedef {{ at: number, added: string[], removed: string[] }} ReachLogEntry */
+
+/** @type {Map<string, ReachLogEntry[]>} board id -> that board's reach-change
+ * log, oldest first, capped at REACH_LOG_LIMIT_PER_BOARD. */
+let reachLogs = new Map();
+
+/** @type {Map<string, string[]>} board id -> the project-path set this plugin
+ * last confirmed with sessions.update() for that board's conductor.
+ * In-memory only, like lastMessageOutcomes above - a restart (or a fresh
+ * sandbox) re-derives it from scratch the first time syncConductorReach()
+ * runs for a board, which, finding no prior entry, treats the conductor's
+ * actual sessions.update() state as unknown and re-sends the current set
+ * once rather than assuming it already matches. */
+let lastSyncedReach = new Map();
+
+let reachSyncTimer = null;
+
+/** Restores every board's reach-change log from storage. Called once,
+ * alongside loadConductorIds(), before activate()'s first seed(). A storage
+ * failure, or a value that is not the object this plugin writes, degrades to
+ * "every board has an empty log" rather than throwing the activation. */
+async function loadReachLogs() {
+	reachLogs = new Map();
+	try {
+		const raw = await sdk.storage.get(CONDUCTOR_REACH_LOG_STORAGE_KEY);
+		if (typeof raw === 'string' && raw !== '') {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const key of Object.keys(parsed)) {
+					const entries = Array.isArray(parsed[key]) ? parsed[key] : [];
+					reachLogs.set(
+						key,
+						entries.filter(function (entry) {
+							return (
+								entry &&
+								typeof entry === 'object' &&
+								typeof entry.at === 'number' &&
+								Array.isArray(entry.added) &&
+								Array.isArray(entry.removed)
+							);
+						})
+					);
+				}
+			}
+		}
+	} catch (err) {
+		console.error('maestro-kanban: failed to read the stored reach log: ' + String(err));
+	}
+}
+
+/** Writes every board's reach-change log in one call. A failed write logs
+ * and moves on: the in-memory log stays authoritative for this session, the
+ * same best-effort persistence persistConductorIds() uses. */
+async function persistReachLogs() {
+	const obj = {};
+	for (const [boardId, entries] of reachLogs) {
+		obj[boardId] = entries;
+	}
+	try {
+		await sdk.storage.set(CONDUCTOR_REACH_LOG_STORAGE_KEY, JSON.stringify(obj));
+	} catch (err) {
+		console.error('maestro-kanban: failed to persist the reach log: ' + String(err));
+	}
+}
+
+/** One board's reach-change log, oldest first - a copy, so a caller cannot
+ * mutate this plugin's own record of it by mutating the returned array.
+ * Phase 07 renders this (see that phase's board activity feed task).
+ * @param {string|null} boardId
+ * @returns {ReachLogEntry[]} */
+function reachLogForBoard(boardId) {
+	if (typeof boardId !== 'string' || boardId === '') return [];
+	return (reachLogs.get(boardId) || []).slice();
+}
+
+/** Appends one reach-change entry for a board and persists the log, pruning
+ * the oldest entry first once it is over REACH_LOG_LIMIT_PER_BOARD.
+ * @param {string} boardId
+ * @param {string[]} added
+ * @param {string[]} removed */
+async function recordReachChange(boardId, added, removed) {
+	const entries = (reachLogs.get(boardId) || []).slice();
+	entries.push({ at: Date.now(), added: added.slice(), removed: removed.slice() });
+	while (entries.length > REACH_LOG_LIMIT_PER_BOARD) entries.shift();
+	reachLogs.set(boardId, entries);
+	await persistReachLogs();
+}
+
+/**
+ * Recomputes the board on screen's granted directory set and, only when it
+ * actually differs from what was last confirmed with the host, pushes it
+ * through sessions.update() and records the change. A no-op (`changed:
+ * false`) when the board on screen has no conductor, or has one this plugin
+ * cannot currently reach (not yet granted), or when nothing in the granted
+ * set has actually moved since the last sync - there is nothing to push in
+ * any of those cases. Never throws: a sessions.update() denial is handled
+ * the same way every other grant denial in this plugin is (see the section
+ * comment above), and any other failure is logged and left for the next
+ * sync to retry; either is reported back as `{ changed: true, ok: false }`
+ * so a caller like createConductor() can decide whether to tell the user.
+ * @returns {Promise<{ changed: boolean, ok: boolean }>}
+ */
+async function syncConductorReach() {
+	const boardId = currentBoardId();
+	if (boardId === null) return { changed: false, ok: false };
+	const conductorId = await resolveConductorSessionId(boardId);
+	if (conductorId === null) return { changed: false, ok: false };
+	if (!isSessionAccessGranted(conductorId)) return { changed: false, ok: false };
+	const directories = conductorDirectoryGrants();
+	const grantedPaths = directories.map(function (entry) {
+		return entry.path;
+	});
+	const previous = lastSyncedReach.get(boardId) || [];
+	const previousSet = new Set(previous);
+	const grantedSet = new Set(grantedPaths);
+	const added = grantedPaths.filter(function (path) {
+		return !previousSet.has(path);
+	});
+	const removed = previous.filter(function (path) {
+		return !grantedSet.has(path);
+	});
+	if (added.length === 0 && removed.length === 0) return { changed: false, ok: false };
+	try {
+		await sdk.sessions.update(conductorId, { additionalDirectories: directories });
+	} catch (err) {
+		const message = errorMessage(err);
+		if (isGrantDenial(message)) {
+			grantedSessions.delete(conductorId);
+		} else {
+			console.error(
+				'maestro-kanban: sessions.update (conductor reach sync) failed: ' + String(err)
+			);
+		}
+		return { changed: true, ok: false };
+	}
+	lastSyncedReach.set(boardId, grantedPaths);
+	await recordReachChange(boardId, added, removed);
+	return { changed: true, ok: true };
+}
+
+/** Debounces syncConductorReach() so a burst of the events this section
+ * answers to produces exactly one sessions.update() call and one log entry,
+ * never one per event. */
+function scheduleReachSync() {
+	if (reachSyncTimer) return;
+	reachSyncTimer = setTimeout(function () {
+		reachSyncTimer = null;
+		syncConductorReach().catch(function (err) {
+			console.error('maestro-kanban: syncConductorReach failed: ' + String(err));
+		});
+	}, REACH_SYNC_DEBOUNCE_MS);
+}
+
+// ===========================================================================
+// End of Phase 06 conductor reach sync.
 // ===========================================================================
 
 // ===========================================================================
@@ -4481,6 +4686,10 @@ async function selectBoard(boardId) {
 		// lost, which is a strictly smaller failure than refusing the switch.
 		console.error('maestro-kanban: failed to remember the selected board: ' + String(err));
 	}
+	// The board on screen just changed, so its conductor (if it has one) may
+	// have gone unsynced while nobody was looking at it - see the "Phase 06
+	// conductor reach sync" section above.
+	scheduleReachSync();
 	await pushSnapshotNow();
 	return { ok: true, boardId: next };
 }
@@ -4953,6 +5162,10 @@ async function rebuildCardsFromTabs(tabs) {
 	// out to storage in the same write as the placement it belongs to.
 	await reconcileAgingClocks();
 	await flushDirtyPlacements();
+	// A full rebuild is how a card appearing or disappearing is noticed, so
+	// the board on screen's conductor (if it has one) may need its reach
+	// recomputed - see the "Phase 06 conductor reach sync" section above.
+	scheduleReachSync();
 }
 
 function scheduleRefresh() {
@@ -5305,7 +5518,10 @@ function onSessionRemoved(payload) {
 			removedAny = true;
 		}
 	}
-	if (removedAny) schedulePanelPush();
+	if (removedAny) {
+		schedulePanelPush();
+		scheduleReachSync();
+	}
 }
 
 function onGenericSessionEvent(topic, payload) {
@@ -5324,6 +5540,11 @@ function onSessionActivated(payload) {
 		activeProjectPath = typeof projectPath === 'string' && projectPath !== '' ? projectPath : null;
 	}
 	markDirty(sessionId);
+	// activeProjectPath feeds currentBoardId() whenever nothing is explicitly
+	// selected (see resolveBoardView()), so this can change which board is on
+	// screen the same way selectBoard() does - see the "Phase 06 conductor
+	// reach sync" section above.
+	scheduleReachSync();
 }
 
 function registerEventHandlers(maestro) {
@@ -5586,7 +5807,10 @@ function registerCommands(maestro) {
 			.requestAccess(sessionId)
 			.then((result) => {
 				const granted = !!(result && result.granted === true);
-				if (granted) grantedSessions.add(sessionId);
+				if (granted) {
+					grantedSessions.add(sessionId);
+					scheduleReachSync();
+				}
 				return pushSnapshotNow().then(() => ({ ok: true, granted: granted }));
 			})
 			.catch((err) => {
@@ -5720,6 +5944,7 @@ function registerCommands(maestro) {
 				const granted = !!(accessResult && accessResult.granted === true);
 				if (!granted) return recordOutcome('failed', 'access not granted');
 				grantedSessions.add(sessionId);
+				scheduleReachSync();
 				return dispatchCardMessage(sessionId, tabId, prompt).then((result) =>
 					recordOutcome(result.ok ? 'sent' : 'failed', result.error)
 				);
@@ -5909,6 +6134,23 @@ module.exports = {
 	conductorDirectoryGrants: conductorDirectoryGrants,
 	createConductor: createConductor,
 
+	// Phase 06 conductor reach sync, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-conductor.test.ts, written once Phase 06's
+	// remaining tasks land). Every trigger in that section (a card
+	// appearing/disappearing, a grant approved or found revoked, a board
+	// switch) calls the unexported scheduleReachSync() debounce, which a test
+	// reaches through the public command/event surface those triggers already
+	// sit behind (request-access, send-message, select-board, the events
+	// registerEventHandlers() subscribes to) plus fake timers; syncConductorReach()
+	// itself is exported so a test can also await the underlying work
+	// directly, without fighting the debounce, to assert the sessions.update()
+	// payload and the resulting reach log entry. reachLogForBoard() reads that
+	// log; nothing else writes to it but recordReachChange(), called only from
+	// inside syncConductorReach().
+	REACH_LOG_LIMIT_PER_BOARD: REACH_LOG_LIMIT_PER_BOARD,
+	syncConductorReach: syncConductorReach,
+	reachLogForBoard: reachLogForBoard,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -5937,6 +6179,7 @@ module.exports = {
 		await loadBoardSettings();
 		await loadConductorConfigs();
 		await loadConductorIds();
+		await loadReachLogs();
 		await loadArchiveBoardIndex();
 		await seed();
 		await prunePlacements();
@@ -5957,6 +6200,10 @@ module.exports = {
 			clearTimeout(panelTimer);
 			panelTimer = null;
 		}
+		if (reachSyncTimer) {
+			clearTimeout(reachSyncTimer);
+			reachSyncTimer = null;
+		}
 		dirtySessions.clear();
 		cards = new Map();
 		activeProjectPath = null;
@@ -5968,6 +6215,8 @@ module.exports = {
 		boardSettings = new Map();
 		conductorConfigs = new Map();
 		conductorIds = new Map();
+		reachLogs = new Map();
+		lastSyncedReach = new Map();
 		agingByCard = new Map();
 		stopRetirementTicks();
 		cardColumnTrail.clear();
