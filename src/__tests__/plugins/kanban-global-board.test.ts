@@ -359,6 +359,25 @@ describe('maestro-kanban main.js: Phase 03 global board aggregation', () => {
 			expect(legalGlobalColumnsFor({ columnId: 'backlog' }, null, GLOBAL_BOARD)).toEqual([]);
 		});
 
+		it('never offers the read-only Unmapped lane, and refuses a write-back to it', () => {
+			const { legalGlobalColumnsFor, projectColumnForGlobalColumn, UNMAPPED_COLUMN_ID } =
+				loadMain();
+			// This card renders in the lane - its own column has no maps_to - but
+			// its project is mapped, so it can still be dragged out. What it can
+			// never be dropped on is the lane itself.
+			const legal = legalGlobalColumnsFor({ columnId: 'notes' }, SITE_BOARD, GLOBAL_BOARD);
+			expect(legal).toEqual(['backlog']);
+			expect(legal).not.toContain(UNMAPPED_COLUMN_ID);
+			expect(
+				projectColumnForGlobalColumn(
+					{ columnId: 'notes' },
+					SITE_BOARD,
+					GLOBAL_BOARD,
+					UNMAPPED_COLUMN_ID
+				)
+			).toBeNull();
+		});
+
 		it('leaves the project-board behavior of legalColumnsFor untouched', () => {
 			const { legalColumnsFor } = loadMain();
 			expect(legalColumnsFor({ columnId: 'todo' }, APP_BOARD, GLOBAL_BOARD)).toEqual([
@@ -416,6 +435,32 @@ describe('maestro-kanban main.js: Phase 03 global board aggregation', () => {
 			expect(
 				projectColumnForGlobalColumn({ columnId: 'todo' }, APP_BOARD, GLOBAL_BOARD, '')
 			).toBeNull();
+		});
+
+		it('lands the card in the dropped-on global column once the write-back is applied', () => {
+			const { projectColumnForGlobalColumn, buildGlobalBoard } = loadMain();
+			const boards = new Map([['/code/app', APP_BOARD]]);
+			const moving = card({ key: 'moving', columnId: 'todo' });
+			expect(idsIn(buildGlobalBoard(GLOBAL_BOARD, boards, [moving]), 'backlog')).toEqual([
+				'moving',
+			]);
+
+			// The ambiguous case: two project columns map to 'in-progress', so
+			// whichever one the write-back picks has to project back onto the
+			// column the drop actually named, not merely be a legal column.
+			const writeBack = projectColumnForGlobalColumn(
+				moving,
+				APP_BOARD,
+				GLOBAL_BOARD,
+				'in-progress'
+			);
+			expect(writeBack).not.toBeNull();
+			expect(writeBack!.ambiguous).toBe(true);
+			const after = buildGlobalBoard(GLOBAL_BOARD, boards, [
+				{ ...moving, columnId: writeBack!.columnId },
+			]);
+			expect(idsIn(after, 'in-progress')).toEqual(['moving']);
+			expect(idsIn(after, 'backlog')).toEqual([]);
 		});
 	});
 
@@ -475,6 +520,30 @@ describe('maestro-kanban main.js: Phase 03 global board aggregation', () => {
 			expect(after.columns.map((c) => c.id)).toEqual(before.columns.map((c) => c.id));
 			expect(idsIn(after, 'backlog')).toEqual(['b', 'a']);
 			expect(idsIn(after, 'in-progress')).toEqual(['c']);
+		});
+
+		it('survives a serialize and reload of the placement store', () => {
+			const { buildGlobalBoard } = loadMain();
+			const cards = [
+				card({ key: 'a', columnId: 'todo', lastActivityAt: 3 }),
+				card({ key: 'b', columnId: 'todo', lastActivityAt: 4 }),
+				card({ key: 'unplaced', columnId: 'todo', lastActivityAt: 9 }),
+			];
+			// An explicit order lives in a JSON placement store rather than on
+			// the card, so a restart is a round trip through JSON.
+			const placements = { a: { columnId: 'todo', order: 1 }, b: { columnId: 'todo', order: 0 } };
+			const reloaded = JSON.parse(JSON.stringify(placements)) as typeof placements;
+			const orderOf = (c: TestCard): number | null => {
+				const entry = reloaded[c.key as keyof typeof reloaded];
+				return entry ? entry.order : null;
+			};
+			const result = buildGlobalBoard(GLOBAL_BOARD, new Map([['/code/app', APP_BOARD]]), cards, {
+				orderOf,
+			});
+			// The hand-arranged pair keeps the order the store recorded, and the
+			// card the store never positioned still sorts by last activity above
+			// them rather than falling to the bottom.
+			expect(idsIn(result, 'backlog')).toEqual(['unplaced', 'b', 'a']);
 		});
 
 		it('honors an injected orderOf over the card-declared order', () => {
