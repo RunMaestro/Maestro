@@ -147,6 +147,43 @@ records ride along when an agent is duplicated into a git worktree, so a parked 
 not silently lost there either. **Never merge `customEnvVarsDisabled` into a spawn
 environment.**
 
+#### Basic and Advanced Editing
+
+Every environment variable editor (Settings → Environment, and the per-agent editor in New
+Agent, Edit Agent, the Wizard, Group Chat, and Director's Notes) has a **Basic / Advanced**
+toggle. Basic is a row per variable. Advanced is one textarea of `.env` text, for pasting a
+block out of a `.env` file, a password manager, or a provider's docs, and for copying an
+agent's variables back out. The choice is remembered across editors and restarts.
+
+Both modes edit the same records, so switching back and forth changes nothing by itself.
+What a line means in Advanced mode:
+
+| Line                       | Meaning                                                               |
+| -------------------------- | --------------------------------------------------------------------- |
+| `KEY=value`                | A live variable. Only the first `=` splits, so `KEY=a=b` is `a=b`.    |
+| `export KEY=value`         | The same. The leading `export` is dropped.                            |
+| `# KEY=value`              | A parked variable, where the editor has an eye button. See above.     |
+| `# anything else`, a blank | Ignored, and not saved: it is gone the next time the editor is opened |
+
+Things worth knowing:
+
+- **Quotes are kept as typed.** `TOKEN="a b"` stores the quotes as part of the value, exactly
+  as the Basic row does. Maestro does not unquote a value in either mode.
+- **A line that cannot be saved is listed under the textarea with its line number**, and
+  every other line is still saved. A line fails when it is not `KEY=value` or its name is
+  not a valid variable name. In Settings → Environment it also fails for the two reasons a
+  Basic row does there: an unquoted shell special character, or a relative
+  `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.
+- **A value cannot span lines.** A quoted multiline value (a PEM key, for instance) is
+  reported once, against the line that opens the quote, and nothing from there through the
+  line that closes it is saved.
+- **The same name twice: the last one wins**, with a warning. A name that is both live and
+  commented out stays live, and the commented copy is dropped.
+- **There are no inline comments.** `URL=https://example.com # prod` stores everything after
+  the `=`, and the editor warns about it.
+
+The parser and serializer are `parseDotEnv()` / `serializeDotEnv()` in `src/shared/dotEnv.ts`.
+
 ---
 
 ## Precedence Rules

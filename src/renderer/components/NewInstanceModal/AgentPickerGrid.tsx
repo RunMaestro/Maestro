@@ -47,6 +47,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	onEnvVarValueChange,
 	onEnvVarRemove,
 	onEnvVarAdd,
+	onEnvVarsReplace,
 	onConfigChange,
 	onConfigBlur,
 	onRefreshModels,
@@ -266,6 +267,9 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 											}}
 											onEnvVarAdd={() => {
 												onEnvVarAdd(agent.id);
+											}}
+											onEnvVarsReplace={(vars) => {
+												onEnvVarsReplace(agent.id, vars);
 											}}
 											onEnvVarsBlur={() => {
 												/* Saved on agent create */
