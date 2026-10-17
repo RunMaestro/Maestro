@@ -23,6 +23,8 @@
 				color: var(--maestro-text-main, #e6e6e6);
 				height: 100%;
 				overflow: hidden;
+				display: flex;
+				flex-direction: column;
 			}
 			#board {
 				display: flex;
@@ -30,7 +32,8 @@
 				align-items: stretch;
 				gap: 12px;
 				padding: 12px;
-				height: 100%;
+				flex: 1;
+				min-height: 0;
 				overflow-x: auto;
 				user-select: none;
 			}
@@ -61,6 +64,11 @@
 				border-radius: 10px;
 				padding: 0 6px;
 				font-size: 11px;
+			}
+			.column-count.over-limit {
+				background: var(--maestro-warning, #e5c07b);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-weight: 600;
 			}
 			.column-body {
 				flex: 1;
@@ -120,9 +128,26 @@
 				padding: 32px;
 				user-select: text;
 			}
+			#banner {
+				margin: 12px 12px 0 12px;
+				padding: 8px 10px;
+				border-radius: 6px;
+				background: var(--maestro-error, #e06c75);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-size: 12px;
+				user-select: text;
+			}
+			#banner[hidden] {
+				display: none;
+			}
+			.banner-path {
+				opacity: 0.85;
+				margin-left: 6px;
+			}
 		</style>
 	</head>
 	<body>
+		<div id="banner" hidden></div>
 		<div id="board">
 			<div class="empty-state">
 				Waiting for the board to load. Open an AI tab in Maestro to see it appear here.
@@ -130,14 +155,6 @@
 		</div>
 		<script>
 			(function () {
-				var COLUMN_TITLES = {
-					backlog: 'Backlog',
-					'in-progress': 'In Progress',
-					review: 'Review',
-					blocked: 'Blocked',
-					done: 'Done',
-				};
-
 				// Maestro's state colors (see CLAUDE.md "Agent States"): green ready,
 				// yellow thinking/busy, red error, orange connecting. There is no
 				// single host-injected "connecting" variable (the real app derives it
@@ -221,7 +238,29 @@
 					return el;
 				}
 
+				function renderBanner(boardError) {
+					var banner = document.getElementById('banner');
+					if (!boardError || typeof boardError.message !== 'string') {
+						banner.hidden = true;
+						banner.textContent = '';
+						return;
+					}
+					banner.hidden = false;
+					banner.textContent = '';
+					var message = document.createElement('span');
+					message.textContent = 'Board file failed to parse: ' + boardError.message;
+					banner.appendChild(message);
+					if (typeof boardError.path === 'string' && boardError.path) {
+						var pathEl = document.createElement('span');
+						pathEl.className = 'banner-path';
+						pathEl.textContent = boardError.path;
+						banner.appendChild(pathEl);
+					}
+				}
+
 				function render(snapshot) {
+					renderBanner(snapshot && snapshot.boardError);
+
 					var board = document.getElementById('board');
 					board.innerHTML = '';
 
@@ -241,6 +280,8 @@
 					columns.forEach(function (column) {
 						if (!column || typeof column.id !== 'string') return;
 						var cards = Array.isArray(column.cards) ? column.cards : [];
+						var wipLimit = typeof column.wipLimit === 'number' ? column.wipLimit : undefined;
+						var overLimit = typeof wipLimit === 'number' && cards.length > wipLimit;
 
 						var col = document.createElement('div');
 						col.className = 'column';
@@ -248,10 +289,10 @@
 						var header = document.createElement('div');
 						header.className = 'column-header';
 						var label = document.createElement('span');
-						label.textContent = COLUMN_TITLES[column.id] || column.id;
+						label.textContent = typeof column.title === 'string' ? column.title : column.id;
 						header.appendChild(label);
 						var count = document.createElement('span');
-						count.className = 'column-count';
+						count.className = overLimit ? 'column-count over-limit' : 'column-count';
 						count.textContent = String(cards.length);
 						header.appendChild(count);
 						col.appendChild(header);

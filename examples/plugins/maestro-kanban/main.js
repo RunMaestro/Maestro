@@ -1,13 +1,12 @@
 /** @import { MaestroSdk } from '@maestro/plugin-sdk' */
 /* global module, console, setTimeout, clearTimeout */
 
-// Fixed column ladder for Phase 01, still the shape buildSnapshot() renders
-// today (resolving it against a project's own YAML columns is a later task
-// in this phase). Card placement itself is no longer derived fresh every
-// refresh: see the "Phase 02 placement persistence" section below, which
-// remembers where a card was put and only falls back to deriveColumn() for a
-// card that has never been placed.
-const COLUMN_IDS = ['backlog', 'in-progress', 'review', 'blocked', 'done'];
+// Phase 01's fixed column ladder is gone from here: buildSnapshot() now
+// renders resolveColumns()'s output for "the active board" (see
+// activeProjectPath below). Card placement itself is no longer derived fresh
+// every refresh either: see the "Phase 02 placement persistence" section
+// below, which remembers where a card was put and only falls back to
+// deriveColumn() for a card that has never been placed.
 
 // Metadata-only topics this board needs to stay live. All ten are confirmed
 // real in src/shared/plugins/events.ts; agent.statusChanged is the one whose
@@ -41,8 +40,8 @@ const PANEL_PUSH_DEBOUNCE_MS = 50;
 // board files through `maestro.fs.*` is a later task in that same phase.
 // ===========================================================================
 
-// The ladder from Phase 01 (COLUMN_IDS above), reshaped into the column
-// model below. Used by resolveColumns() when no board file exists yet.
+// Phase 01's fixed column ladder, reshaped into the column model below.
+// Used by resolveColumns() when no board file exists yet.
 const DEFAULT_COLUMNS = [
 	{ id: 'backlog', title: 'Backlog' },
 	{ id: 'in-progress', title: 'In Progress' },
@@ -456,6 +455,15 @@ const sessionProjectPath = new Map();
 const sessionLastActivity = new Map();
 /** @type {Set<string>} sessions touched since the last tabs.list() re-read */
 const dirtySessions = new Set();
+
+/** Project path of the session the host most recently reported as activated
+ * via session.activated - what buildSnapshot() below treats as "the active
+ * board" whose resolveColumns() output renders in the panel. null before any
+ * session.activated event has fired this run (there is no host API to learn
+ * the already-focused session at activate() time), or when the activated
+ * session has no known project path yet; either way buildSnapshot() falls
+ * back to resolveColumns(null, globalBoard), i.e. DEFAULT_COLUMNS. */
+let activeProjectPath = null;
 
 let refreshTimer = null;
 let panelTimer = null;
@@ -903,7 +911,9 @@ function schedulePanelPush() {
 	if (panelTimer) return;
 	panelTimer = setTimeout(() => {
 		panelTimer = null;
-		pushSnapshotNow();
+		pushSnapshotNow().catch((err) => {
+			console.error('maestro-kanban: pushSnapshotNow failed: ' + String(err));
+		});
 	}, PANEL_PUSH_DEBOUNCE_MS);
 }
 
@@ -921,16 +931,44 @@ function cardToJson(card) {
 	};
 }
 
-function buildSnapshot() {
-	const byColumn = new Map(COLUMN_IDS.map((id) => [id, []]));
+/**
+ * Builds the panel snapshot for "the active board": resolveColumns()'s
+ * output for activeProjectPath (or DEFAULT_COLUMNS when none is active yet),
+ * each column carrying its title and wip_limit so the panel never has to
+ * guess either. A card whose own columnId is not one of these resolved ids -
+ * its home project uses different columns than the active board, or its
+ * placement predates this task's fallback-bucket logic - lands in the first
+ * column rather than being dropped; real cross-project aggregation is
+ * Phase 03's job. `boardError` surfaces whichever of the active project's or
+ * the global board's file most recently failed to parse, so a broken file is
+ * diagnosable from the board itself.
+ */
+async function buildSnapshot() {
+	const [projectResult, globalResult] = await Promise.all([
+		activeProjectPath !== null
+			? loadProjectBoard(activeProjectPath)
+			: Promise.resolve({ board: null, error: null }),
+		loadGlobalBoard(),
+	]);
+	const resolvedColumns = resolveColumns(projectResult.board, globalResult.board);
+	const fallbackColumnId = resolvedColumns.length > 0 ? resolvedColumns[0].id : 'backlog';
+	const byColumn = new Map(resolvedColumns.map((column) => [column.id, []]));
 	const ordered = Array.from(cards.values()).sort((a, b) => a.createdAt - b.createdAt);
 	for (const card of ordered) {
-		const list = byColumn.get(card.columnId) || byColumn.get('backlog');
-		list.push(cardToJson(card));
+		const list = byColumn.get(card.columnId) || byColumn.get(fallbackColumnId);
+		if (list) list.push(cardToJson(card));
 	}
+	const boardError =
+		(activeProjectPath !== null && projectResult.error) || globalResult.error || null;
 	return {
 		updatedAt: Date.now(),
-		columns: COLUMN_IDS.map((id) => ({ id: id, cards: byColumn.get(id) })),
+		columns: resolvedColumns.map((column) => ({
+			id: column.id,
+			title: column.title,
+			wipLimit: typeof column.wip_limit === 'number' ? column.wip_limit : undefined,
+			cards: byColumn.get(column.id) || [],
+		})),
+		boardError: boardError,
 	};
 }
 
@@ -978,18 +1016,19 @@ function safeToast(message) {
 	return sdk.notifications.toast(message).catch(() => {});
 }
 
-function pushSnapshotNow() {
+async function pushSnapshotNow() {
 	if (panelTimer) {
 		clearTimeout(panelTimer);
 		panelTimer = null;
 	}
 	if (!sdk) return;
-	const result = trimToBudget(buildSnapshot());
+	const snapshot = await buildSnapshot();
+	const result = trimToBudget(snapshot);
 	if (result.trimmed) {
 		console.warn('maestro-kanban: board snapshot exceeded the panel budget and was trimmed');
 		safeToast('Kanban board is large; some card detail was trimmed to fit the panel.');
 	}
-	sdk.ui.panelPost('board', result.snapshot).catch((err) => {
+	await sdk.ui.panelPost('board', result.snapshot).catch((err) => {
 		console.error('maestro-kanban: panelPost failed: ' + String(err));
 	});
 }
@@ -1033,13 +1072,25 @@ function onGenericSessionEvent(topic, payload) {
 	markDirty(sessionIdForEvent(topic, payload));
 }
 
+/** Besides the usual markDirty() refresh, session.activated also updates
+ * activeProjectPath - see its declaration above - so buildSnapshot() renders
+ * whichever project the user just focused. A session with no known project
+ * path (not yet seen by rebuildSessionMeta()/onSessionCreated()) clears it
+ * back to null rather than leaving a stale project's columns on screen. */
+function onSessionActivated(payload) {
+	const sessionId = sessionIdForEvent('session.activated', payload);
+	if (sessionId) {
+		const projectPath = sessionProjectPath.get(sessionId);
+		activeProjectPath = typeof projectPath === 'string' && projectPath !== '' ? projectPath : null;
+	}
+	markDirty(sessionId);
+}
+
 function registerEventHandlers(maestro) {
 	maestro.events.on('session.created', onSessionCreated);
 	maestro.events.on('session.updated', onSessionUpdated);
 	maestro.events.on('session.removed', onSessionRemoved);
-	maestro.events.on('session.activated', (payload) =>
-		onGenericSessionEvent('session.activated', payload)
-	);
+	maestro.events.on('session.activated', onSessionActivated);
 	maestro.events.on('agent.statusChanged', (payload) =>
 		onGenericSessionEvent('agent.statusChanged', payload)
 	);
@@ -1068,7 +1119,7 @@ async function seed() {
 	} catch (err) {
 		console.error('maestro-kanban: tabs.list failed: ' + String(err));
 	}
-	pushSnapshotNow();
+	await pushSnapshotNow();
 }
 
 function registerCommands(maestro) {
@@ -1159,6 +1210,7 @@ module.exports = {
 		}
 		dirtySessions.clear();
 		cards = new Map();
+		activeProjectPath = null;
 		placementCache.clear();
 		dirtyPlacementBoards.clear();
 		if (sdk) {

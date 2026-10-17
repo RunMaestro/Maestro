@@ -257,6 +257,98 @@ describe('maestro-kanban main.js', () => {
 		await expect(plugin.activate(maestro)).resolves.toBeUndefined();
 	});
 
+	it("switches the panel's resolved columns to the activated session's project board", async () => {
+		const plugin = loadMain();
+		const projectPath = '/Users/dev/projects/widgets';
+		const slug = plugin.projectBoardSlug(projectPath) as string;
+		const boardPath = '~/.maestro/kanban-boards/' + slug + '.yaml';
+		const boardYaml =
+			'version: 1\n' +
+			'project: ' +
+			projectPath +
+			'\n' +
+			'columns:\n' +
+			'  - id: backlog\n' +
+			'    title: Inbox\n' +
+			'  - id: doing\n' +
+			'    title: Doing\n' +
+			'    wip_limit: 1\n' +
+			'  - id: done\n' +
+			'    title: Done\n' +
+			'    terminal: true\n';
+		const { maestro, eventHandlers } = createStubMaestro({
+			sessionsList: () => Promise.resolve([{ id: 'session-1', title: 'Widgets', projectPath }]),
+			tabsList: () =>
+				Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath })]),
+		});
+		maestro.fs.read = vi.fn((path: string) => {
+			if (path === boardPath) return Promise.resolve(boardYaml);
+			return Promise.reject(new Error('ENOENT: no such file or directory'));
+		});
+
+		await plugin.activate(maestro);
+		const initialSnapshot = maestro.ui.panelPost.mock.calls[0]![1] as {
+			columns: { id: string; title: string }[];
+		};
+		// Before any session.activated event, the panel falls back to
+		// DEFAULT_COLUMNS rather than guessing which project is "active".
+		expect(initialSnapshot.columns.map((c) => c.id)).toEqual([
+			'backlog',
+			'in-progress',
+			'review',
+			'blocked',
+			'done',
+		]);
+
+		maestro.ui.panelPost.mockClear();
+		emit(eventHandlers, 'session.activated', { sessionId: 'session-1' });
+		await vi.advanceTimersByTimeAsync(150 + 50);
+
+		expect(maestro.ui.panelPost).toHaveBeenCalledTimes(1);
+		const snapshot = maestro.ui.panelPost.mock.calls[0]![1] as {
+			columns: { id: string; title: string; wipLimit?: number; cards: { key: string }[] }[];
+			boardError: unknown;
+		};
+		expect(
+			snapshot.columns.map((c) => ({ id: c.id, title: c.title, wipLimit: c.wipLimit }))
+		).toEqual([
+			{ id: 'backlog', title: 'Inbox', wipLimit: undefined },
+			{ id: 'doing', title: 'Doing', wipLimit: 1 },
+			{ id: 'done', title: 'Done', wipLimit: undefined },
+		]);
+		expect(findCard(snapshot, 'session-1::tab-1')?.columnId).toBe('backlog');
+		expect(snapshot.boardError).toBeNull();
+	});
+
+	it('surfaces a board parse failure as boardError with the message and the file path', async () => {
+		const plugin = loadMain();
+		const projectPath = '/Users/dev/projects/widgets';
+		const slug = plugin.projectBoardSlug(projectPath) as string;
+		const boardPath = '~/.maestro/kanban-boards/' + slug + '.yaml';
+		// Missing the required `version` key.
+		const brokenYaml =
+			'project: ' + projectPath + '\ncolumns:\n  - id: backlog\n    title: Backlog\n';
+		const { maestro, eventHandlers } = createStubMaestro({
+			sessionsList: () => Promise.resolve([{ id: 'session-1', title: 'Widgets', projectPath }]),
+			tabsList: () =>
+				Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1', projectPath })]),
+		});
+		maestro.fs.read = vi.fn((path: string) => {
+			if (path === boardPath) return Promise.resolve(brokenYaml);
+			return Promise.reject(new Error('ENOENT: no such file or directory'));
+		});
+
+		await plugin.activate(maestro);
+		maestro.ui.panelPost.mockClear();
+		emit(eventHandlers, 'session.activated', { sessionId: 'session-1' });
+		await vi.advanceTimersByTimeAsync(150 + 50);
+
+		const snapshot = maestro.ui.panelPost.mock.calls[0]![1] as {
+			boardError: { message: string; path: string } | null;
+		};
+		expect(snapshot.boardError).toEqual({ message: 'version is required', path: boardPath });
+	});
+
 	it('trims an oversized model to a snapshot under the 64 KB panel budget', async () => {
 		const plugin = loadMain();
 		const manyTabs = Array.from({ length: 2000 }, (_, i) =>

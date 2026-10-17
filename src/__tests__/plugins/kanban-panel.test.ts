@@ -43,14 +43,42 @@ interface SnapshotCard {
 	lastActivityAt?: number;
 }
 
-const COLUMN_IDS = ['backlog', 'in-progress', 'review', 'blocked', 'done'];
+interface SnapshotColumn {
+	id: string;
+	title: string;
+	wipLimit?: number;
+	cards: SnapshotCard[];
+}
+
+// id -> title, matching DEFAULT_COLUMNS in main.js (the columns rendered
+// before any project board is active).
+const DEFAULT_COLUMN_TITLES: Record<string, string> = {
+	backlog: 'Backlog',
+	'in-progress': 'In Progress',
+	review: 'Review',
+	blocked: 'Blocked',
+	done: 'Done',
+};
+const COLUMN_IDS = Object.keys(DEFAULT_COLUMN_TITLES);
 
 /** Builds a snapshot shaped exactly like `main.js`'s `buildSnapshot()`: every
- * column present, in order, with the requested cards placed by column id. */
-function snapshotWith(byColumn: Partial<Record<string, SnapshotCard[]>>) {
+ * default column present, in order, with its title and the requested cards
+ * placed by column id. `boardError` mirrors the same field buildSnapshot()
+ * emits when a board file failed to parse. */
+function snapshotWith(
+	byColumn: Partial<Record<string, SnapshotCard[]>>,
+	opts: { boardError?: { message: string; path: string } | null; columns?: SnapshotColumn[] } = {}
+) {
 	return {
 		updatedAt: Date.now(),
-		columns: COLUMN_IDS.map((id) => ({ id, cards: byColumn[id] ?? [] })),
+		columns:
+			opts.columns ??
+			COLUMN_IDS.map((id) => ({
+				id,
+				title: DEFAULT_COLUMN_TITLES[id]!,
+				cards: byColumn[id] ?? [],
+			})),
+		boardError: opts.boardError ?? null,
 	};
 }
 
@@ -157,10 +185,102 @@ describe('maestro-kanban panel.html', () => {
 
 		const backlogColumn = columns[0]!;
 		expect(backlogColumn.querySelector('.column-count')?.textContent).toBe('1');
+		expect(backlogColumn.querySelector('.column-header span')?.textContent).toBe('Backlog');
 		const inProgressColumn = columns[1]!;
 		expect(inProgressColumn.querySelector('.column-count')?.textContent).toBe('1');
 		const reviewColumn = columns[2]!;
 		expect(reviewColumn.querySelector('.column-count')?.textContent).toBe('0');
+	});
+
+	it("renders a column's title from the resolved board data, not a hardcoded map", () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					columns: [
+						{ id: 'doing', title: 'Doing Now', cards: [makeCard({ key: 'session-1::tab-1' })] },
+					],
+				}
+			)
+		);
+
+		const columns = Array.from(board().querySelectorAll('.column'));
+		expect(columns).toHaveLength(1);
+		expect(columns[0]!.querySelector('.column-header span')?.textContent).toBe('Doing Now');
+	});
+
+	it('renders a warning-colored count once a column exceeds its wip_limit, and not before', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					columns: [
+						{
+							id: 'doing',
+							title: 'Doing',
+							wipLimit: 1,
+							cards: [makeCard({ key: 'session-1::tab-1' })],
+						},
+					],
+				}
+			)
+		);
+		let count = board().querySelector('.column-count');
+		expect(count?.classList.contains('over-limit')).toBe(false);
+
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					columns: [
+						{
+							id: 'doing',
+							title: 'Doing',
+							wipLimit: 1,
+							cards: [
+								makeCard({ key: 'session-1::tab-1' }),
+								makeCard({ key: 'session-2::tab-2', sessionId: 'session-2', tabId: 'tab-2' }),
+							],
+						},
+					],
+				}
+			)
+		);
+		count = board().querySelector('.column-count');
+		expect(count?.classList.contains('over-limit')).toBe(true);
+		expect(count?.textContent).toBe('2');
+	});
+
+	it("shows a banner with the parser's message and file path when a board file failed to parse", () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					boardError: {
+						message: "Column is missing required 'title' (line 4)",
+						path: '~/.maestro/kanban-boards/widgets-1a2b3c4d.yaml',
+					},
+				}
+			)
+		);
+
+		const banner = document.getElementById('banner');
+		expect(banner?.hidden).toBe(false);
+		expect(banner?.textContent).toContain("Column is missing required 'title' (line 4)");
+		expect(banner?.textContent).toContain('~/.maestro/kanban-boards/widgets-1a2b3c4d.yaml');
+	});
+
+	it('hides the banner once the board file parses cleanly again', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{ boardError: { message: 'version is required', path: '~/.maestro/kanban.yaml' } }
+			)
+		);
+		expect(document.getElementById('banner')?.hidden).toBe(false);
+
+		pushSnapshot(emptySnapshot());
+		expect(document.getElementById('banner')?.hidden).toBe(true);
 	});
 
 	it('renders the empty state, never a blank rectangle, when the snapshot has zero cards', () => {
