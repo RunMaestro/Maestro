@@ -1,5 +1,5 @@
 /** @import { MaestroSdk } from '@maestro/plugin-sdk' */
-/* global module, console, setTimeout, clearTimeout */
+/* global module, console, setTimeout, clearTimeout, setInterval, clearInterval */
 
 // Phase 01's fixed column ladder is gone from here: buildSnapshot() now
 // renders resolveColumns()'s output for "the active board" (see
@@ -1487,6 +1487,23 @@ function setPlacementOrder(boardPath, key, order) {
 	dirtyPlacementBoards.add(boardPath);
 }
 
+/** Forgets a card's placement entirely, so the card has no column, no
+ * position and no aging clock on that board any more. Phase 05's retirement
+ * is the only caller: a retired card's record lives in the archive from then
+ * on, and leaving a placement behind would both put the card back on the
+ * board at the next rebuild and keep a stale Done clock in storage. Returns
+ * whether there was anything to forget.
+ * @param {string} boardPath
+ * @param {string} key
+ */
+function removePlacement(boardPath, key) {
+	const map = placementCache.get(boardPath);
+	if (!map || !map.has(key)) return false;
+	map.delete(key);
+	dirtyPlacementBoards.add(boardPath);
+	return true;
+}
+
 /** Writes every board whose placement map changed since the last flush, one
  * maestro.storage.set per board, then clears the dirty set. A failed write
  * logs and moves on - the in-memory cache stays authoritative for this
@@ -2258,6 +2275,353 @@ async function appendToArchive(boardId, additions) {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 05 retirement: the one way a card leaves the board. The aging model
+// above says a card is `expired`; this is what acts on that, and it is
+// deliberately the narrowest thing that can: an archive record is written,
+// the card's placement is forgotten, and the card drops out of the in-memory
+// model. Nothing else. In particular THIS PATH NEVER TOUCHES A TAB - losing
+// an AI tab and its transcript as a side effect of a board setting is
+// unacceptable, so the opt-in close (`closeTabsOnRetire`) is a separate,
+// later layer that runs alongside retirement rather than inside it.
+//
+// Five properties worth knowing:
+//
+//   1. It runs on activate() and then on a low-frequency interval -
+//      RETIREMENT_TICK_MS is hours, not seconds. Aging is measured in days,
+//      so a card is retired within a few hours of its horizon and the plugin
+//      spends essentially nothing watching the clock. Opening the panel does
+//      not sweep; neither does a refresh.
+//   2. The archive write comes FIRST and the board edit second. If
+//      appendToArchive() throws (an unreadable archive file it refuses to
+//      overwrite), that board's cards are left exactly where they are and
+//      the next tick tries again - a card is never removed from the board
+//      without a record of it existing.
+//   3. A card is archived under its own project's board id, which is the
+//      board it was actually on, so a retirement from the Global board's
+//      view still lands in the right project's archive file.
+//   4. The archive is the thing that keeps a retired card off the board. Its
+//      tab usually still exists (retirement does not close it), so
+//      rebuildCardsFromTabs() would otherwise rebuild the card from
+//      tabs.list() on the next event and drop it back into Backlog. The
+//      per-board set of archived keys is read once per board per session and
+//      maintained by retirement (and, later, by Restore).
+//   5. A retired card's note (its description and comment thread) is left in
+//      storage, not deleted. The record carries a copy for the archive view
+//      to render, and keeping the original means Restore puts the card back
+//      with its thread intact rather than with a flattened snapshot of it.
+// ===========================================================================
+
+/** How often the retirement sweep runs. Hours, not seconds: the horizon it
+ * enforces is measured in days, so checking a few times a day retires a card
+ * well inside the day it expired while costing nothing in between. */
+const RETIREMENT_TICK_MS = 6 * 60 * 60 * 1000;
+
+/** The reason stamped on a card the aging horizon retired, as opposed to one
+ * a person archived by hand (those reasons come from their own callers in a
+ * later task). Stored on the record and shown in the archive view, so it is
+ * a sentence fragment a person reads, not a code. */
+const RETIREMENT_REASON_AGED = 'aged out of Done';
+
+/** How many columns of one card's trail are kept. A card that has been
+ * dragged around for months should not grow an unbounded array in its
+ * archive record; the oldest hops are dropped first. */
+const COLUMN_TRAIL_CAP = 24;
+
+/** @type {Map<string, string[]>} card key -> the columns it has been seen in
+ * this session, oldest first, consecutive duplicates collapsed. This is the
+ * `columnHistory` an archive record carries. It is session-scoped on purpose:
+ * a column trail is interesting but not worth a format change to the
+ * placement store (which records where a card IS, not where it has been), so
+ * a card first seen after a restart has a trail that starts at the column it
+ * was found in. A record therefore always names at least the column the card
+ * retired from, which is the part that matters. */
+const cardColumnTrail = new Map();
+
+/** @type {Map<string, Set<string>>} board id -> the card keys that board's
+ * archive holds. Read once per board per session (see
+ * archivedKeysForBoard()) rather than per rebuild, and kept current by
+ * retirement itself, so no sweep or repaint re-reads an archive file. */
+const archivedCardKeys = new Map();
+
+/** @type {ReturnType<typeof setInterval>|null} */
+let retirementTimer = null;
+
+/** Appends a column to a card's trail, collapsing a repeat of the column it
+ * is already on so a rebuild that changes nothing does not grow the trail.
+ * @param {string} key
+ * @param {string} columnId
+ */
+function noteCardColumn(key, columnId) {
+	if (typeof key !== 'string' || key === '') return;
+	if (typeof columnId !== 'string' || columnId === '') return;
+	const trail = cardColumnTrail.get(key) || [];
+	if (trail.length > 0 && trail[trail.length - 1] === columnId) return;
+	trail.push(columnId);
+	if (trail.length > COLUMN_TRAIL_CAP) trail.splice(0, trail.length - COLUMN_TRAIL_CAP);
+	cardColumnTrail.set(key, trail);
+}
+
+/** One card's column trail for its archive record, with `columnId` appended
+ * when the trail does not already end there - so a record always names the
+ * column the card retired from even if the trail was never populated.
+ * @param {string} key
+ * @param {unknown} columnId
+ * @returns {string[]}
+ */
+function columnTrailFor(key, columnId) {
+	const trail = (cardColumnTrail.get(key) || []).slice();
+	if (typeof columnId === 'string' && columnId !== '' && trail[trail.length - 1] !== columnId) {
+		trail.push(columnId);
+	}
+	return trail;
+}
+
+/**
+ * The set of card keys one board's archive holds, read from disk the first
+ * time and cached for the session after that. An archive file this plugin
+ * cannot read yields an EMPTY set, logged: the safe direction when in doubt
+ * is to leave a card on the board the user can see, not to hide it on the
+ * strength of a file that did not parse.
+ * @param {string} boardId
+ * @returns {Promise<Set<string>>}
+ */
+async function archivedKeysForBoard(boardId) {
+	const cached = archivedCardKeys.get(boardId);
+	if (cached) return cached;
+	/** @type {Set<string>} */
+	const keys = new Set();
+	const result = await loadArchive(boardId);
+	if (result.error) {
+		console.error(
+			'maestro-kanban: cannot read the archive at ' +
+				result.error.path +
+				', so no card on that board is treated as archived: ' +
+				result.error.message
+		);
+	}
+	for (const record of result.records) keys.add(record.key);
+	archivedCardKeys.set(boardId, keys);
+	return keys;
+}
+
+/** Whether a card has already been retired and therefore does not belong on
+ * the board, even though its tab is still open. Synchronous: every board with
+ * live cards has been through archivedKeysForBoard() in the same rebuild.
+ * @param {{ key: string, projectPath?: string }} card
+ */
+function isCardArchived(card) {
+	if (!card || typeof card.projectPath !== 'string' || card.projectPath === '') return false;
+	const keys = archivedCardKeys.get(card.projectPath);
+	return !!keys && keys.has(card.key);
+}
+
+/** Makes sure every board represented in `cardList` has its archived-key set
+ * loaded, so the rebuild that follows can filter synchronously. One fs.read
+ * per board per session.
+ * @param {Iterable<{ projectPath?: string }>} cardList
+ */
+async function ensureArchivedKeysLoaded(cardList) {
+	/** @type {Set<string>} */
+	const boardIds = new Set();
+	for (const card of cardList) {
+		if (card && typeof card.projectPath === 'string' && card.projectPath !== '') {
+			if (!archivedCardKeys.has(card.projectPath)) boardIds.add(card.projectPath);
+		}
+	}
+	for (const boardId of boardIds) await archivedKeysForBoard(boardId);
+}
+
+/**
+ * One live card as the archive record that outlives it: the card's identity,
+ * what it was called, who was working it, where it had been, and this
+ * plugin's own note on it, flattened into the record so the archive view can
+ * render a retired card with no live card to read. `agentName` prefers the
+ * session's title (the name the user gave the agent in the Left Bar) and
+ * falls back to the provider id, which is all this plugin knows for a
+ * session it has never seen a title for.
+ * @param {object} card
+ * @param {string} reason
+ * @param {number} retiredAt
+ * @returns {ArchiveRecord}
+ */
+function archiveRecordForCard(card, reason, retiredAt) {
+	const note = noteFor(card.key);
+	return {
+		key: card.key,
+		retiredAt: retiredAt,
+		reason: archiveString(reason),
+		title: archiveString(card.title),
+		sessionId: archiveNullableString(card.sessionId),
+		tabId: archiveNullableString(card.tabId),
+		agentName:
+			archiveNullableString(sessionTitle.get(card.sessionId)) ||
+			archiveNullableString(card.agentId),
+		projectPath: archiveNullableString(card.projectPath),
+		columnHistory: columnTrailFor(card.key, card.columnId),
+		description: note.description,
+		comments: note.comments.slice(),
+	};
+}
+
+/**
+ * Every card whose aging horizon has passed, with the state that says so.
+ * Reads the same agingStateForCard() the panel renders opacity from, so a
+ * card is only ever retired on exactly the condition the user watched it fade
+ * towards. A card with no project path has no board, no terminal column and
+ * no archive, so it is never retirable.
+ * @param {number} now
+ * @returns {Promise<{ card: object, state: ReturnType<typeof agingState> }[]>}
+ */
+async function collectExpiredCards(now) {
+	/** @type {Map<string, string|null>} project path -> terminal column id */
+	const terminalByProject = new Map();
+	const expired = [];
+	for (const card of cards.values()) {
+		if (typeof card.projectPath !== 'string' || card.projectPath === '') continue;
+		if (!terminalByProject.has(card.projectPath)) {
+			terminalByProject.set(card.projectPath, await terminalColumnIdForProject(card.projectPath));
+		}
+		const state = agingStateForCard(card, terminalByProject.get(card.projectPath), now);
+		if (state.expired) expired.push({ card: card, state: state });
+	}
+	return expired;
+}
+
+/**
+ * Retires cards: archive record first, board edit second, no tab touched.
+ * The single path a card leaves the board by - the aging sweep below and the
+ * manual Clear Done / Archive Now actions all come through here, so there is
+ * exactly one place that knows how a card is removed.
+ *
+ * Cards are grouped by their own project board so each archive file is read
+ * and written once. A board whose archive refuses the write (unreadable file)
+ * leaves its cards on the board and reports them in `failed`; the next tick
+ * retries. Resolves to the keys that were actually retired.
+ * @param {object[]} targets
+ * @param {string} reason
+ * @param {number} [now]
+ * @returns {Promise<{ retired: string[], failed: string[] }>}
+ */
+async function retireCards(targets, reason, now) {
+	const at = typeof now === 'number' && isFinite(now) ? now : Date.now();
+	/** @type {Map<string, object[]>} board id -> cards retiring from it */
+	const byBoard = new Map();
+	/** @type {string[]} */
+	const failed = [];
+	for (const card of Array.isArray(targets) ? targets : []) {
+		if (!card || typeof card.key !== 'string' || card.key === '') continue;
+		if (typeof card.projectPath !== 'string' || card.projectPath === '') {
+			// No project means no board file, no placement and no archive file to
+			// write to: there is nowhere to retire this card TO.
+			console.warn(
+				'maestro-kanban: cannot retire card ' +
+					card.key +
+					': that agent has no project folder, so it has no archive to retire to'
+			);
+			failed.push(card.key);
+			continue;
+		}
+		const group = byBoard.get(card.projectPath) || [];
+		group.push(card);
+		byBoard.set(card.projectPath, group);
+	}
+
+	/** @type {string[]} */
+	const retired = [];
+	for (const [boardId, group] of byBoard) {
+		const records = group.map(function (card) {
+			return archiveRecordForCard(card, reason, at);
+		});
+		try {
+			await appendToArchive(boardId, records);
+		} catch (err) {
+			// The archive refused the write, so nothing is removed: a card is
+			// never taken off the board without a record of it.
+			console.error(
+				'maestro-kanban: could not archive ' +
+					group.length +
+					' card(s) from ' +
+					boardId +
+					'; leaving them on the board for the next sweep: ' +
+					errorMessage(err)
+			);
+			for (const card of group) failed.push(card.key);
+			continue;
+		}
+		const archivedKeys = await archivedKeysForBoard(boardId);
+		const boardPath = boardFilePath(boardId);
+		for (const card of group) {
+			archivedKeys.add(card.key);
+			removePlacement(boardPath, card.key);
+			cards.delete(card.key);
+			cardColumnTrail.delete(card.key);
+			console.log(
+				'maestro-kanban: retired card ' +
+					card.key +
+					' ("' +
+					archiveString(card.title) +
+					'") to ' +
+					archiveFilePath(boardId) +
+					': ' +
+					archiveString(reason)
+			);
+			retired.push(card.key);
+		}
+	}
+	if (retired.length > 0) await flushDirtyPlacements();
+	return { retired: retired, failed: failed };
+}
+
+/**
+ * One pass of the aging sweep: find the expired cards and retire them. Called
+ * at activate() and then every RETIREMENT_TICK_MS. A pass that retires
+ * nothing is completely silent - no snapshot push, no log - so the common
+ * case (aging off, or nothing near its horizon) costs one walk of the card
+ * map.
+ * @param {number} [now]
+ * @returns {Promise<{ retired: string[], failed: string[] }>}
+ */
+async function runRetirementSweep(now) {
+	const at = typeof now === 'number' && isFinite(now) ? now : Date.now();
+	const expired = await collectExpiredCards(at);
+	if (expired.length === 0) return { retired: [], failed: [] };
+	const result = await retireCards(
+		expired.map(function (entry) {
+			return entry.card;
+		}),
+		RETIREMENT_REASON_AGED,
+		at
+	);
+	if (result.retired.length > 0) await pushSnapshotNow();
+	return result;
+}
+
+/** Starts the low-frequency sweep. Idempotent, so a reactivation never ends
+ * up with two intervals. Unref'd where the host's timers support it, so the
+ * interval is never the reason a process stays alive. */
+function startRetirementTicks() {
+	if (retirementTimer) return;
+	retirementTimer = setInterval(function () {
+		runRetirementSweep().catch(function (err) {
+			console.error('maestro-kanban: retirement sweep failed: ' + String(err));
+		});
+	}, RETIREMENT_TICK_MS);
+	if (retirementTimer && typeof retirementTimer.unref === 'function') retirementTimer.unref();
+}
+
+/** Stops the sweep. Called from deactivate(), which is the only reason a
+ * plugin that is going away must not leave a timer behind. */
+function stopRetirementTicks() {
+	if (!retirementTimer) return;
+	clearInterval(retirementTimer);
+	retirementTimer = null;
+}
+
+// ===========================================================================
+// End of Phase 05 retirement.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -2733,6 +3097,7 @@ async function handleMove(args) {
 	const fromColumnId = card.columnId;
 	card.columnId = toColumnId;
 	setPlacement(boardFilePath(card.projectPath), key, toColumnId);
+	noteCardColumn(key, toColumnId);
 	const landedAt = placeInColumnOrder(active.columns, active.cards, toColumnId, key, toIndex);
 	if (fromColumnId !== toColumnId) {
 		renumberColumnOrder(active.columns, active.cards, fromColumnId);
@@ -2797,6 +3162,7 @@ async function handleGlobalMove(card, cardProjectBoard, globalBoard, toColumnId,
 	const fromColumnId = card.columnId;
 	card.columnId = decision.columnId;
 	setPlacement(boardFilePath(card.projectPath), key, decision.columnId);
+	noteCardColumn(key, decision.columnId);
 	const landedAt = await reorderGlobalColumn(card, globalBoard, toColumnId, toIndex);
 	if (fromColumnId !== decision.columnId) {
 		renumberOrderedCards(projectColumnMembers(card.projectPath, fromColumnId));
@@ -2921,9 +3287,15 @@ async function rebuildCardsFromTabs(tabs) {
 			columnId: null,
 		});
 	}
+	// A retired card's tab usually still exists (retirement never closes
+	// one), so the archive is what keeps it off the board: without this it
+	// would be rebuilt from tabs.list() and land back in Backlog.
+	await ensureArchivedKeysLoaded(built);
 	const next = new Map();
 	for (const card of built) {
+		if (isCardArchived(card)) continue;
 		card.columnId = await resolveCardColumnId(card);
+		noteCardColumn(card.key, card.columnId);
 		next.set(card.key, card);
 	}
 	cards = next;
@@ -3626,6 +3998,16 @@ module.exports = {
 	saveArchive: saveArchive,
 	appendToArchive: appendToArchive,
 
+	// Phase 05 retirement, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-aging.test.ts). runRetirementSweep() and
+	// retireCards() read the live card model and write both the archive file
+	// and the placement store, so a test calls them after activate() with a
+	// stub SDK - and activate() has already run one sweep by then.
+	RETIREMENT_TICK_MS: RETIREMENT_TICK_MS,
+	RETIREMENT_REASON_AGED: RETIREMENT_REASON_AGED,
+	runRetirementSweep: runRetirementSweep,
+	retireCards: retireCards,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -3654,6 +4036,12 @@ module.exports = {
 		await loadBoardSettings();
 		await seed();
 		await prunePlacements();
+		// Retirement runs at activate and then on its own low-frequency tick,
+		// never on a refresh or a panel open: a card that aged out while the app
+		// was closed retires on the way in, and nothing else has to watch the
+		// clock. Retires nothing (and pushes no snapshot) when aging is off.
+		await runRetirementSweep();
+		startRetirementTicks();
 	},
 
 	deactivate() {
@@ -3674,6 +4062,9 @@ module.exports = {
 		pendingMoveRejection = null;
 		cardNotes = new Map();
 		boardSettings = new Map();
+		stopRetirementTicks();
+		cardColumnTrail.clear();
+		archivedCardKeys.clear();
 		// The host clears its own grant bookkeeping when the sandbox stops; this
 		// mirrors that so a reactivated plugin never assumes a grant it has not
 		// seen confirmed again.

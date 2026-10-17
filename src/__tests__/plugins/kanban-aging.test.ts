@@ -92,6 +92,14 @@ interface KanbanAging {
 	readStoredArchiveRecord: (value: unknown) => ArchiveRecord | null;
 	pruneArchiveRecords: (records: ArchiveRecord[], path: string) => ArchiveRecord[];
 	loadArchive: (boardId: string) => Promise<ArchiveRead>;
+	RETIREMENT_TICK_MS: number;
+	RETIREMENT_REASON_AGED: string;
+	runRetirementSweep: (now?: number) => Promise<{ retired: string[]; failed: string[] }>;
+	retireCards: (
+		targets: unknown[],
+		reason: string,
+		now?: number
+	) => Promise<{ retired: string[]; failed: string[] }>;
 	saveArchive: (boardId: string, records: ArchiveRecord[]) => Promise<ArchiveRecord[]>;
 	appendToArchive: (boardId: string, additions: ArchiveRecord[]) => Promise<ArchiveRecord[]>;
 	GLOBAL_BOARD_ID: string;
@@ -318,6 +326,7 @@ interface StubOptions {
 	storage?: Record<string, string>;
 	files?: Record<string, string>;
 	tabsList?: () => Promise<unknown>;
+	sessionsList?: () => Promise<unknown>;
 }
 
 /** An in-memory `maestro.fs`/`maestro.storage` backed by plain Maps, so a
@@ -340,11 +349,14 @@ function createStubMaestro(options: StubOptions = {}) {
 			}),
 		},
 		sessions: {
-			list: vi.fn(() => Promise.resolve([])),
+			list: vi.fn(options.sessionsList ?? (() => Promise.resolve([]))),
 			focus: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		tabs: {
 			list: vi.fn(options.tabsList ?? (() => Promise.resolve([]))),
+			// Retirement must never reach this: the opt-in close is a later
+			// layer, so every test here asserts it stayed untouched.
+			close: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		ui: {
 			panelPost: vi.fn(() => Promise.resolve({ ok: true })),
@@ -805,5 +817,236 @@ describe('maestro-kanban archive storage', () => {
 			'widgets::1',
 		]);
 		expect((await plugin.loadArchive(other)).records.map((r) => r.key)).toEqual(['gadgets::1']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Retirement: the one path a card leaves the board by. Runs at activate() and
+// on the low-frequency tick, writes the archive record first and edits the
+// board second, and touches no tab - the opt-in close is a later layer, so
+// `tabs.close` staying untouched is asserted here too.
+// ---------------------------------------------------------------------------
+
+/** The snapshot of the last panel push, or null when nothing was pushed. */
+function lastSnapshot(panelPost: { mock: { calls: unknown[][] } }) {
+	const calls = panelPost.mock.calls;
+	if (calls.length === 0) return null;
+	return calls[calls.length - 1]![1] as {
+		columns: { id: string; cards: { key: string }[] }[];
+	};
+}
+
+function snapshotKeys(panelPost: { mock: { calls: unknown[][] } }) {
+	const snapshot = lastSnapshot(panelPost);
+	if (!snapshot) return [];
+	return snapshot.columns.flatMap((column) => column.cards.map((card) => card.key));
+}
+
+describe('maestro-kanban retirement', () => {
+	const projectPath = '/Users/dev/projects/widgets';
+	const key = 'session-1::tab-1';
+
+	/** A board whose one card has been sitting in Done for `daysInDone` days,
+	 * with aging configured however the test needs it. */
+	function retirementStub(
+		plugin: KanbanAging,
+		daysInDone: number,
+		settings: Partial<AgingSettings> = { agingEnabled: true, horizonDays: 14 },
+		extra: StubOptions = {}
+	) {
+		const boardPath = plugin.boardFilePath(projectPath);
+		return createStubMaestro({
+			storage: {
+				['placements:' + boardPath]: JSON.stringify({
+					[key]: { columnId: 'done', order: 0, enteredDoneAt: Date.now() - daysInDone * DAY },
+				}),
+				'board-settings': JSON.stringify({
+					[projectPath]: { closeTabsOnRetire: false, horizonDays: 14, ...settings },
+				}),
+				'card-notes': JSON.stringify({
+					[key]: {
+						description: 'Shipped it.',
+						comments: [{ id: 'c1', body: 'reviewed', createdAt: Date.now() - 40 * DAY }],
+					},
+				}),
+				...(extra.storage ?? {}),
+			},
+			files: extra.files,
+			sessionsList: () =>
+				Promise.resolve([
+					{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
+				]),
+			tabsList: () => Promise.resolve([aiTab({ projectPath, title: 'Ship the thing' })]),
+		});
+	}
+
+	it('retires a card past its horizon on activate, writing a complete archive record', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, files, storageStore } = retirementStub(plugin, 20);
+
+		await plugin.activate(maestro);
+
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.records).toHaveLength(1);
+		const record = archive.records[0]!;
+		expect(record).toEqual({
+			key: key,
+			retiredAt: expect.any(Number),
+			reason: plugin.RETIREMENT_REASON_AGED,
+			title: 'Ship the thing',
+			sessionId: 'session-1',
+			tabId: 'tab-1',
+			// The name the user gave the agent, not the bare provider id.
+			agentName: 'Widget Agent',
+			projectPath: projectPath,
+			// At minimum the column it retired FROM, always.
+			columnHistory: ['done'],
+			description: 'Shipped it.',
+			comments: [{ id: 'c1', body: 'reviewed', createdAt: expect.any(Number) }],
+		});
+		// Written to that board's own archive file and nowhere else.
+		expect(Array.from(files.keys())).toEqual([plugin.archiveFilePath(projectPath)]);
+		// The placement entry is gone, so nothing remembers a column or a clock
+		// for the card any more.
+		expect(readPlacements(storageStore, boardPath)[key]).toBeUndefined();
+		// And the card is off the board.
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([]);
+	});
+
+	it('never touches a tab, even for the card it just retired', async () => {
+		const plugin = loadMain();
+		const { maestro } = retirementStub(plugin, 20);
+
+		await plugin.activate(maestro);
+
+		expect((await plugin.loadArchive(projectPath)).records).toHaveLength(1);
+		expect(maestro.tabs.close).not.toHaveBeenCalled();
+	});
+
+	it('retires nothing while aging is off, however old the clock is', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, files, storageStore } = retirementStub(plugin, 400, {
+			agingEnabled: false,
+		});
+
+		await plugin.activate(maestro);
+
+		// No archive file was even created, and the card kept its placement.
+		expect(files.size).toBe(0);
+		expect(readPlacements(storageStore, boardPath)[key]!.columnId).toBe('done');
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+		expect(maestro.tabs.close).not.toHaveBeenCalled();
+	});
+
+	it('leaves a card inside its horizon alone', async () => {
+		const plugin = loadMain();
+		const { maestro, files } = retirementStub(plugin, 13, {
+			agingEnabled: true,
+			horizonDays: 14,
+		});
+
+		await plugin.activate(maestro);
+
+		expect(files.size).toBe(0);
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+	});
+
+	it('keeps an already-archived card off the board even though its tab is still open', async () => {
+		const plugin = loadMain();
+		const first = retirementStub(plugin, 20);
+		await plugin.activate(first.maestro);
+		expect((await plugin.loadArchive(projectPath)).records).toHaveLength(1);
+
+		// A second session over the same storage and the same still-open tab:
+		// retirement did not close the tab, so only the archive keeps the card
+		// off the board.
+		const second = loadMain();
+		const next = retirementStub(
+			second,
+			20,
+			{ agingEnabled: true, horizonDays: 14 },
+			{
+				storage: Object.fromEntries(first.storageStore),
+				files: Object.fromEntries(first.files),
+			}
+		);
+		await second.activate(next.maestro);
+
+		expect(snapshotKeys(next.maestro.ui.panelPost)).toEqual([]);
+		// One record, not two: the card was not re-archived on the way through.
+		expect((await second.loadArchive(projectPath)).records).toHaveLength(1);
+	});
+
+	it('leaves the card on the board when the archive refuses the write', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const archivePath = plugin.archiveFilePath(projectPath);
+		const broken = '{ this is not json';
+		const { maestro, files, storageStore } = retirementStub(
+			plugin,
+			20,
+			{ agingEnabled: true, horizonDays: 14 },
+			{ files: { [archivePath]: broken } }
+		);
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			await plugin.activate(maestro);
+		} finally {
+			error.mockRestore();
+		}
+
+		// The unreadable file is untouched, and the card still has its column
+		// and its clock, so the next sweep tries again.
+		expect(files.get(archivePath)).toBe(broken);
+		expect(readPlacements(storageStore, boardPath)[key]!.columnId).toBe('done');
+		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+	});
+
+	it('records the columns a card actually travelled through before Done', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, commandHandlers } = createStubMaestro({
+			storage: {
+				['placements:' + boardPath]: JSON.stringify({ [key]: { columnId: 'backlog' } }),
+				'board-settings': JSON.stringify({
+					[projectPath]: { agingEnabled: true, horizonDays: 1, closeTabsOnRetire: false },
+				}),
+			},
+			tabsList: () => Promise.resolve([aiTab({ projectPath })]),
+		});
+		await plugin.activate(maestro);
+
+		await commandHandlers.get('move')!({ cardKey: key, toColumnId: 'in-progress' });
+		await commandHandlers.get('move')!({ cardKey: key, toColumnId: 'done' });
+		// The clock was stamped on that last move, so push the sweep's idea of
+		// "now" past the one-day horizon instead of waiting a day.
+		await plugin.runRetirementSweep(Date.now() + 2 * DAY);
+
+		const archive = await plugin.loadArchive(projectPath);
+		expect(archive.records[0]!.columnHistory).toEqual(['backlog', 'in-progress', 'done']);
+	});
+
+	it('refuses to retire a card with no project folder to archive it under', async () => {
+		const plugin = loadMain();
+		const { maestro } = createStubMaestro();
+		await plugin.activate(maestro);
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			const result = await plugin.retireCards(
+				[{ key: 'session-9::tab-9', title: 'Homeless', columnId: 'done' }],
+				'manual'
+			);
+			expect(result).toEqual({ retired: [], failed: ['session-9::tab-9'] });
+			expect(warn).toHaveBeenCalledWith(expect.stringContaining('no project folder'));
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it('sweeps on an interval measured in hours, not seconds', () => {
+		const plugin = loadMain();
+		expect(plugin.RETIREMENT_TICK_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
 	});
 });
