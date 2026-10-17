@@ -673,11 +673,21 @@ function deriveColumn(card) {
 // boardFilePath() string this plugin already uses for board YAML - so a
 // project board and the global board (Phase 03) never share one map and
 // fight over the same keys. Stored through maestro.storage as a JSON object
-// of { [cardKey]: columnId }, cached in memory the same way boardCache is;
-// nothing polls.
+// of { [cardKey]: { columnId, order } }, cached in memory the same way
+// boardCache is; nothing polls.
+//
+// A placement is a column id plus an explicit position within that column.
+// `order` is a dense 0..n index written by a move (see placeInColumnOrder in
+// the Phase 03 section) and is absent for a card nobody has dragged yet,
+// which is what makes a never-moved card sort by last activity instead of by
+// a position it never asked for. The pre-ordering format stored a bare
+// column-id string per card, so a string is still read as
+// { columnId: <string>, order: null }: a user upgrading the plugin keeps
+// every column they had, and loses only positions that were never recorded.
 // ===========================================================================
 
-/** @type {Map<string, Map<string, string>>} boardFilePath() -> (cardKey -> columnId) */
+/** @typedef {{ columnId: string, order: number|null }} Placement */
+/** @type {Map<string, Map<string, Placement>>} boardFilePath() -> (cardKey -> Placement) */
 const placementCache = new Map();
 /** @type {Set<string>} board paths whose in-memory placement map changed and
  * still needs a maestro.storage.set to catch up. */
@@ -687,10 +697,34 @@ function placementStorageKey(boardPath) {
 	return 'placements:' + boardPath;
 }
 
+/**
+ * Reads one stored placement value into the { columnId, order } shape, or
+ * null when it is neither shape this plugin has ever written. A bare string
+ * is the pre-ordering format and keeps the column it names with no position;
+ * an `order` that is not a finite number is dropped rather than trusted,
+ * since a NaN order would poison every comparison in its column.
+ * @param {unknown} value
+ * @returns {Placement|null}
+ */
+function readStoredPlacement(value) {
+	if (typeof value === 'string') {
+		return value === '' ? null : { columnId: value, order: null };
+	}
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	const entry = /** @type {{ columnId?: unknown, order?: unknown }} */ (value);
+	if (typeof entry.columnId !== 'string' || entry.columnId === '') return null;
+	const hasOrder = typeof entry.order === 'number' && isFinite(entry.order);
+	return {
+		columnId: entry.columnId,
+		order: hasOrder ? Math.floor(/** @type {number} */ (entry.order)) : null,
+	};
+}
+
 /** Loads one board's placement map, from cache when present. Corrupt or
- * unexpected stored JSON (not a plain object of strings) is treated the same
- * as "nothing stored yet" rather than thrown, since a placement map is
- * disposable - the worst case is deriveColumn() picking a landing spot again.
+ * unexpected stored JSON (neither a bare column id nor a { columnId, order }
+ * object) is treated the same as "nothing stored yet" rather than thrown,
+ * since a placement map is disposable - the worst case is deriveColumn()
+ * picking a landing spot again.
  * @param {string} boardPath */
 async function loadPlacements(boardPath) {
 	if (placementCache.has(boardPath)) return placementCache.get(boardPath);
@@ -701,7 +735,8 @@ async function loadPlacements(boardPath) {
 			const parsed = JSON.parse(raw);
 			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
 				for (const key of Object.keys(parsed)) {
-					if (typeof parsed[key] === 'string') map.set(key, parsed[key]);
+					const placement = readStoredPlacement(parsed[key]);
+					if (placement) map.set(key, placement);
 				}
 			}
 		}
@@ -714,15 +749,32 @@ async function loadPlacements(boardPath) {
 	return map;
 }
 
-/** Records a card's placement in the in-memory cache and marks its board for
- * a write on the next flushDirtyPlacements(). A no-op when the placement is
- * already exactly what is cached, so an unchanged refresh never schedules a
- * redundant storage.set. */
+/** Records a card's column in the in-memory cache and marks its board for a
+ * write on the next flushDirtyPlacements(). The card's recorded order is
+ * left alone: a column change and a position change are written separately
+ * through setPlacementOrder() below, so each caller says what it actually
+ * knows (a move writes both; a repair writes the column and then clears the
+ * order on purpose). A no-op when the column is already exactly what is
+ * cached, so an unchanged refresh never schedules a redundant storage.set. */
 function setPlacement(boardPath, key, columnId) {
 	const map = placementCache.get(boardPath) || new Map();
-	if (map.get(key) === columnId) return;
-	map.set(key, columnId);
+	const existing = map.get(key);
+	if (existing && existing.columnId === columnId) return;
+	map.set(key, { columnId: columnId, order: existing ? existing.order : null });
 	placementCache.set(boardPath, map);
+	dirtyPlacementBoards.add(boardPath);
+}
+
+/** Records a card's explicit position within its column. Only ever called
+ * for a card that already has a placement (the move handler writes the
+ * column first, and a renumber only ever touches cards already on the
+ * board), so an order with no column to hang off is not written. */
+function setPlacementOrder(boardPath, key, order) {
+	const map = placementCache.get(boardPath);
+	const existing = map && map.get(key);
+	if (!existing) return;
+	if (existing.order === order) return;
+	map.set(key, { columnId: existing.columnId, order: order });
 	dirtyPlacementBoards.add(boardPath);
 }
 
@@ -737,7 +789,12 @@ async function flushDirtyPlacements() {
 	for (const boardPath of boardPaths) {
 		const map = placementCache.get(boardPath) || new Map();
 		const obj = {};
-		for (const [key, columnId] of map) obj[key] = columnId;
+		for (const [key, placement] of map) {
+			obj[key] =
+				placement.order === null
+					? { columnId: placement.columnId }
+					: { columnId: placement.columnId, order: placement.order };
+		}
 		try {
 			await sdk.storage.set(placementStorageKey(boardPath), JSON.stringify(obj));
 		} catch (err) {
@@ -768,20 +825,24 @@ async function resolveCardColumnId(card) {
 		loadProjectBoard(card.projectPath),
 	]);
 	const legalIds = resolveColumns(projectBoardResult.board, null).map((column) => column.id);
-	const stored = placements.get(card.key);
-	if (typeof stored === 'string') {
-		if (legalIds.indexOf(stored) !== -1) return stored;
+	const placement = placements.get(card.key);
+	if (placement) {
+		if (legalIds.indexOf(placement.columnId) !== -1) return placement.columnId;
 		const fallback = legalIds[0];
 		console.warn(
 			'maestro-kanban: card ' +
 				card.key +
 				' was on column "' +
-				stored +
+				placement.columnId +
 				'", which no longer exists on its board; repaired to "' +
 				fallback +
 				'"'
 		);
 		setPlacement(boardPath, card.key, fallback);
+		// The recorded order was a position in a column that no longer exists,
+		// so it says nothing about where the card belongs now: clear it and let
+		// the card sort by last activity in the column it was repaired into.
+		setPlacementOrder(boardPath, card.key, null);
 		return fallback;
 	}
 	const derived = deriveColumn(card);
@@ -819,7 +880,6 @@ async function clearAllPlacements() {
 	}
 	placementCache.clear();
 	dirtyPlacementBoards.clear();
-	cardOrder.clear();
 	for (const boardPath of boardPaths) {
 		try {
 			await sdk.storage.delete(placementStorageKey(boardPath));
@@ -849,26 +909,57 @@ async function clearAllPlacements() {
 // panel returns the card to its origin and shows the reason.
 // ===========================================================================
 
-/** @type {Map<string, number>} cardKey -> explicit order within its column,
- * written by a move. A card with no entry sorts after every explicitly
- * ordered card in the same column, oldest first. This map is in-memory only
- * for now; persisting it (and sorting an unordered card by last activity
- * instead) is the next task's job, which grows a stored placement from a
- * bare column id to `{ columnId, order }`. */
-const cardOrder = new Map();
-
 /** @type {{ cardKey: string, reason: string }|null} A move the sandbox
  * refused, handed to the panel on the next snapshot and drained there: a
  * rejection is a one-shot message, not board state, so it must never stick
  * to every later snapshot. */
 let pendingMoveRejection = null;
 
-/** Display order of two cards sitting in the same column. */
+/**
+ * A card's explicit position within its column, or null when nobody has
+ * dragged it yet. Read straight out of the placement store rather than a
+ * second in-memory map, so the order the board renders and the order it
+ * persists cannot disagree, and so a restart resumes exactly where the user
+ * left the column. A card with no projectPath has no placement to key an
+ * order under, so it is always unordered.
+ * @param {{ key: string, projectPath?: string }} card
+ * @returns {number|null}
+ */
+function cardOrderOf(card) {
+	if (typeof card.projectPath !== 'string' || card.projectPath === '') return null;
+	const map = placementCache.get(boardFilePath(card.projectPath));
+	const placement = map ? map.get(card.key) : undefined;
+	return placement && typeof placement.order === 'number' ? placement.order : null;
+}
+
+/** Writes a card's explicit position within its column. A card with no
+ * projectPath cannot carry one (handleMove refuses to move such a card for
+ * the same reason), so it is skipped rather than silently half-applied.
+ * @param {{ key: string, projectPath?: string }} card
+ * @param {number|null} order */
+function setCardOrder(card, order) {
+	if (typeof card.projectPath !== 'string' || card.projectPath === '') return;
+	setPlacementOrder(boardFilePath(card.projectPath), card.key, order);
+}
+
+/**
+ * Display order of two cards sitting in the same column. Cards the user has
+ * positioned come out in that position, in a block; a card nobody has
+ * dragged sorts above them by last activity, newest first, so a tab that
+ * just appeared (or just did something) is at the top of its column instead
+ * of buried at an arbitrary depth. `key` is the final tiebreak so two cards
+ * that match on every signal still sort deterministically - without it, a
+ * snapshot could reshuffle identical-looking cards on every refresh.
+ */
 function compareCardsInColumn(a, b) {
-	const aOrder = cardOrder.has(a.key) ? cardOrder.get(a.key) : Infinity;
-	const bOrder = cardOrder.has(b.key) ? cardOrder.get(b.key) : Infinity;
-	if (aOrder !== bOrder) return aOrder - bOrder;
-	return a.createdAt - b.createdAt;
+	const aOrder = cardOrderOf(a);
+	const bOrder = cardOrderOf(b);
+	if (aOrder === null && bOrder !== null) return -1;
+	if (aOrder !== null && bOrder === null) return 1;
+	if (aOrder !== null && bOrder !== null && aOrder !== bOrder) return aOrder - bOrder;
+	if (a.lastActivityAt !== b.lastActivityAt) return b.lastActivityAt - a.lastActivityAt;
+	if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
+	return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 }
 
 /**
@@ -927,28 +1018,40 @@ function refuseMove(key, reason) {
 	return pushSnapshotNow().then(() => ({ ok: false, reason: reason }));
 }
 
-/** Renumbers `columnId`'s cards into dense 0..n orders, with `key` (which
- * may be arriving from another column) spliced in at `index`. Returns the
- * index the card actually landed on after clamping. */
+/** Renumbers `columnId`'s cards into dense 0..n orders, with the card for
+ * `key` (which may be arriving from another column) spliced in at `index`.
+ * Every card in the column comes out explicitly ordered, including the ones
+ * that were still sorting by last activity: once the user has arranged a
+ * column by hand, a later burst of activity must not reshuffle it under
+ * them. Returns the index the card actually landed on after clamping. */
 function placeInColumnOrder(resolvedColumns, columnId, key, index) {
 	const members = (groupCardsByColumn(resolvedColumns).get(columnId) || []).filter(
 		(card) => card.key !== key
 	);
+	const moved = cards.get(key);
 	const requested =
 		typeof index === 'number' && isFinite(index) ? Math.floor(index) : members.length;
 	const at = Math.max(0, Math.min(requested, members.length));
-	const keys = members.map((card) => card.key);
-	keys.splice(at, 0, key);
-	for (let i = 0; i < keys.length; i++) cardOrder.set(keys[i], i);
+	const ordered = members.slice();
+	if (moved) ordered.splice(at, 0, moved);
+	for (let i = 0; i < ordered.length; i++) setCardOrder(ordered[i], i);
 	return at;
 }
 
 /** Renumbers the column a card just left so its survivors keep dense orders
- * rather than a hole where the card used to be. */
+ * rather than a hole where the card used to be. Cards that were never
+ * positioned by hand keep no order, so they stay in the last-activity block
+ * at the top of the column instead of being pinned by a move they had
+ * nothing to do with. */
 function renumberColumnOrder(resolvedColumns, columnId) {
 	if (typeof columnId !== 'string' || columnId === '') return;
 	const members = groupCardsByColumn(resolvedColumns).get(columnId) || [];
-	for (let i = 0; i < members.length; i++) cardOrder.set(members[i].key, i);
+	let next = 0;
+	for (const card of members) {
+		if (cardOrderOf(card) === null) continue;
+		setCardOrder(card, next);
+		next++;
+	}
 }
 
 /**
@@ -1202,7 +1305,10 @@ function serializedSize(snapshot) {
 }
 
 /** Trim a snapshot under budget: first drop optional fields from every card,
- * then drop the oldest card per column (round-robin) until it fits. */
+ * then drop the bottom card of each column (round-robin) until it fits. The
+ * bottom is the least prominent slot in compareCardsInColumn()'s order - the
+ * end of the user's own arrangement, or the stalest never-positioned card -
+ * so trimming never eats the card that just did something. */
 function trimToBudget(snapshot) {
 	if (serializedSize(snapshot) <= PANEL_BUDGET_BYTES) return { snapshot: snapshot, trimmed: false };
 	for (const column of snapshot.columns) {
@@ -1222,7 +1328,7 @@ function trimToBudget(snapshot) {
 		let droppedAny = false;
 		for (const column of snapshot.columns) {
 			if (column.cards.length > 0) {
-				column.cards.shift();
+				column.cards.pop();
 				droppedAny = true;
 				if (serializedSize(snapshot) <= PANEL_BUDGET_BYTES) break;
 			}
@@ -1473,7 +1579,6 @@ module.exports = {
 		activeProjectPath = null;
 		placementCache.clear();
 		dirtyPlacementBoards.clear();
-		cardOrder.clear();
 		pendingMoveRejection = null;
 		if (sdk) {
 			return sdk.events.unsubscribe().catch(() => {});

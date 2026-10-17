@@ -132,6 +132,18 @@ function aiTab(overrides: Record<string, unknown> = {}) {
 	};
 }
 
+/** The placement map main.js persisted for one board. A placement main.js
+ * wrote is `{ columnId, order? }` - `order` is only written once a move has
+ * positioned the card, so its absence is meaningful and asserted on
+ * directly. A bare string is the pre-ordering format, which only a test that
+ * seeded one and has not triggered a rewrite yet will see. */
+function readPlacements(storageStore: Map<string, string>, boardPath: string) {
+	return JSON.parse(storageStore.get('placements:' + boardPath) as string) as Record<
+		string,
+		{ columnId: string; order?: number } | string
+	>;
+}
+
 function findCard(snapshot: KanbanSnapshot, key: string) {
 	for (const column of snapshot.columns) {
 		const card = column.cards.find((c) => c.key === key);
@@ -173,11 +185,30 @@ describe('maestro-kanban filesystem plumbing and placement persistence', () => {
 
 		const snapshot = maestro.ui.panelPost.mock.calls[0]![1] as KanbanSnapshot;
 		expect(findCard(snapshot, key)?.columnId).toBe(plugin.DEFAULT_COLUMNS[0]!.id);
-		const persisted = JSON.parse(storageStore.get('placements:' + boardPath) as string) as Record<
-			string,
-			string
-		>;
-		expect(persisted[key]).toBe(plugin.DEFAULT_COLUMNS[0]!.id);
+		const persisted = readPlacements(storageStore, boardPath);
+		// The repaired column is persisted, and the order the card carried in
+		// the column that no longer exists is dropped rather than reused as a
+		// position in a different column.
+		expect(persisted[key]).toEqual({ columnId: plugin.DEFAULT_COLUMNS[0]!.id });
+	});
+
+	it("clears a repaired card's stale order instead of reusing it in the column it landed in", async () => {
+		const plugin = loadMain();
+		const projectPath = '/Users/dev/projects/widgets';
+		const boardPath = plugin.boardFilePath(projectPath);
+		const key = 'session-1::tab-1';
+		const { maestro, storageStore } = createStubMaestro({
+			storage: {
+				['placements:' + boardPath]: JSON.stringify({ [key]: { columnId: 'archived', order: 3 } }),
+			},
+			tabsList: () => Promise.resolve([aiTab({ projectPath })]),
+		});
+
+		await plugin.activate(maestro);
+
+		expect(readPlacements(storageStore, boardPath)[key]).toEqual({
+			columnId: plugin.DEFAULT_COLUMNS[0]!.id,
+		});
 	});
 
 	it('prunes placements for card keys whose tab no longer exists, once, on activate', async () => {
@@ -199,8 +230,8 @@ describe('maestro-kanban filesystem plumbing and placement persistence', () => {
 
 		await plugin.activate(maestro);
 
-		const persisted = JSON.parse(storageStore.get('placements:' + boardPath) as string);
-		expect(persisted).toEqual({ [liveKey]: 'backlog' });
+		const persisted = readPlacements(storageStore, boardPath);
+		expect(persisted).toEqual({ [liveKey]: { columnId: 'backlog' } });
 		// The live card's placement was already legal and unchanged, so the
 		// only write should be the one prunePlacements() made for the vanished
 		// key - prunePlacements() runs exactly once, right after activate()'s
@@ -348,8 +379,12 @@ describe('maestro-kanban move command', () => {
 
 		expect(result).toEqual({ ok: true, columnId: 'review', index: 0 });
 		expect(findCard(lastSnapshot(maestro), key)?.columnId).toBe('review');
-		const persisted = JSON.parse(storageStore.get('placements:' + boardPath) as string);
-		expect(persisted[key]).toBe('review');
+		// The move records both halves of the placement: the column and the
+		// explicit position within it.
+		expect(readPlacements(storageStore, boardPath)[key]).toEqual({
+			columnId: 'review',
+			order: 0,
+		});
 	});
 
 	it('honours toIndex, placing a moved card above a card already in the column', async () => {
@@ -359,14 +394,15 @@ describe('maestro-kanban move command', () => {
 			aiTab({ id: 'tab-1', projectPath, createdAt: 1 }),
 			aiTab({ id: 'tab-2', projectPath, createdAt: 2 }),
 		]);
-		// Both land on 'backlog' in createdAt order to start with.
+		// Neither card has been positioned yet, so both sort by last activity,
+		// newest first - the newer tab is on top.
 		const before = lastSnapshot(maestro).columns.find((c) => c.id === 'backlog');
-		expect(before?.cards.map((c) => c.key)).toEqual([first, second]);
+		expect(before?.cards.map((c) => c.key)).toEqual([second, first]);
 
-		await move({ cardKey: second, toColumnId: 'backlog', toIndex: 0, boardId: null });
+		await move({ cardKey: first, toColumnId: 'backlog', toIndex: 0, boardId: null });
 
 		const after = lastSnapshot(maestro).columns.find((c) => c.id === 'backlog');
-		expect(after?.cards.map((c) => c.key)).toEqual([second, first]);
+		expect(after?.cards.map((c) => c.key)).toEqual([first, second]);
 	});
 
 	it('re-checks legality itself and refuses a column the card cannot reach', async () => {
@@ -393,8 +429,7 @@ describe('maestro-kanban move command', () => {
 		// The card stayed where it was and nothing was written.
 		expect(findCard(lastSnapshot(maestro), key)?.columnId).toBe('backlog');
 		expect(maestro.storage.set).not.toHaveBeenCalled();
-		const persisted = JSON.parse(storageStore.get('placements:' + boardPath) as string);
-		expect(persisted[key]).toBe('backlog');
+		expect(readPlacements(storageStore, boardPath)[key]).toEqual({ columnId: 'backlog' });
 	});
 
 	it('refuses a move naming a card that is no longer on the board', async () => {
@@ -456,5 +491,130 @@ describe('maestro-kanban move command', () => {
 		await move({ cardKey: key, toColumnId: 'review', toIndex: 0, boardId: null });
 		expect(lastSnapshot(maestro).moveRejection).toBeNull();
 		expect(findCard(lastSnapshot(maestro), key)?.columnId).toBe('review');
+	});
+});
+
+describe('maestro-kanban card ordering', () => {
+	const projectPath = '/Users/dev/projects/widgets';
+
+	/** Activates the plugin with `tabs` in `projectPath` and `placements`
+	 * already in storage, which is what a restart looks like from main.js's
+	 * point of view: nothing in memory, everything in the placement store. */
+	async function activateWithPlacements(
+		tabs: Record<string, unknown>[],
+		placements: Record<string, unknown> = {}
+	) {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const stub = createStubMaestro({
+			storage: { ['placements:' + boardPath]: JSON.stringify(placements) },
+			tabsList: () => Promise.resolve(tabs),
+		});
+		await plugin.activate(stub.maestro);
+		return { plugin, boardPath, move: stub.commandHandlers.get('move'), ...stub };
+	}
+
+	function columnKeys(
+		maestro: { ui: { panelPost: { mock: { calls: unknown[][] } } } },
+		id: string
+	) {
+		const calls = maestro.ui.panelPost.mock.calls;
+		const snapshot = calls[calls.length - 1]![1] as KanbanSnapshot;
+		return snapshot.columns.find((column) => column.id === id)?.cards.map((card) => card.key);
+	}
+
+	it('restores a hand-arranged column from stored orders rather than re-deriving one', async () => {
+		const first = 'session-1::tab-1';
+		const second = 'session-1::tab-2';
+		const { maestro } = await activateWithPlacements(
+			[
+				// tab-1 is the newer tab, so last-activity order alone would put it
+				// on top. The stored order says otherwise and must win.
+				aiTab({ id: 'tab-1', projectPath, createdAt: 2 }),
+				aiTab({ id: 'tab-2', projectPath, createdAt: 1 }),
+			],
+			{
+				[first]: { columnId: 'backlog', order: 1 },
+				[second]: { columnId: 'backlog', order: 0 },
+			}
+		);
+
+		expect(columnKeys(maestro, 'backlog')).toEqual([second, first]);
+	});
+
+	it('sorts a card with no recorded order by last activity, newest at the top', async () => {
+		const oldest = 'session-1::tab-1';
+		const newest = 'session-1::tab-2';
+		const middle = 'session-1::tab-3';
+		const { maestro } = await activateWithPlacements([
+			aiTab({ id: 'tab-1', projectPath, createdAt: 1 }),
+			aiTab({ id: 'tab-2', projectPath, createdAt: 5 }),
+			aiTab({ id: 'tab-3', projectPath, createdAt: 3 }),
+		]);
+
+		expect(columnKeys(maestro, 'backlog')).toEqual([newest, middle, oldest]);
+	});
+
+	it('puts a brand new tab above the cards the user positioned by hand', async () => {
+		const pinnedTop = 'session-1::tab-1';
+		const pinnedBottom = 'session-1::tab-2';
+		const fresh = 'session-1::tab-3';
+		const { maestro } = await activateWithPlacements(
+			[
+				aiTab({ id: 'tab-1', projectPath, createdAt: 1 }),
+				aiTab({ id: 'tab-2', projectPath, createdAt: 2 }),
+				// Appeared after the user arranged the column, and has no order.
+				aiTab({ id: 'tab-3', projectPath, createdAt: 9 }),
+			],
+			{
+				[pinnedTop]: { columnId: 'backlog', order: 0 },
+				[pinnedBottom]: { columnId: 'backlog', order: 1 },
+			}
+		);
+
+		expect(columnKeys(maestro, 'backlog')).toEqual([fresh, pinnedTop, pinnedBottom]);
+	});
+
+	it('reads a pre-ordering placement stored as a bare column id and rewrites it on the next move', async () => {
+		const key = 'session-1::tab-1';
+		const { boardPath, move, maestro, storageStore } = await activateWithPlacements(
+			[aiTab({ projectPath, status: 'busy' })],
+			// The format this plugin wrote before placements carried an order.
+			{ [key]: 'review' }
+		);
+		// The legacy column survives the upgrade (deriveColumn would have said
+		// 'in-progress' for a busy card).
+		expect(columnKeys(maestro, 'review')).toEqual([key]);
+		expect(readPlacements(storageStore, boardPath)[key]).toEqual('review');
+
+		await move!({ cardKey: key, toColumnId: 'review', toIndex: 0, boardId: null });
+
+		expect(readPlacements(storageStore, boardPath)[key]).toEqual({
+			columnId: 'review',
+			order: 0,
+		});
+	});
+
+	it('renumbers the column a card left so the survivors keep dense, persisted orders', async () => {
+		const moved = 'session-1::tab-1';
+		const stayed = 'session-1::tab-2';
+		const { boardPath, move, storageStore } = await activateWithPlacements(
+			[
+				aiTab({ id: 'tab-1', projectPath, createdAt: 1 }),
+				aiTab({ id: 'tab-2', projectPath, createdAt: 2 }),
+			],
+			{
+				[moved]: { columnId: 'backlog', order: 0 },
+				[stayed]: { columnId: 'backlog', order: 1 },
+			}
+		);
+
+		await move!({ cardKey: moved, toColumnId: 'review', toIndex: 0, boardId: null });
+
+		const persisted = readPlacements(storageStore, boardPath);
+		expect(persisted[moved]).toEqual({ columnId: 'review', order: 0 });
+		// The hole the moved card left is closed rather than leaving the last
+		// survivor stranded on order 1.
+		expect(persisted[stayed]).toEqual({ columnId: 'backlog', order: 0 });
 	});
 });
