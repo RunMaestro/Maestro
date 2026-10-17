@@ -444,6 +444,14 @@ function createStubMaestro(options: StubOptions = {}) {
 		sessions: {
 			list: vi.fn(options.sessionsList ?? (() => Promise.resolve([]))),
 			focus: vi.fn(() => Promise.resolve({ ok: true })),
+			// Phase 04's one-time grant, stubbed as already-willing: the only
+			// thing aging wants out of `send-message` is the timestamp it
+			// stamps on the card, not the consent flow around it (that is
+			// kanban-messaging.test.ts's subject).
+			requestAccess: vi.fn(() => Promise.resolve({ granted: true })),
+		},
+		agents: {
+			dispatch: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		tabs: {
 			list: vi.fn(options.tabsList ?? (() => Promise.resolve([]))),
@@ -1048,6 +1056,77 @@ describe('maestro-kanban retirement', () => {
 
 		expect(files.size).toBe(0);
 		expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+	});
+
+	// The three below share one shape: a card ten days into Done under a
+	// 14-day horizon, swept ten days later. The control retires; the two
+	// after it are touched in between and must not. `agingState()`'s reset
+	// rule is unit-tested above, but only these reach the wiring that feeds
+	// it - `agingStateForCard()` reading the card's note and its newest sent
+	// message - so a reset that never arrived at the sweep would pass every
+	// pure-function case and still retire a card someone just commented on.
+
+	it('retires a card the clock caught up with while nothing touched it', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, files, storageStore } = retirementStub(plugin, 10);
+
+		await plugin.activate(maestro);
+		// Ten days in under a 14-day horizon, so activate's own sweep passed
+		// over it.
+		expect(files.size).toBe(0);
+
+		const result = await plugin.runRetirementSweep(Date.now() + 10 * DAY);
+
+		expect(result.retired).toEqual([key]);
+		expect(readPlacements(storageStore, boardPath)[key]).toBeUndefined();
+	});
+
+	it('spares that same card when a comment restarted its clock', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, files, storageStore, commandHandlers } = retirementStub(plugin, 10);
+
+		await plugin.activate(maestro);
+		const cardNote = commandHandlers.get('card-note')!;
+		expect(await cardNote({ cardKey: key, action: 'comment', body: 'one more thing' })).toEqual({
+			ok: true,
+		});
+
+		// The comment restored full strength immediately, not only at the
+		// next sweep.
+		expect(
+			plugin.agingStateForCard({ key, projectPath, columnId: 'done' }, 'done', Date.now()).opacity
+		).toBe(1);
+
+		const result = await plugin.runRetirementSweep(Date.now() + 10 * DAY);
+
+		expect(result.retired).toEqual([]);
+		expect(files.size).toBe(0);
+		expect(readPlacements(storageStore, boardPath)[key]!.columnId).toBe('done');
+	});
+
+	it('spares it for a message sent through the composer too', async () => {
+		const plugin = loadMain();
+		const boardPath = plugin.boardFilePath(projectPath);
+		const { maestro, files, storageStore, commandHandlers } = retirementStub(plugin, 10);
+
+		await plugin.activate(maestro);
+		const sendMessage = commandHandlers.get('send-message')!;
+		expect(
+			await sendMessage({
+				cardKey: key,
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				prompt: 'any update?',
+			})
+		).toEqual({ ok: true, error: null });
+
+		const result = await plugin.runRetirementSweep(Date.now() + 10 * DAY);
+
+		expect(result.retired).toEqual([]);
+		expect(files.size).toBe(0);
+		expect(readPlacements(storageStore, boardPath)[key]!.columnId).toBe('done');
 	});
 
 	it('keeps an already-archived card off the board even though its tab is still open', async () => {
