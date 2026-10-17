@@ -2601,6 +2601,29 @@ describe('brokered non-act host API breadth', () => {
 		await expect(disabled['sessions.create']!('p', {})).rejects.toThrow(/unavailable/);
 	});
 
+	it('denies sessions.create and sessions.update when the capability grant is absent, before the impl ever runs', async () => {
+		const sessionsCreate = vi.fn(async () => ({ id: 's1', title: 'Created' }));
+		const sessionsUpdate = vi.fn(async () => ({ id: 's1', title: 'Renamed' }));
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => []),
+				sessionsGet: () => ({ id: 's1', title: 'Created' }),
+				sessionsCreate,
+				sessionsUpdate,
+			})
+		);
+
+		await expect(h['sessions.create']!('p', { title: 'Created' })).rejects.toThrow(
+			/permission denied/
+		);
+		await expect(
+			h['sessions.update']!('p', { sessionId: 's1', patch: { title: 'Renamed' } })
+		).rejects.toThrow(/permission denied/);
+
+		expect(sessionsCreate).not.toHaveBeenCalled();
+		expect(sessionsUpdate).not.toHaveBeenCalled();
+	});
+
 	it('focuses an existing session under sessions:focus and rejects stale or over-wide calls', async () => {
 		const focused: Array<{ sessionId: string; tabId?: string }> = [];
 		let grants: PermissionGrant[] = [grant('sessions:focus')];
