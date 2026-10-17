@@ -3,7 +3,7 @@
 	"name": "Kanban Board",
 	"version": "0.1.0",
 	"tier": 2,
-	"maestro": { "minHostApi": "1.16.0" },
+	"maestro": { "minHostApi": "1.26.0" },
 	"entry": "main.js",
 	"category": "ui",
 	"description": "A live, read-only Kanban board: every open AI tab is a card, columns reflect live agent status, and clicking a card jumps Maestro to that tab.",
@@ -29,6 +29,26 @@
 		{
 			"capability": "notifications:toast",
 			"reason": "Surface failures, such as a trimmed or failed board update."
+		},
+		{
+			"capability": "fs:read",
+			"scope": "~/.maestro/kanban.yaml",
+			"reason": "Read the global column definitions. Only reads its own board files under ~/.maestro and never touches a project folder."
+		},
+		{
+			"capability": "fs:read",
+			"scope": "~/.maestro/kanban-boards",
+			"reason": "Read a project's own board file. Only reads its own board files under ~/.maestro and never touches a project folder."
+		},
+		{
+			"capability": "fs:write",
+			"scope": "~/.maestro/kanban.yaml",
+			"reason": "Write the global column definitions. Only writes its own board files under ~/.maestro and never touches a project folder."
+		},
+		{
+			"capability": "fs:write",
+			"scope": "~/.maestro/kanban-boards",
+			"reason": "Write a project's own board file. Only writes its own board files under ~/.maestro and never touches a project folder."
 		}
 	],
 	"contributes": {
