@@ -12,7 +12,7 @@
 		{ "capability": "sessions:read", "reason": "Enumerate agents to build and label cards." },
 		{
 			"capability": "tabs:manage",
-			"reason": "Enumerate AI tabs and their live status to build and update cards."
+			"reason": "Enumerate AI tabs and their live status to build and update cards, and - only when you turn on \"close tabs when cards close\" - close a card's own tab when that card ages out of Done, never while it is busy."
 		},
 		{ "capability": "sessions:focus", "reason": "Jump Maestro to the tab behind a clicked card." },
 		{

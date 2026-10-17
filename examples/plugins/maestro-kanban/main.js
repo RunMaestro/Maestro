@@ -2281,8 +2281,10 @@ async function appendToArchive(boardId, additions) {
 // the card's placement is forgotten, and the card drops out of the in-memory
 // model. Nothing else. In particular THIS PATH NEVER TOUCHES A TAB - losing
 // an AI tab and its transcript as a side effect of a board setting is
-// unacceptable, so the opt-in close (`closeTabsOnRetire`) is a separate,
-// later layer that runs alongside retirement rather than inside it.
+// unacceptable, so the opt-in close (`closeTabsOnRetire`) is a separate
+// layer, immediately below, that runs alongside retirement rather than
+// inside it: only the aging sweep calls into it, and only for a card that
+// has already come back from here as retired.
 //
 // Five properties worth knowing:
 //
@@ -2300,7 +2302,8 @@ async function appendToArchive(boardId, additions) {
 //      board it was actually on, so a retirement from the Global board's
 //      view still lands in the right project's archive file.
 //   4. The archive is the thing that keeps a retired card off the board. Its
-//      tab usually still exists (retirement does not close it), so
+//      tab usually still exists (retirement does not close it, and the
+//      opt-in close is off by default), so
 //      rebuildCardsFromTabs() would otherwise rebuild the card from
 //      tabs.list() on the next event and drop it back into Backlog. The
 //      per-board set of archived keys is read once per board per session and
@@ -2573,27 +2576,47 @@ async function retireCards(targets, reason, now) {
 }
 
 /**
- * One pass of the aging sweep: find the expired cards and retire them. Called
- * at activate() and then every RETIREMENT_TICK_MS. A pass that retires
- * nothing is completely silent - no snapshot push, no log - so the common
- * case (aging off, or nothing near its horizon) costs one walk of the card
- * map.
+ * One pass of the aging sweep: find the expired cards, close the tabs the
+ * user opted into closing, and retire the rest. Called at activate() and
+ * then every RETIREMENT_TICK_MS. A pass that retires nothing is completely
+ * silent - no snapshot push, no log, no tabs.list() - so the common case
+ * (aging off, or nothing near its horizon) costs one walk of the card map.
+ *
+ * The three steps are strictly ordered, and the order is the safety
+ * property: the plan decides which cards may lose a tab (and defers the
+ * ones whose tab is busy), retirement writes the archive and edits the
+ * board, and only a card that came back from retirement as actually retired
+ * has its tab closed.
  * @param {number} [now]
- * @returns {Promise<{ retired: string[], failed: string[] }>}
+ * @returns {Promise<{ retired: string[], failed: string[], closed: string[], deferred: string[] }>}
  */
 async function runRetirementSweep(now) {
 	const at = typeof now === 'number' && isFinite(now) ? now : Date.now();
 	const expired = await collectExpiredCards(at);
-	if (expired.length === 0) return { retired: [], failed: [] };
-	const result = await retireCards(
+	if (expired.length === 0) return { retired: [], failed: [], closed: [], deferred: [] };
+	const plan = await planRetirementTabCloses(
 		expired.map(function (entry) {
 			return entry.card;
-		}),
-		RETIREMENT_REASON_AGED,
-		at
+		})
+	);
+	const result =
+		plan.retire.length > 0
+			? await retireCards(plan.retire, RETIREMENT_REASON_AGED, at)
+			: { retired: [], failed: [] };
+	const closed = await closeTabsForRetiredCards(
+		plan.closeTabs,
+		result.retired,
+		RETIREMENT_REASON_AGED
 	);
 	if (result.retired.length > 0) await pushSnapshotNow();
-	return result;
+	return {
+		retired: result.retired,
+		failed: result.failed,
+		closed: closed,
+		deferred: plan.deferred.map(function (card) {
+			return card.key;
+		}),
+	};
 }
 
 /** Starts the low-frequency sweep. Idempotent, so a reactivation never ends
@@ -2619,6 +2642,190 @@ function stopRetirementTicks() {
 
 // ===========================================================================
 // End of Phase 05 retirement.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 05 opt-in tab close: the one place in this plugin that can destroy
+// something the user cannot get back. Retirement above is pure bookkeeping;
+// this layer sits BESIDE it rather than inside it, so that every other way a
+// card can leave the board - the manual Clear Done and Archive Now actions,
+// and anything a later phase adds - reaches retireCards() and provably
+// cannot reach a tab. Only the aging sweep calls in here, which is what
+// "only at age-out" means in code.
+//
+// Four conditions, all of which must hold before maestro.tabs.close() is
+// called even once:
+//
+//   1. The card's own board has `closeTabsOnRetire` set to true. The
+//      default is false, and a board that has never been configured
+//      inherits the Global board's setting or the default - the same
+//      fallback chain the rest of aging uses.
+//   2. The tab is the retiring card's OWN tabId. Nothing here iterates
+//      tabs, closes a session's other tabs, or closes anything it did not
+//      get from a card that just retired.
+//   3. The tab's CURRENT status, from a fresh maestro.tabs.list() taken in
+//      this sweep, is not busy. The card model's own `status` is as old as
+//      the last rebuild, and an agent can start a turn in between; a busy
+//      tab means the card's whole retirement is deferred to the next tick,
+//      so the card keeps its placement, its clock and its tab.
+//   4. The card actually retired. The archive write comes first, so a card
+//      whose archive refused the write is still on the board - and a card
+//      still on the board keeps its tab.
+//
+// Every close is logged with the card key, the tab id and the retirement
+// reason, and so is every deferral, because a vanished tab must never be a
+// thing the user has to reconstruct from the absence of a card.
+// ===========================================================================
+
+/** Tab statuses that mean "do not close this tab": a turn is running, or one
+ * is about to be. Deliberately the narrow, literal set the host emits rather
+ * than "anything that is not idle" - treating an unrecognized status as busy
+ * would defer such a card's retirement forever instead of once. */
+const BUSY_TAB_STATUSES = new Set(['busy', 'connecting']);
+
+/** @param {unknown} status */
+function isTabStatusBusy(status) {
+	return typeof status === 'string' && BUSY_TAB_STATUSES.has(status);
+}
+
+/**
+ * Every tab's status right now, read fresh rather than taken from the card
+ * model: a card's `status` is as old as the last rebuild, and this is the
+ * check standing between a busy agent and a closed transcript.
+ * @returns {Promise<Map<string, string>|null>} null when the host refused
+ * the read, which is never treated as "not busy".
+ */
+async function readLiveTabStatuses() {
+	try {
+		const tabs = await sdk.tabs.list();
+		/** @type {Map<string, string>} */
+		const statuses = new Map();
+		for (const tab of Array.isArray(tabs) ? tabs : []) {
+			if (!tab || typeof tab !== 'object') continue;
+			if (typeof tab.id !== 'string' || tab.id === '') continue;
+			statuses.set(tab.id, typeof tab.status === 'string' ? tab.status : '');
+		}
+		return statuses;
+	} catch (err) {
+		console.error(
+			'maestro-kanban: tabs.list failed while checking whether a retiring card is busy, ' +
+				'so no tab is closed and those cards wait for the next sweep: ' +
+				errorMessage(err)
+		);
+		return null;
+	}
+}
+
+/**
+ * Splits the expired cards into the ones that retire in this sweep and the
+ * ones that wait for the next one, and names the tabs that may be closed
+ * afterwards. The tabs.list() read only happens when at least one expired
+ * card's board actually opted in, so a board with the default settings adds
+ * no RPC to a sweep.
+ * @param {object[]} expiredCards
+ * @returns {Promise<{ retire: object[], closeTabs: object[], deferred: object[] }>}
+ */
+async function planRetirementTabCloses(expiredCards) {
+	/** @type {object[]} */
+	const retire = [];
+	/** @type {object[]} */
+	const wantsClose = [];
+	for (const card of Array.isArray(expiredCards) ? expiredCards : []) {
+		if (!card) continue;
+		const optedIn = agingSettingsForCard(card).closeTabsOnRetire === true;
+		if (optedIn && typeof card.tabId === 'string' && card.tabId !== '') wantsClose.push(card);
+		else retire.push(card);
+	}
+	if (wantsClose.length === 0) return { retire: retire, closeTabs: [], deferred: [] };
+
+	const statuses = await readLiveTabStatuses();
+	/** @type {object[]} */
+	const closeTabs = [];
+	/** @type {object[]} */
+	const deferred = [];
+	for (const card of wantsClose) {
+		if (!statuses) {
+			// No answer about this tab's status is not an answer of "idle".
+			deferred.push(card);
+			continue;
+		}
+		if (!statuses.has(card.tabId)) {
+			// The tab is already gone, so there is nothing to close and nothing
+			// to be careful about: the card retires on its own.
+			retire.push(card);
+			continue;
+		}
+		if (isTabStatusBusy(statuses.get(card.tabId))) {
+			console.log(
+				'maestro-kanban: card ' +
+					card.key +
+					' is past its Done horizon, but its tab ' +
+					card.tabId +
+					' is ' +
+					statuses.get(card.tabId) +
+					' and this board closes tabs on retirement; deferring its retirement to the next sweep'
+			);
+			deferred.push(card);
+			continue;
+		}
+		retire.push(card);
+		closeTabs.push(card);
+	}
+	return { retire: retire, closeTabs: closeTabs, deferred: deferred };
+}
+
+/**
+ * Closes the tabs of the cards that actually retired. Called after
+ * retireCards() and never before it: a card whose archive write failed is
+ * still on the board, and a card still on the board keeps its tab.
+ *
+ * A close that the host rejects is logged and nothing more - the card stays
+ * retired (its archive record is already written, and that is the ledger),
+ * and the user is left with a tab they can close by hand, which is the safe
+ * direction for this failure.
+ * @param {object[]} candidates cards whose board opted in and whose tab was idle
+ * @param {string[]} retiredKeys
+ * @param {string} reason
+ * @returns {Promise<string[]>} the tab ids actually closed
+ */
+async function closeTabsForRetiredCards(candidates, retiredKeys, reason) {
+	if (!Array.isArray(candidates) || candidates.length === 0) return [];
+	const retired = new Set(retiredKeys);
+	/** @type {string[]} */
+	const closed = [];
+	for (const card of candidates) {
+		if (!retired.has(card.key)) continue;
+		try {
+			await sdk.tabs.close(card.tabId);
+		} catch (err) {
+			console.error(
+				'maestro-kanban: could not close tab ' +
+					card.tabId +
+					' for retired card ' +
+					card.key +
+					'; the card stays retired and the tab stays open: ' +
+					errorMessage(err)
+			);
+			continue;
+		}
+		closed.push(card.tabId);
+		console.log(
+			'maestro-kanban: closed tab ' +
+				card.tabId +
+				' for retired card ' +
+				card.key +
+				' ("' +
+				archiveString(card.title) +
+				'"): ' +
+				archiveString(reason) +
+				' and this board has "close tabs when cards close" on'
+		);
+	}
+	return closed;
+}
+
+// ===========================================================================
+// End of Phase 05 opt-in tab close.
 // ===========================================================================
 
 // ===========================================================================
@@ -4007,6 +4214,15 @@ module.exports = {
 	RETIREMENT_REASON_AGED: RETIREMENT_REASON_AGED,
 	runRetirementSweep: runRetirementSweep,
 	retireCards: retireCards,
+
+	// Phase 05 opt-in tab close, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-aging.test.ts). isTabStatusBusy() is pure;
+	// planRetirementTabCloses() reads the live board settings and calls
+	// sdk.tabs.list(), so a test calls it after activate() with a stub SDK.
+	// There is deliberately no export that closes a tab on its own: the only
+	// caller of closeTabsForRetiredCards() is the aging sweep.
+	isTabStatusBusy: isTabStatusBusy,
+	planRetirementTabCloses: planRetirementTabCloses,
 
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call

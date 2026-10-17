@@ -20,8 +20,11 @@
  *     through the same stub `maestro.fs` the Phase 02 board files use, so a
  *     test can read back exactly what landed on disk.
  *
- * Retirement itself and the opt-in tab close are later tasks in this phase
- * and are not covered here yet.
+ *   - Retirement and the opt-in tab close are only observable end to end
+ *     too: the sweep reads the live card model, so a test drives it through
+ *     `activate()` (which sweeps once) or `runRetirementSweep(now)` with a
+ *     clock pushed past the horizon, and asserts on the stub's `fs`,
+ *     `storage` and `tabs.close` calls.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -94,7 +97,15 @@ interface KanbanAging {
 	loadArchive: (boardId: string) => Promise<ArchiveRead>;
 	RETIREMENT_TICK_MS: number;
 	RETIREMENT_REASON_AGED: string;
-	runRetirementSweep: (now?: number) => Promise<{ retired: string[]; failed: string[] }>;
+	runRetirementSweep: (
+		now?: number
+	) => Promise<{ retired: string[]; failed: string[]; closed: string[]; deferred: string[] }>;
+	isTabStatusBusy: (status: unknown) => boolean;
+	planRetirementTabCloses: (expiredCards: unknown[]) => Promise<{
+		retire: { key: string }[];
+		closeTabs: { key: string }[];
+		deferred: { key: string }[];
+	}>;
 	retireCards: (
 		targets: unknown[],
 		reason: string,
@@ -354,8 +365,8 @@ function createStubMaestro(options: StubOptions = {}) {
 		},
 		tabs: {
 			list: vi.fn(options.tabsList ?? (() => Promise.resolve([]))),
-			// Retirement must never reach this: the opt-in close is a later
-			// layer, so every test here asserts it stayed untouched.
+			// Retirement itself must never reach this; only the opt-in close
+			// layer may, and only for a card whose board turned it on.
 			close: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		ui: {
@@ -872,11 +883,15 @@ describe('maestro-kanban retirement', () => {
 				...(extra.storage ?? {}),
 			},
 			files: extra.files,
-			sessionsList: () =>
-				Promise.resolve([
-					{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
-				]),
-			tabsList: () => Promise.resolve([aiTab({ projectPath, title: 'Ship the thing' })]),
+			sessionsList:
+				extra.sessionsList ??
+				(() =>
+					Promise.resolve([
+						{ id: 'session-1', title: 'Widget Agent', agentId: 'claude-code', projectPath },
+					])),
+			tabsList:
+				extra.tabsList ??
+				(() => Promise.resolve([aiTab({ projectPath, title: 'Ship the thing' })])),
 		});
 	}
 
@@ -1048,5 +1063,266 @@ describe('maestro-kanban retirement', () => {
 	it('sweeps on an interval measured in hours, not seconds', () => {
 		const plugin = loadMain();
 		expect(plugin.RETIREMENT_TICK_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
+	});
+
+	// -----------------------------------------------------------------------
+	// The opt-in tab close. This is the only thing in the plugin that destroys
+	// something a user cannot get back, so each of its four conditions gets a
+	// test of its own: the board opted in, it is the card's own tab, the tab
+	// is not busy right now, and the card really did retire.
+	// -----------------------------------------------------------------------
+	describe('opt-in tab close', () => {
+		/** The same board, with "close tabs when cards close" turned on. */
+		function closingStub(plugin: KanbanAging, daysInDone: number, extra: StubOptions = {}) {
+			return retirementStub(
+				plugin,
+				daysInDone,
+				{ agingEnabled: true, horizonDays: 14, closeTabsOnRetire: true },
+				extra
+			);
+		}
+
+		it('treats only a mid-turn status as busy, and an unknown status as not busy', () => {
+			const plugin = loadMain();
+			expect(plugin.isTabStatusBusy('busy')).toBe(true);
+			expect(plugin.isTabStatusBusy('connecting')).toBe(true);
+			expect(plugin.isTabStatusBusy('idle')).toBe(false);
+			expect(plugin.isTabStatusBusy('error')).toBe(false);
+			expect(plugin.isTabStatusBusy('')).toBe(false);
+			expect(plugin.isTabStatusBusy(undefined)).toBe(false);
+			// An unrecognized status reads as not busy on purpose: treating it as
+			// busy would defer that card's retirement forever, not once.
+			expect(plugin.isTabStatusBusy('reticulating')).toBe(false);
+		});
+
+		it("closes exactly the retiring card's own tab, once, when the board opted in", async () => {
+			const plugin = loadMain();
+			const { maestro } = closingStub(plugin, 20);
+			const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+			let lines: string[] = [];
+			try {
+				await plugin.activate(maestro);
+				lines = log.mock.calls.map((call) => String(call[0]));
+			} finally {
+				log.mockRestore();
+			}
+
+			expect(maestro.tabs.close).toHaveBeenCalledTimes(1);
+			expect(maestro.tabs.close).toHaveBeenCalledWith('tab-1');
+			// And it still retired the ordinary way.
+			expect((await plugin.loadArchive(projectPath)).records).toHaveLength(1);
+			expect(snapshotKeys(maestro.ui.panelPost)).toEqual([]);
+			// Every close is logged with the card key and the retirement reason.
+			const closeLog = lines.filter((line) => line.includes('closed tab'));
+			expect(closeLog).toHaveLength(1);
+			expect(closeLog[0]).toContain(key);
+			expect(closeLog[0]).toContain('tab-1');
+			expect(closeLog[0]).toContain(plugin.RETIREMENT_REASON_AGED);
+		});
+
+		it('leaves every other tab of the same agent alone', async () => {
+			const plugin = loadMain();
+			const boardPath = plugin.boardFilePath(projectPath);
+			const { maestro } = closingStub(plugin, 20, {
+				storage: {
+					['placements:' + boardPath]: JSON.stringify({
+						[key]: { columnId: 'done', order: 0, enteredDoneAt: Date.now() - 20 * DAY },
+						'session-1::tab-2': { columnId: 'backlog', order: 0 },
+					}),
+				},
+				tabsList: () =>
+					Promise.resolve([
+						aiTab({ projectPath, title: 'Ship the thing' }),
+						aiTab({ id: 'tab-2', projectPath, title: 'Still working' }),
+					]),
+			});
+			const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+			try {
+				await plugin.activate(maestro);
+			} finally {
+				log.mockRestore();
+			}
+
+			expect(maestro.tabs.close.mock.calls).toEqual([['tab-1']]);
+			expect(snapshotKeys(maestro.ui.panelPost)).toEqual(['session-1::tab-2']);
+		});
+
+		it('defers the whole retirement while the tab is busy, and closes nothing', async () => {
+			const plugin = loadMain();
+			const boardPath = plugin.boardFilePath(projectPath);
+			let status = 'busy';
+			const { maestro, files, storageStore } = closingStub(plugin, 20, {
+				tabsList: () =>
+					Promise.resolve([aiTab({ projectPath, title: 'Ship the thing', status: status })]),
+			});
+			const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+			let lines: string[] = [];
+			try {
+				await plugin.activate(maestro);
+				lines = log.mock.calls.map((call) => String(call[0]));
+			} finally {
+				log.mockRestore();
+			}
+
+			expect(maestro.tabs.close).not.toHaveBeenCalled();
+			// Deferred, not retired: no archive file, placement and clock intact,
+			// card still on the board, and the deferral is on the record.
+			expect(files.size).toBe(0);
+			expect(readPlacements(storageStore, boardPath)[key]!.enteredDoneAt).toEqual(
+				expect.any(Number)
+			);
+			expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+			expect(lines.filter((line) => line.includes('deferring'))).toHaveLength(1);
+
+			// The next sweep, with the turn finished, retires it and closes it.
+			status = 'idle';
+			const quiet = vi.spyOn(console, 'log').mockImplementation(() => {});
+			let sweep;
+			try {
+				sweep = await plugin.runRetirementSweep();
+			} finally {
+				quiet.mockRestore();
+			}
+			expect(sweep.retired).toEqual([key]);
+			expect(sweep.closed).toEqual(['tab-1']);
+			expect(maestro.tabs.close).toHaveBeenCalledWith('tab-1');
+		});
+
+		it('defers rather than closing when the host will not report tab status', async () => {
+			const plugin = loadMain();
+			let calls = 0;
+			const { maestro, files } = closingStub(plugin, 20, {
+				tabsList: () => {
+					calls += 1;
+					// The rebuild's read succeeds; the status check before a close
+					// does not, which must never read as "idle".
+					return calls === 1
+						? Promise.resolve([aiTab({ projectPath, title: 'Ship the thing' })])
+						: Promise.reject(new Error('host is gone'));
+				},
+			});
+			const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+			try {
+				await plugin.activate(maestro);
+			} finally {
+				error.mockRestore();
+			}
+
+			expect(maestro.tabs.close).not.toHaveBeenCalled();
+			expect(files.size).toBe(0);
+			expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+		});
+
+		it('retires without a close when the tab vanished between the rebuild and the sweep', async () => {
+			const plugin = loadMain();
+			let calls = 0;
+			const { maestro } = closingStub(plugin, 20, {
+				tabsList: () => {
+					calls += 1;
+					return calls === 1
+						? Promise.resolve([aiTab({ projectPath, title: 'Ship the thing' })])
+						: Promise.resolve([]);
+				},
+			});
+			const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+			try {
+				await plugin.activate(maestro);
+			} finally {
+				log.mockRestore();
+			}
+
+			// Nothing to close, so nothing is closed - but the card still retires.
+			expect(maestro.tabs.close).not.toHaveBeenCalled();
+			expect((await plugin.loadArchive(projectPath)).records).toHaveLength(1);
+		});
+
+		it('never closes a tab for a card the archive refused to take', async () => {
+			const plugin = loadMain();
+			const boardPath = plugin.boardFilePath(projectPath);
+			const archivePath = plugin.archiveFilePath(projectPath);
+			const broken = '{ this is not json';
+			const { maestro, files, storageStore } = closingStub(plugin, 20, {
+				files: { [archivePath]: broken },
+			});
+			const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+			try {
+				await plugin.activate(maestro);
+			} finally {
+				error.mockRestore();
+			}
+
+			// The card is still on the board, so it still has its tab.
+			expect(maestro.tabs.close).not.toHaveBeenCalled();
+			expect(files.get(archivePath)).toBe(broken);
+			expect(readPlacements(storageStore, boardPath)[key]!.columnId).toBe('done');
+			expect(snapshotKeys(maestro.ui.panelPost)).toEqual([key]);
+		});
+
+		it('leaves the card retired when the host rejects the close', async () => {
+			const plugin = loadMain();
+			const { maestro } = closingStub(plugin, 20);
+			maestro.tabs.close.mockImplementation(() => Promise.reject(new Error('tab is pinned')));
+			const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+			const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+			let errors: string[] = [];
+			try {
+				await plugin.activate(maestro);
+				errors = error.mock.calls.map((call) => String(call[0]));
+			} finally {
+				log.mockRestore();
+				error.mockRestore();
+			}
+
+			// The archive record is the ledger and it is already written, so the
+			// card stays retired; the user is left with a tab to close by hand.
+			expect((await plugin.loadArchive(projectPath)).records).toHaveLength(1);
+			expect(snapshotKeys(maestro.ui.panelPost)).toEqual([]);
+			expect(errors.filter((line) => line.includes('could not close tab'))).toHaveLength(1);
+		});
+
+		it('does not read tab status at all when no expired card opted in', async () => {
+			const plugin = loadMain();
+			const { maestro } = retirementStub(plugin, 20, {
+				agingEnabled: true,
+				horizonDays: 14,
+				closeTabsOnRetire: false,
+			});
+
+			await plugin.activate(maestro);
+
+			// One read for the rebuild's seed and no second read for a close that
+			// was never on the table.
+			expect(maestro.tabs.list).toHaveBeenCalledTimes(1);
+			expect(maestro.tabs.close).not.toHaveBeenCalled();
+		});
+
+		it('plans a close only for the board that opted in', async () => {
+			const plugin = loadMain();
+			const other = '/Users/dev/projects/gadgets';
+			// Two idle tabs on two boards, only one of which turned the close on.
+			// `other` has no settings of its own and no Global board settings to
+			// inherit, so it runs on the defaults - which leave tabs alone.
+			const { maestro } = createStubMaestro({
+				storage: {
+					'board-settings': JSON.stringify({
+						[projectPath]: { agingEnabled: true, horizonDays: 14, closeTabsOnRetire: true },
+					}),
+				},
+				tabsList: () =>
+					Promise.resolve([
+						aiTab({ id: 'tab-a', sessionId: 'session-a', projectPath }),
+						aiTab({ id: 'tab-b', sessionId: 'session-b', projectPath: other }),
+					]),
+			});
+			await plugin.activate(maestro);
+
+			const plan = await plugin.planRetirementTabCloses([
+				{ key: 'a', tabId: 'tab-a', projectPath: projectPath, columnId: 'done' },
+				{ key: 'b', tabId: 'tab-b', projectPath: other, columnId: 'done' },
+			]);
+			expect(plan.closeTabs.map((card) => card.key)).toEqual(['a']);
+			expect(plan.retire.map((card) => card.key).sort()).toEqual(['a', 'b']);
+			expect(plan.deferred).toEqual([]);
+		});
 	});
 });
