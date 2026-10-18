@@ -170,6 +170,56 @@ export interface SnapshotHistoryExcerpt {
 	error: string | null;
 }
 
+/** Phase 07 plan settings, matching `planSettingsSnapshot()` in main.js. Never
+ * null on a real snapshot: the Halt control and the halted banner read it even
+ * before the conductor has ever been asked for a plan. */
+export interface SnapshotPlanSettings {
+	boardId: string | null;
+	wipCap: number;
+	mode: 'plan-approve' | 'auto';
+	halted: boolean;
+	haltedAt: number | null;
+	minWipCap: number;
+	maxWipCap: number;
+}
+
+/** One proposed row of a plan, as `planDisplayRows()` in panel.html reads it
+ * off `planRun.result`. */
+export interface SnapshotPlanMove {
+	cardKey: string;
+	toColumnId?: string;
+	why?: string;
+}
+
+export interface SnapshotPlanMessage {
+	cardKey: string;
+	prompt: string;
+	why?: string;
+	needsAccess?: boolean;
+}
+
+/** Phase 07 plan run, matching `planRunSnapshot()` in main.js. `decisions` and
+ * `execution` are plain objects rather than Maps because the panel is the
+ * host's JSON bridge, which cannot carry one. */
+export interface SnapshotPlanRun {
+	planId: string;
+	conductorSessionId: string | null;
+	status: 'running' | 'parsed' | 'failed' | 'not-connected';
+	startedAt: number;
+	finishedAt: number | null;
+	result: {
+		ok: boolean;
+		rationale?: string;
+		moves?: SnapshotPlanMove[];
+		messages?: SnapshotPlanMessage[];
+		rejected?: { cardKey?: string; reason?: string }[];
+	} | null;
+	decisions: Record<string, boolean>;
+	decidedAt: number | null;
+	execution: Record<string, { status: string; reason: string | null }>;
+	executedAt: number | null;
+}
+
 // id -> title, matching DEFAULT_COLUMNS in main.js (the columns rendered
 // before any project board is active).
 export const DEFAULT_COLUMN_TITLES: Record<string, string> = {
@@ -220,6 +270,17 @@ export function snapshotWith(
 		 * `boardId`/`boardName` running on the shipped defaults, which is what
 		 * a board nobody has configured looks like. */
 		settings?: SnapshotBoardSettings | null;
+		/** Phase 07: this board's WIP cap, mode and halt state. Defaults to the
+		 * shipped defaults, which is what a board nobody has configured looks
+		 * like. */
+		planSettings?: SnapshotPlanSettings | null;
+		/** Phase 07: the plan run, null until this board's first Ask Conductor -
+		 * which is also what every snapshot pushed before one looks like. */
+		planRun?: SnapshotPlanRun | null;
+		/** Phase 07: the conductor settings payload. Null here stands for "the
+		 * test is not about the conductor"; the panel tolerates it the same way
+		 * it tolerates a snapshot that predates the surface. */
+		conductor?: Record<string, unknown> | null;
 	} = {}
 ) {
 	return {
@@ -251,6 +312,57 @@ export function snapshotWith(
 						boardName: opts.boardName ?? 'All Agents',
 					})
 				: opts.settings,
+		planSettings:
+			opts.planSettings === undefined
+				? makePlanSettings({ boardId: opts.boardId ?? null })
+				: opts.planSettings,
+		planRun: opts.planRun ?? null,
+		conductor: opts.conductor ?? null,
+	};
+}
+
+/** Plan settings for a board nobody has configured: plan-and-approve, the
+ * 3-card WIP cap, not halted - the same values `DEFAULT_PLAN_SETTINGS` in
+ * main.js carries. */
+export function makePlanSettings(
+	overrides: Partial<SnapshotPlanSettings> = {}
+): SnapshotPlanSettings {
+	return {
+		boardId: '/Users/dev/projects/maestro',
+		wipCap: 3,
+		mode: 'plan-approve',
+		halted: false,
+		haltedAt: null,
+		minWipCap: 1,
+		maxWipCap: 25,
+		...overrides,
+	};
+}
+
+/** A parsed plan with one move and one message, which is the smallest plan that
+ * renders both row kinds AND the message row's own Edit control. Undecided and
+ * unexecuted, so the rows are still the diff a person is being asked about. */
+export function makePlanRun(overrides: Partial<SnapshotPlanRun> = {}): SnapshotPlanRun {
+	return {
+		planId: 'plan-1',
+		conductorSessionId: 'conductor-1',
+		status: 'parsed',
+		startedAt: Date.now() - 1000,
+		finishedAt: Date.now(),
+		result: {
+			ok: true,
+			rationale: 'Two cards look ready to advance.',
+			moves: [{ cardKey: 'session-1::tab-1', toColumnId: 'doing', why: 'it is started' }],
+			messages: [
+				{ cardKey: 'session-2::tab-1', prompt: 'Pick this back up, please.', why: 'it stalled' },
+			],
+			rejected: [],
+		},
+		decisions: {},
+		decidedAt: null,
+		execution: {},
+		executedAt: null,
+		...overrides,
 	};
 }
 
@@ -476,6 +588,39 @@ export function archiveToggle(): HTMLButtonElement {
 	const el = document.getElementById('archive-toggle');
 	if (!(el instanceof HTMLButtonElement)) throw new Error('panel.html has no #archive-toggle');
 	return el;
+}
+
+/** The header's Phase 07 Plan toggle. */
+export function planToggle(): HTMLButtonElement {
+	const el = document.getElementById('plan-toggle');
+	if (!(el instanceof HTMLButtonElement)) throw new Error('panel.html has no #plan-toggle');
+	return el;
+}
+
+/** The plan diff row under the header, and whether it is on screen. */
+export function planPanel(): { row: HTMLElement; hidden: boolean } {
+	const row = document.getElementById('plan-panel');
+	if (!row) throw new Error('panel.html has no #plan-panel');
+	return { row, hidden: Boolean(row.hidden) };
+}
+
+/** The Edit button of the plan row showing `prompt`, found the way a person
+ * finds it - by the prompt text on screen - since only a message row has one.
+ * Null when no row shows that prompt, or when the row is already decided. */
+export function planRowEditButton(prompt: string): HTMLButtonElement | null {
+	const rows = Array.from(document.querySelectorAll<HTMLElement>('#plan-rows .plan-row'));
+	const row = rows.find((candidate) =>
+		Array.from(candidate.querySelectorAll('.plan-row-prompt')).some(
+			(el) => el.textContent === prompt
+		)
+	);
+	const edit = row?.querySelector<HTMLButtonElement>('button.plan-row-edit');
+	return edit?.textContent === 'Edit' ? edit : null;
+}
+
+/** The open Edit textarea of a plan row, or null when no row is being edited. */
+export function planRowEditTextarea(): HTMLTextAreaElement | null {
+	return document.querySelector<HTMLTextAreaElement>('#plan-rows .plan-row-prompt-edit');
 }
 
 /** The archive view's filter box. */

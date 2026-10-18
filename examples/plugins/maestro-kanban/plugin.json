@@ -36,6 +36,10 @@
 			"capability": "ui:command",
 			"reason": "Offer open, refresh, and clear-placements as commands."
 		},
+		{
+			"capability": "ui:contribute",
+			"reason": "Put one \"Kanban Board\" launcher button in the Left Bar's action row, so the board is reachable without remembering its keybinding. Runs the same open command the palette does and nothing else."
+		},
 		{ "capability": "storage:read", "reason": "Remember where a card was placed." },
 		{ "capability": "storage:write", "reason": "Remember where a card was placed." },
 		{
@@ -108,6 +112,16 @@
 			{ "id": "refresh", "title": "Kanban: Refresh Board" },
 			{ "id": "clear-placements", "title": "Kanban: Clear Card Placements" }
 		],
-		"keybindings": [{ "id": "open", "key": "Alt+Shift+K", "command": "open" }]
+		"keybindings": [{ "id": "open", "key": "Alt+Shift+K", "command": "open" }],
+		"uiItems": [
+			{
+				"id": "launch",
+				"surface": "sidebar",
+				"label": "Kanban Board",
+				"command": "open",
+				"icon": "panel",
+				"tooltip": "Open the Kanban board"
+			}
+		]
 	}
 }

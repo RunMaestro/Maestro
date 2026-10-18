@@ -45,6 +45,11 @@ import {
 	boardSettingsSurface,
 	cardAging,
 	makeCardAging,
+	planToggle,
+	planPanel,
+	planRowEditButton,
+	planRowEditTextarea,
+	makePlanRun,
 } from '../helpers/kanbanPanel';
 
 describe('maestro-kanban panel.html', () => {
@@ -2313,5 +2318,89 @@ describe('maestro-kanban panel.html', () => {
 		// One unit, named the same way in both places - the card's countdown and
 		// the surface's note cannot read as different units.
 		expect(boardSettingsSurface().horizonNote).toContain('across 1 day');
+	});
+	// ---------------------------------------------------------------------
+	// Phase 08: Escape backs out of ONE surface per press, all the way down to
+	// the panel itself. The board, the archive and the detail pane are covered
+	// above; the plan diff - the deepest surface the board has, since a message
+	// row inside it opens a textarea of its own - is covered here. The panel
+	// cannot dismiss itself (the bridge carries commands one way), so reaching
+	// the panel means posting `close-panel`, and NOT posting it is how a test
+	// says "Escape stopped at an inner surface".
+	// ---------------------------------------------------------------------
+	describe('Escape in the plan diff', () => {
+		/** The board plus a parsed plan, with the plan diff open. Returns a spy
+		 * installed AFTER the opening click, so the posts a test asserts on are
+		 * only the ones Escape caused. */
+		function openPlanDiff() {
+			const snapshot = () =>
+				snapshotWith(
+					{
+						backlog: [makeCard({ key: 'session-1::tab-1', title: 'Planned Card' })],
+						doing: [makeCard({ key: 'session-2::tab-1', title: 'Stalled Card' })],
+					},
+					{ planRun: makePlanRun() }
+				);
+			pushSnapshot(snapshot());
+			planToggle().click();
+			pushSnapshot(snapshot());
+			expect(planPanel().hidden).toBe(false);
+			return vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+		}
+
+		function postedCommandIds(spy: { mock: { calls: unknown[][] } }): string[] {
+			return spy.mock.calls.map((call) => (call[0] as { commandId: string }).commandId);
+		}
+
+		it('closes the plan diff before it closes the panel', () => {
+			const postMessageSpy = openPlanDiff();
+
+			press('Escape');
+			expect(planPanel().hidden).toBe(true);
+			// Escape stopped at the plan diff: nothing was posted, and in
+			// particular the panel was not asked to close.
+			expect(postedCommandIds(postMessageSpy)).toEqual([]);
+
+			// With the plan diff closed, the next press reaches the panel.
+			press('Escape');
+			expect(postedCommandIds(postMessageSpy)).toEqual(['close-panel']);
+			postMessageSpy.mockRestore();
+		});
+
+		it("backs out of a plan row's Edit textarea before the plan diff or the panel", () => {
+			const postMessageSpy = openPlanDiff();
+
+			const edit = planRowEditButton('Pick this back up, please.');
+			expect(edit).not.toBeNull();
+			edit!.click();
+			const textarea = planRowEditTextarea();
+			expect(textarea).not.toBeNull();
+
+			// Escape from inside the textarea discards the edit and leaves the plan
+			// diff up: one press, one level, and nothing posted - an abandoned edit
+			// must never reach edit-plan-message.
+			press('Escape', {}, textarea!);
+			expect(planRowEditTextarea()).toBeNull();
+			expect(planPanel().hidden).toBe(false);
+			expect(postedCommandIds(postMessageSpy)).toEqual([]);
+
+			press('Escape');
+			expect(planPanel().hidden).toBe(true);
+			expect(postedCommandIds(postMessageSpy)).toEqual([]);
+
+			press('Escape');
+			expect(postedCommandIds(postMessageSpy)).toEqual(['close-panel']);
+			postMessageSpy.mockRestore();
+		});
+
+		it('leaves the panel reachable in one press when no surface is up at all', () => {
+			pushSnapshot(
+				snapshotWith({ backlog: [makeCard({ key: 'session-1::tab-1', title: 'Just A Card' })] })
+			);
+			const postMessageSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+			press('Escape');
+			expect(postedCommandIds(postMessageSpy)).toEqual(['close-panel']);
+			postMessageSpy.mockRestore();
+		});
 	});
 });

@@ -4234,6 +4234,17 @@
 					else openPlanPanel();
 				}
 
+				/** Backs out of a plan row's Edit textarea, leaving the plan panel up
+				 * and discarding what was typed - the same thing the row's own Cancel
+				 * button does. Escape has to reach this BEFORE the plan panel or the
+				 * panel itself, because the textarea is the innermost thing the user
+				 * opened and one key press must only undo one of them. */
+				function cancelPlanRowEdit() {
+					if (planEditingCardKey === null) return;
+					planEditingCardKey = null;
+					renderPlanPanel(currentSnapshot);
+				}
+
 				function onPlanAskClick() {
 					postAskConductor();
 				}
@@ -5175,15 +5186,19 @@
 						// stays open, so one key press never does both. Then the
 						// Clear Done confirm, which is a question on screen waiting
 						// for an answer and must be answerable with the key that
-						// means "no"; then the aging and conductor settings rows,
-						// the other transient surfaces under the header; then the
-						// detail pane; then the archive and activity views, which
-						// Escape backs out of to the board. Only once none of those
-						// is up does Escape reach the panel itself.
+						// means "no"; then a plan row's Edit textarea, which is the
+						// innermost thing opened inside the plan diff; then the
+						// aging, conductor settings and plan rows, the transient
+						// surfaces under the header; then the detail pane; then the
+						// archive and activity views, which Escape backs out of to
+						// the board. Only once none of those is up does Escape reach
+						// the panel itself.
 						if (dragState) cancelDrag();
 						else if (clearDoneConfirming) cancelClearDoneConfirm();
+						else if (planEditingCardKey !== null) cancelPlanRowEdit();
 						else if (boardSettingsOpen) closeBoardSettings();
 						else if (conductorSettingsOpen) closeConductorSettings();
+						else if (planPanelOpen) closePlanPanel();
 						else if (detailCardKey !== null) closeCardDetail();
 						else if (archiveOpen) closeArchiveView();
 						else if (activityOpen) closeActivityView();
