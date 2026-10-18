@@ -73,7 +73,7 @@ function createStubMaestro(storage: Record<string, string> = {}) {
 			close: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		ui: {
-			panelPost: vi.fn(() => Promise.resolve({ ok: true })),
+			panelPost: vi.fn((_panelId: string, _message: unknown) => Promise.resolve({ ok: true })),
 			togglePanel: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		notifications: { toast: vi.fn(() => Promise.resolve({ ok: true })) },

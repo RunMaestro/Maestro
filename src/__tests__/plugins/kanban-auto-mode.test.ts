@@ -165,7 +165,7 @@ function createStubMaestro(options: StubOptions = {}) {
 			read: vi.fn(() => Promise.resolve([])),
 		},
 		ui: {
-			panelPost: vi.fn(() => Promise.resolve({ ok: true })),
+			panelPost: vi.fn((_panelId: string, _message: unknown) => Promise.resolve({ ok: true })),
 			togglePanel: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		notifications: {

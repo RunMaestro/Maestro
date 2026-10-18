@@ -78,7 +78,7 @@ function createStubMaestro(overrides: StubOverrides = {}) {
 			list: vi.fn(overrides.agentsList ?? (() => Promise.resolve([]))),
 		},
 		ui: {
-			panelPost: vi.fn(() => Promise.resolve({ ok: true })),
+			panelPost: vi.fn((_panelId: string, _message: unknown) => Promise.resolve({ ok: true })),
 			togglePanel: vi.fn(() => Promise.resolve({ ok: true })),
 		},
 		notifications: {
@@ -89,14 +89,21 @@ function createStubMaestro(overrides: StubOverrides = {}) {
 		// deriveColumn() landing spot, same as before placement persistence
 		// existed. See kanban-persistence.test.ts for the storage-backed cases.
 		fs: {
-			read: vi.fn(() => Promise.reject(new Error('ENOENT: no such file or directory'))),
-			write: vi.fn(() => Promise.resolve({ ok: true })),
+			// Parameters spelled out, not inferred: a test that swaps in its own
+			// fs.read (a real board file) assigns a (path) => ... mock, which a
+			// no-arg inferred default would reject.
+			read: vi.fn(
+				(_path: string): Promise<string> =>
+					Promise.reject(new Error('ENOENT: no such file or directory'))
+			),
+			write: vi.fn((_path: string, _contents: string) => Promise.resolve({ ok: true })),
 		},
 		storage: {
-			get: vi.fn(() => Promise.resolve(null)),
-			set: vi.fn(() => Promise.resolve({ ok: true })),
-			delete: vi.fn(() => Promise.resolve({ ok: true })),
-			keys: vi.fn(() => Promise.resolve([])),
+			// Same reason as fs above: the shared-store tests assign a keyed mock.
+			get: vi.fn((_key: string): Promise<string | null> => Promise.resolve(null)),
+			set: vi.fn((_key: string, _value: string) => Promise.resolve({ ok: true })),
+			delete: vi.fn((_key: string) => Promise.resolve({ ok: true })),
+			keys: vi.fn((): Promise<string[]> => Promise.resolve([])),
 		},
 	};
 
@@ -125,7 +132,13 @@ function aiTab(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-function findCard(snapshot: { columns: { id: string; cards: { key: string }[] }[] }, key: string) {
+// Generic over the column shape so each call site keeps the card fields it
+// cast the snapshot to. A fixed `cards: { key: string }[]` would widen every
+// card back to its key and hide a typo in any other field behind TS2339.
+function findCard<Column extends { id?: string; cards: { key: string }[] }>(
+	snapshot: { columns: Column[] },
+	key: string
+): { card: Column['cards'][number]; columnId: Column['id'] } | undefined {
 	for (const column of snapshot.columns) {
 		const card = column.cards.find((c) => c.key === key);
 		if (card) return { card, columnId: column.id };
