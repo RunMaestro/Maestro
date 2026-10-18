@@ -164,3 +164,44 @@ Remaining limitations:
 
 Keep the PR in draft until the remaining desktop interaction check and CI
 are satisfied. The previous dated validation sections are historical results.
+
+## Rebase and readiness (2026-10-18)
+
+Rebased all 57 commits onto upstream `rc` at
+`c3cd1d2e1bf58a16a383ec9706311ade350a8cfe`. The previous head is preserved on
+`backup/issue-1555-before-rebase-20261018`. Reviewed the replay with range-diff.
+Conflicts preserved upstream settings tests, keyboard actions, the canonical
+utility index, and the new host browser creation path. Ported the navigation
+regression into the upstream browser component test location and placed the
+runtime navigation field on the canonical shared browser type.
+
+Adapted discovery navigation to asynchronous host tab creation. Rapid Next/Back
+requests reuse the pending tab and apply the latest requested URL. The remote
+browser view consumes explicit requests after its connection is ready, without
+replaying observed redirects. Native and remote new-tab actions share the opener.
+
+Validation against the committed dependency lockfile:
+
+- 2,610 tests passed across 50 regression files. The clean-install run passed
+  2,607 tests in 49 files; the remaining asset file initially could not load the
+  canvas native module. After rebuilding canvas, all three asset tests passed.
+- TypeScript, ESLint, full-repository Prettier, main/preload builds, renderer
+  build, and web-desktop build passed.
+- Documentation checks passed: 934 asserted paths, 320 matching utility index
+  entries, and references across 42 documents.
+- Browser checks covered all 21 tips in light and dark themes, font scales
+  0.6/1.0/2.4 at widths 390/600/1000, and navigation through every tip at the
+  narrow maximum-font setting. Reading-mode checks passed docking, backdrop
+  hit testing, keyboard activation, return, reduced motion, and narrow widths.
+- An isolated, offscreen Electron window loaded the real Cue docs page
+  (24,200 text characters, complete DOM), scrolled it, reused the docs tab for
+  the next tip, and returned to the modal. Native guest mouse events followed
+  a real link to Cue Configuration; PageDown scrolled that page 690 pixels.
+  The window remained invisible. This resolves the earlier hidden-window document-loading timeout.
+
+Dependencies were restored with `npm ci` and the native modules rebuilt locally;
+no dependency manifest or lockfile changes are included. Logs and the current
+50-file manifest are in `tmp/readiness-oct18/` (local, not committed).
+The full suite and live-provider scenarios remain outside the contribution
+playbook's scope; the push hook that runs the full suite is bypassed after the
+checks above. Maintainer-approved CI and visual/editorial review remain required.

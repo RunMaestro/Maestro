@@ -28,7 +28,11 @@ function recordBrowserOpen(
 	});
 }
 
-export function openBrowserTab(url: string, options: BrowserTabCreationOptions, focusAddress: boolean): void {
+export function openBrowserTab(
+	url: string,
+	options: BrowserTabCreationOptions,
+	focusAddress: boolean
+): BrowserTab | Promise<BrowserTab | undefined> | undefined {
 	const { activeSessionId } = useSessionStore.getState();
 	if (
 		!activeSessionId ||
@@ -40,39 +44,44 @@ export function openBrowserTab(url: string, options: BrowserTabCreationOptions, 
 			useUIStore.getState().requestTabFocus({ type: 'browser', id });
 	};
 	if (isWebDesktop()) {
-		void window.maestro.browserSession
+		return window.maestro.browserSession
 			.createTab(activeSessionId, { ...options, url })
 			.then((tab) => {
 				updateSessionWith(activeSessionId, (session) => activateBrowserTab(session, tab));
 				focus(tab.id);
 				recordBrowserOpen(activeSessionId, tab, options.title);
+				return tab;
 			})
-			.catch((error) =>
+			.catch((error) => {
 				notifyCenterFlash({
 					color: 'red',
 					message: 'Could not create host browser tab',
 					detail: error instanceof Error ? error.message : String(error),
-				})
-			);
-		return;
+				});
+				return undefined;
+			});
 	}
-	let id: string | null = null;
+	let created: BrowserTab | undefined;
 	updateSessionWith(activeSessionId, (session) => {
 		const tab = createBrowserTab(session.id, url, {
 			title: options.title,
 			ephemeral: options.ephemeral,
 			isLoading: url !== DEFAULT_BROWSER_TAB_URL,
 		});
-		id = tab.id;
+		created = tab;
 		return activateBrowserTab(session, tab);
 	});
-	if (id) {
-		focus(id);
-		recordBrowserOpen(activeSessionId, { id, url, ephemeral: options.ephemeral }, options.title);
+	if (created) {
+		focus(created.id);
+		recordBrowserOpen(activeSessionId, created, options.title);
 	}
+	return created;
 }
 
 /** Open a URL in a new active browser tab without requesting DOM focus. */
-export function openBrowserTabAt(url: string, options?: { title?: string }): void {
-	if (url) openBrowserTab(url, { title: options?.title ?? url }, false);
+export function openBrowserTabAt(
+	url: string,
+	options?: { title?: string }
+): BrowserTab | Promise<BrowserTab | undefined> | undefined {
+	if (url) return openBrowserTab(url, { title: options?.title ?? url }, false);
 }
