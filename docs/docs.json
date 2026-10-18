@@ -116,7 +116,7 @@
 			},
 			{
 				"group": "Integrations",
-				"pages": ["mcp-server", "deep-links"],
+				"pages": ["mcp-server", "deep-links", "kanban-board"],
 				"icon": "plug"
 			},
 			{

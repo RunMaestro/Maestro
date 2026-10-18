@@ -639,6 +639,16 @@ toggle in the Help panel, and it is remembered between visits.
 it to disk as a PNG. The shot is the graph area exactly as it is painted, so
 frame it first.
 
+## Plugin Keybindings
+
+A plugin can contribute its own chord in its manifest, and the chord exists only while that plugin is enabled. These do not appear in the Shortcuts tab and cannot be remapped there; the plugin's manifest is where the chord is declared.
+
+| Action                                  | Key                           | From                    |
+| --------------------------------------- | ----------------------------- | ----------------------- |
+| Open the [Kanban Board](./kanban-board) | `Alt+Shift+K` / `Opt+Shift+K` | The Kanban Board plugin |
+
+Maestro's own shortcuts always win a conflict: if an app shortcut handles the key first, the plugin chord never runs. Plugin chords that carry `Alt` or `Cmd`/`Ctrl` also fire while a text field has focus, which is why contributed chords use one; a bare or Shift-only chord is skipped while you are typing so it cannot hijack the composer.
+
 ## Customizing Shortcuts
 
 Most shortcuts can be remapped to fit your workflow:
