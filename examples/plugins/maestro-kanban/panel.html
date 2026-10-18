@@ -1197,6 +1197,112 @@
 				overflow: hidden;
 				text-overflow: ellipsis;
 			}
+			/* Phase 07 board activity feed: a second full-pane view, the same
+			   shape the archive above uses (filter box, count, scrolling list),
+			   since both are a read-only ledger rather than a form. */
+			#activity-toggle {
+				flex: 0 0 auto;
+				padding: 3px 8px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			#activity-toggle:hover {
+				border-color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#activity-toggle[aria-pressed='true'] {
+				border-color: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-accent, #4a9eff);
+			}
+			#activity {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				padding: 12px;
+				flex: 1;
+				min-height: 0;
+				overflow: hidden;
+			}
+			#activity[hidden] {
+				display: none;
+			}
+			#activity-head {
+				flex: 0 0 auto;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			#activity-filter {
+				flex: 1 1 auto;
+				max-width: 320px;
+				padding: 4px 8px;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+			}
+			#activity-count {
+				flex: 0 0 auto;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#activity-list {
+				flex: 1 1 auto;
+				min-height: 0;
+				overflow-y: auto;
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+			}
+			#activity-empty[hidden] {
+				display: none;
+			}
+			.activity-row {
+				padding: 6px 10px;
+				border-radius: 6px;
+				background: var(--maestro-bg-sidebar, #252526);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				user-select: text;
+			}
+			.activity-row-head {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			.activity-row-type {
+				flex: 0 0 auto;
+				padding: 1px 6px;
+				border-radius: 999px;
+				font-size: 10px;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.04em;
+				color: var(--maestro-text-dim, #9d9d9d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+			}
+			.activity-row-time {
+				flex: 1 1 auto;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.activity-row-summary {
+				margin-top: 4px;
+				font-size: 12px;
+			}
+			.activity-row-meta {
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
 			#banner {
 				margin: 12px 12px 0 12px;
 				padding: 8px 10px;
@@ -1299,6 +1405,14 @@
 				title="Ask the conductor for a plan: proposed card moves and messages you review, edit and approve or decline before anything happens."
 			>
 				Plan
+			</button>
+			<button
+				id="activity-toggle"
+				type="button"
+				aria-pressed="false"
+				title="This board's activity feed: plan requests, approvals, executed moves and messages, access requests, reach changes, retirements, and halts."
+			>
+				Activity
 			</button>
 			<select id="board-switcher" aria-label="Board"></select>
 		</div>
@@ -1468,6 +1582,19 @@
 				<div id="archive-error" hidden></div>
 				<div id="archive-list"></div>
 				<div id="archive-empty" class="empty-state">Loading the archive...</div>
+			</div>
+			<div id="activity" hidden>
+				<div id="activity-head">
+					<input
+						id="activity-filter"
+						type="search"
+						placeholder="Filter by card..."
+						aria-label="Filter the activity feed by card"
+					/>
+					<span id="activity-count"></span>
+				</div>
+				<div id="activity-list"></div>
+				<div id="activity-empty" class="empty-state">Loading the activity feed...</div>
 			</div>
 			<div id="detail" hidden>
 				<div id="detail-header">
@@ -2365,21 +2492,34 @@
 					return el && typeof el.value === 'string' ? el : null;
 				}
 
-				/** Paints which of the two modes is on screen. Kept separate from
-				 * render() so toggling the archive does not rebuild the board
+				/** Paints which mode is on screen: the board, the archive, or the
+				 * activity feed (Phase 07 board activity feed) - exactly one of
+				 * the three, enforced by openArchiveView()/openActivityView()
+				 * closing the other before this runs. Kept separate from
+				 * render() so toggling either view does not rebuild the board
 				 * underneath it. */
 				function applyViewMode() {
 					var boardEl = document.getElementById('board');
 					var archiveEl = document.getElementById('archive');
-					var toggle = document.getElementById('archive-toggle');
-					if (boardEl) boardEl.hidden = archiveOpen;
+					var activityEl = document.getElementById('activity');
+					var archiveToggle = document.getElementById('archive-toggle');
+					var activityToggle = document.getElementById('activity-toggle');
+					if (boardEl) boardEl.hidden = archiveOpen || activityOpen;
 					if (archiveEl) archiveEl.hidden = !archiveOpen;
-					if (toggle) {
-						toggle.setAttribute('aria-pressed', archiveOpen ? 'true' : 'false');
-						toggle.textContent = archiveOpen ? 'Board' : 'Archive';
-						toggle.title = archiveOpen
+					if (activityEl) activityEl.hidden = !activityOpen;
+					if (archiveToggle) {
+						archiveToggle.setAttribute('aria-pressed', archiveOpen ? 'true' : 'false');
+						archiveToggle.textContent = archiveOpen ? 'Board' : 'Archive';
+						archiveToggle.title = archiveOpen
 							? 'Back to the board.'
 							: 'Show the cards retired from this board. Nothing is deleted: a card whose tab is still open can be restored.';
+					}
+					if (activityToggle) {
+						activityToggle.setAttribute('aria-pressed', activityOpen ? 'true' : 'false');
+						activityToggle.textContent = activityOpen ? 'Board' : 'Activity';
+						activityToggle.title = activityOpen
+							? 'Back to the board.'
+							: "This board's activity feed: plan requests, approvals, executed moves and messages, access requests, reach changes, retirements, and halts.";
 					}
 				}
 
@@ -2392,13 +2532,14 @@
 					// one.
 					closeCardDetail();
 					cancelClearDoneConfirm();
-					// The aging, conductor and plan surfaces are about the board,
-					// which is about to be hidden: the same one-at-a-time rule
-					// openBoardSettings(), openConductorSettings() and
-					// openPlanPanel() keep.
+					// The aging, conductor and plan surfaces, and the activity feed,
+					// are about the board, which is about to be hidden: the same
+					// one-at-a-time rule openBoardSettings(), openConductorSettings(),
+					// openPlanPanel() and openActivityView() keep.
 					closeBoardSettings();
 					closeConductorSettings();
 					closePlanPanel();
+					closeActivityView();
 					applyViewMode();
 					renderClearDone(currentSnapshot);
 					renderArchive(currentSnapshot);
@@ -2627,6 +2768,223 @@
 				}
 
 				// -------------------------------------------------------------
+				// Phase 07 board activity feed: a second full-pane view, built the
+				// same way the archive above is - a filter box, a count line, and
+				// a scrolling list the sandbox already sorted newest first and
+				// filtered server-side (see buildActivityView() in main.js).
+				// -------------------------------------------------------------
+
+				var activityOpen = false;
+				var activityFilterTimer = null;
+
+				function activityOf(snapshot) {
+					var activity = snapshot && snapshot.activity;
+					return activity && typeof activity === 'object' ? activity : null;
+				}
+
+				function activityEntriesOf(activity) {
+					return activity && Array.isArray(activity.entries) ? activity.entries : [];
+				}
+
+				function postActivityView(open, filter) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'activity-view',
+							args: { open: open, filter: filter },
+						},
+						'*'
+					);
+				}
+
+				function activityFilterInput() {
+					var el = document.getElementById('activity-filter');
+					return el && typeof el.value === 'string' ? el : null;
+				}
+
+				function openActivityView() {
+					if (activityOpen) return;
+					activityOpen = true;
+					// Same one-at-a-time rule openArchiveView() keeps, in the other
+					// direction.
+					closeCardDetail();
+					cancelClearDoneConfirm();
+					closeBoardSettings();
+					closeConductorSettings();
+					closePlanPanel();
+					closeArchiveView();
+					applyViewMode();
+					renderClearDone(currentSnapshot);
+					renderActivity(currentSnapshot);
+					postActivityView(true, '');
+					var input = activityFilterInput();
+					if (input && typeof input.focus === 'function') input.focus();
+				}
+
+				function closeActivityView() {
+					if (!activityOpen) return;
+					activityOpen = false;
+					if (activityFilterTimer) {
+						clearTimeout(activityFilterTimer);
+						activityFilterTimer = null;
+					}
+					var input = activityFilterInput();
+					if (input) input.value = '';
+					// Emptied on the way out, the same reason closeArchiveView() does
+					// this: reopening it must not flash the list as it was before
+					// whatever happened in between.
+					var list = document.getElementById('activity-list');
+					if (list) list.textContent = '';
+					var empty = document.getElementById('activity-empty');
+					if (empty) {
+						empty.hidden = false;
+						empty.textContent = 'Loading the activity feed...';
+					}
+					applyViewMode();
+					renderClearDone(currentSnapshot);
+					postActivityView(false, '');
+				}
+
+				function toggleActivityView() {
+					if (activityOpen) closeActivityView();
+					else openActivityView();
+				}
+
+				/** Posts the typed filter, debounced - the same rhythm
+				 * onArchiveFilterInput() uses. */
+				function onActivityFilterInput() {
+					if (!activityOpen) return;
+					if (activityFilterTimer) clearTimeout(activityFilterTimer);
+					activityFilterTimer = setTimeout(function () {
+						activityFilterTimer = null;
+						var input = activityFilterInput();
+						postActivityView(true, input ? input.value : '');
+					}, ARCHIVE_FILTER_DEBOUNCE_MS);
+				}
+
+				/** An entry's timestamp as an unambiguous absolute stamp plus a
+				 * relative one, the same pairing archiveRowElement() uses for a
+				 * retirement date - but to the second, not the day, since several
+				 * entries can land in the same minute. */
+				function activityTimestamp(ms) {
+					if (typeof ms !== 'number' || !isFinite(ms)) return '';
+					var date = new Date(ms);
+					if (isNaN(date.getTime())) return '';
+					return date.toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
+				}
+
+				/** A short, stable label for one entry's type - the literal values
+				 * main.js's ACTIVITY_TYPE_* constants hold, duplicated here the same
+				 * way every other command id and type string in this file already
+				 * is across the bridge. */
+				function activityTypeLabel(type) {
+					switch (type) {
+						case 'plan-requested':
+							return 'Plan asked';
+						case 'plan-result':
+							return 'Plan result';
+						case 'row-decided':
+							return 'Decision';
+						case 'access-requested':
+							return 'Access';
+						case 'row-executed':
+							return 'Executed';
+						case 'reach-changed':
+							return 'Reach';
+						case 'retired':
+							return 'Retired';
+						case 'halt-changed':
+							return 'Halt';
+						case 'mode-changed':
+							return 'Mode';
+						default:
+							return type || 'Activity';
+					}
+				}
+
+				function activityRowElement(entry) {
+					var row = document.createElement('div');
+					row.className = 'activity-row';
+					var cardKey = typeof entry.cardKey === 'string' ? entry.cardKey : '';
+					if (cardKey) row.setAttribute('data-card-key', cardKey);
+
+					var head = document.createElement('div');
+					head.className = 'activity-row-head';
+					var type = document.createElement('span');
+					type.className = 'activity-row-type';
+					type.textContent = activityTypeLabel(entry.type);
+					head.appendChild(type);
+					var time = document.createElement('span');
+					time.className = 'activity-row-time';
+					var stamp = activityTimestamp(entry.at);
+					var relative = relativeTime(entry.at);
+					time.textContent = stamp + (relative ? ' (' + relative + ')' : '');
+					head.appendChild(time);
+					row.appendChild(head);
+
+					var summary = document.createElement('div');
+					summary.className = 'activity-row-summary';
+					summary.textContent = typeof entry.summary === 'string' ? entry.summary : '';
+					row.appendChild(summary);
+
+					if (cardKey) {
+						var meta = document.createElement('div');
+						meta.className = 'activity-row-meta';
+						meta.textContent = 'Card: ' + cardKey;
+						row.appendChild(meta);
+					}
+					return row;
+				}
+
+				/** Paints the activity list off the snapshot's payload. Never
+				 * writes the filter box's value, the same reason renderArchive()
+				 * does not: the user may still be typing into it while the answer
+				 * to the previous keystroke arrives. */
+				function renderActivity(snapshot) {
+					var list = document.getElementById('activity-list');
+					var empty = document.getElementById('activity-empty');
+					var countEl = document.getElementById('activity-count');
+					if (!list || !empty || !countEl) return;
+					if (!activityOpen) return;
+
+					var activity = activityOf(snapshot);
+					var entries = activityEntriesOf(activity);
+					list.textContent = '';
+					entries.forEach(function (entry) {
+						if (!entry || typeof entry.summary !== 'string') return;
+						list.appendChild(activityRowElement(entry));
+					});
+
+					var filter =
+						activity && typeof activity.filter === 'string' ? activity.filter.trim() : '';
+					if (!activity) {
+						// The open post has not come back yet.
+						empty.hidden = false;
+						empty.textContent = 'Loading the activity feed...';
+						countEl.textContent = '';
+						return;
+					}
+					var total = typeof activity.total === 'number' ? activity.total : entries.length;
+					var hidden = typeof activity.hidden === 'number' ? activity.hidden : 0;
+					countEl.textContent =
+						total === 0
+							? ''
+							: 'Newest first: ' +
+								entries.length +
+								' of ' +
+								total +
+								(filter ? ' matching' : '') +
+								(total === 1 ? ' event' : ' events') +
+								(hidden > 0 ? ' (' + hidden + ' older not shown)' : '');
+					empty.hidden = entries.length > 0;
+					if (entries.length === 0) {
+						empty.textContent = filter
+							? 'No activity matches "' + filter + '".'
+							: 'Nothing has happened on this board yet. Asking the conductor for a plan, deciding or executing a row, a reach change, a retirement, and a halt all show up here.';
+					}
+				}
+
+				// -------------------------------------------------------------
 				// Phase 05 board settings surface. The three aging controls, as
 				// a ROW under the header rather than a third mode of this panel:
 				// changing the horizon is something a person does in order to
@@ -2803,12 +3161,13 @@
 				function openBoardSettings() {
 					if (boardSettingsOpen) return;
 					boardSettingsOpen = true;
-					// The archive takes the board's place, and the conductor and
-					// plan surfaces are the same kind of row under the header: one
-					// of the four at a time.
+					// The archive and the activity feed take the board's place, and
+					// the conductor and plan surfaces are the same kind of row under
+					// the header: one of the five at a time.
 					closeArchiveView();
 					closeConductorSettings();
 					closePlanPanel();
+					closeActivityView();
 					renderBoardSettings(currentSnapshot);
 				}
 
@@ -3169,11 +3528,12 @@
 				function openConductorSettings() {
 					if (conductorSettingsOpen) return;
 					conductorSettingsOpen = true;
-					// One of the four surfaces under the header at a time, the
+					// One of the five surfaces under the header at a time, the
 					// same rule openBoardSettings() and openArchiveView() keep.
 					closeArchiveView();
 					closeBoardSettings();
 					closePlanPanel();
+					closeActivityView();
 					renderConductorSettings(currentSnapshot);
 				}
 
@@ -3773,11 +4133,12 @@
 				function openPlanPanel() {
 					if (planPanelOpen) return;
 					planPanelOpen = true;
-					// One of the four surfaces under the header at a time, the
-					// same rule the other three keep.
+					// One of the five surfaces under the header at a time, the
+					// same rule the other four keep.
 					closeArchiveView();
 					closeBoardSettings();
 					closeConductorSettings();
+					closeActivityView();
 					renderPlanPanel(currentSnapshot);
 				}
 
@@ -4603,6 +4964,10 @@
 					// board hidden underneath while it is up.
 					applyViewMode();
 					renderArchive(snapshot);
+					// Same reasoning for the activity feed: a reach change, a
+					// retirement, a decision, or an executed row from another window
+					// on the same board shows up here too.
+					renderActivity(snapshot);
 					// Every push repaints the aging controls: the settings payload
 					// rides them all, so a horizon saved from this panel (or from
 					// another window on the same board) is on screen immediately.
@@ -4734,24 +5099,26 @@
 						// for an answer and must be answerable with the key that
 						// means "no"; then the aging and conductor settings rows,
 						// the other transient surfaces under the header; then the
-						// detail pane; then the archive view, which Escape backs
-						// out of to the board. Only once none of those is up does
-						// Escape reach the panel itself.
+						// detail pane; then the archive and activity views, which
+						// Escape backs out of to the board. Only once none of those
+						// is up does Escape reach the panel itself.
 						if (dragState) cancelDrag();
 						else if (clearDoneConfirming) cancelClearDoneConfirm();
 						else if (boardSettingsOpen) closeBoardSettings();
 						else if (conductorSettingsOpen) closeConductorSettings();
 						else if (detailCardKey !== null) closeCardDetail();
 						else if (archiveOpen) closeArchiveView();
+						else if (activityOpen) closeActivityView();
 						else requestClosePanel();
 						return;
 					}
 					// Mid-drag the pointer owns the board; only Escape applies.
 					if (dragState) return;
-					// The archive is on screen, so the board's own keys (arrowing
-					// between cards, Enter to open a tab, Alt+arrow to move one)
-					// would be acting on a board nobody can see.
-					if (archiveOpen) return;
+					// The archive or the activity feed is on screen, so the board's
+					// own keys (arrowing between cards, Enter to open a tab,
+					// Alt+arrow to move one) would be acting on a board nobody can
+					// see.
+					if (archiveOpen || activityOpen) return;
 					if (ownsItsOwnKeys(event.target)) return;
 					// Cmd/Ctrl combinations belong to the OS and the engine.
 					if (event.metaKey || event.ctrlKey) return;
@@ -4835,6 +5202,25 @@
 							archiveFilterTimer = null;
 						}
 						postArchiveView(true, archiveFilterEl.value);
+					});
+				}
+
+				// Phase 07 board activity feed: the toggle and the filter box, the
+				// same wiring the archive view above uses for its own.
+				var activityToggleEl = document.getElementById('activity-toggle');
+				if (activityToggleEl) activityToggleEl.addEventListener('click', toggleActivityView);
+
+				var activityFilterEl = document.getElementById('activity-filter');
+				if (activityFilterEl) {
+					activityFilterEl.addEventListener('input', onActivityFilterInput);
+					activityFilterEl.addEventListener('keydown', function (event) {
+						if (event.key !== 'Enter') return;
+						event.preventDefault();
+						if (activityFilterTimer) {
+							clearTimeout(activityFilterTimer);
+							activityFilterTimer = null;
+						}
+						postActivityView(true, activityFilterEl.value);
 					});
 				}
 

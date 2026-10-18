@@ -2701,6 +2701,17 @@ async function retireCards(targets, reason, now) {
 					': ' +
 					archiveString(reason)
 			);
+			await recordActivity(
+				boardId,
+				ACTIVITY_TYPE_RETIRED,
+				card.key,
+				'retired card ' +
+					card.key +
+					' ("' +
+					archiveString(card.title) +
+					'"): ' +
+					archiveString(reason)
+			);
 			retired.push(card.key);
 		}
 	}
@@ -4335,25 +4346,19 @@ async function createConductor(args) {
 // recovery readSessionHistoryExcerpt()/dispatchCardMessage() already do for
 // a card, so the next snapshot reads "conductor not connected" instead of a
 // generic error.
+//
+// A reach change is recorded through recordActivity() (Phase 07 board
+// activity feed, below this file's own Phase 07 plan sections) rather than a
+// log of its own: this section used to keep a dedicated reach-change log,
+// and that log's own doc comments said as much - "Phase 07's board activity
+// feed folds reach changes from Phase 06 into a single unified log". This is
+// that folding; recordReachChange() is the one place this section writes to
+// it.
 // ===========================================================================
 
 /** How long a burst of the events this section answers to is allowed to
  * settle before syncConductorReach() runs once for all of them. */
 const REACH_SYNC_DEBOUNCE_MS = 400;
-
-const CONDUCTOR_REACH_LOG_STORAGE_KEY = 'conductor-reach-log';
-
-/** At most this many entries are kept per board, oldest first pruned. Phase
- * 07's board activity feed folds "reach changes from Phase 06" into a single
- * unified log capped the same way, so this log already follows the rule it
- * will be read into. */
-const REACH_LOG_LIMIT_PER_BOARD = 50;
-
-/** @typedef {{ at: number, added: string[], removed: string[] }} ReachLogEntry */
-
-/** @type {Map<string, ReachLogEntry[]>} board id -> that board's reach-change
- * log, oldest first, capped at REACH_LOG_LIMIT_PER_BOARD. */
-let reachLogs = new Map();
 
 /** @type {Map<string, string[]>} board id -> the project-path set this plugin
  * last confirmed with sessions.update() for that board's conductor.
@@ -4366,75 +4371,23 @@ let lastSyncedReach = new Map();
 
 let reachSyncTimer = null;
 
-/** Restores every board's reach-change log from storage. Called once,
- * alongside loadConductorIds(), before activate()'s first seed(). A storage
- * failure, or a value that is not the object this plugin writes, degrades to
- * "every board has an empty log" rather than throwing the activation. */
-async function loadReachLogs() {
-	reachLogs = new Map();
-	try {
-		const raw = await sdk.storage.get(CONDUCTOR_REACH_LOG_STORAGE_KEY);
-		if (typeof raw === 'string' && raw !== '') {
-			const parsed = JSON.parse(raw);
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				for (const key of Object.keys(parsed)) {
-					const entries = Array.isArray(parsed[key]) ? parsed[key] : [];
-					reachLogs.set(
-						key,
-						entries.filter(function (entry) {
-							return (
-								entry &&
-								typeof entry === 'object' &&
-								typeof entry.at === 'number' &&
-								Array.isArray(entry.added) &&
-								Array.isArray(entry.removed)
-							);
-						})
-					);
-				}
-			}
-		}
-	} catch (err) {
-		console.error('maestro-kanban: failed to read the stored reach log: ' + String(err));
-	}
-}
-
-/** Writes every board's reach-change log in one call. A failed write logs
- * and moves on: the in-memory log stays authoritative for this session, the
- * same best-effort persistence persistConductorIds() uses. */
-async function persistReachLogs() {
-	const obj = {};
-	for (const [boardId, entries] of reachLogs) {
-		obj[boardId] = entries;
-	}
-	try {
-		await sdk.storage.set(CONDUCTOR_REACH_LOG_STORAGE_KEY, JSON.stringify(obj));
-	} catch (err) {
-		console.error('maestro-kanban: failed to persist the reach log: ' + String(err));
-	}
-}
-
-/** One board's reach-change log, oldest first - a copy, so a caller cannot
- * mutate this plugin's own record of it by mutating the returned array.
- * Phase 07 renders this (see that phase's board activity feed task).
- * @param {string|null} boardId
- * @returns {ReachLogEntry[]} */
-function reachLogForBoard(boardId) {
-	if (typeof boardId !== 'string' || boardId === '') return [];
-	return (reachLogs.get(boardId) || []).slice();
-}
-
-/** Appends one reach-change entry for a board and persists the log, pruning
- * the oldest entry first once it is over REACH_LOG_LIMIT_PER_BOARD.
+/** Appends one reach-change entry to the board's activity feed (Phase 07
+ * board activity feed, above - recordActivity() caps and persists it). No
+ * cardKey: a reach change is about the conductor's own directory grants, not
+ * about one card.
  * @param {string} boardId
  * @param {string[]} added
  * @param {string[]} removed */
 async function recordReachChange(boardId, added, removed) {
-	const entries = (reachLogs.get(boardId) || []).slice();
-	entries.push({ at: Date.now(), added: added.slice(), removed: removed.slice() });
-	while (entries.length > REACH_LOG_LIMIT_PER_BOARD) entries.shift();
-	reachLogs.set(boardId, entries);
-	await persistReachLogs();
+	const parts = [];
+	if (added.length > 0) parts.push('granted ' + added.join(', '));
+	if (removed.length > 0) parts.push('revoked ' + removed.join(', '));
+	await recordActivity(
+		boardId,
+		ACTIVITY_TYPE_REACH_CHANGED,
+		null,
+		'conductor reach changed: ' + (parts.length > 0 ? parts.join('; ') : 'no change')
+	);
 }
 
 /**
@@ -4777,13 +4730,12 @@ function planSettingsPatchFrom(source) {
  * A halt flip is logged (at warn when it is *armed*) with the board named,
  * the same spirit as applyBoardSettings()'s close-tabs warning: it is the
  * one flip on this surface that stops every card on the board from moving
- * or being messaged until a person clears it. A mode change is logged the
- * same way - this is "the mode change" the auto-mode switch task calls for
- * logging "to the activity feed": until Phase 07's own activity-feed task
- * builds that feed's storage and panel, this line is that feed's only
- * record, the same stopgap applyPlanSettings() already keeps for a halt
- * flip above (also explicitly named as an activity-feed entry type, also
- * only a log line today).
+ * or being messaged until a person clears it, and is also recorded to the
+ * board's activity feed (Phase 07 board activity feed) - "halts" is one of
+ * that feed's own named entry types. A mode change is logged and recorded
+ * the same way: this is "the mode change" the auto-mode switch task called
+ * for logging "to the activity feed", now writing to the real feed rather
+ * than the console-only stopgap that task left behind.
  * @param {unknown} args
  */
 async function applyPlanSettings(args) {
@@ -4817,8 +4769,15 @@ async function applyPlanSettings(args) {
 				boardId +
 				'" halted; no card will move or be messaged on it until the halt is cleared'
 		);
+		await recordActivity(
+			boardId,
+			ACTIVITY_TYPE_HALT_CHANGED,
+			null,
+			'board halted; no card will move or be messaged until the halt is cleared'
+		);
 	} else if (!settings.halted && before.halted) {
 		console.log('maestro-kanban: "' + boardId + '" halt cleared');
+		await recordActivity(boardId, ACTIVITY_TYPE_HALT_CHANGED, null, 'board halt cleared');
 	}
 	if (settings.mode !== before.mode) {
 		console.log(
@@ -4828,6 +4787,12 @@ async function applyPlanSettings(args) {
 				(settings.mode === PLAN_MODE_AUTO
 					? 'fully auto (plans execute without approval, still bound by the WIP cap and halt; access requests still wait for a person)'
 					: 'plan and approve')
+		);
+		await recordActivity(
+			boardId,
+			ACTIVITY_TYPE_MODE_CHANGED,
+			null,
+			'plan mode set to ' + (settings.mode === PLAN_MODE_AUTO ? 'fully auto' : 'plan and approve')
 		);
 	}
 	if (!outcome.persisted) {
@@ -6057,19 +6022,49 @@ function planRunFailure(run, reason) {
 	return planParseFailure(reason, '', planParseContext(run.board, run.cards));
 }
 
-/** Settles a run: cancels its timeout, records the result and status, and
- * stamps `finishedAt`. `statusOverride` names the two failure states that are
- * not simply "parsePlan said no" - 'not-connected' and (from
- * onPlanRunTimeout) 'timeout' folds into 'failed', since a run that timed out
- * and a run whose plan file never parsed are the same thing to everything
- * downstream: a failure with a reason, not a plan to approve.
+/** One sentence describing how a run ended, for the activity feed: how many
+ * moves and messages a parsed plan accepted and rejected, or the reason a
+ * run never got that far (a dispatch failure, an unreadable or unparseable
+ * plan file, a timeout, or a revoked grant).
+ * @param {PlanRun} run */
+function planResultSummary(run) {
+	const result = run.result;
+	if (!result || result.ok !== true) {
+		const reason = (result && result.error) || 'unknown reason';
+		return 'plan ' + run.planId + ' did not run: ' + reason;
+	}
+	const rejectedCount = Array.isArray(result.rejected) ? result.rejected.length : 0;
+	return (
+		'plan ' +
+		run.planId +
+		' parsed: ' +
+		result.moves.length +
+		' move(s) and ' +
+		result.messages.length +
+		' message(s) accepted, ' +
+		rejectedCount +
+		' rejected'
+	);
+}
+
+/** Settles a run: cancels its timeout, records the result and status, stamps
+ * `finishedAt`, and logs the outcome to the board's activity feed (Phase 07
+ * board activity feed) - the single place a run is ever closed out is the
+ * single place its result is ever recorded, so "plan requests" (askConductor,
+ * below) and "parsed plans with their accepted and rejected entries" can
+ * never drift out of step with the run map itself. `statusOverride` names the
+ * two failure states that are not simply "parsePlan said no" - 'not-connected'
+ * and (from onPlanRunTimeout) 'timeout' folds into 'failed', since a run that
+ * timed out and a run whose plan file never parsed are the same thing to
+ * everything downstream: a failure with a reason, not a plan to approve.
  * @param {string} boardId @param {PlanRun} run @param {object} result
  * @param {'not-connected'=} statusOverride */
-function finishPlanRun(boardId, run, result, statusOverride) {
+async function finishPlanRun(boardId, run, result, statusOverride) {
 	clearPlanRunTimer(run);
 	run.result = result;
 	run.status = statusOverride || (result.ok ? 'parsed' : 'failed');
 	run.finishedAt = Date.now();
+	await recordActivity(boardId, ACTIVITY_TYPE_PLAN_RESULT, null, planResultSummary(run));
 }
 
 /**
@@ -6089,12 +6084,12 @@ async function settlePlanRun(boardId, run) {
 		const reason = isFileNotFoundError(err)
 			? 'the conductor finished without writing this plan'
 			: "could not read the conductor's plan: " + errorMessage(err);
-		finishPlanRun(boardId, run, planRunFailure(run, reason));
+		await finishPlanRun(boardId, run, planRunFailure(run, reason));
 		await pushSnapshotNow();
 		return;
 	}
 	if (run.status !== 'running') return;
-	finishPlanRun(boardId, run, parsePlan(text, run.planId, run.board, run.cards));
+	await finishPlanRun(boardId, run, parsePlan(text, run.planId, run.board, run.cards));
 	// Fully auto's own trigger: a plan that just parsed ok on a board whose
 	// mode is PLAN_MODE_AUTO executes itself, with no person in between. See
 	// autoExecuteIfNeeded()'s own doc comment (Phase 07 plan execution,
@@ -6126,16 +6121,14 @@ function onPlanRunEvent(topic, payload) {
 /** Fires PLAN_RUN_TIMEOUT_MS after a successful dispatch. Guarded the same
  * way settlePlanRun() is guarded against it: whichever of the two settles the
  * run first wins. @param {string} boardId @param {PlanRun} run */
-function onPlanRunTimeout(boardId, run) {
+async function onPlanRunTimeout(boardId, run) {
 	if (run.status !== 'running') return;
-	finishPlanRun(
+	await finishPlanRun(
 		boardId,
 		run,
 		planRunFailure(run, 'the conductor did not finish this plan within the time this board allows')
 	);
-	pushSnapshotNow().catch(function (err) {
-		console.error('maestro-kanban: plan run timeout push failed: ' + String(err));
-	});
+	await pushSnapshotNow();
 }
 
 /**
@@ -6208,6 +6201,15 @@ async function askConductor(args) {
 		executedAt: null,
 	};
 	planRuns.set(boardId, run);
+	// Logged before the dispatch is even attempted, so "a plan was requested"
+	// is on the record regardless of how the run ends - the result (parsed,
+	// failed, or not-connected) is finishPlanRun()'s own entry, right after.
+	await recordActivity(
+		boardId,
+		ACTIVITY_TYPE_PLAN_REQUESTED,
+		null,
+		'asked the conductor for a plan (' + run.planId + ')'
+	);
 	try {
 		await sdk.agents.dispatch(conductorId, request.prompt);
 	} catch (err) {
@@ -6215,7 +6217,7 @@ async function askConductor(args) {
 		if (isGrantDenial(message)) {
 			grantedSessions.delete(conductorId);
 			scheduleReachSync();
-			finishPlanRun(
+			await finishPlanRun(
 				boardId,
 				run,
 				planRunFailure(run, 'the conductor is no longer connected to this board'),
@@ -6223,13 +6225,19 @@ async function askConductor(args) {
 			);
 		} else {
 			console.error('maestro-kanban: agents.dispatch (conductor) failed: ' + String(err));
-			finishPlanRun(boardId, run, planRunFailure(run, 'could not reach the conductor: ' + message));
+			await finishPlanRun(
+				boardId,
+				run,
+				planRunFailure(run, 'could not reach the conductor: ' + message)
+			);
 		}
 		await pushSnapshotNow();
 		return { ok: false, reason: run.result.error };
 	}
 	run.timeoutTimer = setTimeout(function () {
-		onPlanRunTimeout(boardId, run);
+		onPlanRunTimeout(boardId, run).catch(function (err) {
+			console.error('maestro-kanban: plan run timeout handling failed: ' + String(err));
+		});
 	}, PLAN_RUN_TIMEOUT_MS);
 	await pushSnapshotNow();
 	return { ok: true, planId: run.planId };
@@ -6352,6 +6360,27 @@ function recordPlanDecisions(run, approvedKeys) {
 	run.decidedAt = Date.now();
 }
 
+/** Appends one activity-feed entry per row THIS decision pass just decided -
+ * called right after recordPlanDecisions() (every row gets a decision) or
+ * autoDecidePlanRun() (a needsAccess row under fully auto is deliberately
+ * left undecided, and is skipped here the same way). A row is logged by the
+ * card it is about, so "approvals and rejections" stay filterable by card
+ * the same way every other per-card entry in this feed is.
+ * @param {string} boardId @param {PlanRun} run */
+async function recordDecisionActivity(boardId, run) {
+	for (const entry of planRunEntries(run)) {
+		const key = planRowKey(entry.kind, entry.cardKey);
+		const approved = run.decisions.get(key);
+		if (approved === undefined) continue;
+		await recordActivity(
+			boardId,
+			ACTIVITY_TYPE_ROW_DECIDED,
+			entry.cardKey,
+			entry.kind + ' for card ' + entry.cardKey + ' ' + (approved ? 'approved' : 'declined')
+		);
+	}
+}
+
 /** Mutates one message's prompt in place on a parsed plan, before it is
  * approved - the Edit action the approval UI offers a message row. Validated
  * the same way parsePlan() itself validates a prompt (trimmed, non-empty,
@@ -6452,6 +6481,12 @@ async function executePlanRun(boardId, run) {
 		if (!data) continue;
 		if (data.overCap) {
 			run.execution.set(key, { status: 'pending-cap', reason: data.capReason });
+			await recordActivity(
+				boardId,
+				ACTIVITY_TYPE_ROW_EXECUTED,
+				entry.cardKey,
+				entry.kind + ' for card ' + entry.cardKey + ' is pending: ' + data.capReason
+			);
 			continue;
 		}
 		if (isBoardHalted(boardId)) {
@@ -6469,11 +6504,23 @@ async function executePlanRun(boardId, run) {
 			} catch (err) {
 				result = { ok: false, reason: errorMessage(err) };
 			}
+			const moved = result && result.ok === true;
 			run.execution.set(
 				key,
-				result && result.ok === true
+				moved
 					? { status: 'moved', reason: null }
 					: { status: 'failed', reason: (result && result.reason) || 'that move failed' }
+			);
+			await recordActivity(
+				boardId,
+				ACTIVITY_TYPE_ROW_EXECUTED,
+				entry.cardKey,
+				'move for card ' +
+					entry.cardKey +
+					' to ' +
+					data.toColumnId +
+					': ' +
+					(moved ? 'moved' : 'failed (' + run.execution.get(key).reason + ')')
 			);
 			continue;
 		}
@@ -6492,9 +6539,21 @@ async function executePlanRun(boardId, run) {
 					status: 'failed',
 					reason: 'could not request access to that agent',
 				});
+				await recordActivity(
+					boardId,
+					ACTIVITY_TYPE_ACCESS_REQUESTED,
+					entry.cardKey,
+					'access request for card ' + entry.cardKey + ' failed: could not reach Maestro'
+				);
 				continue;
 			}
 			const granted = !!(accessResult && accessResult.granted === true);
+			await recordActivity(
+				boardId,
+				ACTIVITY_TYPE_ACCESS_REQUESTED,
+				entry.cardKey,
+				'access requested for card ' + entry.cardKey + ': ' + (granted ? 'granted' : 'declined')
+			);
 			if (!granted) {
 				run.execution.set(key, { status: 'declined-access', reason: 'access not granted' });
 				continue;
@@ -6508,6 +6567,15 @@ async function executePlanRun(boardId, run) {
 			sendResult.ok
 				? { status: 'sent', reason: null }
 				: { status: 'failed', reason: sendResult.error }
+		);
+		await recordActivity(
+			boardId,
+			ACTIVITY_TYPE_ROW_EXECUTED,
+			entry.cardKey,
+			'message for card ' +
+				entry.cardKey +
+				': ' +
+				(sendResult.ok ? 'sent' : 'failed (' + sendResult.error + ')')
 		);
 	}
 	// Only once the loop ran to its natural end AND every row has an actual
@@ -6567,11 +6635,231 @@ async function autoExecuteIfNeeded(boardId, run) {
 	if (run.status !== 'parsed' || !run.result || run.result.ok !== true) return;
 	if (planSettingsForBoard(boardId).mode !== PLAN_MODE_AUTO) return;
 	autoDecidePlanRun(run);
+	await recordDecisionActivity(boardId, run);
 	await executePlanRun(boardId, run);
 }
 
 // ===========================================================================
 // End of Phase 07 plan execution.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 07 board activity feed: the one append-only ledger every other part
+// of this plugin writes a line to. A board is a statement about what IS
+// (its cards, its settings); this is the statement about what HAPPENED -
+// every plan request and result, every row a person (or, in fully auto, this
+// plugin) approved or declined, every access request and its outcome, every
+// move and message actually executed, every conductor reach change (Phase
+// 06), every retirement (Phase 05), and every halt or mode flip. Nothing
+// here is executable: an activity entry is read-only history, the same way
+// `rationale` on a plan is display only.
+//
+// It is deliberately ONE log per board rather than one per entry type - a
+// person reading "what happened on this board" wants the order events
+// actually happened in, not five separate timelines they would have to
+// interleave by hand. Every writer calls the same recordActivity(), which is
+// also the only thing that persists this log, so there is exactly one place
+// that caps and prunes it.
+//
+// Like plan settings, this is per-board and never inherited from or merged
+// into the Global board's own feed: an event is recorded under the board id
+// its own section already scopes it to (a plan run's `boardId`, a
+// retirement's `card.projectPath`), the same id planSettingsForBoard() and
+// planRunSnapshot() already key their own state by. Viewing the Global
+// board's activity feed shows the Global board's OWN events only (its own
+// plan runs, if it has a conductor of its own), not every project's -
+// exactly the same scope planRunSnapshot() already keeps.
+// ===========================================================================
+
+const ACTIVITY_LOG_STORAGE_KEY = 'activity-log';
+
+/** At most this many entries are kept per board, oldest first pruned, so the
+ * log cannot grow without bound. Generous relative to a typical plan (the
+ * default WIP cap is 3) - it takes a sustained run of large plans to push
+ * the oldest entries out, and when that happens it is always the oldest
+ * history that goes, never the newest. */
+const ACTIVITY_LOG_LIMIT_PER_BOARD = 200;
+
+/** How many entries ride in one snapshot, newest first. The filter runs over
+ * the whole per-board log (see buildActivityView), so this caps the PAYLOAD,
+ * not the search - the same split buildArchiveView() already uses. */
+const ACTIVITY_VIEW_LIMIT = 100;
+
+/** How long a typed filter may be, and how long the field posts back. Plain
+ * substring search, case-insensitive, same spirit as the archive's filter. */
+const ACTIVITY_FILTER_MAX_CHARS = 160;
+
+const ACTIVITY_TYPE_PLAN_REQUESTED = 'plan-requested';
+const ACTIVITY_TYPE_PLAN_RESULT = 'plan-result';
+const ACTIVITY_TYPE_ROW_DECIDED = 'row-decided';
+const ACTIVITY_TYPE_ACCESS_REQUESTED = 'access-requested';
+const ACTIVITY_TYPE_ROW_EXECUTED = 'row-executed';
+const ACTIVITY_TYPE_REACH_CHANGED = 'reach-changed';
+const ACTIVITY_TYPE_RETIRED = 'retired';
+const ACTIVITY_TYPE_HALT_CHANGED = 'halt-changed';
+const ACTIVITY_TYPE_MODE_CHANGED = 'mode-changed';
+
+/** @typedef {{ at: number, type: string, cardKey: string|null, summary: string }} ActivityLogEntry */
+
+/** @type {Map<string, ActivityLogEntry[]>} board id -> that board's activity
+ * log, oldest first, capped at ACTIVITY_LOG_LIMIT_PER_BOARD. */
+let activityLogs = new Map();
+
+/** Restores every board's activity log from storage. Called once, alongside
+ * loadConductorIds(), before activate()'s first seed(). A storage failure
+ * degrades to "every board has an empty log" rather than throwing the
+ * activation - losing yesterday's history is a smaller failure than refusing
+ * to open at all. */
+async function loadActivityLog() {
+	activityLogs = new Map();
+	try {
+		const raw = await sdk.storage.get(ACTIVITY_LOG_STORAGE_KEY);
+		if (typeof raw === 'string' && raw !== '') {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const key of Object.keys(parsed)) {
+					const entries = Array.isArray(parsed[key]) ? parsed[key] : [];
+					activityLogs.set(
+						key,
+						entries.filter(function (entry) {
+							return (
+								entry &&
+								typeof entry === 'object' &&
+								typeof entry.at === 'number' &&
+								typeof entry.type === 'string' &&
+								typeof entry.summary === 'string'
+							);
+						})
+					);
+				}
+			}
+		}
+	} catch (err) {
+		console.error('maestro-kanban: failed to read the stored activity log: ' + String(err));
+	}
+}
+
+/** Writes every board's activity log in one call. A failed write logs and
+ * moves on: the in-memory log stays authoritative for this session, the same
+ * best-effort persistence persistReachLogs() used to keep before this
+ * section absorbed it. */
+async function persistActivityLog() {
+	const obj = {};
+	for (const [boardId, entries] of activityLogs) {
+		obj[boardId] = entries;
+	}
+	try {
+		await sdk.storage.set(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(obj));
+	} catch (err) {
+		console.error('maestro-kanban: failed to persist the activity log: ' + String(err));
+	}
+}
+
+/** One board's activity log, oldest first - a copy, so a caller cannot
+ * mutate this plugin's own record by mutating the returned array.
+ * @param {string|null} boardId
+ * @returns {ActivityLogEntry[]} */
+function activityLogForBoard(boardId) {
+	if (typeof boardId !== 'string' || boardId === '') return [];
+	return (activityLogs.get(boardId) || []).slice();
+}
+
+/** Appends one entry to a board's activity log and persists it, pruning the
+ * oldest entry first once the board is over ACTIVITY_LOG_LIMIT_PER_BOARD.
+ * The one place every other section of this file calls into: plan requests
+ * and results, row decisions, access requests, executed moves and messages,
+ * reach changes, retirements, and halt/mode flips.
+ * @param {string|null} boardId
+ * @param {string} type one of the ACTIVITY_TYPE_* constants above
+ * @param {string|null} cardKey the card this entry is about, or null for a
+ *   board-wide event (a halt, a mode change, a reach change)
+ * @param {string} summary a sentence a person reads, not a code
+ */
+async function recordActivity(boardId, type, cardKey, summary) {
+	if (typeof boardId !== 'string' || boardId === '') return;
+	const entries = (activityLogs.get(boardId) || []).slice();
+	entries.push({
+		at: Date.now(),
+		type: type,
+		cardKey: typeof cardKey === 'string' && cardKey !== '' ? cardKey : null,
+		summary: String(summary),
+	});
+	while (entries.length > ACTIVITY_LOG_LIMIT_PER_BOARD) entries.shift();
+	activityLogs.set(boardId, entries);
+	await persistActivityLog();
+}
+
+/** Pure: does this entry match the activity view's filter? Case-insensitive
+ * substring over the card key and the summary text - the two things a person
+ * remembers about something that happened ("what did card X do" or "when
+ * did we halt").
+ * @param {ActivityLogEntry} entry @param {string} needle lowercased already */
+function activityEntryMatches(entry, needle) {
+	if (needle === '') return true;
+	if (typeof entry.cardKey === 'string' && entry.cardKey.toLowerCase().indexOf(needle) !== -1) {
+		return true;
+	}
+	return entry.summary.toLowerCase().indexOf(needle) !== -1;
+}
+
+/** Whether the panel is showing the activity feed instead of the board. The
+ * same "rides in the snapshot only while open" shape buildArchiveView()
+ * uses: a board nobody is browsing the feed of costs nothing extra on a
+ * repaint. */
+let activityViewOpen = false;
+
+/** The text the activity view is filtered by, as the panel last posted it. */
+let activityViewFilter = '';
+
+/**
+ * The activity payload for the next snapshot, or null when the view is
+ * closed. Filters the current board's own log (never merged across boards -
+ * see this section's header), sorts newest first, and sends the newest
+ * ACTIVITY_VIEW_LIMIT matches.
+ * @returns {{ open: true, filter: string, boardName: string, entries: ActivityLogEntry[], total: number, hidden: number }|null}
+ */
+function buildActivityView() {
+	if (!activityViewOpen) return null;
+	const needle = activityViewFilter.trim().toLowerCase();
+	const entries = activityLogForBoard(currentBoardId());
+	const matched = entries.filter(function (entry) {
+		return activityEntryMatches(entry, needle);
+	});
+	matched.reverse();
+	const shown = matched.slice(0, ACTIVITY_VIEW_LIMIT);
+	return {
+		open: true,
+		filter: activityViewFilter,
+		boardName: currentBoardName(),
+		entries: shown,
+		total: matched.length,
+		hidden: matched.length - shown.length,
+	};
+}
+
+/**
+ * Backs the panel's `activity-view` command: opens, closes, and re-filters
+ * the activity feed - the same shape setArchiveView() already uses for its
+ * own view. There is no manifest `commands` entry (the palette has no board
+ * to show the feed of until the panel itself is open), and no capability
+ * change (this reads only the in-memory log activate() already loaded).
+ * @param {unknown} args
+ */
+async function setActivityView(args) {
+	const open = !!(args && args.open === true);
+	const filter =
+		args && typeof args.filter === 'string' ? args.filter.slice(0, ACTIVITY_FILTER_MAX_CHARS) : '';
+	activityViewOpen = open;
+	// A closed view forgets its filter, so reopening it starts on the whole
+	// log rather than a search typed days ago - the same rule setArchiveView()
+	// follows.
+	activityViewFilter = open ? filter : '';
+	await pushSnapshotNow();
+	return { ok: true, open: activityViewOpen, filter: activityViewFilter };
+}
+
+// ===========================================================================
+// End of Phase 07 board activity feed.
 // ===========================================================================
 
 // ===========================================================================
@@ -7498,6 +7786,10 @@ async function buildSnapshot() {
 		// planRun: the Halt control and the halted banner need this even
 		// before the conductor has ever been asked for a plan.
 		planSettings: planSettingsSnapshot(currentBoardId()),
+		// null unless the panel has the activity feed open (see
+		// buildActivityView(), Phase 07 board activity feed, above) - a board
+		// nobody is browsing the feed of reads no extra state on a repaint.
+		activity: buildActivityView(),
 	};
 }
 
@@ -7555,6 +7847,16 @@ function trimToBudget(snapshot) {
 		while (serializedSize(snapshot) > PANEL_BUDGET_BYTES && archive.records.length > 0) {
 			archive.records.pop();
 			archive.hidden = (typeof archive.hidden === 'number' ? archive.hidden : 0) + 1;
+		}
+	}
+	// Same reasoning for the activity feed: entries[] is already newest first
+	// (see buildActivityView), so popping the end drops the oldest of the
+	// shown batch, and `hidden` already says the feed is capped.
+	const activity = snapshot.activity;
+	if (activity && Array.isArray(activity.entries)) {
+		while (serializedSize(snapshot) > PANEL_BUDGET_BYTES && activity.entries.length > 0) {
+			activity.entries.pop();
+			activity.hidden = (typeof activity.hidden === 'number' ? activity.hidden : 0) + 1;
 		}
 	}
 	let guard = 0;
@@ -7814,6 +8116,22 @@ function registerCommands(maestro) {
 		})
 	);
 
+	// Invoked by the panel's Activity toggle and its filter box, the same
+	// shape 'archive-view' uses for its own view: no manifest `commands`
+	// entry (the activity feed is a MODE of a panel that has to already be
+	// open), and the open/filter state lives in the sandbox because the
+	// bridge carries no reply to a post - the view can only arrive on a
+	// snapshot (see buildActivityView(), Phase 07 board activity feed).
+	maestro.commands.register('activity-view', (args) =>
+		setActivityView(args).catch((err) => {
+			console.error('maestro-kanban: activity-view failed: ' + String(err));
+			return safeToast('Could not open the activity feed: ' + errorMessage(err)).then(() => ({
+				ok: false,
+				error: errorMessage(err),
+			}));
+		})
+	);
+
 	// Invoked by an archive row's Restore button; no manifest `commands` entry
 	// is needed since the palette has no record in hand to restore. `boardId`
 	// is the record's own project path, echoed back from the row so the
@@ -7938,7 +8256,8 @@ function registerCommands(maestro) {
 			outcome.run,
 			new Set(approvedKeys.filter((key) => typeof key === 'string'))
 		);
-		return executePlanRun(boardId, outcome.run)
+		return recordDecisionActivity(boardId, outcome.run)
+			.then(() => executePlanRun(boardId, outcome.run))
 			.catch((err) => {
 				console.error('maestro-kanban: executing plan ' + planId + ' failed: ' + String(err));
 			})
@@ -7966,7 +8285,8 @@ function registerCommands(maestro) {
 			}));
 		}
 		recordPlanDecisions(outcome.run, new Set());
-		return executePlanRun(boardId, outcome.run)
+		return recordDecisionActivity(boardId, outcome.run)
+			.then(() => executePlanRun(boardId, outcome.run))
 			.catch((err) => {
 				console.error('maestro-kanban: executing plan ' + planId + ' failed: ' + String(err));
 			})
@@ -8392,12 +8712,10 @@ module.exports = {
 	// registerEventHandlers() subscribes to) plus fake timers; syncConductorReach()
 	// itself is exported so a test can also await the underlying work
 	// directly, without fighting the debounce, to assert the sessions.update()
-	// payload and the resulting reach log entry. reachLogForBoard() reads that
-	// log; nothing else writes to it but recordReachChange(), called only from
-	// inside syncConductorReach().
-	REACH_LOG_LIMIT_PER_BOARD: REACH_LOG_LIMIT_PER_BOARD,
+	// payload and the resulting activity-feed entry (see recordReachChange(),
+	// called only from inside syncConductorReach(), and activityLogForBoard()
+	// below, Phase 07 board activity feed).
 	syncConductorReach: syncConductorReach,
-	reachLogForBoard: reachLogForBoard,
 
 	// Phase 06 conductor chat surface, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-conductor-settings.test.ts).
@@ -8477,6 +8795,30 @@ module.exports = {
 	askConductor: askConductor,
 	planRunSnapshot: planRunSnapshot,
 
+	// Phase 07 board activity feed, exported for direct unit testing.
+	// activityEntryMatches() is pure; activityLogForBoard() and
+	// recordActivity() read/write the in-memory map loadActivityLog() fills
+	// at activate() time, so a test calls those after activate() with a stub
+	// SDK. buildActivityView() and setActivityView() are the pure read and
+	// the stateful write behind the panel's `activity-view` command, the
+	// same split buildArchiveView()/setArchiveView() use for their own view.
+	ACTIVITY_LOG_LIMIT_PER_BOARD: ACTIVITY_LOG_LIMIT_PER_BOARD,
+	ACTIVITY_VIEW_LIMIT: ACTIVITY_VIEW_LIMIT,
+	ACTIVITY_TYPE_PLAN_REQUESTED: ACTIVITY_TYPE_PLAN_REQUESTED,
+	ACTIVITY_TYPE_PLAN_RESULT: ACTIVITY_TYPE_PLAN_RESULT,
+	ACTIVITY_TYPE_ROW_DECIDED: ACTIVITY_TYPE_ROW_DECIDED,
+	ACTIVITY_TYPE_ACCESS_REQUESTED: ACTIVITY_TYPE_ACCESS_REQUESTED,
+	ACTIVITY_TYPE_ROW_EXECUTED: ACTIVITY_TYPE_ROW_EXECUTED,
+	ACTIVITY_TYPE_REACH_CHANGED: ACTIVITY_TYPE_REACH_CHANGED,
+	ACTIVITY_TYPE_RETIRED: ACTIVITY_TYPE_RETIRED,
+	ACTIVITY_TYPE_HALT_CHANGED: ACTIVITY_TYPE_HALT_CHANGED,
+	ACTIVITY_TYPE_MODE_CHANGED: ACTIVITY_TYPE_MODE_CHANGED,
+	activityEntryMatches: activityEntryMatches,
+	activityLogForBoard: activityLogForBoard,
+	recordActivity: recordActivity,
+	buildActivityView: buildActivityView,
+	setActivityView: setActivityView,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -8509,7 +8851,11 @@ module.exports = {
 		await loadPlanSettings();
 		await loadConductorConfigs();
 		await loadConductorIds();
-		await loadReachLogs();
+		// Before seed() like the rest: a reach change, a retirement, a halt, or
+		// a plan result can all be recorded before the first panel open, and
+		// none of them should find an empty log where there is a real one on
+		// disk.
+		await loadActivityLog();
 		await loadArchiveBoardIndex();
 		await seed();
 		await prunePlacements();
@@ -8553,7 +8899,11 @@ module.exports = {
 		planRuns = new Map();
 		conductorConfigs = new Map();
 		conductorIds = new Map();
-		reachLogs = new Map();
+		// Dropped like planSettings above, and for the same reason: the log
+		// lives in storage, so clearing the mirror does not clear history.
+		activityLogs = new Map();
+		activityViewOpen = false;
+		activityViewFilter = '';
 		lastSyncedReach = new Map();
 		latestTabs = [];
 		agingByCard = new Map();
