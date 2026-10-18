@@ -95,8 +95,13 @@ export type BinaryIdentityValidator = (candidatePath: string) => Promise<boolean
 
 /**
  * Validate executables whose generic command name can collide with unrelated tools.
- * Cursor's `agent` binary has no identifying text in `--version`, so use its stable
- * help contract instead.
+ *
+ * Cursor's `agent` binary has no identifying text in `--version`, so the check
+ * reads its `--help` output instead. That output is not a stable contract: this
+ * match depends on the Cursor version, and a release that rewords its help can
+ * stop Cursor from being detected. It keys on `CURSOR_API_KEY`, the documented
+ * auth variable, as the token least likely to change. Every other agent passes
+ * without running anything.
  */
 export async function validateAgentBinaryIdentity(
 	agentId: string,
@@ -111,8 +116,10 @@ export async function validateAgentBinaryIdentity(
 		return false;
 	}
 
+	// Version-coupled: depends on Cursor's `--help` text. If Cursor stops being
+	// detected after a Cursor update, check here first.
 	const output = `${result.stdout}\n${result.stderr}`;
-	return output.includes('Start the Cursor Agent') && output.includes('CURSOR_API_KEY');
+	return output.includes('CURSOR_API_KEY');
 }
 
 // ============ Environment Expansion ============

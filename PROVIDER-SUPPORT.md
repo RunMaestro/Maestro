@@ -1397,7 +1397,7 @@ mirror: the mirror copies one file, and a WAL store's newest steps can still sit
 
 **Known limitations:**
 
-- **Generic binary name:** PATH detection for bare `agent` can collide with unrelated tools. Direct probing and expanded PATH prefer the official native install directories; a custom path remains available for nonstandard installs.
+- **Generic binary name:** PATH detection for bare `agent` can collide with unrelated tools. Direct probing and expanded PATH prefer the official native install directories, and every candidate (custom path included) must pass `validateAgentBinaryIdentity`, which runs `agent --help` and looks for `CURSOR_API_KEY`. That match is version-coupled: it depends on Cursor's help text, so if Cursor stops being detected after a Cursor update, check that function first.
 - **Group chat moderation:** capability left false until exercised
 
 **Provider translation:** none registered (see the [Provider Translation Contract](#provider-translation-contract)). Sessions, memories, instructions, skills, and custom subagents are all unsupported in both directions, to and from Cursor CLI: there is no `TranslationAdapter` for it, and its sessions are not read from `~/.cursor/chats/`. Switching an agent to or from Cursor CLI keeps the switching warning.

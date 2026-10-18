@@ -62,25 +62,44 @@ describe('path-prober', () => {
 	});
 
 	describe('validateAgentBinaryIdentity', () => {
-		it('accepts Cursor help and rejects unrelated generic agent binaries', async () => {
-			vi.mocked(execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: 'Start the Cursor Agent\nCURSOR_API_KEY',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: 'Generic automation agent',
-					stderr: '',
-					exitCode: 0,
-				});
+		it('accepts Cursor help that names CURSOR_API_KEY without the old prose', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				stdout: 'Usage: agent [options] [prompt]\n\nEnvironment:\n  CURSOR_API_KEY  API key',
+				stderr: '',
+				exitCode: 0,
+			});
 
-			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/cursor-agent')).resolves.toBe(
-				true
-			);
+			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/agent')).resolves.toBe(true);
+			expect(execFileNoThrow).toHaveBeenCalledWith('/bin/agent', ['--help'], undefined, {
+				timeout: 5000,
+			});
+		});
+
+		it('rejects help output without CURSOR_API_KEY', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				stdout: 'Start the Cursor Agent\nGeneric automation agent',
+				stderr: '',
+				exitCode: 0,
+			});
+
 			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/unrelated-agent')).resolves.toBe(
 				false
 			);
+		});
+
+		it('rejects a binary whose --help exits non-zero', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				stdout: 'CURSOR_API_KEY',
+				stderr: '',
+				exitCode: 1,
+			});
+
+			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/agent')).resolves.toBe(false);
+		});
+
+		it('passes every other agent without running anything', async () => {
+			await expect(validateAgentBinaryIdentity('codex', '/bin/codex')).resolves.toBe(true);
+			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 
