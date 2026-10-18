@@ -257,4 +257,31 @@ describe('CursorCliOutputParser', () => {
 			})
 		);
 	});
+
+	// Stream-json events were classified line by line as they arrived. Matched
+	// again at exit as one blob, an answer that discussed rate limits turned an
+	// unrelated crash into a "rate limited" error.
+	it('does not classify a non-zero exit from the stream-json events on stdout', () => {
+		const parser = new CursorCliOutputParser();
+		const stdout = JSON.stringify({
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				content: [{ type: 'text', text: 'I added backoff for the rate limit.' }],
+			},
+			session_id: 'sess-1',
+		});
+
+		const error = parser.detectErrorFromExit(1, '', stdout);
+
+		expect(error).toEqual(expect.objectContaining({ type: 'agent_crashed' }));
+	});
+
+	it('still classifies a plain-text stdout line at exit', () => {
+		const parser = new CursorCliOutputParser();
+
+		const error = parser.detectErrorFromExit(1, '', 'Error: rate limit exceeded');
+
+		expect(error).toEqual(expect.objectContaining({ type: 'rate_limited' }));
+	});
 });
