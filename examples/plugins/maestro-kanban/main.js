@@ -4737,16 +4737,22 @@ function planSettingsSnapshot(boardId) {
 
 /** The fields of a `plan-settings` post, as a patch for setPlanSettings().
  * Absent fields stay absent, so toggling Halt never also restates (or
- * accidentally resets) the WIP cap, and vice versa - the same reasoning
- * boardSettingsPatchFrom() applies to aging's three independent fields. A
- * cap arrives as a number or as the string a number input hands over;
- * anything unparseable is dropped rather than guessed.
- * @param {{ wipCap?: unknown, halted?: unknown }} source
- * @returns {{ wipCap?: number, halted?: boolean }} */
+ * accidentally resets) the WIP cap or the mode, and vice versa - the same
+ * reasoning boardSettingsPatchFrom() applies to aging's three independent
+ * fields. A cap arrives as a number or as the string a number input hands
+ * over; anything unparseable is dropped rather than guessed. `mode` is
+ * normalized the same way normalizePlanSettings() normalizes it: anything
+ * other than the literal auto value becomes plan-and-approve, the safe one,
+ * never guessed into the automatic one.
+ * @param {{ wipCap?: unknown, halted?: unknown, mode?: unknown }} source
+ * @returns {{ wipCap?: number, halted?: boolean, mode?: string }} */
 function planSettingsPatchFrom(source) {
-	/** @type {{ wipCap?: number, halted?: boolean }} */
+	/** @type {{ wipCap?: number, halted?: boolean, mode?: string }} */
 	const patch = {};
 	if (source.halted !== undefined) patch.halted = source.halted === true;
+	if (source.mode !== undefined) {
+		patch.mode = source.mode === PLAN_MODE_AUTO ? PLAN_MODE_AUTO : PLAN_MODE_APPROVE;
+	}
 	if (source.wipCap !== undefined) {
 		const raw = source.wipCap;
 		const parsed =
@@ -4761,16 +4767,23 @@ function planSettingsPatchFrom(source) {
 }
 
 /**
- * Backs the panel's `plan-settings` command: writes this board's WIP cap
- * and/or halt flag, then pushes a fresh snapshot so the Halt control and the
- * halted banner repaint immediately. Refused, with a toast naming why, the
- * same way applyBoardSettings() refuses - no board on screen, a board that
- * changed since the post, or a post naming nothing this plugin reads.
+ * Backs the panel's `plan-settings` command: writes this board's WIP cap,
+ * halt flag, and/or mode, then pushes a fresh snapshot so the Halt control,
+ * the halted banner, and the mode switch all repaint immediately. Refused,
+ * with a toast naming why, the same way applyBoardSettings() refuses - no
+ * board on screen, a board that changed since the post, or a post naming
+ * nothing this plugin reads.
  *
  * A halt flip is logged (at warn when it is *armed*) with the board named,
  * the same spirit as applyBoardSettings()'s close-tabs warning: it is the
  * one flip on this surface that stops every card on the board from moving
- * or being messaged until a person clears it.
+ * or being messaged until a person clears it. A mode change is logged the
+ * same way - this is "the mode change" the auto-mode switch task calls for
+ * logging "to the activity feed": until Phase 07's own activity-feed task
+ * builds that feed's storage and panel, this line is that feed's only
+ * record, the same stopgap applyPlanSettings() already keeps for a halt
+ * flip above (also explicitly named as an activity-feed entry type, also
+ * only a log line today).
  * @param {unknown} args
  */
 async function applyPlanSettings(args) {
@@ -4806,6 +4819,16 @@ async function applyPlanSettings(args) {
 		);
 	} else if (!settings.halted && before.halted) {
 		console.log('maestro-kanban: "' + boardId + '" halt cleared');
+	}
+	if (settings.mode !== before.mode) {
+		console.log(
+			'maestro-kanban: "' +
+				boardId +
+				'" plan mode set to ' +
+				(settings.mode === PLAN_MODE_AUTO
+					? 'fully auto (plans execute without approval, still bound by the WIP cap and halt; access requests still wait for a person)'
+					: 'plan and approve')
+		);
 	}
 	if (!outcome.persisted) {
 		await safeToast('That setting did not save; it may not survive a restart.');
@@ -6072,6 +6095,11 @@ async function settlePlanRun(boardId, run) {
 	}
 	if (run.status !== 'running') return;
 	finishPlanRun(boardId, run, parsePlan(text, run.planId, run.board, run.cards));
+	// Fully auto's own trigger: a plan that just parsed ok on a board whose
+	// mode is PLAN_MODE_AUTO executes itself, with no person in between. See
+	// autoExecuteIfNeeded()'s own doc comment (Phase 07 plan execution,
+	// below) for what it does and does not decide on its own.
+	await autoExecuteIfNeeded(boardId, run);
 	await pushSnapshotNow();
 }
 
@@ -6482,10 +6510,64 @@ async function executePlanRun(boardId, run) {
 				: { status: 'failed', reason: sendResult.error }
 		);
 	}
-	// Only once the loop ran to its natural end: a halt that broke out of it
-	// early leaves executedAt null, so the next executePlanRun() call (once
-	// the halt is cleared) still has something to finish.
-	if (!haltedMidway) run.executedAt = Date.now();
+	// Only once the loop ran to its natural end AND every row has an actual
+	// decision on file: a halt that broke out of it early leaves executedAt
+	// null, so the next executePlanRun() call (once the halt is cleared)
+	// still has something to finish - and so does a fully-auto plan with a
+	// needsAccess row nobody has decided yet, which autoDecidePlanRun() below
+	// deliberately leaves out of `run.decisions` rather than declining it. A
+	// row recorded as declined still counts as decided: the person (or, for
+	// the rest of a fully-auto plan, this plugin) looked at it and chose
+	// nothing, which is different from never having looked at all.
+	const stillPending = planRunEntries(run).some(
+		(entry) => !run.decisions.has(planRowKey(entry.kind, entry.cardKey))
+	);
+	if (!haltedMidway && !stillPending) run.executedAt = Date.now();
+}
+
+/** Fully auto's own decision pass, run once per parsed plan in place of a
+ * person's Approve Selected click: every row is approved EXCEPT a message
+ * whose `needsAccess` is set, which is left out of `decisions` entirely -
+ * not approved, not declined, genuinely undecided - so it stays "needs your
+ * OK" until a person reviews that one row by hand through the exact same
+ * approve-plan/reject-plan action the plan-and-approve surface already
+ * exposes (see executePlanRun()'s `stillPending` check just above for why
+ * that leftover row does not block a later approval).
+ *
+ * A move or a non-access message riding past the WIP cap is still approved
+ * here: the cap governs execution (it lands `pending-cap`), not review, the
+ * same way a person reviewing a fresh plan starts with every row checked.
+ * @param {PlanRun} run
+ */
+function autoDecidePlanRun(run) {
+	const decisions = new Map();
+	for (const entry of planRunEntries(run)) {
+		if (entry.kind === 'message') {
+			const message = run.result.messages.find((candidate) => candidate.cardKey === entry.cardKey);
+			if (message && message.needsAccess) continue;
+		}
+		decisions.set(planRowKey(entry.kind, entry.cardKey), true);
+	}
+	run.decisions = decisions;
+	run.decidedAt = Date.now();
+}
+
+/**
+ * Backs the auto-mode switch: the instant a plan parses ok on a board whose
+ * `plan-settings` mode is PLAN_MODE_AUTO, decide what this plugin is allowed
+ * to decide on its own (autoDecidePlanRun()) and execute immediately -
+ * nothing here is a second pipeline, it is the identical
+ * decide-then-executePlanRun() pair 'approve-plan' already drives, with only
+ * the person removed from the middle. A no-op for a board still in
+ * plan-and-approve mode, or a run that did not parse (nothing to decide), so
+ * calling this unconditionally from settlePlanRun() is always safe.
+ * @param {string} boardId @param {PlanRun} run
+ */
+async function autoExecuteIfNeeded(boardId, run) {
+	if (run.status !== 'parsed' || !run.result || run.result.ok !== true) return;
+	if (planSettingsForBoard(boardId).mode !== PLAN_MODE_AUTO) return;
+	autoDecidePlanRun(run);
+	await executePlanRun(boardId, run);
 }
 
 // ===========================================================================
@@ -8329,16 +8411,18 @@ module.exports = {
 	conductorTabStatus: conductorTabStatus,
 
 	// Phase 07 plan settings, exported for direct unit testing (see
-	// src/__tests__/plugins/kanban-plan-parser.test.ts and, once the run loop
-	// lands, kanban-auto-mode.test.ts). normalizePlanSettings() is pure;
+	// src/__tests__/plugins/kanban-plan-parser.test.ts and the upcoming
+	// kanban-auto-mode.test.ts). normalizePlanSettings() is pure;
 	// planSettingsForBoard() and isBoardHalted() read the map loadPlanSettings()
 	// fills at activate() time, and setPlanSettings() writes plugin storage, so
 	// a test calls those after activate() with a stub SDK. planSettingsSnapshot()
 	// and planSettingsPatchFrom() are pure, the same split boardSettingsSnapshot()/
 	// boardSettingsPatchFrom() use; applyPlanSettings() backs the panel's
-	// `plan-settings` command (the Halt control and the WIP cap field) and is
-	// exported the same way applyBoardSettings() is. The auto-mode switch is
-	// still a later task; nothing here writes `mode`.
+	// `plan-settings` command (the Halt control, the WIP cap field, and the
+	// Mode switch) and is exported the same way applyBoardSettings() is.
+	// planSettingsPatchFrom() now also accepts `mode`; see autoDecidePlanRun()
+	// and autoExecuteIfNeeded() (Phase 07 plan execution, above) for what
+	// PLAN_MODE_AUTO actually changes about a run.
 	PLAN_MODE_APPROVE: PLAN_MODE_APPROVE,
 	PLAN_MODE_AUTO: PLAN_MODE_AUTO,
 	DEFAULT_PLAN_WIP_CAP: DEFAULT_PLAN_WIP_CAP,

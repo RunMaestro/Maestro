@@ -1406,6 +1406,17 @@
 				<button id="plan-allow-access" type="button" hidden>Allow Access</button>
 			</div>
 			<div class="board-settings-row">
+				<label for="plan-mode">Mode</label>
+				<select id="plan-mode">
+					<option value="plan-approve">Plan &amp; approve</option>
+					<option value="auto">Fully auto</option>
+				</select>
+				<span class="board-settings-note"
+					>fully auto still enforces the WIP cap and halt, and still waits for your OK before asking
+					for access to an agent</span
+				>
+			</div>
+			<div class="board-settings-row">
 				<label for="plan-wip-cap">WIP cap</label>
 				<input id="plan-wip-cap" type="number" min="1" max="25" step="1" />
 				<span class="board-settings-note">cards this board executes at a time</span>
@@ -3298,6 +3309,7 @@
 						ask: document.getElementById('plan-ask'),
 						status: document.getElementById('plan-status'),
 						allowAccess: document.getElementById('plan-allow-access'),
+						mode: document.getElementById('plan-mode'),
 						wipCap: document.getElementById('plan-wip-cap'),
 						haltToggle: document.getElementById('plan-halt-toggle'),
 						haltedNote: document.getElementById('plan-halted-note'),
@@ -3428,38 +3440,50 @@
 						);
 				}
 
-				/** One row's DOM: a checkbox (or, once decided, a read-only
-				 * Approved/Declined badge) plus the row's own content. A message
-				 * row carries its own Edit action and, when the card is not yet
-				 * granted, the "needs your OK" marker the task calls for; either
-				 * kind carries the over-cap marker when this row rode past the
-				 * board's WIP cap.
+				/** One row's DOM: a checkbox (or, once this ROW has a decision, a
+				 * read-only Approved/Declined badge) plus the row's own content. A
+				 * message row carries its own Edit action and, when the card is
+				 * not yet granted, the "needs your OK" marker the task calls for;
+				 * either kind carries the over-cap marker when this row rode past
+				 * the board's WIP cap.
 				 * @param {{kind: 'move'|'message', cardKey: string, data: object}} entry
-				 * @param {object} plan @param {boolean} decided */
+				 * @param {object} plan */
 				/** What a decided row's badge should say once executePlanRun() has
-				 * (or has not yet) attempted it: Approved/Declined cover a row with
-				 * no outcome yet (not approved, or approved but not reached before
-				 * a halt); an outcome narrows an approved row to what actually
-				 * happened to it. */
+				 * (or has not yet) attempted it: an outcome - the ground truth of
+				 * what this plugin actually did - always wins over the bare
+				 * decision, so a row a fully-auto plan already executed never
+				 * flips back to "Declined" merely because a later Reject All (on
+				 * some other, still-pending row of the same plan) re-recorded
+				 * every row's decision, including this one's. Approved/Declined
+				 * cover a row with no outcome yet (approved but not reached
+				 * before a halt, or declined outright). */
 				function planRowExecutionLabel(decision, outcome) {
+					if (outcome) {
+						if (outcome.status === 'moved' || outcome.status === 'sent') {
+							return { label: 'Executed', className: 'plan-row-badge-approved' };
+						}
+						if (outcome.status === 'pending-cap') {
+							return { label: 'Pending', className: 'plan-row-badge-cap' };
+						}
+						if (outcome.status === 'declined-access') {
+							return { label: 'Access declined', className: 'plan-row-badge-declined' };
+						}
+						return { label: 'Failed', className: 'plan-row-badge-failed' };
+					}
 					if (!decision) return { label: 'Declined', className: 'plan-row-badge-declined' };
-					if (!outcome) return { label: 'Approved', className: 'plan-row-badge-approved' };
-					if (outcome.status === 'moved' || outcome.status === 'sent') {
-						return { label: 'Executed', className: 'plan-row-badge-approved' };
-					}
-					if (outcome.status === 'pending-cap') {
-						return { label: 'Pending', className: 'plan-row-badge-cap' };
-					}
-					if (outcome.status === 'declined-access') {
-						return { label: 'Access declined', className: 'plan-row-badge-declined' };
-					}
-					return { label: 'Failed', className: 'plan-row-badge-failed' };
+					return { label: 'Approved', className: 'plan-row-badge-approved' };
 				}
 
-				function buildPlanRow(entry, plan, decided) {
+				function buildPlanRow(entry, plan) {
 					var key = planRowKey(entry.kind, entry.cardKey);
 					var decision = plan && plan.decisions ? plan.decisions[key] : undefined;
 					var outcome = plan && plan.execution ? plan.execution[key] : undefined;
+					// Decided PER ROW, not for the plan as a whole: a fully-auto
+					// plan decides every row except a needsAccess message (see
+					// autoDecidePlanRun() in main.js), so that one row still shows
+					// its checkbox - "needs your OK" - while its siblings already
+					// show their Executed/Pending badges.
+					var decided = decision !== undefined;
 
 					var row = document.createElement('div');
 					row.className = 'plan-row';
@@ -3631,6 +3655,10 @@
 					if (nodes.allowAccess)
 						nodes.allowAccess.hidden = !plan || plan.status !== 'not-connected';
 
+					if (nodes.mode && planSettings && typeof planSettings.mode === 'string') {
+						nodes.mode.value = planSettings.mode;
+					}
+
 					if (nodes.wipCap) {
 						var editingWipCap = document.activeElement === nodes.wipCap || planWipCapTimer !== null;
 						if (planSettings && typeof planSettings.minWipCap === 'number') {
@@ -3690,6 +3718,20 @@
 					var entries = hasPlan ? planDisplayRows(result) : [];
 					if (nodes.empty) nodes.empty.hidden = plan !== null;
 
+					// Separate from `decided` above: a fully-auto plan can have
+					// SOME rows decided (and already executed) while a needsAccess
+					// message sits undecided, waiting on a person - Approve
+					// Selected/Reject All must stay offered for that one row until
+					// every row has an actual decision on file, not merely until the
+					// first one does.
+					var allRowsDecided =
+						hasPlan &&
+						entries.length > 0 &&
+						entries.every(function (entry) {
+							var key = planRowKey(entry.kind, entry.cardKey);
+							return plan.decisions && Object.prototype.hasOwnProperty.call(plan.decisions, key);
+						});
+
 					var signature = hasPlan ? planRowsSignatureOf(plan, result) : plan ? plan.status : null;
 					if (nodes.rows && signature !== planRowsSignature) {
 						planRowsSignature = signature;
@@ -3701,7 +3743,7 @@
 							nodes.rows.appendChild(none);
 						} else {
 							entries.forEach(function (entry) {
-								nodes.rows.appendChild(buildPlanRow(entry, plan, decided));
+								nodes.rows.appendChild(buildPlanRow(entry, plan));
 							});
 						}
 					}
@@ -3724,7 +3766,7 @@
 					}
 
 					if (nodes.actions) {
-						nodes.actions.hidden = !hasPlan || decided || entries.length === 0;
+						nodes.actions.hidden = !hasPlan || allRowsDecided || entries.length === 0;
 					}
 				}
 
@@ -3810,6 +3852,35 @@
 				function onPlanHaltToggleClick() {
 					var settings = planSettingsOf(currentSnapshot);
 					postPlanSettings({ halted: !(settings && settings.halted === true) });
+				}
+
+				/** Switching the Mode select to Fully auto is the one direction
+				 * this control guards: it is the reading that removes a person
+				 * from the loop for everything except an access request, so an
+				 * in-panel confirm states that in one sentence before the post
+				 * goes out. Switching back to Plan & approve only adds the
+				 * review step back, so it posts immediately, the same as the
+				 * Halt control's own Resume needs no confirmation. A cancelled
+				 * confirm reverts the <select> to the mode actually in force,
+				 * so the control never shows a choice that was not applied. */
+				function onPlanModeChange() {
+					var nodes = planPanelNodes();
+					if (!nodes || !nodes.mode) return;
+					var settings = planSettingsOf(currentSnapshot);
+					var current =
+						settings && typeof settings.mode === 'string' ? settings.mode : 'plan-approve';
+					var next = nodes.mode.value === 'auto' ? 'auto' : 'plan-approve';
+					if (next === current) return;
+					if (next === 'auto') {
+						var confirmed = window.confirm(
+							"Fully auto will move cards and send the conductor's messages as soon as a plan parses, with no approval step, though it still obeys the WIP cap and halt and still waits for your OK before requesting access to an agent - continue?"
+						);
+						if (!confirmed) {
+							nodes.mode.value = current;
+							return;
+						}
+					}
+					postPlanSettings({ mode: next });
 				}
 
 				// -------------------------------------------------------------
@@ -4886,6 +4957,9 @@
 
 				var planHaltToggleEl = document.getElementById('plan-halt-toggle');
 				if (planHaltToggleEl) planHaltToggleEl.addEventListener('click', onPlanHaltToggleClick);
+
+				var planModeEl = document.getElementById('plan-mode');
+				if (planModeEl) planModeEl.addEventListener('change', onPlanModeChange);
 
 				// The <select> is static markup, never replaced by a render, so the
 				// listener is bound once here rather than per snapshot.
