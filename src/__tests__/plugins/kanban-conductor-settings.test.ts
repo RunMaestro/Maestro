@@ -52,6 +52,7 @@ interface ConductorPayload {
 	boardName: string;
 	config: ConductorConfig;
 	providers: ConductorProvider[];
+	providersError: string | null;
 	providerSupportsDirectories: boolean | null;
 	reach: {
 		granted: ConductorReachEntry[];
@@ -288,6 +289,9 @@ describe('maestro-kanban conductor settings surface', () => {
 			boardName: 'widgets',
 			config: { agentId: null, customModel: null, customEffort: null },
 			providers: [{ toolType: 'claude-code', supportsAdditionalDirectories: true }],
+			// Null, not absent: the picker reads this to tell "you run no
+			// providers" apart from "Maestro would not say".
+			providersError: null,
 			// No provider is configured on this board yet, so there is nothing
 			// to say about its directory support.
 			providerSupportsDirectories: null,
@@ -364,6 +368,31 @@ describe('maestro-kanban conductor settings surface', () => {
 		const conductor = lastConductor(maestro.ui.panelPost)!;
 		expect(conductor.providers).toEqual([]);
 		expect(conductor.boardId).toBe(projectPath);
+	});
+
+	it('says agents.list was refused rather than letting the empty picker read as "no providers"', async () => {
+		const plugin = loadMain();
+		const { maestro } = conductorStub({
+			agentsList: () => Promise.reject(new Error('capability agents:list not granted')),
+		});
+
+		await plugin.activate(maestro);
+
+		const conductor = lastConductor(maestro.ui.panelPost)!;
+		expect(conductor.providers).toEqual([]);
+		// The host's own words, not a guess this plugin would have to maintain.
+		expect(conductor.providersError).toBe('capability agents:list not granted');
+	});
+
+	it('leaves providersError null when agents.list genuinely reports no agents', async () => {
+		const plugin = loadMain();
+		const { maestro } = conductorStub({ agentsList: () => Promise.resolve([]) });
+
+		await plugin.activate(maestro);
+
+		const conductor = lastConductor(maestro.ui.panelPost)!;
+		expect(conductor.providers).toEqual([]);
+		expect(conductor.providersError).toBeNull();
 	});
 
 	it("lists a project under ungranted, with one card's session as the representative to approve", async () => {

@@ -481,6 +481,63 @@ describe('maestro-kanban panel.html', () => {
 	});
 
 	// ---------------------------------------------------------------------
+	// Phase 08 honest failure states. A refused tabs.list()/sessions.list()
+	// leaves the card model untouched, which on screen is indistinguishable
+	// from a board where nothing has happened. #stale-banner is the line that
+	// tells the two apart, and it gets its own slot so a halted board (or a
+	// board file that will not parse) does not hide it.
+	// ---------------------------------------------------------------------
+
+	it('hides the stale-cards notice while the card model is fresh', () => {
+		pushSnapshot(emptySnapshot());
+
+		expect(document.getElementById('stale-banner')?.hidden).toBe(true);
+	});
+
+	it('says the cards may be out of date, naming the refused call and the host reason', () => {
+		pushSnapshot(
+			snapshotWith(
+				{ backlog: [makeCard({ key: 'session-1::tab-1', title: 'Older Card' })] },
+				{ cardsStale: { call: 'tabs.list', message: 'RPC down' } }
+			)
+		);
+
+		const stale = document.getElementById('stale-banner');
+		expect(stale?.hidden).toBe(false);
+		expect(stale?.textContent).toContain('may be out of date');
+		expect(stale?.textContent).toContain('tabs.list');
+		expect(stale?.textContent).toContain('RPC down');
+		// Degraded, not blanked: the cards from the last good read still render.
+		expect(findCardElement('Older Card')).toBeTruthy();
+	});
+
+	it('shows the stale notice alongside a parse-error banner rather than instead of it', () => {
+		pushSnapshot(
+			snapshotWith(
+				{},
+				{
+					boardError: { message: 'version is required', path: '~/.maestro/kanban.yaml' },
+					cardsStale: { call: 'sessions.list', message: 'not granted' },
+				}
+			)
+		);
+
+		expect(document.getElementById('banner')?.hidden).toBe(false);
+		expect(document.getElementById('banner')?.textContent).toContain('version is required');
+		expect(document.getElementById('stale-banner')?.hidden).toBe(false);
+		expect(document.getElementById('stale-banner')?.textContent).toContain('sessions.list');
+	});
+
+	it('clears the stale notice on the first snapshot after the read works again', () => {
+		pushSnapshot(snapshotWith({}, { cardsStale: { call: 'tabs.list', message: 'RPC down' } }));
+		expect(document.getElementById('stale-banner')?.hidden).toBe(false);
+
+		pushSnapshot(emptySnapshot());
+		expect(document.getElementById('stale-banner')?.hidden).toBe(true);
+		expect(document.getElementById('stale-banner')?.textContent).toBe('');
+	});
+
+	// ---------------------------------------------------------------------
 	// Phase 04 card detail pane. A click now opens the detail pane beside
 	// the board instead of jumping straight to the agent's tab; Open Tab on
 	// that pane is the explicit path to the `focus` command a click used to

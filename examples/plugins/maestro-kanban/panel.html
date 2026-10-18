@@ -1333,6 +1333,21 @@
 				justify-content: space-between;
 				gap: 10px;
 			}
+			/* The card model is older than the host. Warning-colored, not
+			   error-colored: nothing is broken, the cards on screen are simply
+			   not current, and the next successful refresh clears it. */
+			#stale-banner {
+				margin: 8px 12px 0 12px;
+				padding: 8px 10px;
+				border-radius: 6px;
+				background: var(--maestro-warning, #e5c07b);
+				color: var(--maestro-bg-main, #1e1e1e);
+				font-size: 12px;
+				user-select: text;
+			}
+			#stale-banner[hidden] {
+				display: none;
+			}
 			.banner-path {
 				opacity: 0.85;
 				margin-left: 6px;
@@ -1470,6 +1485,7 @@
 				</select>
 			</div>
 			<p class="board-settings-note">Only providers you already run an agent for appear here.</p>
+			<p id="conductor-providers-error" class="board-settings-note" hidden></p>
 			<p id="conductor-directory-note" class="board-settings-note" hidden>
 				This provider has no way to add directories, so the conductor will work from the board
 				snapshot rather than from files.
@@ -1562,6 +1578,10 @@
 			</div>
 		</div>
 		<div id="banner" hidden></div>
+		<!-- Its own slot rather than a third case in #banner: a board can be
+		     halted AND holding cards the host refused to refresh, and the one
+		     the user most needs to know about must not hide the other. -->
+		<div id="stale-banner" hidden></div>
 		<div id="toast" hidden></div>
 		<div id="main">
 			<div id="board">
@@ -2308,6 +2328,41 @@
 						return;
 					}
 					banner.hidden = true;
+				}
+
+				/**
+				 * Phase 08 honest failure state. `cardsStale` is set when the
+				 * sandbox asked Maestro for the tabs (or the sessions) behind
+				 * these cards and was refused, which means the cards below are as
+				 * old as the last read that worked. Every other failure in this
+				 * panel is visible on its own terms; this one is not, because a
+				 * stale board looks exactly like a quiet one. So it gets a line
+				 * of its own, in its own slot, alongside whatever #banner is
+				 * already saying.
+				 */
+				function renderStaleBanner(snapshot) {
+					var el = document.getElementById('stale-banner');
+					if (!el) return;
+					var stale = snapshot && snapshot.cardsStale;
+					el.textContent = '';
+					if (!stale || typeof stale !== 'object') {
+						el.hidden = true;
+						return;
+					}
+					el.hidden = false;
+					var text = document.createElement('span');
+					var call = typeof stale.call === 'string' && stale.call ? stale.call : 'Maestro';
+					text.textContent =
+						'These cards may be out of date: ' +
+						call +
+						' was refused, so the board is showing the last answer Maestro gave.';
+					el.appendChild(text);
+					if (typeof stale.message === 'string' && stale.message) {
+						var reason = document.createElement('span');
+						reason.className = 'banner-path';
+						reason.textContent = stale.message;
+						el.appendChild(reason);
+					}
 				}
 
 				// -------------------------------------------------------------
@@ -3271,6 +3326,7 @@
 						toggle: toggle,
 						scope: document.getElementById('conductor-settings-scope'),
 						directoryNote: document.getElementById('conductor-directory-note'),
+						providersError: document.getElementById('conductor-providers-error'),
 						create: document.getElementById('conductor-create'),
 						open: document.getElementById('conductor-open'),
 						allowAccess: document.getElementById('conductor-allow-access'),
@@ -3443,17 +3499,30 @@
 						conductor && Array.isArray(conductor.providers) ? conductor.providers : [];
 					var config = (conductor && conductor.config) || {};
 					var wantedProvider = typeof config.agentId === 'string' ? config.agentId : '';
-					var signature = providers
-						.map(function (provider) {
-							return provider.toolType;
-						})
-						.join(',');
+					// Phase 08 honest failure state: an empty picker because Maestro
+					// refused the read is NOT the same statement as an empty picker
+					// because the user runs no agents, and the second is the more
+					// discouraging of the two to be told wrongly.
+					var providersError =
+						conductor && typeof conductor.providersError === 'string'
+							? conductor.providersError
+							: null;
+					var signature =
+						(providersError ? 'error:' : '') +
+						providers
+							.map(function (provider) {
+								return provider.toolType;
+							})
+							.join(',');
 					if (nodes.provider.getAttribute('data-signature') !== signature) {
 						nodes.provider.textContent = '';
 						var blank = document.createElement('option');
 						blank.value = '';
-						blank.textContent =
-							providers.length > 0 ? 'Not configured' : 'No providers running yet';
+						blank.textContent = providersError
+							? 'Could not read your providers'
+							: providers.length > 0
+								? 'Not configured'
+								: 'No providers running yet';
 						nodes.provider.appendChild(blank);
 						providers.forEach(function (provider) {
 							var option = document.createElement('option');
@@ -3468,6 +3537,14 @@
 							return provider.toolType === wantedProvider;
 						})
 							? wantedProvider
+							: '';
+					}
+					if (nodes.providersError) {
+						nodes.providersError.hidden = !providersError;
+						nodes.providersError.textContent = providersError
+							? 'Maestro would not list your agents (' +
+								providersError +
+								'), so this picker is empty for now rather than complete.'
 							: '';
 					}
 
@@ -4983,6 +5060,7 @@
 					// push - the rows, while one is mid-edit.
 					renderPlanPanel(snapshot);
 					renderBanner(snapshot);
+					renderStaleBanner(snapshot);
 
 					var board = document.getElementById('board');
 					board.innerHTML = '';

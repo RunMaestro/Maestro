@@ -1055,6 +1055,8 @@ async function readSessionHistoryExcerpt(sessionId, options) {
 		historyCache.set(sessionId, result);
 		return result;
 	} catch (err) {
+		// transcripts.read refused: a revoked grant drops the session; any other failure becomes the
+		// excerpt's own error line.
 		const message = errorMessage(err);
 		if (isGrantDenial(message)) {
 			grantedSessions.delete(sessionId);
@@ -1113,6 +1115,7 @@ function onHistoryRelevantEvent(topic, payload) {
 	readSessionHistoryExcerpt(sessionId, { force: true })
 		.then(() => pushSnapshotNow())
 		.catch((err) => {
+			// The event-driven History re-read failed; the pane keeps the excerpt it already has.
 			console.error('maestro-kanban: History re-read on ' + topic + ' failed: ' + String(err));
 		});
 }
@@ -1162,6 +1165,8 @@ async function dispatchCardMessage(sessionId, tabId, prompt) {
 		await sdk.agents.dispatch(sessionId, prompt, { tabId: tabId });
 		return { ok: true, error: null };
 	} catch (err) {
+		// agents.dispatch refused: a revoked grant drops the session; every other denial (unsigned, no
+		// unattended consent, the rate cap, an unknown tab) is returned verbatim.
 		const message = errorMessage(err);
 		if (isGrantDenial(message)) {
 			grantedSessions.delete(sessionId);
@@ -1252,6 +1257,7 @@ async function readBoardFile(path, expectedProjectPath) {
 	try {
 		text = await sdk.fs.read(path);
 	} catch (err) {
+		// Board file read failed: ENOENT means "no file yet, use defaults"; anything else is reported.
 		if (isFileNotFoundError(err)) return { board: null, error: null };
 		return { board: null, error: { message: errorMessage(err), path: path } };
 	}
@@ -1268,6 +1274,7 @@ async function readBoardFile(path, expectedProjectPath) {
 		}
 		return { board: board, error: null };
 	} catch (err) {
+		// The board YAML did not parse, or names another project: reported, never silently defaulted.
 		return { board: null, error: { message: errorMessage(err), path: path } };
 	}
 }
@@ -1313,6 +1320,7 @@ async function saveProjectBoard(projectPath, board) {
 	try {
 		existingText = await sdk.fs.read(path);
 	} catch (err) {
+		// Only ENOENT is survivable here (nothing to protect); any other read failure aborts the write.
 		if (!isFileNotFoundError(err)) throw err;
 	}
 	if (existingText !== null) {
@@ -1345,6 +1353,7 @@ async function writeDefaultBoard(projectPath) {
 	try {
 		await sdk.fs.read(path);
 	} catch (err) {
+		// Only ENOENT means "no board yet"; any other read failure bubbles rather than overwriting.
 		if (!isFileNotFoundError(err)) throw err;
 		fileExists = false;
 	}
@@ -1478,6 +1487,7 @@ async function loadPlacements(boardPath) {
 			}
 		}
 	} catch (err) {
+		// storage.get refused: this board falls back to deriveColumn() placements for the session.
 		console.error(
 			'maestro-kanban: failed to read stored placements for ' + boardPath + ': ' + String(err)
 		);
@@ -1582,6 +1592,7 @@ async function flushDirtyPlacements() {
 		try {
 			await sdk.storage.set(placementStorageKey(boardPath), JSON.stringify(obj));
 		} catch (err) {
+			// storage.set refused: the move holds on screen but is not remembered across a restart.
 			console.error(
 				'maestro-kanban: failed to persist placements for ' + boardPath + ': ' + String(err)
 			);
@@ -1668,6 +1679,7 @@ async function clearAllPlacements() {
 		try {
 			await sdk.storage.delete(placementStorageKey(boardPath));
 		} catch (err) {
+			// storage.delete refused: a stale placement key survives; the board is already cleared.
 			console.error(
 				'maestro-kanban: failed to clear placements for ' + boardPath + ': ' + String(err)
 			);
@@ -1772,6 +1784,7 @@ async function loadCardNotes() {
 			}
 		}
 	} catch (err) {
+		// storage.get refused: cards start this session with no description and no comments.
 		console.error('maestro-kanban: failed to read stored card notes: ' + String(err));
 	}
 }
@@ -1798,6 +1811,7 @@ async function persistCardNotes() {
 	try {
 		await sdk.storage.set(CARD_NOTES_STORAGE_KEY, JSON.stringify(obj));
 	} catch (err) {
+		// storage.set refused: the note shows on screen but is not remembered across a restart.
 		console.error('maestro-kanban: failed to persist card notes: ' + String(err));
 	}
 }
@@ -1904,6 +1918,7 @@ async function loadBoardSettings() {
 			}
 		}
 	} catch (err) {
+		// storage.get refused: this board runs on the default settings for the session.
 		console.error('maestro-kanban: failed to read stored board settings: ' + String(err));
 	}
 }
@@ -1919,6 +1934,7 @@ async function persistBoardSettings() {
 	try {
 		await sdk.storage.set(BOARD_SETTINGS_STORAGE_KEY, JSON.stringify(obj));
 	} catch (err) {
+		// storage.set refused: the setting holds on screen but is not remembered across a restart.
 		console.error('maestro-kanban: failed to persist board settings: ' + String(err));
 	}
 }
@@ -2255,6 +2271,8 @@ async function loadArchive(boardId) {
 	try {
 		text = await sdk.fs.read(path);
 	} catch (err) {
+		// Archive read failed: ENOENT is an empty archive; anything else is reported, never
+		// written over.
 		if (isFileNotFoundError(err)) return { records: [], error: null, exists: false };
 		return { records: [], error: { message: errorMessage(err), path: path }, exists: true };
 	}
@@ -2274,6 +2292,7 @@ async function loadArchive(boardId) {
 		records.sort(compareArchiveRecords);
 		return { records: records, error: null, exists: true };
 	} catch (err) {
+		// The archive JSON did not parse: reported, so saveArchive() refuses to overwrite it.
 		return { records: [], error: { message: errorMessage(err), path: path }, exists: true };
 	}
 }
@@ -2770,6 +2789,7 @@ function startRetirementTicks() {
 	if (retirementTimer) return;
 	retirementTimer = setInterval(function () {
 		runRetirementSweep().catch(function (err) {
+			// A sweep that threw must not take the interval down with it; the next tick retries.
 			console.error('maestro-kanban: retirement sweep failed: ' + String(err));
 		});
 	}, RETIREMENT_TICK_MS);
@@ -2851,6 +2871,7 @@ async function readLiveTabStatuses() {
 		}
 		return statuses;
 	} catch (err) {
+		// tabs.list refused: null is never read as "not busy", so no tab is closed on this sweep.
 		console.error(
 			'maestro-kanban: tabs.list failed while checking whether a retiring card is busy, ' +
 				'so no tab is closed and those cards wait for the next sweep: ' +
@@ -2942,6 +2963,7 @@ async function closeTabsForRetiredCards(candidates, retiredKeys, reason) {
 		try {
 			await sdk.tabs.close(card.tabId);
 		} catch (err) {
+			// tabs.close refused (stale tab id, or the host declined): the card is archived either way.
 			console.error(
 				'maestro-kanban: could not close tab ' +
 					card.tabId +
@@ -3209,6 +3231,7 @@ async function loadArchiveBoardIndex() {
 			}
 		}
 	} catch (err) {
+		// storage.get refused: the index degrades to "no board has an archive" for this session.
 		console.error('maestro-kanban: failed to read the archive board index: ' + String(err));
 	}
 	return archiveBoardIndex;
@@ -3230,6 +3253,7 @@ async function noteArchiveBoard(boardId) {
 			JSON.stringify(Array.from(archiveBoardIndex))
 		);
 	} catch (err) {
+		// storage.set refused: this board's archive file is still written, only the index forgets it.
 		console.error('maestro-kanban: failed to remember the archive board index: ' + String(err));
 	}
 }
@@ -3280,6 +3304,8 @@ async function liveCardKeys() {
 		}
 		return keys;
 	} catch (err) {
+		// tabs.list refused: null is never read as "the tab is gone", so nothing is offered for
+		// restore.
 		console.error(
 			'maestro-kanban: tabs.list failed while checking which archived cards still have a tab, ' +
 				'so none is offered for restore: ' +
@@ -3759,6 +3785,7 @@ async function loadConductorConfigs() {
 			}
 		}
 	} catch (err) {
+		// storage.get refused: every board runs on the default conductor configuration this session.
 		console.error('maestro-kanban: failed to read stored conductor configuration: ' + String(err));
 	}
 }
@@ -3775,6 +3802,7 @@ async function persistConductorConfigs() {
 	try {
 		await sdk.storage.set(CONDUCTOR_CONFIG_STORAGE_KEY, JSON.stringify(obj));
 	} catch (err) {
+		// storage.set refused: the configuration holds on screen but is forgotten on restart.
 		console.error('maestro-kanban: failed to persist conductor configuration: ' + String(err));
 	}
 }
@@ -3846,17 +3874,24 @@ async function setConductorConfig(boardId, patch) {
  * will see files or only the board snapshot). A plugin cannot install a
  * provider for the user, so the picker never claims to offer one nothing is
  * running - "only providers you already run an agent for appear" is the
- * literal truth, not a hedge. A failed `agents.list()` degrades to an empty
- * list rather than breaking the rest of the snapshot.
- * @returns {Promise<{ toolType: string, supportsAdditionalDirectories: boolean }[]>}
+ * literal truth, not a hedge.
+ *
+ * A failed `agents.list()` degrades this one picker and nothing else, and it
+ * degrades HONESTLY: the options come back empty with `error` set, because
+ * an empty picker on its own reads as "you run no agents", which is a
+ * different and much more discouraging statement than "Maestro would not
+ * tell us". The panel renders the two differently - see renderConductorSettings.
+ * @returns {Promise<{ options: { toolType: string, supportsAdditionalDirectories: boolean }[],
+ * error: string|null }>}
  */
 async function conductorProviderOptions() {
 	let entries;
 	try {
 		entries = await sdk.agents.list();
 	} catch (err) {
+		// agents.list refused: reported to the picker as an error, never as "you run no providers".
 		console.error('maestro-kanban: agents.list failed: ' + String(err));
-		return [];
+		return { options: [], error: errorMessage(err) };
 	}
 	const byToolType = new Map();
 	for (const entry of Array.isArray(entries) ? entries : []) {
@@ -3867,9 +3902,10 @@ async function conductorProviderOptions() {
 			supportsAdditionalDirectories: entry.supportsAdditionalDirectories === true,
 		});
 	}
-	return Array.from(byToolType.values()).sort(function (a, b) {
+	const options = Array.from(byToolType.values()).sort(function (a, b) {
 		return a.toolType < b.toolType ? -1 : a.toolType > b.toolType ? 1 : 0;
 	});
+	return { options: options, error: null };
 }
 
 /** The fields of a `conductor-config` post, as a patch for
@@ -4001,12 +4037,17 @@ async function conductorSettingsSnapshot() {
 	const boardId = currentBoardId();
 	const conductorId = await resolveConductorSessionId(boardId);
 	const config = conductorConfigForBoard(boardId);
-	const providers = await conductorProviderOptions();
+	const providerRead = await conductorProviderOptions();
+	const providers = providerRead.options;
 	return {
 		boardId: boardId,
 		boardName: currentBoardName(),
 		config: config,
 		providers: providers,
+		// Non-null only when agents.list() refused, so the picker can say that
+		// instead of claiming the user runs no providers (see
+		// conductorProviderOptions above).
+		providersError: providerRead.error,
 		providerSupportsDirectories: conductorProviderSupportsDirectories(providers, config.agentId),
 		reach: conductorReachForBoard(),
 		conductorId: conductorId,
@@ -4129,6 +4170,8 @@ async function loadConductorIds() {
 			}
 		}
 	} catch (err) {
+		// storage.get refused: no board remembers its conductor this session; createConductor()
+		// says so.
 		console.error('maestro-kanban: failed to read stored conductor ids: ' + String(err));
 	}
 }
@@ -4144,6 +4187,7 @@ async function persistConductorIds() {
 	try {
 		await sdk.storage.set(CONDUCTOR_ID_STORAGE_KEY, JSON.stringify(obj));
 	} catch (err) {
+		// storage.set refused: the conductor exists but is re-created after a restart.
 		console.error('maestro-kanban: failed to persist conductor ids: ' + String(err));
 	}
 }
@@ -4188,6 +4232,7 @@ async function resolveConductorSessionId(boardId) {
 	try {
 		session = await sdk.sessions.get(id);
 	} catch (err) {
+		// sessions.get refused (grant revoked, or the id is stale): treated as "no conductor".
 		console.error('maestro-kanban: sessions.get (conductor) failed: ' + String(err));
 		return null;
 	}
@@ -4267,6 +4312,7 @@ async function createConductor(args) {
 	try {
 		await writeConductorReadme(boardId);
 	} catch (err) {
+		// The conductor scratch folder could not be written: no agent is created without one.
 		console.error('maestro-kanban: writing the conductor README failed: ' + String(err));
 		await safeToast('Could not create a conductor: could not write its scratch folder.');
 		return { ok: false, reason: errorMessage(err) };
@@ -4282,6 +4328,7 @@ async function createConductor(args) {
 	try {
 		created = await sdk.sessions.create(createParams);
 	} catch (err) {
+		// sessions.create refused: no conductor exists, and the reason is handed back to the panel.
 		console.error('maestro-kanban: sessions.create (conductor) failed: ' + String(err));
 		await safeToast('Could not create the conductor agent.');
 		return { ok: false, reason: errorMessage(err) };
@@ -4427,6 +4474,7 @@ async function syncConductorReach() {
 	try {
 		await sdk.sessions.update(conductorId, { additionalDirectories: directories });
 	} catch (err) {
+		// sessions.update refused: a revoked grant drops the conductor; the reach is left unchanged.
 		const message = errorMessage(err);
 		if (isGrantDenial(message)) {
 			grantedSessions.delete(conductorId);
@@ -4450,6 +4498,7 @@ function scheduleReachSync() {
 	reachSyncTimer = setTimeout(function () {
 		reachSyncTimer = null;
 		syncConductorReach().catch(function (err) {
+			// A reach sync that threw must not take the debounce timer down with it.
 			console.error('maestro-kanban: syncConductorReach failed: ' + String(err));
 		});
 	}, REACH_SYNC_DEBOUNCE_MS);
@@ -4608,6 +4657,7 @@ async function loadPlanSettings() {
 			}
 		}
 	} catch (err) {
+		// storage.get refused: every board runs on the default plan settings for the session.
 		console.error('maestro-kanban: failed to read stored plan settings: ' + String(err));
 	}
 }
@@ -4626,6 +4676,7 @@ async function persistPlanSettings() {
 		await sdk.storage.set(PLAN_SETTINGS_STORAGE_KEY, JSON.stringify(obj));
 		return true;
 	} catch (err) {
+		// storage.set refused: reported to the caller, which refuses the setting rather than faking it.
 		console.error('maestro-kanban: failed to persist plan settings: ' + String(err));
 		return false;
 	}
@@ -5320,6 +5371,7 @@ function extractPlanJson(text) {
 	try {
 		return { value: JSON.parse(usable[0].body), error: null };
 	} catch (err) {
+		// The fenced block is not JSON after all: reported as the plan's own parse failure.
 		return { error: 'the plan is not valid JSON: ' + errorMessage(err) };
 	}
 }
@@ -6080,6 +6132,7 @@ async function settlePlanRun(boardId, run) {
 	try {
 		text = await sdk.fs.read(planFilePath(boardId, run.planId));
 	} catch (err) {
+		// The plan file could not be read: ENOENT means the conductor never wrote one.
 		if (run.status !== 'running') return;
 		const reason = isFileNotFoundError(err)
 			? 'the conductor finished without writing this plan'
@@ -6111,6 +6164,7 @@ function onPlanRunEvent(topic, payload) {
 	for (const [boardId, run] of planRuns) {
 		if (run.status !== 'running' || run.conductorSessionId !== sessionId) continue;
 		settlePlanRun(boardId, run).catch(function (err) {
+			// Settling a plan run must not throw out of the event handler that noticed the turn ended.
 			console.error(
 				'maestro-kanban: settling the plan run for ' + boardId + ' failed: ' + String(err)
 			);
@@ -6213,6 +6267,8 @@ async function askConductor(args) {
 	try {
 		await sdk.agents.dispatch(conductorId, request.prompt);
 	} catch (err) {
+		// agents.dispatch refused: a revoked grant drops the conductor; the run settles as
+		// not-connected.
 		const message = errorMessage(err);
 		if (isGrantDenial(message)) {
 			grantedSessions.delete(conductorId);
@@ -6236,6 +6292,7 @@ async function askConductor(args) {
 	}
 	run.timeoutTimer = setTimeout(function () {
 		onPlanRunTimeout(boardId, run).catch(function (err) {
+			// Timeout handling must not throw out of the timer that fired it.
 			console.error('maestro-kanban: plan run timeout handling failed: ' + String(err));
 		});
 	}, PLAN_RUN_TIMEOUT_MS);
@@ -6502,6 +6559,7 @@ async function executePlanRun(boardId, run) {
 					boardId: boardId,
 				});
 			} catch (err) {
+				// handleMove() refused this step (WIP cap, illegal drop, stale board): recorded per step.
 				result = { ok: false, reason: errorMessage(err) };
 			}
 			const moved = result && result.ok === true;
@@ -6532,6 +6590,8 @@ async function executePlanRun(boardId, run) {
 			try {
 				accessResult = await sdk.sessions.requestAccess(data.sessionId);
 			} catch (err) {
+				// sessions.requestAccess refused: this step records "not connected" rather than
+				// silently skipping.
 				console.error(
 					'maestro-kanban: sessions.requestAccess (plan execution) failed: ' + String(err)
 				);
@@ -6735,6 +6795,7 @@ async function loadActivityLog() {
 			}
 		}
 	} catch (err) {
+		// storage.get refused: the feed starts empty this session rather than partial.
 		console.error('maestro-kanban: failed to read the stored activity log: ' + String(err));
 	}
 }
@@ -6751,6 +6812,7 @@ async function persistActivityLog() {
 	try {
 		await sdk.storage.set(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(obj));
 	} catch (err) {
+		// storage.set refused: the feed holds on screen but is not remembered across a restart.
 		console.error('maestro-kanban: failed to persist the activity log: ' + String(err));
 	}
 }
@@ -7041,6 +7103,7 @@ async function loadSelectedBoard() {
 		const raw = await sdk.storage.get(SELECTED_BOARD_STORAGE_KEY);
 		selectedBoardId = typeof raw === 'string' && raw !== '' ? raw : null;
 	} catch (err) {
+		// storage.get refused: the board switcher falls back to the active project's board.
 		console.error('maestro-kanban: failed to read the remembered board: ' + String(err));
 		selectedBoardId = null;
 	}
@@ -7558,6 +7621,41 @@ async function rebuildCardsFromTabs(tabs) {
 	scheduleReachSync();
 }
 
+// ---------------------------------------------------------------------------
+// Phase 08 honest failure state: the card model's own freshness.
+//
+// Every other read in this plugin degrades a feature that is visible on its
+// own terms - an archive that will not read says so in the archive view, a
+// board file that will not parse says so in the banner. The card model is
+// the one read whose failure is INVISIBLE: `cards` simply keeps whatever the
+// last successful tabs.list() produced, and a board drawn from it looks
+// exactly like a board where nothing has happened lately. So a refused
+// sessions.list()/tabs.list() is recorded here and rides out on the snapshot
+// (`cardsStale`), and the panel says the cards may be out of date rather
+// than painting them as live.
+// ---------------------------------------------------------------------------
+
+/** @type {{ call: string, message: string }|null} The read that should have
+ * refreshed the card model and did not. Null whenever the model is as fresh
+ * as the host last reported it. */
+let cardRefreshError = null;
+
+/** @param {string} call @param {unknown} err */
+function noteCardRefreshFailure(call, err) {
+	cardRefreshError = { call: call, message: errorMessage(err) };
+}
+
+function clearCardRefreshFailure() {
+	cardRefreshError = null;
+}
+
+/** The stale-card notice for the panel: null when the model is fresh,
+ * otherwise which host read failed and the host's own reason. */
+function cardRefreshSnapshot() {
+	if (!cardRefreshError) return null;
+	return { call: cardRefreshError.call, message: cardRefreshError.message };
+}
+
 function scheduleRefresh() {
 	if (refreshTimer) return;
 	refreshTimer = setTimeout(() => {
@@ -7573,12 +7671,16 @@ function doRefresh() {
 		.list()
 		.then((tabs) => rebuildCardsFromTabs(tabs))
 		.then(() => {
+			clearCardRefreshFailure();
 			schedulePanelPush();
 		})
 		.catch((err) => {
-			// A rejected RPC degrades this refresh only; existing cards are left
-			// as they were rather than wiping the board.
+			// tabs.list refused: this refresh degrades only - the cards already on
+			// screen are left alone rather than wiped - but the panel is told they
+			// are now older than the host, so it never paints them as live.
 			console.error('maestro-kanban: tabs.list failed: ' + String(err));
+			noteCardRefreshFailure('tabs.list', err);
+			schedulePanelPush();
 		});
 }
 
@@ -7587,6 +7689,7 @@ function schedulePanelPush() {
 	panelTimer = setTimeout(() => {
 		panelTimer = null;
 		pushSnapshotNow().catch((err) => {
+			// A debounced push that threw must not take the timer down with it; the next push retries.
 			console.error('maestro-kanban: pushSnapshotNow failed: ' + String(err));
 		});
 	}, PANEL_PUSH_DEBOUNCE_MS);
@@ -7766,6 +7869,10 @@ async function buildSnapshot() {
 		updatedAt: Date.now(),
 		columns: board.columns,
 		boardError: board.boardError,
+		// Non-null only when the host refused the read that would have
+		// refreshed these cards - see the card-freshness section above. The
+		// panel draws the cards either way; it just stops calling them live.
+		cardsStale: cardRefreshSnapshot(),
 		globalBoardMissing: board.globalBoardMissing,
 		activeProjectPath: active.projectPath,
 		projectBoardMissing: board.projectBoardMissing,
@@ -7797,6 +7904,7 @@ function serializedSize(snapshot) {
 	try {
 		return JSON.stringify(snapshot).length;
 	} catch {
+		// A snapshot JSON.stringify refuses cannot be posted at all, so Infinity forces the trim path.
 		return Infinity;
 	}
 }
@@ -7877,6 +7985,7 @@ function trimToBudget(snapshot) {
 
 function safeToast(message) {
 	if (!sdk) return Promise.resolve();
+	// A refused toast is never worth failing the action that raised it.
 	return sdk.notifications.toast(message).catch(() => {});
 }
 
@@ -7893,6 +8002,7 @@ async function pushSnapshotNow() {
 		safeToast('Kanban board is large; some card detail was trimmed to fit the panel.');
 	}
 	await sdk.ui.panelPost('board', result.snapshot).catch((err) => {
+		// panelPost refused (the panel is closed, or the post is oversize): the next push retries.
 		console.error('maestro-kanban: panelPost failed: ' + String(err));
 	});
 }
@@ -7986,26 +8096,40 @@ function registerEventHandlers(maestro) {
 
 /** Re-seed everything from sessions.list()/tabs.list() and push right away.
  * Used at activate() and by the 'refresh' command. A rejected sessions.list()
- * still lets tabs.list() run, so the board degrades rather than going blank. */
+ * still lets tabs.list() run, so the board degrades rather than going blank -
+ * but either refusal is recorded as the snapshot's stale-card notice (see the
+ * freshness section above), because a board seeded from a read the host
+ * refused is not a board with nothing on it. */
 async function seed() {
+	/** @type {{ call: string, err: unknown }|null} */
+	let failure = null;
 	try {
 		const sessions = await sdk.sessions.list();
 		rebuildSessionMeta(sessions);
 	} catch (err) {
+		// sessions.list refused: the cards still rebuild from tabs.list() below, but their titles
+		// and projects are as old as the last read that worked, so this still counts as stale.
 		console.error('maestro-kanban: sessions.list failed: ' + String(err));
+		failure = { call: 'sessions.list', err: err };
 	}
 	try {
 		const tabs = await sdk.tabs.list();
 		await rebuildCardsFromTabs(tabs);
 	} catch (err) {
+		// tabs.list refused: the card model is untouched rather than wiped, and the notice names
+		// this read rather than sessions.list() because it is the worse of the two failures.
 		console.error('maestro-kanban: tabs.list failed: ' + String(err));
+		failure = { call: 'tabs.list', err: err };
 	}
+	if (failure) noteCardRefreshFailure(failure.call, failure.err);
+	else clearCardRefreshFailure();
 	await pushSnapshotNow();
 }
 
 function registerCommands(maestro) {
 	maestro.commands.register('open', () => {
 		invalidateBoardCache();
+		// togglePanel refused: nothing else in this command depends on it.
 		return maestro.ui.togglePanel('board').catch(() => {});
 	});
 
@@ -8039,6 +8163,8 @@ function registerCommands(maestro) {
 				)
 			)
 			.catch((err) => {
+				// The default board could not be written (the path exists, or fs refused): the reason
+				// is toasted.
 				console.error('maestro-kanban: write-default-board failed: ' + String(err));
 				return safeToast(errorMessage(err)).then(() => ({ ok: false, error: errorMessage(err) }));
 			});
@@ -8049,6 +8175,7 @@ function registerCommands(maestro) {
 			.then(() => seed())
 			.then(() => ({ ok: true }))
 			.catch((err) => {
+				// Clearing placements failed: the board keeps whatever arrangement it already had.
 				console.error('maestro-kanban: clear-placements failed: ' + String(err));
 				return { ok: false };
 			})
@@ -8058,6 +8185,7 @@ function registerCommands(maestro) {
 	// needed since the palette has no way to pick which board it would mean.
 	maestro.commands.register('select-board', (args) =>
 		selectBoard(args && args.boardId).catch((err) => {
+			// The board could not be switched (its file failed to read): the switcher stays where it was.
 			console.error('maestro-kanban: select-board failed: ' + String(err));
 			return safeToast('Could not switch boards.').then(() => ({ ok: false }));
 		})
@@ -8075,6 +8203,8 @@ function registerCommands(maestro) {
 		const boardId =
 			args && typeof args.boardId === 'string' && args.boardId !== '' ? args.boardId : null;
 		return clearDoneColumn(boardId).catch((err) => {
+			// Clear Done failed (the archive refused the write): nothing is retired, and the
+			// reason is shown.
 			console.error('maestro-kanban: clear-done failed: ' + String(err));
 			return safeToast('Could not clear Done: ' + errorMessage(err)).then(() => ({
 				ok: false,
@@ -8092,6 +8222,7 @@ function registerCommands(maestro) {
 		const cardKey = args && typeof args.cardKey === 'string' ? args.cardKey : undefined;
 		if (!cardKey) return Promise.resolve({ ok: false, error: 'cardKey is required' });
 		return archiveCardNow(cardKey).catch((err) => {
+			// Archiving one card failed (the archive refused the write): the card stays on the board.
 			console.error('maestro-kanban: archive-card failed: ' + String(err));
 			return safeToast('Could not archive that card: ' + errorMessage(err)).then(() => ({
 				ok: false,
@@ -8108,6 +8239,7 @@ function registerCommands(maestro) {
 	// reply to a post, so the view can only ever arrive on a snapshot.
 	maestro.commands.register('archive-view', (args) =>
 		setArchiveView(args).catch((err) => {
+			// The archive view could not be built (an archive file failed to read): the reason is shown.
 			console.error('maestro-kanban: archive-view failed: ' + String(err));
 			return safeToast('Could not open the archive: ' + errorMessage(err)).then(() => ({
 				ok: false,
@@ -8124,6 +8256,7 @@ function registerCommands(maestro) {
 	// snapshot (see buildActivityView(), Phase 07 board activity feed).
 	maestro.commands.register('activity-view', (args) =>
 		setActivityView(args).catch((err) => {
+			// The activity feed could not be built: the reason is shown rather than an empty feed.
 			console.error('maestro-kanban: activity-view failed: ' + String(err));
 			return safeToast('Could not open the activity feed: ' + errorMessage(err)).then(() => ({
 				ok: false,
@@ -8141,6 +8274,7 @@ function registerCommands(maestro) {
 		const cardKey = args && typeof args.cardKey === 'string' ? args.cardKey : undefined;
 		if (!cardKey) return Promise.resolve({ ok: false, error: 'cardKey is required' });
 		return restoreArchivedCard(cardKey, args && args.boardId).catch((err) => {
+			// Restore failed (the archive refused the rewrite): the record stays archived.
 			console.error('maestro-kanban: restore-card failed: ' + String(err));
 			return safeToast('Could not restore that card: ' + errorMessage(err)).then(() => ({
 				ok: false,
@@ -8158,6 +8292,7 @@ function registerCommands(maestro) {
 	// here that can cost someone a tab and its transcript.
 	maestro.commands.register('board-settings', (args) =>
 		applyBoardSettings(args).catch((err) => {
+			// The setting could not be saved: the board keeps the setting it had, and says so.
 			console.error('maestro-kanban: board-settings failed: ' + String(err));
 			return safeToast('Could not save that setting: ' + errorMessage(err)).then(() => ({
 				ok: false,
@@ -8173,6 +8308,7 @@ function registerCommands(maestro) {
 	// before the post landed.
 	maestro.commands.register('conductor-config', (args) =>
 		applyConductorConfig(args).catch((err) => {
+			// The conductor configuration could not be saved: the board keeps the one it had.
 			console.error('maestro-kanban: conductor-config failed: ' + String(err));
 			return safeToast('Could not save that setting: ' + errorMessage(err)).then(() => ({
 				ok: false,
@@ -8205,6 +8341,7 @@ function registerCommands(maestro) {
 	// none - the palette has no board in hand to configure.
 	maestro.commands.register('plan-settings', (args) =>
 		applyPlanSettings(args).catch((err) => {
+			// The plan setting could not be saved: the board keeps the setting it had, and says so.
 			console.error('maestro-kanban: plan-settings failed: ' + String(err));
 			return safeToast('Could not save that setting: ' + errorMessage(err)).then(() => ({
 				ok: false,
@@ -8259,6 +8396,7 @@ function registerCommands(maestro) {
 		return recordDecisionActivity(boardId, outcome.run)
 			.then(() => executePlanRun(boardId, outcome.run))
 			.catch((err) => {
+				// Executing an approved plan threw: the run's own per-step results still reach the panel.
 				console.error('maestro-kanban: executing plan ' + planId + ' failed: ' + String(err));
 			})
 			.then(() => pushSnapshotNow())
@@ -8288,6 +8426,8 @@ function registerCommands(maestro) {
 		return recordDecisionActivity(boardId, outcome.run)
 			.then(() => executePlanRun(boardId, outcome.run))
 			.catch((err) => {
+				// Executing an auto-approved plan threw: the run's own per-step results still reach
+				// the panel.
 				console.error('maestro-kanban: executing plan ' + planId + ' failed: ' + String(err));
 			})
 			.then(() => pushSnapshotNow())
@@ -8333,6 +8473,7 @@ function registerCommands(maestro) {
 	// surfaced in the command palette.
 	maestro.commands.register('move', (args) =>
 		handleMove(args).catch((err) => {
+			// The move threw outright: refused by card key, so the panel snaps that one card back.
 			console.error('maestro-kanban: move failed: ' + String(err));
 			return refuseMove(
 				args && typeof args.cardKey === 'string' ? args.cardKey : '',
@@ -8351,6 +8492,7 @@ function registerCommands(maestro) {
 			.closePanel('board')
 			.then(() => ({ ok: true }))
 			.catch((err) => {
+				// closePanel refused: the panel is already closed, or the host declined.
 				console.error('maestro-kanban: close-panel failed: ' + String(err));
 				return { ok: false };
 			})
@@ -8377,6 +8519,7 @@ function registerCommands(maestro) {
 				return pushSnapshotNow().then(() => ({ ok: true, granted: granted }));
 			})
 			.catch((err) => {
+				// sessions.requestAccess refused: the card stays "not connected" and the reason is toasted.
 				console.error('maestro-kanban: sessions.requestAccess failed: ' + String(err));
 				return safeToast('Could not request access to that agent.').then(() => ({
 					ok: false,
@@ -8406,6 +8549,7 @@ function registerCommands(maestro) {
 			.then(() => pushSnapshotNow())
 			.then(() => ({ ok: true }))
 			.catch((err) => {
+				// The History excerpt could not be read: readSessionHistoryExcerpt() stored the reason.
 				console.error('maestro-kanban: read-history failed: ' + String(err));
 				return { ok: false, error: errorMessage(err) };
 			});
@@ -8446,6 +8590,7 @@ function registerCommands(maestro) {
 				.then(() => pushSnapshotNow())
 				.then(() => ({ ok: true }))
 				.catch((err) => {
+					// The description could not be saved: the panel is told and the card keeps its text.
 					console.error('maestro-kanban: card-note description failed: ' + String(err));
 					return { ok: false, error: errorMessage(err) };
 				});
@@ -8459,6 +8604,7 @@ function registerCommands(maestro) {
 				.then(() => pushSnapshotNow())
 				.then(() => ({ ok: true }))
 				.catch((err) => {
+					// The comment could not be saved: the panel is told and the card keeps its comments.
 					console.error('maestro-kanban: card-note comment failed: ' + String(err));
 					return { ok: false, error: errorMessage(err) };
 				});
@@ -8513,6 +8659,7 @@ function registerCommands(maestro) {
 				);
 			})
 			.catch((err) => {
+				// sessions.requestAccess refused: the send is recorded as failed, never dropped.
 				console.error(
 					'maestro-kanban: sessions.requestAccess (from send-message) failed: ' + String(err)
 				);
@@ -8534,6 +8681,7 @@ function registerCommands(maestro) {
 			.focus(sessionId, tabId)
 			.then(() => ({ ok: true }))
 			.catch((err) => {
+				// sessions.focus refused (stale session or tab id): the user is told it did not happen.
 				console.error('maestro-kanban: sessions.focus failed: ' + String(err));
 				return safeToast('Could not jump to that agent.').then(() => ({ ok: false }));
 			});
@@ -8837,6 +8985,7 @@ module.exports = {
 		try {
 			await maestro.events.subscribe(EVENT_TOPICS);
 		} catch (err) {
+			// events.subscribe refused: the board still seeds and renders, it just stops updating itself.
 			console.error('maestro-kanban: events.subscribe failed: ' + String(err));
 		}
 		// Before seed(), so the first snapshot already renders the board the
@@ -8921,6 +9070,7 @@ module.exports = {
 		openHistorySessionId = null;
 		lastMessageOutcomes.clear();
 		if (sdk) {
+			// events.unsubscribe refused on deactivate: the host tears the sandbox down regardless.
 			return sdk.events.unsubscribe().catch(() => {});
 		}
 		return undefined;

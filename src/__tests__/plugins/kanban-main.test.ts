@@ -574,6 +574,97 @@ describe('maestro-kanban main.js', () => {
 		await expect(plugin.activate(maestro)).resolves.toBeUndefined();
 	});
 
+	// Phase 08 honest failure states. A refused tabs.list() leaves the card
+	// model exactly as it was, which on screen is indistinguishable from a
+	// board where nothing happened - so the snapshot has to say so.
+	describe('card-model staleness', () => {
+		it('rides a cardsStale notice naming tabs.list when the seed read is refused', async () => {
+			const plugin = loadMain();
+			const { maestro } = createStubMaestro({
+				tabsList: () => Promise.reject(new Error('RPC down')),
+			});
+
+			await plugin.activate(maestro);
+
+			const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				cardsStale: { call: string; message: string } | null;
+			};
+			expect(snapshot.cardsStale).toEqual({ call: 'tabs.list', message: 'RPC down' });
+		});
+
+		it('names sessions.list when only that read is refused, since the titles are stale too', async () => {
+			const plugin = loadMain();
+			const { maestro } = createStubMaestro({
+				sessionsList: () => Promise.reject(new Error('capability sessions:list not granted')),
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+
+			await plugin.activate(maestro);
+
+			const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				cardsStale: { call: string; message: string } | null;
+				columns: { cards: { key: string }[] }[];
+			};
+			expect(snapshot.cardsStale).toEqual({
+				call: 'sessions.list',
+				message: 'capability sessions:list not granted',
+			});
+			// Degraded, not blank: the cards tabs.list() did return are still drawn.
+			expect(snapshot.columns.flatMap((c) => c.cards).map((c) => c.key)).toEqual([
+				'session-1::tab-1',
+			]);
+		});
+
+		it('leaves cardsStale null when both reads succeed', async () => {
+			const plugin = loadMain();
+			const { maestro } = createStubMaestro({
+				tabsList: () => Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+
+			await plugin.activate(maestro);
+
+			const snapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				cardsStale: unknown;
+			};
+			expect(snapshot.cardsStale).toBeNull();
+		});
+
+		it('pushes the notice from a failed background refresh, and clears it on the next good one', async () => {
+			const plugin = loadMain();
+			let failNext = false;
+			const { maestro, eventHandlers } = createStubMaestro({
+				tabsList: () =>
+					failNext
+						? Promise.reject(new Error('RPC down'))
+						: Promise.resolve([aiTab({ id: 'tab-1', sessionId: 'session-1' })]),
+			});
+
+			await plugin.activate(maestro);
+			maestro.ui.panelPost.mockClear();
+
+			failNext = true;
+			emit(eventHandlers, 'agent.statusChanged', { tabId: 'session-1', status: 'busy' });
+			await vi.advanceTimersByTimeAsync(200);
+
+			const failedSnapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				cardsStale: { call: string } | null;
+				columns: { cards: { key: string }[] }[];
+			};
+			expect(failedSnapshot.cardsStale).toEqual({ call: 'tabs.list', message: 'RPC down' });
+			// The card the last good read produced is still on the board.
+			expect(failedSnapshot.columns.flatMap((c) => c.cards)).toHaveLength(1);
+
+			failNext = false;
+			emit(eventHandlers, 'agent.statusChanged', { tabId: 'session-1', status: 'idle' });
+			await vi.advanceTimersByTimeAsync(200);
+
+			const recoveredSnapshot = maestro.ui.panelPost.mock.calls.at(-1)![1] as {
+				cardsStale: unknown;
+			};
+			expect(recoveredSnapshot.cardsStale).toBeNull();
+		});
+	});
+
 	it("switches the panel's resolved columns to the activated session's project board", async () => {
 		const plugin = loadMain();
 		const projectPath = '/Users/dev/projects/widgets';

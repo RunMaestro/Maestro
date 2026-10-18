@@ -199,6 +199,10 @@ export function snapshotWith(
 		boards?: SnapshotBoard[];
 		boardsHidden?: number;
 		globalBoardMissing?: boolean;
+		/** Phase 08: set when the host refused the read that would have
+		 * refreshed these cards, so the panel says they may be out of date
+		 * instead of painting them as live. Null the rest of the time. */
+		cardsStale?: { call: string; message: string } | null;
 		moveRejection?: SnapshotMoveRejection | null;
 		historyExcerpt?: SnapshotHistoryExcerpt | null;
 		/** Phase 05: how many cards Clear Done would retire right now, per
@@ -235,6 +239,7 @@ export function snapshotWith(
 		boards: opts.boards ?? [],
 		boardsHidden: opts.boardsHidden,
 		globalBoardMissing: opts.globalBoardMissing ?? false,
+		cardsStale: opts.cardsStale ?? null,
 		moveRejection: opts.moveRejection ?? null,
 		historyExcerpt: opts.historyExcerpt ?? null,
 		doneCardCount: opts.doneCardCount ?? 0,
