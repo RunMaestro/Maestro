@@ -990,6 +990,10 @@
 				color: var(--maestro-text-dim, #9d9d9d);
 				border: 1px solid var(--maestro-border, #3c3c3c);
 			}
+			.plan-row-badge-failed {
+				color: var(--maestro-error, #e06c75);
+				border: 1px solid var(--maestro-error, #e06c75);
+			}
 			.plan-row-edit {
 				flex: 0 0 auto;
 				align-self: flex-start;
@@ -1212,9 +1216,31 @@
 				color: var(--maestro-text-main, #e6e6e6);
 				border: 1px solid var(--maestro-border, #3c3c3c);
 			}
+			/* Not a parse error either, but still deliberate: every card on this
+			   board is frozen until a person clears the halt, which is exactly
+			   as prominent as a board that failed to load. */
+			#banner.banner-halted {
+				background: var(--maestro-warning, #e5c07b);
+				color: var(--maestro-bg-main, #1e1e1e);
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 10px;
+			}
 			.banner-path {
 				opacity: 0.85;
 				margin-left: 6px;
+			}
+			#banner-resume {
+				flex: 0 0 auto;
+				padding: 2px 10px;
+				font: inherit;
+				font-size: 12px;
+				color: var(--maestro-bg-main, #1e1e1e);
+				background: transparent;
+				border: 1px solid var(--maestro-bg-main, #1e1e1e);
+				border-radius: 6px;
+				cursor: pointer;
 			}
 			#toast {
 				position: fixed;
@@ -1379,6 +1405,22 @@
 				<span id="plan-status" class="board-settings-note"></span>
 				<button id="plan-allow-access" type="button" hidden>Allow Access</button>
 			</div>
+			<div class="board-settings-row">
+				<label for="plan-wip-cap">WIP cap</label>
+				<input id="plan-wip-cap" type="number" min="1" max="25" step="1" />
+				<span class="board-settings-note">cards this board executes at a time</span>
+				<button
+					id="plan-halt-toggle"
+					type="button"
+					aria-pressed="false"
+					title="Stop this board from moving or messaging any card until this is cleared again."
+				>
+					Halt
+				</button>
+			</div>
+			<p id="plan-halted-note" class="board-settings-note" hidden>
+				Halted: no card on this board will move or be messaged until the halt is cleared.
+			</p>
 			<p id="plan-rationale" class="board-settings-note" hidden></p>
 			<div id="plan-rejected" hidden>
 				<p class="board-settings-note">
@@ -2091,6 +2133,28 @@
 							pathEl.textContent = boardError.path;
 							banner.appendChild(pathEl);
 						}
+						return;
+					}
+					// A halt is not a parse error, but it is just as prominent: every
+					// card on this board is frozen until a person clears it, and the
+					// Resume button here is the second of the two ways to do that -
+					// the other being the Halt/Resume toggle in the Plan panel itself.
+					var planSettings = snapshot && snapshot.planSettings;
+					if (planSettings && planSettings.halted === true) {
+						banner.hidden = false;
+						banner.className = 'banner-halted';
+						var haltedMessage = document.createElement('span');
+						haltedMessage.textContent =
+							'This board is halted: no card will move or be messaged until it is cleared.';
+						banner.appendChild(haltedMessage);
+						var resume = document.createElement('button');
+						resume.id = 'banner-resume';
+						resume.type = 'button';
+						resume.textContent = 'Resume';
+						resume.addEventListener('click', function () {
+							postPlanSettings({ halted: false });
+						});
+						banner.appendChild(resume);
 						return;
 					}
 					// A Global board with no ~/.maestro/kanban.yaml has no columns to
@@ -3204,10 +3268,23 @@
 				 * textarea, or null. Dropped on close so a half-typed edit never
 				 * reappears on reopen. */
 				var planEditingCardKey = null;
+				/** The WIP cap field's own debounce state - the same rhythm the
+				 * aging surface's horizon field uses (see onHorizonInput()). */
+				var planWipCapTimer = null;
+				var planWipCapDirty = false;
 
 				function planOf(snapshot) {
 					var plan = snapshot && snapshot.planRun;
 					return plan && typeof plan === 'object' ? plan : null;
+				}
+
+				/** This board's WIP cap, mode and halt state - never null, unlike
+				 * planOf(), so the Halt control and the halted banner have
+				 * something to read even before the conductor has ever been
+				 * asked for a plan. */
+				function planSettingsOf(snapshot) {
+					var settings = snapshot && snapshot.planSettings;
+					return settings && typeof settings === 'object' ? settings : null;
 				}
 
 				function planPanelNodes() {
@@ -3221,6 +3298,9 @@
 						ask: document.getElementById('plan-ask'),
 						status: document.getElementById('plan-status'),
 						allowAccess: document.getElementById('plan-allow-access'),
+						wipCap: document.getElementById('plan-wip-cap'),
+						haltToggle: document.getElementById('plan-halt-toggle'),
+						haltedNote: document.getElementById('plan-halted-note'),
 						rationale: document.getElementById('plan-rationale'),
 						rejectedWrap: document.getElementById('plan-rejected'),
 						rejectedList: document.getElementById('plan-rejected-list'),
@@ -3294,6 +3374,25 @@
 					);
 				}
 
+				/** Posts one or more changed plan settings (the WIP cap, the Halt
+				 * control), carrying the id of the board the surface was drawn on -
+				 * the same echo postBoardSettings() carries for aging. */
+				function postPlanSettings(patch) {
+					var settings = planSettingsOf(currentSnapshot);
+					var boardId =
+						settings && typeof settings.boardId === 'string' && settings.boardId
+							? settings.boardId
+							: boardIdOf(currentSnapshot);
+					var args = { boardId: boardId };
+					Object.keys(patch).forEach(function (field) {
+						args[field] = patch[field];
+					});
+					parent.postMessage(
+						{ type: 'maestro:invokeCommand', commandId: 'plan-settings', args: args },
+						'*'
+					);
+				}
+
 				/** English status line above the diff, or the explanation for why
 				 * there is no diff to show yet. */
 				function planStatusText(plan) {
@@ -3337,9 +3436,30 @@
 				 * board's WIP cap.
 				 * @param {{kind: 'move'|'message', cardKey: string, data: object}} entry
 				 * @param {object} plan @param {boolean} decided */
+				/** What a decided row's badge should say once executePlanRun() has
+				 * (or has not yet) attempted it: Approved/Declined cover a row with
+				 * no outcome yet (not approved, or approved but not reached before
+				 * a halt); an outcome narrows an approved row to what actually
+				 * happened to it. */
+				function planRowExecutionLabel(decision, outcome) {
+					if (!decision) return { label: 'Declined', className: 'plan-row-badge-declined' };
+					if (!outcome) return { label: 'Approved', className: 'plan-row-badge-approved' };
+					if (outcome.status === 'moved' || outcome.status === 'sent') {
+						return { label: 'Executed', className: 'plan-row-badge-approved' };
+					}
+					if (outcome.status === 'pending-cap') {
+						return { label: 'Pending', className: 'plan-row-badge-cap' };
+					}
+					if (outcome.status === 'declined-access') {
+						return { label: 'Access declined', className: 'plan-row-badge-declined' };
+					}
+					return { label: 'Failed', className: 'plan-row-badge-failed' };
+				}
+
 				function buildPlanRow(entry, plan, decided) {
 					var key = planRowKey(entry.kind, entry.cardKey);
 					var decision = plan && plan.decisions ? plan.decisions[key] : undefined;
+					var outcome = plan && plan.execution ? plan.execution[key] : undefined;
 
 					var row = document.createElement('div');
 					row.className = 'plan-row';
@@ -3347,11 +3467,13 @@
 					head.className = 'plan-row-head';
 
 					if (decided) {
+						var status = planRowExecutionLabel(decision, outcome);
 						var badge = document.createElement('span');
-						badge.className =
-							'plan-row-badge ' +
-							(decision ? 'plan-row-badge-approved' : 'plan-row-badge-declined');
-						badge.textContent = decision ? 'Approved' : 'Declined';
+						badge.className = 'plan-row-badge ' + status.className;
+						badge.textContent = status.label;
+						if (outcome && typeof outcome.reason === 'string' && outcome.reason) {
+							badge.title = outcome.reason;
+						}
 						head.appendChild(badge);
 					} else {
 						var checkbox = document.createElement('input');
@@ -3473,6 +3595,10 @@
 						decidedAt: plan ? plan.decidedAt : null,
 						editing: planEditingCardKey,
 						result: result,
+						// So a row's badge advances from "Approved" to "Executed" (or
+						// "Pending (cap)", or "Access declined") as executePlanRun()
+						// fills in each row's outcome, without needing its own signal.
+						execution: plan ? plan.execution : null,
 					});
 				}
 
@@ -3492,13 +3618,37 @@
 					var conductor = conductorOf(snapshot);
 					var conductorExists = !!conductor && conductor.conductorExists === true;
 					var running = !!plan && plan.status === 'running';
+					var planSettings = planSettingsOf(snapshot);
+					var halted = !!planSettings && planSettings.halted === true;
 					if (nodes.ask) {
-						nodes.ask.disabled = !conductorExists || running;
+						nodes.ask.disabled = !conductorExists || running || halted;
 						nodes.ask.textContent = running ? 'Asking...' : 'Ask Conductor';
+						nodes.ask.title = halted
+							? 'This board is halted; clear the halt before asking the conductor for a plan.'
+							: '';
 					}
 					if (nodes.status) nodes.status.textContent = planStatusText(plan);
 					if (nodes.allowAccess)
 						nodes.allowAccess.hidden = !plan || plan.status !== 'not-connected';
+
+					if (nodes.wipCap) {
+						var editingWipCap = document.activeElement === nodes.wipCap || planWipCapTimer !== null;
+						if (planSettings && typeof planSettings.minWipCap === 'number') {
+							nodes.wipCap.min = String(planSettings.minWipCap);
+						}
+						if (planSettings && typeof planSettings.maxWipCap === 'number') {
+							nodes.wipCap.max = String(planSettings.maxWipCap);
+						}
+						if (!editingWipCap && planSettings && typeof planSettings.wipCap === 'number') {
+							nodes.wipCap.value = String(planSettings.wipCap);
+							planWipCapDirty = false;
+						}
+					}
+					if (nodes.haltToggle) {
+						nodes.haltToggle.setAttribute('aria-pressed', halted ? 'true' : 'false');
+						nodes.haltToggle.textContent = halted ? 'Resume' : 'Halt';
+					}
+					if (nodes.haltedNote) nodes.haltedNote.hidden = !halted;
 
 					var hasPlan =
 						!!plan && plan.status === 'parsed' && !!plan.result && plan.result.ok === true;
@@ -3593,6 +3743,9 @@
 					if (!planPanelOpen) return;
 					planPanelOpen = false;
 					planEditingCardKey = null;
+					// Anything typed and not yet posted is posted on the way out, the
+					// same rule closeBoardSettings() keeps for the horizon field.
+					flushPlanWipCap();
 					renderPlanPanel(currentSnapshot);
 				}
 
@@ -3623,6 +3776,40 @@
 						return;
 					}
 					requestConductorReachAccess(plan.conductorSessionId);
+				}
+
+				/** Posts whatever the WIP cap field currently holds, cancelling any
+				 * pending debounce - the same shape flushHorizon() uses. A blank or
+				 * unparseable field posts nothing. */
+				function flushPlanWipCap() {
+					if (planWipCapTimer) {
+						clearTimeout(planWipCapTimer);
+						planWipCapTimer = null;
+					}
+					if (!planWipCapDirty) return;
+					planWipCapDirty = false;
+					var nodes = planPanelNodes();
+					if (!nodes || !nodes.wipCap || nodes.wipCap.disabled) return;
+					var raw = nodes.wipCap.value;
+					if (typeof raw !== 'string' || raw.trim() === '') return;
+					var parsed = Number(raw);
+					if (!isFinite(parsed)) return;
+					postPlanSettings({ wipCap: parsed });
+				}
+
+				function onPlanWipCapInput() {
+					if (!planPanelOpen) return;
+					planWipCapDirty = true;
+					if (planWipCapTimer) clearTimeout(planWipCapTimer);
+					planWipCapTimer = setTimeout(function () {
+						planWipCapTimer = null;
+						flushPlanWipCap();
+					}, HORIZON_DEBOUNCE_MS);
+				}
+
+				function onPlanHaltToggleClick() {
+					var settings = planSettingsOf(currentSnapshot);
+					postPlanSettings({ halted: !(settings && settings.halted === true) });
 				}
 
 				// -------------------------------------------------------------
@@ -4685,6 +4872,20 @@
 
 				var planAllowAccessEl = document.getElementById('plan-allow-access');
 				if (planAllowAccessEl) planAllowAccessEl.addEventListener('click', onPlanAllowAccessClick);
+
+				var planWipCapEl = document.getElementById('plan-wip-cap');
+				if (planWipCapEl) {
+					planWipCapEl.addEventListener('input', onPlanWipCapInput);
+					planWipCapEl.addEventListener('change', flushPlanWipCap);
+					planWipCapEl.addEventListener('keydown', function (event) {
+						if (event.key !== 'Enter') return;
+						event.preventDefault();
+						flushPlanWipCap();
+					});
+				}
+
+				var planHaltToggleEl = document.getElementById('plan-halt-toggle');
+				if (planHaltToggleEl) planHaltToggleEl.addEventListener('click', onPlanHaltToggleClick);
 
 				// The <select> is static markup, never replaced by a render, so the
 				// listener is bound once here rather than per snapshot.

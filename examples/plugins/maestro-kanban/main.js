@@ -4716,6 +4716,104 @@ function isBoardHalted(boardId) {
 	return planSettingsForBoard(boardId).halted === true;
 }
 
+/** The plan settings surface's view of one board - its WIP cap, mode, halt
+ * state, and the bounds its number input should enforce - the same shape
+ * boardSettingsSnapshot()/conductorSettingsSnapshot() hand back for their
+ * own surfaces.
+ * @param {string|null} boardId
+ * @returns {{ boardId: string|null, wipCap: number, mode: string, halted: boolean, haltedAt: number|null, minWipCap: number, maxWipCap: number }} */
+function planSettingsSnapshot(boardId) {
+	const settings = planSettingsForBoard(boardId);
+	return {
+		boardId: boardId,
+		wipCap: settings.wipCap,
+		mode: settings.mode,
+		halted: settings.halted,
+		haltedAt: settings.haltedAt,
+		minWipCap: MIN_PLAN_WIP_CAP,
+		maxWipCap: MAX_PLAN_WIP_CAP,
+	};
+}
+
+/** The fields of a `plan-settings` post, as a patch for setPlanSettings().
+ * Absent fields stay absent, so toggling Halt never also restates (or
+ * accidentally resets) the WIP cap, and vice versa - the same reasoning
+ * boardSettingsPatchFrom() applies to aging's three independent fields. A
+ * cap arrives as a number or as the string a number input hands over;
+ * anything unparseable is dropped rather than guessed.
+ * @param {{ wipCap?: unknown, halted?: unknown }} source
+ * @returns {{ wipCap?: number, halted?: boolean }} */
+function planSettingsPatchFrom(source) {
+	/** @type {{ wipCap?: number, halted?: boolean }} */
+	const patch = {};
+	if (source.halted !== undefined) patch.halted = source.halted === true;
+	if (source.wipCap !== undefined) {
+		const raw = source.wipCap;
+		const parsed =
+			typeof raw === 'number'
+				? raw
+				: typeof raw === 'string' && raw.trim() !== ''
+					? Number(raw)
+					: Number.NaN;
+		if (isFinite(parsed)) patch.wipCap = parsed;
+	}
+	return patch;
+}
+
+/**
+ * Backs the panel's `plan-settings` command: writes this board's WIP cap
+ * and/or halt flag, then pushes a fresh snapshot so the Halt control and the
+ * halted banner repaint immediately. Refused, with a toast naming why, the
+ * same way applyBoardSettings() refuses - no board on screen, a board that
+ * changed since the post, or a post naming nothing this plugin reads.
+ *
+ * A halt flip is logged (at warn when it is *armed*) with the board named,
+ * the same spirit as applyBoardSettings()'s close-tabs warning: it is the
+ * one flip on this surface that stops every card on the board from moving
+ * or being messaged until a person clears it.
+ * @param {unknown} args
+ */
+async function applyPlanSettings(args) {
+	const source = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+	const boardId =
+		typeof source.boardId === 'string' && source.boardId !== '' ? source.boardId : null;
+	if (boardId === null) {
+		const reason = 'there is no board on screen to configure yet';
+		console.warn('maestro-kanban: refused a plan-settings post: ' + reason);
+		await safeToast('Could not save that setting: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	if (boardId !== currentBoardId()) {
+		const reason = 'the board changed before that setting was saved; try again';
+		console.warn('maestro-kanban: refused a plan-settings post: ' + reason);
+		await safeToast('Could not save that setting: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const patch = planSettingsPatchFrom(source);
+	if (Object.keys(patch).length === 0) {
+		const reason = 'that post named no setting this board understands';
+		console.warn('maestro-kanban: refused a plan-settings post: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const before = planSettingsForBoard(boardId);
+	const outcome = await setPlanSettings(boardId, patch);
+	const settings = outcome.settings;
+	if (settings.halted && !before.halted) {
+		console.warn(
+			'maestro-kanban: "' +
+				boardId +
+				'" halted; no card will move or be messaged on it until the halt is cleared'
+		);
+	} else if (!settings.halted && before.halted) {
+		console.log('maestro-kanban: "' + boardId + '" halt cleared');
+	}
+	if (!outcome.persisted) {
+		await safeToast('That setting did not save; it may not survive a restart.');
+	}
+	await pushSnapshotNow();
+	return { ok: true, settings: settings, persisted: outcome.persisted };
+}
+
 // ===========================================================================
 // End of Phase 07 plan settings.
 // ===========================================================================
@@ -5906,6 +6004,8 @@ const PLAN_RUN_TIMEOUT_MS = 15 * 60 * 1000;
  *   timeoutTimer: ReturnType<typeof setTimeout>|null,
  *   decisions: Map<string, boolean>,
  *   decidedAt: number|null,
+ *   execution: Map<string, { status: 'moved'|'sent'|'pending-cap'|'declined-access'|'failed', reason: string|null }>,
+ *   executedAt: number|null,
  * }} PlanRun */
 
 /** @type {Map<string, PlanRun>} boardId -> that board's most recent (or
@@ -6076,6 +6176,8 @@ async function askConductor(args) {
 		// board, so nothing from the last one rides along.
 		decisions: new Map(),
 		decidedAt: null,
+		execution: new Map(),
+		executedAt: null,
 	};
 	planRuns.set(boardId, run);
 	try {
@@ -6125,6 +6227,11 @@ function planRunSnapshot(boardId) {
 		// Approve Selected or Reject All actually decides the plan.
 		decisions: run.decisions.size > 0 ? Object.fromEntries(run.decisions) : {},
 		decidedAt: run.decidedAt,
+		// Same shape as `decisions`: `{ "move:cardKey": { status, reason } }`.
+		// Empty until executePlanRun() has attempted at least one row - see
+		// "Phase 07 plan execution" below.
+		execution: run.execution.size > 0 ? Object.fromEntries(run.execution) : {},
+		executedAt: run.executedAt,
 	};
 }
 
@@ -6193,6 +6300,9 @@ function planRunForAction(boardId, planId) {
 	if (!run.result || run.result.ok !== true) {
 		return { reason: 'this plan did not parse, so there is nothing to approve' };
 	}
+	if (run.executedAt !== null) {
+		return { reason: 'this plan has already been executed' };
+	}
 	return { run: run };
 }
 
@@ -6252,6 +6362,134 @@ function editPlanMessage(run, cardKey, prompt) {
 
 // ===========================================================================
 // End of Phase 07 plan approval.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 07 plan execution: turns an approved row into the same side effect a
+// person causes by hand - handleMove()'s own placement path for a move,
+// dispatchCardMessage()'s own agents:dispatch path for a message - so the
+// legality re-check, the per-tab targeting, and the access/rate handling are
+// exactly what a drag or a hand-typed message already goes through. Nothing
+// here is a second path to either effect.
+//
+// Every row executePlanRun() looks at is read in this order:
+//
+//   1. isBoardHalted() - checked before the loop starts, and again right
+//      before this row's own side effect, so a halt flipped mid-execution
+//      (a second command arriving while this one is still awaiting a
+//      dispatch) stops everything from that point on, immediately. A row
+//      not yet reached when the halt lands is left exactly as it was:
+//      approved, but not executed - there is no partial or half-applied
+//      move.
+//   2. overCap - parsePlan() already decided this at ask-time, against the
+//      board's wipCap *then*. Execution honors that decision rather than
+//      re-deriving a live count, so a plan the user is looking at never
+//      executes a different set of rows than the diff they approved.
+//   3. needsAccess (messages only) - sessions.requestAccess() once, the
+//      same one-time confirmation the detail pane's own composer uses. A
+//      decline is recorded as declined-for-access and nothing is sent;
+//      this plugin never assumes a grant the host has not confirmed.
+//
+// Idempotency is per plan id, not per call. `run.execution` records every
+// row this function has already attempted, keyed the same way `decisions`
+// is (planRowKey()); a row already in that map is never attempted twice, no
+// matter how many times executePlanRun() is called for this run. The whole
+// run is marked `executedAt` only once every approved, in-cap row has been
+// attempted with nothing left to do - a halt that cuts the loop short
+// leaves `executedAt` null so the gap is visible, but even so, a repeat
+// call picks up only the rows it has not already touched. There is no path
+// in this file that dispatches a message or moves a card twice for the same
+// plan id.
+// ===========================================================================
+
+/** Executes every row of a parsed, decided plan that was approved and is
+ * not riding past the WIP cap. A no-op when this run has already finished
+ * executing (`executedAt` set) or when the board is halted before a single
+ * row has been attempted - neither case touches `run.execution`.
+ * @param {string} boardId @param {PlanRun} run
+ * @returns {Promise<void>}
+ */
+async function executePlanRun(boardId, run) {
+	if (run.executedAt !== null) return;
+	if (isBoardHalted(boardId)) return;
+	let haltedMidway = false;
+	for (const entry of planRunEntries(run)) {
+		const key = planRowKey(entry.kind, entry.cardKey);
+		if (run.execution.has(key)) continue;
+		if (run.decisions.get(key) !== true) continue;
+		const data =
+			entry.kind === 'move'
+				? run.result.moves.find((move) => move.cardKey === entry.cardKey)
+				: run.result.messages.find((message) => message.cardKey === entry.cardKey);
+		if (!data) continue;
+		if (data.overCap) {
+			run.execution.set(key, { status: 'pending-cap', reason: data.capReason });
+			continue;
+		}
+		if (isBoardHalted(boardId)) {
+			haltedMidway = true;
+			break;
+		}
+		if (entry.kind === 'move') {
+			let result;
+			try {
+				result = await handleMove({
+					cardKey: entry.cardKey,
+					toColumnId: data.toColumnId,
+					boardId: boardId,
+				});
+			} catch (err) {
+				result = { ok: false, reason: errorMessage(err) };
+			}
+			run.execution.set(
+				key,
+				result && result.ok === true
+					? { status: 'moved', reason: null }
+					: { status: 'failed', reason: (result && result.reason) || 'that move failed' }
+			);
+			continue;
+		}
+		// entry.kind === 'message': the same access dance 'send-message'
+		// itself does, except a decline here is recorded on the row rather
+		// than left for the composer to render.
+		if (!isSessionAccessGranted(data.sessionId)) {
+			let accessResult;
+			try {
+				accessResult = await sdk.sessions.requestAccess(data.sessionId);
+			} catch (err) {
+				console.error(
+					'maestro-kanban: sessions.requestAccess (plan execution) failed: ' + String(err)
+				);
+				run.execution.set(key, {
+					status: 'failed',
+					reason: 'could not request access to that agent',
+				});
+				continue;
+			}
+			const granted = !!(accessResult && accessResult.granted === true);
+			if (!granted) {
+				run.execution.set(key, { status: 'declined-access', reason: 'access not granted' });
+				continue;
+			}
+			grantedSessions.add(data.sessionId);
+			scheduleReachSync();
+		}
+		const sendResult = await dispatchCardMessage(data.sessionId, data.tabId, data.prompt);
+		run.execution.set(
+			key,
+			sendResult.ok
+				? { status: 'sent', reason: null }
+				: { status: 'failed', reason: sendResult.error }
+		);
+	}
+	// Only once the loop ran to its natural end: a halt that broke out of it
+	// early leaves executedAt null, so the next executePlanRun() call (once
+	// the halt is cleared) still has something to finish.
+	if (!haltedMidway) run.executedAt = Date.now();
+}
+
+// ===========================================================================
+// End of Phase 07 plan execution.
 // ===========================================================================
 
 // ===========================================================================
@@ -7174,6 +7412,10 @@ async function buildSnapshot() {
 		// null until this board's first Ask Conductor since activate(); see
 		// planRunSnapshot() (Phase 07 plan run loop, above).
 		planRun: planRunSnapshot(currentBoardId()),
+		// This board's WIP cap, mode and halt state - never null, unlike
+		// planRun: the Halt control and the halted banner need this even
+		// before the conductor has ever been asked for a plan.
+		planSettings: planSettingsSnapshot(currentBoardId()),
 	};
 }
 
@@ -7556,6 +7798,21 @@ function registerCommands(maestro) {
 		})
 	);
 
+	// Invoked by the panel's plan surface's WIP cap field and Halt control:
+	// `{ boardId, wipCap?, halted? }`. Mirrors 'board-settings' exactly - see
+	// applyPlanSettings() for the refusals and the halt log line. No manifest
+	// `commands` entry is needed for the same reason 'board-settings' has
+	// none - the palette has no board in hand to configure.
+	maestro.commands.register('plan-settings', (args) =>
+		applyPlanSettings(args).catch((err) => {
+			console.error('maestro-kanban: plan-settings failed: ' + String(err));
+			return safeToast('Could not save that setting: ' + errorMessage(err)).then(() => ({
+				ok: false,
+				reason: errorMessage(err),
+			}));
+		})
+	);
+
 	// Invoked by the panel's Ask Conductor action; no manifest `commands`
 	// entry is needed since the palette has no board in hand to plan for.
 	// askConductor() already catches its own failures and returns
@@ -7574,12 +7831,13 @@ function registerCommands(maestro) {
 
 	// Invoked by the panel's plan approval surface's Approve Selected button:
 	// `{ boardId, planId, approvedKeys }`. Records every row of the board's
-	// current parsed plan as approved or declined (see recordPlanDecisions())
-	// and pushes a fresh snapshot so the panel's diff repaints as decided; no
+	// current parsed plan as approved or declined (see recordPlanDecisions()),
+	// then runs executePlanRun() against exactly that decision - a move
+	// through handleMove(), a message through dispatchCardMessage(), a
+	// needsAccess row through one sessions.requestAccess() - and pushes a
+	// fresh snapshot so the panel's diff repaints with each row's outcome; no
 	// manifest `commands` entry is needed since the palette has no plan in
-	// hand to approve. Recording the decision is as far as this command goes -
-	// executing an approved row is the next task's job, reading the same
-	// `decisions` map this leaves on the run.
+	// hand to approve.
 	maestro.commands.register('approve-plan', (args) => {
 		const boardId = args && typeof args.boardId === 'string' ? args.boardId : undefined;
 		const planId = args && typeof args.planId === 'string' ? args.planId : undefined;
@@ -7598,14 +7856,20 @@ function registerCommands(maestro) {
 			outcome.run,
 			new Set(approvedKeys.filter((key) => typeof key === 'string'))
 		);
-		return pushSnapshotNow().then(() => ({ ok: true }));
+		return executePlanRun(boardId, outcome.run)
+			.catch((err) => {
+				console.error('maestro-kanban: executing plan ' + planId + ' failed: ' + String(err));
+			})
+			.then(() => pushSnapshotNow())
+			.then(() => ({ ok: true }));
 	});
 
 	// Invoked by the panel's plan approval surface's Reject All button:
 	// `{ boardId, planId }`. The same recordPlanDecisions() as 'approve-plan'
-	// above with nothing in the approved set, so every row lands declined; no
-	// manifest `commands` entry is needed for the same reason 'approve-plan'
-	// has none.
+	// above with nothing in the approved set, so every row lands declined,
+	// then the same executePlanRun() call - which, with nothing approved,
+	// executes nothing and simply marks the run executed; no manifest
+	// `commands` entry is needed for the same reason 'approve-plan' has none.
 	maestro.commands.register('reject-plan', (args) => {
 		const boardId = args && typeof args.boardId === 'string' ? args.boardId : undefined;
 		const planId = args && typeof args.planId === 'string' ? args.planId : undefined;
@@ -7620,7 +7884,12 @@ function registerCommands(maestro) {
 			}));
 		}
 		recordPlanDecisions(outcome.run, new Set());
-		return pushSnapshotNow().then(() => ({ ok: true }));
+		return executePlanRun(boardId, outcome.run)
+			.catch((err) => {
+				console.error('maestro-kanban: executing plan ' + planId + ' failed: ' + String(err));
+			})
+			.then(() => pushSnapshotNow())
+			.then(() => ({ ok: true }));
 	});
 
 	// Invoked by the panel's plan approval surface's Edit action on a message
@@ -8064,9 +8333,12 @@ module.exports = {
 	// lands, kanban-auto-mode.test.ts). normalizePlanSettings() is pure;
 	// planSettingsForBoard() and isBoardHalted() read the map loadPlanSettings()
 	// fills at activate() time, and setPlanSettings() writes plugin storage, so
-	// a test calls those after activate() with a stub SDK. The panel reaches
-	// the same three fields through this phase's later tasks (the Halt control,
-	// the WIP cap, and the auto-mode switch); nothing else writes them.
+	// a test calls those after activate() with a stub SDK. planSettingsSnapshot()
+	// and planSettingsPatchFrom() are pure, the same split boardSettingsSnapshot()/
+	// boardSettingsPatchFrom() use; applyPlanSettings() backs the panel's
+	// `plan-settings` command (the Halt control and the WIP cap field) and is
+	// exported the same way applyBoardSettings() is. The auto-mode switch is
+	// still a later task; nothing here writes `mode`.
 	PLAN_MODE_APPROVE: PLAN_MODE_APPROVE,
 	PLAN_MODE_AUTO: PLAN_MODE_AUTO,
 	DEFAULT_PLAN_WIP_CAP: DEFAULT_PLAN_WIP_CAP,
@@ -8076,6 +8348,9 @@ module.exports = {
 	planSettingsForBoard: planSettingsForBoard,
 	setPlanSettings: setPlanSettings,
 	isBoardHalted: isBoardHalted,
+	planSettingsSnapshot: planSettingsSnapshot,
+	planSettingsPatchFrom: planSettingsPatchFrom,
+	applyPlanSettings: applyPlanSettings,
 
 	// Phase 07 plan contract, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-plan-parser.test.ts). parsePlan(),
