@@ -835,6 +835,194 @@
 				border-radius: 6px;
 				cursor: pointer;
 			}
+			/* Phase 07 plan approval. The toggle and the panel it opens are
+			   styled exactly like the conductor settings surface above -
+			   same row under the header, same one-at-a-time rule - and reuse
+			   .board-settings-row/-note for everything that is not unique to
+			   a plan's own diff (a row's checkbox, its Edit textarea, and
+			   the needs-access/over-cap markers). */
+			#plan-toggle {
+				flex: 0 0 auto;
+				padding: 3px 8px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			#plan-toggle:hover {
+				border-color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#plan-toggle[aria-pressed='true'] {
+				border-color: var(--maestro-accent, #4a9eff);
+				color: var(--maestro-accent, #4a9eff);
+			}
+			#plan-panel {
+				flex: 0 0 auto;
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				margin: 12px 12px 0 12px;
+				padding: 10px 12px;
+				max-height: 60vh;
+				overflow-y: auto;
+				border-radius: 6px;
+				font-size: 12px;
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+			}
+			#plan-panel[hidden] {
+				display: none;
+			}
+			#plan-panel-head {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			#plan-panel-heading {
+				font-weight: 600;
+			}
+			#plan-panel-scope {
+				flex: 1 1 auto;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			#plan-panel-close {
+				flex: 0 0 auto;
+				padding: 0 4px;
+				font: inherit;
+				font-size: 14px;
+				line-height: 1;
+				color: var(--maestro-text-dim, #9d9d9d);
+				background: transparent;
+				border: none;
+				cursor: pointer;
+			}
+			#plan-panel-close:hover {
+				color: var(--maestro-text-main, #e6e6e6);
+			}
+			#plan-ask:disabled {
+				cursor: not-allowed;
+				opacity: 0.5;
+			}
+			#plan-rejected-list {
+				margin: 0;
+				padding: 0 0 0 16px;
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+			}
+			#plan-rows {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+			}
+			#plan-empty[hidden] {
+				display: none;
+			}
+			/* One row per proposed move or message. User-select is left on
+			   (unlike the click-driven board behind it) because the whole
+			   point of this surface is reading a prompt or a reason closely
+			   enough to decide about it. */
+			.plan-row {
+				display: flex;
+				flex-direction: column;
+				gap: 4px;
+				padding: 6px 8px;
+				border-radius: 6px;
+				background: var(--maestro-bg-main, #1e1e1e);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				user-select: text;
+			}
+			.plan-row-head {
+				display: flex;
+				align-items: flex-start;
+				gap: 6px;
+			}
+			.plan-row-head input[type='checkbox'] {
+				margin: 2px 0 0 0;
+				cursor: pointer;
+				flex: 0 0 auto;
+			}
+			.plan-row-body {
+				flex: 1 1 auto;
+				min-width: 0;
+				display: flex;
+				flex-direction: column;
+				gap: 2px;
+			}
+			.plan-row-title {
+				font-weight: 600;
+				color: var(--maestro-text-main, #e6e6e6);
+			}
+			.plan-row-why,
+			.plan-row-prompt {
+				font-size: 11px;
+				color: var(--maestro-text-dim, #9d9d9d);
+				white-space: pre-wrap;
+			}
+			.plan-row-prompt {
+				color: var(--maestro-text-main, #e6e6e6);
+			}
+			.plan-row-badge {
+				align-self: flex-start;
+				padding: 1px 6px;
+				border-radius: 4px;
+				font-size: 10px;
+			}
+			.plan-row-badge-access {
+				color: var(--maestro-accent, #4a9eff);
+				border: 1px solid var(--maestro-accent, #4a9eff);
+			}
+			.plan-row-badge-cap {
+				color: var(--maestro-text-dim, #9d9d9d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+			}
+			.plan-row-badge-approved {
+				color: var(--maestro-accent, #4a9eff);
+				border: 1px solid var(--maestro-accent, #4a9eff);
+			}
+			.plan-row-badge-declined {
+				color: var(--maestro-text-dim, #9d9d9d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+			}
+			.plan-row-edit {
+				flex: 0 0 auto;
+				align-self: flex-start;
+				padding: 1px 8px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-activity, #2d2d2d);
+				border: 1px solid var(--maestro-border, #3c3c3c);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			.plan-row-prompt-edit {
+				width: 100%;
+				min-height: 54px;
+				padding: 4px 6px;
+				font: inherit;
+				font-size: 11px;
+				color: var(--maestro-text-main, #e6e6e6);
+				background: var(--maestro-bg-main, #1e1e1e);
+				border: 1px solid var(--maestro-accent, #4a9eff);
+				border-radius: 4px;
+				resize: vertical;
+			}
+			#plan-actions[hidden] {
+				display: none;
+			}
+			#plan-reject {
+				/* Not accent-colored, the same reasoning #detail-archive-now
+				   uses: this is the control that discards the whole plan, not
+				   the one to reach for by default. */
+				background: var(--maestro-bg-activity, #2d2d2d);
+			}
 			/* Archive Now sits beside Open Tab in the detail pane and is
 			   deliberately NOT accent-colored: it is the one control on the
 			   pane that takes the card off the board, so it reads as a
@@ -1077,6 +1265,15 @@
 			>
 				Conductor
 			</button>
+			<button
+				id="plan-toggle"
+				type="button"
+				aria-pressed="false"
+				aria-controls="plan-panel"
+				title="Ask the conductor for a plan: proposed card moves and messages you review, edit and approve or decline before anything happens."
+			>
+				Plan
+			</button>
 			<select id="board-switcher" aria-label="Board"></select>
 		</div>
 		<div
@@ -1169,6 +1366,32 @@
 				<p id="conductor-reach-ungranted-empty" class="board-settings-note">
 					Every project here is already granted.
 				</p>
+			</div>
+		</div>
+		<div id="plan-panel" role="group" aria-labelledby="plan-panel-heading" hidden>
+			<div id="plan-panel-head">
+				<span id="plan-panel-heading">Plan</span>
+				<span id="plan-panel-scope"></span>
+				<button id="plan-panel-close" type="button" aria-label="Close plan">&times;</button>
+			</div>
+			<div class="board-settings-row">
+				<button id="plan-ask" type="button">Ask Conductor</button>
+				<span id="plan-status" class="board-settings-note"></span>
+				<button id="plan-allow-access" type="button" hidden>Allow Access</button>
+			</div>
+			<p id="plan-rationale" class="board-settings-note" hidden></p>
+			<div id="plan-rejected" hidden>
+				<p class="board-settings-note">
+					The conductor proposed some entries this board could not accept:
+				</p>
+				<ul id="plan-rejected-list"></ul>
+			</div>
+			<div id="plan-rows"></div>
+			<p id="plan-empty" class="board-settings-note">No plan yet. Ask the conductor for one.</p>
+			<p id="plan-decided" class="board-settings-note" hidden></p>
+			<div id="plan-actions" class="board-settings-row" hidden>
+				<button id="plan-approve" type="button">Approve Selected</button>
+				<button id="plan-reject" type="button">Reject All</button>
 			</div>
 		</div>
 		<div id="banner" hidden></div>
@@ -2094,11 +2317,13 @@
 					// one.
 					closeCardDetail();
 					cancelClearDoneConfirm();
-					// The aging and conductor controls are about the board, which is
-					// about to be hidden: the same one-at-a-time rule
-					// openBoardSettings() and openConductorSettings() keep.
+					// The aging, conductor and plan surfaces are about the board,
+					// which is about to be hidden: the same one-at-a-time rule
+					// openBoardSettings(), openConductorSettings() and
+					// openPlanPanel() keep.
 					closeBoardSettings();
 					closeConductorSettings();
+					closePlanPanel();
 					applyViewMode();
 					renderClearDone(currentSnapshot);
 					renderArchive(currentSnapshot);
@@ -2503,11 +2728,12 @@
 				function openBoardSettings() {
 					if (boardSettingsOpen) return;
 					boardSettingsOpen = true;
-					// The archive takes the board's place, and the conductor
-					// surface is the same kind of row under the header: one of
-					// the three at a time.
+					// The archive takes the board's place, and the conductor and
+					// plan surfaces are the same kind of row under the header: one
+					// of the four at a time.
 					closeArchiveView();
 					closeConductorSettings();
+					closePlanPanel();
 					renderBoardSettings(currentSnapshot);
 				}
 
@@ -2868,10 +3094,11 @@
 				function openConductorSettings() {
 					if (conductorSettingsOpen) return;
 					conductorSettingsOpen = true;
-					// One of the three surfaces under the header at a time, the
+					// One of the four surfaces under the header at a time, the
 					// same rule openBoardSettings() and openArchiveView() keep.
 					closeArchiveView();
 					closeBoardSettings();
+					closePlanPanel();
 					renderConductorSettings(currentSnapshot);
 				}
 
@@ -2940,6 +3167,462 @@
 					postConductorConfig({
 						agentId: nodes.provider.value === '' ? null : nodes.provider.value,
 					});
+				}
+
+				// -------------------------------------------------------------
+				// Phase 07 plan approval. Ask Conductor dispatches a plan
+				// request; once it parses, every move and message rides as one
+				// checkable row (checked by default - Reject All is the
+				// explicit way to approve nothing), a message row gets an Edit
+				// action that swaps its text for a textarea, and Approve
+				// Selected/Reject All resolve every row at once (see main.js's
+				// recordPlanDecisions()). Once decided, the rows repaint
+				// read-only (Approved/Declined) rather than offering the
+				// buttons again - asking the conductor again starts a fresh
+				// plan with a fresh review.
+				//
+				// `#plan-rows` is only ever torn down and rebuilt when
+				// planRowsSignatureOf() changes (a new plan, a decision
+				// recorded, or an edited prompt echoed back) - never on every
+				// snapshot, the same way renderConductorSettings() guards the
+				// provider <select> with `data-signature`. Without that guard,
+				// a background snapshot push mid-keystroke in the Edit textarea
+				// (nothing about the plan itself changed) would wipe out
+				// whatever the user had just typed.
+				// -------------------------------------------------------------
+
+				var planPanelOpen = false;
+				/** Row keys ('move:cardKey' / 'message:cardKey') the user has
+				 * checked for the CURRENT plan - reset to "every row" whenever a
+				 * different planId shows up, so a fresh plan starts fully
+				 * selected and Reject All stays the one deliberate way to
+				 * approve nothing. */
+				var planSelectedKeys = new Set();
+				var planSelectionPlanId = null;
+				var planRowsSignature = null;
+				/** The cardKey of the message row currently showing its Edit
+				 * textarea, or null. Dropped on close so a half-typed edit never
+				 * reappears on reopen. */
+				var planEditingCardKey = null;
+
+				function planOf(snapshot) {
+					var plan = snapshot && snapshot.planRun;
+					return plan && typeof plan === 'object' ? plan : null;
+				}
+
+				function planPanelNodes() {
+					var row = document.getElementById('plan-panel');
+					var toggle = document.getElementById('plan-toggle');
+					if (!row || !toggle) return null;
+					return {
+						row: row,
+						toggle: toggle,
+						scope: document.getElementById('plan-panel-scope'),
+						ask: document.getElementById('plan-ask'),
+						status: document.getElementById('plan-status'),
+						allowAccess: document.getElementById('plan-allow-access'),
+						rationale: document.getElementById('plan-rationale'),
+						rejectedWrap: document.getElementById('plan-rejected'),
+						rejectedList: document.getElementById('plan-rejected-list'),
+						rows: document.getElementById('plan-rows'),
+						empty: document.getElementById('plan-empty'),
+						decided: document.getElementById('plan-decided'),
+						actions: document.getElementById('plan-actions'),
+						approve: document.getElementById('plan-approve'),
+						reject: document.getElementById('plan-reject'),
+					};
+				}
+
+				/** Mirrors main.js's planRowKey() exactly - the panel never
+				 * imports from main.js (the bridge carries JSON, not code), so
+				 * the two sides agree on this string by convention, the same
+				 * way every command id here is duplicated rather than shared. */
+				function planRowKey(kind, cardKey) {
+					return kind + ':' + cardKey;
+				}
+
+				function postAskConductor() {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'ask-conductor',
+							args: { boardId: boardIdOf(currentSnapshot) },
+						},
+						'*'
+					);
+				}
+
+				function postApprovePlan(planId, approvedKeys) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'approve-plan',
+							args: {
+								boardId: boardIdOf(currentSnapshot),
+								planId: planId,
+								approvedKeys: approvedKeys,
+							},
+						},
+						'*'
+					);
+				}
+
+				function postRejectPlan(planId) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'reject-plan',
+							args: { boardId: boardIdOf(currentSnapshot), planId: planId },
+						},
+						'*'
+					);
+				}
+
+				function postEditPlanMessage(planId, cardKey, prompt) {
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'edit-plan-message',
+							args: {
+								boardId: boardIdOf(currentSnapshot),
+								planId: planId,
+								cardKey: cardKey,
+								prompt: prompt,
+							},
+						},
+						'*'
+					);
+				}
+
+				/** English status line above the diff, or the explanation for why
+				 * there is no diff to show yet. */
+				function planStatusText(plan) {
+					if (!plan) return 'No plan yet.';
+					if (plan.status === 'running') return 'Asking the conductor for a plan...';
+					if (plan.status === 'not-connected') {
+						return 'Conductor not connected; its access to this board was revoked.';
+					}
+					if (plan.status === 'failed') {
+						var reason =
+							plan.result && typeof plan.result.error === 'string'
+								? plan.result.error
+								: 'unknown reason';
+						return 'The last plan failed: ' + reason;
+					}
+					return 'Plan ready.';
+				}
+
+				/** Every row a parsed plan has to show: its moves, then its
+				 * messages, each carrying the kind-tagged entry the row builder
+				 * reads from. @param {object} result */
+				function planDisplayRows(result) {
+					var moves = Array.isArray(result.moves) ? result.moves : [];
+					var messages = Array.isArray(result.messages) ? result.messages : [];
+					return moves
+						.map(function (move) {
+							return { kind: 'move', cardKey: move.cardKey, data: move };
+						})
+						.concat(
+							messages.map(function (message) {
+								return { kind: 'message', cardKey: message.cardKey, data: message };
+							})
+						);
+				}
+
+				/** One row's DOM: a checkbox (or, once decided, a read-only
+				 * Approved/Declined badge) plus the row's own content. A message
+				 * row carries its own Edit action and, when the card is not yet
+				 * granted, the "needs your OK" marker the task calls for; either
+				 * kind carries the over-cap marker when this row rode past the
+				 * board's WIP cap.
+				 * @param {{kind: 'move'|'message', cardKey: string, data: object}} entry
+				 * @param {object} plan @param {boolean} decided */
+				function buildPlanRow(entry, plan, decided) {
+					var key = planRowKey(entry.kind, entry.cardKey);
+					var decision = plan && plan.decisions ? plan.decisions[key] : undefined;
+
+					var row = document.createElement('div');
+					row.className = 'plan-row';
+					var head = document.createElement('div');
+					head.className = 'plan-row-head';
+
+					if (decided) {
+						var badge = document.createElement('span');
+						badge.className =
+							'plan-row-badge ' +
+							(decision ? 'plan-row-badge-approved' : 'plan-row-badge-declined');
+						badge.textContent = decision ? 'Approved' : 'Declined';
+						head.appendChild(badge);
+					} else {
+						var checkbox = document.createElement('input');
+						checkbox.type = 'checkbox';
+						checkbox.checked = planSelectedKeys.has(key);
+						checkbox.setAttribute('aria-label', entry.cardKey + ' ' + entry.kind);
+						checkbox.addEventListener('change', function () {
+							if (checkbox.checked) planSelectedKeys.add(key);
+							else planSelectedKeys.delete(key);
+						});
+						head.appendChild(checkbox);
+					}
+
+					var body = document.createElement('div');
+					body.className = 'plan-row-body';
+
+					var title = document.createElement('div');
+					title.className = 'plan-row-title';
+					if (entry.kind === 'move') {
+						title.textContent =
+							entry.cardKey +
+							': ' +
+							(entry.data.fromColumnId || '(none)') +
+							' -> ' +
+							entry.data.toColumnId;
+					} else {
+						title.textContent = entry.cardKey + ': message';
+					}
+					body.appendChild(title);
+
+					if (typeof entry.data.why === 'string' && entry.data.why) {
+						var why = document.createElement('div');
+						why.className = 'plan-row-why';
+						why.textContent = entry.data.why;
+						body.appendChild(why);
+					}
+
+					if (entry.kind === 'message') {
+						if (!decided && planEditingCardKey === entry.cardKey) {
+							var textarea = document.createElement('textarea');
+							textarea.className = 'plan-row-prompt-edit';
+							textarea.value = entry.data.prompt;
+							body.appendChild(textarea);
+							var editActions = document.createElement('div');
+							editActions.className = 'board-settings-row';
+							var save = document.createElement('button');
+							save.type = 'button';
+							save.className = 'plan-row-edit';
+							save.textContent = 'Save';
+							save.addEventListener('click', function () {
+								planEditingCardKey = null;
+								postEditPlanMessage(plan.planId, entry.cardKey, textarea.value);
+							});
+							var cancel = document.createElement('button');
+							cancel.type = 'button';
+							cancel.className = 'plan-row-edit';
+							cancel.textContent = 'Cancel';
+							cancel.addEventListener('click', function () {
+								planEditingCardKey = null;
+								renderPlanPanel(currentSnapshot);
+							});
+							editActions.appendChild(save);
+							editActions.appendChild(cancel);
+							body.appendChild(editActions);
+							window.setTimeout(function () {
+								textarea.focus();
+							}, 0);
+						} else {
+							var promptEl = document.createElement('div');
+							promptEl.className = 'plan-row-prompt';
+							promptEl.textContent = entry.data.prompt;
+							body.appendChild(promptEl);
+							if (!decided) {
+								var edit = document.createElement('button');
+								edit.type = 'button';
+								edit.className = 'plan-row-edit';
+								edit.textContent = 'Edit';
+								edit.addEventListener('click', function () {
+									planEditingCardKey = entry.cardKey;
+									renderPlanPanel(currentSnapshot);
+								});
+								body.appendChild(edit);
+							}
+						}
+						if (entry.data.needsAccess) {
+							var access = document.createElement('div');
+							access.className = 'plan-row-badge plan-row-badge-access';
+							access.textContent =
+								'Needs your OK: approving this will ask Maestro for one-time access to that agent.';
+							body.appendChild(access);
+						}
+					}
+
+					if (entry.data.overCap) {
+						var cap = document.createElement('div');
+						cap.className = 'plan-row-badge plan-row-badge-cap';
+						cap.textContent =
+							typeof entry.data.capReason === 'string'
+								? entry.data.capReason
+								: "Pending: over this board's limit right now.";
+						body.appendChild(cap);
+					}
+
+					head.appendChild(body);
+					row.appendChild(head);
+					return row;
+				}
+
+				/** A signature of everything that should force #plan-rows to be
+				 * torn down and rebuilt: which plan, whether it has been decided,
+				 * which row (if any) is mid-edit, and the plan's own content. A
+				 * snapshot that changes something else entirely (a card
+				 * elsewhere on the board going busy, say) leaves this unchanged,
+				 * so the rebuild - and the textarea focus/text it would discard -
+				 * is skipped. */
+				function planRowsSignatureOf(plan, result) {
+					return JSON.stringify({
+						planId: plan ? plan.planId : null,
+						decidedAt: plan ? plan.decidedAt : null,
+						editing: planEditingCardKey,
+						result: result,
+					});
+				}
+
+				function renderPlanPanel(snapshot) {
+					var nodes = planPanelNodes();
+					if (!nodes) return;
+					nodes.toggle.setAttribute('aria-pressed', planPanelOpen ? 'true' : 'false');
+					nodes.row.hidden = !planPanelOpen;
+					if (!planPanelOpen) return;
+
+					if (nodes.scope) {
+						nodes.scope.textContent =
+							snapshot && typeof snapshot.boardName === 'string' ? snapshot.boardName : '';
+					}
+
+					var plan = planOf(snapshot);
+					var conductor = conductorOf(snapshot);
+					var conductorExists = !!conductor && conductor.conductorExists === true;
+					var running = !!plan && plan.status === 'running';
+					if (nodes.ask) {
+						nodes.ask.disabled = !conductorExists || running;
+						nodes.ask.textContent = running ? 'Asking...' : 'Ask Conductor';
+					}
+					if (nodes.status) nodes.status.textContent = planStatusText(plan);
+					if (nodes.allowAccess)
+						nodes.allowAccess.hidden = !plan || plan.status !== 'not-connected';
+
+					var hasPlan =
+						!!plan && plan.status === 'parsed' && !!plan.result && plan.result.ok === true;
+					var result = hasPlan ? plan.result : null;
+					var decided = hasPlan && typeof plan.decidedAt === 'number';
+
+					if (nodes.rationale) {
+						var rationale = hasPlan && typeof result.rationale === 'string' ? result.rationale : '';
+						nodes.rationale.hidden = rationale === '';
+						nodes.rationale.textContent = rationale;
+					}
+
+					var rejected = hasPlan && Array.isArray(result.rejected) ? result.rejected : [];
+					if (nodes.rejectedWrap) nodes.rejectedWrap.hidden = rejected.length === 0;
+					if (nodes.rejectedList) {
+						nodes.rejectedList.textContent = '';
+						rejected.forEach(function (entry) {
+							var li = document.createElement('li');
+							var cardKey = typeof entry.cardKey === 'string' ? entry.cardKey : null;
+							var reason = typeof entry.reason === 'string' ? entry.reason : 'rejected';
+							li.textContent = (cardKey ? cardKey + ': ' : '') + reason;
+							nodes.rejectedList.appendChild(li);
+						});
+					}
+
+					// A fresh plan (a new planId since last render) starts with
+					// every row checked, so Approve Selected with no changes
+					// approves the whole plan and Reject All stays the one
+					// deliberate way to approve nothing.
+					if (hasPlan && plan.planId !== planSelectionPlanId) {
+						planSelectionPlanId = plan.planId;
+						planSelectedKeys = new Set(
+							planDisplayRows(result).map(function (entry) {
+								return planRowKey(entry.kind, entry.cardKey);
+							})
+						);
+					}
+
+					var entries = hasPlan ? planDisplayRows(result) : [];
+					if (nodes.empty) nodes.empty.hidden = plan !== null;
+
+					var signature = hasPlan ? planRowsSignatureOf(plan, result) : plan ? plan.status : null;
+					if (nodes.rows && signature !== planRowsSignature) {
+						planRowsSignature = signature;
+						nodes.rows.textContent = '';
+						if (hasPlan && entries.length === 0) {
+							var none = document.createElement('p');
+							none.className = 'board-settings-note';
+							none.textContent = 'The conductor proposed nothing to do right now.';
+							nodes.rows.appendChild(none);
+						} else {
+							entries.forEach(function (entry) {
+								nodes.rows.appendChild(buildPlanRow(entry, plan, decided));
+							});
+						}
+					}
+
+					if (nodes.decided) {
+						if (decided) {
+							var approvedCount = 0;
+							var declinedCount = 0;
+							Object.keys(plan.decisions).forEach(function (key) {
+								if (plan.decisions[key]) approvedCount++;
+								else declinedCount++;
+							});
+							nodes.decided.hidden = false;
+							nodes.decided.textContent =
+								'Reviewed: ' + approvedCount + ' approved, ' + declinedCount + ' declined.';
+						} else {
+							nodes.decided.hidden = true;
+							nodes.decided.textContent = '';
+						}
+					}
+
+					if (nodes.actions) {
+						nodes.actions.hidden = !hasPlan || decided || entries.length === 0;
+					}
+				}
+
+				function openPlanPanel() {
+					if (planPanelOpen) return;
+					planPanelOpen = true;
+					// One of the four surfaces under the header at a time, the
+					// same rule the other three keep.
+					closeArchiveView();
+					closeBoardSettings();
+					closeConductorSettings();
+					renderPlanPanel(currentSnapshot);
+				}
+
+				function closePlanPanel() {
+					if (!planPanelOpen) return;
+					planPanelOpen = false;
+					planEditingCardKey = null;
+					renderPlanPanel(currentSnapshot);
+				}
+
+				function togglePlanPanel() {
+					if (planPanelOpen) closePlanPanel();
+					else openPlanPanel();
+				}
+
+				function onPlanAskClick() {
+					postAskConductor();
+				}
+
+				function onPlanApproveClick() {
+					var plan = planOf(currentSnapshot);
+					if (!plan || plan.status !== 'parsed') return;
+					postApprovePlan(plan.planId, Array.from(planSelectedKeys));
+				}
+
+				function onPlanRejectClick() {
+					var plan = planOf(currentSnapshot);
+					if (!plan || plan.status !== 'parsed') return;
+					postRejectPlan(plan.planId);
+				}
+
+				function onPlanAllowAccessClick() {
+					var plan = planOf(currentSnapshot);
+					if (!plan || typeof plan.conductorSessionId !== 'string' || !plan.conductorSessionId) {
+						return;
+					}
+					requestConductorReachAccess(plan.conductorSessionId);
 				}
 
 				// -------------------------------------------------------------
@@ -3670,6 +4353,12 @@
 					// elsewhere, or a reach grant approved from a card, shows up
 					// here without a dedicated re-open.
 					renderConductorSettings(snapshot);
+					// Same reasoning again for the plan approval surface: a plan
+					// finishing, or a decision made from another window on the
+					// same board, shows up here too. renderPlanPanel() itself
+					// guards the one part of this that must NOT repaint on every
+					// push - the rows, while one is mid-edit.
+					renderPlanPanel(snapshot);
 					renderBanner(snapshot);
 
 					var board = document.getElementById('board');
@@ -3976,6 +4665,26 @@
 						requestConductorOwnAccess(conductorOf(currentSnapshot));
 					});
 				}
+
+				// Phase 07 plan approval surface: static markup too, same
+				// pattern as the aging and conductor surfaces above.
+				var planToggleEl = document.getElementById('plan-toggle');
+				if (planToggleEl) planToggleEl.addEventListener('click', togglePlanPanel);
+
+				var planCloseEl = document.getElementById('plan-panel-close');
+				if (planCloseEl) planCloseEl.addEventListener('click', closePlanPanel);
+
+				var planAskEl = document.getElementById('plan-ask');
+				if (planAskEl) planAskEl.addEventListener('click', onPlanAskClick);
+
+				var planApproveEl = document.getElementById('plan-approve');
+				if (planApproveEl) planApproveEl.addEventListener('click', onPlanApproveClick);
+
+				var planRejectEl = document.getElementById('plan-reject');
+				if (planRejectEl) planRejectEl.addEventListener('click', onPlanRejectClick);
+
+				var planAllowAccessEl = document.getElementById('plan-allow-access');
+				if (planAllowAccessEl) planAllowAccessEl.addEventListener('click', onPlanAllowAccessClick);
 
 				// The <select> is static markup, never replaced by a render, so the
 				// listener is bound once here rather than per snapshot.

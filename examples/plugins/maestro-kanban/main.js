@@ -5904,6 +5904,8 @@ const PLAN_RUN_TIMEOUT_MS = 15 * 60 * 1000;
  *   finishedAt: number|null,
  *   result: object|null,
  *   timeoutTimer: ReturnType<typeof setTimeout>|null,
+ *   decisions: Map<string, boolean>,
+ *   decidedAt: number|null,
  * }} PlanRun */
 
 /** @type {Map<string, PlanRun>} boardId -> that board's most recent (or
@@ -6070,6 +6072,10 @@ async function askConductor(args) {
 		finishedAt: null,
 		result: null,
 		timeoutTimer: null,
+		// Fresh for every ask: a new plan is a new review, even on the same
+		// board, so nothing from the last one rides along.
+		decisions: new Map(),
+		decidedAt: null,
 	};
 	planRuns.set(boardId, run);
 	try {
@@ -6114,11 +6120,138 @@ function planRunSnapshot(boardId) {
 		startedAt: run.startedAt,
 		finishedAt: run.finishedAt,
 		result: run.result,
+		// `{ "move:cardKey": true }`-shaped, never a Map: the panel is the host's
+		// own JSON bridge, which cannot carry one. Empty until the approval UI's
+		// Approve Selected or Reject All actually decides the plan.
+		decisions: run.decisions.size > 0 ? Object.fromEntries(run.decisions) : {},
+		decidedAt: run.decidedAt,
 	};
 }
 
 // ===========================================================================
 // End of Phase 07 plan run loop.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 07 plan approval: lets the panel render a parsed plan as a diff the
+// user checks row by row, then records their decision - never executes
+// anything itself, since execution (the move/dispatch guardrails, the WIP
+// cap, the halt check) is the next task's job, reading the same `decisions`
+// map this leaves on the run. A row is identified by `kind + ':' + cardKey`
+// (planRowKey) - a card gets at most one move and one message per plan, so
+// that pair is unique - and the panel builds the identical string itself
+// rather than importing anything from here, the same way it already
+// duplicates every other command-id string in this file.
+//
+// "Approve Selected" and "Reject All" both resolve EVERY row of the plan,
+// not only the ones a button's name suggests: a row left unchecked when
+// Approve Selected is clicked is a row the user saw and declined, and the
+// activity feed this phase adds next has to be able to show that a row was
+// declined, not merely that it went unmentioned. There is no partial
+// "still pending" state once a decision is recorded.
+// ===========================================================================
+
+/** Shared identifier for one row of a plan: a move or a message, named by
+ * the card it is about. @param {'move'|'message'} kind @param {string} cardKey */
+function planRowKey(kind, cardKey) {
+	return kind + ':' + cardKey;
+}
+
+/** Every row of a parsed plan that is a candidate for approval - every move
+ * and every message `parsePlan()` accepted, including one riding past the
+ * WIP cap (`overCap: true`): the cap governs execution, not review, so a
+ * person can still approve or decline a deferred row. Entries `parsePlan()`
+ * itself rejected are never rows here; they have no action to approve.
+ * @param {PlanRun} run @returns {{kind: 'move'|'message', cardKey: string}[]} */
+function planRunEntries(run) {
+	const moves = run.result.moves.map((move) => ({ kind: 'move', cardKey: move.cardKey }));
+	const messages = run.result.messages.map((message) => ({
+		kind: 'message',
+		cardKey: message.cardKey,
+	}));
+	return moves.concat(messages);
+}
+
+/** Refuses the way every other board-scoped command here refuses: a stale
+ * board, a plan that is no longer this board's current run, a run still in
+ * flight, or one that never parsed into something with rows to decide.
+ * Shared by 'approve-plan', 'reject-plan' and 'edit-plan-message' so the
+ * three commands refuse identically rather than drifting apart.
+ * @param {string} boardId @param {string} planId
+ * @returns {{run: PlanRun}|{reason: string}} */
+function planRunForAction(boardId, planId) {
+	if (typeof boardId !== 'string' || boardId === '' || boardId !== currentBoardId()) {
+		return { reason: 'the board changed before this plan could be acted on; try again' };
+	}
+	const run = planRuns.get(boardId);
+	if (!run || run.planId !== planId) {
+		return { reason: "that plan is no longer this board's current plan" };
+	}
+	if (run.status === 'running') {
+		return { reason: 'this plan is still being written; wait for it to finish' };
+	}
+	if (!run.result || run.result.ok !== true) {
+		return { reason: 'this plan did not parse, so there is nothing to approve' };
+	}
+	return { run: run };
+}
+
+/** Records the user's row-by-row decision on a parsed plan: every row
+ * (planRunEntries) is marked approved when its key is in `approvedKeys`,
+ * declined otherwise - see the section banner above for why there is no
+ * third "still pending" outcome. Replaces whatever decision the run already
+ * carried, so re-deciding the same plan (unchecking a row and clicking
+ * Approve Selected again) always reflects the latest click, never a stale
+ * mix of two decisions.
+ * @param {PlanRun} run @param {Set<string>} approvedKeys */
+function recordPlanDecisions(run, approvedKeys) {
+	const decisions = new Map();
+	for (const entry of planRunEntries(run)) {
+		const key = planRowKey(entry.kind, entry.cardKey);
+		decisions.set(key, approvedKeys.has(key));
+	}
+	run.decisions = decisions;
+	run.decidedAt = Date.now();
+}
+
+/** Mutates one message's prompt in place on a parsed plan, before it is
+ * approved - the Edit action the approval UI offers a message row. Validated
+ * the same way parsePlan() itself validates a prompt (trimmed, non-empty,
+ * under PLAN_MESSAGE_PROMPT_MAX_CHARS), since an edited prompt is still a
+ * prompt this plugin is about to dispatch. Clears any decision already
+ * recorded for this run: an edited prompt is a materially different plan
+ * than the one last approved or declined, so every row goes back to
+ * "reviewed? not yet" rather than carrying a decision made about different
+ * text.
+ * @param {PlanRun} run @param {string} cardKey @param {string} prompt
+ * @returns {{ok: true}|{ok: false, reason: string}} */
+function editPlanMessage(run, cardKey, prompt) {
+	const trimmed = typeof prompt === 'string' ? prompt.trim() : '';
+	if (trimmed === '') return { ok: false, reason: 'a message needs a prompt to send' };
+	if (trimmed.length > PLAN_MESSAGE_PROMPT_MAX_CHARS) {
+		return {
+			ok: false,
+			reason:
+				'that prompt is ' +
+				trimmed.length +
+				' characters, more than the ' +
+				PLAN_MESSAGE_PROMPT_MAX_CHARS +
+				' one message may carry',
+		};
+	}
+	const message = run.result.messages.find(function (candidate) {
+		return candidate.cardKey === cardKey;
+	});
+	if (!message) return { ok: false, reason: 'that card has no proposed message in this plan' };
+	message.prompt = trimmed;
+	message.edited = true;
+	run.decisions = new Map();
+	run.decidedAt = null;
+	return { ok: true };
+}
+
+// ===========================================================================
+// End of Phase 07 plan approval.
 // ===========================================================================
 
 // ===========================================================================
@@ -7038,6 +7171,9 @@ async function buildSnapshot() {
 		archive: await buildArchiveView(),
 		settings: boardSettingsSnapshot(),
 		conductor: await conductorSettingsSnapshot(),
+		// null until this board's first Ask Conductor since activate(); see
+		// planRunSnapshot() (Phase 07 plan run loop, above).
+		planRun: planRunSnapshot(currentBoardId()),
 	};
 }
 
@@ -7435,6 +7571,91 @@ function registerCommands(maestro) {
 			}));
 		})
 	);
+
+	// Invoked by the panel's plan approval surface's Approve Selected button:
+	// `{ boardId, planId, approvedKeys }`. Records every row of the board's
+	// current parsed plan as approved or declined (see recordPlanDecisions())
+	// and pushes a fresh snapshot so the panel's diff repaints as decided; no
+	// manifest `commands` entry is needed since the palette has no plan in
+	// hand to approve. Recording the decision is as far as this command goes -
+	// executing an approved row is the next task's job, reading the same
+	// `decisions` map this leaves on the run.
+	maestro.commands.register('approve-plan', (args) => {
+		const boardId = args && typeof args.boardId === 'string' ? args.boardId : undefined;
+		const planId = args && typeof args.planId === 'string' ? args.planId : undefined;
+		const approvedKeys = args && Array.isArray(args.approvedKeys) ? args.approvedKeys : [];
+		if (!boardId || !planId) {
+			return Promise.resolve({ ok: false, reason: 'boardId and planId are required' });
+		}
+		const outcome = planRunForAction(boardId, planId);
+		if (!outcome.run) {
+			return safeToast('Could not approve that plan: ' + outcome.reason).then(() => ({
+				ok: false,
+				reason: outcome.reason,
+			}));
+		}
+		recordPlanDecisions(
+			outcome.run,
+			new Set(approvedKeys.filter((key) => typeof key === 'string'))
+		);
+		return pushSnapshotNow().then(() => ({ ok: true }));
+	});
+
+	// Invoked by the panel's plan approval surface's Reject All button:
+	// `{ boardId, planId }`. The same recordPlanDecisions() as 'approve-plan'
+	// above with nothing in the approved set, so every row lands declined; no
+	// manifest `commands` entry is needed for the same reason 'approve-plan'
+	// has none.
+	maestro.commands.register('reject-plan', (args) => {
+		const boardId = args && typeof args.boardId === 'string' ? args.boardId : undefined;
+		const planId = args && typeof args.planId === 'string' ? args.planId : undefined;
+		if (!boardId || !planId) {
+			return Promise.resolve({ ok: false, reason: 'boardId and planId are required' });
+		}
+		const outcome = planRunForAction(boardId, planId);
+		if (!outcome.run) {
+			return safeToast('Could not reject that plan: ' + outcome.reason).then(() => ({
+				ok: false,
+				reason: outcome.reason,
+			}));
+		}
+		recordPlanDecisions(outcome.run, new Set());
+		return pushSnapshotNow().then(() => ({ ok: true }));
+	});
+
+	// Invoked by the panel's plan approval surface's Edit action on a message
+	// row, before that row is approved: `{ boardId, planId, cardKey, prompt }`.
+	// editPlanMessage() validates and applies the new prompt and clears any
+	// decision already recorded for the run (see its own doc comment); no
+	// manifest `commands` entry is needed for the same reason 'approve-plan'
+	// has none.
+	maestro.commands.register('edit-plan-message', (args) => {
+		const boardId = args && typeof args.boardId === 'string' ? args.boardId : undefined;
+		const planId = args && typeof args.planId === 'string' ? args.planId : undefined;
+		const cardKey = args && typeof args.cardKey === 'string' ? args.cardKey : undefined;
+		const prompt = args && typeof args.prompt === 'string' ? args.prompt : undefined;
+		if (!boardId || !planId || !cardKey || prompt === undefined) {
+			return Promise.resolve({
+				ok: false,
+				reason: 'boardId, planId, cardKey and prompt are required',
+			});
+		}
+		const outcome = planRunForAction(boardId, planId);
+		if (!outcome.run) {
+			return safeToast('Could not edit that message: ' + outcome.reason).then(() => ({
+				ok: false,
+				reason: outcome.reason,
+			}));
+		}
+		const result = editPlanMessage(outcome.run, cardKey, prompt);
+		if (!result.ok) {
+			return safeToast('Could not edit that message: ' + result.reason).then(() => ({
+				ok: false,
+				reason: result.reason,
+			}));
+		}
+		return pushSnapshotNow().then(() => ({ ok: true }));
+	});
 
 	// Invoked by the panel when a drag ends in a drop (and, later, by its
 	// keyboard move); no manifest `commands` entry is needed since it is never
