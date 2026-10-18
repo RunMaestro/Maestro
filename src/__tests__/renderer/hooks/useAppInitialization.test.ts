@@ -115,6 +115,7 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({
 			setAudioFeedback: mockSetAudioFeedback,
 			setOsNotifications: mockSetOsNotifications,
 			setIdleNotification: mockSetIdleNotification,
+			setHistoryEnabled: vi.fn(),
 		}),
 		setState: vi.fn(),
 		subscribe: vi.fn(() => vi.fn()),

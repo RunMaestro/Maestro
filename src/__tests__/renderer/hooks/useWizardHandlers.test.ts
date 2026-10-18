@@ -302,6 +302,116 @@ describe('useWizardHandlers', () => {
 	// Slash command discovery effect
 	// ========================================================================
 	describe('slash command discovery effect', () => {
+		it('refreshes Codex commands when global environment settings change', async () => {
+			const session = createMockSession({ toolType: 'codex' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			(window as any).maestro.agents.discoverSlashCommands.mockClear();
+
+			await act(async () => {
+				useSettingsStore.setState({ shellEnvVars: { CODEX_HOME: '/other/profile' } });
+			});
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+		});
+
+		it('keeps disabled SSH configuration on the local Codex discovery path', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				sessionSshRemoteConfig: { enabled: false, remoteId: 'remote-1' },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				undefined,
+				undefined
+			);
+		});
+
+		it('passes a persisted Codex SSH identity and removes stale local commands', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				agentCommands: [{ command: '/local-skill', description: 'Local skill' }],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue(null);
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				undefined,
+				'remote-1'
+			);
+			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([]);
+		});
+
+		it('refreshes Codex commands when the active agent changes SSH identity', async () => {
+			const session = createMockSession({ toolType: 'codex' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			(window as any).maestro.agents.discoverSlashCommands.mockClear();
+
+			await act(async () => {
+				useSessionStore.getState().updateSession(session.id, { sshRemoteId: 'remote-2' });
+			});
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				undefined,
+				'remote-2'
+			);
+		});
+
+		it('refreshes persisted Codex commands without starting a discovery loop', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				customEnvVars: { CODEX_HOME: '/custom/codex' },
+				agentCommands: [{ command: '/old-skill', description: 'Stale skill' }],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'plugin:code-review', description: 'Review code', prompt: '$plugin:code-review' },
+			]);
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				undefined,
+				undefined,
+				{ CODEX_HOME: '/custom/codex' }
+			);
+			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([
+				{
+					command: '/plugin:code-review',
+					description: 'Review code',
+					prompt: '$plugin:code-review',
+				},
+			]);
+		});
+
+		it('clears stale Codex commands when all skills have been disabled', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				agentCommands: [{ command: '/disabled', description: 'Disabled' }],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([]);
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+		});
+
 		it('fetches custom commands and agent commands for claude-code sessions', async () => {
 			const session = createMockSession({ agentCommands: undefined });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });

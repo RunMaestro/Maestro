@@ -28,6 +28,44 @@ import type { Playbook, BatchDocumentEntry, TaskSelectionMode } from '../../type
 import { DEFAULT_BATCH_PROMPT } from './batchUtils';
 import { logger } from '../../utils/logger';
 
+const DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}[-_ ]?/;
+const PHASE_SUFFIX_RE = /[-_ ]\d+$/;
+
+/**
+ * Pull a playbook codename out of a run-list document path. Playbook docs follow
+ * `YYYY-MM-DD-Auth-Rewrite/AUTH-REWRITE-01` (dated folder) or `Auth-Rewrite-01`
+ * (flat), so the folder carries the codename when there is one; otherwise the
+ * file name does, minus its phase number. Any leading date is dropped because
+ * the caller stamps its own.
+ */
+export function extractPlaybookCodename(documentPath: string): string {
+	const segments = documentPath.replace(/\.md$/i, '').split('/').filter(Boolean);
+	const source = segments.length > 1 ? segments[0] : (segments[0] ?? '');
+	let codename = source.replace(DATE_PREFIX_RE, '');
+	if (segments.length <= 1) codename = codename.replace(PHASE_SUFFIX_RE, '');
+	return codename.trim() || 'Playbook';
+}
+
+/**
+ * `YYYY-MM-DD-CODENAME` for a one-click save, with the codename taken from the
+ * first document. Local date, since the user reads it as "the day I saved it".
+ * A `-2`, `-3`, ... suffix keeps it unique against the agent's playbooks.
+ */
+export function autoPlaybookName(
+	firstDocument: string,
+	existingNames: Iterable<string>,
+	now: Date = new Date()
+): string {
+	const pad = (n: number) => String(n).padStart(2, '0');
+	const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+	const base = `${date}-${extractPlaybookCodename(firstDocument)}`;
+	const taken = new Set(existingNames);
+	if (!taken.has(base)) return base;
+	let n = 2;
+	while (taken.has(`${base}-${n}`)) n++;
+	return `${base}-${n}`;
+}
+
 /**
  * Configuration passed to the hook for modification detection
  * Note: Worktree configuration has been moved to WorktreeConfigModal
@@ -83,8 +121,10 @@ export interface UsePlaybookManagementReturn {
 	handleCancelDeletePlaybook: () => void;
 	handleExportPlaybook: (playbook: Playbook) => Promise<void>;
 	handleImportPlaybook: () => Promise<void>;
-	handleSaveAsPlaybook: (name: string) => Promise<void>;
-	handleSaveUpdate: () => Promise<void>;
+	/** Resolves to the created playbook, or null when the save failed or was skipped. */
+	handleSaveAsPlaybook: (name: string) => Promise<Playbook | null>;
+	/** Resolves to the updated playbook, or null when the save failed or was skipped. */
+	handleSaveUpdate: () => Promise<Playbook | null>;
 	handleDiscardChanges: () => void;
 }
 
@@ -276,10 +316,11 @@ export function usePlaybookManagement(
 
 	// Handle saving a new playbook
 	const handleSaveAsPlaybook = useCallback(
-		async (name: string) => {
-			if (savingPlaybook) return;
+		async (name: string): Promise<Playbook | null> => {
+			if (savingPlaybook) return null;
 
 			setSavingPlaybook(true);
+			let saved: Playbook | null = null;
 			try {
 				const { documents, loopEnabled, maxLoops, prompt, taskSelectionMode } = config;
 
@@ -303,20 +344,23 @@ export function usePlaybookManagement(
 					setPlaybooks((prev) => [...prev, result.playbook]);
 					setLoadedPlaybook(result.playbook);
 					setShowSavePlaybookModal(false);
+					saved = result.playbook;
 				}
 			} catch (error) {
 				logger.error('Failed to save playbook:', undefined, error);
 			}
 			setSavingPlaybook(false);
+			return saved;
 		},
 		[sessionId, config, savingPlaybook]
 	);
 
 	// Handle updating an existing playbook
-	const handleSaveUpdate = useCallback(async () => {
-		if (!loadedPlaybook || savingPlaybook) return;
+	const handleSaveUpdate = useCallback(async (): Promise<Playbook | null> => {
+		if (!loadedPlaybook || savingPlaybook) return null;
 
 		setSavingPlaybook(true);
+		let saved: Playbook | null = null;
 		try {
 			const { documents, loopEnabled, maxLoops, prompt, taskSelectionMode } = config;
 
@@ -345,11 +389,13 @@ export function usePlaybookManagement(
 				setPlaybooks((prev) =>
 					prev.map((p) => (p.id === result.playbook.id ? result.playbook : p))
 				);
+				saved = result.playbook;
 			}
 		} catch (error) {
 			logger.error('Failed to update playbook:', undefined, error);
 		}
 		setSavingPlaybook(false);
+		return saved;
 	}, [sessionId, loadedPlaybook, config, savingPlaybook]);
 
 	// Handle discarding changes and reloading original playbook configuration

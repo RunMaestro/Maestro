@@ -5,10 +5,14 @@
 //
 //   maestro-cli reference            # Markdown (default)
 //   maestro-cli reference --format json
+//   maestro-cli reference --all      # include verbs of switched-off Encore Features
 //
-// `npm run gen:cli-reference` pipes the Markdown form into docs/cli-reference.md.
+// `npm run gen:cli-reference` pipes the `--all` Markdown form into docs/cli-reference.md.
+// Without `--all` the reference matches `--help`: a feature the user switched
+// off contributes no commands and no options.
 
-import type { Command } from 'commander';
+import type { Command, Option } from 'commander';
+import { listedSubcommands } from '../utils/encore-gate';
 
 interface OptionInfo {
 	flags: string;
@@ -26,14 +30,18 @@ interface CommandInfo {
 
 interface ReferenceOptions {
 	format?: string;
+	all?: boolean;
 }
 
-function optionInfo(cmd: Command): OptionInfo[] {
-	return cmd.options.map((opt) => ({
-		flags: opt.flags,
-		description: opt.description ?? '',
-		defaultValue: opt.defaultValue,
-	}));
+function optionInfo(cmd: Command, includeHidden: boolean): OptionInfo[] {
+	const options = cmd.options as readonly Option[];
+	return options
+		.filter((opt) => includeHidden || !opt.hidden)
+		.map((opt) => ({
+			flags: opt.flags,
+			description: opt.description ?? '',
+			defaultValue: opt.defaultValue,
+		}));
 }
 
 /** Render the argument signature (e.g. "<agent-id> [message]") for a command. */
@@ -48,15 +56,17 @@ function argSignature(cmd: Command): string {
 	return args.map((a) => (a.required ? `<${a.name()}>` : `[${a.name()}]`)).join(' ');
 }
 
-function buildInfo(cmd: Command, parentPath: string): CommandInfo {
+function buildInfo(cmd: Command, parentPath: string, includeHidden: boolean): CommandInfo {
 	const name = cmd.name();
 	const path = parentPath ? `${parentPath} ${name}` : name;
 	return {
 		path,
 		description: cmd.description() ?? '',
 		args: argSignature(cmd),
-		options: optionInfo(cmd),
-		subcommands: cmd.commands.map((c) => buildInfo(c as Command, path)),
+		options: optionInfo(cmd, includeHidden),
+		subcommands: listedSubcommands(cmd, includeHidden).map((c) =>
+			buildInfo(c, path, includeHidden)
+		),
 	};
 }
 
@@ -65,6 +75,20 @@ function flatten(info: CommandInfo, out: CommandInfo[]): void {
 	// Skip the synthetic root (empty/program name handled by caller).
 	out.push(info);
 	for (const sub of info.subcommands) flatten(sub, out);
+}
+
+/**
+ * Mintlify parses the page as MDX, so a bare `<agent>` in prose is an unclosed
+ * JSX tag and `{x}` is an expression: either one fails the whole docs deploy.
+ * Escape them everywhere except inside code spans, where they are literal.
+ */
+export function escapeMdxProse(text: string): string {
+	return text
+		.split(/(`[^`]*`)/)
+		.map((part, i) =>
+			i % 2 === 1 ? part : part.replace(/</g, '&lt;').replace(/[{}]/g, (c) => `\\${c}`)
+		)
+		.join('');
 }
 
 function toMarkdown(root: CommandInfo): string {
@@ -84,7 +108,7 @@ function toMarkdown(root: CommandInfo): string {
 		lines.push(`## \`${sig}\``);
 		lines.push('');
 		if (cmd.description) {
-			lines.push(cmd.description);
+			lines.push(escapeMdxProse(cmd.description));
 			lines.push('');
 		}
 		const realOptions = cmd.options.filter((o) => o.flags !== '-h, --help');
@@ -96,7 +120,7 @@ function toMarkdown(root: CommandInfo): string {
 					opt.defaultValue !== undefined && opt.defaultValue !== false
 						? `\`${JSON.stringify(opt.defaultValue)}\``
 						: '-';
-				const desc = (opt.description || '-').replace(/\|/g, '\\|');
+				const desc = escapeMdxProse(opt.description || '-').replace(/\|/g, '\\|');
 				const flags = opt.flags.replace(/\|/g, '\\|');
 				lines.push(`| \`${flags}\` | ${desc} | ${def} |`);
 			}
@@ -107,7 +131,7 @@ function toMarkdown(root: CommandInfo): string {
 }
 
 export function reference(program: Command, options: ReferenceOptions): void {
-	const root = buildInfo(program, '');
+	const root = buildInfo(program, '', options.all === true);
 	const format = (options.format ?? 'md').trim().toLowerCase();
 	if (format === 'json') {
 		console.log(JSON.stringify(root.subcommands, null, 2));

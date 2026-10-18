@@ -125,11 +125,13 @@ export function createPluginsApi() {
 
 		/**
 		 * Subscribe to plugin-registry changes (install/uninstall/enable/disable/
-		 * refresh). The callback receives no payload - it is a signal to re-read
-		 * `list()` / `contributions()`. Returns an unsubscribe function.
+		 * refresh). Optional live panel IDs let consumers remove revoked guests
+		 * immediately while re-reading `list()` / `contributions()`. Returns an
+		 * unsubscribe function. Callbacks that ignore the payload remain supported.
 		 */
-		onChanged: (callback: () => void): (() => void) => {
-			const handler = (): void => callback();
+		onChanged: (callback: (activePanelIds?: string[]) => void): (() => void) => {
+			const handler = (_event: unknown, _registry: unknown, activePanelIds?: string[]): void =>
+				callback(activePanelIds);
 			ipcRenderer.on('plugins:changed', handler);
 			return () => {
 				ipcRenderer.removeListener('plugins:changed', handler);

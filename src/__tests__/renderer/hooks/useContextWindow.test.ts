@@ -285,6 +285,65 @@ describe('useContextWindow', () => {
 		expect(result.current.activeTabContextUsage).toBe(0);
 	});
 
+	it('reads the occupancy snapshot, not the summed turn spend, on a 1M window (#1782)', async () => {
+		mockGetConfig.mockResolvedValue({});
+		const session = makeSession();
+		// A tool-heavy Claude turn: the top-level fields sum ~7 internal API calls
+		// and stay UNDER the 1M window, so the overflow guard never fires.
+		const tab = {
+			id: 'tab-1',
+			usageStats: {
+				contextWindow: 1_000_000,
+				contextWindowResolved: true,
+				inputTokens: 22,
+				outputTokens: 4_100,
+				cacheReadInputTokens: 437_222,
+				cacheCreationInputTokens: 89_297,
+				totalCostUsd: 0,
+				absoluteUsage: {
+					inputTokens: 3,
+					outputTokens: 600,
+					cacheReadInputTokens: 78_900,
+					cacheCreationInputTokens: 4_500,
+					reasoningTokens: 0,
+				},
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab as any));
+
+		await waitFor(() => {
+			expect(result.current.activeTabContextWindow).toBe(1_000_000);
+		});
+		expect(result.current.activeTabContextTokens).toBe(83_403);
+		expect(result.current.activeTabContextUsage).toBe(8);
+	});
+
+	it('still reads the top-level fields for a tab stored without a snapshot', async () => {
+		mockGetConfig.mockResolvedValue({});
+		const session = makeSession();
+		const tab = {
+			id: 'tab-1',
+			usageStats: {
+				contextWindow: 1_000_000,
+				contextWindowResolved: true,
+				inputTokens: 10,
+				outputTokens: 500,
+				cacheReadInputTokens: 60_000,
+				cacheCreationInputTokens: 5_000,
+				totalCostUsd: 0,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab as any));
+
+		await waitFor(() => {
+			expect(result.current.activeTabContextWindow).toBe(1_000_000);
+		});
+		expect(result.current.activeTabContextTokens).toBe(65_010);
+		expect(result.current.activeTabContextUsage).toBe(7);
+	});
+
 	it('handles agent config fetch failure', async () => {
 		mockGetConfig.mockRejectedValue(new Error('Failed'));
 		const session = makeSession();

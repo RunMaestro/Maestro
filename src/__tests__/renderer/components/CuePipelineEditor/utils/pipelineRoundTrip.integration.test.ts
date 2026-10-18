@@ -333,3 +333,122 @@ describe('round-trip: iteration-order invariance', () => {
 		expect(inOrder[0].edges.length).toBe(reversed[0].edges.length);
 	});
 });
+
+// ─── Scenario: per-node model and effort ─────────────────────────────────────
+
+describe('round-trip: agent node tier / model / effort', () => {
+	function withSettings(node: PipelineNode, settings: Partial<AgentNodeData>): PipelineNode {
+		return { ...node, data: { ...(node.data as AgentNodeData), ...settings } };
+	}
+	const sessions = [
+		{ id: 'sess-a', name: 'Alpha', toolType: 'claude-code' },
+		{ id: 'sess-b', name: 'Bravo', toolType: 'claude-code' },
+	];
+	function settingsByName(p: CuePipeline): Record<string, Partial<AgentNodeData>> {
+		const out: Record<string, Partial<AgentNodeData>> = {};
+		for (const n of p.nodes) {
+			if (n.type !== 'agent') continue;
+			const d = n.data as AgentNodeData;
+			out[d.sessionName] = { tier: d.tier, model: d.model, effort: d.effort };
+		}
+		return out;
+	}
+
+	it('keeps a trigger target tier and a chain target exact model', () => {
+		const a1 = withSettings(agent('a1', 'sess-a', 'Alpha'), { tier: 'low', effort: 'low' });
+		const a2 = withSettings(agent('a2', 'sess-b', 'Bravo', 100), {
+			model: 'claude-opus-4-7',
+			effort: 'high',
+		});
+		const pipelines = [
+			pipeline(
+				'p1',
+				'triage',
+				'#06b6d4',
+				[trigger('t1', 'time.heartbeat'), a1, a2],
+				[edge('e1', 't1', 'a1'), edge('e2', 'a1', 'a2')]
+			),
+		];
+
+		const { yaml: yamlStr } = pipelinesToYaml(pipelines);
+		const subs = (yaml.load(yamlStr) as { subscriptions: Array<Record<string, unknown>> })
+			.subscriptions;
+		expect(subs.find((s) => s.event === 'time.heartbeat')).toMatchObject({
+			tier: 'low',
+			effort: 'low',
+		});
+		expect(subs.find((s) => s.event === 'agent.completed')).toMatchObject({
+			model: 'claude-opus-4-7',
+			effort: 'high',
+		});
+
+		const [reconstructed] = roundTrip(pipelines, sessions);
+		expect(settingsByName(reconstructed)).toEqual({
+			Alpha: { tier: 'low', model: undefined, effort: 'low' },
+			Bravo: { tier: undefined, model: 'claude-opus-4-7', effort: 'high' },
+		});
+	});
+
+	it('emits one fan_out sub when every target shares the setting', () => {
+		const pipelines = [
+			pipeline(
+				'p1',
+				'shared',
+				'#06b6d4',
+				[
+					trigger('t1', 'time.heartbeat'),
+					withSettings(agent('a1', 'sess-a', 'Alpha'), { tier: 'high' }),
+					withSettings(agent('a2', 'sess-b', 'Bravo', 100), { tier: 'high' }),
+				],
+				[edge('e1', 't1', 'a1'), edge('e2', 't1', 'a2')]
+			),
+		];
+
+		const subs = (
+			yaml.load(pipelinesToYaml(pipelines).yaml) as {
+				subscriptions: Array<Record<string, unknown>>;
+			}
+		).subscriptions;
+		expect(subs).toHaveLength(1);
+		expect(subs[0]).toMatchObject({ fan_out: ['Alpha', 'Bravo'], tier: 'high' });
+
+		const [reconstructed] = roundTrip(pipelines, sessions);
+		expect(settingsByName(reconstructed)).toEqual({
+			Alpha: { tier: 'high', model: undefined, effort: undefined },
+			Bravo: { tier: 'high', model: undefined, effort: undefined },
+		});
+	});
+
+	it('splits a fan-out into per-branch subs when targets disagree', () => {
+		const pipelines = [
+			pipeline(
+				'p1',
+				'mixed',
+				'#06b6d4',
+				[
+					trigger('t1', 'time.heartbeat'),
+					withSettings(agent('a1', 'sess-a', 'Alpha'), { tier: 'low' }),
+					withSettings(agent('a2', 'sess-b', 'Bravo', 100), { tier: 'high' }),
+				],
+				[edge('e1', 't1', 'a1'), edge('e2', 't1', 'a2')]
+			),
+		];
+
+		const subs = (
+			yaml.load(pipelinesToYaml(pipelines).yaml) as {
+				subscriptions: Array<Record<string, unknown>>;
+			}
+		).subscriptions;
+		expect(subs).toHaveLength(2);
+		expect(subs.every((s) => s.fan_out === undefined)).toBe(true);
+		expect(subs.map((s) => s.tier).sort()).toEqual(['high', 'low']);
+
+		const [reconstructed] = roundTrip(pipelines, sessions);
+		// Still one visual trigger feeding two agents, each with its own tier.
+		expect(reconstructed.nodes.filter((n) => n.type === 'trigger')).toHaveLength(1);
+		expect(settingsByName(reconstructed)).toEqual({
+			Alpha: { tier: 'low', model: undefined, effort: undefined },
+			Bravo: { tier: 'high', model: undefined, effort: undefined },
+		});
+	});
+});

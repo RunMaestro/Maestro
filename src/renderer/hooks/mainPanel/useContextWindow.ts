@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { calculateContextDisplay } from '../../utils/contextUsage';
+import { calculateContextDisplay, resolveGaugeTokenStats } from '../../utils/contextUsage';
 import { resolveConfiguredContextWindow } from '../../utils/contextWindowResolver';
 import { resolveContextWindow } from '../../utils/contextWindowPrecedence';
 import type { Session, AITab } from '../../types';
@@ -81,13 +81,10 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 			return { tokens: lastGoodRef.current.tokens, percentage: lastGoodRef.current.percentage };
 		}
 
+		// Measure the occupancy snapshot when the provider attached one, not the
+		// turn's summed token spend (#1782).
 		const result = calculateContextDisplay(
-			{
-				inputTokens: activeTab.usageStats.inputTokens,
-				outputTokens: activeTab.usageStats.outputTokens,
-				cacheCreationInputTokens: activeTab.usageStats.cacheCreationInputTokens ?? 0,
-				cacheReadInputTokens: activeTab.usageStats.cacheReadInputTokens ?? 0,
-			},
+			resolveGaugeTokenStats(activeTab.usageStats, activeSession?.toolType),
 			activeTabContextWindow,
 			activeSession?.toolType,
 			activeSession?.contextUsage

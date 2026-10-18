@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { RefObject } from 'react';
 import type { Theme } from '../../types';
 import type { FileNode } from '../../types/fileTree';
-import { getEncoder } from '../../utils/tokenCounter';
+import { countTokens } from '../../utils/tokenCounter';
 import {
 	REMARK_GFM_PLUGINS,
 	generateAutoRunProseStyles,
@@ -122,11 +122,10 @@ export function useAutoRunMarkdown({
 
 		let isActive = true;
 
-		getEncoder()
-			.then((encoder) => {
+		countTokens(savedContent)
+			.then((count) => {
 				if (!isActive) return;
-				const tokens = encoder.encode(savedContent);
-				setTokenCount(tokens.length);
+				setTokenCount(count);
 			})
 			.catch((err) => {
 				if (!isActive) return;

@@ -13,6 +13,8 @@ import {
 	applyMovementHtmlPayload,
 	clearConcertoHtmlDocumentsForTests,
 	CONCERTO_HTML_CSP,
+	CODEX_VISUALIZATION_CSP,
+	registerCodexVisualizationDocument,
 } from '../../../../main/concerto-html';
 
 vi.mock('../../../../main/utils/logger', () => ({
@@ -104,5 +106,16 @@ describe('ConcertoRoutes', () => {
 		const reply = createMockReply();
 		await mockFastify.getHandler(ROUTE)!({ query: { surface: 'movement', id: 'gone' } }, reply);
 		expect(reply.state.code).toBe(404);
+	});
+
+	it('serves a visualization with the visualization policy', async () => {
+		const revision = registerCodexVisualizationDocument('viz', '<p>chart</p>');
+		const reply = createMockReply();
+		await mockFastify.getHandler(ROUTE)!(
+			{ query: { surface: 'visualization', id: 'viz', revision: String(revision) } },
+			reply
+		);
+		expect(reply.state.body).toContain('<p>chart</p>');
+		expect(reply.state.headers?.['content-security-policy']).toBe(CODEX_VISUALIZATION_CSP);
 	});
 });

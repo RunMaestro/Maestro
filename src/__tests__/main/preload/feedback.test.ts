@@ -23,8 +23,17 @@ describe('Feedback Preload API', () => {
 
 		const result = await api.checkGhAuth();
 
-		expect(mockInvoke).toHaveBeenCalledWith('feedback:check-gh-auth');
+		expect(mockInvoke).toHaveBeenCalledWith('feedback:check-gh-auth', { fresh: false });
 		expect(result.authenticated).toBe(true);
+
+		await api.checkGhAuth({ fresh: true });
+		expect(mockInvoke).toHaveBeenLastCalledWith('feedback:check-gh-auth', { fresh: true });
+	});
+
+	it('invokes feedback:gh-login-command', async () => {
+		mockInvoke.mockResolvedValue({ command: 'gh', args: [], display: 'gh' });
+		await api.getGhLoginCommand();
+		expect(mockInvoke).toHaveBeenCalledWith('feedback:gh-login-command');
 	});
 
 	it('invokes feedback:submit with attachments payload', async () => {
@@ -101,5 +110,16 @@ describe('Feedback Preload API', () => {
 		await api.drafts.delete('draft-1');
 
 		expect(mockInvoke).toHaveBeenCalledWith('feedback:drafts:delete', { id: 'draft-1' });
+	});
+
+	it('lists and remembers feedback accounts over IPC', async () => {
+		mockInvoke.mockResolvedValue({ accounts: [], lastWorkingKey: null });
+		await api.listAccounts();
+		expect(mockInvoke).toHaveBeenCalledWith('feedback:list-accounts');
+
+		await api.rememberAccount('claude-code::/home/me/.claude-work');
+		expect(mockInvoke).toHaveBeenCalledWith('feedback:remember-account', {
+			key: 'claude-code::/home/me/.claude-work',
+		});
 	});
 });

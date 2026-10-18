@@ -154,6 +154,7 @@ remote for you:
 maestro-cli create-ssh-remote "Tunnelled box" \
   --host tailcat-devbox \
   --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
+  --ssh-option HostKeyAlias=tailcat-devbox \
   --ssh-option ConnectTimeout=45
 
 # Adjust one option later without disturbing the rest
@@ -164,8 +165,40 @@ maestro-cli update-ssh-remote tunnelled --disable-ssh-option ProxyCommand
 maestro-cli update-ssh-remote tunnelled --enable-ssh-option ProxyCommand
 
 # See the full option set ssh will actually receive
-maestro-cli list-ssh-remotes --json
+maestro-cli list ssh-remotes --json
 ```
+
+#### Example: a tailcat tunnel
+
+The `create-ssh-remote` call above is a working tailcat
+setup. Two of its options are there on purpose:
+
+- **`HostKeyAlias`**. With a `ProxyCommand`, `ssh` files the host key in
+  `known_hosts` under whatever `--host` says. If that is the machine's LAN name
+  or address, the tunnelled entry collides with the direct one and `ssh`
+  refuses the connection as a changed host key. A stable alias gives the tunnel
+  its own entry.
+- **`ConnectTimeout=45`**. tailcat has to bootstrap a relay before it can
+  connect, which regularly takes longer than Maestro's default 10 seconds.
+
+On the server, generate a key once, then keep `tailcat serve` running under
+launchd or systemd with `KeepAlive` (or `Restart=always`). It proxies into the
+real `sshd`, so `authorized_keys` still does the authentication:
+
+```bash
+# Once: create the key and print the tcXXXX address
+tailcat genkey --key=devbox --embed-derp-map
+
+# Always running (launchd KeepAlive / systemd Restart=always)
+tailcat serve --key=devbox 22
+```
+
+<Warning>
+Since tailcat v0.6 the `tcXXXX` address includes a WireGuard pre-shared key by
+default, so treat it as a secret, not a hostname. Maestro stores it in plaintext
+in its settings as part of the `ProxyCommand`. Never publish it in a DNS TXT
+record (or anywhere else public) for a server that relies on the PSK.
+</Warning>
 
 ### Connection Testing
 
@@ -175,6 +208,10 @@ Before saving, you can test your SSH configuration:
 - **Agent test**: Checks if the AI agent command is available on the remote host
 
 A successful test shows the remote hostname. Failed tests display specific error messages to help diagnose issues.
+
+When the cause is something you can fix with one command, the test says so and
+offers the command to copy. The most common case is a Windows host answering
+SSH with PowerShell or cmd.exe - see [Windows Remote Hosts](#windows-remote-hosts).
 
 ### Setting a Global Default
 
@@ -264,11 +301,11 @@ The Command Terminal executes commands on the remote host:
 - Tab completion works with remote file paths
 - Command history is preserved per-session
 
-### Claude Max Plan on Remote Hosts
+### Claude TUI Wrapper on Remote Hosts
 
-Running a Claude Code agent against your Max plan quota (the TUI Wrapper and Dynamic [token sources](/provider-notes#token-source-max-plan-vs-api)) relies on the **maestro-p** helper. It ships bundled with the desktop app for local agents, but over SSH the Claude TUI runs on the remote machine, so maestro-p must be on the **remote host's** PATH. If it is missing, Maestro disables the Max plan options for that agent and falls back to the per-token API source.
+The TUI Wrapper and Dynamic [token sources](/provider-notes#token-source) rely on the **maestro-p** helper. It ships bundled with the desktop app for local agents, but over SSH the Claude TUI runs on the remote machine, so maestro-p must be on the **remote host's** PATH. If it is missing, Maestro disables those options for that agent and falls back to `claude -p`.
 
-To enable Max plan billing on a remote host, install maestro-p from the [maestro-p install page](https://runmaestro.ai/maestro-p/) on that host, then click **Re-check** in the agent's Claude Token Source panel.
+To enable the TUI Wrapper on a remote host, install maestro-p from the [maestro-p install page](https://runmaestro.ai/maestro-p/) on that host, then click **Re-check** in the agent's Claude Token Source panel.
 
 ### Group Chat with Remote Agents
 
@@ -286,6 +323,116 @@ This is especially useful for:
 - Comparing implementations across different environments
 - Coordinating changes that span multiple servers
 - Getting perspectives from agents with access to different resources
+
+## Windows Remote Hosts
+
+Maestro drives a remote agent by piping a POSIX shell script into `/bin/bash`
+on the remote: a PATH bootstrap, `export VAR=...`, then `cd <dir> && exec
+<agent>`. That means **the remote's default SSH shell must be a POSIX shell**.
+It does not have to be a Linux or macOS host; a Windows machine works fine once
+it answers SSH with bash instead of PowerShell or cmd.exe.
+
+Out of the box it does not. Windows OpenSSH ships with `cmd.exe` as its
+`DefaultShell`, and most setup guides switch it to Windows PowerShell. Neither
+can run the script Maestro sends, so every turn fails:
+
+| Remote default shell   | What you see                                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Windows PowerShell 5.1 | `The token '&&' is not a valid statement separator in this version.` PowerShell 5.1 has no `&&` operator; it arrived in PowerShell 7 |
+| cmd.exe                | `'/bin/bash' is not recognized as an internal or external command`                                                                   |
+
+Maestro recognizes both. **Test Connection** reports `Remote SSH shell is
+Windows PowerShell` (or `cmd.exe`) with the fix command attached, rather than a
+raw parser dump, and a turn that hits this fails with the same guidance instead
+of a generic crash.
+
+<Note>
+Being able to `ssh` into the host by hand does not mean Maestro can use it. An
+interactive login and a piped non-interactive command are two different paths;
+`DefaultShell` governs both, but only the second one needs POSIX.
+</Note>
+
+### Pointing OpenSSH at a POSIX shell
+
+Install [Git for Windows](https://gitforwindows.org/) (which brings Git Bash),
+then run this in an **elevated PowerShell on the remote**:
+
+```powershell
+New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Program Files\Git\bin\bash.exe" -PropertyType String -Force
+```
+
+To use a WSL distribution instead, point at `bash.exe` in System32:
+
+```powershell
+New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Windows\System32\bash.exe" -PropertyType String -Force
+```
+
+`bash.exe` opens the **default** WSL distribution. `DefaultShell` cannot carry
+arguments, so a value like `wsl.exe -d Ubuntu` does not work. To use a
+specific distribution, make it the default instead:
+
+```powershell
+wsl --set-default Ubuntu
+```
+
+WSL distributions are registered per Windows account. Install the distribution
+and run `wsl --set-default` while signed in as the user Maestro connects as,
+not as a different admin account. The agent runs as that distribution's
+default Linux user. To change that user, set `default=<name>` under `[user]`
+in the distribution's `/etc/wsl.conf`, then run `wsl --terminate Ubuntu`.
+
+<Warning>
+Do not launch WSL through `ForceCommand` in `sshd_config` (for example, a
+`Match User` block that runs a `.bat` file calling `wsl.exe -d Ubuntu`). This
+gives you a per-user shell, but it replaces every command Maestro sends.
+Starting an agent still works because that script arrives on stdin. The file
+tree, git status, and **Test Connection** send their commands as arguments, so
+they get an empty shell and come back with nothing. `DefaultShell` is a
+machine-wide registry value and cannot be set in `sshd_config` or inside a
+`Match` block, so use `wsl --set-default` to choose the distribution.
+</Warning>
+
+Restart the SSH service so new connections pick up the change:
+
+```powershell
+Restart-Service sshd
+```
+
+Verify from your Mac or Linux box before returning to Maestro:
+
+```bash
+ssh windows-host 'echo "SSH_OK" && uname -s'
+```
+
+Git Bash answers `SSH_OK` then `MINGW64_NT-10.0`; WSL answers `SSH_OK` then
+`Linux`. Either is good. A PowerShell parser error means the registry change
+did not take effect - check that you ran it elevated and restarted `sshd`.
+
+### Git Bash or WSL?
+
+|                                                           | Git Bash                                 | WSL                                                                                      |
+| --------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Filesystem the agent sees                                 | The real Windows drives (`/c/Users/...`) | The distro's Linux filesystem, with Windows drives under `/mnt/c` (slow for large repos) |
+| Windows tooling (MSBuild, Visual Studio, `.exe` binaries) | Available                                | Needs interop, often awkward                                                             |
+| Node and agent CLIs                                       | Install the Windows builds               | Install the Linux builds inside the distro                                               |
+| Working directory you configure in Maestro                | `/c/Users/you/project`                   | `/home/you/project`                                                                      |
+
+Pick Git Bash when the project is a Windows project. Pick WSL when the project
+is a Linux project that happens to live on a Windows machine. Do not mix: the
+agent's working directory must be reachable from whichever shell `DefaultShell`
+names.
+
+### After the shell is fixed
+
+The rest of the setup is the same as any other remote:
+
+- Install the agent CLI so it is on the PATH of the shell you chose. Maestro
+  probes the usual Node version-manager locations (nvm, fnm, volta, mise, asdf,
+  n) but cannot find a binary that is only on the PowerShell PATH.
+- Use forward-slash paths for the working directory (`/c/Users/you/project`,
+  not `C:\Users\you\project`).
+- Run **Test Connection** with the agent command filled in - it reports whether
+  the agent binary was found, not just whether SSH works.
 
 ## Collaborating over SSH
 
@@ -336,7 +483,7 @@ Multiple team members (`pedbook`, `stephan`, `mattj`) each have Maestro installe
 
 ### Entry Limits
 
-Shared history files respect the **Maximum Log Buffer** setting (Settings → Display). Each hostname's file retains up to this many entries (default: 5,000). When reading another host's file, Maestro reads only the most recent entries up to your own buffer limit.
+Shared history files respect the **Maximum Log Buffer** setting (Settings → Display). Each hostname's file retains up to this many entries (default: 10,000). When reading another host's file, Maestro reads only the most recent entries up to your own buffer limit.
 
 ### Notes
 
@@ -364,6 +511,15 @@ Shared history files respect the **Maximum Log Buffer** setting (Settings → Di
 | "Connection timed out"       | Check network connectivity and firewall rules   |
 | "Could not resolve hostname" | Verify the hostname/IP is correct               |
 | "No route to host"           | Check network path to the remote host           |
+
+### Remote Shell Errors
+
+| Error                                                      | Solution                                                                                                                                      |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Remote SSH shell is Windows PowerShell" / "...is cmd.exe" | The host answers SSH with a Windows shell, which cannot run the POSIX script Maestro sends. See [Windows Remote Hosts](#windows-remote-hosts) |
+| "The token '&&' is not a valid statement separator"        | Same cause, seen raw: PowerShell 5.1 has no `&&`. Repoint `DefaultShell` at Git Bash or WSL bash                                              |
+| "'/bin/bash' is not recognized"                            | Same cause, from cmd.exe or PowerShell during a turn rather than a test                                                                       |
+| "Shell profile syntax error on remote host"                | A `.bashrc` or `.zshrc` on the remote has a syntax error. Fix it there; Maestro sources login profiles to find the agent binary               |
 
 ### Agent Errors
 
@@ -401,3 +557,4 @@ Shared history files respect the **Maximum Log Buffer** setting (Settings → Di
 - Network latency affects perceived responsiveness
 - The remote host must have the agent CLI installed and configured
 - Some shell initialization files (`.bashrc`, `.zshrc`) may not be fully sourced - agent commands use `$SHELL -lc` to ensure PATH availability from login profiles
+- The remote's default SSH shell must be POSIX. A Windows host works, but only after its OpenSSH `DefaultShell` points at Git Bash or WSL bash - see [Windows Remote Hosts](#windows-remote-hosts)

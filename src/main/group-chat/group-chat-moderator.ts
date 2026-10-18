@@ -1,19 +1,20 @@
 /**
  * @file group-chat-moderator.ts
- * @description Moderator management for Group Chat feature.
+ * @description Moderator management for the Group Chat feature, bound to the desktop.
  *
  * The moderator is an AI agent that coordinates the group chat:
  * - Spawned in read-only mode to prevent unintended modifications
  * - Receives messages from users and dispatches to participants
  * - Aggregates responses and maintains conversation flow
+ *
+ * The registry lives in the library (`src/shared/maestro-lib/groupchat/moderator.ts`)
+ * and runs inside the desktop's one engine (`desktop-engine.ts`). This module keeps
+ * every export the main process already imports.
  */
 
 import * as os from 'os';
-import { GroupChat, loadGroupChat, updateGroupChat } from './group-chat-storage';
-import { appendToLog, readLog } from './group-chat-log';
-import { getPrompt } from '../prompt-manager';
-import { powerManager } from '../power-manager';
-import { logger } from '../utils/logger';
+import type { GroupChat } from './group-chat-storage';
+import { desktopGroupChatEngine as engine } from './desktop-engine';
 
 /**
  * Interface for the process manager dependency.
@@ -54,68 +55,34 @@ export interface IProcessManager {
 }
 
 /**
- * In-memory store for active moderator sessions.
- * Maps groupChatId -> sessionId
+ * Stops the periodic session cleanup. The registry no longer runs one (nothing
+ * ever started it), so this is kept for the shutdown call that still names it.
  */
-const activeModeratorSessions = new Map<string, string>();
-
-/**
- * Tracks last activity time for each moderator session.
- * Maps groupChatId -> timestamp
- */
-const sessionActivityTimestamps = new Map<string, number>();
-
-/**
- * Cleanup interval reference for clearing on shutdown.
- */
-let cleanupIntervalId: NodeJS.Timeout | null = null;
-
-/**
- * Stops the periodic session cleanup.
- * Should be called during application shutdown.
- */
-export function stopSessionCleanup(): void {
-	if (cleanupIntervalId) {
-		clearInterval(cleanupIntervalId);
-		cleanupIntervalId = null;
-	}
-}
-
-/**
- * Updates the activity timestamp for a moderator session.
- * Call this when the session is actively used.
- */
-function touchSession(groupChatId: string): void {
-	sessionActivityTimestamps.set(groupChatId, Date.now());
-}
+export function stopSessionCleanup(): void {}
 
 /**
  * Gets the base system prompt for the moderator.
- * This is combined with participant info and chat history in routeUserMessage.
  * Loaded from src/prompts/group-chat-moderator-system.md
  */
 export function getModeratorSystemPrompt(): string {
-	return getPrompt('group-chat-moderator-system');
+	return engine.getModeratorSystemPrompt();
 }
 
 /**
  * Gets the synthesis prompt for the moderator when reviewing agent responses.
- * The moderator decides whether to continue with agents or return to the user.
  * Loaded from src/prompts/group-chat-moderator-synthesis.md
  */
 export function getModeratorSynthesisPrompt(): string {
-	return getPrompt('group-chat-moderator-synthesis');
+	return engine.getModeratorSynthesisPrompt();
 }
 
 /**
- * Spawns a moderator agent for a group chat.
+ * Registers a moderator for a group chat.
  *
- * Note: This function is now only used for initial setup and storing the session mapping.
- * The actual moderator process is spawned per-message in batch mode (see routeUserMessage).
+ * Only used for initial setup and storing the session mapping. The moderator
+ * process itself is spawned per message in batch mode (see routeUserMessage).
+ * The process manager and cwd are accepted for API compatibility.
  *
- * @param chat - The group chat to spawn a moderator for
- * @param processManager - The process manager (not used for spawning, kept for API compatibility)
- * @param cwd - Working directory for the moderator (defaults to home directory)
  * @returns The session ID prefix that will be used for moderator messages
  */
 export async function spawnModerator(
@@ -123,40 +90,12 @@ export async function spawnModerator(
 	_processManager: IProcessManager,
 	_cwd: string = os.homedir()
 ): Promise<string> {
-	logger.debug(`[GroupChat:Debug] ========== SPAWNING MODERATOR ==========`);
-	logger.debug(`[GroupChat:Debug] Chat ID: ${chat.id}`);
-	logger.debug(`[GroupChat:Debug] Chat Name: ${chat.name}`);
-	logger.debug(`[GroupChat:Debug] Moderator Agent ID: ${chat.moderatorAgentId}`);
-
-	// Generate a session ID prefix for this group chat's moderator
-	// Each message will use this prefix with a timestamp suffix
-	const sessionIdPrefix = `group-chat-${chat.id}-moderator`;
-
-	logger.debug(`[GroupChat:Debug] Generated session ID prefix: ${sessionIdPrefix}`);
-
-	// Store the session mapping (using prefix as identifier)
-	activeModeratorSessions.set(chat.id, sessionIdPrefix);
-
-	// Track session activity for cleanup
-	touchSession(chat.id);
-
-	// Update the group chat with the moderator session ID prefix
-	await updateGroupChat(chat.id, { moderatorSessionId: sessionIdPrefix });
-
-	logger.debug(`[GroupChat:Debug] Moderator initialized and stored in active sessions`);
-	logger.debug(
-		`[GroupChat:Debug] Active moderator sessions count: ${activeModeratorSessions.size}`
-	);
-	logger.debug(`[GroupChat:Debug] ==========================================`);
-
-	return sessionIdPrefix;
+	return engine.spawnModerator(chat);
 }
 
 /**
  * Sends a message to the moderator and logs it.
  *
- * @param groupChatId - The ID of the group chat
- * @param message - The message to send
  * @param processManager - The process manager (optional, for sending to agent)
  */
 export async function sendToModerator(
@@ -164,97 +103,38 @@ export async function sendToModerator(
 	message: string,
 	processManager?: IProcessManager
 ): Promise<void> {
-	const chat = await loadGroupChat(groupChatId);
-	if (!chat) {
-		throw new Error(`Group chat not found: ${groupChatId}`);
-	}
-
-	// Log the message
-	await appendToLog(chat.logPath, 'user', message);
-
-	// Update session activity
-	touchSession(groupChatId);
-
-	// If process manager is provided, also send to the moderator session
-	if (processManager) {
-		const sessionId = activeModeratorSessions.get(groupChatId);
-		if (sessionId) {
-			processManager.write(sessionId, message + '\n');
-		}
-	}
+	return engine.sendToModerator(groupChatId, message, processManager);
 }
 
 /**
- * Kills the moderator session for a group chat.
+ * Stops the moderator for a group chat: the turn that is running (by its full
+ * process id), then the registration.
  *
- * @param groupChatId - The ID of the group chat
  * @param processManager - The process manager (optional, for killing the process)
  */
 export async function killModerator(
 	groupChatId: string,
 	processManager?: IProcessManager
 ): Promise<void> {
-	const sessionId = activeModeratorSessions.get(groupChatId);
-
-	if (sessionId && processManager) {
-		processManager.kill(sessionId);
-	}
-
-	activeModeratorSessions.delete(groupChatId);
-	sessionActivityTimestamps.delete(groupChatId);
-
-	// Remove power block reason when moderator is killed
-	powerManager.removeBlockReason(`groupchat:${groupChatId}`);
-
-	// Clear the session ID in storage
-	try {
-		await updateGroupChat(groupChatId, { moderatorSessionId: '' });
-	} catch {
-		// Chat may already be deleted
-	}
+	return engine.killModerator(groupChatId, processManager);
 }
 
-/**
- * Gets the moderator session ID for a group chat.
- *
- * @param groupChatId - The ID of the group chat
- * @returns The session ID, or undefined if no moderator is active
- */
+/** Gets the moderator session ID prefix for a group chat, or undefined if no moderator is active. */
 export function getModeratorSessionId(groupChatId: string): string | undefined {
-	return activeModeratorSessions.get(groupChatId);
+	return engine.getModeratorSessionId(groupChatId);
 }
 
-/**
- * Checks if a moderator is currently active for a group chat.
- *
- * @param groupChatId - The ID of the group chat
- * @returns True if a moderator is active
- */
+/** Checks if a moderator is currently active for a group chat. */
 export function isModeratorActive(groupChatId: string): boolean {
-	return activeModeratorSessions.has(groupChatId);
+	return engine.isModeratorActive(groupChatId);
 }
 
-/**
- * Clears all active moderator sessions.
- * Useful for cleanup during shutdown or testing.
- */
+/** Clears all active moderator sessions. Useful for cleanup during shutdown or testing. */
 export function clearAllModeratorSessions(): void {
-	activeModeratorSessions.clear();
-	sessionActivityTimestamps.clear();
+	engine.clearAllModeratorSessions();
 }
 
-/**
- * Gets the chat log for the group chat.
- * This is useful for providing context to the moderator.
- *
- * @param groupChatId - The ID of the group chat
- * @returns Array of messages from the chat log
- */
+/** Gets the chat log for the group chat, to give context to the moderator. */
 export async function getModeratorChatLog(groupChatId: string) {
-	const chat = await loadGroupChat(groupChatId);
-	if (!chat) {
-		throw new Error(`Group chat not found: ${groupChatId}`);
-	}
-
-	return readLog(chat.logPath);
+	return engine.getModeratorChatLog(groupChatId);
 }

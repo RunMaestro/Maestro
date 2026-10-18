@@ -5,6 +5,8 @@
  * token usage data from Claude Code responses.
  */
 
+import * as os from 'os';
+import { EventEmitter } from 'events';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock node-pty before importing process-manager (native module)
@@ -41,6 +43,8 @@ const { mockIsWindows } = vi.hoisted(() => ({
 
 vi.mock('../../shared/platformDetection', () => ({
 	isWindows: () => mockIsWindows(),
+	// Decides where the stop ladder reads the process table from.
+	isLinux: () => process.platform === 'linux',
 }));
 
 // Mock the PID liveness probe so the stale-entry reconciliation can be driven
@@ -50,6 +54,12 @@ const { mockIsPidAlive } = vi.hoisted(() => ({
 	mockIsPidAlive: vi.fn<(pid: number | undefined) => boolean>().mockReturnValue(true),
 }));
 
+const { mockSignalRemoteAgent } = vi.hoisted(() => ({ mockSignalRemoteAgent: vi.fn() }));
+vi.mock('../../main/utils/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../main/utils/ssh-remote-signal')>()),
+	signalRemoteAgent: mockSignalRemoteAgent,
+}));
+
 vi.mock('../../main/process-manager/utils/childProcessInfo', async (importOriginal) => {
 	const actual =
 		await importOriginal<typeof import('../../main/process-manager/utils/childProcessInfo')>();
@@ -57,7 +67,6 @@ vi.mock('../../main/process-manager/utils/childProcessInfo', async (importOrigin
 });
 
 import * as fs from 'fs';
-import { logger } from '../../main/utils/logger';
 
 import {
 	aggregateModelUsage,
@@ -489,7 +498,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 12345,
@@ -517,7 +526,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 12345,
@@ -552,6 +561,7 @@ describe('process-manager.ts', () => {
 				let exitCallback: (() => void) | undefined;
 				const mockOnExit = vi.fn((cb: () => void) => {
 					exitCallback = cb;
+					return { dispose: vi.fn() };
 				});
 				const processes = (processManager as any).processes as Map<string, any>;
 				processes.set('pty-session', {
@@ -559,7 +569,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 12345,
@@ -587,95 +597,166 @@ describe('process-manager.ts', () => {
 			});
 		});
 
-		describe('kill method - Windows PTY tree kill', () => {
-			let killWindowsTreeSpy: ReturnType<typeof vi.spyOn>;
+		describe('interrupt() / kill() on an SSH agent', () => {
+			function registerChild(sessionId: string) {
+				const child = Object.assign(new EventEmitter(), {
+					pid: 4242,
+					killed: false,
+					exitCode: null as number | null,
+					signalCode: null as string | null,
+					kill: vi.fn(function (this: { killed: boolean }) {
+						this.killed = true;
+						return true;
+					}),
+				});
+				const processes = (processManager as any).processes as Map<string, any>;
+				processes.set(sessionId, {
+					sessionId,
+					toolType: 'claude-code',
+					isTerminal: false,
+					pid: 4242,
+					cwd: os.tmpdir(),
+					startTime: Date.now(),
+					childProcess: child,
+				});
+				return { child, processes };
+			}
+
+			afterEach(() => {
+				vi.useRealTimers();
+				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+			});
+
+			// The local child of an SSH spawn is only the ssh client: signalling it
+			// left the remote agent running (48 minutes, 2026-10-12).
+			it('asks the remote host to interrupt, then terminate, an SSH agent', () => {
+				mockIsWindows.mockReturnValue(false);
+				vi.useFakeTimers();
+				mockSignalRemoteAgent.mockClear();
+				const { processes } = registerChild('ssh-session');
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				Object.assign(processes.get('ssh-session'), {
+					command: '/usr/bin/ssh',
+					args: sshArgs,
+					sshRemotePidFile: '/tmp/maestro-agent-1.pid',
+				});
+				const target = {
+					sshCommand: '/usr/bin/ssh',
+					sshArgs,
+					pidFile: '/tmp/maestro-agent-1.pid',
+					sessionId: 'ssh-session',
+				};
+
+				processManager.interrupt('ssh-session');
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(target, 'interrupt');
+
+				vi.advanceTimersByTime(2100);
+				expect(mockSignalRemoteAgent).toHaveBeenLastCalledWith(target, 'terminate');
+			});
+
+			it('does not reach for a remote host for a local agent', () => {
+				mockIsWindows.mockReturnValue(false);
+				mockSignalRemoteAgent.mockClear();
+				registerChild('local-session');
+
+				processManager.interrupt('local-session');
+				processManager.kill('local-session');
+
+				expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('kill method - Windows tree kill', () => {
+			const TASKKILL_PTY = ['taskkill', ['/pid', '12345', '/t', '/f'], expect.any(Function)];
+
+			// A running child, as Node reports one: the stop ladder signals only a
+			// process whose exit state is still null.
+			function runningChild(pid: number) {
+				return Object.assign(new EventEmitter(), {
+					kill: vi.fn(),
+					pid,
+					exitCode: null,
+					signalCode: null,
+				});
+			}
+
+			function trackPty(ptyProcess: unknown) {
+				const processes = (processManager as unknown as { processes: Map<string, unknown> })
+					.processes;
+				processes.set('pty-session', {
+					sessionId: 'pty-session',
+					toolType: 'terminal',
+					ptyProcess,
+					isTerminal: true,
+					pid: 12345,
+					cwd: os.tmpdir(),
+					startTime: Date.now(),
+				});
+			}
 
 			beforeEach(() => {
-				killWindowsTreeSpy = vi
-					.spyOn(ProcessManager.prototype as never, 'killWindowsProcessTree' as never)
-					.mockImplementation(() => {});
+				mockExecFile.mockReset();
+				mockExecFileSync.mockReset();
 			});
 
 			afterEach(() => {
 				mockIsWindows.mockImplementation(() => process.platform === 'win32');
-				killWindowsTreeSpy.mockRestore();
 			});
 
 			it('should use taskkill tree-kill for PTY processes on Windows', () => {
 				mockIsWindows.mockReturnValue(true);
-
-				const mockPtyProcess = { kill: vi.fn(), onExit: vi.fn() };
-				const processes = (processManager as unknown as { processes: Map<string, unknown> })
-					.processes;
-				processes.set('pty-session', {
-					sessionId: 'pty-session',
-					toolType: 'terminal',
-					ptyProcess: mockPtyProcess,
-					isTerminal: true,
-					pid: 12345,
-					cwd: '/tmp',
-					startTime: Date.now(),
-				});
+				const mockPtyProcess = { pid: 12345, kill: vi.fn(), onExit: vi.fn() };
+				trackPty(mockPtyProcess);
 
 				processManager.kill('pty-session');
 
-				expect(killWindowsTreeSpy).toHaveBeenCalledWith(12345, 'pty-session', false);
+				expect(mockExecFile).toHaveBeenCalledWith(...TASKKILL_PTY);
+				expect(mockExecFileSync).not.toHaveBeenCalled();
 				expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+			});
 
-				killWindowsTreeSpy.mockRestore();
-				const error = new Error('taskkill failed');
+			it('should block on taskkill when the app is shutting down', () => {
+				mockIsWindows.mockReturnValue(true);
+				const mockPtyProcess = { pid: 12345, kill: vi.fn(), onExit: vi.fn() };
+				trackPty(mockPtyProcess);
+
+				processManager.kill('pty-session', { sync: true, shutdown: true });
+
+				expect(mockExecFileSync).toHaveBeenCalledWith('taskkill', ['/pid', '12345', '/t', '/f'], {
+					timeout: 5000,
+				});
+				expect(mockExecFile).not.toHaveBeenCalled();
+				expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+				expect(mockPtyProcess.onExit).not.toHaveBeenCalled();
+			});
+
+			it('should not throw when taskkill fails for a process that is already gone', () => {
+				mockIsWindows.mockReturnValue(true);
 				mockExecFile.mockImplementationOnce(
 					(_command: string, _arguments: string[], callback: (callbackError: Error) => void) =>
-						callback(error)
+						callback(new Error('taskkill failed'))
 				);
-				// The private helper is the behavior selected by the public Windows kill path.
-				const managerWithPrivateKill = processManager as unknown as {
-					killWindowsProcessTree: (pid: number, sessionId: string, sync?: boolean) => void;
-				};
-				expect(() =>
-					managerWithPrivateKill.killWindowsProcessTree(12345, 'async-session')
-				).not.toThrow();
-				expect(mockExecFile).toHaveBeenCalledWith(
-					'taskkill',
-					['/pid', '12345', '/t', '/f'],
-					expect.any(Function)
-				);
-				expect(logger.debug).toHaveBeenCalledWith(
-					'[ProcessManager] taskkill exited with error (process may already be terminated)',
-					'ProcessManager',
-					{ sessionId: 'async-session', pid: 12345, error: String(error) }
-				);
-				killWindowsTreeSpy = vi
-					.spyOn(ProcessManager.prototype as never, 'killWindowsProcessTree' as never)
-					.mockImplementation(() => {});
+				trackPty({ pid: 12345, kill: vi.fn(), onExit: vi.fn() });
+
+				expect(() => processManager.kill('pty-session')).not.toThrow();
+				expect(mockExecFile).toHaveBeenCalledWith(...TASKKILL_PTY);
 			});
 
 			it('should use SIGTERM for PTY processes on non-Windows', () => {
 				mockIsWindows.mockReturnValue(false);
-
-				const mockPtyProcess = { kill: vi.fn(), onExit: vi.fn() };
-				const processes = (processManager as unknown as { processes: Map<string, unknown> })
-					.processes;
-				processes.set('pty-session', {
-					sessionId: 'pty-session',
-					toolType: 'terminal',
-					ptyProcess: mockPtyProcess,
-					isTerminal: true,
-					pid: 12345,
-					cwd: '/tmp',
-					startTime: Date.now(),
-				});
+				const mockPtyProcess = { pid: 12345, kill: vi.fn(), onExit: vi.fn() };
+				trackPty(mockPtyProcess);
 
 				processManager.kill('pty-session');
 
 				expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
-				expect(killWindowsTreeSpy).not.toHaveBeenCalled();
+				expect(mockExecFile).not.toHaveBeenCalled();
 			});
 
 			it('should use taskkill tree-kill for child processes on Windows', () => {
 				mockIsWindows.mockReturnValue(true);
 
-				const mockChildProcess = { kill: vi.fn(), pid: 99999 };
+				const mockChildProcess = runningChild(99999);
 				const processes = (processManager as unknown as { processes: Map<string, unknown> })
 					.processes;
 				processes.set('child-session', {
@@ -684,35 +765,164 @@ describe('process-manager.ts', () => {
 					childProcess: mockChildProcess,
 					isTerminal: false,
 					pid: 99999,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 				});
 
 				processManager.kill('child-session');
 
-				expect(killWindowsTreeSpy).toHaveBeenCalledWith(99999, 'child-session', false);
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'taskkill',
+					['/pid', '99999', '/t', '/f'],
+					expect.any(Function)
+				);
 				expect(mockChildProcess.kill).not.toHaveBeenCalled();
 			});
 
 			it('should remove process from map after kill', () => {
 				mockIsWindows.mockReturnValue(true);
+				trackPty({ pid: 12345, kill: vi.fn(), onExit: vi.fn() });
 
-				const mockPtyProcess = { kill: vi.fn(), onExit: vi.fn() };
+				processManager.kill('pty-session');
+
+				expect(processManager.get('pty-session')).toBeUndefined();
+			});
+		});
+
+		describe('stopping a pipe-backed agent on POSIX', () => {
+			// A running child, as Node reports one. The pid is not a child of this
+			// test process, so the ladder signals it through the handle alone.
+			function trackAgent() {
+				const child = Object.assign(new EventEmitter(), {
+					kill: vi.fn(() => {
+						// Node flips this as soon as a signal is SENT.
+						(child as unknown as { killed: boolean }).killed = true;
+						return true;
+					}),
+					pid: 99999,
+					exitCode: null as number | null,
+					signalCode: null as NodeJS.Signals | null,
+					killed: false,
+					stdin: null,
+				});
+				const processes = (processManager as unknown as { processes: Map<string, unknown> })
+					.processes;
+				const managed = {
+					sessionId: 'agent-session',
+					toolType: 'claude-code',
+					childProcess: child,
+					isTerminal: false,
+					pid: 99999,
+					cwd: os.tmpdir(),
+					startTime: Date.now(),
+					interrupted: false,
+				};
+				processes.set('agent-session', managed);
+				return { child, managed };
+			}
+
+			beforeEach(() => {
+				mockIsWindows.mockReturnValue(false);
+				// `ps` reports nothing, so no tree is ever claimed as this test's own.
+				mockExecFileSync.mockReset();
+				mockExecFileSync.mockReturnValue('');
+				vi.useFakeTimers();
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+			});
+
+			it('interrupt escalates past an agent that ignores SIGINT', () => {
+				const { child, managed } = trackAgent();
+
+				expect(processManager.interrupt('agent-session')).toBe(true);
+				expect(managed.interrupted).toBe(true);
+				expect(child.kill.mock.calls).toEqual([['SIGINT']]);
+
+				vi.advanceTimersByTime(2000);
+				expect(child.kill.mock.calls).toEqual([['SIGINT'], ['SIGTERM']]);
+
+				vi.advanceTimersByTime(2000);
+				expect(child.kill.mock.calls).toEqual([['SIGINT'], ['SIGTERM'], ['SIGKILL']]);
+			});
+
+			it('interrupt sends nothing more once the agent exits', () => {
+				const { child } = trackAgent();
+
+				processManager.interrupt('agent-session');
+				child.exitCode = 0;
+				child.emit('exit', 0, null);
+				vi.advanceTimersByTime(10_000);
+
+				expect(child.kill.mock.calls).toEqual([['SIGINT']]);
+			});
+
+			it('interrupt leaves the process tracked so its exit still settles the turn', () => {
+				trackAgent();
+
+				processManager.interrupt('agent-session');
+				vi.advanceTimersByTime(4000);
+
+				expect(processManager.get('agent-session')).toBeDefined();
+			});
+
+			it('kill follows SIGTERM with SIGKILL for an agent that traps it', () => {
+				const { child } = trackAgent();
+
+				expect(processManager.kill('agent-session')).toBe(true);
+				expect(child.kill.mock.calls).toEqual([['SIGTERM']]);
+				expect(processManager.get('agent-session')).toBeUndefined();
+
+				vi.advanceTimersByTime(2000);
+				expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
+			});
+
+			it('kill on shutdown sends SIGTERM only and leaves no timer behind', () => {
+				// Quitting has always sent a pipe-backed agent SIGTERM and nothing
+				// more, so it can finish writing its state. A SIGKILL right behind
+				// it would take that chance away.
+				const { child } = trackAgent();
+
+				processManager.kill('agent-session', { sync: true, shutdown: true });
+
+				expect(child.kill.mock.calls).toEqual([['SIGTERM']]);
+				expect(child.listenerCount('exit')).toBe(0);
+				expect(vi.getTimerCount()).toBe(0);
+			});
+		});
+
+		describe('interrupt() on a PTY', () => {
+			it('sends Ctrl+C and never escalates, since a shell outlives it by design', () => {
+				vi.useFakeTimers();
+				const ptyProcess = {
+					pid: 12345,
+					kill: vi.fn(),
+					write: vi.fn(),
+					onExit: vi.fn(),
+					onData: vi.fn(),
+					resize: vi.fn(),
+				};
 				const processes = (processManager as unknown as { processes: Map<string, unknown> })
 					.processes;
 				processes.set('pty-session', {
 					sessionId: 'pty-session',
 					toolType: 'terminal',
-					ptyProcess: mockPtyProcess,
+					ptyProcess,
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 				});
 
-				processManager.kill('pty-session');
+				expect(processManager.interrupt('pty-session')).toBe(true);
+				vi.advanceTimersByTime(10_000);
 
-				expect(processManager.get('pty-session')).toBeUndefined();
+				expect(ptyProcess.write).toHaveBeenCalledWith('\x03');
+				expect(ptyProcess.kill).not.toHaveBeenCalled();
+				expect(processManager.get('pty-session')).toBeDefined();
+				vi.useRealTimers();
 			});
 		});
 
@@ -737,7 +947,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 11111,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 11111,
@@ -753,7 +963,7 @@ describe('process-manager.ts', () => {
 					processManager.spawn({
 						sessionId: 'dup-session',
 						toolType: 'terminal',
-						cwd: '/tmp',
+						cwd: os.tmpdir(),
 						command: 'zsh',
 						args: [],
 						shell: 'zsh',
@@ -935,7 +1145,7 @@ describe('process-manager.ts', () => {
 						toolType: 'terminal',
 						isTerminal: true,
 						pid: 1,
-						cwd: '/tmp',
+						cwd: os.tmpdir(),
 						startTime: Date.now(),
 						ptyProcess: {
 							pid: 1,
@@ -968,7 +1178,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 1,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 1,
@@ -1003,7 +1213,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 1,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 1,

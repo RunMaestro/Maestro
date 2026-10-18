@@ -81,6 +81,14 @@ vi.mock('../../../main/window-state-persistence', () => ({
 	saveAllWindowStates: (...args: unknown[]) => mockSaveAllWindowStates(...args),
 }));
 
+// The per-device state store saves behind a short timer, so the quit path has
+// to land its last write. Mocked so the assertion is on the call, not on a
+// store file (the store has its own tests).
+const mockFlushDeviceState = vi.fn();
+vi.mock('../../../main/cot-export/config-store', () => ({
+	flushCotConfigStoreSync: (...args: unknown[]) => mockFlushDeviceState(...args),
+}));
+
 // Platform is controllable per-test: the update-install hard-exit only applies
 // on macOS (Squirrel.Mac/ShipIt), while Windows/Linux keep the graceful path.
 let mockIsMacOS = true;
@@ -118,8 +126,6 @@ describe('app-lifecycle/quit-handler', () => {
 		getWebServer: ReturnType<typeof vi.fn>;
 		getHistoryManager: ReturnType<typeof vi.fn>;
 		tunnelManager: typeof mockTunnelManager;
-		getActiveGroomingSessionCount: ReturnType<typeof vi.fn>;
-		cleanupAllGroomingSessions: ReturnType<typeof vi.fn>;
 		closeStatsDB: ReturnType<typeof vi.fn>;
 		stopCliWatcher: ReturnType<typeof vi.fn>;
 		powerManager: typeof mockPowerManager;
@@ -162,8 +168,6 @@ describe('app-lifecycle/quit-handler', () => {
 			getWebServer: vi.fn().mockReturnValue(mockWebServer),
 			getHistoryManager: vi.fn().mockReturnValue(mockHistoryManager),
 			tunnelManager: mockTunnelManager,
-			getActiveGroomingSessionCount: vi.fn().mockReturnValue(0),
-			cleanupAllGroomingSessions: vi.fn().mockResolvedValue(undefined),
 			closeStatsDB: vi.fn(),
 			stopCliWatcher: vi.fn(),
 			powerManager: mockPowerManager,
@@ -386,6 +390,25 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(deps.closeStatsDB).toHaveBeenCalled();
 		});
 
+		it('releases the data-dir lock last, after the stats database closes', async () => {
+			mockIsMacOS = false;
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const releaseDataDirLock = vi.fn();
+			const quitHandler = createQuitHandler({
+				...deps,
+				releaseDataDirLock,
+			} as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			expect(releaseDataDirLock).toHaveBeenCalledTimes(1);
+			expect(
+				(deps.closeStatsDB as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+			).toBeLessThan(releaseDataDirLock.mock.invocationCallOrder[0]);
+		});
+
 		it('saves the multi-window layout during cleanup, before processes are torn down', async () => {
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
@@ -422,23 +445,28 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockSaveAllWindowStates).not.toHaveBeenCalled();
 		});
 
-		it('should cleanup grooming sessions if any are active', async () => {
-			deps.getActiveGroomingSessionCount.mockReturnValue(3);
-
+		it('lands the pending device-state write before processes are torn down, and once more after', async () => {
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
 			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
 			quitHandler.setup();
 			quitHandler.confirmQuit();
 
-			const mockEvent = { preventDefault: vi.fn() };
-			beforeQuitHandler!(mockEvent);
+			beforeQuitHandler!({ preventDefault: vi.fn() });
 
-			expect(deps.cleanupAllGroomingSessions).toHaveBeenCalledWith(mockProcessManager);
+			// Before: nothing further down cleanup can cost the write. After: a
+			// line a process printed on its way out can have moved the store again.
+			expect(mockFlushDeviceState).toHaveBeenCalledTimes(2);
+			const [firstFlush, secondFlush] = mockFlushDeviceState.mock.invocationCallOrder;
+			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
+			expect(firstFlush).toBeLessThan(killOrder);
+			expect(secondFlush).toBeGreaterThan(killOrder);
 		});
 
-		it('should not cleanup grooming sessions if none are active', async () => {
-			deps.getActiveGroomingSessionCount.mockReturnValue(0);
+		it('finishes cleanup when the device-state write fails', async () => {
+			mockFlushDeviceState.mockImplementationOnce(() => {
+				throw new Error('ENOSPC');
+			});
 
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
@@ -446,10 +474,9 @@ describe('app-lifecycle/quit-handler', () => {
 			quitHandler.setup();
 			quitHandler.confirmQuit();
 
-			const mockEvent = { preventDefault: vi.fn() };
-			beforeQuitHandler!(mockEvent);
-
-			expect(deps.cleanupAllGroomingSessions).not.toHaveBeenCalled();
+			expect(() => beforeQuitHandler!({ preventDefault: vi.fn() })).not.toThrow();
+			expect(mockProcessManager.killAll).toHaveBeenCalled();
+			expect(deps.closeStatsDB).toHaveBeenCalled();
 		});
 
 		it('should handle null process manager gracefully', async () => {

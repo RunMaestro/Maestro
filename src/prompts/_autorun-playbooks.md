@@ -27,6 +27,8 @@ These are two distinct actions and the user's phrasing tells you which (or both)
 
 **Critical:** When the user asks you to _run_ an auto-run, do NOT execute the tasks yourself by reading the document and doing the work in this chat. That bypasses the Auto Run engine, leaves nothing in the UI, produces no playbook record, and loses the per-task fresh-context isolation that makes auto-runs reliable. Launching via `maestro-cli auto-run --launch` is the only correct path. Always pass `--agent {{AGENT_ID}}` so the run targets you (without it the CLI picks the first available agent).
 
+The same rule applies to a **saved playbook**: read its documents and loop settings with `maestro-cli show playbook <id>`, then launch them with `auto-run --launch`. `maestro-cli playbook <id>` and `maestro-cli run-doc` are headless, in-process runners that the desktop never sees; use them only when the user asks for a headless run or the desktop app is not running. For recurring work, use `--loop` / `--max-loops <n>` (or a scheduler your system prompt's feature sections offer), **never a scheduler of your own** (shell loop, cron, launchd, or a background script that re-runs the CLI on a timer).
+
 ### Playbook Type: Task-Based vs Document-Based
 
 Every playbook runs in one of two fresh-context modes. **When you create a playbook, explicitly tell the user which type it is** (one line is enough) so they know how it will execute:
@@ -88,21 +90,11 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
 - Credentials or accounts only a person can obtain: "sign up for an API key", "create a Stripe account", "request production access"
 - Physical or out-of-band work: "plug in the device", "call the vendor", "deploy from the admin console"
 
-**Two correct encodings** - pick by whether the run must stop:
+**Auto Runs are unattended.** The user starts a playbook so they can walk away. Every pause you add is a run that sits idle until they come back. Work down this ladder and stop at the first rung that fits:
 
-1. **The run must pause here** - emit a HITL gate marker on its own line, immediately above the tasks that depend on the human:
+1. **Make it agent work.** Most "human" steps are not. Verification becomes a test, a Playwright or CDP check, or a screenshot the agent captures and compares. A precondition ("confirm the branch is merged", "check the file exists", "make sure the dev server is up") is a command the agent runs, and if it fails the agent fixes it (rebase, start the server, create the worktree). A missing credential becomes a mocked client or a stub, so the code and its tests still land.
 
-   ```markdown
-   - [ ] Build the checkout flow and deploy it to the staging environment.
-
-   <!-- MAESTRO:HITL reason="Click through checkout on staging and confirm the payment step renders" artifact="https://staging.example.com/checkout" -->
-
-   - [ ] Apply the fixes from the staging review, then run the checkout test suite.
-   ```
-
-   The engine pauses the run at that marker, surfaces the `reason` (and optional `artifact` to look at) in the Auto Run panel and a toast, and waits. The user resumes by checking the box above the marker or clicking Resume. This is a **deliberate, visible pause** - the opposite of a stall.
-
-2. **The work just isn't the engine's job** - put it as plain `-` bullets under a trailing section. The engine never reads these, so they cannot stall anything:
+2. **The default for real human work: Manual Follow-Up.** Visual polish, testing on a physical device, sign-off, review of finished work, anything only a person can judge. Put it as plain `-` bullets under a trailing section. The engine never reads these, so the run finishes and the user does them afterwards:
 
    ```markdown
    ## Manual Follow-Up (not executed by Auto Run)
@@ -110,6 +102,18 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
    - Verify the dark mode toggle looks correct on a physical iPhone.
    - Get design sign-off on the new empty state.
    ```
+
+3. **A HITL gate - rare.** Emit one only when (a) the user explicitly asked the run to stop at that point, or (b) the very next tasks cannot execute at all without something only a person can supply, and rungs 1 and 2 cannot absorb it. Never gate to have a person review, approve, or eyeball work the run already did; that is Manual Follow-Up. The default is zero gates per playbook. Write the marker on its own line, immediately above the dependent tasks:
+
+   ```markdown
+   - [ ] Write the schema migration in `db/migrations/0042_split_accounts.sql` and run it against the local database.
+
+   <!-- MAESTRO:HITL reason="You asked to review the migration before the backfill runs" artifact="db/migrations/0042_split_accounts.sql" -->
+
+   - [ ] Backfill `accounts` from `legacy_users` with `scripts/backfill-accounts.ts` and verify the row counts match.
+   ```
+
+   The engine pauses at the marker, shows the `reason` (and optional `artifact`) in the Auto Run panel and a toast, and waits until the user clicks **Done, Resume**. Do not add an approval checkbox of your own.
 
 **Wrong:**
 
@@ -123,17 +127,15 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
 
 ```markdown
 - [ ] Add Playwright coverage for the login flow in `e2e/login.spec.ts` (happy path, wrong password, locked account) and run `npm run e2e` until green.
-
-<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" -->
-
 - [ ] Wire the SendGrid transport in `src/mail/transport.ts` using `process.env.SENDGRID_API_KEY` and add a unit test that mocks the client.
 
 ## Manual Follow-Up (not executed by Auto Run)
 
+- Add `SENDGRID_API_KEY` to `.env` to send real mail.
 - Get design sign-off on the new login screen.
 ```
 
-A stale HITL marker left above an unchecked task will pause every re-run until the box above it is checked, so use gates only where a person genuinely must act.
+The SendGrid task needs no gate: the code and a mocked test land without the key, so the key is follow-up, not a blocker. A stale HITL marker left above an unchecked task pauses every re-run until a person passes it, which is one more reason gates are the exception.
 
 ### Token Efficiency
 

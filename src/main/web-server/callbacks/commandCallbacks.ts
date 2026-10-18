@@ -58,7 +58,7 @@ function parseRemoteCommandReceipt(raw: unknown): RemoteCommandReceipt {
  * answer is reported as a failure rather than passed through as a truthy object,
  * so the calling agent never treats "no answer" as an answer.
  */
-function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
+export function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
 	if (typeof raw !== 'object' || raw === null) {
 		return { success: false, error: 'malformed-consult-result' };
 	}

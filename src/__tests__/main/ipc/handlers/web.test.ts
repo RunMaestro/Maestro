@@ -4,9 +4,6 @@ import { ipcMain } from 'electron';
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
 
-// Desktop windows the Auto Run mirror forward should reach. Mutated per test.
-let mockBrowserWindows: any[] = [];
-
 // Mock ipcMain
 vi.mock('electron', () => ({
 	ipcMain: {
@@ -16,9 +13,6 @@ vi.mock('electron', () => ({
 	},
 	app: {
 		getVersion: vi.fn(() => '0.0.0-test'),
-	},
-	BrowserWindow: {
-		getAllWindows: vi.fn(() => mockBrowserWindows),
 	},
 }));
 
@@ -75,7 +69,6 @@ describe('web handlers', () => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
 		lastWrittenInfo = null;
-		mockBrowserWindows = [];
 		resetAutoRunStateTracker();
 		// Re-wire the writeCliServerInfo / readCliServerInfo mocks after
 		// clearAllMocks blew away their implementations.
@@ -101,10 +94,15 @@ describe('web handlers', () => {
 			broadcastAutoRunState: vi.fn(),
 			broadcastTabsChange: vi.fn(),
 			requestNewTab: vi.fn().mockResolvedValue({ tabId: 'tab-2' }),
+			requestCloseTab: vi.fn().mockResolvedValue(true),
+			requestReopenTab: vi.fn().mockResolvedValue({ tabId: 'restored' }),
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
 			getPort: vi.fn().mockReturnValue(8080),
+			// Models a Live Mode server by default; tests of the loopback-only
+			// CLI server override it.
+			isLanAccessible: vi.fn().mockReturnValue(true),
 			start: vi.fn().mockResolvedValue({
 				port: 8080,
 				token: 'mock-security-token',
@@ -198,6 +196,71 @@ describe('web handlers', () => {
 		});
 	});
 
+	describe('web:takeOrphanedAutoRuns (#1470)', () => {
+		const owner = {
+			instanceId: 'tab-1',
+			config: { documents: [{ filename: 'a.md' }], prompt: 'go', loopEnabled: false },
+			folderPath: '/docs',
+		};
+
+		it('hands a run back only to the client that started it', async () => {
+			const claim = registeredHandlers.get('web:claimAutoRunStart');
+			const broadcast = registeredHandlers.get('web:broadcastAutoRunState');
+			const take = registeredHandlers.get('web:takeOrphanedAutoRuns');
+
+			expect(await claim!({}, 'session-123', owner)).toBe(true);
+			await broadcast!({}, 'session-123', {
+				isRunning: true,
+				totalTasks: 3,
+				completedTasks: 1,
+				currentTaskIndex: 1,
+			});
+
+			expect(await take!({}, 'tab-2')).toEqual([]);
+			expect(await take!({}, '')).toEqual([]);
+			expect(await take!({}, 'tab-1')).toEqual([
+				expect.objectContaining({
+					agentId: 'session-123',
+					config: owner.config,
+					folderPath: '/docs',
+				}),
+			]);
+
+			// Another client still cannot start over the reclaimed run.
+			expect(await claim!({}, 'session-123')).toBe(false);
+			// Its owner can restart it.
+			expect(await claim!({}, 'session-123', owner)).toBe(true);
+		});
+
+		it('drops a malformed owner instead of refusing the start', async () => {
+			const claim = registeredHandlers.get('web:claimAutoRunStart');
+			const take = registeredHandlers.get('web:takeOrphanedAutoRuns');
+
+			expect(await claim!({}, 'session-123', { instanceId: 'tab-1' })).toBe(true);
+			expect(await take!({}, 'tab-1')).toEqual([]);
+		});
+
+		it('ends a reclaimed run its owner gives up on', async () => {
+			const claim = registeredHandlers.get('web:claimAutoRunStart');
+			const broadcast = registeredHandlers.get('web:broadcastAutoRunState');
+			const take = registeredHandlers.get('web:takeOrphanedAutoRuns');
+			const abandon = registeredHandlers.get('web:abandonAutoRunReclaim');
+
+			await claim!({}, 'session-123', owner);
+			await broadcast!({}, 'session-123', {
+				isRunning: true,
+				totalTasks: 3,
+				completedTasks: 1,
+				currentTaskIndex: 1,
+			});
+			await take!({}, 'tab-1');
+
+			expect(await abandon!({}, 'session-123', 'tab-2')).toBe(false);
+			expect(await abandon!({}, 'session-123', 'tab-1')).toBe(true);
+			expect(await claim!({}, 'session-123')).toBe(true);
+		});
+	});
+
 	describe('web:requestNewTab', () => {
 		it('creates the tab through the desktop callback registry', async () => {
 			const handler = registeredHandlers.get('web:requestNewTab');
@@ -213,6 +276,40 @@ describe('web handlers', () => {
 
 			expect(await handler!({}, 'session-123', false)).toBeNull();
 		});
+	});
+
+	describe('web:requestCloseTab', () => {
+		it('routes the close through the desktop callback registry', async () => {
+			const handler = registeredHandlers.get('web:requestCloseTab');
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(true);
+			expect(mockWebServer.requestCloseTab).toHaveBeenCalledWith('session-123', 'tab-1');
+		});
+
+		it('returns false when the desktop is unavailable', async () => {
+			const handler = registeredHandlers.get('web:requestCloseTab');
+			mockWebServer.requestCloseTab.mockResolvedValue(false);
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(false);
+			webServerRef.current = null;
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(false);
+		});
+	});
+
+	it.each([undefined, '', 42, {}])(
+		'rejects invalid conversation ids %j before dispatch',
+		async (id) => {
+			expect(await registeredHandlers.get('web:requestCloseTab')!({}, 'session-1', id)).toBe(false);
+			expect(await registeredHandlers.get('web:requestReopenTab')!({}, id, 'tab-1')).toBeNull();
+			expect(mockWebServer.requestCloseTab).not.toHaveBeenCalled();
+			expect(mockWebServer.requestReopenTab).not.toHaveBeenCalled();
+		}
+	);
+
+	it('restores a specific history entry through its desktop owner', async () => {
+		const handler = registeredHandlers.get('web:requestReopenTab')!;
+		expect(await handler({}, 'session-1', 'closed-tab')).toEqual({ tabId: 'restored' });
+		expect(mockWebServer.requestReopenTab).toHaveBeenCalledWith('session-1', 'closed-tab');
+		webServerRef.current = null;
+		expect(await handler({}, 'session-1', 'closed-tab')).toBeNull();
 	});
 
 	describe('web:broadcastUserInput', () => {
@@ -262,112 +359,6 @@ describe('web handlers', () => {
 
 			expect(mockWebServer.broadcastAutoRunState).toHaveBeenCalledWith('session-123', state);
 			expect(result).toBe(true);
-		});
-	});
-
-	// Auto Run is renderer-owned, and `autorun_state` only ever reaches WebSocket
-	// clients. A run started in a browser tab therefore had no path back to the
-	// Electron app and the desktop drew the agent as idle for the whole run
-	// (issue #1519). Main forwards a bridge-originated frame to the desktop
-	// windows on the channel the mirror hook already consumes.
-	describe('web:broadcastAutoRunState -> desktop mirror forward', () => {
-		/** The synthetic event `handleBridgeInvoke` calls ipcMain handlers with. */
-		const BRIDGE_EVENT = { senderFrame: null, frameId: -1, processId: -1, type: 'bridge' };
-
-		const makeWindow = () => ({
-			isDestroyed: vi.fn(() => false),
-			webContents: { isDestroyed: vi.fn(() => false), send: vi.fn() },
-		});
-
-		const runningState = { isRunning: true, totalTasks: 3, completedTasks: 1 };
-
-		it('forwards a web-owned run to every desktop window', async () => {
-			const [a, b] = [makeWindow(), makeWindow()];
-			mockBrowserWindows = [a, b];
-
-			const handler = registeredHandlers.get('web:broadcastAutoRunState');
-			await handler!(BRIDGE_EVENT, 'session-123', runningState);
-
-			for (const win of [a, b]) {
-				expect(win.webContents.send).toHaveBeenCalledWith(
-					'remote:autoRunStateMirror',
-					'session-123',
-					runningState
-				);
-			}
-		});
-
-		// The echo that would break the owner: a desktop window receiving its own
-		// state back can have its live run stamped `mirrored: true`, which disables
-		// Stop/Skip/Resume/Abort on the very window driving the run.
-		it('does not forward a run owned by a desktop renderer', async () => {
-			const win = makeWindow();
-			mockBrowserWindows = [win];
-
-			const handler = registeredHandlers.get('web:broadcastAutoRunState');
-			await handler!({ senderFrame: {} }, 'session-123', runningState);
-
-			expect(win.webContents.send).not.toHaveBeenCalled();
-		});
-
-		// `null` is how the owner says the run ended. It has to reach the desktop
-		// or the mirrored card outlives the run it describes.
-		it('forwards a cleared run so the mirror can be torn down', async () => {
-			const win = makeWindow();
-			mockBrowserWindows = [win];
-
-			const handler = registeredHandlers.get('web:broadcastAutoRunState');
-			await handler!(BRIDGE_EVENT, 'session-123', null);
-
-			expect(win.webContents.send).toHaveBeenCalledWith(
-				'remote:autoRunStateMirror',
-				'session-123',
-				null
-			);
-		});
-
-		it('skips a destroyed window and still reaches the live ones', async () => {
-			const dead = makeWindow();
-			dead.isDestroyed.mockReturnValue(true);
-			const live = makeWindow();
-			mockBrowserWindows = [dead, live];
-
-			const handler = registeredHandlers.get('web:broadcastAutoRunState');
-			await handler!(BRIDGE_EVENT, 'session-123', runningState);
-
-			expect(dead.webContents.send).not.toHaveBeenCalled();
-			expect(live.webContents.send).toHaveBeenCalled();
-		});
-
-		// A window closing mid-broadcast must not cost the others their frame, nor
-		// fail the broadcast the web clients are also waiting on.
-		it('keeps going when one window throws', async () => {
-			const throwing = makeWindow();
-			throwing.webContents.send.mockImplementation(() => {
-				throw new Error('render frame disposed');
-			});
-			const healthy = makeWindow();
-			mockBrowserWindows = [throwing, healthy];
-
-			const handler = registeredHandlers.get('web:broadcastAutoRunState');
-			const result = await handler!(BRIDGE_EVENT, 'session-123', runningState);
-
-			expect(healthy.webContents.send).toHaveBeenCalled();
-			expect(result).toBe(true);
-		});
-
-		// The forward must not depend on Live Mode having a server attached: the
-		// tracker and the desktop mirror are both first-party main-process state.
-		it('forwards even when no web server is attached', async () => {
-			webServerRef.current = null;
-			const win = makeWindow();
-			mockBrowserWindows = [win];
-
-			const handler = registeredHandlers.get('web:broadcastAutoRunState');
-			const result = await handler!(BRIDGE_EVENT, 'session-123', runningState);
-
-			expect(win.webContents.send).toHaveBeenCalled();
-			expect(result).toBe(false);
 		});
 	});
 
@@ -477,10 +468,42 @@ describe('web handlers', () => {
 			const handler = registeredHandlers.get('live:startServer');
 			const result = await handler!({});
 
-			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(mockCreateWebServer).toHaveBeenCalledWith({ lanAccess: true });
 			expect(webServerRef.current).toBe(mockWebServer); // Server was set
 			expect(mockWebServer.start).toHaveBeenCalled();
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
+		});
+
+		it('should replace a loopback-only CLI server with a LAN server even when persistentWebLink is on', async () => {
+			// The CLI server never listens on the LAN. Live ON must swap it for
+			// one that does; the persistent token survives because the factory
+			// reads it from settings, not from the old server.
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
+			mockWebServer.isLanAccessible.mockReturnValue(false);
+			const lanServer = {
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				isLanAccessible: vi.fn().mockReturnValue(true),
+				start: vi.fn().mockResolvedValue({
+					port: 8080,
+					token: 'mock-security-token',
+					url: 'http://192.168.1.5:8080/mock-security-token',
+				}),
+			};
+			mockCreateWebServer.mockReturnValueOnce(lanServer);
+
+			const handler = registeredHandlers.get('live:startServer');
+			const result = await handler!({});
+
+			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(mockCreateWebServer).toHaveBeenCalledWith({ lanAccess: true });
+			expect(webServerRef.current).toBe(lanServer);
+			expect(result).toEqual({
+				success: true,
+				url: 'http://192.168.1.5:8080/mock-security-token',
+			});
 		});
 
 		it('should just start existing server if not active and persistentWebLink is on', async () => {
@@ -720,6 +743,25 @@ describe('web handlers', () => {
 		});
 	});
 
+	describe('live:getDashboardUrl', () => {
+		it('returns the URL of a running Live Mode (LAN) server', async () => {
+			const handler = registeredHandlers.get('live:getDashboardUrl');
+			expect(await handler!({})).toBe('http://localhost:8080');
+		});
+
+		it('returns null for the loopback-only CLI server so auto-start still opens the LAN', async () => {
+			mockWebServer.isLanAccessible.mockReturnValue(false);
+			const handler = registeredHandlers.get('live:getDashboardUrl');
+			expect(await handler!({})).toBeNull();
+		});
+
+		it('returns null when the server is not running', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
+			const handler = registeredHandlers.get('live:getDashboardUrl');
+			expect(await handler!({})).toBeNull();
+		});
+	});
+
 	describe('live:stopServer', () => {
 		it('should stop web server, delete discovery, and re-establish CLI server', async () => {
 			const handler = registeredHandlers.get('live:stopServer');
@@ -920,6 +962,16 @@ describe('web handlers', () => {
 			expect(writeCliServerInfo).toHaveBeenCalledWith(
 				expect.objectContaining({ port: 8080, token: 'mock-security-token', pid: process.pid })
 			);
+		});
+
+		it('creates the CLI server without LAN access', async () => {
+			webServerRef.current = null;
+			mockWebServer.isActive.mockReturnValue(false);
+
+			await ensureCliServer(buildDeps());
+
+			expect(mockCreateWebServer).toHaveBeenCalledTimes(1);
+			expect(mockCreateWebServer.mock.calls[0]).toEqual([]);
 		});
 
 		it('refreshes the discovery file when an already-running server is reused', async () => {

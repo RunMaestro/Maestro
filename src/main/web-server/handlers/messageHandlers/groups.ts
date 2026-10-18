@@ -155,7 +155,8 @@ export function handleRenameGroup(
 }
 
 /**
- * Handle update_group message - change a group's name, appearance, or parent.
+ * Handle update_group message - change a group's name, appearance, parent, or
+ * whether it is parked out of the Left Bar.
  *
  * Everything is validated here, before the renderer is asked to mutate
  * anything, so a request carrying one bad field cannot half-apply. The renderer
@@ -183,6 +184,15 @@ export function handleUpdateGroup(
 			return;
 		}
 		if (read.value !== undefined) request[field] = read.value;
+	}
+
+	const rawHidden = (message as Record<string, unknown>).hidden;
+	if (rawHidden !== undefined) {
+		if (typeof rawHidden !== 'boolean') {
+			ctx.sendError(client, 'Invalid hidden');
+			return;
+		}
+		request.hidden = rawHidden;
 	}
 
 	const rawClear = (message as Record<string, unknown>).clear;

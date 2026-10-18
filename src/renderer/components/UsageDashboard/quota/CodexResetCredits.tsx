@@ -176,15 +176,9 @@ export const CodexResetCredits = memo(function CodexResetCredits({
 					className="flex items-center gap-2 py-1"
 					data-testid={`${testIdPrefix}-reset-credit-${credit.id}`}
 				>
-					<div className="flex flex-col min-w-0 flex-1">
-						<span className="text-xs truncate" style={{ color: theme.colors.textMain }}>
-							{credit.title ?? 'Usage reset'}
-						</span>
-						<span className="text-xs" style={{ color: theme.colors.textDim }}>
-							{describeCreditExpiry(credit, now)}
-							{credit.grantedBy ? ` · from ${credit.grantedBy}` : ''}
-						</span>
-					</div>
+					{/* Button first: the action is what the row is for, and parking it
+					    at the far right of a full-width panel strands it acres away
+					    from the credit it acts on. */}
 					<button
 						type="button"
 						disabled={redeeming}
@@ -204,6 +198,15 @@ export const CodexResetCredits = memo(function CodexResetCredits({
 						<RotateCcw className="w-3 h-3" />
 						{redeeming ? 'Resetting...' : 'Reset now'}
 					</button>
+					<div className="flex flex-col min-w-0 flex-1">
+						<span className="text-xs truncate" style={{ color: theme.colors.textMain }}>
+							{credit.title ?? 'Usage reset'}
+						</span>
+						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+							{describeCreditExpiry(credit, now)}
+							{credit.grantedBy ? ` · from ${credit.grantedBy}` : ''}
+						</span>
+					</div>
 				</div>
 			))}
 

@@ -5,6 +5,12 @@ import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
 import type { LogEntry } from '../../../../../renderer/types';
+import { noteRetryProgress } from '../../../../../renderer/stores/retryStore';
+
+vi.mock('../../../../../renderer/stores/retryStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/stores/retryStore')>()),
+	noteRetryProgress: vi.fn(),
+}));
 
 let handler: ((sessionId: string, content: string) => void) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -66,6 +72,17 @@ function flushRaf() {
 }
 
 describe('useAgentThinkingListener', () => {
+	it('reports model output to the retry engine even when thinking is hidden', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'off' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentThinkingListener());
+		handler!('sess-1-ai-tab-1', 'Working on it');
+
+		expect(noteRetryProgress).toHaveBeenCalledWith('sess-1', 'tab-1');
+	});
+
 	it('subscribes once and unsubscribes on unmount', () => {
 		const { unmount } = renderHook(() => useAgentThinkingListener());
 		expect(mockProcess.onThinkingChunk).toHaveBeenCalledTimes(1);

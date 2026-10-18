@@ -9,10 +9,12 @@ import {
 	buildAgentArgs,
 	applyAgentConfigOverrides,
 	getContextWindowValue,
+	placeResumeSelectorLast,
 } from '../../../main/utils/agent-args';
-import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
+import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
-import { getAgentDefinition } from '../../../main/agents/definitions';
+import { logger as mockLogger } from '../../../main/utils/logger';
+import { setMaestroLibLogger } from '../../../shared/maestro-lib/host';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -43,6 +45,11 @@ function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 // ---------------------------------------------------------------------------
 // buildAgentArgs
 // ---------------------------------------------------------------------------
+// The library logs and reports through its host (shared/maestro-lib/host.ts),
+// which the real desktop modules register into on load. They are mocked here,
+// so register the mocks instead.
+setMaestroLibLogger(mockLogger);
+
 describe('buildAgentArgs', () => {
 	it('returns baseArgs when agent is null', () => {
 		const result = buildAgentArgs(null, { baseArgs: ['--foo', '--bar'] });
@@ -934,6 +941,59 @@ describe('buildAgentArgs', () => {
 // applyAgentConfigOverrides
 // ---------------------------------------------------------------------------
 describe('applyAgentConfigOverrides', () => {
+	describe('Codex reasoning config (#1744)', () => {
+		const baseArgs = ['exec', '--json'];
+		const codex = () => getAgentDefinition('codex');
+
+		it('inherits the Codex reasoning summary default until explicitly configured', () => {
+			expect(applyAgentConfigOverrides(codex(), baseArgs, {}).args).toEqual(baseArgs);
+		});
+
+		it.each(['auto', 'concise', 'detailed', 'none'])(
+			'forwards supported reasoning summary %s',
+			(reasoningSummary) => {
+				expect(
+					applyAgentConfigOverrides(codex(), baseArgs, {
+						agentConfigValues: { reasoningSummary },
+					}).args
+				).toEqual([...baseArgs, '-c', `model_reasoning_summary="${reasoningSummary}"`]);
+			}
+		);
+
+		// Codex refuses to load its config on an unknown variant, so a bad stored
+		// value must drop the flag rather than break every spawn.
+		it.each(['', 'invalid', ' auto ', null, 42])(
+			'drops unsupported stored reasoning summary %s',
+			(reasoningSummary) => {
+				expect(
+					applyAgentConfigOverrides(codex(), baseArgs, {
+						agentConfigValues: { reasoningSummary },
+					}).args
+				).toEqual(baseArgs);
+			}
+		);
+
+		it('keeps the summary override when Codex runs in read-only mode', () => {
+			const agent = codex();
+			const readOnlyArgs = buildAgentArgs(agent, { baseArgs, readOnlyMode: true });
+			const { args } = applyAgentConfigOverrides(agent, readOnlyArgs, {
+				readOnlyMode: true,
+				agentConfigValues: { reasoningSummary: 'auto' },
+			});
+			expect(args).toEqual([...readOnlyArgs, '-c', 'model_reasoning_summary="auto"']);
+			expect(args).toContain('--sandbox');
+			expect(args).toContain('read-only');
+		});
+
+		it('sends effort as model_reasoning_effort, the key Codex reads', () => {
+			const { args } = applyAgentConfigOverrides(codex(), baseArgs, {
+				agentConfigValues: { reasoningEffort: 'high', reasoningSummary: 'none' },
+			});
+			expect(args).toContain('model_reasoning_effort="high"');
+			expect(args.some((arg) => arg.startsWith('reasoning.effort'))).toBe(false);
+		});
+	});
+
 	it('processes configOptions with argBuilder', () => {
 		const agent = makeAgent({
 			configOptions: [
@@ -1531,6 +1591,135 @@ describe('buildAgentArgs: additionalDirectories', () => {
 
 		expect(args).toEqual(['--print', '--add-dir', '/shared/src']);
 		expect(args[args.length - 1]).not.toMatch(/^-/);
+	});
+
+	it('puts the grant flags before the resume selector', () => {
+		const agent = makeAgent({
+			additionalDirArgs: accessAgent.additionalDirArgs,
+			resumeArgs: (id: string) => ['--resume', id],
+		});
+
+		expect(
+			buildAgentArgs(agent, {
+				baseArgs: ['--print'],
+				agentSessionId: 'sess-1',
+				additionalDirectories: [RO, RW],
+			})
+		).toEqual([
+			'--print',
+			'--add-dir',
+			'/ref/docs',
+			'--add-dir',
+			'/shared/src',
+			'--resume',
+			'sess-1',
+		]);
+	});
+
+	it('leaves a resume turn unchanged when there are no grants', () => {
+		const agent = makeAgent({ resumeArgs: (id: string) => ['--resume', id] });
+
+		expect(buildAgentArgs(agent, { baseArgs: ['--print'], agentSessionId: 'sess-1' })).toEqual([
+			'--print',
+			'--resume',
+			'sess-1',
+		]);
+	});
+
+	it('Codex: --add-dir lands on `exec`, not on the `resume` subcommand', () => {
+		// `codex exec resume` has no `--add-dir`. Emitted after `resume <id>` it is
+		// parsed as that subcommand's flag, Codex answers "unexpected argument
+		// '--add-dir' found" and exits 2, so a tab's first turn worked and every
+		// follow-up died before it started.
+		const codex = {
+			...getAgentDefinition('codex'),
+			available: true,
+			capabilities: {} as AgentConfig['capabilities'],
+		} as AgentConfig;
+
+		const args = buildAgentArgs(codex, {
+			baseArgs: [],
+			prompt: 'hi',
+			cwd: '/work',
+			agentSessionId: 'thread-1',
+			additionalDirectories: [RO, RW],
+		});
+
+		// Codex's flag means WRITABLE root, so only the write grant maps to it.
+		expect(args.filter((a) => a === '--add-dir')).toHaveLength(1);
+		const addDirIdx = args.indexOf('--add-dir');
+		expect(args[addDirIdx + 1]).toBe('/shared/src');
+		expect(args.indexOf('exec')).toBeLessThan(addDirIdx);
+		expect(addDirIdx).toBeLessThan(args.indexOf('resume'));
+		expect(args.slice(-2)).toEqual(['resume', 'thread-1']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// placeResumeSelectorLast: nothing may land inside Codex's `resume` subcommand
+// ---------------------------------------------------------------------------
+describe('placeResumeSelectorLast', () => {
+	const codex = {
+		...getAgentDefinition('codex'),
+		available: true,
+		capabilities: {} as AgentConfig['capabilities'],
+	} as AgentConfig;
+
+	/** Every spawn path: buildAgentArgs, then config options and custom args. */
+	function codexResumeArgs(agentConfigValues: Record<string, unknown>, sessionCustomArgs?: string) {
+		const built = buildAgentArgs(codex, {
+			baseArgs: [],
+			prompt: 'hi',
+			cwd: '/work',
+			agentSessionId: 'thread-1',
+			additionalDirectories: [{ path: '/shared/src', read: true, write: true }],
+		});
+		return applyAgentConfigOverrides(codex, built, { agentConfigValues, sessionCustomArgs }).args;
+	}
+
+	it('keeps `resume <id>` last when custom args add exec-only flags', () => {
+		// `codex exec resume` rejects --add-dir and -s; appended after the selector
+		// they failed every follow-up with exit 2.
+		const args = codexResumeArgs({}, '--add-dir /extra -s workspace-write');
+
+		expect(args.slice(-2)).toEqual(['resume', 'thread-1']);
+		expect(args.indexOf('--add-dir', args.indexOf('/shared/src'))).toBeLessThan(
+			args.indexOf('resume')
+		);
+		expect(args.indexOf('-s')).toBeLessThan(args.indexOf('resume'));
+	});
+
+	it('keeps `resume <id>` last when config options add model and effort', () => {
+		const args = codexResumeArgs({ model: 'gpt-5.3-codex', reasoningEffort: 'high' });
+
+		expect(args.slice(-2)).toEqual(['resume', 'thread-1']);
+		expect(args).toContain('gpt-5.3-codex');
+		expect(args.indexOf('gpt-5.3-codex')).toBeLessThan(args.indexOf('resume'));
+	});
+
+	it('leaves a fresh Codex turn alone', () => {
+		const args = ['exec', '--json', '-m', 'o3'];
+		expect(placeResumeSelectorLast(codex, args)).toBe(args);
+	});
+
+	it('only matches the keyword after the batch-mode subcommand', () => {
+		const args = ['-C', 'resume', 'exec', '--json', 'resume', 'thread-1', '-m', 'o3'];
+		expect(placeResumeSelectorLast(codex, args)).toEqual([
+			'-C',
+			'resume',
+			'exec',
+			'--json',
+			'-m',
+			'o3',
+			'resume',
+			'thread-1',
+		]);
+	});
+
+	it('leaves flag-style resume selectors untouched', () => {
+		const agent = makeAgent({ resumeArgs: (id: string) => ['--resume', id] });
+		const args = ['--print', '--resume', 'sess-1', '--model', 'opus'];
+		expect(placeResumeSelectorLast(agent, args)).toBe(args);
 	});
 });
 

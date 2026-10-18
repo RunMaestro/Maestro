@@ -82,6 +82,21 @@ vi.mock('os', () => ({
 	},
 }));
 
+// Session usage now goes through the shared subagent-aware helper. Delegate to
+// the mocked pricing above so the cost assertions keep one formula, and report
+// no subagents (that module is covered by shared/claudeSessionUsage.test.ts).
+vi.mock('../../../../shared/claudeSessionUsage', async () => {
+	const { computeClaudeUsageCost } = await import('../../../../main/utils/pricing');
+	const price = (content: string, subagents: readonly string[] = []) =>
+		computeClaudeUsageCost(subagents.length ? [content, ...subagents].join('\n') : content);
+	return {
+		readClaudeSubagentTranscripts: vi.fn(async () => []),
+		readClaudeSubagentTranscriptsSync: vi.fn(() => []),
+		computeClaudeUsageWithSubagents: vi.fn(price),
+		computeClaudeSessionUsage: vi.fn(async (_filePath: string, content: string) => price(content)),
+	};
+});
+
 // Mock statsCache module
 // Mock Sentry so transcript-read noise assertions can inspect the reporter
 vi.mock('../../../../main/utils/sentry', () => ({
@@ -92,7 +107,9 @@ vi.mock('../../../../main/utils/sentry', () => ({
 vi.mock('../../../../main/utils/statsCache', () => ({
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 	loadStatsCache: vi.fn(),
+	rescaleArchivedEntries: vi.fn(),
 	saveStatsCache: vi.fn(),
+	statsCacheScope: vi.fn().mockResolvedValue(undefined),
 	STATS_CACHE_VERSION: 1,
 }));
 
@@ -292,6 +309,35 @@ describe('Claude IPC handlers', () => {
 
 			const channels = vi.mocked(broadcastBridgeEvent).mock.calls.map((c) => c[0]);
 			expect(channels).toContain('claude:projectStatsUpdate');
+		});
+	});
+
+	describe('claude:registerSessionOrigin', () => {
+		it('keeps the saved name and star when a turn re-registers the session', async () => {
+			// Runs on every turn; replacing the record wiped tab names out of "All Named".
+			mockClaudeSessionOriginsStore.get.mockReturnValue({
+				'/project': {
+					'sess-1': { origin: 'user', sessionName: 'TypeSafe.ai JEV Skill', starred: true },
+				},
+			});
+
+			const handler = handlers.get('claude:registerSessionOrigin')!;
+			await handler({}, '/project', 'sess-1', 'user');
+
+			expect(mockClaudeSessionOriginsStore.set).toHaveBeenCalledWith('origins', {
+				'/project': {
+					'sess-1': { origin: 'user', sessionName: 'TypeSafe.ai JEV Skill', starred: true },
+				},
+			});
+		});
+
+		it('stores a first registration with no name as the bare origin', async () => {
+			const handler = handlers.get('claude:registerSessionOrigin')!;
+			await handler({}, '/project', 'sess-new', 'auto');
+
+			expect(mockClaudeSessionOriginsStore.set).toHaveBeenCalledWith('origins', {
+				'/project': { 'sess-new': 'auto' },
+			});
 		});
 	});
 

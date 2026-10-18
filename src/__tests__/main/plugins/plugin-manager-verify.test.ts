@@ -27,10 +27,15 @@ import {
 	type PluginManagerDeps,
 	type PluginSandboxLifecycle,
 } from '../../../main/plugins/plugin-manager';
-import { pluginsDir } from '../../../main/plugins/plugin-store-main';
+import { pluginsDir, readPluginState } from '../../../main/plugins/plugin-store-main';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 import { packPluginArchive } from '../../../shared/plugins/plugin-archive';
+import {
+	AuthorizationStore,
+	shouldDisablePluginForVerifyResult,
+} from '../../../main/plugins/authorization-ledger';
+import { pluginIdentity } from '../../../main/plugins/plugin-identity';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 
 // FC1 Option-B gate: code only RUNS with a trusted signature. Tests asserting a
@@ -151,13 +156,92 @@ afterEach(() => {
 	fs.rmSync(workDir, { recursive: true, force: true });
 });
 
-describe('PluginManager refresh-time verifyRecord gate', () => {
+describe('PluginManager identity verification', () => {
+	it('rejects setEnabled after a same-signer code update until fresh consent binds the new identity', async () => {
+		const id = 'relay';
+		writePlugin(id, 1);
+		const installedDir = path.join(pluginsDir(), id);
+		const manifestPath = path.join(installedDir, 'plugin.json');
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+		manifest.permissions = [{ capability: 'agents:dispatch', scope: 'CONFIGURE_IN_MAESTRO' }];
+		fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+		signPluginDir(installedDir, signingKeys);
+		const trustedKeys = [signingKeys.publicKeyB64];
+		const authStore = new AuthorizationStore({
+			seal: { available: () => false, seal: () => Buffer.alloc(0), unseal: () => '' },
+			anchor: { available: () => false, read: () => null, write: () => {}, clear: () => {} },
+			ledgerPath: path.join(workDir, 'authorization-ledger'),
+		});
+		const m = manager({
+			trustedKeys: () => trustedKeys,
+			verifyRecord: (record) => {
+				const identity = pluginIdentity(record.source, trustedKeys);
+				if (!identity) return { disable: true };
+				const requested = (record.manifest?.permissions ?? []).map((p) => p.capability);
+				return {
+					disable: shouldDisablePluginForVerifyResult(
+						authStore.verify(record.id, identity, requested)
+					),
+				};
+			},
+		});
+		m.refresh();
+		const oldIdentity = pluginIdentity(installedDir, trustedKeys);
+		if (!oldIdentity) throw new Error('test plugin identity missing');
+		authStore.mint(
+			id,
+			[{ capability: 'agents:dispatch', scope: 'obsidian-agent', grantedAt: 1, unattended: true }],
+			oldIdentity
+		);
+		m.setEnabled(id, true);
+		expect(recordOf(m, id)?.enabled).toBe(true);
+
+		const source = path.join(workDir, 'relay-next');
+		fs.cpSync(installedDir, source, { recursive: true });
+		const nextManifestPath = path.join(source, 'plugin.json');
+		const nextManifest = JSON.parse(fs.readFileSync(nextManifestPath, 'utf8')) as Record<
+			string,
+			unknown
+		>;
+		nextManifest.version = '1.0.1';
+		fs.writeFileSync(nextManifestPath, JSON.stringify(nextManifest));
+		fs.writeFileSync(
+			path.join(source, 'main.js'),
+			'module.exports = { activate() { return "next"; } };'
+		);
+		signPluginDir(source, signingKeys);
+		await m.update(source);
+		expect(recordOf(m, id)?.signature?.status).toBe('trusted');
+		expect(recordOf(m, id)?.enabled).toBe(false);
+		expect(authStore.isEnabled(id)).toBe(true); // old grant still exists
+		m.setEnabled(id, false); // operator leaves the updated plugin off
+		expect(() => m.setEnabled(id, true)).toThrow('PluginNotAuthorized');
+		expect(recordOf(m, id)?.enabled).toBe(false);
+		expect(readPluginState().plugins[id].enabled).toBe(false);
+		expect(m.getActiveRecords().some((record) => record.id === id)).toBe(false);
+
+		const nextIdentity = pluginIdentity(installedDir, trustedKeys);
+		if (!nextIdentity) throw new Error('updated plugin identity missing');
+		expect(nextIdentity.signerKey).toBe(oldIdentity.signerKey);
+		expect(nextIdentity.contentHash).not.toBe(oldIdentity.contentHash);
+		// This mint stands in for the separately tested protected consent flow.
+		authStore.mint(
+			id,
+			[{ capability: 'agents:dispatch', scope: 'obsidian-agent', grantedAt: 2, unattended: true }],
+			nextIdentity
+		);
+		m.setEnabled(id, true);
+		expect(recordOf(m, id)?.enabled).toBe(true);
+	});
+
 	it('force-disables an enabled code-tier plugin the gate rejects', () => {
-		const verifyRecord = vi.fn(() => ({ disable: true }));
+		let authorized = true;
+		const verifyRecord = vi.fn(() => ({ disable: !authorized }));
 		const m = manager({ verifyRecord });
 		writePlugin('demo', 1);
 		enableTier1(m, 'demo');
 
+		authorized = false;
 		m.refresh(); // now enabled + runnable -> gate consulted
 		expect(verifyRecord).toHaveBeenCalledWith(expect.objectContaining({ id: 'demo' }));
 		expect(recordOf(m, 'demo')?.enabled).toBe(false);

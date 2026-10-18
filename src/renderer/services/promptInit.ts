@@ -22,6 +22,7 @@ import { loadBatchUtilsPrompts } from '../hooks/batch/batchUtils';
 // Services
 import { loadContextGroomerPrompts } from './contextGroomer';
 import { loadContextSummarizerPrompts } from './contextSummarizer';
+import { loadCrossAgentConsultPrompts } from './crossAgentConsultHold';
 import { loadInlineWizardConversationPrompts } from './inlineWizardConversation';
 import { loadInlineWizardDocGenPrompts } from './inlineWizardDocumentGeneration';
 import { loadWizardPrompts } from '../components/Wizard/services/wizardPrompts';
@@ -42,6 +43,7 @@ async function loadAll(force = false): Promise<void> {
 		// Services
 		loadContextGroomerPrompts(force),
 		loadContextSummarizerPrompts(force),
+		loadCrossAgentConsultPrompts(force),
 		loadInlineWizardConversationPrompts(force),
 		loadInlineWizardDocGenPrompts(force),
 		loadWizardPrompts(force),

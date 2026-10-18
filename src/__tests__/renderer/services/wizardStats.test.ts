@@ -8,7 +8,7 @@
  * on, so they are what these tests pin.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { WizardRun } from '../../../shared/stats-types';
 import {
 	beginWizardRun,
@@ -17,7 +17,10 @@ import {
 	recordCompletedWizardRun,
 	recordWizardDocuments,
 	resetWizardRunsForTest,
+	setWizardAgentWorking,
 	updateWizardRun,
+	AGENT_TURN_CAP_MS,
+	USER_GAP_CAP_MS,
 } from '../../../renderer/services/wizardStats';
 
 vi.mock('../../../renderer/utils/logger', () => ({
@@ -162,6 +165,70 @@ describe('wizardStats', () => {
 		expect(recordWizardRun).not.toHaveBeenCalled();
 	});
 
+	describe('active time', () => {
+		const MINUTE = 60_000;
+		const HOUR = 60 * MINUTE;
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2026-09-08T15:00:00Z'));
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('caps a user gap so a tab left open for a day adds minutes, not hours', () => {
+			beginWizardRun('tab-1', INIT);
+			vi.advanceTimersByTime(2 * MINUTE);
+			countWizardExchange('tab-1');
+			vi.advanceTimersByTime(24 * HOUR);
+			finishWizardRun('tab-1');
+
+			expect(lastFlush().activeMs).toBe(2 * MINUTE + USER_GAP_CAP_MS);
+		});
+
+		it('counts an agent turn in full, however long it runs', () => {
+			beginWizardRun('tab-1', INIT);
+			countWizardExchange('tab-1');
+			setWizardAgentWorking('tab-1', true);
+			vi.advanceTimersByTime(25 * MINUTE);
+			recordWizardDocuments('tab-1', { documents: 3, tasks: 18 });
+			setWizardAgentWorking('tab-1', false);
+
+			expect(lastFlush().activeMs).toBe(25 * MINUTE);
+		});
+
+		it('caps an agent turn that never comes back', () => {
+			beginWizardRun('tab-1', INIT);
+			setWizardAgentWorking('tab-1', true);
+			vi.advanceTimersByTime(3 * HOUR);
+			setWizardAgentWorking('tab-1', false);
+
+			expect(lastFlush().activeMs).toBe(AGENT_TURN_CAP_MS);
+		});
+
+		it('goes back to the user cap once the agent turn ends', () => {
+			beginWizardRun('tab-1', INIT);
+			setWizardAgentWorking('tab-1', true);
+			vi.advanceTimersByTime(MINUTE);
+			setWizardAgentWorking('tab-1', false);
+			vi.advanceTimersByTime(HOUR);
+			countWizardExchange('tab-1');
+
+			expect(lastFlush().activeMs).toBe(MINUTE + USER_GAP_CAP_MS);
+		});
+
+		it('ignores a repeated working mark instead of splitting the gap', () => {
+			beginWizardRun('tab-1', INIT);
+			setWizardAgentWorking('tab-1', true);
+			const flushed = recordWizardRun.mock.calls.length;
+			setWizardAgentWorking('tab-1', true);
+
+			expect(recordWizardRun.mock.calls.length).toBe(flushed);
+		});
+	});
+
 	it('derives startedAt from the duration for a run reported only at its end', () => {
 		recordCompletedWizardRun({
 			sessionId: 'onboarding',
@@ -176,6 +243,7 @@ describe('wizardStats', () => {
 
 		const run = lastFlush();
 		expect(run.endedAt - run.startedAt).toBe(90_000);
+		expect(run.activeMs).toBe(90_000);
 		expect(run).toMatchObject({ surface: 'onboarding', outcome: 'generated', tasks: 24 });
 	});
 

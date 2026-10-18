@@ -4,12 +4,15 @@ import {
 	applyMovementHtmlPayload,
 	attachConcertoHtmlNavigationGuard,
 	clearConcertoHtmlDocumentsForTests,
+	CODEX_VISUALIZATION_CSP,
 	CONCERTO_HTML_CSP,
 	createConcertoHtmlResponse,
 	getConcertoHtmlDocumentRevision,
 	injectConcertoDesignerBootstrap,
 	MAX_CONCERTO_HTML_BYTES,
 	MAX_CONCERTO_HTML_DOCUMENTS,
+	MAX_CODEX_VISUALIZATION_DOCUMENTS,
+	registerCodexVisualizationDocument,
 	releaseConcertoHtmlDocument,
 	restoreConcertoHtmlDocument,
 } from '../../main/concerto-html';
@@ -194,5 +197,37 @@ describe('Concerto HTML document protocol', () => {
 			initiator: { url: buildConcertoHtmlUrl('movement', 'mockup', 1) },
 		});
 		expect(preventDefault).toHaveBeenCalledTimes(2);
+	});
+
+	it('serves a Codex visualization under its own CDN-allowlist policy', async () => {
+		const revision = registerCodexVisualizationDocument('viz', '<div id="v">chart</div>');
+		const response = createConcertoHtmlResponse(
+			buildConcertoHtmlUrl('visualization', 'viz', revision)
+		);
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain('<div id="v">chart</div>');
+		const csp = response.headers.get('content-security-policy');
+		expect(csp).toBe(CODEX_VISUALIZATION_CSP);
+		expect(csp).toContain('https://unpkg.com');
+		expect(csp).toContain('connect-src blob: data:');
+		expect(csp).toContain("webrtc 'block'");
+		expect(csp).toContain('sandbox allow-scripts');
+	});
+
+	it('keeps a visualization revision while its HTML is unchanged', () => {
+		const first = registerCodexVisualizationDocument('viz', '<p>a</p>');
+		expect(registerCodexVisualizationDocument('viz', '<p>a</p>')).toBe(first);
+		expect(registerCodexVisualizationDocument('viz', '<p>b</p>')).toBeGreaterThan(first);
+	});
+
+	it('evicts the oldest visualization instead of filling the registry', () => {
+		for (let i = 0; i <= MAX_CODEX_VISUALIZATION_DOCUMENTS; i += 1) {
+			registerCodexVisualizationDocument(`viz-${i}`, `<p>${i}</p>`);
+		}
+		expect(getConcertoHtmlDocumentRevision('visualization', 'viz-0')).toBeNull();
+		expect(
+			getConcertoHtmlDocumentRevision('visualization', `viz-${MAX_CODEX_VISUALIZATION_DOCUMENTS}`)
+		).not.toBeNull();
+		expect(getConcertoHtmlDocumentRevision('visualization', 'viz-1')).not.toBeNull();
 	});
 });

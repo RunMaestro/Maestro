@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type { WebServer } from '../WebServer';
@@ -13,7 +14,12 @@ export function registerSessionCrudCallbacks(
 
 	// Set up callback for web server to create a session
 	// Uses IPC request-response pattern - renderer creates the session and responds with sessionId
-	server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config) => {
+	//
+	// `background` has to reach the renderer for `create-agent --background` to
+	// mean anything: the renderer's gate reads it off the event detail, so an
+	// argument dropped here is indistinguishable from a foreground create and
+	// the new agent takes the window from whoever is working (issue #1496).
+	server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config, background) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for createSession', 'WebServer');
@@ -45,7 +51,8 @@ export function registerSessionCrudCallbacks(
 				cwd,
 				groupId,
 				config,
-				responseChannel
+				responseChannel,
+				background === true
 			);
 
 			const timeoutId = setTimeout(() => {
@@ -273,6 +280,8 @@ export function registerSessionCrudCallbacks(
 	// disk. Applied even while the agent runs (these are spawn-time settings).
 	server.setUpdateSessionConfigCallback(
 		async (sessionId: string, configPatch: Record<string, unknown>) => {
+			const migration =
+				typeof configPatch.toolType === 'string' || typeof configPatch.migrationAction === 'string';
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for updateSessionConfig', 'WebServer');
@@ -285,7 +294,7 @@ export function registerSessionCrudCallbacks(
 
 				const handleResponse = (
 					_event: Electron.IpcMainEvent,
-					result: { success?: boolean; error?: string } | undefined
+					result: TranslationReport | undefined
 				) => {
 					if (resolved) return;
 					resolved = true;
@@ -293,6 +302,8 @@ export function registerSessionCrudCallbacks(
 					resolve({
 						success: Boolean(result?.success),
 						error: result?.error,
+						plan: result?.plan,
+						result: result?.result,
 					});
 				};
 
@@ -310,16 +321,25 @@ export function registerSessionCrudCallbacks(
 					responseChannel
 				);
 
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`updateSessionConfig callback timed out for session ${sessionId}`,
-						'WebServer'
-					);
-					resolve({ success: false, error: 'Renderer did not respond in time' });
-				}, 5000);
+				const timeoutId = setTimeout(
+					() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`updateSessionConfig callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({
+							success: false,
+							error: migration
+								? 'Provider migration response timed out. The operation may still be running; query --migration status before retrying.'
+								: 'Renderer did not respond in time',
+						});
+						// Leave time for this report to reach the CLI before its migration deadline.
+					},
+					migration ? 110000 : 5000
+				);
 			});
 		}
 	);

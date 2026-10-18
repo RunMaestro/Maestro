@@ -20,6 +20,15 @@ import type {
 	PanelContribution,
 } from '../../../../shared/plugins/contributions';
 import { useUIStore } from '../../../stores/uiStore';
+import { useModalStore } from '../../../stores/modalStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
+
+// Contributions are only read while the plugins Encore Feature is on.
+const encoreDefaults = useSettingsStore.getState().encoreFeatures;
+function setPluginsEnabled(plugins: boolean): void {
+	useSettingsStore.setState({ encoreFeatures: { ...encoreDefaults, plugins } });
+}
+beforeEach(() => setPluginsEnabled(true));
 
 const theme = THEMES.dracula;
 
@@ -41,12 +50,13 @@ const EMPTY: AggregatedContributions = {
 	errorsByPlugin: {},
 };
 
+/** Builds a generic contributed-panel fixture with per-test overrides. */
 function panel(over: Partial<PanelContribution> = {}): PanelContribution {
 	return {
-		id: 'acme.flow/flow',
+		id: 'acme.panel/flow',
 		localId: 'flow',
-		pluginId: 'acme.flow',
-		title: 'Agent Flow',
+		pluginId: 'acme.panel',
+		title: 'Example Panel',
 		entry: 'panel.html',
 		placement: 'modal',
 		size: 'full',
@@ -75,8 +85,8 @@ const pluginBridge = {
 };
 
 /** Fire a main-process `plugins:panel-visibility` broadcast at the mount. */
-function broadcast(action: VisibilityPayload['action'], panelId = 'acme.flow/flow'): void {
-	act(() => visibilityCb?.({ pluginId: 'acme.flow', panelId, action }));
+function broadcast(action: VisibilityPayload['action'], panelId = 'acme.panel/flow'): void {
+	act(() => visibilityCb?.({ pluginId: 'acme.panel', panelId, action }));
 }
 
 function renderMount() {
@@ -99,6 +109,7 @@ beforeEach(() => {
 	// The open-panel id is a module-level store singleton; reset it so one test's
 	// overlay never leaks into the next.
 	useUIStore.setState({ openPluginPanelId: null });
+	useModalStore.getState().closeModal('settings');
 });
 
 afterEach(() => {
@@ -107,6 +118,35 @@ afterEach(() => {
 });
 
 describe('PluginModalPanelMount', () => {
+	it('resolves a settings summon arriving before contribution loading completes', async () => {
+		let resolve!: (value: AggregatedContributions) => void;
+		pluginBridge.contributions.mockImplementation(
+			() =>
+				new Promise((done) => {
+					resolve = done;
+				})
+		);
+		renderMount();
+		broadcast('open');
+		await act(async () => resolve({ ...EMPTY, panels: [panel({ placement: 'settings' })] }));
+		expect(useModalStore.getState().getData('settings')).toMatchObject({
+			settingId: 'plugin-settings:acme.panel/flow',
+		});
+		expect(useUIStore.getState().openPluginPanelId).toBeNull();
+	});
+	it('routes a settings panel to its own settings card after contributions load', async () => {
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			panels: [panel({ placement: 'settings' })],
+		});
+		renderMount();
+		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
+		broadcast('open');
+		expect(useModalStore.getState().getData('settings')).toMatchObject({
+			settingId: 'plugin-settings:acme.panel/flow',
+		});
+		expect(useUIStore.getState().openPluginPanelId).toBeNull();
+	});
 	it('renders nothing until the store field names a live panel', async () => {
 		const { container } = renderMount();
 
@@ -114,19 +154,19 @@ describe('PluginModalPanelMount', () => {
 		expect(container).toBeEmptyDOMElement();
 
 		// The Settings launch button writes exactly this.
-		act(() => useUIStore.getState().setOpenPluginPanelId('acme.flow/flow'));
+		act(() => useUIStore.getState().setOpenPluginPanelId('acme.panel/flow'));
 
-		await waitFor(() => expect(screen.getByText('Agent Flow')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText('Example Panel')).toBeInTheDocument());
 		// Same host, same provenance line as the docked path.
-		expect(screen.getByText('from acme.flow')).toBeInTheDocument();
+		expect(screen.getByText('from acme.panel')).toBeInTheDocument();
 	});
 
 	it('opens edge-to-edge chrome for a size: full panel', async () => {
 		const { container } = renderMount();
 		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
-		act(() => useUIStore.getState().setOpenPluginPanelId('acme.flow/flow'));
+		act(() => useUIStore.getState().setOpenPluginPanelId('acme.panel/flow'));
 
-		await waitFor(() => expect(screen.getByText('Agent Flow')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText('Example Panel')).toBeInTheDocument());
 		expect(container.querySelector('.inset-4')).not.toBeNull();
 		expect(container.querySelector('.w-\\[720px\\]')).toBeNull();
 	});
@@ -134,12 +174,12 @@ describe('PluginModalPanelMount', () => {
 	it('closes on Escape through the layer stack and clears the store field', async () => {
 		renderMount();
 		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
-		act(() => useUIStore.getState().setOpenPluginPanelId('acme.flow/flow'));
-		await waitFor(() => expect(screen.getByText('Agent Flow')).toBeInTheDocument());
+		act(() => useUIStore.getState().setOpenPluginPanelId('acme.panel/flow'));
+		await waitFor(() => expect(screen.getByText('Example Panel')).toBeInTheDocument());
 
 		fireEvent.keyDown(window, { key: 'Escape' });
 
-		await waitFor(() => expect(screen.queryByText('Agent Flow')).not.toBeInTheDocument());
+		await waitFor(() => expect(screen.queryByText('Example Panel')).not.toBeInTheDocument());
 		// Cleared, not merely unmounted - otherwise the chord could never re-open it.
 		expect(useUIStore.getState().openPluginPanelId).toBeNull();
 	});
@@ -149,18 +189,18 @@ describe('PluginModalPanelMount', () => {
 		await waitFor(() => expect(pluginBridge.onPanelVisibility).toHaveBeenCalledTimes(1));
 
 		broadcast('open');
-		await waitFor(() => expect(screen.getByText('Agent Flow')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText('Example Panel')).toBeInTheDocument());
 
 		// The chord path: toggle dismisses...
 		broadcast('toggle');
-		await waitFor(() => expect(screen.queryByText('Agent Flow')).not.toBeInTheDocument());
+		await waitFor(() => expect(screen.queryByText('Example Panel')).not.toBeInTheDocument());
 
 		// ...and summons again.
 		broadcast('toggle');
-		await waitFor(() => expect(screen.getByText('Agent Flow')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText('Example Panel')).toBeInTheDocument());
 
 		broadcast('close');
-		await waitFor(() => expect(screen.queryByText('Agent Flow')).not.toBeInTheDocument());
+		await waitFor(() => expect(screen.queryByText('Example Panel')).not.toBeInTheDocument());
 	});
 
 	it('ignores a close naming a panel that is not the open one', async () => {
@@ -168,20 +208,20 @@ describe('PluginModalPanelMount', () => {
 		await waitFor(() => expect(pluginBridge.onPanelVisibility).toHaveBeenCalledTimes(1));
 
 		broadcast('open');
-		await waitFor(() => expect(screen.getByText('Agent Flow')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText('Example Panel')).toBeInTheDocument());
 
 		// A different plugin's close must never dismiss this overlay.
 		broadcast('close', 'other.plugin/board');
 
-		expect(screen.getByText('Agent Flow')).toBeInTheDocument();
-		expect(useUIStore.getState().openPluginPanelId).toBe('acme.flow/flow');
+		expect(screen.getByText('Example Panel')).toBeInTheDocument();
+		expect(useUIStore.getState().openPluginPanelId).toBe('acme.panel/flow');
 	});
 
 	it('drops the overlay when the open id stops resolving to a live panel', async () => {
 		renderMount();
 		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
-		act(() => useUIStore.getState().setOpenPluginPanelId('acme.flow/flow'));
-		await waitFor(() => expect(screen.getByText('Agent Flow')).toBeInTheDocument());
+		act(() => useUIStore.getState().setOpenPluginPanelId('acme.panel/flow'));
+		await waitFor(() => expect(screen.getByText('Example Panel')).toBeInTheDocument());
 
 		// Plugin disabled/uninstalled while its overlay is up: contributions refresh
 		// without it. `usePluginContributions` re-fetches on the onChanged callback.
@@ -190,7 +230,7 @@ describe('PluginModalPanelMount', () => {
 		expect(onChangedCb).toBeTypeOf('function');
 		act(() => onChangedCb!());
 
-		await waitFor(() => expect(screen.queryByText('Agent Flow')).not.toBeInTheDocument());
+		await waitFor(() => expect(screen.queryByText('Example Panel')).not.toBeInTheDocument());
 	});
 
 	it('unsubscribes from panel-visibility on unmount', async () => {

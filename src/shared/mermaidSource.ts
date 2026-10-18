@@ -1,5 +1,5 @@
 /**
- * Mermaid source repair for the flowchart lexer rules that eat ordinary prose.
+ * Mermaid source repair for the flowchart and timeline lexer rules that eat ordinary prose.
  *
  * Mermaid's flowchart grammar is a jison lexer with per-state rules and
  * longest-match. The three label forms - node (`A[text]`), pipe
@@ -107,6 +107,20 @@
  * same repair runs on the per-subgraph `direction` statement, whose set is the
  * same one minus `BR`.
  *
+ * ## A `:` or `#` in a timeline period
+ *
+ * The timeline grammar reads everything before the first `: ` as the period,
+ * with `[^#:\n]+`. A clock time is the most natural period there is, and it
+ * kills the diagram:
+ *
+ *   16:18 : Email received
+ *   --^ Parse error: got 'INVALID'
+ *
+ * A `#` is worse: it opens a line comment, so `Issue #1710 : opened` parses
+ * and renders a period with its events silently gone. `escapeTimelinePeriods`
+ * writes both as entity codes, which the lexer never sees. See there for the
+ * section-title variant.
+ *
  * ## What is deliberately not repaired
  *
  * Two inputs are ambiguous rather than broken, and both are left byte-for-byte
@@ -157,15 +171,23 @@ function findDiagramLineIndex(lines: string[]): number {
 /** The keywords that select the flowchart grammar, `flowchart-elk` included. */
 const FLOWCHART_KEYWORD = /^(flowchart|graph)\b/i;
 
+/** The keyword that selects the timeline grammar (`timeline`, `timeline LR`). */
+const TIMELINE_KEYWORD = /^timeline\b/i;
+
+/** True when the line carrying the diagram keyword matches `keyword`. */
+function hasDiagramKeyword(source: string, keyword: RegExp): boolean {
+	const lines = source.split('\n');
+	const index = findDiagramLineIndex(lines);
+	return index !== -1 && keyword.test(lines[index].trim());
+}
+
 /**
  * True when the source is a flowchart, the only diagram type whose grammar has
  * the edge-id rule. Every other diagram treats `@` as plain text, so rewriting
  * there would be a change with no bug behind it.
  */
 function isFlowchartSource(source: string): boolean {
-	const lines = source.split('\n');
-	const index = findDiagramLineIndex(lines);
-	return index !== -1 && FLOWCHART_KEYWORD.test(lines[index].trim());
+	return hasDiagramKeyword(source, FLOWCHART_KEYWORD);
 }
 
 /**
@@ -553,6 +575,75 @@ function quoteSubgraphTitles(source: string): string {
 }
 
 /**
+ * A character the timeline period rule reads as syntax, or an entity code
+ * (`#58;`, `#quot;`) already written, which passes through so a second pass
+ * changes nothing.
+ */
+const ENTITY_OR_TIMELINE_BREAKING = /#\w+;|[:#]/g;
+const TIMELINE_ENTITIES: Record<string, string> = { ':': '#58;', '#': '#35;' };
+
+/** The `: ` (or end-of-line `:`) that ends a timeline period and opens its first event. */
+const TIMELINE_EVENT_DELIMITER = /:(?=\s|$)/;
+
+/** Timeline statements whose text the period rule never sees. */
+const TIMELINE_NON_PERIOD = /^(?:%%|:|title\s|acc(?:Title|Descr)\b)/i;
+
+/**
+ * Escape what the timeline lexer would read as syntax in a period or a section
+ * title. Text before the first `: ` is a period, and the lexer reads it with
+ * `[^#:\n]+`, so:
+ *
+ * - a `:` ends the period, and the rest is not an event (`:\s` is), so
+ *   `16:18 : Email` is a parse error on its line, and so is
+ *   `section 12:00 - 14:00`. A section line cannot carry events at all
+ *   (`section Day 1: start` crashes in the db), so every `:` in it is escaped.
+ * - a `#` opens a line comment, so `Issue #1710 : opened` parses to a period
+ *   `Issue ` with its events silently gone. This is the one repair that changes
+ *   a diagram that already parses, because what that diagram renders is wrong.
+ *
+ * Both become entity codes (`#58;`, `#35;`). mermaid hides entity codes from
+ * the lexer (`encodeEntities` runs before the parse) and decodes them in the
+ * rendered SVG, so the text reads exactly as written. Event text needs no
+ * repair: its rule accepts any `:` that is not followed by whitespace, and a
+ * `: ` inside it is the documented way to put two events on one line.
+ */
+function escapeTimelinePeriods(source: string): string {
+	const lines = source.split('\n');
+	const start = findDiagramLineIndex(lines) + 1;
+	let inAccDescrBlock = false;
+
+	for (let i = start; i < lines.length; i++) {
+		const line = lines[i];
+		const trimmed = line.trim();
+
+		if (inAccDescrBlock) {
+			if (trimmed.includes('}')) inAccDescrBlock = false;
+			continue;
+		}
+		if (/^accDescr\s*\{/i.test(trimmed)) {
+			inAccDescrBlock = !trimmed.includes('}');
+			continue;
+		}
+		if (!trimmed || TIMELINE_NON_PERIOD.test(trimmed)) continue;
+
+		const section = /^([ \t]*section\s)(.*)$/i.exec(line);
+		if (section) {
+			const [, head, title] = section;
+			lines[i] = head + title.replace(ENTITY_OR_TIMELINE_BREAKING, (m) => (m === ':' ? '#58;' : m));
+			continue;
+		}
+
+		const delimiter = TIMELINE_EVENT_DELIMITER.exec(line);
+		const end = delimiter ? delimiter.index : line.length;
+		const period = line
+			.slice(0, end)
+			.replace(ENTITY_OR_TIMELINE_BREAKING, (m) => TIMELINE_ENTITIES[m] ?? m);
+		lines[i] = period + line.slice(end);
+	}
+	return lines.join('\n');
+}
+
+/**
  * Anything that can trigger a repair: a character that can turn label text into
  * syntax, the head of an inline-labelled link, or a `subgraph` line, whose bare
  * title breaks on characters no label does. A source with none of these is
@@ -563,13 +654,15 @@ const REPAIRABLE = /[@()[\]{}]|-\.|==|^[ \t]*subgraph\b/im;
 /**
  * Repair the flowchart source: quote any label whose text would lex as syntax,
  * and rewrite `@` inside label text as `#64;` so the edge-id lexer rule cannot
- * swallow it. Returns `source` unchanged when there is nothing to repair (no
- * character that can break a label, or not a flowchart).
+ * swallow it. In a timeline, escape the `:` and `#` a period cannot carry.
+ * Returns `source` unchanged when there is nothing to repair (no character that
+ * can break a label, or neither a flowchart nor a timeline).
  */
 export function normalizeMermaidSource(source: string): string {
 	// Runs ahead of the REPAIRABLE gate: a bad direction carries none of the
 	// characters that gate looks for.
 	const directed = repairDirections(source);
+	if (hasDiagramKeyword(directed, TIMELINE_KEYWORD)) return escapeTimelinePeriods(directed);
 	if (!REPAIRABLE.test(directed)) return directed;
 	if (!isFlowchartSource(directed)) return directed;
 

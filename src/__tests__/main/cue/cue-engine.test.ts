@@ -16,15 +16,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as yaml from 'js-yaml';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
+import type { LoadCueConfigDetailedResult } from '../../../main/cue/cue-yaml-loader';
 
 // Mock the yaml loader
 const mockLoadCueConfig = vi.fn<(projectRoot: string) => CueConfig | null>();
-type DetailedResult =
-	| { ok: true; config: CueConfig; warnings: string[] }
-	| { ok: false; reason: 'missing' }
-	| { ok: false; reason: 'parse-error'; message: string }
-	| { ok: false; reason: 'invalid'; errors: string[] };
-const mockLoadCueConfigDetailed = vi.fn<(projectRoot: string) => DetailedResult>();
+const mockLoadCueConfigDetailed = vi.fn<(projectRoot: string) => LoadCueConfigDetailedResult>();
 const mockWatchCueYaml = vi.fn<(projectRoot: string, onChange: () => void) => () => void>();
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	loadCueConfig: (...args: unknown[]) => mockLoadCueConfig(args[0] as string),
@@ -70,10 +66,23 @@ vi.mock('../../../main/cue/cue-task-scanner', async () => {
 const mockInitCueDb = vi.fn();
 const mockCloseCueDb = vi.fn();
 const mockPruneCueEvents = vi.fn();
+// Mock the cross-process engine lock: acquireCueEngineLock/releaseCueEngineLock
+// touch a REAL file under the real Maestro data directory (cue-engine-lock.ts is
+// deliberately global-state, cross-process by design), which would make parallel
+// test workers steal each other's lock and fail start() nondeterministically.
+vi.mock('../../../main/cue/cue-engine-lock', () => ({
+	acquireCueEngineLock: () => ({ acquired: true }),
+	releaseCueEngineLock: () => {},
+	touchCueEngineLock: () => 'held',
+	CUE_ENGINE_LOCK_HEARTBEAT_MS: 30_000,
+	readCueEngineLock: () => null,
+}));
+
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: (...args: unknown[]) => mockInitCueDb(...args),
 	closeCueDb: () => mockCloseCueDb(),
 	pruneCueEvents: (...args: unknown[]) => mockPruneCueEvents(...args),
+	failOrphanedRunningEvents: () => 0,
 	isCueDbReady: () => true,
 	recordCueEvent: vi.fn(),
 	updateCueEventStatus: vi.fn(),
@@ -756,7 +765,7 @@ describe('CueEngine', () => {
 			expect(engine.getStatus()).toHaveLength(0);
 		});
 
-		it('sets up a pending yaml watcher after config deletion for re-creation', () => {
+		it('retains the yaml watcher after config deletion for re-creation', () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -776,8 +785,9 @@ describe('CueEngine', () => {
 			const initialWatchCalls = mockWatchCueYaml.mock.calls.length;
 			engine.refreshSession('session-1', '/projects/test');
 
-			// A new yaml watcher should be created for watching re-creation
-			expect(mockWatchCueYaml.mock.calls.length).toBe(initialWatchCalls + 1);
+			// Keep the original watcher alive for deletion, re-creation and read retries.
+			expect(mockWatchCueYaml.mock.calls.length).toBe(initialWatchCalls);
+			expect(yamlWatcherCleanup).not.toHaveBeenCalled();
 		});
 
 		it('recovers when config file is re-created after deletion', () => {
@@ -842,19 +852,18 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			const pendingCleanup = vi.fn();
 			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
-			mockWatchCueYaml.mockReturnValueOnce(yamlWatcherCleanup).mockReturnValue(pendingCleanup);
+			mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Delete config - creates pending yaml watcher
+			// Delete config - the original watcher now waits for re-creation
 			engine.refreshSession('session-1', '/projects/test');
 
 			// Stop engine - should clean up pending watcher
 			engine.stop();
-			expect(pendingCleanup).toHaveBeenCalled();
+			expect(yamlWatcherCleanup).toHaveBeenCalledTimes(1);
 		});
 
 		it('cleans up pending yaml watchers on removeSession', () => {
@@ -869,19 +878,18 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			const pendingCleanup = vi.fn();
 			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
-			mockWatchCueYaml.mockReturnValueOnce(yamlWatcherCleanup).mockReturnValue(pendingCleanup);
+			mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Delete config - creates pending yaml watcher
+			// Delete config - the original watcher now waits for re-creation
 			engine.refreshSession('session-1', '/projects/test');
 
 			// Remove session - should clean up pending watcher
 			engine.removeSession('session-1');
-			expect(pendingCleanup).toHaveBeenCalled();
+			expect(yamlWatcherCleanup).toHaveBeenCalledTimes(1);
 		});
 
 		it('triggers refresh via yaml watcher callback on file change', () => {
@@ -3243,7 +3251,7 @@ describe('CueEngine', () => {
 		// loadCueConfigDetailed().warnings, which session-runtime-service forwards to
 		// the logger. These tests inject the warning directly via the detailed mock to
 		// verify the integration path: loader warnings → engine logger.
-		it('logs warning when prompt_file is set but prompt is empty', () => {
+		it('logs a structured health warning when prompt_file is set but prompt is empty', () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3255,19 +3263,24 @@ describe('CueEngine', () => {
 					},
 				],
 			});
+			const warning =
+				'"missing-file-sub" has prompt_file "missing.md" but the file was not found - subscription will fail on trigger';
 			mockLoadCueConfigDetailed.mockReturnValue({
 				ok: true,
 				config,
-				warnings: [
-					'"missing-file-sub" has prompt_file "missing.md" but the file was not found - subscription will fail on trigger',
-				],
+				warnings: [warning],
+				healthWarnings: [{ warningIndex: 0 }],
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('prompt_file'));
-			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('missing.md'));
+			const message = `[CUE] ${warning}`;
+			expect(deps.onLog).toHaveBeenCalledWith('warn', message, {
+				type: 'triggerHealthWarning',
+				sessionId: 'session-1',
+				message,
+			});
 
 			engine.stop();
 		});

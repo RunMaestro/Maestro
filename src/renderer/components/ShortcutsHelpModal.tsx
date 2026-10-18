@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useCallback } from 'react';
 import { X, Award, CheckCircle, Trophy, ExternalLink, Settings } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { ShortcutFilterButton } from './ui/ShortcutFilterButton';
+import { ShortcutKeys } from './ui/ShortcutHint';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -16,6 +17,8 @@ import {
 	getLevelForPercentage,
 } from '../constants/keyboardMastery';
 import { openUrl } from '../utils/openUrl';
+import { availableShortcuts } from '../utils/encoreShortcuts';
+import { useSettingsStore } from '../stores/settingsStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface ShortcutsHelpModalProps {
@@ -59,14 +62,20 @@ export function ShortcutsHelpModal({
 		return true;
 	}, []);
 
-	// Combine all shortcuts for display and mastery tracking
+	// Combine all shortcuts for display and mastery tracking. A switched-off
+	// Encore Feature's chord cannot fire, so it is neither listed nor counted.
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const allShortcuts = useMemo(
-		() => ({
-			...shortcuts,
-			...tabShortcuts,
-			...FIXED_SHORTCUTS,
-		}),
-		[shortcuts, tabShortcuts]
+		() =>
+			availableShortcuts(
+				{
+					...shortcuts,
+					...tabShortcuts,
+					...FIXED_SHORTCUTS,
+				},
+				encoreFeatures
+			),
+		[shortcuts, tabShortcuts, encoreFeatures]
 	);
 
 	const totalShortcuts = Object.values(allShortcuts).length;
@@ -76,12 +85,12 @@ export function ShortcutsHelpModal({
 	// already has. Resolved against the live binding so a rebound host chord
 	// keeps the hint truthful.
 	const doublePressHint = useCallback(
-		(id: string): string | null => {
+		(id: string): string[] | null => {
 			const hostId = DOUBLE_PRESS_ACCESS[id];
 			if (!hostId) return null;
 			const hostKeys = allShortcuts[hostId]?.keys;
 			if (!hostKeys?.length) return null;
-			return formatShortcutKeys(hostKeys);
+			return hostKeys;
 		},
 		[allShortcuts]
 	);
@@ -90,10 +99,7 @@ export function ShortcutsHelpModal({
 	// above (the user should still know the action exists and can give it a
 	// chord), but they cannot be fired, so counting them would pin the bar below
 	// 100% no matter how much of the keyboard the user learns.
-	const boundShortcuts = useMemo(
-		() => collectBoundShortcuts(shortcuts, tabShortcuts, FIXED_SHORTCUTS),
-		[shortcuts, tabShortcuts]
-	);
+	const boundShortcuts = useMemo(() => collectBoundShortcuts(allShortcuts), [allShortcuts]);
 	const masteryTotal = boundShortcuts.length;
 	const usedShortcutsCount = countUsedBoundShortcuts(
 		boundShortcuts,
@@ -308,29 +314,11 @@ export function ShortcutsHelpModal({
 									className="text-xs flex-shrink-0 flex items-center gap-1"
 									style={{ color: theme.colors.textDim }}
 								>
-									<kbd
-										className="px-2 py-1 rounded border font-mono text-xs font-bold"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											borderColor: theme.colors.border,
-											color: theme.colors.textMain,
-										}}
-									>
-										{doublePressHint(sc.id)}
-									</kbd>
+									<ShortcutKeys theme={theme} keys={doublePressHint(sc.id)!} size="md" />
 									<span className="italic">twice</span>
 								</span>
 							) : sc.keys.length > 0 ? (
-								<kbd
-									className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-									}}
-								>
-									{formatShortcutKeys(sc.keys)}
-								</kbd>
+								<ShortcutKeys theme={theme} keys={sc.keys} size="md" />
 							) : (
 								<span
 									className="text-xs italic flex-shrink-0"

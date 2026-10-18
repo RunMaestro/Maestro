@@ -5,7 +5,7 @@ import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
+import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
 import { useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { estimateTokenCount } from '../../shared/formatters';
@@ -40,6 +40,7 @@ export function AgentPromptComposerModal({
 	placeholder = 'Enter your agent prompt... (type {{ for variables)',
 	showTemplateVariables = true,
 }: AgentPromptComposerModalProps) {
+	const templateVariables = useAvailableTemplateVariables();
 	const [value, setValue] = useState(initialValue);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -223,7 +224,7 @@ export function AgentPromptComposerModal({
 									runtime.
 								</p>
 								<div className="grid grid-cols-2 gap-x-6 gap-y-1 max-h-40 overflow-y-auto scrollbar-thin">
-									{TEMPLATE_VARIABLES.map(({ variable, description }) => (
+									{templateVariables.map(({ variable, description }) => (
 										<div key={variable} className="flex items-center gap-2 py-0.5 min-w-0">
 											<code
 												className="text-xs font-mono px-1.5 py-0.5 rounded shrink-0 cursor-pointer hover:opacity-80"

@@ -79,6 +79,22 @@ describe('TerminalSelectionContextMenu', () => {
 		expect(onDismiss).toHaveBeenCalledTimes(1);
 	});
 
+	it('invokes onQuote with the selection and then dismisses', () => {
+		const onQuote = vi.fn();
+		const onDismiss = vi.fn();
+		render(
+			<TerminalSelectionContextMenu
+				menu={menu}
+				theme={baseTheme}
+				onDismiss={onDismiss}
+				onQuote={onQuote}
+			/>
+		);
+		fireEvent.click(screen.getByText('Quote in Message'));
+		expect(onQuote).toHaveBeenCalledWith('hello world');
+		expect(onDismiss).toHaveBeenCalledTimes(1);
+	});
+
 	it('omits actions whose handler is undefined', () => {
 		render(
 			<TerminalSelectionContextMenu
@@ -91,6 +107,7 @@ describe('TerminalSelectionContextMenu', () => {
 		);
 		expect(screen.getByText('Copy to Clipboard')).toBeTruthy();
 		expect(screen.queryByText('Send to Agent')).toBeNull();
+		expect(screen.queryByText('Quote in Message')).toBeNull();
 	});
 
 	it('dismisses on Escape', () => {

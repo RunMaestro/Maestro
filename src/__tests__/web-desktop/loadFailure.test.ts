@@ -236,6 +236,8 @@ describe('installLoadFailureHandler', () => {
 		expect(reload).not.toHaveBeenCalled();
 		const [, , hint] = testWindow().__maestroShowBootError!.mock.calls[0];
 		expect(hint).toMatch(/updated or restarted/i);
+		// A tunnel dropping requests presents identically, so the hint names it too.
+		expect(hint).toMatch(/tunnel/i);
 		// The misleading network copy must not be what the user sees here.
 		expect(hint).not.toMatch(/Wi-Fi/i);
 	});

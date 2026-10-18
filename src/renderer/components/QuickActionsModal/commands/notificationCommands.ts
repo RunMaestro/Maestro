@@ -1,10 +1,28 @@
 import type { QuickAction } from '../types';
+import type { ToastPosition } from '../../../../shared/toastPosition';
+import { toggleInAppToasts } from '../../../services/inAppToasts';
+import {
+	TOAST_POSITIONS,
+	TOAST_POSITION_LABELS,
+	isTopToastPosition,
+} from '../../../../shared/toastPosition';
 
 interface BuildNotificationCommandsArgs {
 	/** Number of toasts currently on screen. */
 	visibleToastCount: number;
 	clearToasts: () => void;
+	/** Unread entries in the notification center. */
+	unreadNotificationCount: number;
+	/** Absent while the Notification Center Encore Feature is off, which drops its command. */
+	openNotificationCenter?: () => void;
 	clearAllNotificationsShortcut?: QuickAction['shortcut'];
+	openNotificationCenterShortcut?: QuickAction['shortcut'];
+	/** Whether in-app floating toasts render (toast duration is not "Off"). */
+	toastsEnabled: boolean;
+	toggleInAppToastsShortcut?: QuickAction['shortcut'];
+	/** Corner the toast stack is pinned to right now. */
+	toastPosition: ToastPosition;
+	setToastPosition: (value: ToastPosition) => void;
 	setQuickActionOpen: (open: boolean) => void;
 }
 
@@ -25,7 +43,14 @@ interface BuildNotificationCommandsArgs {
 export function buildNotificationCommands({
 	visibleToastCount,
 	clearToasts,
+	unreadNotificationCount,
+	openNotificationCenter,
 	clearAllNotificationsShortcut,
+	openNotificationCenterShortcut,
+	toastsEnabled,
+	toggleInAppToastsShortcut,
+	toastPosition,
+	setToastPosition,
 	setQuickActionOpen,
 }: BuildNotificationCommandsArgs): QuickAction[] {
 	return [
@@ -42,5 +67,58 @@ export function buildNotificationCommands({
 				setQuickActionOpen(false);
 			},
 		},
+		...(openNotificationCenter
+			? [
+					{
+						id: 'open-notification-center',
+						label: 'Open Notification Center',
+						shortcut: openNotificationCenterShortcut,
+						subtext:
+							unreadNotificationCount > 0
+								? `${unreadNotificationCount} unread notification${unreadNotificationCount === 1 ? '' : 's'}`
+								: 'No unread notifications',
+						action: () => {
+							openNotificationCenter();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		{
+			id: 'toggle-in-app-toasts',
+			label: toastsEnabled ? 'Turn Off In-App Toasts' : 'Turn On In-App Toasts',
+			shortcut: toggleInAppToastsShortcut,
+			// With the Notification Center off nothing records a hidden toast, so do
+			// not promise the inbox keeps them.
+			subtext: toastsEnabled
+				? openNotificationCenter
+					? 'Hide floating toasts; notifications still collect in the notification center'
+					: 'Hide floating toasts'
+				: 'Show floating toasts again at your previous duration',
+			action: () => {
+				setQuickActionOpen(false);
+				toggleInAppToasts();
+			},
+		},
+		// One command per corner, all four always listed so a search for any corner
+		// name finds it. The current corner stays in the list (marked in the
+		// subtext) rather than vanishing, which would read as a missing option.
+		// setToastPosition fires its own preview toast, so the move is visible.
+		...TOAST_POSITIONS.map(
+			(position): QuickAction => ({
+				id: `toast-position-${position}`,
+				label: `Move Toast Notifications to ${TOAST_POSITION_LABELS[position]}`,
+				subtext:
+					position === toastPosition
+						? 'Current position'
+						: isTopToastPosition(position)
+							? 'Toasts stack downward from this corner'
+							: 'Toasts stack upward from this corner',
+				action: () => {
+					setToastPosition(position);
+					setQuickActionOpen(false);
+				},
+			})
+		),
 	];
 }

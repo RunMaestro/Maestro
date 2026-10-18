@@ -1,8 +1,9 @@
 /**
  * useTimeTracking - sleep-aware elapsed time for an Auto Run.
  *
- * Measures how long a run actually ran. The machine being asleep is subtracted,
- * because the agent really does stop; nothing else is.
+ * Measures how long a run actually ran. Two spans are subtracted, because in
+ * both the agent really does stop: the machine being asleep, and the run being
+ * paused (an agent error or a HITL gate waiting on the user). Nothing else is.
  *
  * ## Why the window being hidden is NOT subtracted
  *
@@ -35,11 +36,35 @@
  * Features:
  * - Per-session time tracking
  * - Machine sleep subtracted from any session that was counting through it
+ * - Pause/resume while an Auto Run waits on the user
  * - Proper cleanup on unmount
  */
 
 import { useRef, useEffect, useCallback } from 'react';
-import { onSystemSleep } from '../../services/systemSleep';
+import { onSystemSleep, sleepAwareElapsedSince } from '../../services/systemSleep';
+import type { BatchRunState } from '../../types';
+
+/**
+ * Live active elapsed time of an Auto Run, for displays. Reads the tracker's
+ * mirror in `BatchRunState`: closed spans plus the live one, so the clock
+ * stops while the run is paused (`lastActiveTimestamp` cleared). Sleep is
+ * already out of both fields - the tracker walks the live span's start past
+ * it - so the live span is plain wall clock.
+ *
+ * Falls back to sleep-aware time since `startTime` for a state that carries
+ * no tracker fields (a snapshot from an older build).
+ */
+export function autoRunActiveElapsedMs(
+	state: Pick<BatchRunState, 'startTime' | 'accumulatedElapsedMs' | 'lastActiveTimestamp'>,
+	now: number = Date.now()
+): number {
+	const { startTime, accumulatedElapsedMs, lastActiveTimestamp } = state;
+	if (accumulatedElapsedMs === undefined && lastActiveTimestamp === undefined) {
+		return startTime ? sleepAwareElapsedSince(startTime) : 0;
+	}
+	const live = lastActiveTimestamp !== undefined ? Math.max(0, now - lastActiveTimestamp) : 0;
+	return (accumulatedElapsedMs ?? 0) + live;
+}
 
 /**
  * Configuration options for the time tracking hook
@@ -75,6 +100,20 @@ export interface UseTimeTrackingReturn {
 	 * @returns The final elapsed time in milliseconds
 	 */
 	stopTracking: (sessionId: string) => number;
+
+	/**
+	 * Stop the clock while the run waits on the user (error or HITL gate).
+	 * Idempotent: the runner re-pauses on every iteration that re-detects a gate.
+	 * @param sessionId - The session to pause
+	 */
+	pauseTracking: (sessionId: string) => void;
+
+	/**
+	 * Restart the clock when the user resumes or skips past a pause. No-op when
+	 * the session is not paused.
+	 * @param sessionId - The session to resume
+	 */
+	resumeTracking: (sessionId: string) => void;
 
 	/**
 	 * Get the current elapsed time for a session
@@ -113,13 +152,14 @@ export interface UseTimeTrackingReturn {
  * - Time accumulates for as long as the run is tracked, whether or not the
  *   Maestro window is on screen - see the note at the top of this file
  * - A machine sleep is subtracted by walking the active timestamp forward
+ * - pauseTracking folds the live span into the accumulator and clears the
+ *   active timestamp; resumeTracking starts a new live span
  * - When stopTracking is called, the final accumulated time is returned
  *
- * `accumulatedTimeRefs` and the nullable `lastActiveTimestampRefs` are kept
- * even though nothing pauses a session any more: sleep correction writes
- * through the same timestamp, and the `onTimeUpdate` shape (which persists into
- * `BatchRunState.accumulatedElapsedMs` / `lastActiveTimestamp`, and from there
- * into state restored across a reload) is unchanged by this fix.
+ * Every change is reported through `onTimeUpdate`, which mirrors it into
+ * `BatchRunState.accumulatedElapsedMs` / `lastActiveTimestamp`. The elapsed
+ * displays read those two fields (`autoRunActiveElapsedMs`), so a paused run's
+ * clock stops on screen too.
  *
  * Memory safety guarantees:
  * - Sleep subscription is removed on unmount
@@ -135,10 +175,10 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 	const onTimeUpdateRef = useRef(onTimeUpdate);
 	onTimeUpdateRef.current = onTimeUpdate;
 
-	// Track accumulated time per session (time while document was visible)
+	// Track accumulated time per session (closed spans, excluding pauses and sleep)
 	const accumulatedTimeRefs = useRef<Record<string, number>>({});
 
-	// Track the last timestamp when we started counting (null when document is hidden or not tracking)
+	// Track the last timestamp when we started counting (null while paused or not tracking)
 	const lastActiveTimestampRefs = useRef<Record<string, number | null>>({});
 
 	// Track which sessions are being tracked
@@ -214,6 +254,33 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 	}, []);
 
 	/**
+	 * Pause a session's clock: fold the live span into the accumulator.
+	 */
+	const pauseTracking = useCallback((sessionId: string): void => {
+		if (!trackingSessionsRef.current.has(sessionId)) return;
+		const lastActive = lastActiveTimestampRefs.current[sessionId];
+		if (lastActive === null || lastActive === undefined) return;
+
+		const accumulated =
+			(accumulatedTimeRefs.current[sessionId] || 0) + Math.max(0, Date.now() - lastActive);
+		accumulatedTimeRefs.current[sessionId] = accumulated;
+		lastActiveTimestampRefs.current[sessionId] = null;
+		onTimeUpdateRef.current?.(sessionId, accumulated, null);
+	}, []);
+
+	/**
+	 * Resume a paused session's clock from now.
+	 */
+	const resumeTracking = useCallback((sessionId: string): void => {
+		if (!trackingSessionsRef.current.has(sessionId)) return;
+		if (lastActiveTimestampRefs.current[sessionId] != null) return;
+
+		const now = Date.now();
+		lastActiveTimestampRefs.current[sessionId] = now;
+		onTimeUpdateRef.current?.(sessionId, accumulatedTimeRefs.current[sessionId] || 0, now);
+	}, []);
+
+	/**
 	 * Get the current elapsed time for a session (without stopping)
 	 */
 	const getElapsedTime = useCallback((sessionId: string): number => {
@@ -253,6 +320,8 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 	return {
 		startTracking,
 		stopTracking,
+		pauseTracking,
+		resumeTracking,
 		getElapsedTime,
 		getAccumulatedTime,
 		getLastActiveTimestamp,

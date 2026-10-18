@@ -42,6 +42,7 @@ import Store from 'electron-store';
 
 import type { AgentDetector } from './detector';
 import type { AgentConfigsData, SessionsData } from '../stores/types';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import type { MaestroSettings } from '../ipc/handlers/persistence';
 import { logger } from '../utils/logger';
 import { isMaestroPBinaryPath } from './claudeSpawnCore';
@@ -322,7 +323,11 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 		return;
 	}
 
-	const storedSessions = deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
+	// Live agents only: a dormant Pianola (flag off) is never sampled for.
+	const storedSessions = filterLiveAgents(
+		deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
+		deps.settingsStore.get('encoreFeatures')
+	);
 	const agentLevelCustomPath = getAgentLevelCustomPath(deps.agentConfigsStore);
 	const agentLevelIsMaestroP = isMaestroPBinaryPath(agentLevelCustomPath);
 	const eligibleClaudeSessions = storedSessions.filter((s) => {
@@ -383,7 +388,7 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// snapshot, or one remembered in `quotaAccountsStore` because a sampler
 	// targeted it for a real agent. The dashboard keeps rendering those rows, and
 	// nothing else re-samples them once their agents move away (or all run over
-	// SSH, which buildTarget skips): the footer reads "Last refreshed just now"
+	// SSH, which buildTarget skips): the dashboard footer reads a fresh sample age
 	// off the other accounts while this row's bars sit frozen. Neither source is
 	// a leftover dir on disk, this only runs when the user pressed Refresh, and
 	// the sampler points BROWSER at a no-op besides.

@@ -34,6 +34,54 @@ Environment variables are passed to the agent process. Use these for:
 The `MAESTRO_SESSION_RESUMED` variable is automatically set to `1` when resuming sessions - you don't need to configure this manually.
 </Note>
 
+## Switching Providers with Memory and Session Carry
+
+Memory and session conversion is available as a preview between **Claude Code 2.1.296/2.1.302** and **Codex 0.162.1/0.163.0**, in both directions. Live checks on Claude Code 2.1.302 and Codex 0.163.0 verified native conversation recall in both directions, including a message added after switching, and access to carried project resource definitions. Both adapters remain unverified overall: skill execution, subagent invocation, arbitrary tool/image payloads, and repeated incremental synchronization are not certified. Other provider/version combinations have no supported converter and are blocked by preflight.
+
+In **Edit Agent → Provider**, destinations with a converter from the agent's current provider have a **Carry Over** pill at the right of the provider list. The hint below the selector uses the same pill. It identifies a declared adapter; Maestro still checks the installed versions and conversation contents before allowing the switch.
+
+Select the destination to read the conversion plan, review and accept any listed limitations, then click **Save Changes**. Translation runs as part of saving. It carries project memory and session history while preserving tabs, drafts, queued messages and file previews. Additional user-level resources, such as skills, must be selected explicitly; account-global knowledge is excluded.
+
+A spinner shows when Maestro is reading history, waiting for the current turn, translating, or finishing the switch. The status follows the current migration operation. There is no percentage bar because completion units are not measured. A failed conversion reports the error and retains the source provider.
+
+The CLI uses the same conversion operation:
+
+```bash
+maestro-cli update-agent <agent-id> --provider codex --dry-run --json
+maestro-cli update-agent <agent-id> --provider codex --migration-plan <plan-id> --accept-translation-limitations --json
+maestro-cli update-agent <agent-id> --migration status --migration-plan <plan-id> --json
+```
+
+Switch back with `--provider claude-code`. The second command accepts conversion warnings; it does not bypass a blocked plan.
+
+`--dry-run` returns the reviewed operation ID as `plan.id`. Passing it with `--migration-plan` rechecks the source and scope before applying; changed evidence requires a fresh plan. `--migration recover` and `--migration rollback` can also address an operation by ID. Failure or a deferred switch exits nonzero; a command-node pipeline must inspect the reported state rather than treating an accepted request as completed translation.
+
+The CLI and desktop must both include this translation protocol. The new CLI uses a dedicated `provider_translation` request, so an older desktop refuses it instead of interpreting a preflight as the old destructive provider change. A source build does not replace the CLI bundled in an already installed application.
+
+### Starting Translation from Cue
+
+Cue can invoke these commands using an existing shell Command node. Use a separate controller agent and trigger after the source agent completes. Replace the two agent-ID placeholders before installing this example:
+
+```yaml
+subscriptions:
+  - name: plan-provider-translation
+    pipeline_name: Provider Translation
+    agent_id: CONTROLLER_AGENT_ID
+    event: agent.completed
+    source_session_ids: [SOURCE_AGENT_ID]
+    enabled: true
+    action: command
+    command:
+      mode: shell
+      shell: >-
+        maestro-cli update-agent SOURCE_AGENT_ID
+        --provider codex --dry-run --json
+```
+
+The example prepares a plan only. Apply a reviewed ID with the second CLI command above. Shell Command nodes already capture JSON output and exit status; structured `command.mode: cli` currently supports `send`, so translation uses `mode: shell`.
+
+An applied translation **changes the source agent's active provider**. Return switches reconcile intervening history using native lineage and checkpoints. This is not continuous synchronization of two independently active agents, nor an inactive replica update that leaves the source provider unchanged. Independent destination edits currently produce a divergence block rather than being silently merged. Do not schedule alternating provider switches as a substitute for a non-switching sync operation.
+
 ## Claude Code
 
 | Feature            | Support                                                                        |
@@ -55,24 +103,39 @@ The `MAESTRO_SESSION_RESUMED` variable is automatically set to `1` when resuming
 - Maestro sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` by default for every Claude Code spawn (desktop UI, CLI batch, `--live`, SSH). This disables Claude Code's `Bash run_in_background` + `Monitor` feature, which is incompatible with Maestro for two reasons: (1) short-lived CLI batch sessions exit before background tasks finish, silently losing results; and (2) the polling wrapper Claude Code generates around each background task can deadlock on a self-matching `pgrep -f` predicate when the watched command regex appears verbatim in the wrapper's own argv, leaving long-running desktop tabs stuck on a zsh `until` loop that can never satisfy its exit condition. Maestro's multi-tab terminals cover the same use cases (watch a dev server, tail a log) more reliably. To re-enable, export `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=0` from your shell, or set it per-agent under **Settings → Providers → Claude Code → Environment Variables**.
 - Ask-back questions require Standard permission mode. In Standard mode Maestro injects a permission relay into Claude Code (API mode) that surfaces tool approvals and `AskUserQuestion` ask-backs as in-app prompts you answer inline. Full Access passes `--dangerously-skip-permissions` and skips the relay, so an `AskUserQuestion` call there has nowhere to go: the question never appears and the turn stalls until you stop the agent. A follow-up message won't recover it either: it only queues behind the stalled turn, which never completes to dispatch it. Read-Only mode also runs without the relay. SSH remote agents can't use Standard mode at all: a Standard-mode Claude Code spawn over SSH fails loudly (the relay socket is local-only and can't mediate a remote spawn) rather than downgrading, so SSH agents always run in Full Access or Read-Only, which is why ask-backs never surface there. This is the expected trade-off of bypassing permissions, not a defect; switch the tab to Standard mode when you want ask-back questions to work.
 
-### Token Source: Max plan vs. API
+### Token Source
 
-Claude Code agents can bill against either your Anthropic API credit or your Claude Max plan quota. Pick the source per-agent under **Settings → Providers → Claude Code** (or in the New Agent / Edit Agent dialog), and Maestro can show a matching pill on each captured turn.
+A Claude Code agent can run each turn in one of two ways. Pick one per agent under **Settings → Providers → Claude Code** (or in the New Agent / Edit Agent dialog), and Maestro can show a matching pill on each captured turn.
 
-| Mode                   | Pill          | Behavior                                                                                 |
-| ---------------------- | ------------- | ---------------------------------------------------------------------------------------- |
-| API (`claude -p`)      | `claude -p`   | Always uses `claude --print` and bills per-token API credit.                             |
-| TUI Wrapper (Max plan) | `TUI Wrapper` | Always drives the Claude interactive TUI against your Max plan quota.                    |
-| Dynamic                | `Dynamic ...` | Starts on the Max plan TUI, then auto-switches to API when the quota is near exhaustion. |
+| Mode        | Pill          | Behavior                                                                                                                   |
+| ----------- | ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `claude -p` | `claude -p`   | Runs every turn through `claude --print`.                                                                                  |
+| TUI Wrapper | `TUI Wrapper` | Runs every turn through Claude Code's interactive TUI, driven by maestro-p.                                                |
+| Dynamic     | `Dynamic ...` | Starts on the TUI Wrapper, switches to `claude -p` when a plan window is near its limit, and switches back once it resets. |
+
+**The mode does not decide what you are billed.** The agent's credentials do:
+
+- **Signed in with a Claude plan** (Pro, Max, Team): both modes draw from that plan's 5-hour and weekly limits. Anthropic confirms this for `claude -p` in [Monthly API credits for Max and Team plans](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-and-team-plans).
+- **An API key, gateway, or cloud provider** (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, Bedrock, Vertex) in the agent's environment: both modes bill that credential instead. A Max or Team plan's monthly API credits are spent this way, through a key from the linked Claude Console organization.
+
+<Note>
+Dynamic's switch only buys time when the agent also has an API key. Signed in with a plan alone, `claude -p` hits the same limit the TUI just hit, and [Agent Resilience](/agent-resilience) is what carries the turn to the reset.
+</Note>
+
+<Warning>
+Anthropic plans to make `--bare` the default for `claude -p` in a future Claude Code release. Bare mode never reads your plan login, so a `claude -p` agent with no API key would start failing with "Failed to authenticate". If that happens, switch the agent to TUI Wrapper.
+</Warning>
 
 The pill is off by default. Turn it on under **Settings → Display → Provider Mode Pill** to show it under chat responses and on History entries.
 
 When a window does run dry, [Agent Resilience](/agent-resilience) takes the turn over: it reads the reset moment out of Claude's own banner (`resets 11:40am (America/Chicago)`) and resends your prompt then, instead of leaving you to notice and retype it.
 
-The TUI Wrapper and Dynamic modes are powered by **maestro-p**, a small standalone helper that drives Claude Code's interactive TUI (the mode that draws on your Max plan quota rather than per-token API credit). It ships bundled with the desktop app, so local agents work out of the box.
+The TUI Wrapper and Dynamic modes are powered by **maestro-p**, a small standalone helper that drives Claude Code's interactive TUI and hands Maestro the same output `claude -p` would. It ships bundled with the desktop app, so local agents work out of the box.
+
+Like `claude -p`, maestro-p never stops on a permission prompt: it runs Claude with permissions bypassed, unless the agent is in read-only (plan) mode. A Task subagent's tool calls show up under the Task card as they run, and each turn reports its cost and per-model usage from Claude's own tracker.
 
 <Note>
-For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on the **remote host's** PATH, since the TUI runs there rather than on your machine. If it is missing, Maestro disables the Max plan options and falls back to API. Install it from the [maestro-p install page](https://runmaestro.ai/maestro-p/), then click **Re-check** in the agent's Claude Token Source panel.
+For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on the **remote host's** PATH, since the TUI runs there rather than on your machine. If it is missing, Maestro disables the TUI Wrapper and Dynamic options and falls back to `claude -p`. Install it from the [maestro-p install page](https://runmaestro.ai/maestro-p/), then click **Re-check** in the agent's Claude Token Source panel.
 </Note>
 
 ## Codex (OpenAI)
@@ -95,6 +158,23 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 - Because Maestro drives Codex through `codex exec`, the CLI never expands the slash itself. Maestro substitutes the command's file contents before sending, so the agent receives the fully expanded prompt.
 - Codex's **built-in** [slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/compact`, `/diff`, `/model`, etc.) are still unavailable: they are implemented inside the interactive TUI and have no on-disk prompt to expand.
 - Codex commands on an SSH remote agent are not discovered yet, since the skills live on the remote host.
+
+### App Server Transport (Experimental)
+
+By default Maestro runs every Codex turn through `codex exec`. A Codex agent can opt into `codex app-server` instead, which keeps a live connection to the running turn. That connection is what makes the **Steer** button available on a queued message: Maestro hands the message to the turn already in progress, and Codex folds it into its work instead of waiting for the turn to end.
+
+Turn it on per agent:
+
+- **Agent settings:** set **Codex Transport** to **codex app-server** in the New Agent or Edit Agent dialog.
+- **CLI:** `maestro-cli update-agent <agent-id> --codex-transport app-server` (use `exec` to switch back).
+
+Only local chat turns use the app server. These keep running on `codex exec` even with the option on:
+
+- [SSH remote](/ssh-remote-execution) agents
+- Prompts with attached images
+- Auto Run, Maestro Cue, and `maestro-cli` batch runs
+
+If the app server cannot start (an older Codex build, or a handshake error), Maestro runs the turn on `codex exec` automatically. Conversations carry over in both directions, because both transports share the same Codex session.
 
 ## OpenCode
 
@@ -164,6 +244,7 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 **Notes**:
 
 - Hermes is [Nous Research's](https://hermes-agent.nousresearch.com/) coding agent. Set a documented model override (for example `anthropic/claude-sonnet-4-20250514`) under **Settings → Providers → Hermes**, or leave it blank for the CLI default.
+- On Windows, Maestro passes batch prompts through stdin with `hermes chat -Q --yolo --query-file -`. The explicit query source keeps Auto Run and tab naming out of the interactive TUI without exposing long prompts to the Windows command-line limit. Hermes must support `chat --query-file`; update Hermes if your installation does not list it in `hermes chat --help`.
 
 ## Pi
 

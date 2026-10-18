@@ -5,9 +5,9 @@
 // contentTracing is an Electron main-process API; the CLI has no Electron, so
 // every subcommand routes through the desktop app over the WS bridge.
 
-import path from 'path';
-import os from 'os';
 import { withMaestroClient } from '../services/maestro-client';
+import { resolveCliPath } from '../utils/parse';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 /**
  * Stopping a capture compresses the raw trace (can be hundreds of MB) into the
@@ -27,15 +27,6 @@ interface StopOptions {
 
 interface StatusOptions {
 	json?: boolean;
-}
-
-/** Expand a leading `~` and resolve to an absolute path against the CLI's cwd. */
-function resolveOutputPath(input: string): string {
-	let p = input.trim();
-	if (p === '~' || p.startsWith('~/')) {
-		p = path.join(os.homedir(), p.slice(1));
-	}
-	return path.resolve(process.cwd(), p);
 }
 
 export async function profilingStart(options: StartOptions): Promise<void> {
@@ -74,6 +65,7 @@ export async function profilingStart(options: StartOptions): Promise<void> {
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));
@@ -90,7 +82,7 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 		process.exit(1);
 	}
 
-	const outputPath = resolveOutputPath(options.output);
+	const outputPath = resolveCliPath(options.output);
 
 	try {
 		const result = await withMaestroClient((client) =>
@@ -148,6 +140,7 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));
@@ -197,6 +190,7 @@ export async function profilingStatus(options: StatusOptions): Promise<void> {
 			console.log('Profiling is not active');
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));

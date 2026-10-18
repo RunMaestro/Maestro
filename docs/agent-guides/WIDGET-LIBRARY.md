@@ -44,6 +44,7 @@ The library splits into two families:
 | `AgentActivityBars`    | Horizontal bars from `BarDatum[]`: sorted descending, top-N + overflow row |
 | `SuccessFailureWidget` | Single success-vs-failure split bar with counts and percentage             |
 | `Sparkline`            | Standalone inline SVG trend line (also embedded by `StatCard`)             |
+| `MultiLineChart`       | Several rates as lines over one x axis, with gaps and legend toggles       |
 | `ChartTooltip`         | Portaled, cursor-anchored, viewport-clamped tooltip for any chart          |
 | `ChartErrorBoundary`   | Catches a throwing chart child and shows a themed retry UI                 |
 
@@ -100,6 +101,15 @@ Every output widget extends `WidgetProps` (`{ theme: Theme }`) unless noted.
 
 - `data: number[]` - sequential values (oldest to newest). Empty or all-zero data renders a flat collapsed baseline rather than crashing.
 - `color: string` (required), `width?` (80), `height?` (24), `fillOpacity?` (0.15), `showEndDot?` (true), `strokeWidth?` (1.5).
+- `domain?: { min; max }` - plot against a fixed scale instead of the data's own range (several charts sharing one scale). With a domain, all-zero data draws as a flat line on the floor, not the empty baseline.
+- `reference?: { value; color; label? }` - a dashed horizontal mark at `value` on the same scale (a peak, a limit).
+
+**`MultiLineChart`** - for comparing a RATE across groups, where stacking would be meaningless because the values do not sum:
+
+- `xLabels: string[]` - one label per x slot; the axis thins them (`maxXLabels`, default 6) but always keeps the first and last.
+- `series: LineSeries[]` - `{ key, label, color, values: Array<number | null>, dashed? }`. `null` is a GAP: the line breaks there instead of diving to zero, and a point with no neighbours draws as a dot.
+- `ariaLabel: string` (required), `height?` (160), `formatValue?` (axis + tooltip), `showLegend?` (true), `testId?` (legend buttons get `${testId}-legend-${key}`).
+- The legend is the hide/show control; a hidden series leaves the y scale, and the last visible series cannot be hidden. The SVG scales via `viewBox` with non-scaling strokes, so it needs no width measurement.
 
 **`ChartTooltip`** (portaled primitive):
 

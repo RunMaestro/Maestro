@@ -7,6 +7,7 @@ import {
 	remoteUrlToBrowserUrl,
 	parseGitStatusPorcelain,
 	parseGitNumstat,
+	isNotAGitRepositoryError,
 } from '../../shared/gitUtils';
 import type {
 	GitCommandOutputChunk,
@@ -21,6 +22,14 @@ export interface GitStatus {
 		status: string;
 	}>;
 	branch?: string;
+	/** Git reported the directory is not inside a repo (its `.git` is gone). */
+	notARepo?: boolean;
+	/**
+	 * Git did not answer the status or branch query in time (a folder in
+	 * iCloud Drive can block it for minutes). `files` and `branch` may be
+	 * empty placeholders rather than answers - keep the last good value.
+	 */
+	timedOut?: boolean;
 }
 
 export interface GitDiff {
@@ -33,6 +42,8 @@ export interface GitNumstat {
 		additions: number;
 		deletions: number;
 	}>;
+	/** Git did not answer in time; see `GitStatus.timedOut`. */
+	timedOut?: boolean;
 }
 
 export interface GitGraphNode {
@@ -116,8 +127,11 @@ export const gitService = {
 
 				const files = parseGitStatusPorcelain(statusResult.stdout || '');
 				const branch = branchResult.stdout?.trim() || undefined;
+				if (statusResult.timedOut || branchResult.timedOut)
+					return { files, branch, timedOut: true };
+				const notARepo = isNotAGitRepositoryError(statusResult.stderr);
 
-				return { files, branch };
+				return notARepo ? { files, branch, notARepo } : { files, branch };
 			},
 			errorContext: 'Git status',
 			defaultValue: { files: [], branch: undefined },
@@ -159,7 +173,7 @@ export const gitService = {
 			call: async () => {
 				const result = await window.maestro.git.numstat(cwd, sshRemoteId);
 				const files = parseGitNumstat(result.stdout || '');
-				return { files };
+				return result.timedOut ? { files, timedOut: true } : { files };
 			},
 			errorContext: 'Git numstat',
 			defaultValue: { files: [] },

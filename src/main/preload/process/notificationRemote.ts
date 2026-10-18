@@ -1,8 +1,36 @@
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../shared/notificationInbox';
 import { ipcRenderer } from 'electron';
 import type { ToastClickAction } from '../../../shared/toastClickAction';
 
 export function createNotificationRemoteApi() {
 	return {
+		/** Subscribe to inbox operations and acknowledge the resulting live-store snapshot. */
+		onRemoteNotificationInbox: (
+			callback: (
+				request: NotificationInboxRequest
+			) => NotificationInboxResult | Promise<NotificationInboxResult>
+		): (() => void) => {
+			const handler = async (
+				_: unknown,
+				request: NotificationInboxRequest,
+				responseChannel: string
+			) => {
+				try {
+					ipcRenderer.send(responseChannel, await callback(request));
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			};
+			ipcRenderer.on('remote:notificationInbox', handler);
+			return () => ipcRenderer.removeListener('remote:notificationInbox', handler);
+		},
+
 		/**
 		 * Subscribe to remote toast notifications from CLI/web interface.
 		 * Color is one of the 5 canonical Toast/Center Flash colors.

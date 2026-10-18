@@ -35,6 +35,7 @@ export function createAchievementCardViewModel(
 		currentLevel,
 		cumulativeTimeFormatted: formatCumulativeTime(autoRunStats.cumulativeTimeMs),
 		cueTimeFormatted: formatCumulativeTime(cueTimeMs),
+		hasCueTime: cueTimeMs > 0,
 		autoRunTimeFormatted: formatCumulativeTime(autoRunTimeMs),
 		cueSharePercent:
 			autoRunStats.cumulativeTimeMs > 0

@@ -20,6 +20,8 @@ import { MergeSessionModal, type MergeOptions } from '../MergeSessionModal';
 import { SendToAgentModal, type SendToAgentOptions } from '../SendToAgentModal';
 import { TransferProgressModal } from '../TransferProgressModal';
 import { LeaderboardRegistrationModal } from '../LeaderboardRegistrationModal';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 
 // Re-export types used by consumers
 export type { RecoveryAction, MergeOptions, SendToAgentOptions };
@@ -151,6 +153,10 @@ export const AppAgentModals = memo(function AppAgentModals({
 	onCloseSendToAgent,
 	onSendToAgent,
 }: AppAgentModalsProps) {
+	// Transfer targets follow the Left Bar: the Pianola agent outlives its Encore
+	// flag in the session store, and must not be offered while the flag is off.
+	const pianolaEnabled = useSettingsStore((st) => st.encoreFeatures?.pianola);
+	const transferTargets = filterSessionsVisibleInSidebar(sessions, { pianolaEnabled });
 	// Self-sourced (Tier 1B): the re-authentication modal is opened from the
 	// agent-error listener and from Cue pipeline failures, neither of which
 	// routes through App.tsx's modal props. It is keyed by PROVIDER - the roster
@@ -161,8 +167,10 @@ export const AppAgentModals = memo(function AppAgentModals({
 	const reauthOutage = useAuthOutageStore(selectAuthOutage(reauthData?.providerKey));
 	// Any blocked agent can host the login shell; they share the credential
 	// store. The first is the one that failed first.
+	// An account login names its own host: the outage's first blocked agent
+	// may be on a different account of the same provider.
 	const reauthSession = reauthOutage
-		? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId)
+		? (reauthData?.host ?? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId))
 		: undefined;
 
 	return (
@@ -233,7 +241,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 					isOpen={mergeSessionModalOpen}
 					sourceSession={activeSession}
 					sourceTabId={activeSession.activeTabId}
-					allSessions={sessions}
+					allSessions={transferTargets}
 					onClose={onCloseMergeSession}
 					onMerge={onMerge}
 				/>
@@ -264,7 +272,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 					isOpen={sendToAgentModalOpen}
 					sourceSession={activeSession}
 					sourceTabId={activeSession.activeTabId}
-					allSessions={sessions}
+					allSessions={transferTargets}
 					onClose={onCloseSendToAgent}
 					onSend={onSendToAgent}
 				/>

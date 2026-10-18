@@ -22,6 +22,12 @@ There is only ever **one** player. Opening a second file switches to it and keep
 
 To line a file up instead of switching to it, right-click it and choose **Add to Play Queue**. Select several files, right-click, and **Preview** plays the first and queues the rest - that is how you start a playlist in one gesture.
 
+An agent can do the same without starting anything: `maestro-cli open-file <path> --queue` puts a file in the player and leaves pressing play to you. See [Open a File](/cli#open-a-file).
+
+## Streaming from a URL
+
+The player also streams from the web. `maestro-cli open-file https://example.com/clip.mp4` plays a progressive MP4 (H.264 video with AAC audio) or a plain audio file (MP3, M4A, and so on) straight from the server, with seeking. Ask an agent to "play this URL" and it runs the same command. Adaptive and live formats (HLS `.m3u8`, DASH, RTSP, RTMP) are not supported yet. If a stream does not play, the player's **Open in Browser** button hands the URL to your browser.
+
 <Note>
 Media files never appear in the tab bar. If you want the file itself - to inspect it, move it, or open it in another app - use the Files pane, or the player's own **Open in default app** button.
 </Note>

@@ -6,6 +6,7 @@ import { captureException } from '../../../../../utils/sentry';
 import { fetchExistingDocsForWizard } from '../utils/existingDocs';
 import type { WizardConversationState } from '../types';
 import { projectNameFromPath } from '../../../shared/projectIdentity';
+import { getClaudeTokenSourceFields } from '../../../../../../shared/claudeTokenMode';
 
 export function useConversationBootstrap({
 	state,
@@ -47,6 +48,7 @@ export function useConversationBootstrap({
 					customArgs: state.customArgs,
 					customEnvVars: state.customEnvVars,
 					agentConfigValues: state.agentConfigValues,
+					claudeTokenSource: getClaudeTokenSourceFields(state),
 				});
 
 				if (mounted) {

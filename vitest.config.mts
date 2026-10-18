@@ -29,10 +29,36 @@ const jsdomOnlyTs = [
 	// The web-desktop electron shim constructs a BridgeClient and reads
 	// `window`/`document` at module load, so its suites need a DOM.
 	'src/__tests__/web-desktop/**/*.{test,spec}.ts',
-	// The agent-flow overlay panel is a standalone HTML document evaluated into
-	// jsdom by its test (the plugin's sandbox test next to it stays on node).
-	'src/__tests__/plugins/agent-flow-panel.test.ts',
 ];
+
+// Variables that tell git WHERE the repository is. Git exports them to hooks and
+// to `rebase --exec`, so a suite launched from either inherits them, and a test
+// that runs `git init` / `git commit` in a temp directory then operates on the
+// host repository instead (see the note in .husky/pre-push for what that cost).
+// Dropped here, in the main process before any worker is forked, so no launch
+// path can hand them to a test. Mirrors `git rev-parse --local-env-vars`.
+const GIT_REPOSITORY_ENV_VARS = [
+	'GIT_DIR',
+	'GIT_WORK_TREE',
+	'GIT_INDEX_FILE',
+	'GIT_COMMON_DIR',
+	'GIT_OBJECT_DIRECTORY',
+	'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+	'GIT_NAMESPACE',
+	'GIT_PREFIX',
+	'GIT_CONFIG',
+	'GIT_CONFIG_PARAMETERS',
+	'GIT_CONFIG_COUNT',
+	'GIT_GRAFT_FILE',
+	'GIT_SHALLOW_FILE',
+	'GIT_IMPLICIT_WORK_TREE',
+	'GIT_REPLACE_REF_BASE',
+	'GIT_NO_REPLACE_OBJECTS',
+	'GIT_INTERNAL_SUPER_PREFIX',
+];
+for (const name of GIT_REPOSITORY_ENV_VARS) {
+	delete process.env[name];
+}
 
 export default defineConfig({
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any

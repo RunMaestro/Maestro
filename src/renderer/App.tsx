@@ -12,6 +12,7 @@ import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfte
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
 import { useEdgeSwipeHandlers } from './hooks/utils/useEdgeSwipeHandlers';
+import { useEventListener } from './hooks/utils/useEventListener';
 import { slashCommands } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
@@ -141,17 +142,21 @@ import { useSidebarNavStore } from './stores/sidebarNavStore';
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
+import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
 import { notifyToast } from './stores/notificationStore';
-import { useModalActions, useModalStore } from './stores/modalStore';
+import { notifyCenterFlash } from './stores/centerFlashStore';
+import { useComposerInputStore } from './stores/composerInputStore';
+import { getModalActions, useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
 import { GitShortcutActionsBridge } from './components/GitShortcutActionsBridge';
@@ -163,6 +168,12 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
+import {
+	CODEX_FOLLOWUP_EVENT,
+	resolveCodexFollowup,
+	type CodexFollowupRequest,
+} from './services/codexFollowup';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -180,6 +191,7 @@ import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
+import { useQuickChatEngine } from './hooks/useQuickChatEngine';
 import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 import { PluginModalPanelMount } from './components/plugins/PluginModalPanelMount';
@@ -222,15 +234,22 @@ import {
 	findUnreadSessionInDirection,
 	type UnreadNavDirection,
 } from './utils/tabHelpers';
-import { getForceSendEligibility, type ForceSendEligibility } from './utils/executionQueue';
+import {
+	getForceSendEligibility,
+	getSteerEligibility,
+	type ForceSendEligibility,
+	type SteerEligibility,
+} from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
 import { useUIStore } from './stores/uiStore';
 import { useSettingsStore } from './stores/settingsStore';
+import { filterLiveAgents } from '../shared/agentVisibility';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 
+/** Coordinates the desktop workspace, shared listeners, and app-level surfaces. */
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
 	const { hasOpenLayers, hasOpenModal } = useLayerStack();
@@ -521,8 +540,25 @@ function MaestroConsoleInner() {
 	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
 
 	useEffect(() => {
-		if (!encoreFeatures.pianola) setPianolaModalOpen(false);
-	}, [encoreFeatures.pianola, setPianolaModalOpen]);
+		if (!encoreFeatures.pianola) {
+			setPianolaModalOpen(false);
+			// The AgentRun Dashboard is Pianola's ledger view: its cancel / retry /
+			// merge actions are refused by main without this flag.
+			setAgentRunDashboardOpen(false);
+		}
+	}, [encoreFeatures.pianola, setPianolaModalOpen, setAgentRunDashboardOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.directorNotes) setDirectorNotesOpen(false);
+	}, [encoreFeatures.directorNotes, setDirectorNotesOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.computerHistory) getModalActions().setComputerHistoryOpen(false);
+	}, [encoreFeatures.computerHistory]);
+
+	useEffect(() => {
+		if (!encoreFeatures.concerto) getModalActions().setConcertoStageOpen(false);
+	}, [encoreFeatures.concerto]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
@@ -536,7 +572,12 @@ function MaestroConsoleInner() {
 	// updates would re-render the entire console shell. Event-time readers use
 	// sessionsRef / getState(); paint leaves self-source with narrow selectors.
 	// Left Bar sort/nav/starred live in sidebarNavStore (SidebarNavSync host).
-	const hasSessions = useSessionStore((s) => s.sessions.length > 0);
+	// Live agents only: a dormant Pianola (flag off) does not count, so the
+	// empty state still shows when it is the only stored agent.
+	const pianolaEnabled = encoreFeatures.pianola;
+	const hasSessions = useSessionStore(
+		(s) => filterLiveAgents(s.sessions, { pianola: pianolaEnabled }).length > 0
+	);
 	const hasNoAgents = !hasSessions;
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -979,6 +1020,9 @@ function MaestroConsoleInner() {
 	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 	// Note: pauseBatchOnErrorRef and getBatchStateRef moved into useBatchHandlers hook
 
+	// Let the Feedback chat read this window's live state (read-only).
+	useEffect(() => installFeedbackLiveStateHook(), []);
+
 	// Expose notifyToast to window for debugging/testing
 	useEffect(() => {
 		(window as any).__maestroDebug = {
@@ -1026,8 +1070,11 @@ function MaestroConsoleInner() {
 
 	// --- CUE VISIBILITY WIRING (PR-B 1.4) ---
 	// Forwards document visibility to the main-process Cue scanner
-	// subsystem so it pauses background work when the window is hidden.
-	useCueVisibilityWiring();
+	// subsystem so it pauses background work when the window is hidden. Silent
+	// while the Cue Encore Feature is off.
+	useCueVisibilityWiring(encoreFeatures.maestroCue);
+	// Adds the agents a bundle import brings (Bundles tab or `maestro-cli bundle import`).
+	useCueBundleAgentSync();
 
 	// --- TAB HANDLERS (extracted hook) ---
 	// PERF: Paint/derived tab state lives in MainPanel via getTabDerivedState.
@@ -1225,6 +1272,7 @@ function MaestroConsoleInner() {
 		handleRemoveGroupChatQueueItem,
 		handleReorderGroupChatQueueItems,
 		handleResumeGroupChatQueue,
+		handleSteerGroupChatQueueItem,
 		handleStopAll: handleGroupChatStopAll,
 		handleNewGroupChat,
 		handleEditGroupChat,
@@ -1463,6 +1511,10 @@ function MaestroConsoleInner() {
 		setActiveSessionId,
 		defaultSaveToHistory,
 		defaultShowThinking,
+		customAICommandsRef,
+		speckitCommandsRef,
+		openspecCommandsRef,
+		bmadCommandsRef,
 	});
 
 	// Web broadcasting hook - handles external history change notifications
@@ -1484,7 +1536,8 @@ function MaestroConsoleInner() {
 
 	// Get capabilities for the active session's agent type
 	const { hasCapability: hasActiveSessionCapability } = useAgentCapabilities(
-		activeSession?.toolType
+		activeSession?.toolType,
+		activeSession?.providerTranslationKnowledgeDirectory
 	);
 
 	// Merge & Transfer handlers (Phase 2.5)
@@ -1767,12 +1820,13 @@ function MaestroConsoleInner() {
 	}, []);
 
 	const handleToggleQueuedItemPause = useCallback((itemId: string) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => ({
-			...s,
-			executionQueue: s.executionQueue.map((item) =>
-				item.id === itemId ? { ...item, paused: !item.paused } : item
-			),
-		}));
+		toggleQueuedItemPaused(activeSessionIdRef.current, itemId);
+	}, []);
+
+	// Fold a queued message into the one above it (the queued card's Merge button).
+	// Same service `maestro-cli queue merge` reaches.
+	const handleMergeQueuedItem = useCallback((itemId: string) => {
+		mergeQueuedItemIntoAbove(activeSessionIdRef.current, itemId);
 	}, []);
 
 	// Edit a queued message's prompt text and attached images in place.
@@ -1865,7 +1919,10 @@ function MaestroConsoleInner() {
 			state: wizardState,
 			completeWizard,
 			clearResumeState,
-			openWizard: openWizardModal,
+			// The base opener, not openWizardModal: the resume handlers call this
+			// after the resume prompt, and openWizardModal would find the saved
+			// state still on disk and raise the same prompt again (#1835).
+			openWizard: _baseOpenWizardModal,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,
@@ -1889,6 +1946,7 @@ function MaestroConsoleInner() {
 		handleReplayMessage,
 		handlePaste,
 		handleDrop,
+		handleUploadFiles,
 		tabCompletionSuggestions,
 		atMentionItems,
 		atMentionCounts,
@@ -1974,6 +2032,16 @@ function MaestroConsoleInner() {
 		});
 	}, []);
 
+	// Chat steering's counterpart to getForceSendContext above, and read by the same
+	// surfaces for the same reason: one decision, computed once. Steering is the
+	// inverse condition (the target tab must be BUSY, not idle), so the two are
+	// mutually exclusive on any given card.
+	const getSteerContext = useCallback((item: QueuedItem): SteerEligibility | null => {
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		if (!session) return null;
+		return getSteerEligibility(session, item);
+	}, []);
+
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
 		if (!activeSession) return;
@@ -2026,6 +2094,12 @@ function MaestroConsoleInner() {
 
 	// "Quit when idle" watcher - quits the app once all operations finish once armed
 	useQuitWhenIdle();
+	// Quick Chat: run the floating window's conversation in this window's store.
+	// Not on web-desktop, which has no Quick Chat window of its own.
+	useQuickChatEngine(
+		!isWebDesktop() && encoreFeatures.quickChat !== false,
+		windowCtx?.isMainWindow ?? true
+	);
 
 	// Handler for switching to autorun tab - shows setup modal if no folder configured
 	const handleSetActiveRightTab = useCallback(
@@ -2389,7 +2463,60 @@ function MaestroConsoleInner() {
 		abortBatchOnError: abortAutoRunBatchOnError,
 	});
 
-	// Plugin `sessions.focus` (e.g. Agent Flow node-jump) writes main's store,
+	/*
+	 * --- CODEX FOLLOWUP CHIPS ---
+	 *
+	 * A clicked `:codex-followup` chip in a Codex transcript. It arrives as an
+	 * event rather than a callback because `LogItem` renders `<MarkdownRenderer>`
+	 * at six call sites - see `services/codexFollowup.ts` for that reasoning.
+	 *
+	 * The request names the conversation it was drawn in, and that is CHECKED
+	 * here rather than trusted. A chip is only drawn in the tab on screen, so a
+	 * mismatch means the store moved between the click and this handler, and the
+	 * prompt is agent-authored: putting one into a conversation that never
+	 * offered it is not something the user can take back. A moved conversation
+	 * therefore degrades to a prefill and says why - the prompt is still in front
+	 * of them, and pressing Enter stays their decision.
+	 *
+	 * The send path pins its target explicitly, the same way `useSessionRecovery`
+	 * re-sends a failed prompt, so the dispatch cannot drift to another tab
+	 * between here and the spawn.
+	 */
+	useEventListener(CODEX_FOLLOWUP_EVENT, (event) => {
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		const resolution = resolveCodexFollowup((event as CustomEvent<CodexFollowupRequest>).detail, {
+			activeSessionId: session?.id ?? null,
+			activeTabId: session ? (getActiveTab(session)?.id ?? null) : null,
+		});
+
+		if (resolution.action === 'ignore') return;
+
+		if (resolution.action === 'send') {
+			processInputRef.current(resolution.prompt, {
+				sessionId: resolution.sessionId,
+				tabId: resolution.tabId,
+			});
+			return;
+		}
+
+		// `loadAiDraft` writes the text, the command mode and the owning tab in one
+		// go, which is what this has to use: the same string is a message, a shell
+		// command or a request for one depending on the mode, so prefilling the
+		// text alone would drop an agent prompt into a bang composer and Enter
+		// would run it as a shell command.
+		useComposerInputStore.getState().loadAiDraft(resolution.tabId, resolution.prompt, 'off');
+		inputRef.current?.focus();
+
+		if (resolution.movedAway) {
+			notifyCenterFlash({
+				message: 'Conversation moved',
+				detail: 'The follow-up is in the composer, not sent.',
+				color: 'yellow',
+			});
+		}
+	});
+
+	// Plugin `sessions.focus` writes main's store,
 	// which is invisible to the live renderer store - apply it via canonical helpers.
 	usePluginFocusRequestListener();
 
@@ -2397,6 +2524,7 @@ function MaestroConsoleInner() {
 	// Extracted hook for group CRUD operations (toggle, rename, create, drag-drop)
 	const {
 		toggleGroup,
+		toggleGroupHidden,
 		startRenamingGroup,
 		finishRenamingGroup,
 		createNewGroup,
@@ -2500,6 +2628,8 @@ function MaestroConsoleInner() {
 		handleTogglePauseQueueItem,
 		handleEditQueueItem,
 		handleForceSendQueueItem,
+		handleSteerQueueItem,
+		handleMergeQueueItem,
 	} = useQueueHandlers({ processQueuedItem });
 
 	// Force Send from the inline chat list: the item always belongs to the active
@@ -2510,6 +2640,20 @@ function MaestroConsoleInner() {
 			if (sessionId) handleForceSendQueueItem(sessionId, itemId);
 		},
 		[handleForceSendQueueItem]
+	);
+
+	// Steering from the inline chat list: same shape as Force Send above, with the
+	// session pinned to the active agent.
+	const handleSteerQueuedItem = useCallback(
+		(itemId: string) => {
+			const sessionId = activeSessionIdRef.current;
+			if (!sessionId) return;
+			// Nothing here needs the result - the handler reports to the user with a
+			// toast - but the rejection still needs an owner so a dead channel cannot
+			// surface as an unhandled promise crash report.
+			void handleSteerQueueItem(sessionId, itemId);
+		},
+		[handleSteerQueueItem]
 	);
 
 	// Symphony contribution handler - extracted to useSymphonyContribution hook
@@ -2848,17 +2992,21 @@ function MaestroConsoleInner() {
 		handleInputKeyDown,
 		handlePaste,
 		handleDrop,
+		handleUploadFiles,
 		getContextColor: boundGetContextColor,
 		setActiveSessionId,
 		handleStopBatchRun,
 		handleDeleteLog,
 		handleRemoveQueuedItem,
 		handleToggleQueuedItemPause,
+		handleMergeQueuedItem,
 		handleEditQueuedItem,
 		handleReorderQueuedItem,
 		handleForceSendQueuedItem,
 		forcedParallelEnabled: settings.forcedParallelExecution,
 		getForceSendContext,
+		getSteerContext,
+		handleSteerQueuedItem,
 		handleOpenQueueBrowser,
 
 		// Tab management handlers
@@ -2996,6 +3144,7 @@ function MaestroConsoleInner() {
 		toggleGlobalLive,
 		restartWebServer,
 		toggleGroup,
+		toggleGroupHidden,
 		handleDragStart,
 		handleDragOver,
 		handleDropOnGroup,
@@ -3242,6 +3391,7 @@ function MaestroConsoleInner() {
 									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
 									onResumeQueue={handleResumeGroupChatQueue}
+									onSteerQueuedItem={handleSteerGroupChatQueueItem}
 									onReorderQueuedItems={handleReorderGroupChatQueueItems}
 									markdownEditMode={chatRawTextMode}
 									onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}
@@ -3405,7 +3555,7 @@ function MaestroConsoleInner() {
 						setLogViewerOpen={setLogViewerOpen}
 						setProcessMonitorOpen={setProcessMonitorOpen}
 						setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
-						setAgentRunDashboardOpen={setAgentRunDashboardOpen}
+						setAgentRunDashboardOpen={encoreFeatures.pianola ? setAgentRunDashboardOpen : undefined}
 						setActiveRightTab={setActiveRightTab}
 						setAgentSessionsOpen={setAgentSessionsOpen}
 						setMemoryViewerOpen={setMemoryViewerOpen}
@@ -3559,6 +3709,7 @@ function MaestroConsoleInner() {
 						onTogglePauseQueueItem={handleTogglePauseQueueItem}
 						onEditQueueItem={handleEditQueueItem}
 						onForceSendQueueItem={handleForceSendQueueItem}
+						onMergeQueueItem={handleMergeQueueItem}
 						// AppGroupChatModals props
 						onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
 						onCreateGroupChat={handleCreateGroupChat}
@@ -3683,10 +3834,16 @@ function MaestroConsoleInner() {
  * re-render MaestroConsoleInner via this parent.
  */
 function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
-	const sessions = useStoreWithEqualityFn(
+	const storedSessions = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => s.sessions,
 		gitPollSessionEquality
+	);
+	// Live agents only: a dormant Pianola's folder (flag off) is never polled.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const sessions = useMemo(
+		() => filterLiveAgents(storedSessions, { pianola: pianolaEnabled }),
+		[storedSessions, pianolaEnabled]
 	);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	return (

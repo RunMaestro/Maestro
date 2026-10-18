@@ -65,8 +65,8 @@ describe('list-groups command', () => {
 
 			expect(readGroups).toHaveBeenCalled();
 			expect(formatGroups).toHaveBeenCalledWith([
-				{ id: 'group-1', name: 'Frontend', emoji: '🎨', collapsed: false },
-				{ id: 'group-2', name: 'Backend', emoji: '⚙️', collapsed: true },
+				{ id: 'group-1', name: 'Frontend', emoji: '🎨', collapsed: false, hidden: false },
+				{ id: 'group-2', name: 'Backend', emoji: '⚙️', collapsed: true, hidden: false },
 			]);
 			expect(consoleSpy).toHaveBeenCalled();
 		});
@@ -89,7 +89,7 @@ describe('list-groups command', () => {
 			listGroups({});
 
 			expect(formatGroups).toHaveBeenCalledWith([
-				{ id: 'group-single', name: 'Solo Group', emoji: '🌟', collapsed: false },
+				{ id: 'group-single', name: 'Solo Group', emoji: '🌟', collapsed: false, hidden: false },
 			]);
 		});
 
@@ -127,8 +127,22 @@ describe('list-groups command', () => {
 			const parsed = JSON.parse(output);
 
 			expect(parsed).toEqual([
-				{ id: 'group-1', name: 'Test Group', emoji: '🔧', collapsed: false },
+				{ id: 'group-1', name: 'Test Group', emoji: '🔧', collapsed: false, hidden: false },
 			]);
+		});
+
+		// `hidden` is always a real boolean, so a script can read the state back
+		// after `update-group --hide` without treating an absent key as a third case.
+		it('reports whether a group is parked out of the Left Bar', () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{ id: 'shown', name: 'Shown', emoji: '📂', collapsed: false },
+				{ id: 'parked', name: 'Parked', emoji: '📁', collapsed: false, hidden: true },
+			]);
+
+			listGroups({ json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.map((g: { hidden: boolean }) => g.hidden)).toEqual([false, true]);
 		});
 
 		it('includes parentGroupId for nested groups', () => {

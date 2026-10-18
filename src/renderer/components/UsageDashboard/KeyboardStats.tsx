@@ -16,12 +16,13 @@
  * the v7 `shortcut_usage_daily` migration.
  */
 
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Keyboard, Trophy, Sparkles } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { ShortcutUsageDay, StatsTimeRange } from '../../../shared/stats-types';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
+import { availableShortcuts } from '../../utils/encoreShortcuts';
 import {
 	KEYBOARD_MASTERY_LEVELS,
 	collectBoundShortcuts,
@@ -29,11 +30,11 @@ import {
 	getLevelForPercentage,
 } from '../../constants/keyboardMastery';
 import { formatNumber } from '../../../shared/formatters';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import { logger } from '../../utils/logger';
+import { ShortcutKeys } from '../ui/ShortcutHint';
 import { MetricCard } from './SummaryCards';
 import { buildShortcutsSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
+import { useDashboardResource } from './useDashboardResource';
 
 interface KeyboardStatsProps {
 	timeRange: StatsTimeRange;
@@ -274,66 +275,42 @@ function DailyBarChart({ series, theme }: DailyBarChartProps) {
 	);
 }
 
+const NO_DAYS: ShortcutUsageDay[] = [];
+
 export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: KeyboardStatsProps) {
 	const masteryStats = useSettingsStore((s) => s.keyboardMasteryStats);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 
-	const [series, setSeries] = useState<ShortcutUsageDay[] | null>(null);
-	const [total, setTotal] = useState<number>(0);
-	const [loading, setLoading] = useState(true);
-
-	useEffect(() => {
-		let cancelled = false;
-		setLoading(true);
-		Promise.all([
-			window.maestro.stats.getShortcutUsageByDay(timeRange),
-			window.maestro.stats.getShortcutUsageTotal(timeRange),
-		])
-			.then(([byDay, totalCount]) => {
-				if (cancelled) return;
-				setSeries(byDay);
-				setTotal(totalCount);
-			})
-			.catch((err) => {
-				if (cancelled) return;
-				logger.error('Failed to fetch shortcut usage stats', undefined, err);
-				setSeries([]);
-				setTotal(0);
-			})
-			.finally(() => {
-				if (!cancelled) setLoading(false);
-			});
-
-		// Refresh on stats:updated so the chart reflects firings while the
-		// modal is open.
-		const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
-			Promise.all([
+	// Cached across opens and refreshed on stats:updated, so the chart reflects
+	// firings while the modal is open without blanking between refreshes.
+	const { data, loading } = useDashboardResource(
+		`shortcut-usage:${timeRange}`,
+		async () => {
+			const [byDay, total] = await Promise.all([
 				window.maestro.stats.getShortcutUsageByDay(timeRange),
 				window.maestro.stats.getShortcutUsageTotal(timeRange),
-			])
-				.then(([byDay, totalCount]) => {
-					if (cancelled) return;
-					setSeries(byDay);
-					setTotal(totalCount);
-				})
-				.catch(() => {
-					/* best-effort refresh; surface only initial-load errors */
-				});
-		});
-
-		return () => {
-			cancelled = true;
-			unsubscribe();
-		};
-	}, [timeRange]);
+			]);
+			return { byDay, total };
+		},
+		'fetchShortcutUsage'
+	);
+	const series: ShortcutUsageDay[] | null = data?.byDay ?? (loading ? null : NO_DAYS);
+	const total = data?.total ?? 0;
 
 	// Unbound shortcuts are excluded outright: the user cannot fire a chord that
 	// does not exist, so listing one as "unused" is busywork and counting one in
-	// the denominator holds the mastery ring below 100% forever.
+	// the denominator holds the mastery ring below 100% forever. The same goes
+	// for the chord of an Encore Feature that is switched off.
 	const boundShortcuts = useMemo(
-		() => collectBoundShortcuts(shortcuts, tabShortcuts, FIXED_SHORTCUTS),
-		[shortcuts, tabShortcuts]
+		() =>
+			collectBoundShortcuts(
+				availableShortcuts(shortcuts, encoreFeatures),
+				tabShortcuts,
+				availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
+			),
+		[shortcuts, tabShortcuts, encoreFeatures]
 	);
 
 	const totalShortcuts = boundShortcuts.length;
@@ -515,16 +492,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 								<span className="truncate" title={s.label}>
 									{s.label}
 								</span>
-								<kbd
-									className="px-1.5 py-0.5 rounded border font-mono text-2xs font-bold flex-shrink-0 ml-auto"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-									}}
-								>
-									{formatShortcutKeys(s.keys)}
-								</kbd>
+								<ShortcutKeys theme={theme} keys={s.keys} className="ml-auto" />
 							</li>
 						))}
 					</ul>

@@ -3,7 +3,7 @@
  * @description Tests for the encore CLI commands
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/storage', () => ({
@@ -19,6 +19,7 @@ import { encoreList, encoreSet } from '../../../cli/commands/encore';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { readSettingValue } from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
+import { ENCORE_FEATURE_DEFAULTS } from '../../../shared/encoreFeatureDefaults';
 
 function mockSend(result: Record<string, unknown>) {
 	let captured: Record<string, unknown> = {};
@@ -68,13 +69,59 @@ describe('encore commands', () => {
 		vi.mocked(readSettingValue).mockReturnValue(undefined);
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
-		// rc's CLI also exposes Pianola, which has not graduated and ships off.
-		expect(parsed.features).toEqual({
-			directorNotes: true,
-			usageStats: true,
-			symphony: true,
-			maestroCue: true,
-			pianola: false,
+		// Every flag the app knows, at its shipped default. MaestroRun is macOS
+		// only, so it is covered by its own platform tests below.
+		const { maestroRun: _maestroRun, ...everywhere } = parsed.features;
+		const { maestroRun: _default, ...defaults } = ENCORE_FEATURE_DEFAULTS;
+		expect(everywhere).toEqual(defaults);
+	});
+
+	it('lists and toggles every flag, not a hand-kept subset', async () => {
+		vi.mocked(readSettingValue).mockReturnValue(undefined);
+		encoreList({ json: true });
+		const listed = Object.keys(JSON.parse(consoleSpy.mock.calls[0][0]).features);
+		for (const key of ['concerto', 'groupsPlus', 'webLogin', 'coworking', 'opencodeServer']) {
+			expect(listed).toContain(key);
+		}
+
+		const getPayload = mockSend({ success: true });
+		await encoreSet('groups-plus', true, {});
+		expect((getPayload().value as Record<string, boolean>).groupsPlus).toBe(true);
+	});
+
+	describe('a macOS-only feature (MaestroRun)', () => {
+		const realPlatform = process.platform;
+		const setPlatform = (value: string) =>
+			Object.defineProperty(process, 'platform', { value, configurable: true });
+		afterEach(() => setPlatform(realPlatform));
+
+		it('is listed and can be enabled on macOS', async () => {
+			setPlatform('darwin');
+			encoreList({ json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).features.maestroRun).toBe(false);
+
+			const getPayload = mockSend({ success: true });
+			await encoreSet('maestro-run', true, {});
+			expect((getPayload().value as Record<string, boolean>).maestroRun).toBe(true);
+		});
+
+		it.each(['win32', 'linux'])('is not listed and refuses to enable on %s', async (platform) => {
+			setPlatform(platform);
+			encoreList({ json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).features).not.toHaveProperty('maestroRun');
+
+			await expect(encoreSet('maestroRun', true, {})).rejects.toThrow('__exit__');
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('not available on this operating system')
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('can still be switched off anywhere', async () => {
+			setPlatform('linux');
+			mockSend({ success: true });
+			await encoreSet('maestroRun', false, {});
+			expect(withMaestroClient).toHaveBeenCalled();
 		});
 	});
 
@@ -87,16 +134,53 @@ describe('encore commands', () => {
 		expect(p.value).toMatchObject({ symphony: true, maestroCue: true });
 	});
 
+	it.each([
+		['directorNotes', false],
+		['usageStats', false],
+		['symphony', false],
+		['maestroCue', true],
+		['pianola', true],
+		['computerHistory', true],
+		['quickChat', false],
+		['maestroRun', false],
+	] as const)('changing %s preserves other saved Encore flags', async (feature, enabled) => {
+		vi.mocked(readSettingValue).mockReturnValue(
+			Object.freeze({
+				plugins: true,
+				concerto: true,
+				webLogin: false,
+				futureFeature: true,
+			})
+		);
+		const getPayload = mockSend({ success: true });
+
+		await encoreSet(feature, enabled, {});
+
+		expect(getPayload().value).toMatchObject({
+			[feature]: enabled,
+			plugins: true,
+			concerto: true,
+			webLogin: false,
+			futureFeature: true,
+		});
+	});
+
 	it('disable flips a flag off', async () => {
 		const getPayload = mockSend({ success: true });
 		await encoreSet('symphony', false, {});
 		expect((getPayload().value as Record<string, boolean>).symphony).toBe(false);
 	});
 
-	it('resolves friendly aliases (e.g. "group-chat" -> symphony)', async () => {
+	it('resolves friendly aliases (e.g. "maestro-symphony" -> symphony)', async () => {
 		const getPayload = mockSend({ success: true });
-		await encoreSet('group-chat', true, {});
+		await encoreSet('maestro-symphony', true, {});
 		expect((getPayload().value as Record<string, boolean>).symphony).toBe(true);
+	});
+
+	it('does not map "group-chat" onto Symphony (Group Chat has no Encore flag)', async () => {
+		await expect(encoreSet('group-chat', false, {})).rejects.toThrow('__exit__');
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Unknown Encore feature'));
+		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
 
 	it('lists pianola, defaulting off when unset', () => {
@@ -115,6 +199,15 @@ describe('encore commands', () => {
 		await encoreSet('manager', true, {});
 		expect((getPayload2().value as Record<string, boolean>).pianola).toBe(true);
 	});
+
+	it.each(['throughput-gauge', 'throughput', 'gauge', 'tps'])(
+		'resolves the "%s" alias to throughputGauge',
+		async (alias) => {
+			const getPayload = mockSend({ success: true });
+			await encoreSet(alias, true, {});
+			expect((getPayload().value as Record<string, boolean>).throughputGauge).toBe(true);
+		}
+	);
 
 	it('rejects an unknown feature without connecting', async () => {
 		await expect(encoreSet('telepathy', true, {})).rejects.toThrow('__exit__');

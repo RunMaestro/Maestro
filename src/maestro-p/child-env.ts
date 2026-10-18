@@ -7,8 +7,13 @@
 //   * Session identity markers, which must be REMOVED (see
 //     CLAUDE_SESSION_IDENTITY_ENV_VARS).
 //   * The login name, which must be PRESENT (see LOGIN_NAME_ENV_VARS).
+//
+// Plus maestro-p's OWN control variable, MAESTRO_P_STEERING_SOCKET, which must be
+// removed too (see MAESTRO_P_PRIVATE_ENV_VARS).
 
 import * as os from 'os';
+
+import { STEERING_SOCKET_ENV_VAR } from '../shared/chatSteering';
 
 // Env vars that mark the CURRENT process as running inside a Claude Code
 // session. When maestro-p is invoked from within a Claude agent (or any
@@ -29,6 +34,14 @@ export const CLAUDE_SESSION_IDENTITY_ENV_VARS = [
 	'CLAUDE_CODE_CHILD_SESSION',
 	'CLAUDE_CODE_ENTRYPOINT',
 ] as const;
+
+// Variables addressed to THIS maestro-p and nobody below it. The steering socket
+// path names the channel this process listens on; left in the env, it reaches the
+// claude TUI and through it every Bash-tool child, so an agent that runs
+// `maestro-p` (or any tool that reads the variable) would try to open a second
+// server on the SAME path - knocking out this turn's steering channel - or could
+// connect to it and type into the very turn that spawned it.
+export const MAESTRO_P_PRIVATE_ENV_VARS = [STEERING_SOCKET_ENV_VAR] as const;
 
 // The login name, filled in from the OS account when the caller left it unset.
 // With USER missing, claude cannot find the subscription login it keeps in the
@@ -57,7 +70,7 @@ function osLoginName(): string | undefined {
 
 /**
  * Return a copy of `parentEnv` fit for the claude TUI: session-identity markers
- * removed, and the login name filled in when the caller left it unset or blank.
+ * and maestro-p's private control variables removed, and the login name filled in when the caller left it unset or blank.
  * A value the caller did set is never overwritten.
  */
 export function buildChildEnv(
@@ -66,6 +79,9 @@ export function buildChildEnv(
 ): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...parentEnv };
 	for (const key of CLAUDE_SESSION_IDENTITY_ENV_VARS) {
+		delete env[key];
+	}
+	for (const key of MAESTRO_P_PRIVATE_ENV_VARS) {
 		delete env[key];
 	}
 	if (platform === 'win32') return env;

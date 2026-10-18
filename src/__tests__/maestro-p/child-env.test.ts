@@ -8,6 +8,7 @@ import * as os from 'os';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildChildEnv, CLAUDE_SESSION_IDENTITY_ENV_VARS } from '../../maestro-p/child-env';
+import { STEERING_SOCKET_ENV_VAR } from '../../shared/chatSteering';
 
 const posix = { platform: 'darwin' as const, loginName: () => 'alice' };
 
@@ -28,6 +29,23 @@ describe('buildChildEnv', () => {
 		expect(env.CLAUDE_CONFIG_DIR).toBe('/cfg');
 		expect(env.ANTHROPIC_MODEL).toBe('fable');
 		expect(env.MAESTRO_CLAUDE_BIN).toBe('/bin/claude');
+	});
+
+	it('removes the steering socket so nothing below this maestro-p can reach its channel', () => {
+		// Left in, it rides into claude and every Bash-tool child: a nested
+		// maestro-p would open a second server on the same path (taking this turn's
+		// channel down), and any tool could type into the turn that spawned it.
+		const parent: NodeJS.ProcessEnv = {
+			USER: 'alice',
+			LOGNAME: 'alice',
+			[STEERING_SOCKET_ENV_VAR]: '/tmp/maestro-steer-abc.sock',
+		};
+
+		const env = buildChildEnv(parent, posix);
+
+		expect(env).not.toHaveProperty(STEERING_SOCKET_ENV_VAR);
+		// The caller's own env still carries it; maestro-p reads it from there.
+		expect(parent[STEERING_SOCKET_ENV_VAR]).toBe('/tmp/maestro-steer-abc.sock');
 	});
 
 	// #1577: with USER unset, claude misses its keychain login and starts on API

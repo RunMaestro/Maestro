@@ -21,6 +21,7 @@ export interface BrowserTabsState {
 	browserTabKeepAlive: 'off' | 'recent' | 'all';
 	browserTabKeepAliveLimit: number;
 	automaticTabNamingEnabled: boolean;
+	shortenLongTabNames: boolean;
 	newTabPlacement: 'end' | 'after-current';
 	newBrowserTabPlacement: 'end' | 'after-current';
 	newTerminalPlacement: 'end' | 'after-current';
@@ -38,6 +39,7 @@ export interface BrowserTabsActions {
 	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
 	setBrowserTabKeepAliveLimit: (value: number) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+	setShortenLongTabNames: (value: boolean) => void;
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
 	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
 	setNewTerminalPlacement: (value: 'end' | 'after-current') => void;
@@ -63,6 +65,8 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 	browserTabKeepAlive: 'off',
 	browserTabKeepAliveLimit: 10,
 	automaticTabNamingEnabled: true,
+	// Off: an auto-generated name is kept whole and the tab strip shows all of it.
+	shortenLongTabNames: false,
 	newTabPlacement: 'end',
 	newBrowserTabPlacement: 'after-current',
 	newTerminalPlacement: 'after-current',
@@ -113,6 +117,11 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 	setAutomaticTabNamingEnabled: (value) => {
 		set({ automaticTabNamingEnabled: value });
 		window.maestro.settings.set('automaticTabNamingEnabled', value);
+	},
+
+	setShortenLongTabNames: (value) => {
+		set({ shortenLongTabNames: value });
+		window.maestro.settings.set('shortenLongTabNames', value);
 	},
 
 	setNewTabPlacement: (value) => {
@@ -172,6 +181,9 @@ export function hydrateBrowserTabsSettings(
 
 	if (allSettings['automaticTabNamingEnabled'] !== undefined)
 		patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;
+
+	if (typeof allSettings['shortenLongTabNames'] === 'boolean')
+		patch.shortenLongTabNames = allSettings['shortenLongTabNames'];
 
 	if (allSettings['newTabPlacement'] !== undefined) {
 		const placement = allSettings['newTabPlacement'];

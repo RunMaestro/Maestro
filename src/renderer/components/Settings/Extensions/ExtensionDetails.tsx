@@ -7,15 +7,22 @@
  * Configure (consent + a live editor for the plugin's contributed settings,
  * written to `plugins.<id>.*`), Revoke, and Uninstall. For a built-in feature
  * it shows the description and an enable toggle.
+ *
+ * Every extension gets the same frame: title, meta, and the Enable switch
+ * pinned in the header row, the one-line description,
+ * then the Help | Settings | Permissions sub-tabs. The usage guide lives in the
+ * Help tab, so a long guide never pushes the switch down the pane and every
+ * tile puts it in the same place.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { HelpCircle, Settings as SettingsIcon, Trash2, KeyRound, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { formatCalendarDay } from '../../../../shared/formatters';
 import { PermissionList, RISK_COLOR } from './PermissionList';
 import { UsageGuide } from './UsageGuide';
+import { ToggleSwitchTrack } from '../../ui/ToggleSwitch';
 import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
 import { WebLoginUsers } from './WebLoginUsers';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
@@ -23,17 +30,14 @@ import type {
 	AggregatedContributions,
 	SettingContribution,
 } from '../../../../shared/plugins/contributions';
+import { collectContributions } from '../../../../shared/plugins/contributions';
 import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
-import {
-	CATEGORY_LABELS,
-	STATE_LABELS,
-	extensionBadge,
-	type ExtensionState,
-	type UnifiedExtension,
-} from './extensionModel';
+import { CATEGORY_LABELS, extensionBadge, type UnifiedExtension } from './extensionModel';
 import { FIRST_PARTY_PLUGINS } from '../../../../shared/plugins/first-party';
-import { getModalActions } from '../../../stores/modalStore';
+import { pluginSettingsId } from '../../../../shared/plugins/panel-host';
+import { getModalActions, useModalStore } from '../../../stores/modalStore';
 import { launchFromSettings } from '../../../utils/launchFromSettings';
+import type { EncoreTileRequest } from '../tabs/EncoreTab/types';
 
 interface ExtensionDetailsProps {
 	theme: Theme;
@@ -42,6 +46,7 @@ interface ExtensionDetailsProps {
 	busy: boolean;
 	onTogglePlugin: (record: PluginRecord) => void;
 	onToggleBuiltin: (flag: NonNullable<UnifiedExtension['flag']>) => void;
+	onUpdate?: (record: PluginRecord) => void;
 	onUninstall: (record: PluginRecord) => void;
 	onRevoke: (id: string) => void;
 	getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
@@ -49,7 +54,12 @@ interface ExtensionDetailsProps {
 	 * the Plugins tab). Absent for plugins and for features with no inline
 	 * config (e.g. Pianola, whose config is its own modal). */
 	settingsBody?: ReactNode;
+	/** A deep link into this tile's settings. Each new request shows the
+	 * Settings sub-tab, even when the pane was already open on Help. */
+	settingsRequest?: EncoreTileRequest | null;
 }
+
+type ExtensionSubTab = 'help' | 'settings' | 'permissions';
 
 /** A buckets→count summary of a plugin's contributions (only non-empty buckets). */
 const CONTRIB_BUCKETS: ReadonlyArray<{
@@ -76,10 +86,12 @@ export function ExtensionDetails({
 	busy,
 	onTogglePlugin,
 	onToggleBuiltin,
+	onUpdate,
 	onUninstall,
 	onRevoke,
 	getGrants,
 	settingsBody,
+	settingsRequest,
 }: ExtensionDetailsProps) {
 	// Grants are tagged with the plugin they belong to, so switching plugins never
 	// reads the previous plugin's snapshot before the new plugin's async load
@@ -93,32 +105,48 @@ export function ExtensionDetails({
 	const grants = grantsState?.pluginId === ext.id ? grantsState.snapshot : null;
 	const [configureOpen, setConfigureOpen] = useState(false);
 	const [settingValues, setSettingValues] = useState<Record<string, boolean | string | number>>({});
-	const [activeSubTab, setActiveSubTab] = useState<'settings' | 'permissions'>('settings');
+	const [activeSubTab, setActiveSubTab] = useState<ExtensionSubTab>('help');
+	// Read when the user switches extensions, NOT a dependency of that reset:
+	// flipping the switch must never yank the user off the tab they are on.
+	const extStateRef = useRef(ext.state);
+	extStateRef.current = ext.state;
 
 	const isPlugin = ext.kind === 'plugin';
 	const record = ext.record;
+	const grantsLoadGeneration = useRef(0);
 	const isCodeTier = (ext.tier ?? 0) >= 1;
 
-	// Load the plugin's requested/granted permissions whenever the selection
-	// changes. First-party features disclose statically from their definition
-	// (grants are minted host-side on enable), so no ledger round-trip.
+	// Refresh grants without mounting any executable panel inside management.
 	useEffect(() => {
-		if (!isPlugin) {
-			setGrantsState(null);
-			return;
-		}
 		let cancelled = false;
-		void getGrants(ext.id)
-			.then((snap) => {
-				if (!cancelled) setGrantsState({ pluginId: ext.id, snapshot: snap });
-			})
-			.catch(() => {
-				if (!cancelled) setGrantsState(null);
-			});
+		setGrantsState(null);
+		if (!isPlugin) return;
+		const load = () => {
+			const generation = ++grantsLoadGeneration.current;
+			void getGrants(ext.id)
+				.then((snapshot) => {
+					if (!cancelled && generation === grantsLoadGeneration.current)
+						setGrantsState({ pluginId: ext.id, snapshot });
+				})
+				.catch(() => {
+					if (!cancelled && generation === grantsLoadGeneration.current) setGrantsState(null);
+				});
+		};
+		load();
+		const unsubscribe = window.maestro.plugins.onChanged(() => load());
 		return () => {
 			cancelled = true;
+			unsubscribe?.();
 		};
-	}, [isPlugin, ext.id, getGrants]);
+	}, [
+		isPlugin,
+		ext.id,
+		getGrants,
+		record?.enabled,
+		record?.manifest?.version,
+		record?.loadStatus,
+		record?.signature?.status,
+	]);
 
 	const isPianola = !isPlugin && ext.flag === 'pianola';
 	// Web Login manages its accounts in its own tile: the channels behind that
@@ -128,19 +156,39 @@ export function ExtensionDetails({
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
 		: [];
+	const declared =
+		isPlugin &&
+		record?.manifest &&
+		record.loadStatus === 'ok' &&
+		record.signature?.status !== 'invalid'
+			? collectContributions(record.manifest)
+			: null;
+	const settingsPanels = declared?.panels.filter((panel) => panel.placement === 'settings') ?? [];
+
 	const canConfigurePlugin = isPlugin && ext.state === 'enabled' && pluginSettings.length > 0;
 
 	// The Settings sub-tab exists when there's something to configure: a
 	// first-party config body, a configurable plugin, or Pianola's modal entry.
-	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola || isWebLogin;
+	const hasSettingsTab =
+		Boolean(settingsBody) ||
+		canConfigurePlugin ||
+		Boolean(declared?.settings.length) ||
+		isPianola ||
+		isWebLogin ||
+		settingsPanels.length > 0;
 
-	// Reset transient editor + sub-tab when switching extensions. Default to
-	// Settings when it exists, else Permissions.
+	// Reset transient editor + sub-tab when switching extensions. Something not
+	// yet enabled opens on Help (the user is deciding whether to turn it on);
+	// something enabled opens on Settings when it has any, else on Help.
 	useEffect(() => {
 		setConfigureOpen(false);
 		setSettingValues({});
-		setActiveSubTab(hasSettingsTab ? 'settings' : 'permissions');
+		setActiveSubTab(extStateRef.current === 'enabled' && hasSettingsTab ? 'settings' : 'help');
 	}, [ext.key, hasSettingsTab]);
+
+	useEffect(() => {
+		if (settingsRequest && hasSettingsTab) setActiveSubTab('settings');
+	}, [settingsRequest, hasSettingsTab]);
 
 	const openConfigure = useCallback(async () => {
 		if (!canConfigurePlugin) {
@@ -176,15 +224,9 @@ export function ExtensionDetails({
 		[canConfigurePlugin, ext.id]
 	);
 
-	const stateColor = (state: ExtensionState): string =>
-		state === 'enabled'
-			? theme.colors.success
-			: state === 'installed'
-				? theme.colors.accent
-				: theme.colors.textDim;
-
 	const grantedCaps = new Set((grants?.granted ?? []).map((g) => g.capability));
-	const toggleLabel = ext.state === 'enabled' ? 'Disable' : 'Enable';
+	const isEnabled = ext.state === 'enabled';
+	const toggleBlocked = busy || (isPlugin && ext.loadStatus !== 'ok');
 
 	// First-party tiles surface their supervised background services; status
 	// derives from the definition + the bridge-written flag state (enable
@@ -236,22 +278,41 @@ export function ExtensionDetails({
 						)}
 					</div>
 				</div>
-				<span
-					data-testid="extension-details-state"
-					className="px-2 py-0.5 rounded text-xs-plus font-bold flex-shrink-0"
-					style={{ backgroundColor: stateColor(ext.state) + '22', color: stateColor(ext.state) }}
-				>
-					{STATE_LABELS[ext.state]}
-				</span>
+				<div className="flex items-center gap-2 flex-shrink-0">
+					{/* One switch for every tile, always in this spot. The label and
+					    the pill share one role="switch" button (a nested button
+					    would be invalid), the same shape as the Cue header. */}
+					<button
+						type="button"
+						role="switch"
+						aria-checked={isEnabled}
+						aria-label={isEnabled ? `Disable ${ext.name}` : `Enable ${ext.name}`}
+						data-testid="extension-enable-toggle"
+						disabled={toggleBlocked}
+						onClick={() => {
+							if (isPlugin && record) onTogglePlugin(record);
+							else if (ext.flag) onToggleBuiltin(ext.flag);
+						}}
+						className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs-plus font-bold transition-colors disabled:opacity-50"
+						style={{
+							backgroundColor: isEnabled ? theme.colors.success + '22' : theme.colors.bgActivity,
+							color: isEnabled ? theme.colors.success : theme.colors.textDim,
+						}}
+					>
+						<span data-testid="extension-details-state">{isEnabled ? 'Enabled' : 'Disabled'}</span>
+						<ToggleSwitchTrack
+							checked={isEnabled}
+							theme={theme}
+							busy={busy}
+							activeColor={theme.colors.success}
+						/>
+					</button>
+				</div>
 			</div>
 
 			<p className="text-sm mt-3" style={{ color: theme.colors.textMain }}>
 				{ext.description || 'No description provided.'}
 			</p>
-
-			{/* A one-liner says what the feature is; this says how to summon it and
-			    drive it. Only first-party features carry a usage guide today. */}
-			{ext.usage && <UsageGuide theme={theme} usage={ext.usage} />}
 
 			{isPlugin && ext.loadStatus && ext.loadStatus !== 'ok' && (
 				<p className="text-xs mt-2" style={{ color: theme.colors.error }}>
@@ -286,57 +347,73 @@ export function ExtensionDetails({
 				</p>
 			)}
 
-			{/* Actions */}
-			<div className="flex flex-wrap items-center gap-2 mt-4">
-				<button
-					type="button"
-					data-testid="extension-enable-toggle"
-					disabled={busy || (isPlugin && ext.loadStatus !== 'ok')}
-					onClick={() => {
-						if (isPlugin && record) onTogglePlugin(record);
-						else if (ext.flag) onToggleBuiltin(ext.flag);
-					}}
-					className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-				>
-					<Power className="w-4 h-4" /> {toggleLabel}
-				</button>
+			{/* Plugin lifecycle actions. Enable/Disable is the header switch. */}
+			{isPlugin && (
+				<div className="flex flex-wrap items-center gap-2 mt-4">
+					{isCodeTier && (
+						<button
+							type="button"
+							data-testid="extension-revoke"
+							disabled={busy}
+							onClick={() => onRevoke(ext.id)}
+							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
+							style={{ borderColor: theme.colors.border, color: theme.colors.warning }}
+						>
+							<KeyRound className="w-4 h-4" /> Revoke
+						</button>
+					)}
 
-				{isPlugin && isCodeTier && (
-					<button
-						type="button"
-						data-testid="extension-revoke"
-						disabled={busy}
-						onClick={() => onRevoke(ext.id)}
-						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
-						style={{ borderColor: theme.colors.border, color: theme.colors.warning }}
-					>
-						<KeyRound className="w-4 h-4" /> Revoke
-					</button>
-				)}
+					{record && (
+						<button
+							type="button"
+							data-testid="extension-uninstall"
+							disabled={busy}
+							onClick={() => onUninstall(record)}
+							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
+							style={{ borderColor: theme.colors.border, color: theme.colors.error }}
+						>
+							<Trash2 className="w-4 h-4" /> Uninstall
+						</button>
+					)}
+					{record && onUpdate && (
+						<button
+							type="button"
+							data-testid="extension-update"
+							disabled={busy}
+							onClick={() => onUpdate(record)}
+							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors disabled:opacity-50"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							title="Choose a folder with a newer version of this plugin"
+						>
+							<RefreshCw className="w-4 h-4" /> Update from folder…
+						</button>
+					)}
+				</div>
+			)}
 
-				{isPlugin && record && (
-					<button
-						type="button"
-						data-testid="extension-uninstall"
-						disabled={busy}
-						onClick={() => onUninstall(record)}
-						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
-						style={{ borderColor: theme.colors.border, color: theme.colors.error }}
-					>
-						<Trash2 className="w-4 h-4" /> Uninstall
-					</button>
-				)}
-			</div>
-
-			{/* Sub-tabs: Settings (config) and Permissions (capabilities, services,
-			    contributions). Settings only shows when there's something to
-			    configure; otherwise the pane opens straight on Permissions. */}
+			{/* Sub-tabs: Help (the usage guide), Settings (config), and Permissions
+			    (capabilities, services, contributions). Help is always there;
+			    Settings only when there's something to configure. */}
 			<div
 				className="flex items-center gap-1 mt-5 border-b"
 				style={{ borderColor: theme.colors.border }}
 				role="tablist"
 			>
+				<button
+					type="button"
+					role="tab"
+					data-testid="extension-subtab-help"
+					aria-selected={activeSubTab === 'help'}
+					onClick={() => setActiveSubTab('help')}
+					className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition-colors"
+					style={{
+						borderColor: activeSubTab === 'help' ? theme.colors.accent : 'transparent',
+						color: activeSubTab === 'help' ? theme.colors.textMain : theme.colors.textDim,
+					}}
+				>
+					<HelpCircle className="w-3.5 h-3.5" />
+					Help
+				</button>
 				{hasSettingsTab && (
 					<button
 						type="button"
@@ -368,6 +445,23 @@ export function ExtensionDetails({
 					Permissions
 				</button>
 			</div>
+
+			{activeSubTab === 'help' && (
+				<div className="mt-1" data-testid="extension-help-panel">
+					{ext.usage ? (
+						<UsageGuide theme={theme} usage={ext.usage} />
+					) : (
+						<p
+							data-testid="extension-help-missing"
+							className="mt-4 text-xs rounded-lg border p-3"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+						>
+							{ext.name} does not ship a usage guide. The description above is everything its author
+							provided.
+						</p>
+					)}
+				</div>
+			)}
 
 			{activeSubTab === 'permissions' && (
 				<>
@@ -600,6 +694,42 @@ export function ExtensionDetails({
 								Enable Pianola to open its manager and rules.
 							</div>
 						))}
+
+					{isPlugin &&
+						ext.state !== 'enabled' &&
+						declared &&
+						(settingsPanels.length > 0 || declared.settings.length > 0) && (
+							<div
+								data-testid="extension-plugin-settings-status"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								Select Enable to review permissions for this version. Plugin content stays disabled.
+							</div>
+						)}
+					{settingsPanels.map((panel) => (
+						<button
+							key={panel.id}
+							disabled={
+								ext.state !== 'enabled' ||
+								record?.signature?.status !== 'trusted' ||
+								!grantedCaps.has('ui:panel') ||
+								!contributions?.panels.some(
+									(active) => active.id === panel.id && active.pluginId === ext.id
+								)
+							}
+							type="button"
+							className="w-full px-3 py-2 rounded border text-sm disabled:opacity-50"
+							style={{ borderColor: theme.colors.border }}
+							onClick={() =>
+								useModalStore
+									.getState()
+									.openModal('settings', { tab: 'encore', settingId: pluginSettingsId(panel.id) })
+							}
+						>
+							Open {panel.title}
+						</button>
+					))}
 
 					{/* Plugin: consent-gated live editor for contributed settings */}
 					{isPlugin && canConfigurePlugin && (

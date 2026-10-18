@@ -3,6 +3,7 @@ import type { UsageDashboardViewMode as ViewMode } from '../../../types';
 export const OVERVIEW_SECTIONS = [
 	'year-in-pixels',
 	'summary-cards',
+	'token-speed',
 	'delegation-score',
 	'query-percentiles',
 	'agent-comparison',
@@ -26,6 +27,7 @@ export const AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS = [
 	'agent-usage',
 ] as const;
 export const ACTIVITY_SECTIONS = [
+	'prompt-cadence',
 	'delegation-trend',
 	'activity-heatmap',
 	'weekday-comparison',
@@ -55,7 +57,9 @@ export type SectionId =
 const SECTION_LABELS: Record<SectionId, string> = {
 	'year-in-pixels': 'Past Year Activity Strip',
 	'summary-cards': 'Summary Cards',
+	'token-speed': 'Tokens per Second',
 	'delegation-score': 'Delegation Score',
+	'prompt-cadence': 'Prompts',
 	'delegation-trend': 'Interactive vs Delegated Trend',
 	'query-percentiles': 'Query Duration Percentiles',
 	'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',

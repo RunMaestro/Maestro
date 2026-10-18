@@ -17,13 +17,15 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import type { CueCommandCliCall, CueEvent, CueRunResult, CueSubscription } from './cue-types';
 import type { SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
+import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
+import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 
 /** Timeout for a single maestro-cli send invocation. */
 const CLI_SEND_TIMEOUT_MS = 30_000;
@@ -56,6 +58,8 @@ export interface CueCliExecutionConfig {
 	templateContext: TemplateContext;
 	timeoutMs: number;
 	onLog: (level: string, message: string) => void;
+	/** Aborted when the run is stopped: a call not yet spawned returns `stopped` (see cue-launch-cancel.ts). */
+	signal?: AbortSignal;
 }
 
 export interface CliSendResult {
@@ -85,6 +89,16 @@ export function resolveMaestroCliScriptPath(): string {
 	candidates.push(path.resolve(__dirname, '..', '..', 'cli', 'maestro-cli.js'));
 	// Legacy single-level fallback (kept for any flattened/bundled layout).
 	candidates.push(path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'));
+	// Outside Electron this code runs INSIDE a maestro-cli bundle (`maestro-cli
+	// host`, `maestro-cli cue engine`), which can sit in any directory, not only
+	// one named `cli`. The running script is that bundle, or sits beside it.
+	const runningScript = process.argv[1];
+	if (runningScript) {
+		if (path.basename(runningScript) === 'maestro-cli.js') {
+			candidates.push(path.resolve(runningScript));
+		}
+		candidates.push(path.resolve(path.dirname(runningScript), 'maestro-cli.js'));
+	}
 
 	for (const candidate of candidates) {
 		try {
@@ -99,62 +113,20 @@ export function resolveMaestroCliScriptPath(): string {
 	return candidates[0] ?? path.resolve(__dirname, '..', 'cli', 'maestro-cli.js');
 }
 
-const SIGKILL_DELAY_MS = 5000;
-
-/**
- * Tracked, in-flight CLI child processes keyed by runId. Entries are only
- * registered when a caller passes `runId` (i.e. `executeCueCli`); the legacy
- * Phase 3 path calls {@link runMaestroCliSend} without a runId and remains
- * untracked since it's an already-completed-run side effect.
- */
-const activeCliProcesses = new Map<string, { child: ChildProcess; startTime: number }>();
-
-function killCliProcess(child: ChildProcess, sync = false): void {
-	if (isWindows() && child.pid) {
-		if (sync) {
-			try {
-				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { timeout: 5000 });
-			} catch {
-				// taskkill returns non-zero when the process is already dead - fine.
-			}
-		} else {
-			execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
-				if (!error) return;
-				if (child.exitCode !== null || child.signalCode !== null) return;
-				captureException(error, { operation: 'cue:cli:taskkill', pid: child.pid });
-			});
-		}
-		return;
-	}
-	child.kill('SIGTERM');
-	if (sync) {
-		// Shutdown path: the event loop may drain before a deferred timer
-		// fires, leaving any child that ignores SIGTERM alive. Escalate
-		// immediately so the child is guaranteed to be reaped. Mirrors
-		// the same fix in cue-shell-executor.ts.
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill('SIGKILL');
-		}
-		return;
-	}
-	setTimeout(() => {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill('SIGKILL');
-		}
-	}, SIGKILL_DELAY_MS);
-}
-
 /**
  * Spawn `node maestro-cli.js dispatch <target> <message>`. Used by both the
  * primary cli executor and the legacy cli_output Phase 3 path. When `runId`
- * is provided, the child is registered in {@link activeCliProcesses} so
- * {@link stopCueCliRun} can cancel it on user stop.
+ * is provided, the child joins the shared Cue registry
+ * ({@link trackCueProcess}) so the Process Monitor lists it and Stop reaches
+ * it. The legacy cli_output Phase 3 path passes no runId: it is a side effect of
+ * an already-completed run, so it stays untracked.
  */
 export async function runMaestroCliSend(
 	target: string,
 	message: string,
 	timeoutMs: number = CLI_SEND_TIMEOUT_MS,
-	runId?: string
+	runId?: string,
+	newTab = false
 ): Promise<CliSendResult> {
 	const cliScriptPath = resolveMaestroCliScriptPath();
 	const truncated = message.substring(0, CLI_SEND_OUTPUT_MAX_CHARS);
@@ -163,7 +135,12 @@ export async function runMaestroCliSend(
 	return new Promise<CliSendResult>((resolve) => {
 		let child: ChildProcess;
 		try {
-			child = spawn(process.execPath, [cliScriptPath, 'dispatch', target, truncated], {
+			const args = [cliScriptPath, 'dispatch', target, truncated, '--background'];
+			// Cue Agent messages promise a tab in the target's tab strip while
+			// preserving the user's view. Visibility is separate from placement;
+			// ordinary background dispatches keep their existing hidden default.
+			if (newTab) args.push('--new-tab', '--visible');
+			child = spawn(process.execPath, args, {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				// In packaged Electron, `process.execPath` is the app binary, not
 				// Node - without this flag the spawn would launch the app instead
@@ -198,12 +175,21 @@ export async function runMaestroCliSend(
 			return;
 		}
 
-		if (runId) {
-			activeCliProcesses.set(runId, { child, startTime: Date.now() });
-		}
-
 		let stdout = '';
 		let stderr = '';
+
+		const untrack = runId
+			? trackCueProcess(runId, {
+					child,
+					command: process.execPath,
+					args: [cliScriptPath, 'dispatch', target],
+					cwd: process.cwd(),
+					toolType: 'terminal',
+					startTime: Date.now(),
+					getStdout: () => stdout,
+					getStderr: () => stderr,
+				})
+			: undefined;
 		let settled = false;
 		let timedOut = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
@@ -211,7 +197,7 @@ export async function runMaestroCliSend(
 		const finish = (exitCode: number | string, sawError: Error | null) => {
 			if (settled) return;
 			settled = true;
-			if (runId) activeCliProcesses.delete(runId);
+			untrack?.();
 			if (timeoutTimer) clearTimeout(timeoutTimer);
 			if (sawError) stderr = stderr ? `${stderr}\n${sawError.message}` : sawError.message;
 			resolve({
@@ -257,26 +243,10 @@ export async function runMaestroCliSend(
 			timeoutTimer = setTimeout(() => {
 				if (settled) return;
 				timedOut = true;
-				killCliProcess(child);
+				killCueProcess(child);
 			}, effectiveTimeout);
 		}
 	});
-}
-
-/** Stop a tracked CLI child process by runId. Returns true if found. */
-export function stopCueCliRun(runId: string): boolean {
-	const entry = activeCliProcesses.get(runId);
-	if (!entry) return false;
-	killCliProcess(entry.child);
-	return true;
-}
-
-/** Stop all active CLI child processes (called on app shutdown). */
-export function stopAllCueCliRuns(): void {
-	for (const [runId, entry] of activeCliProcesses) {
-		killCliProcess(entry.child, true);
-		activeCliProcesses.delete(runId);
-	}
 }
 
 /**
@@ -284,7 +254,8 @@ export function stopAllCueCliRuns(): void {
  * `target` + `message` with template variables then invokes maestro-cli.
  */
 export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueRunResult> {
-	const { runId, session, subscription, event, cli, templateContext, timeoutMs, onLog } = config;
+	const { runId, session, subscription, event, cli, templateContext, timeoutMs, onLog, signal } =
+		config;
 
 	const startedAt = new Date().toISOString();
 	const startTime = Date.now();
@@ -345,7 +316,25 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		}
 		const clampedTimeout =
 			timeoutMs > 0 ? Math.min(timeoutMs, CLI_SEND_TIMEOUT_MS) : CLI_SEND_TIMEOUT_MS;
-		const result = await runMaestroCliSend(resolvedTarget, resolvedMessage, clampedTimeout, runId);
+		// Last check before the spawn: runMaestroCliSend spawns synchronously.
+		if (isLaunchCancelled(signal)) {
+			return stoppedBeforeLaunchResult({
+				runId,
+				sessionId: session.id,
+				sessionName: session.name,
+				subscriptionName: subscription.name,
+				pipelineName: subscription.pipeline_name,
+				event,
+				startedAt,
+			});
+		}
+		const result = await runMaestroCliSend(
+			resolvedTarget,
+			resolvedMessage,
+			clampedTimeout,
+			runId,
+			cli.new_tab
+		);
 		const status = result.timedOut ? 'timeout' : result.ok ? 'completed' : 'failed';
 		if (result.timedOut) {
 			onLog(

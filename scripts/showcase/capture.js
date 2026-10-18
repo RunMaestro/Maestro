@@ -38,7 +38,7 @@ const { SHOTS, SETTLE_MS } = require('./shots');
 const ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_THEMES = ['dracula', 'catppuccin-latte', 'pedurple'];
 /**
- * Logical window size for the published set, 4096x2560 at 2x.
+ * Logical window size for the published set, 4960x2800 at 2x.
  *
  * Sized so the main window still has room after the side panels are given the
  * width their own layout gates ask for (see the seed's `leftSidebarWidth` /
@@ -51,7 +51,7 @@ const DEFAULT_THEMES = ['dracula', 'catppuccin-latte', 'pedurple'];
  * the whole set comes out small. `assertViewport` below turns that into an
  * error rather than a surprise.
  */
-const DEFAULT_SIZE = '2048x1280';
+const DEFAULT_SIZE = '2480x1400';
 const DEFAULT_OUT = path.join(ROOT, 'docs', 'screenshots');
 const CDP_PORT = process.env.MAESTRO_CDP_PORT || '17399';
 /** How long to wait for the app to boot far enough to answer CDP. */
@@ -65,6 +65,12 @@ const BOOT_TIMEOUT_MS = 120000;
 const PAINT_TIMEOUT_MS = 240000;
 /** How long to wait for a signalled app to stop answering CDP before giving up. */
 const SHUTDOWN_TIMEOUT_MS = 30000;
+/**
+ * How long the shell may be rendered with the splash still up before the driver
+ * dismisses it itself. Long enough that a genuinely slow load finishes on its
+ * own and is photographed through the normal path.
+ */
+const SPLASH_GRACE_MS = 20000;
 
 // --- CLI args ---------------------------------------------------------------
 
@@ -247,20 +253,46 @@ class Cdp {
 
 	async awaitRendered(timeoutMs) {
 		const deadline = Date.now() + timeoutMs;
+		let shellSince = 0;
 		while (Date.now() < deadline) {
 			// Re-asserted every pass rather than once: the window can be occluded
 			// again at any point by anything else on the desktop, and a single call
 			// at connect time only covers the instant it was made.
 			await this.bringToFront().catch(() => {});
-			const ready = await this.evaluate(
+			const state = await this.evaluate(
 				`(() => {
 				const splash = document.querySelector('#initial-splash');
 				const splashGone = !splash || splash.classList.contains('hidden');
 				const shell = document.querySelector('[data-testid="sidebar-header-indicators"]');
-				return Boolean(splashGone && shell);
+				return JSON.stringify({ splashGone, shell: Boolean(shell) });
 			})()`
-			).catch(() => false);
-			if (ready) return;
+			).catch(() => null);
+			const { splashGone = false, shell = false } = state ? JSON.parse(state) : {};
+			if (splashGone && shell) return;
+
+			// The shell is up but the splash has not lifted. That is the rAF
+			// throttle, not a slow load: Maestro dismisses its splash from inside
+			// a DOUBLE requestAnimationFrame (`useAppInitialization`), and Chromium
+			// suspends rAF in a window it considers occluded - so the app is fully
+			// loaded, sitting behind a curtain nothing will ever raise.
+			// `Page.bringToFront` above fixes this most of the time and cannot be
+			// relied on: whether macOS actually raises the window depends on what
+			// else is grabbing focus while a 20-minute run is going.
+			//
+			// So after a grace period, call the app's OWN dismissal function. It is
+			// what the rAF callback would have called, and its internals
+			// (`document.fonts.ready`, `setTimeout`) are not rAF-driven, so it
+			// completes under throttling. This reveals the shell that already
+			// rendered; it never fabricates one, which is why the `shell` half of
+			// the predicate is still required before it fires.
+			if (shell) {
+				if (!shellSince) shellSince = Date.now();
+				else if (Date.now() - shellSince > SPLASH_GRACE_MS) {
+					await this.evaluate('window.__hideSplash && window.__hideSplash()').catch(() => {});
+				}
+			} else {
+				shellSince = 0;
+			}
 			await new Promise((r) => setTimeout(r, 1000));
 		}
 		// Say what was actually on screen. "Still on the splash" and "painted but
@@ -321,13 +353,21 @@ class Cdp {
 	}
 
 	/**
-	 * Press Escape. There is no `close_modals` bridge verb, and there should not
-	 * be one: Escape is how a user leaves a layer, so pressing it exercises the
-	 * same layer-stack path rather than a back door that could drift from it.
-	 * Sent twice in case a surface has a nested layer open above it.
+	 * Press Escape until nothing is left open. There is no `close_modals` bridge
+	 * verb, and there should not be one: Escape is how a user leaves a layer, so
+	 * pressing it exercises the same layer-stack path rather than a back door
+	 * that could drift from it.
+	 *
+	 * `times` is the depth to clear, not a retry count. Only the full-window
+	 * DESTINATION modals close each other on open; every other surface LAYERS,
+	 * so a run that opens one surface per shot without closing the last one
+	 * accumulates a stack, and each shot photographs whichever modal happens to
+	 * sit on top. That is not a crash - the bridge answers `success: true` for
+	 * every one of them - so the run reports a full set while filing the same
+	 * picture under several names.
 	 */
-	async escape() {
-		for (let i = 0; i < 2; i++) {
+	async escape(times = 6) {
+		for (let i = 0; i < times; i++) {
 			await this.send('Input.dispatchKeyEvent', {
 				type: 'keyDown',
 				key: 'Escape',
@@ -507,6 +547,11 @@ async function captureTheme(theme) {
 				// rAF and CSS transitions, so a modal's open animation would still
 				// be mid-flight when the shutter fires.
 				await cdp.bringToFront().catch(() => {});
+				// EVERY shot starts from a clean window, including the ones that
+				// open a surface. Layering is the default for anything that is not
+				// a full-window destination, so without this each shot is taken
+				// through whatever the previous shots left stacked on screen.
+				await cdp.escape();
 				if (shot.surface) {
 					const res = await bridge.send(
 						{ type: 'open_modal', surface: shot.surface, tab: shot.tab },
@@ -518,8 +563,6 @@ async function captureTheme(theme) {
 					if (res && res.success === false) {
 						throw new Error(res.error || `refused: ${shot.surface}`);
 					}
-				} else {
-					await cdp.escape();
 				}
 				await sleep(shot.settleMs || SETTLE_MS);
 				await cdp.screenshot(file);

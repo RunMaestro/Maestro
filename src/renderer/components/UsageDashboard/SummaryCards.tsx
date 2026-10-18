@@ -43,11 +43,12 @@ import {
 	formatDurationHuman as formatDuration,
 	formatDurationWords,
 	formatElapsedTickerCompact,
+	formatHourOfDay,
 	formatNumber,
 	formatCost,
 	formatTokensCompact,
 } from '../../../shared/formatters';
-import { aggregateUsage } from '../../../shared/usageStats';
+import { aggregateRangeUsage } from '../../../shared/usageStats';
 import { visibleAiTabs } from '../../utils/tabHelpers';
 import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
@@ -501,18 +502,11 @@ export const MetricCard = memo(function MetricCard({
 });
 
 /**
- * Format hour number (0-23) to human-readable time
- * Examples: 0 → "12 AM", 13 → "1 PM", 9 → "9 AM"
- *
- * Exported for the footer summary, which reports the same peak hour this file
- * puts on the Peak Hour card. (`PeakHoursChart` keeps its own lowercase "8pm"
- * variant for axis labels - a different style, not a duplicate of this one.)
+ * Format hour number (0-23) to human-readable time. Exported for the footer
+ * summary, which reports the same peak hour this file puts on the Peak Hour
+ * card; the implementation lives in `src/shared/formatters.ts`.
  */
-export function formatHour(hour: number): string {
-	const suffix = hour >= 12 ? 'PM' : 'AM';
-	const displayHour = hour % 12 || 12;
-	return `${displayHour} ${suffix}`;
-}
+export const formatHour = formatHourOfDay;
 
 interface ContextUsageBarProps {
 	/** Context usage as a percentage (0-100). Values above 100 are capped. */
@@ -811,14 +805,22 @@ export const SummaryCards = memo(function SummaryCards({
 		return data.totalSessions;
 	}, [sessions, data.totalSessions]);
 
-	// Token & cost usage summed across the loaded agents' persisted usageStats.
-	const usageAgg = useMemo(
-		() =>
-			aggregateUsage(
-				(sessions ?? []).map((s) => ({ usageStats: s.usageStats, model: s.customModel }))
-			),
-		[sessions]
-	);
+	// Token & cost usage for the SELECTED RANGE, read from the aggregation's
+	// per-session totals.
+	//
+	// These cards used to sum each agent's persisted `usageStats`, which is a
+	// LIFETIME counter: it cannot move when the range selector does, so Tokens
+	// and Cost reported the same number on This Week as on This Year while every
+	// other card on the tab changed (issue #1399). `bySessionTokens` is already
+	// scoped to the range main filtered on, so the fix is to read it instead.
+	//
+	// The model lookup is what keeps the Cost card populated: the stats DB stores
+	// provider-REPORTED cost only, so agents on a provider that prices nothing
+	// itself fall back to the same rate-table estimate the lifetime path used.
+	const usageAgg = useMemo(() => {
+		const modelBySession = new Map((sessions ?? []).map((s) => [s.id, s.customModel]));
+		return aggregateRangeUsage(data.bySessionTokens, (id) => modelBySession.get(id));
+	}, [data.bySessionTokens, sessions]);
 
 	// Count open tabs across all sessions (AI + file preview)
 	const openTabCount = useMemo(() => {

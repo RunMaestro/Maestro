@@ -42,9 +42,9 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
-
-// Maximum persisted logs per AI tab (matches session persistence limit)
-const MAX_PERSISTED_LOGS_PER_TAB = 100;
+import { MAX_PERSISTED_SESSION_LOGS } from '../../../shared/deferredSessionContent';
+import { persistClientSessionView } from '../../utils/activeSessionPersistence';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * Thrown by `persistInternal` when the session registry was never read back
@@ -69,7 +69,7 @@ const MAX_PERSISTED_PREVIEW_CONTENT = 256 * 1024;
 /**
  * Prepare a session for persistence by:
  * 1. Filtering out tabs with active wizard state (incomplete wizards should not persist)
- * 2. Truncating logs in each AI tab to MAX_PERSISTED_LOGS_PER_TAB entries
+ * 2. Truncating logs in each AI tab to MAX_PERSISTED_SESSION_LOGS entries
  * 3. Resetting runtime-only state (busy state, thinking time, etc.)
  * 4. Excluding runtime-only fields (closedTabHistory, agentError, etc.)
  *
@@ -93,7 +93,7 @@ const MAX_PERSISTED_PREVIEW_CONTENT = 256 * 1024;
  *
  * This is a local copy to avoid circular imports in session persistence logic.
  */
-const prepareSessionForPersistence = (session: Session): Session => {
+export const prepareSessionForPersistence = (session: Session): Session => {
 	// Filter out tabs with active wizard state - incomplete wizards should not persist
 	// When a wizard completes, wizardState is cleared (set to undefined) and the tab
 	// becomes a regular session that should persist.
@@ -141,8 +141,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const truncatedTabs = tabsToProcess.map((tab) => ({
 		...tab,
 		logs:
-			tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
-				? tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
+			tab.logs.length > MAX_PERSISTED_SESSION_LOGS
+				? tab.logs.slice(-MAX_PERSISTED_SESSION_LOGS)
 				: tab.logs,
 		// Reset runtime-only tab state - processes don't survive app restart
 		state: 'idle' as const,
@@ -180,12 +180,14 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const newActiveTabId = activeTabExists ? session.activeTabId : truncatedTabs[0]?.id;
 
 	// Strip terminal tab runtime state - PTY processes don't survive app restart
-	const cleanedTerminalTabs = (session.terminalTabs || []).map((tab) => ({
-		...tab,
-		pid: 0,
-		state: 'idle' as const,
-		exitCode: undefined,
-	}));
+	const cleanedTerminalTabs = (session.terminalTabs || []).map(
+		({ ptyInitialized: _ptyInitialized, ...tab }) => ({
+			...tab,
+			pid: 0,
+			state: 'idle' as const,
+			exitCode: undefined,
+		})
+	);
 
 	// Validate activeTerminalTabId against the cleaned terminal tabs list
 	const activeTerminalTabExists = cleanedTerminalTabs.some(
@@ -230,8 +232,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 					tab: {
 						...entry.tab,
 						logs:
-							entry.tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
-								? entry.tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
+							entry.tab.logs.length > MAX_PERSISTED_SESSION_LOGS
+								? entry.tab.logs.slice(-MAX_PERSISTED_SESSION_LOGS)
 								: entry.tab.logs,
 						state: 'idle' as const,
 						thinkingStartTime: undefined,
@@ -325,6 +327,7 @@ export interface UseDebouncedPersistenceReturn {
 
 /** Default debounce delay in milliseconds */
 export const DEFAULT_DEBOUNCE_DELAY = 2000;
+export const SESSION_PERSISTENCE_BASELINE_EVENT = 'maestro:session-persistence-baseline';
 
 /**
  * Diff two sessions arrays by reference identity per element.
@@ -393,6 +396,8 @@ export function useDebouncedPersistence(
 
 	// Track if flush is in progress to prevent double-flushing
 	const flushingRef = useRef(false);
+	// A forced membership save must not disappear behind an older in-flight write.
+	const flushRequestedRef = useRef(false);
 
 	// Snapshot of the sessions array as it existed at the previous flush.
 	// Captured from the successful initial load. If this hook did not observe
@@ -408,6 +413,10 @@ export function useDebouncedPersistence(
 	// Restoring a session repairs its in-memory shape. Those repaired objects are
 	// not durable yet, so the first incremental flush must include the whole tree.
 	const startupBaselineNeedsFullFlushRef = useRef(false);
+	// A peer can introduce an already-durable agent after our startup snapshot.
+	// Retain its wire snapshot until our first successful save; restoration must
+	// not turn that host-owned row into a client-created row without a baseline.
+	const peerBaselinesRef = useRef(new Map<string, Session>());
 
 	/**
 	 * Run one persistence pass. Throws on failure so callers can decide
@@ -444,6 +453,19 @@ export function useDebouncedPersistence(
 			throw new Error(SESSIONS_NOT_READ_MESSAGE);
 		}
 		const current = sessionsRef.current;
+		const peerBaselines = peerBaselinesRef.current;
+		const observedBaselines = (previous: Session[] | null, toPersist: Session[]): Session[] => {
+			const ids = new Set(toPersist.map((session) => session.id));
+			const byId = new Map(
+				(previous ?? [])
+					.filter((session) => ids.has(session.id))
+					.map((session) => [session.id, prepareSessionForPersistence(session)])
+			);
+			for (const [id, snapshot] of peerBaselines) {
+				if (ids.has(id)) byId.set(id, snapshot);
+			}
+			return [...byId.values()];
+		};
 		if (previouslyPersistedRef.current === null) {
 			const sessionsForPersistence = current.map(prepareSessionForPersistence);
 			const tombstones = mountedSessionsRef.current
@@ -451,12 +473,20 @@ export function useDebouncedPersistence(
 				: [];
 			const ok =
 				tombstones.length > 0
-					? await window.maestro.sessions.setMany(sessionsForPersistence, tombstones)
-					: await window.maestro.sessions.setAll(sessionsForPersistence);
+					? await window.maestro.sessions.setMany(
+							sessionsForPersistence,
+							tombstones,
+							observedBaselines(mountedSessionsRef.current, current)
+						)
+					: await window.maestro.sessions.setAll(
+							sessionsForPersistence,
+							observedBaselines(mountedSessionsRef.current, current)
+						);
 			if (ok === false) {
 				throw new Error('Session persistence returned false (recoverable disk error)');
 			}
 			previouslyPersistedRef.current = current;
+			for (const session of current) peerBaselines.delete(session.id);
 			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
@@ -470,11 +500,13 @@ export function useDebouncedPersistence(
 			return;
 		}
 		const dirtyForPersistence = sessionsToPersist.map(prepareSessionForPersistence);
-		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones);
+		const baselines = observedBaselines(previouslyPersistedRef.current, sessionsToPersist);
+		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones, baselines);
 		if (ok === false) {
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}
 		previouslyPersistedRef.current = current;
+		for (const session of current) peerBaselines.delete(session.id);
 		startupBaselineNeedsFullFlushRef.current = false;
 	}, []);
 
@@ -489,14 +521,20 @@ export function useDebouncedPersistence(
 	 * timer callback - there's no caller above that could meaningfully
 	 * handle it, and an unhandled rejection here would just produce noise.
 	 */
-	const persistSessions = useCallback(async () => {
-		if (flushingRef.current) return;
+	const persistSessions = useCallback(async (): Promise<void> => {
+		if (flushingRef.current) {
+			flushRequestedRef.current = true;
+			return;
+		}
 
 		flushingRef.current = true;
+		const snapshot = sessionsRef.current;
 		try {
 			await persistInternal();
-			isPendingRef.current = false;
-			setIsPending(false);
+			if (sessionsRef.current === snapshot && !flushRequestedRef.current) {
+				isPendingRef.current = false;
+				setIsPending(false);
+			}
 		} catch (err) {
 			logger.warn(
 				'[Persistence] flush failed; isPending preserved for next-mutation/beforeunload retry',
@@ -519,6 +557,10 @@ export function useDebouncedPersistence(
 			// still pending. Next mutation OR beforeunload will retry.
 		} finally {
 			flushingRef.current = false;
+			if (flushRequestedRef.current) {
+				flushRequestedRef.current = false;
+				void persistSessions();
+			}
 		}
 	}, [persistInternal]);
 
@@ -559,6 +601,23 @@ export function useDebouncedPersistence(
 
 	// Debounced persistence via store subscribe (no App-level sessions subscription)
 	useEffect(() => {
+		const unsubscribePeerSnapshots = window.maestro.sessions.onLifecycleSync?.((payload) => {
+			for (const session of payload.added ?? []) {
+				if (
+					!peerBaselinesRef.current.has(session.id) &&
+					!previouslyPersistedRef.current?.some((known) => known.id === session.id)
+				) {
+					peerBaselinesRef.current.set(session.id, structuredClone(session));
+				}
+			}
+			for (const id of payload.removedIds ?? []) peerBaselinesRef.current.delete(id);
+		});
+		const rememberBootstrap = (event: Event) => {
+			for (const session of (event as CustomEvent<Session[]>).detail) {
+				peerBaselinesRef.current.set(session.id, structuredClone(session));
+			}
+		};
+		window.addEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, rememberBootstrap);
 		const schedulePersist = () => {
 			// Skip persistence during initial load
 			if (!initialLoadComplete.current) {
@@ -584,8 +643,21 @@ export function useDebouncedPersistence(
 		};
 
 		const unsubscribe = useSessionStore.subscribe((state, prevState) => {
-			if (state.sessions === prevState.sessions) return;
+			// Restoration writes the loaded tree BEFORE it marks the read as ok, so
+			// the read succeeding is the moment that tree becomes the baseline.
+			// Missing it left the first flush on setAll, which keeps every id the
+			// client omits, so an agent removed during startup (a worktree child
+			// the startup scan found gone) came back on the next launch.
+			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
+			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
 			sessionsRef.current = state.sessions;
+			if (initialLoadComplete.current && isWebDesktop()) {
+				const previous = new Map(prevState.sessions.map((session) => [session.id, session]));
+				for (const session of state.sessions) {
+					const before = previous.get(session.id);
+					if (session !== before) persistClientSessionView(session, before);
+				}
+			}
 			if (
 				!initialLoadComplete.current &&
 				state.sessionsReadOk &&
@@ -595,11 +667,14 @@ export function useDebouncedPersistence(
 				startupBaselineNeedsFullFlushRef.current = true;
 				return;
 			}
+			if (state.sessions === prevState.sessions) return;
 			schedulePersist();
 		});
 
 		return () => {
 			unsubscribe();
+			unsubscribePeerSnapshots?.();
+			window.removeEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, rememberBootstrap);
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 			}

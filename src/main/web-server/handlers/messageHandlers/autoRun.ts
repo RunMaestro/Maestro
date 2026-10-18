@@ -366,17 +366,19 @@ export function handleSetAutoRunFolder(
 	);
 
 	if (!sessionId) {
-		ctx.sendError(client, 'Missing sessionId');
+		ctx.sendError(client, 'Missing sessionId', { requestId: message.requestId });
 		return;
 	}
 
 	if (typeof folderPath !== 'string' || folderPath.trim() === '') {
-		ctx.sendError(client, 'Missing or invalid folderPath');
+		ctx.sendError(client, 'Missing or invalid folderPath', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.setSessionAutoRunFolder) {
-		ctx.sendError(client, 'Auto Run folder updates not configured');
+		ctx.sendError(client, 'Auto Run folder updates not configured', {
+			requestId: message.requestId,
+		});
 		return;
 	}
 
@@ -402,7 +404,9 @@ export function handleSetAutoRunFolder(
 					requestId: message.requestId,
 				},
 			});
-			ctx.sendError(client, `Failed to set Auto Run folder: ${err.message}`);
+			ctx.sendError(client, `Failed to set Auto Run folder: ${err.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -454,17 +458,19 @@ export function handleGetAutoRunState(
 	logger.info(`[Web] Received get_auto_run_state message: session=${sessionId}`, LOG_CONTEXT);
 
 	if (!sessionId) {
-		ctx.sendError(client, 'Missing sessionId');
+		ctx.sendError(client, 'Missing sessionId', { requestId: message.requestId });
 		return;
 	}
 
-	if (!ctx.callbacks.getSessionDetail) {
-		ctx.sendError(client, 'Session detail not configured');
+	if (!ctx.callbacks.getAutoRunState) {
+		ctx.sendError(client, 'Auto Run state not configured', { requestId: message.requestId });
 		return;
 	}
 
-	const detail = ctx.callbacks.getSessionDetail(sessionId);
-	const state: AutoRunState | null = ((detail as any)?.autoRunState as AutoRunState | null) ?? null;
+	// The live state the desktop broadcasts, the same record a newly connected web
+	// client is handed. Session detail never carried it, which made every read
+	// answer "not running" while a run was in progress.
+	const state: AutoRunState | null = ctx.callbacks.getAutoRunState(sessionId) ?? null;
 
 	ctx.send(client, {
 		type: 'auto_run_state',

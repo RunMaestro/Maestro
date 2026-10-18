@@ -893,5 +893,96 @@ describe('GroupChatInput', () => {
 
 			expect(screen.queryByText(/Queue paused/i)).not.toBeInTheDocument();
 		});
+
+		describe('steering a queued message', () => {
+			const steerButton = () => screen.queryByRole('button', { name: /^Steer$/ });
+
+			it('offers Steer while the round runs, and hands the item id over', () => {
+				const onSteerQueuedItem = vi.fn();
+				render(
+					<GroupChatInput
+						{...createDefaultProps({
+							state: 'moderator-thinking',
+							queueState: { items: [queuedItem('q-1', 'also check docs')], paused: false },
+							onSteerQueuedItem,
+						})}
+					/>
+				);
+
+				fireEvent.click(steerButton()!);
+				expect(onSteerQueuedItem).toHaveBeenCalledWith('q-1');
+			});
+
+			it('does not offer Steer in an idle room', () => {
+				render(
+					<GroupChatInput
+						{...createDefaultProps({
+							state: 'idle',
+							queueState: { items: [queuedItem('q-1', 'waiting')], paused: false },
+							onSteerQueuedItem: vi.fn(),
+						})}
+					/>
+				);
+
+				expect(steerButton()).not.toBeInTheDocument();
+			});
+
+			it('does not offer Steer without a handler', () => {
+				render(
+					<GroupChatInput
+						{...createDefaultProps({
+							state: 'agent-working',
+							queueState: { items: [queuedItem('q-1', 'waiting')], paused: false },
+						})}
+					/>
+				);
+
+				expect(steerButton()).not.toBeInTheDocument();
+			});
+
+			it('does not offer Steer for a message with images or one already sending', () => {
+				render(
+					<GroupChatInput
+						{...createDefaultProps({
+							state: 'agent-working',
+							queueState: {
+								items: [
+									{ ...queuedItem('q-1', 'with a picture'), images: ['data:image/png;base64,AA'] },
+									{ ...queuedItem('q-2', 'on its way'), sending: true },
+								],
+								paused: false,
+							},
+							onSteerQueuedItem: vi.fn(),
+						})}
+					/>
+				);
+
+				expect(steerButton()).not.toBeInTheDocument();
+			});
+
+			it('does not offer Steer for a held (failed) message or a command', () => {
+				render(
+					<GroupChatInput
+						{...createDefaultProps({
+							state: 'agent-working',
+							queueState: {
+								items: [
+									{
+										...queuedItem('q-1', 'maybe sent'),
+										failed: true,
+										failureReason: 'unconfirmed',
+									},
+									queuedItem('q-2', '!commit'),
+								],
+								paused: true,
+							},
+							onSteerQueuedItem: vi.fn(),
+						})}
+					/>
+				);
+
+				expect(steerButton()).not.toBeInTheDocument();
+			});
+		});
 	});
 });

@@ -470,6 +470,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			return {
 				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, firstRequestedId),
 				activeItemId: firstRequestedId,
+				...historyForActiveChange(state, firstRequestedId),
 				dismissed: false,
 				dormant: false,
 			};

@@ -16,7 +16,12 @@ import {
 	buildSshProbeCommand,
 	describeSshConnectionError,
 	readSshProbeOutput,
+	SSH_PROBE_MARKER,
 } from '../shared/sshConnection';
+import {
+	detectNonPosixRemoteShell,
+	nonPosixRemoteShellRemediation,
+} from '../shared/sshRemoteShell';
 
 /**
  * Validation result for SSH remote configuration.
@@ -176,6 +181,17 @@ export class SshRemoteManager {
 			const result = await this.deps.execSsh('ssh', sshArgs);
 
 			if (result.exitCode !== 0) {
+				// A Windows shell rejecting `&&` means SSH itself worked; say so
+				// rather than surfacing the PowerShell parser dump as a connection error.
+				const shell = detectNonPosixRemoteShell(`${result.stdout}\n${result.stderr}`);
+				if (shell) {
+					const remediation = nonPosixRemoteShellRemediation(
+						shell,
+						await this.probeHostname(config)
+					);
+					return { success: false, error: remediation.detail, remediation };
+				}
+
 				// Parse common SSH error patterns
 				const errorMessage = this.parseSSHError(result.stderr) || 'Connection failed';
 				return { success: false, error: errorMessage };
@@ -183,6 +199,13 @@ export class SshRemoteManager {
 
 			const reading = readSshProbeOutput(result.stdout, Boolean(agentCommand));
 			if (!reading.ok) {
+				// cmd.exe honors `&&` but does not strip the quotes around the marker,
+				// so a quoted marker identifies the shell rather than a broken host.
+				const lines = result.stdout.trim().split('\n');
+				if (lines[0]?.trim() === `"${SSH_PROBE_MARKER}"`) {
+					const remediation = nonPosixRemoteShellRemediation('cmd', lines[1]?.trim() || undefined);
+					return { success: false, error: remediation.detail, remediation };
+				}
 				return { success: false, error: 'Unexpected response from remote host' };
 			}
 
@@ -199,6 +222,32 @@ export class SshRemoteManager {
 				success: false,
 				error: `Connection test failed: ${String(err)}`,
 			};
+		}
+	}
+
+	/**
+	 * Ask a remote for its hostname with a command every shell understands.
+	 *
+	 * `hostname` is a bare executable on Windows and a builtin or binary on
+	 * POSIX systems, so it survives the shell mismatch that broke the main test
+	 * command. Used only to name the host in the non-POSIX shell error.
+	 *
+	 * @param config The SSH remote configuration
+	 * @returns The remote hostname, or undefined if the probe failed
+	 */
+	private async probeHostname(config: SshRemoteConfig): Promise<string | undefined> {
+		try {
+			const args = this.buildSshArgs(config);
+			args.push('hostname');
+			const result = await this.deps.execSsh('ssh', args);
+			if (result.exitCode !== 0) {
+				return undefined;
+			}
+			return result.stdout.trim().split('\n')[0]?.trim() || undefined;
+		} catch {
+			// The caller already has a failure to report; a missing hostname only
+			// costs the error message some specificity.
+			return undefined;
 		}
 	}
 

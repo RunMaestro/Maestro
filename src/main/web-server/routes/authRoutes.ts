@@ -27,6 +27,7 @@ import { getSettingsStore } from '../../stores/getters';
 import { WEB_LOGIN_COOKIE, WEB_LOGIN_PATHS } from '../../../shared/webLogin';
 import { getWebUserStore, WEB_SESSION_TTL_MS } from '../auth/web-user-store';
 import {
+	isWebLoginEnabled,
 	isWebRequestAuthorized,
 	readSessionCookie,
 	resolveWebRequestAuth,
@@ -154,6 +155,11 @@ export class AuthRoutes {
 			`/${token}/${WEB_LOGIN_PATHS.login}`,
 			{ config: { rateLimit: { max: this.rateLimit.max, timeWindow: this.rateLimit.timeWindow } } },
 			async (request, reply) => {
+				// With Web Login off nothing reads a session, so none is minted:
+				// the route answers as if it did not exist.
+				if (!isWebLoginEnabled()) {
+					return reply.code(404).send({ ok: false, reason: 'web-login-disabled' });
+				}
 				const body = (request.body ?? {}) as LoginBody;
 				const username = typeof body.username === 'string' ? body.username : '';
 				const password = typeof body.password === 'string' ? body.password : '';

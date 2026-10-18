@@ -1,12 +1,19 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import type { Session, BatchRunConfig } from '../../types';
 import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
+import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
 import { useBatchStore } from '../../stores/batchStore';
 import { readTaskCountsAndContent } from './useAutoRunDocumentLoader';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	reserveGoalRunLaunch,
+	releaseGoalRunLaunch,
+	waitForGoalRunStart,
+} from '../remote/goalRunLaunch';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -38,7 +45,11 @@ export interface UseAutoRunHandlersDeps {
 	autoRunDocumentList: string[];
 
 	// Batch processor hook
-	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => void;
+	startBatchRun: (
+		sessionId: string,
+		config: BatchRunConfig,
+		folderPath: string
+	) => void | Promise<void>;
 }
 
 /**
@@ -195,9 +206,16 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 	);
 
 	// Handler to start batch run from modal with multi-document support
-	const handleStartBatchRun = useCallback(
-		async (config: BatchRunConfig) => {
-			const activeSession = selectActiveSession(useSessionStore.getState());
+	const launchBatchRun = useCallback(
+		async (
+			config: BatchRunConfig,
+			requestedSessionId?: string,
+			requestedFolderPath?: string
+		): Promise<boolean> => {
+			const activeSession = requestedSessionId
+				? selectSessionById(requestedSessionId)(useSessionStore.getState())
+				: selectActiveSession(useSessionStore.getState());
+			const folderPath = requestedFolderPath ?? activeSession?.autoRunFolderPath ?? '';
 			window.maestro.logger.log('info', 'handleStartBatchRun called', 'AutoRunHandlers', {
 				hasActiveSession: !!activeSession,
 				sessionId: activeSession?.id,
@@ -207,97 +225,65 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 				worktreeBranch: config.worktree?.branchName,
 				worktreeTargetMode: config.worktreeTarget?.mode,
 			});
-			if (!activeSession || !activeSession.autoRunFolderPath) {
+			if (!activeSession || (!folderPath && !config.goalConfig)) {
 				window.maestro.logger.log(
 					'warn',
 					'handleStartBatchRun early return - missing session or folder',
 					'AutoRunHandlers'
 				);
-				return;
+				return false;
+			}
+			if (isWebDesktop()) {
+				await startBatchRun(activeSession.id, config, folderPath);
+				setBatchRunnerModalOpen(false);
+				return true;
 			}
 
-			// Determine target session ID - may differ from activeSession when running in a worktree
+			// Which agent the run executes in - the active one, unless it targets a
+			// worktree. Shared with the remote and scheduled launch paths.
 			let targetSessionId = activeSession.id;
-			if (config.worktreeTarget?.mode === 'existing-open' && config.worktreeTarget.sessionId) {
-				// Verify the target session still exists (could have been removed while modal was open)
-				const targetSession = selectSessionById(config.worktreeTarget!.sessionId)(
-					useSessionStore.getState()
+			const dispatch = await resolveAutoRunDispatchTarget(activeSession, config);
+			if (dispatch.ok) {
+				targetSessionId = dispatch.sessionId;
+			} else if (dispatch.reason === 'target-missing') {
+				// The worktree agent was removed while the modal was open. The user
+				// is right here and pressed Go, so run it where they are and say so.
+				window.maestro.logger.log(
+					'warn',
+					`Target worktree session no longer exists: ${config.worktreeTarget?.sessionId}. Falling back to active session.`,
+					'AutoRunHandlers'
 				);
-				if (!targetSession) {
-					window.maestro.logger.log(
-						'warn',
-						`Target worktree session no longer exists: ${config.worktreeTarget.sessionId}. Falling back to active session.`,
-						'AutoRunHandlers'
-					);
-					notifyToast({
-						type: 'warning',
-						title: 'Worktree Agent Not Found',
-						message:
-							'The selected worktree agent was removed. Running on the active agent instead.',
-					});
-					// Fall back to active session
-					targetSessionId = activeSession.id;
-				} else if (targetSession.state === 'busy' || targetSession.state === 'connecting') {
-					// Race condition: agent became busy after user selected it
-					window.maestro.logger.log(
-						'warn',
-						`Target worktree session is busy: ${config.worktreeTarget.sessionId}`,
-						'AutoRunHandlers'
-					);
-					notifyToast({
-						type: 'warning',
-						title: 'Target Agent Busy',
-						message: 'Target agent is busy. Please try again.',
-					});
-					return;
-				} else {
-					targetSessionId = config.worktreeTarget.sessionId;
-
-					// Populate config.worktree for PR creation when using existing-open worktree.
-					// spawnWorktreeAgentAndDispatch does this for create-new/existing-closed,
-					// but existing-open skips that function entirely.
-					if (config.worktreeTarget.createPROnCompletion) {
-						config.worktree = {
-							enabled: true,
-							path: targetSession.cwd,
-							branchName:
-								targetSession.worktreeBranch || targetSession.cwd.split('/').pop() || 'worktree',
-							createPROnCompletion: true,
-							prTargetBranch: config.worktreeTarget.baseBranch || 'main',
-						};
-					}
-				}
-			} else if (
-				config.worktreeTarget?.mode === 'create-new' ||
-				config.worktreeTarget?.mode === 'existing-closed'
+				if (requestedSessionId) throw new Error('The requested worktree agent no longer exists');
+				notifyToast({
+					type: 'warning',
+					title: 'Worktree Agent Not Found',
+					message: 'The selected worktree agent was removed. Running on the active agent instead.',
+				});
+			} else if (dispatch.reason === 'target-busy') {
+				window.maestro.logger.log(
+					'warn',
+					`Target worktree session is busy: ${config.worktreeTarget?.sessionId}`,
+					'AutoRunHandlers'
+				);
+				notifyToast({
+					type: 'warning',
+					title: 'Target Agent Busy',
+					message: 'Target agent is busy. Please try again.',
+				});
+				return false;
+			} else {
+				window.maestro.logger.log(
+					'error',
+					`Failed to spawn worktree agent: ${dispatch.message}`,
+					'AutoRunHandlers'
+				);
+				return false;
+			}
+			if (
+				requestedSessionId &&
+				useBatchStore.getState().batchRunStates[targetSessionId]?.isRunning
 			) {
-				// If the active session is itself a worktree child, resolve to its parent so
-				// basePath/cwd used for worktree creation come from the main repo, not the child.
-				let parentForSpawn = activeSession;
-				if (activeSession.parentSessionId) {
-					const parent = selectSessionById(activeSession.parentSessionId)(
-						useSessionStore.getState()
-					);
-					if (parent) parentForSpawn = parent;
-				}
-				// Spawn a worktree agent and dispatch to it
-				try {
-					const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, config);
-					if (!newSessionId) return; // Error already shown via toast
-					targetSessionId = newSessionId;
-				} catch (err) {
-					window.maestro.logger.log(
-						'error',
-						`Failed to spawn worktree agent: ${err instanceof Error ? err.message : String(err)}`,
-						'AutoRunHandlers'
-					);
-					notifyToast({
-						type: 'error',
-						title: 'Worktree Error',
-						message: err instanceof Error ? err.message : String(err),
-					});
-					return;
-				}
+				throw new Error('Auto Run is already active for the requested target');
 			}
 
 			window.maestro.logger.log('info', 'Starting batch run', 'AutoRunHandlers', {
@@ -307,10 +293,72 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 			});
 			setBatchRunnerModalOpen(false);
 			// Documents stay with the parent session's autoRunFolderPath; execution targets the worktree agent
-			startBatchRun(targetSessionId, config, activeSession.autoRunFolderPath);
+			const runPromise = Promise.resolve(startBatchRun(targetSessionId, config, folderPath));
+			void runPromise.catch((error: unknown) => {
+				notifyToast({
+					type: 'error',
+					title: 'Auto Run failed',
+					message: error instanceof Error ? error.message : String(error),
+				});
+			});
+			// Confirm startup, not completion. The existing runner keeps ownership after this reply.
+			return requestedSessionId ? waitForGoalRunStart(targetSessionId, runPromise) : true;
 		},
 		[startBatchRun, setBatchRunnerModalOpen]
 	);
+
+	const handleStartBatchRun = useCallback(
+		async (config: BatchRunConfig): Promise<void> => {
+			try {
+				await launchBatchRun(config);
+			} catch (error) {
+				notifyToast({
+					type: 'error',
+					title: 'Auto Run start failed',
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
+		},
+		[launchBatchRun]
+	);
+
+	useEffect(() => {
+		if (isWebDesktop()) return;
+		return window.maestro.process.onRemoteStartAutoRun?.(
+			(sessionId, config, folderPath, responseChannel) => {
+				void (async () => {
+					const session = selectSessionById(sessionId)(useSessionStore.getState());
+					if (!session) throw new Error('Auto Run agent no longer exists');
+					if (useSettingsStore.getState().autoRunDisabled)
+						throw new Error('Auto Run is disabled on the host');
+					if (!config.goalConfig && !config.documents?.length)
+						throw new Error('No Auto Run documents selected');
+					if (!reserveGoalRunLaunch(sessionId))
+						throw new Error('Auto Run is already active for this agent');
+					try {
+						const success = await launchBatchRun(config, sessionId, folderPath);
+						window.maestro.process.sendRemoteAutoRunResponse(
+							responseChannel,
+							success
+								? { success: true }
+								: {
+										success: false,
+										error:
+											'Host did not confirm Auto Run startup. Check host state before retrying.',
+									}
+						);
+					} finally {
+						releaseGoalRunLaunch(sessionId);
+					}
+				})().catch((error: unknown) => {
+					window.maestro.process.sendRemoteAutoRunResponse(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		);
+	}, [launchBatchRun]);
 
 	// Memoized function to get task count for a document (used by BatchRunnerModal)
 	const getDocumentTaskCount = useCallback(async (filename: string) => {

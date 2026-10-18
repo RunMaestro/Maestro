@@ -17,6 +17,7 @@ vi.mock('../../../../renderer/stores/notificationStore', () => ({
 import { openUrl } from '../../../../renderer/utils/openUrl';
 import { openMaestroLink } from '../../../../renderer/utils/openMaestroLink';
 import { notifyToast } from '../../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 const theme = { colors: { accent: '#3366ff', accentText: '#88aaff' } } as any;
 
@@ -49,8 +50,26 @@ beforeEach(() => {
 	};
 });
 
+const setConcertoEnabled = (concerto: boolean) =>
+	useSettingsStore.setState({
+		encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, concerto },
+	});
+
 describe('createMarkdownLink - shared targets', () => {
+	it('renders a Concerto link as plain text while Concerto is off', () => {
+		setConcertoEnabled(false);
+		const el = renderLink(
+			{ theme },
+			{ href: 'maestro://concerto/movement/board', children: 'the board' }
+		);
+
+		expect(el.type).not.toBe('button');
+		expect(el.props.onClick).toBeUndefined();
+		expect(el.props.children).toBe('the board');
+	});
+
 	it('reports when a Concerto chip points to an unavailable Movement', async () => {
+		setConcertoEnabled(true);
 		const el = renderLink(
 			{ theme },
 			{ href: 'maestro://concerto/movement/missing', children: 'open it' }
@@ -129,6 +148,19 @@ describe('createMarkdownLink - chat behavior (directExternal, accentText, contex
 		expect(openUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
 	});
 
+	it('hands a routing-hinted link to openUrl unstripped, so openUrl decides', () => {
+		const el = renderLink(chat(), { href: 'maestro+http://localhost:5173/x', children: 'x' });
+		el.props.onClick(makeEvent());
+		expect(openUrl).toHaveBeenCalledWith('maestro+http://localhost:5173/x', { ctrlKey: false });
+	});
+
+	it('opens nothing for a hint in front of a non-http scheme', () => {
+		const el = renderLink(chat(), { href: 'maestro+javascript:void(0)', children: 'x' });
+		el.props.onClick(makeEvent());
+		expect(openUrl).not.toHaveBeenCalled();
+		expect((window as any).maestro.shell.openExternal).not.toHaveBeenCalled();
+	});
+
 	it('opens file:// links via the shell', () => {
 		const el = renderLink(chat(), { href: 'file:///tmp/x.txt', children: 'x' });
 		el.props.onClick(makeEvent());
@@ -202,6 +234,32 @@ describe('createMarkdownLink - chat behavior (directExternal, accentText, contex
 		expect(onFileContextMenu.mock.calls[0][2]).toBe('readme.md');
 	});
 
+	it('opens the FILE context menu on right-click of a file:// link (outside the project root)', () => {
+		const onFileContextMenu = vi.fn();
+		const onLinkContextMenu = vi.fn();
+		const el = renderLink(
+			chat({ projectRoot: '/Users/me/proj', onFileContextMenu, onLinkContextMenu }),
+			{
+				href: 'file:///Users/me/Documents/Ritto-DNA-Report.pdf',
+				children: 'x',
+			}
+		);
+		el.props.onContextMenu(makeEvent());
+		expect(onLinkContextMenu).not.toHaveBeenCalled();
+		expect(onFileContextMenu.mock.calls[0][1]).toBe('/Users/me/Documents/Ritto-DNA-Report.pdf');
+		expect(onFileContextMenu.mock.calls[0][2]).toBe('Ritto-DNA-Report.pdf');
+	});
+
+	it('still opens the LINK context menu for a file:// link when no file handler is wired', () => {
+		const onLinkContextMenu = vi.fn();
+		const el = renderLink(chat({ onLinkContextMenu }), {
+			href: 'file:///tmp/song.mp3',
+			children: 'x',
+		});
+		el.props.onContextMenu(makeEvent());
+		expect(onLinkContextMenu).toHaveBeenCalledWith(expect.anything(), 'file:///tmp/song.mp3');
+	});
+
 	it('opens a link context menu on right-click of an external link', () => {
 		const onLinkContextMenu = vi.fn();
 		const el = renderLink(chat({ onLinkContextMenu }), { href: 'https://x.com', children: 'x' });
@@ -239,6 +297,20 @@ describe('createMarkdownLink - document behavior (anchors, relativeAsFile, callb
 		});
 		el.props.onClick(makeEvent());
 		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
+	});
+
+	it('routes a routing-hinted link through onExternalLinkClick, not as a relative file', () => {
+		const onExternalLinkClick = vi.fn();
+		const onFileClick = vi.fn();
+		const el = renderLink(doc({ onExternalLinkClick, onFileClick }), {
+			href: 'system+https://example.com',
+			children: 'x',
+		});
+		el.props.onClick(makeEvent());
+		expect(onExternalLinkClick).toHaveBeenCalledWith('system+https://example.com', {
+			ctrlKey: false,
+		});
+		expect(onFileClick).not.toHaveBeenCalled();
 	});
 
 	it('routes relative paths to onFileClick with options', () => {

@@ -14,6 +14,7 @@ import type {
 	CueGraphSession as SharedCueGraphSession,
 } from './cue';
 export type { CueCommand, CueCommandMode, CueEventType, CueNotifyConfig } from './cue';
+import type { EffortLevel, ModelTier } from './modelTiers';
 
 /** Cue brand color - single source of truth for all Cue UI */
 export const CUE_COLOR = '#06b6d4';
@@ -125,6 +126,13 @@ export interface AgentNodeData {
 	fanInTimeoutMinutes?: number;
 	/** Per-node fan-in timeout-on-fail override. 'break' waits for all, 'continue' fires with partial data. */
 	fanInTimeoutOnFail?: 'break' | 'continue';
+	/** Model tier this node runs at (`low | medium | high`). Serialized onto
+	 *  the subscription that runs the node as `tier`. Exclusive with `model`. */
+	tier?: ModelTier;
+	/** Exact model id this node runs on. Serialized as `model`. */
+	model?: string;
+	/** Effort level this node runs at. Serialized as `effort`. */
+	effort?: EffortLevel;
 	/** Stable per-instance identifier (UUID), generated when the node is
 	 *  created in the editor. Persisted in YAML via `target_node_key` /
 	 *  `fan_out_node_keys` on the owning subscription so two visual nodes
@@ -152,6 +160,8 @@ export interface CommandNodeData {
 	cliTarget?: string;
 	/** Optional message override for `mode === 'cli'`. Defaults to {{CUE_SOURCE_OUTPUT}} when blank. */
 	cliMessage?: string;
+	/** Send into a fresh AI tab when using `mode === 'cli'`. */
+	cliNewTab?: boolean;
 	/** Owning session that provides cwd/project root + agent_id binding. */
 	owningSessionId: string;
 	/** Cached owning session name for display. */
@@ -205,6 +215,7 @@ export function commandNodeDataToCueCommand(data: CommandNodeData): CueCommand |
 				command: 'send',
 				target: data.cliTarget,
 				message: data.cliMessage || undefined,
+				...(data.cliNewTab !== undefined ? { new_tab: data.cliNewTab } : {}),
 			},
 		};
 	}
@@ -214,7 +225,10 @@ export function commandNodeDataToCueCommand(data: CommandNodeData): CueCommand |
 /** Build CommandNodeData from a wire-format CueCommand (for deserialization). */
 export function cueCommandToCommandNodeFields(
 	cmd: CueCommand
-): Pick<CommandNodeData, 'mode' | 'shell' | 'cliCommand' | 'cliTarget' | 'cliMessage'> {
+): Pick<
+	CommandNodeData,
+	'mode' | 'shell' | 'cliCommand' | 'cliTarget' | 'cliMessage' | 'cliNewTab'
+> {
 	if (cmd.mode === 'shell') {
 		return { mode: 'shell', shell: cmd.shell };
 	}
@@ -223,6 +237,7 @@ export function cueCommandToCommandNodeFields(
 		cliCommand: cmd.cli.command,
 		cliTarget: cmd.cli.target,
 		cliMessage: cmd.cli.message,
+		...(cmd.cli.new_tab !== undefined ? { cliNewTab: cmd.cli.new_tab } : {}),
 	};
 }
 

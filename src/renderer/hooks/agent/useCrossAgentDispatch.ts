@@ -19,7 +19,7 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type { HistoryEntry, LogEntry, Session, ToolType } from '../../types';
+import type { LogEntry, Session, ToolType } from '../../types';
 import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
@@ -31,6 +31,12 @@ import {
 	selectContextWindow,
 } from '../../../shared/crossAgentContext';
 import { parseSynopsis } from '../../../shared/synopsis';
+import { settleConsultHold } from '../../services/crossAgentConsultHold';
+import {
+	buildConsultHistoryEntry,
+	buildConsultTabName,
+	crossAgentTerminationNote,
+} from '../../../shared/maestro-lib/agents/consult-prompt';
 import type {
 	CrossAgentResponseChunk,
 	CrossAgentTranscriptEntry,
@@ -100,6 +106,12 @@ export interface SendCrossAgentRequestOptions {
 	 */
 	sourceCwd?: string;
 	/**
+	 * The source turn's final answer, when this request is a HAND-OFF rather than
+	 * a consult (see services/crossAgentHandoff). `sourceLogs` is then the
+	 * transcript BEFORE that turn, so the answer is not sent twice.
+	 */
+	handoffAnswer?: string;
+	/**
 	 * Called once with the finished answer. A typed `@mention` needs nothing here
 	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
 	 * has to hand the text back to a caller that is blocked waiting for it, so
@@ -128,20 +140,9 @@ export interface CrossAgentCompletion {
 	targetAgentSessionId?: string;
 }
 
-/**
- * Pure: the note explaining why a consult ended, or null when it simply
- * finished. The attribution header only carries `error` in an `sr-only` span, so
- * the reason has to reach the bubble body or the user never sees it.
- *
- * Stop and failure are deliberately worded apart: the user pressing Stop is not
- * the target agent failing to answer, and reporting it as one blames the wrong
- * party for something the user chose.
- */
-export function crossAgentTerminationNote(chunk: CrossAgentResponseChunk): string | null {
-	if (chunk.canceled) return `⏹ ${chunk.targetAgentName} was stopped.`;
-	if (chunk.error) return `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
-	return null;
-}
+// The wording of a consult's end, and the target's History entry, are shared with the headless
+// consult service so a consult reads the same whichever host ran it.
+export { crossAgentTerminationNote, buildConsultTabName, buildConsultHistoryEntry };
 
 /**
  * Pure: fold a chunk's text into the prior accumulation and resolve what should
@@ -201,11 +202,6 @@ export function buildCrossAgentLogEntry(
 			},
 		},
 	};
-}
-
-/** Label for a consult tab on the target: signals an inbound consult + who from. */
-export function buildConsultTabName(sourceAgentName: string): string {
-	return `↩ ${sourceAgentName}`;
 }
 
 /**
@@ -357,76 +353,6 @@ function rememberCompletion(requestId: string, completion: CrossAgentCompletion)
 		if (oldest.done) break;
 		completedRequests.delete(oldest.value);
 	}
-}
-
-/**
- * Pure: build the History entry for a finished consult. Exported for unit
- * testing; `recordConsultHistory` resolves the store state and hands the pieces
- * in, so every derivation rule below is verifiable without IPC or a store.
- */
-export function buildConsultHistoryEntry(opts: {
-	entryId: string;
-	timestamp: number;
-	/** Display name of the agent that did the consulting. */
-	sourceAgentName: string;
-	/** Short subject derived from the question; may be empty. */
-	subject: string;
-	/** Accumulated response text (empty on a consult that failed before answering). */
-	accumulated: string;
-	/** Failure reason, when the consult errored. */
-	error?: string;
-	/** The user stopped the consult; not a failure of the target agent. */
-	canceled?: boolean;
-	/** The target agent's provider session id, when one was captured. */
-	agentSessionId?: string;
-	/** Fallback label when there is no subject. */
-	consultTabName?: string | null;
-	targetName?: string | null;
-	historySessionId: string;
-	projectPath: string;
-}): HistoryEntry {
-	// Summary names WHO consulted and ABOUT WHAT; the pill carries the subject so
-	// multiple consults from the same agent are distinguishable at a glance. The
-	// consult TAB stays named after the source agent (it's the reused container
-	// for every consult from that tab) - only this per-consult entry gets the subject.
-	const summary = opts.subject
-		? `Consulted by ${opts.sourceAgentName}: ${opts.subject}`
-		: `Consulted by ${opts.sourceAgentName}`;
-	const sessionName = opts.subject
-		? `↩ ${opts.subject}`
-		: (opts.consultTabName ?? opts.targetName ?? undefined) || undefined;
-
-	// A failed or stopped consult may accumulate nothing, so the raw text alone
-	// would leave the detail view blank. The reason lives on the chunk - not in
-	// `accumulated` - so fold it in here the same way the inline bubble does
-	// (partial text first, then the reason). A cancel is recorded as a SUCCESS
-	// with a note: the user stopping a consult is not the target failing.
-	const endNote = opts.canceled
-		? '⏹ Consult stopped by the user.'
-		: opts.error
-			? `⚠️ Consult failed: ${opts.error}`
-			: '';
-	const detailFallback = [opts.accumulated, endNote].filter(Boolean).join('\n\n');
-
-	return {
-		id: opts.entryId,
-		// A consult is an ordinary message that happened to be proxied in from
-		// another agent - NOT automation. Logging it as AUTO made it render as an
-		// Auto Run task and inflated the Auto Run counts.
-		type: 'AGENT',
-		timestamp: opts.timestamp,
-		summary,
-		// Raw response (or the failure reason) is the immediate fallback for the
-		// detail view; replaced with a condensed summary by enrichConsultDetail
-		// once it returns.
-		fullResponse: detailFallback || undefined,
-		agentSessionId: opts.agentSessionId,
-		sessionId: opts.historySessionId,
-		sessionName,
-		projectPath: opts.projectPath,
-		sourceAgentName: opts.sourceAgentName,
-		success: !opts.error,
-	};
 }
 
 /**
@@ -593,6 +519,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			transcript,
 			strategy,
 			sourceCwd: opts.sourceCwd,
+			...(opts.handoffAnswer !== undefined && { handoffAnswer: opts.handoffAnswer }),
 		})
 		.then(({ requestId }) => {
 			// The terminal chunk already landed (fast failure/short response that
@@ -650,8 +577,17 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 				err
 			);
 			// A rejected send never produces a chunk, so nothing else will ever
-			// settle a caller blocked on the answer.
-			opts.onComplete?.({ text: '', error: err instanceof Error ? err.message : String(err) });
+			// settle a caller blocked on the answer - or the source turn's consult
+			// hold, which would otherwise wait on this target forever.
+			const error = err instanceof Error ? err.message : String(err);
+			settleConsultHold({
+				sourceSessionId: opts.sourceSessionId,
+				sourceTabId: opts.sourceTabId,
+				targetSessionId: opts.targetSessionId,
+				text: '',
+				error,
+			});
+			opts.onComplete?.({ text: '', error });
 		});
 }
 
@@ -755,6 +691,19 @@ export function useCrossAgentDispatch(
 				targetAgentSessionId: chunk.targetAgentSessionId,
 			};
 			rememberCompletion(chunk.requestId, completion);
+			// Release the source turn's consult hold (when it has one) so the agent
+			// that asked gets this reply and can finish its answer. Keyed on the
+			// chunk's own ids, not `tracked`, so it still lands after a reload lost
+			// the request bookkeeping.
+			settleConsultHold({
+				sourceSessionId: chunk.sourceSessionId,
+				sourceTabId: chunk.sourceTabId,
+				targetSessionId: chunk.targetSessionId,
+				targetAgentName: chunk.targetAgentName,
+				text: accumulated,
+				error: chunk.error,
+				canceled: chunk.canceled,
+			});
 			// Hand the answer to a caller blocked on it (`maestro-cli ask`). Runs
 			// after the transcript writes so the consult tab already holds the text
 			// the caller is about to be given.

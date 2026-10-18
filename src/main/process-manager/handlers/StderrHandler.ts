@@ -50,8 +50,11 @@ export class StderrHandler {
 		// Accumulate stderr for error detection at exit (with size limit)
 		managedProcess.stderrBuffer = appendToBuffer(managedProcess.stderrBuffer || '', stderrData);
 
-		// Check for errors in stderr using the parser (if available)
-		if (outputParser && !managedProcess.errorEmitted) {
+		// Check for errors in stderr using the parser (if available).
+		// `!interrupted` matches StdoutHandler: a turn the user stopped must not
+		// surface as a crash, and several agents write a farewell to stderr on
+		// their way out.
+		if (outputParser && !managedProcess.errorEmitted && !managedProcess.interrupted) {
 			const agentError = outputParser.detectErrorFromLine(stderrData);
 			if (agentError) {
 				managedProcess.errorEmitted = true;
@@ -65,8 +68,10 @@ export class StderrHandler {
 			}
 		}
 
-		// Check for SSH-specific errors in stderr (only when running via SSH remote)
-		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId) {
+		// Check for SSH-specific errors in stderr (only when running via SSH remote).
+		// Same `!interrupted` rule as above: tearing down the remote process is
+		// what produces these lines when the user stops a turn.
+		if (!managedProcess.errorEmitted && !managedProcess.interrupted && managedProcess.sshRemoteId) {
 			const sshError = matchSshErrorPattern(stderrData);
 			if (sshError) {
 				managedProcess.errorEmitted = true;

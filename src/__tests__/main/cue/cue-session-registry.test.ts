@@ -28,7 +28,6 @@ function makeState(overrides: Partial<SessionState> = {}): SessionState {
 	return {
 		config,
 		triggerSources: [],
-		yamlWatchers: [],
 		sleepPrevented: false,
 		...overrides,
 	};
@@ -264,6 +263,27 @@ describe('cue-session-registry', () => {
 			registry.sweepStaleScheduledKeys('09:00');
 			// Startup key is unaffected - still deduped
 			expect(registry.markStartupFired('s1', 'init')).toBe(false);
+		});
+	});
+
+	describe('heartbeat last run', () => {
+		it('records the latest run per (session, sub)', () => {
+			expect(registry.heartbeatFiredAt('s1', 'beat')).toBeUndefined();
+			registry.markHeartbeatFired('s1', 'beat', 1000);
+			registry.markHeartbeatFired('s1', 'beat', 2000);
+			registry.markHeartbeatFired('s2', 'beat', 5000);
+			expect(registry.heartbeatFiredAt('s1', 'beat')).toBe(2000);
+			expect(registry.heartbeatFiredAt('s2', 'beat')).toBe(5000);
+		});
+
+		it('forgets a session on unregister and everything on clear', () => {
+			registry.markHeartbeatFired('s1', 'beat', 1000);
+			registry.markHeartbeatFired('s2', 'beat', 1000);
+			registry.unregister('s1');
+			expect(registry.heartbeatFiredAt('s1', 'beat')).toBeUndefined();
+			expect(registry.heartbeatFiredAt('s2', 'beat')).toBe(1000);
+			registry.clear();
+			expect(registry.heartbeatFiredAt('s2', 'beat')).toBeUndefined();
 		});
 	});
 });

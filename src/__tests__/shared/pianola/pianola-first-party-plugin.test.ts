@@ -148,6 +148,10 @@ describe('first-party plugin registry', () => {
 			['concerto', 'com.maestro.concerto'],
 			['groupsPlus', 'com.maestro.groups-plus'],
 			['webLogin', 'com.maestro.web-login'],
+			['computerHistory', 'com.maestro.computer-history'],
+			['quickChat', 'com.maestro.quick-chat'],
+			['maestroRun', 'com.maestro.maestro-run'],
+			['throughputGauge', 'com.maestro.throughput-gauge'],
 		]);
 	});
 

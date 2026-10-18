@@ -21,7 +21,8 @@
  */
 
 import type React from 'react';
-import { CornerUpRight, Loader2 } from 'lucide-react';
+import { CornerUpRight } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { LogEntry, Theme } from '../types';
 import { getAgentIcon } from '../constants/agentIcons';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
@@ -84,11 +85,7 @@ export function CrossAgentResponseHeader({
 		>
 			{/* Provider glyph, or a spinner while the reply is still streaming in. */}
 			{isStreaming ? (
-				<Loader2
-					className="w-3.5 h-3.5 shrink-0 animate-spin"
-					style={{ color: accent }}
-					aria-hidden
-				/>
+				<Spinner size={14} color={accent} decorative />
 			) : (
 				<span className="shrink-0 text-sm leading-none" aria-hidden>
 					{getAgentIcon(crossAgent.fromToolType)}

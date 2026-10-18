@@ -26,11 +26,16 @@ const mockUpdateAutoRunProgress = vi
 	.mockReturnValue({ newBadgeLevel: null, isNewRecord: false });
 const mockUpdateUsageStats = vi.fn();
 const mockAutoRunStats = { longestRunMs: 0 };
+const mockEncoreFeatures = { maestroCue: true };
 
 vi.mock('../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: Object.assign(
 		vi.fn((selector: (s: any) => any) =>
-			selector({ autoRunStats: mockAutoRunStats, settingsLoaded: true })
+			selector({
+				autoRunStats: mockAutoRunStats,
+				settingsLoaded: true,
+				encoreFeatures: mockEncoreFeatures,
+			})
 		),
 		{
 			getState: vi.fn(() => ({
@@ -151,6 +156,7 @@ describe('useAutoRunAchievements', () => {
 
 		// Reset autoRunStats
 		mockAutoRunStats.longestRunMs = 0;
+		mockEncoreFeatures.maestroCue = true;
 
 		// Default: no badge unlocked
 		mockUpdateAutoRunProgress.mockReturnValue({ newBadgeLevel: null, isNewRecord: false });
@@ -164,7 +170,11 @@ describe('useAutoRunAchievements', () => {
 		);
 		(useSessionStore as any).getState = vi.fn(() => mockSessionStoreState());
 		(useSettingsStore as any).mockImplementation((selector: (s: any) => any) =>
-			selector({ autoRunStats: mockAutoRunStats, settingsLoaded: true })
+			selector({
+				autoRunStats: mockAutoRunStats,
+				settingsLoaded: true,
+				encoreFeatures: mockEncoreFeatures,
+			})
 		);
 		(useSettingsStore as any).getState.mockReturnValue({
 			updateAutoRunProgress: mockUpdateAutoRunProgress,
@@ -822,6 +832,13 @@ describe('useAutoRunAchievements', () => {
 
 			expect(mockCueOnActivityUpdate).toHaveBeenCalledTimes(1);
 			expect(capturedCueActivityCallback).toBeTypeOf('function');
+		});
+
+		it('does not subscribe to Cue activity while the Cue Encore Feature is off', () => {
+			mockEncoreFeatures.maestroCue = false;
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			expect(mockCueOnActivityUpdate).not.toHaveBeenCalled();
 		});
 
 		it('credits creditMs through updateAutoRunProgress on a conductorTimeCredit payload', () => {

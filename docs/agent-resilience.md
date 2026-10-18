@@ -60,7 +60,7 @@ Two buttons:
 - **Try now** - skip the timer and resend immediately. Useful when you know the provider recovered, or you just switched accounts.
 - **Stop** - give up on this outage. The card freezes into a summary and the turn is yours to handle.
 
-When a retry succeeds, the card turns green and freezes: _Connection recovered. Service overloaded cleared after 3 retries over 4m._ Every outage keeps its own card, so a transcript honestly records what the day was like.
+When a retry gets through, the card turns green and freezes as soon as the agent starts thinking or calling tools, not when the turn ends: _Connection recovered. Service overloaded cleared after 3 retries over 4m._ A quota outage reads _Quota restored._ instead. Every outage keeps its own card, so a transcript honestly records what the day was like.
 
 <Note>
 Pending retries do not survive quitting Maestro. This is deliberate: a closed app should not sit in the background burning quota on your behalf. Reopening the app leaves the outage card in place as a dim summary, and you send the prompt again yourself.
@@ -71,6 +71,8 @@ Pending retries do not survive quitting Maestro. This is deliberate: a closed ap
 If you queued several messages behind a turn that then failed, the queue **holds**. It does not drain into a provider that just refused you, because every queued message would hit the same wall and fail in turn.
 
 The retry goes out for the prompt that actually failed. Your queue then drains in order behind it, exactly as it would have if the outage had never happened. Nothing is dropped and nothing is reordered, so a batch of work you lined up before bed is still there in the morning.
+
+While the outage lasts, the failed prompt also sits at the top of the **QUEUED** list with an **Awaiting retry** badge. That is its place in line, not a second copy. The retry takes it out of the queue as it resends it, so it goes out once.
 
 Sending a **new** message while a retry is counting down is different: that is you moving on, so it takes over. The countdown stops, the outage card freezes into a stopped summary, and your new prompt goes out instead.
 
@@ -115,6 +117,6 @@ The [Usage Dashboard](/usage-dashboard) (`Cmd+Alt+U` / `Ctrl+Alt+U`) keeps score
 
 ## See also
 
-- [Provider Notes](/provider-notes) - Claude Code token sources, and how Dynamic mode switches from Max plan quota to API when a window runs dry
+- [Provider Notes](/provider-notes) - Claude Code token sources, and what each one draws from when a plan window runs dry
 - [Auto Run & Playbooks](/autorun-playbooks) - the batch runner resilience keeps alive
 - [Troubleshooting](/troubleshooting) - agent errors that resilience deliberately does not handle

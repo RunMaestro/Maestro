@@ -162,6 +162,30 @@ describe('buildCuePersistedOutput', () => {
 		expect(fullOutput).toHaveLength(MAX_HISTORY_RESPONSE_LENGTH);
 	});
 
+	it('excerpts a stdout that is only a fenced table instead of calling the run silent', () => {
+		// Seen live on 2026-10-14: this stdout persisted a NULL excerpt beside a
+		// non-null full output, so History hid a run that had answered.
+		const stdout = '```\n| billing-api | 2.7.0 | raza |\n```';
+		const { excerpt, fullOutput } = buildCuePersistedOutput({
+			stdout,
+			stderr: 'warning: cache miss',
+		});
+		expect(excerpt).toBe('billing-api · 2.7.0 · raza');
+		expect(fullOutput).toBe(stdout);
+	});
+
+	it('gives every run with visible stdout a non-null excerpt', () => {
+		for (const stdout of [
+			'```\n| a | b |\n```',
+			'| a | b |\n|---|---|',
+			'x'.repeat(500),
+			`${'long sentence '.repeat(40)}end`,
+			'```\n```',
+		]) {
+			expect(buildCuePersistedOutput({ stdout, stderr: '' }).excerpt).not.toBeNull();
+		}
+	});
+
 	it('strips ANSI codes out of the excerpt', () => {
 		const { excerpt } = buildCuePersistedOutput({
 			stdout: '\u001b[32mBuild passed.\u001b[0m',

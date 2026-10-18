@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Edit3, FolderInput, FolderPlus, FolderUp, Plus, Trash2 } from 'lucide-react';
+import {
+	AppWindow,
+	Edit3,
+	Eye,
+	EyeOff,
+	FolderInput,
+	FolderPlus,
+	FolderUp,
+	Plus,
+	Trash2,
+} from 'lucide-react';
 import type { Group, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import type { WindowMoveTarget } from '../../utils/windowTargets';
 
 interface GroupContextMenuProps {
 	x: number;
@@ -21,6 +32,15 @@ interface GroupContextMenuProps {
 	onMoveInto?: (parentGroupId: string) => void;
 	onMoveToTopLevel?: () => void;
 	onNewGroupInside?: () => void;
+	/** Park this group out of the Left Bar, or bring it back. */
+	onToggleHidden?: () => void;
+	/**
+	 * Windows the whole group can move into (`buildGroupWindowMoveTargets`).
+	 * Empty or absent in a single-window app, which hides "Move Group to Window".
+	 */
+	windowTargets?: WindowMoveTarget[];
+	onMoveToNewWindow?: () => void;
+	onMoveToWindow?: (windowId: string) => void;
 	onDismiss: () => void;
 }
 
@@ -39,9 +59,19 @@ export function GroupContextMenu({
 	onMoveInto,
 	onMoveToTopLevel,
 	onNewGroupInside,
+	onToggleHidden,
+	windowTargets = [],
+	onMoveToNewWindow,
+	onMoveToWindow,
 	onDismiss,
 }: GroupContextMenuProps) {
 	const [moveSubmenuOpen, setMoveSubmenuOpen] = useState(false);
+	const [windowSubmenuOpen, setWindowSubmenuOpen] = useState(false);
+	// Same gate as the agent menu: a mover and at least one enumerated window.
+	// Not gated on `memberCount`, which counts only the agents THIS window shows:
+	// a group whose agents all live in another window must still be movable back.
+	// An empty group yields no targets, so it hides the entry on its own.
+	const showMoveToWindow = !!onMoveToNewWindow && !!onMoveToWindow && windowTargets.length > 0;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
@@ -58,7 +88,13 @@ export function GroupContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y, 8, moveSubmenuOpen);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(
+		menuRef,
+		x,
+		y,
+		8,
+		moveSubmenuOpen || windowSubmenuOpen
+	);
 
 	return (
 		<div
@@ -112,6 +148,55 @@ export function GroupContextMenu({
 				<Plus className="w-3.5 h-3.5" />
 				New Agent in Group...
 			</button>
+
+			{showMoveToWindow && (
+				<div>
+					<button
+						type="button"
+						aria-expanded={windowSubmenuOpen}
+						aria-haspopup="menu"
+						onClick={() => setWindowSubmenuOpen((open) => !open)}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						<AppWindow className="w-3.5 h-3.5" />
+						Move Group to Window...
+					</button>
+					{windowSubmenuOpen && (
+						<>
+							<button
+								type="button"
+								onClick={() => {
+									onMoveToNewWindow?.();
+									onDismiss();
+								}}
+								className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+								style={{ color: theme.colors.accent }}
+							>
+								<Plus className="w-3.5 h-3.5" />
+								New Window
+							</button>
+							{windowTargets.map((target) => (
+								<button
+									key={target.windowId}
+									type="button"
+									disabled={target.isCurrentOwner}
+									title={target.isCurrentOwner ? 'The whole group is already here' : undefined}
+									onClick={() => {
+										onMoveToWindow?.(target.windowId);
+										onDismiss();
+									}}
+									className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent"
+									style={{ color: theme.colors.textMain }}
+								>
+									<AppWindow className="w-3.5 h-3.5 shrink-0" />
+									<span className="truncate">{target.label}</span>
+								</button>
+							))}
+						</>
+					)}
+				</div>
+			)}
 
 			{groupsPlusEnabled && eligibleParentGroups.length > 0 && onMoveInto && (
 				<div>
@@ -172,6 +257,21 @@ export function GroupContextMenu({
 				>
 					<FolderPlus className="w-3.5 h-3.5" />
 					New group inside...
+				</button>
+			)}
+
+			{onToggleHidden && (
+				<button
+					type="button"
+					onClick={() => {
+						onToggleHidden();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					{group.hidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+					{group.hidden ? 'Unhide Group' : 'Hide Group'}
 				</button>
 			)}
 

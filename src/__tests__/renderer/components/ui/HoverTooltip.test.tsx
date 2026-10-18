@@ -63,4 +63,34 @@ describe('HoverTooltip', () => {
 			Object.defineProperty(window, 'innerWidth', { value: original, configurable: true });
 		}
 	});
+
+	// A wrapping label column used to squeeze the shortcut until `⌘ J` broke at
+	// its space and the keys stacked vertically.
+	it('draws the shortcut as key caps that never wrap beside a wrapping label', () => {
+		const tip = open(
+			<HoverTooltip
+				theme={mockTheme}
+				maxWidth={260}
+				label="Choose the tab. Maestro finds the tab that fits your message."
+				shortcut={['Meta', 'j']}
+			>
+				<span>trigger</span>
+			</HoverTooltip>
+		);
+
+		const chord = tip.querySelector('[data-shortcut-keys]') as HTMLElement;
+		expect(chord).toHaveAttribute('data-shortcut-keys', 'Meta+j');
+		expect(chord.className).toContain('whitespace-nowrap');
+		expect(chord.className).toContain('shrink-0');
+		expect(chord.querySelectorAll('kbd')).toHaveLength(2);
+	});
+
+	it('draws a string shortcut as one cap', () => {
+		const tip = open(
+			<HoverTooltip theme={mockTheme} label="Cancel" shortcut="Esc">
+				<span>trigger</span>
+			</HoverTooltip>
+		);
+		expect(tip.querySelectorAll('kbd')).toHaveLength(1);
+	});
 });

@@ -14,7 +14,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { app } from 'electron';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 import {
 	PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY,
 	type PipelineLayoutState,
@@ -24,9 +24,14 @@ import { captureException } from '../utils/sentry';
 
 let cachedLayoutFilePath: string | null = null;
 
-function getLayoutFilePath(): string {
+/**
+ * The layout file in `dataDir`, or in the resolved data directory when none is
+ * given. Only the default is cached; the bundle importer names its target.
+ */
+function getLayoutFilePath(dataDir?: string): string {
+	if (dataDir) return path.join(dataDir, 'cue-pipeline-layout.json');
 	if (!cachedLayoutFilePath) {
-		cachedLayoutFilePath = path.join(app.getPath('userData'), 'cue-pipeline-layout.json');
+		cachedLayoutFilePath = path.join(resolveUserDataDir(), 'cue-pipeline-layout.json');
 	}
 	return cachedLayoutFilePath;
 }
@@ -75,8 +80,8 @@ function migrateLegacyLayout(layout: PipelineLayoutState): PipelineLayoutState {
 	};
 }
 
-export function savePipelineLayout(layout: PipelineLayoutState): void {
-	const filePath = getLayoutFilePath();
+export function savePipelineLayout(layout: PipelineLayoutState, dataDir?: string): void {
+	const filePath = getLayoutFilePath(dataDir);
 	// Deduplicate pipelines by `id` before persisting - the renderer's save
 	// path writes `state.pipelines` verbatim, so the file naturally drops
 	// entries for deleted pipelines on every save. Dedup here is a defensive
@@ -102,8 +107,8 @@ export function savePipelineLayout(layout: PipelineLayoutState): void {
 	fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), 'utf-8');
 }
 
-export function loadPipelineLayout(): PipelineLayoutState | null {
-	const filePath = getLayoutFilePath();
+export function loadPipelineLayout(dataDir?: string): PipelineLayoutState | null {
+	const filePath = getLayoutFilePath(dataDir);
 	if (!fs.existsSync(filePath)) {
 		return null;
 	}

@@ -10,14 +10,41 @@
  * API" instead of "claude-code".
  */
 
-import type { Session } from '../../types';
+import type { CSSProperties } from 'react';
+import type { Session, Theme } from '../../types';
 import { AGENT_DISPLAY_NAMES } from '../../../shared/agentMetadata';
+import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 
 // `clampTooltipToViewport` was relocated into the shared widget library (so the
 // library's ChartTooltip primitive owns its geometry without depending back on
 // UsageDashboard). Re-export it here to keep the historical chartUtils API
 // stable for any existing importer.
 export { clampTooltipToViewport } from '../widgets/output/tooltipGeometry';
+
+/** Colors for series after the first, which takes the theme accent. */
+const SERIES_COLORS = [
+	'#10b981',
+	'#8b5cf6',
+	'#ef4444',
+	'#06b6d4',
+	'#ec4899',
+	'#f59e0b',
+	'#84cc16',
+	'#6366f1',
+];
+
+/**
+ * Color for the Nth series of a chart (a provider, an agent, a model). One
+ * mapping for every dashboard chart, so the same index reads as the same color
+ * when two charts sit side by side.
+ */
+export function getSeriesColor(index: number, theme: Theme, colorBlindMode?: boolean): string {
+	if (colorBlindMode) {
+		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
+	}
+	if (index === 0) return theme.colors.accent;
+	return SERIES_COLORS[(index - 1) % SERIES_COLORS.length];
+}
 
 /**
  * Returns true if the session is a worktree child (was spawned from a parent agent).
@@ -215,6 +242,58 @@ export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<numbe
 
 	return new Set(indices);
 }
+
+/**
+ * Split a dense per-day series into at most `maxGroups` runs of equal length
+ * (the last run may be shorter), for a long range that would otherwise draw
+ * more bars than the chart has pixels for. Returns one single-item group per
+ * day when the series already fits.
+ *
+ * Grouping is by a fixed number of consecutive days rather than by calendar
+ * week: the buckets stay equal width, which is what makes neighbouring bars
+ * comparable, and a partial week at either end can't render as a dip that never
+ * happened.
+ */
+export function chunkIntoEqualGroups<T>(items: readonly T[], maxGroups: number): T[][] {
+	const limit = Math.max(1, maxGroups);
+	if (items.length <= limit) return items.map((item) => [item]);
+	const groupSize = Math.ceil(items.length / limit);
+	const groups: T[][] = [];
+	for (let i = 0; i < items.length; i += groupSize) groups.push(items.slice(i, i + groupSize));
+	return groups;
+}
+
+/**
+ * Layout for the dashboard's horizontal bar charts (Agent Efficiency, Agent
+ * Comparison, By Agent Type, the token cost breakdowns): one CSS grid whose
+ * first column is the name, second the bar, third the trailing value.
+ *
+ * The name column is sized by the browser to the widest label it actually
+ * renders (`fit-content`), so every label reads in full and every bar starts
+ * at the same x. The bar column takes what is left. This replaced a per-chart
+ * width ESTIMATED from character count, which came out short of the real text
+ * ("Claude Co..." beside a bar with hundreds of spare pixels) and could never
+ * account for the user's font or zoom. The 50% ceiling keeps one pathological
+ * user-assigned agent name from erasing the bars; past it the label ellipsizes
+ * and the row's `title` carries the full name.
+ *
+ * Each row spreads `BAR_CHART_ROW_STYLE` so it stays one box (hover, click,
+ * focus, role all still live on the row) while its three children sit in the
+ * parent's shared columns via subgrid. The trailing column is shared too, so
+ * a row with a longer value does not shorten its own bar.
+ */
+export const BAR_CHART_GRID_CLASS = 'grid gap-x-3 gap-y-2';
+
+export const BAR_CHART_GRID_STYLE: CSSProperties = {
+	gridTemplateColumns: 'fit-content(50%) minmax(0, 1fr) auto',
+};
+
+export const BAR_CHART_ROW_STYLE: CSSProperties = {
+	display: 'grid',
+	gridTemplateColumns: 'subgrid',
+	gridColumn: '1 / -1',
+	alignItems: 'center',
+};
 
 /**
  * Geometry shared by the dashboard's donut charts (Activity Source, Session

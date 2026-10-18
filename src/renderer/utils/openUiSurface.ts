@@ -12,8 +12,11 @@ import type { CueModalData, ModalId } from '../stores/modalStore';
 import { getModalActions, useModalStore } from '../stores/modalStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
-import { notifyToast } from '../stores/notificationStore';
-import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
+import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useThroughputGaugeStore } from '../stores/throughputGaugeStore';
+import { notifyToast, useNotificationStore } from '../stores/notificationStore';
+import { resolveUiSurface, resolveUiSurfaceTab, uiSurfaceRefusal } from '../../shared/uiSurfaces';
+import { isWebDesktop } from './runtimeContext';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
 export interface OpenUiSurfaceResult {
@@ -25,9 +28,12 @@ export interface OpenUiSurfaceResult {
 /**
  * Open `surfaceId`, optionally deep-linking to `tabId`.
  *
- * Refuses (with a toast) when the surface is behind an Encore Feature the user
- * has turned off: silently opening nothing would look like the CLI lied, and
- * silently enabling the feature would change a setting the user never touched.
+ * Refuses when the surface (or the requested tab) is behind an Encore Feature
+ * the user has turned off. The refusal goes back to the caller only - no toast:
+ * a disabled feature has no footprint, and a toast naming it would advertise it
+ * to the person who switched it off. Silently enabling the feature would change
+ * a setting the user never touched. (`maestro-cli open` gets the same refusal
+ * from the main process, which checks before the renderer is asked.)
  */
 export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceResult {
 	const surface = resolveUiSurface(surfaceId);
@@ -36,18 +42,24 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 	const tab = tabId ? resolveUiSurfaceTab(surface, tabId) : null;
 	if (tabId && !tab) return { ok: false, error: `Unknown tab "${tabId}" for ${surface.label}` };
 
-	if (surface.encore) {
-		const enabled = useSettingsStore.getState().encoreFeatures[surface.encore];
-		if (!enabled) {
-			const message = `${surface.label} is an Encore Feature and is currently off. Turn it on in Settings → General → Encore Features.`;
-			notifyToast({ color: 'yellow', title: `${surface.label} is disabled`, message });
-			return { ok: false, error: message };
-		}
-	}
+	const refusal = uiSurfaceRefusal(surface, tab, useSettingsStore.getState().encoreFeatures);
+	if (refusal) return { ok: false, error: refusal };
 
 	const actions = getModalActions();
 
 	switch (surface.id) {
+		case 'notification-center': {
+			// Switched off, there is no inbox to open. Say so rather than opening
+			// nothing, and never flip the setting on the user's behalf.
+			if (!useSettingsStore.getState().notificationCenterEnabled) {
+				const message =
+					'The notification center is off. Turn it on in Settings → Notifications → Notification center.';
+				notifyToast({ color: 'yellow', title: 'Notification Center is off', message });
+				return { ok: false, error: message };
+			}
+			useNotificationStore.getState().setNotificationCenterOpen(true);
+			return { ok: true };
+		}
 		case 'settings':
 			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined);
 			return { ok: true };
@@ -63,9 +75,31 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			}
 			actions.setUsageDashboardOpen(true);
 			return { ok: true };
+		case 'quick-chat': {
+			// A separate window owned by the main process, and only the Electron
+			// app has one: the web-desktop bridge exposes no Quick Chat window.
+			const quickChat = isWebDesktop() ? undefined : window.maestro?.quickChat;
+			if (!quickChat)
+				return { ok: false, error: 'Quick Chat is only available in the desktop app' };
+			void quickChat.window('show');
+			return { ok: true };
+		}
+		case 'throughput-gauge':
+			// A floating card, not a modal: show it through its own store. Showing
+			// never moves focus, so the user keeps typing where they were.
+			useThroughputGaugeStore.getState().show();
+			return { ok: true };
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');
 			return { ok: true };
+		case 'feedback': {
+			// Same as the Feedback button: a parked draft is restored, not replaced
+			// by a fresh modal that would throw the conversation away.
+			const draft = useFeedbackDraftStore.getState();
+			if (draft.isMinimized) draft.setMinimized(false);
+			else useModalStore.getState().openModal('feedback');
+			return { ok: true };
+		}
 		default:
 			// Surfaces with no data payload open generically - one line here beats
 			// a switch arm per modal that would drift as the registry grows.

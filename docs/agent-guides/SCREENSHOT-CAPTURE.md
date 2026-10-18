@@ -43,7 +43,7 @@ npm run capture:showcase -- --cwd /Users/maestro/Projects/Maestro
 | Flag           | Default                             | What it does                                                              |
 | -------------- | ----------------------------------- | ------------------------------------------------------------------------- |
 | `--themes`     | `dracula,catppuccin-latte,pedurple` | Comma-separated theme ids from `THEMES` in `src/shared/themes.ts`.        |
-| `--size`       | `2048x1280`                         | Logical window size. The published set is this, which is 4096x2560 at 2x. |
+| `--size`       | `2480x1400`                         | Logical window size. The published set is this, which is 4960x2800 at 2x. |
 | `--only`       | all                                 | Comma-separated shot names from `shots.js`.                               |
 | `--out`        | `docs/screenshots`                  | Output directory.                                                         |
 | `--cwd`        | this checkout                       | Working directory the demo agents point at (see below).                   |
@@ -82,8 +82,21 @@ loaded out of `src/shared/typographyPresets.ts` rather than copied into the seed
 JSON, so retuning the Default face moves the published set on the next run.
 Pass `--typography hacker` to shoot the monospace look deliberately.
 
+**A one-off shot taken outside this pipeline follows the same rule.** Every
+screenshot in `docs/` is in the Default preset, including the single-surface
+ones taken by hand against a fresh `MAESTRO_DEMO_DIR` profile (a floating
+window, a dialog the showcase set does not cover). A fresh profile boots into
+the store default, which is the monospace look, so apply the preset before
+shooting. Write the fonts AND the sizes, the same twelve values `setup.js`
+writes: `applyTypographyPreset('default')` in the settings store sets only the
+fonts, which leaves the interface at the historical 14px instead of Default's
+15px. Check the result on the surface itself (`getComputedStyle(document.body)
+.fontFamily` should start with `Inter`) rather than on the store, because a
+secondary window that does not run `useWindowSettingsSync()` ignores the store
+entirely; that is how the first Quick Chat screenshot shipped in monospace.
+
 **The seed widens both side panels, deliberately.** `leftSidebarWidth` and
-`rightPanelWidth` in the seed settings are 340 and 460 against app defaults of
+`rightPanelWidth` in the seed settings are 470 and 575 against app defaults of
 256 and 384. The app's defaults are the MINIMUM each panel supports, and at the
 minimum both are visibly degraded in ways that photograph badly: the Left Bar
 drops the MAESTRO wordmark entirely (it renders in full or not at all, so there
@@ -109,8 +122,39 @@ not an emulated viewport, so a window larger than the screen is clamped by the
 window manager and every image comes out undersized while the run still reports
 success. `assertViewport` reads `innerWidth`/`innerHeight` once the shell has
 painted and fails the theme when they disagree with `--size`, and the run logs
-the viewport it got. `2048x1280` needs a display of at least about 2560x1440
+the viewport it got. `2480x1400` needs a display of at least about 2560x1440
 logical; pass a smaller `--size` on a laptop panel rather than letting it clamp.
+
+**The seeded execution queue is HELD, and it has to be.** Twelve items are
+seeded across three agents (7 on Maestro, the active one, plus 2 and 3
+elsewhere) so the Execution Queue reads `Current Agent (7)` against
+`All Agents (12)` rather than the same number twice. Every one of them carries
+`paused: true`.
+
+That is not decoration. `useQueueProcessing` drains any agent that is `idle`
+with a runnable item, on the first render after the session load - well before
+the shutter - and `nextRunnableQueueItem` skips paused items and returns the
+first one that is not, so the hold is all-or-nothing. Seeding the queue without
+it means the showcase app spawns real provider processes against the seeded
+prompts, and the count drifts from run to run.
+
+Seeding `state: 'busy'` on the agent instead does NOT work, though it looks like
+it should: it was tried, and two of seven items dispatched anyway, leaving a
+real "Session not found" error in the transcript behind the modal. The `HELD`
+badge on every card is the honest cost of a set that is identical on every run.
+
+Nothing about the hold reduces what the surface demonstrates: depth, per-tab
+grouping, the model and effort pills, Send Now, and the edit / reorder / delete
+/ copy controls are all present and all live, and a held queue is a state a
+user can genuinely reach. Editing a queued message from the showcase app works
+normally - pausing blocks dispatch, not editing.
+
+`src/__tests__/shared/showcaseSeed.test.ts` holds the seed to that: every item
+paused, the queue spread over more than one agent, every `tabId` resolving to a
+real AI tab, and no em or en dash anywhere in the file. Nothing else reaches
+this data - `scripts/` is in ESLint's global `ignores`, the dash-only pass
+matches `.mjs` / `.js` / `.cjs` and never `.json`, and Prettier checks only
+whitespace.
 
 **An Encore-gated surface is refused rather than shot.** `openUiSurface` turns
 down a surface whose Encore Feature is off, and the driver treats that as a skip
@@ -129,9 +173,56 @@ Maestro lifts its splash from inside a double rAF. The first launch of a run
 comes to the front on its own and every launch after it opens behind your
 terminal, so themes two and three used to load completely and then sit on the
 splash until the driver gave up. The driver calls `Page.bringToFront` on every
-readiness poll and before every shot. Practically: the run owns your screen
-while it is going, and a single-theme run is not evidence that a full one
-works.
+readiness poll and before every shot, and that is still not enough on its own:
+whether macOS honors it depends on what else grabs focus during a 20-minute
+run. So once the Left Bar has rendered with the splash still up, the driver
+waits `SPLASH_GRACE_MS` and then calls the app's own `window.__hideSplash()` -
+the function the rAF callback would have called, whose internals are timer- and
+promise-driven rather than rAF-driven. It only ever reveals a shell that has
+already rendered. Practically: the run owns your screen while it is going, and
+a single-theme run is not evidence that a full one works.
+
+**Every shot presses Escape first, including the ones that open a surface.**
+Only the full-window DESTINATION modals close each other; everything else
+LAYERS. A run that opened one surface per shot without clearing the last one
+accumulated a stack and photographed whichever modal happened to sit on top, so
+eleven shots in one run came back byte-identical to four others. Nothing
+errored: the bridge answers `success: true` for a modal that opens behind
+another, which is why the run reported a full set while filing the same picture
+under several names. It is also what made `--tab` look broken on Cue - the
+modal was already mounted, so the deep-link had nothing to do.
+
+---
+
+## What this set does NOT cover
+
+The shot list reaches every surface in `UI_SURFACES`, and that registry holds
+MODALS. A large share of what the docs and the website publish is not a modal
+but an app STATE - a file tab open on a CSV, a terminal tab, a git log, a group
+chat, the composer in command mode - and `open_modal` cannot express any of
+them. Reaching those needs two things this rig does not have yet: seed data
+that contains them (the seeded fleet has AI tabs and nothing else, no
+`cue.yaml`, no `stats.db`) and a shot verb that can drive the app into a state.
+
+Known gaps, all currently published somewhere:
+
+| View                                                     | Why it is out of reach                 |
+| -------------------------------------------------------- | -------------------------------------- |
+| `tabs-code`, `tabs-csv`, `tabs-json-jq`, `tabs-markdown` | no file tabs in the seed               |
+| `tabs-terminal`, `tabs-browser`                          | no terminal/browser tabs               |
+| `git-diff`, `git-logs`                                   | not in `UI_SURFACES`                   |
+| `group-chat`, `group-chat-over-ssh`                      | a view, not a modal                    |
+| `document-graph`                                         | destination lives outside the registry |
+| `command-interpreter`                                    | composer state                         |
+| `chat-code-latex`, `chat-mermaid`                        | transcript content                     |
+| `achievements`                                           | not in `UI_SURFACES`                   |
+| `autorun-1`, `autorun-2`                                 | Right Bar tab, no playbook seeded      |
+| `wizard-inline`                                          | inline wizard state                    |
+| `mobile-chat`, `mobile-groups`, `mobile-history`         | web-desktop at a phone viewport        |
+
+Separately, most of `docs/screenshots/` is CROPS rather than full windows (95
+of 113 at the last audit): a toolbar strip, a right-click menu, a settings row.
+Those are deliberate and this rig does not try to reproduce them.
 
 ---
 

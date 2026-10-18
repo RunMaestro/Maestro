@@ -52,6 +52,20 @@ Commands exit with a standardized code so scripts and CI can branch on the failu
 | `4`  | The running app does not support the command (older build) |
 | `5`  | The app was reachable but did not respond in time          |
 
+Almost every verb that needs the desktop app reports its absence the same way: the message `Maestro desktop app is not running or not reachable`, exit code `3`, and with `--json` (or on verbs that always print JSON) the code `MAESTRO_NOT_RUNNING`:
+
+```json
+{
+	"success": false,
+	"error": "Maestro desktop app is not running or not reachable",
+	"code": "MAESTRO_NOT_RUNNING"
+}
+```
+
+This covers a missing or stale discovery file, a connection that never opens, and one refused at the network level. An app that answers but refuses the connection (for example the Web Login gate) is running, so it reports its own error instead.
+
+A few verbs do not follow this yet: `steer-auto-run`, `quick-chat`, `window`, `maestro-run` and `plugin list|update` print the same message but exit `1` with no `code`, and the `computer-history` writes exit `1` with the message wrapped in `Could not reach the Maestro app (...)`. In a script, treat exit `1` from these as possibly meaning the app is not running.
+
 ### Who Moves the View (`--background` / `--focus`)
 
 Focus belongs to whoever is at the keyboard. An agent may create a surface; it should not decide you ought to be looking at it. Every verb that can move the Maestro view or raise a notice therefore accepts `--background`, which means exactly two things: the active agent does not change, and the active tab inside any agent does not change. The surface is still created and still addressable - it lands in the tab bar the way a browser opens a background tab.
@@ -60,21 +74,21 @@ Maestro's own system prompt tells agents to **pass `--background` by default** a
 
 `--focus` is the opposite ask, and it ships on every one of these verbs even where it only names the current default. If both are passed, `--focus` wins.
 
-**The flag is additive: no verb's default changed.** An unflagged call behaves exactly as it always has, so existing scripts, playbooks, and Cue prompts are unaffected.
+**The flag is additive: one verb's default changed.** An unflagged call behaves exactly as it always has, except `refresh-auto-run`, which is now background by default because its old focusing default only ever pulled you away from the agent you were looking at.
 
-| Command                     | Default when neither flag is passed          |
-| --------------------------- | -------------------------------------------- |
-| `open-file`                 | switches to the file                         |
-| `open-terminal`             | switches to the new terminal                 |
-| `open-browser`              | switches to the new browser tab              |
-| `tab new`                   | switches to the new tab                      |
-| `dispatch --new-tab`        | **background** (as it always was)            |
-| `dispatch` (no `--new-tab`) | selects the target agent                     |
-| `create-agent`              | selects the new agent                        |
-| `create-worktree`           | selects the new agent                        |
-| `switch-mode`               | switches the mode                            |
-| `refresh-auto-run`          | selects the target agent and flashes a count |
-| `refresh-files`             | **already quiet**; flag accepted, no effect  |
+| Command                     | Default when neither flag is passed         |
+| --------------------------- | ------------------------------------------- |
+| `open-file`                 | switches to the file                        |
+| `open-terminal`             | switches to the new terminal                |
+| `open-browser`              | switches to the new browser tab             |
+| `tab new`                   | switches to the new tab                     |
+| `dispatch --new-tab`        | **background** (as it always was)           |
+| `dispatch` (no `--new-tab`) | selects the target agent                    |
+| `create-agent`              | selects the new agent                       |
+| `create-worktree`           | selects the new agent                       |
+| `switch-mode`               | switches the mode                           |
+| `refresh-auto-run`          | **background** (`--focus` to switch)        |
+| `refresh-files`             | **already quiet**; flag accepted, no effect |
 
 `focus-agent`, `send --tab`, `open`, and `open-graph` exist _to_ move the view - you named that intent - so they take no placement flag. The graph in particular is a full-window overlay whose only effect is being looked at, so a background one would do nothing at all.
 
@@ -110,6 +124,7 @@ The response is always JSON:
 	"sessionId": "abc123def456",
 	"response": "The authentication flow works by...",
 	"success": true,
+	"outcome": "completed",
 	"usage": {
 		"inputTokens": 1000,
 		"outputTokens": 500,
@@ -122,6 +137,19 @@ The response is always JSON:
 }
 ```
 
+`outcome` says how the turn ended:
+
+| `outcome`                | `success` | Meaning                                                                                                 |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------- |
+| `completed`              | `true`    | Clean exit with the provider's explicit done signal.                                                    |
+| `completed-with-warning` | `true`    | An answer was captured, but the process exited non-zero or never sent a done signal.                    |
+| `interrupted`            | `false`   | The send was stopped (Ctrl+C or SIGTERM). Never reported as a crash, even if the agent wrote to stderr. |
+| `crashed`                | `false`   | No usable answer, a classified provider error (auth, rate limit, ...), or the process failed to start.  |
+
+For providers that stream JSON lines (everything except Claude Code), a captured answer outranks a bare non-zero exit, but not a specific provider error: a turn whose stderr says the login expired fails even if some text was produced. Claude Code keeps requiring a clean exit. A process killed by a signal nobody requested is always `crashed`.
+
+The first Ctrl+C stops the agent gracefully (SIGTERM, then SIGKILL after 5 seconds if it ignores it) and exits with code `130`; a second Ctrl+C exits immediately. Other failures exit with `1`. Over an SSH remote this stops the local `ssh` client, and the remote process is not guaranteed to receive the hangup.
+
 On failure, `success` is `false` and an `error` field is included:
 
 ```json
@@ -132,11 +160,15 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one      |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)        |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app |
+| Flag                 | Description                                                         |
+| -------------------- | ------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume an existing session instead of creating a new one            |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)              |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app       |
+| `--no-history`       | Do not write a History entry for this turn                          |
+| `--no-synopsis`      | Skip the synopsis turn; the History entry carries the response text |
+
+Every `send` writes an entry to the agent's History, the same file the desktop History panel reads, whether or not the desktop app is running (an open app picks it up live). Who started the send decides the kind of entry. A send Maestro Cue started (a `command` action that runs `maestro-cli send`, or an agent Cue woke that runs it) is a `CUE` entry, and the turn it runs is marked `MAESTRO_QUERY_SOURCE=cue`. A send run from another agent's shell is an `AGENT` entry whose summary opens with `Sent by <agent>:`. Both carry a pass/fail indicator. A send from your own shell or a script is a `USER` entry. A successful turn is summarized by a short synopsis turn resumed on the same provider session at the cheapest model and effort, unless that would shrink the context window, in which case the agent's own model is kept. If the synopsis reports nothing to record, fails, or prints a provider error, the first line of the response is used instead. After a `--read-only` send the synopsis turn is read-only too. Failed and interrupted turns are recorded without a synopsis turn. A History write that fails prints a warning on stderr and never fails the send; the JSON on stdout is unchanged either way. Use `--no-synopsis` to skip the extra turn, or `--no-history` to record nothing.
 
 For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
 
@@ -164,8 +196,11 @@ Everything after `--` is treated as positional, so any flags you need must come 
 # Dispatch to the active tab of an agent
 maestro-cli dispatch <agent-id> "review the PR description"
 
-# Open a fresh tab and dispatch the prompt into it
+# Open a fresh tab and dispatch the prompt into it (hidden: no chip in the strip)
 maestro-cli dispatch <agent-id> "start a new review pass" --new-tab
+
+# Same, but give the new tab a chip so it shows in the tab strip
+maestro-cli dispatch <agent-id> "start a new review pass" --new-tab --visible
 
 # Continue a previous dispatch by targeting its tab
 maestro-cli dispatch <agent-id> "and now run the tests" -t <tab-id>
@@ -185,13 +220,14 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 }
 ```
 
-| Flag             | Description                                                                                                                                                                                                                                                                                          |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--new-tab`      | Create a fresh AI tab in the target agent and deliver the prompt into it. If the agent is mid-turn the prompt is queued for the new tab and runs when that turn ends, so the response reports `queued: true`. Mutually exclusive with `-t` and `-f` (a new tab owns no turn for `--force` to bypass) |
-| `--background`   | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                                                                            |
-| `--focus`        | Move the view to the target after dispatching                                                                                                                                                                                                                                                        |
-| `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                                                                       |
-| `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`                                                                                                                                                               |
+| Flag             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--new-tab`      | Create a fresh AI tab in the target agent and deliver the prompt into it. The tab is hidden: it is named from the prompt and runs normally, but draws no chip in the tab strip until you open it from the completion toast or the caller's delegation pill. If the agent is mid-turn the prompt is queued for the new tab and runs when that turn ends, so the response reports `queued: true`. Mutually exclusive with `-t` and `-f` (a new tab owns no turn for `--force` to bypass) |
+| `--visible`      | With `--new-tab`: give the new tab a chip in the tab strip instead of creating it hidden. `--focus` implies it                                                                                                                                                                                                                                                                                                                                                                         |
+| `--background`   | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                                                                                                                                                                                                                                                              |
+| `--focus`        | Move the view to the target after dispatching                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                                                                                                                                                                                                                                                         |
+| `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`                                                                                                                                                                                                                                                                                                                                                 |
 
 Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
@@ -308,7 +344,7 @@ Currently supported for `claude-code` agents.
 
 Inspect open AI tabs across the running Maestro desktop app and read their conversation history. Pair `dispatch --new-tab` (writes, returns a `tabId`) with `session show <tabId>` (reads, supports `--since` and `--tail`) to build a stateless poll loop without owning a persistent connection - used by Maestro-Discord and Cue follow-ups.
 
-Both verbs talk to the running desktop over the same WebSocket as `dispatch`. There is no on-disk fallback: if the app is not running, the CLI exits with code `MAESTRO_NOT_RUNNING`.
+Both verbs talk to the running desktop over the same WebSocket as `dispatch`. There is no on-disk fallback: if the app is not running, the CLI reports `MAESTRO_NOT_RUNNING` and exits `3`.
 
 #### List Open Tabs
 
@@ -409,7 +445,7 @@ JSON shape:
 
 `role` is a coarse classification (`user` | `assistant` | `system` | `tool` | `thinking` | `error` | `unknown`) so conversational consumers can branch on intent; the raw `source` is preserved alongside for callers that need to discriminate further. ISO timestamps are emitted verbatim so a `messages[-1].timestamp` from one call can be fed directly back into `--since` on the next.
 
-Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`.
+Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`, except `MAESTRO_NOT_RUNNING`, which exits `3`.
 
 ### Pasted Images (`image list` / `image save`)
 
@@ -438,15 +474,15 @@ maestro-cli image save --all -t <tab-id> -o screenshots/
   2  f8d010b2  9h ago        Kensho   Fibonacci Ingest     notes from a verbal session, see the image
 ```
 
-| Flag                  | Command | Description                                                       |
-| --------------------- | ------- | ----------------------------------------------------------------- |
-| `-a, --agent <id>`    | both    | Only this agent (defaults to every agent)                         |
-| `-t, --tab <tab-id>`  | both    | Only this AI tab                                                  |
-| `--limit <n>`         | `list`  | Maximum images to show (default: 20)                              |
-| `-o, --output <path>` | `save`  | File or directory to write (default: a generated name in the cwd) |
-| `--all`               | `save`  | Save every image in scope instead of just the newest              |
-| `--force`             | `save`  | Overwrite an existing file named by `--output`                    |
-| `--json`              | both    | Output as JSON (for scripting)                                    |
+| Flag                  | Command                                      | Description                                                       |
+| --------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
+| `-a, --agent <id>`    | both                                         | Only this agent (defaults to every agent)                         |
+| `-t, --tab <tab-id>`  | both                                         | Only this AI tab                                                  |
+| `--limit <n>`         | `list`                                       | Maximum images to show (default: 20)                              |
+| `-o, --output <path>` | `save`                                       | File or directory to write (default: a generated name in the cwd) |
+| `--all`               | `save`                                       | Save every image in scope instead of just the newest              |
+| `--force`             | Alias for `--accept-translation-limitations` | -                                                                 |
+| `--json`              | both                                         | Output as JSON (for scripting)                                    |
 
 Details worth knowing:
 
@@ -521,6 +557,16 @@ maestro-cli update-agent <agent-id> --clear-env
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
 
+# Review native provider translation before applying it (desktop required)
+maestro-cli update-agent <agent-id> --provider codex --dry-run --json
+
+# Apply the reviewed plan, then inspect its operation state
+maestro-cli update-agent <agent-id> --provider codex --migration-plan <plan-id> --accept-translation-limitations --json
+maestro-cli update-agent <agent-id> --migration status --migration-plan <plan-id> --json
+
+# Opt a Codex agent into the experimental app-server transport (enables steering)
+maestro-cli update-agent <agent-id> --codex-transport app-server
+
 # Update SSH execution config (use "none" to revert to local)
 maestro-cli update-agent <agent-id> --ssh-remote <remote-id> --ssh-cwd /remote/workdir
 maestro-cli update-agent <agent-id> --ssh-remote none
@@ -531,29 +577,37 @@ maestro-cli update-agent <agent-id> --sync-history-to-remote true
 
 The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update moves the agent as a whole: the working directory, the project root the Files panel and Edit dialog read, and an Auto Run folder that lives inside the old directory all follow the new path (an Auto Run folder elsewhere is left where you put it). Provider conversations stored under the old path may not resume from the new one. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the agent is busy or its process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
 
-For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api).
+For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api). `--codex-transport` only carries meaning for Codex agents: `exec` (the default) runs `codex exec`, and `app-server` is an experimental opt-in that lets a running chat turn be steered, on this machine or an SSH remote (which needs a `codex` there that has `app-server`). Image, Auto Run, and Cue turns keep using `codex exec` either way.
 
-| Flag                              | Description                                                                                                                                        | Default |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>`                | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                                              | -       |
-| `-d, --cwd <path>`                | New working directory (resolved to absolute). Agent must be stopped                                                                                | -       |
-| `--ssh-remote <id>`               | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                                              | -       |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote. Agent must be stopped                                                                                | -       |
-| `--sync-history-to-remote <bool>` | Sync history entries to `.maestro/history/` on the remote host                                                                                     | -       |
-| `--nudge <message>`               | Nudge message appended to every message. Empty string clears                                                                                       | -       |
-| `--new-session-message <message>` | Message prefixed to the first message of new sessions. Empty string clears                                                                         | -       |
-| `--custom-path <path>`            | Override the agent binary path. Empty string clears                                                                                                | -       |
-| `--custom-args <args>`            | Custom CLI arguments. Empty string clears                                                                                                          | -       |
-| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                                                     | -       |
-| `--clear-env`                     | Clear all per-agent environment variables                                                                                                          | -       |
-| `--model <model>`                 | Model override (e.g. sonnet, opus). Empty string clears                                                                                            | -       |
-| `--effort <level>`                | Effort/reasoning level override. Empty string clears                                                                                               | -       |
-| `--context-window <size>`         | Context window size in tokens. `0` or `none` clears                                                                                                | -       |
-| `--token-source <mode>`           | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                     | -       |
-| `--maestro-p-path <path>`         | Override the maestro-p binary path. Empty string clears                                                                                            | -       |
-| `--provider <type>`               | Switch the agent's provider. Destructive: resets tabs and clears provider config. Requires `--force`. Cannot be combined with other settings edits | -       |
-| `--force`                         | Confirm a destructive change (required for `--provider`)                                                                                           | -       |
-| `--json`                          | Machine-readable JSON output                                                                                                                       | -       |
+`--provider` uses the desktop's native conversation translation flow. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions, live evidence, and remaining limitations.
+
+| Flag                               | Description                                                                                                           | Default |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>`                 | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                 | -       |
+| `-d, --cwd <path>`                 | New working directory (resolved to absolute). Agent must be stopped                                                   | -       |
+| `--ssh-remote <id>`                | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                 | -       |
+| `--ssh-cwd <path>`                 | Working directory override on the SSH remote. Agent must be stopped                                                   | -       |
+| `--sync-history-to-remote <bool>`  | Sync history entries to `.maestro/history/` on the remote host                                                        | -       |
+| `--nudge <message>`                | Nudge message appended to every message. Empty string clears                                                          | -       |
+| `--new-session-message <message>`  | Message prefixed to the first message of new sessions. Empty string clears                                            | -       |
+| `--custom-path <path>`             | Override the agent binary path. Empty string clears                                                                   | -       |
+| `--custom-args <args>`             | Custom CLI arguments. Empty string clears                                                                             | -       |
+| `--env <KEY=VALUE>`                | Set an environment variable (repeatable; replaces the env map)                                                        | -       |
+| `--clear-env`                      | Clear all per-agent environment variables                                                                             | -       |
+| `--model <model>`                  | Model override (e.g. sonnet, opus). Empty string clears                                                               | -       |
+| `--effort <level>`                 | Effort/reasoning level override. Empty string clears                                                                  | -       |
+| `--context-window <size>`          | Context window size in tokens. `0` or `none` clears                                                                   | -       |
+| `--token-source <mode>`            | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                        | -       |
+| `--maestro-p-path <path>`          | Override the maestro-p binary path. Empty string clears                                                               | -       |
+| `--codex-transport <transport>`    | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only | -       |
+| `--provider <type>`                | Translate native conversations to another provider (desktop required)                                                 | -       |
+| `--dry-run`                        | Plan translation without native writes; requires `--provider`                                                         | -       |
+| `--accept-translation-limitations` | Accept the reported conversion limits; blocked plans remain blocked                                                   | -       |
+| `--migration <action>`             | Plan, apply, inspect status, recover, or roll back a migration                                                        | -       |
+| `--migration-plan <id>`            | Apply a reviewed plan or inspect, recover, or roll back a specific operation                                          | -       |
+| `--translation-resource <path>`    | Include one selected user resource; repeatable, without importing account-global data                                 | -       |
+| `--force`                          | Alias for `--accept-translation-limitations`                                                                          | -       |
+| `--json`                           | Machine-readable JSON output                                                                                          | -       |
 
 The flag table below covers `create-agent`:
 
@@ -669,6 +723,30 @@ Notes on behavior:
 | ------------- | --------------------------------------------------------- | ------- |
 | `-f, --force` | Delete even if the group still has agents (ungroups them) | -       |
 | `--json`      | Machine-readable JSON output                              | -       |
+
+### Moving Agents and Groups Between Windows (`window`)
+
+The CLI half of the Left Bar's **Move to Window** menus. `move-agent` carries one agent with its worktrees; `move-group` carries every agent in a group (and its subgroups when Groups+ nesting is on), gathering a group that is split across windows into one. The primary window answers through the same code path as a click, so the same rule applies: a move that would leave the main window with no agents is refused.
+
+```bash
+# See which windows exist and what each holds
+maestro-cli window list
+
+# Pull a whole group out into a new window
+maestro-cli window move-group <group-id> --to new
+
+# Bring an agent back to the main window, or into window 2 / a named window
+maestro-cli window move-agent <agent-id> --to main
+maestro-cli window move-agent <agent-id> --to 2
+maestro-cli window move-agent <agent-id> --to "Research"
+```
+
+`--to` takes `new`, `main`, a window number (as shown by `window list` and the Left Bar badge), a window id, or a custom window name. Agent and group IDs accept the usual partial-ID resolution. Moving onto the window that already holds everything succeeds and moves nothing.
+
+| Flag            | Description                                            | Default |
+| --------------- | ------------------------------------------------------ | ------- |
+| `--to <window>` | Destination (required for `move-agent` / `move-group`) | -       |
+| `--json`        | Machine-readable JSON output                           | -       |
 
 ### Creating Worktree Agents
 
@@ -876,8 +954,8 @@ prints a `maestro://session/<agent-id>/tab/<tab-id>` deep link that reopens it.
 Use it when an orchestrating agent needs to launch a worker the user can watch;
 use the headless default for CI and scripting.
 
-`--visible` **fails closed**. If the desktop app is not reachable it exits with
-`MAESTRO_NOT_RUNNING` rather than quietly running headlessly, because a silent
+`--visible` **fails closed**. If the desktop app is not reachable it reports
+`MAESTRO_NOT_RUNNING` and exits `3` rather than quietly running headlessly, because a silent
 fallback is invisible in exactly the surface you were pointing at. Other stable
 failure codes: `AGENT_BUSY` (the agent already has an Auto Run going - pass
 `--wait` to queue instead), `AUTO_RUN_DISABLED`, `SESSION_NOT_FOUND`,
@@ -1118,9 +1196,47 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`).
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`, and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`.
 
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
+
+### MaestroRun (macOS)
+
+Set up [MaestroRun](./maestro-run), the signed launcher that holds one Full Disk Access grant for your scheduled scripts. Each verb takes the same path as the matching button on the MaestroRun tile in Settings. The app must be running, and the plugin must be on (`maestro-cli encore enable maestroRun`).
+
+```bash
+maestro-cli maestro-run status               # installed version, signature, Full Disk Access
+maestro-cli maestro-run status --check-latest --json
+maestro-cli maestro-run install              # install the newest release for this Mac, or update
+maestro-cli maestro-run grant                # open the Full Disk Access list and watch for the switch
+maestro-cli maestro-run grant --reveal       # also show MaestroRun.app in Finder
+```
+
+`grant` cannot switch the permission on: macOS has no prompt for Full Disk Access, so you flip the switch in System Settings and `status` reports `ready` once you have. These verbs set MaestroRun up. To run a script, use the launcher itself, at the path `status` prints.
+
+### Quick Chat
+
+Drive the [Quick Chat](./quick-chat) window, the floating chat summoned by a system-wide hotkey. Each verb takes the same path as the matching button in the window. The app must be running.
+
+```bash
+maestro-cli quick-chat toggle                # what the hotkey does: open, focus, or close
+maestro-cli quick-chat send "summarize the last commit"
+maestro-cli quick-chat send "what broke?" --image shot.png   # attach images, like a paste in the window
+maestro-cli quick-chat status --json         # window state, agent, mode, and each message with the tab it went to
+maestro-cli quick-chat keep                  # keep the current chat as a visible tab ("keep off" undoes it)
+maestro-cli quick-chat pin                   # float the window on top ("pin off" lets it fall behind)
+maestro-cli quick-chat thinking on           # show the agent's reasoning until the answer arrives (sticky keeps it, off hides it)
+maestro-cli quick-chat tab new               # next message to a new tab; or a tab id from status, or auto
+maestro-cli quick-chat reveal [message-id]   # open a message's tab in Maestro (default: the latest)
+maestro-cli quick-chat new-tab [message-id]  # send a message to a new tab instead (queued, or wrong tab)
+maestro-cli quick-chat font in               # bigger conversation text (out, reset, or a size such as 120%)
+maestro-cli quick-chat new                   # start over; hidden tabs an ephemeral chat created are deleted
+maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)
+maestro-cli quick-chat stop                  # stop replies in progress and withdraw queued messages
+maestro-cli quick-chat history               # recent chats, numbered, newest first
+maestro-cli quick-chat recall 2              # bring one back: its agent, tab, and messages (number, id, or id prefix)
+maestro-cli quick-chat bounds --width 640 --height 520   # resize or move the window (remembered)
+```
 
 ### Custom Theme Palette
 
@@ -1160,6 +1276,8 @@ Each agent (Claude Code, Codex, OpenCode, Factory Droid) can have its own config
 
 <Info>
 `settings agent set` writes the per-agent-type configuration store (defaults applied to newly created agents and headless CLI spawns). To change the settings of a specific existing agent shown in the Left Bar - its nudge message, model, env vars, Claude token source, and so on - use [`update-agent`](#creating-updating-and-removing-agents) instead, which writes that agent's live desktop Session.
+
+`settings agent list` and `settings agent get` also accept an agent ID (or a unique prefix) in place of a provider type. They then read that agent's own settings, the same fields `update-agent` writes and `show-agent` reports: `codexTransport`, `tokenSource`, `customModel`, `nudgeMessage`, and so on. `set` and `reset` refuse an agent ID and point you at `update-agent`.
 </Info>
 
 ```bash
@@ -1172,6 +1290,9 @@ maestro-cli settings agent list claude-code
 # Get a specific agent config value
 maestro-cli settings agent get codex model
 maestro-cli settings agent get claude-code customPath
+
+# Read one setting of a specific agent (by agent ID)
+maestro-cli settings agent get <agent-id> codexTransport
 
 # Set agent config values
 maestro-cli settings agent set codex contextWindow 128000
@@ -1190,14 +1311,15 @@ maestro-cli settings agent reset codex model
 
 **Common agent config keys:**
 
-| Key               | Type   | Description                                      |
-| ----------------- | ------ | ------------------------------------------------ |
-| `customPath`      | string | Custom path to the agent CLI binary              |
-| `customArgs`      | string | Additional CLI arguments                         |
-| `customEnvVars`   | object | Extra environment variables                      |
-| `model`           | string | Model override (e.g., `gpt-5.3-codex`, `o3`)     |
-| `contextWindow`   | number | Context window size in tokens                    |
-| `reasoningEffort` | string | Reasoning effort level (`low`, `medium`, `high`) |
+| Key                | Type   | Description                                                                                                       |
+| ------------------ | ------ | ----------------------------------------------------------------------------------------------------------------- |
+| `customPath`       | string | Custom path to the agent CLI binary                                                                               |
+| `customArgs`       | string | Additional CLI arguments                                                                                          |
+| `customEnvVars`    | object | Extra environment variables                                                                                       |
+| `model`            | string | Model override (e.g., `gpt-5.3-codex`, `o3`)                                                                      |
+| `contextWindow`    | number | Context window size in tokens                                                                                     |
+| `reasoningEffort`  | string | Reasoning effort level (`low`, `medium`, `high`)                                                                  |
+| `reasoningSummary` | string | Codex only: reasoning shown in Thinking (`auto`, `concise`, `detailed`, `none`); empty inherits the Codex default |
 
 <Info>
 Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately - it's as if you toggled the setting in the Settings modal yourself.
@@ -1274,7 +1396,7 @@ replace the set outright. Passing an empty string to `-u` or `-k` clears it.
 
 A command-line `-o` outranks `~/.ssh/config`, so `--ssh-option` is the only way
 to change one of Maestro's connection defaults (`ConnectTimeout`, `BatchMode`,
-and friends). `list-ssh-remotes --json` and `update-ssh-remote --json` both
+and friends). `list ssh-remotes --json` and `update-ssh-remote --json` both
 report `resolvedSshOptions`, the full merged set `ssh` actually receives, which
 is what answers "did my `ConnectTimeout` take effect?". See
 [SSH Remote Execution](/ssh-remote-execution) for the reserved keys and the
@@ -1330,6 +1452,12 @@ maestro-cli playbook <playbook-id> --json
 {"type":"complete","timestamp":...,"success":true,"totalTasksCompleted":5,"totalElapsedMs":60000,"totalCost":0.05}
 ```
 
+If the run is interrupted (Ctrl+C or SIGTERM), the agent turn in flight is stopped gracefully and the stream ends with a `complete` event carrying `"stopped":true`. The interrupted task is recorded as "interrupted" rather than failed, and the process exits with code `130`. A second Ctrl+C exits immediately. `maestro-cli playbook`, `maestro-cli run-doc` and `maestro-cli goal-run` all behave this way; a goal run ends with `exitReason: "stopped-by-user"`.
+
+```json
+{"type":"complete","timestamp":...,"success":false,"totalTasksCompleted":2,"totalElapsedMs":31000,"stopped":true}
+```
+
 The `send` command always outputs JSON (no `--json` flag needed).
 
 ### Desktop Integration
@@ -1377,19 +1505,36 @@ Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Dir
 Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties), and a path outside every agent's directory is an error. Pass `--agent <id>` to name the agent yourself, which is also how you open a file that lives nowhere near a project.
 
 ```bash
-maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch]
+maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch] [--queue]
 ```
 
-| Flag               | Description                                                                     |
-| ------------------ | ------------------------------------------------------------------------------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)              |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent |
-| `--focus`          | Switch to the file after opening it (default)                                   |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there              |
+| Flag               | Description                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               |
+| `--focus`          | Switch to the file after opening it (default)                                                 |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback |
+
+A folder has no preview, so `open-file <folder>` reveals it in the agent's Files panel instead: the Right Bar opens on the Files tab, every ancestor and the folder itself expand, and its row is selected. Clicking a folder link in the chat does the same. `--background` and `--no-switch` expand and select without moving the view. A folder outside the agent's file tree cannot be revealed there.
 
 This is also the verb that plays media. A local audio or video file does not become a tab at all: it goes to the [floating media player](/media-player), so `open-file ~/Music/track.mp3 --agent <id>` is how you or an agent starts playback without handing the file to your system's default player. There is no separate `play` command. `--background` has nothing to suppress in that case, since playback is audible either way, and a file on an SSH remote has no stream to play, so it falls back to the ordinary binary-file path.
 
 `--no-switch` and `--background` are different asks, and this is the one command that offers both. `--no-switch` keeps the Left Bar selection where it is but still activates the new tab inside the target agent - so if you were already on that agent, your view still changes. `--background` changes nothing rendered anywhere. Passing both is fine; `--background` is strictly stronger and wins. If `--no-switch` is what you reached for, `--background` is probably what you meant.
+
+Audio and video never open as a tab: they go to the [floating media player](/media-player), and a plain `open-file` starts playing. `--queue` puts the file in the player without pressing play. If nothing is loaded, the file loads paused and the player appears; if something is already loaded, the file lines up behind it and nothing is interrupted. A minimized player comes back either way. It never switches agents, since the player is app-wide. To hand someone a playlist to start themselves, queue each file in order:
+
+```bash
+for f in episodes/*.mp3; do maestro-cli open-file "$f" --queue; done
+```
+
+`--queue` on a file that is not audio or video is an error.
+
+Pass an `http://` or `https://` URL instead of a path to stream it in the player. This covers progressive MP4 (H.264 video, AAC audio) and plain audio files such as MP3 or M4A. Adaptive and live formats (HLS `.m3u8`, DASH, RTSP, RTMP) are not supported. A URL never becomes a tab and never switches agents; it is filed under `--agent`, or the agent that owns your shell's current directory. `--queue` works the same as for a file:
+
+```bash
+maestro-cli open-file https://example.com/clip.mp4 --queue
+```
 
 #### Open a Browser Tab
 
@@ -1565,12 +1710,12 @@ Refresh the Auto Run document list after creating or modifying auto-run document
 maestro-cli refresh-auto-run [--agent <id>] [--background | --focus]
 ```
 
-Unflagged, this **switches to the target agent** (that switch is how an off-screen agent gets refreshed at all) and flashes the document count on screen. `--background` gives you neither: an agent already on screen is refreshed silently, and an off-screen one is left alone entirely, since its documents are re-read the moment you switch to it anyway.
+Unflagged (or with `--background`), this never moves the view: an agent already on screen is refreshed silently, and an off-screen one is left alone, since its documents are re-read the moment you switch to it anyway. `--focus` **switches to the target agent** and flashes the document count on screen. This is the one verb whose default is background, because a focusing refresh only ever moved you when you were looking at a different agent.
 
-| Flag           | Description                                                        |
-| -------------- | ------------------------------------------------------------------ |
-| `--background` | Refresh without switching to the target agent, and without a flash |
-| `--focus`      | Switch to the target agent while refreshing (the default)          |
+| Flag           | Description                                                                      |
+| -------------- | -------------------------------------------------------------------------------- |
+| `--background` | Refresh without switching to the target agent, and without a flash (the default) |
+| `--focus`      | Switch to the target agent while refreshing, and flash the count                 |
 
 #### Notifications
 
@@ -1760,6 +1905,12 @@ ends. Omit them to use the agent default. They are honored in worktree mode too,
 without changing the child worktree session's own configured model. See
 [Per-run model override](#per-run-model-override) for the full picture.
 
+Every document must sit inside the agent's Auto Run folder. A saved playbook
+stores each one relative to that folder, so `--save-as` and `--launch` both
+refuse a document outside it and name the file. When a saved playbook names a
+document that no longer exists, `maestro-cli playbook` fails with
+`DOCUMENT_NOT_FOUND` and lists the missing paths.
+
 Worktree mode reuses the desktop app's Auto Run pipeline: the app creates the
 worktree (or reuses an existing one on the same repo), checks out the requested
 branch, dispatches the agent inside the worktree, and - when `--create-pr` is
@@ -1788,15 +1939,33 @@ maestro-cli remove-playbook <agent-id> <playbook-id>
 
 The filename for `reset-auto-run-tasks` is relative to the agent's Auto Run folder; absolute paths and `..` traversal are rejected.
 
+### Steering a Running Auto Run
+
+A steering note changes a run's direction without stopping it: the note parks until the run dispatches its next task, then opens that task's prompt. These are the CLI half of the **Steer Auto Run** button in the Thought Stream. See [Steering a Run in Flight](autorun-playbooks.md#steering-a-run-in-flight) for what the agent is told to do with a note.
+
+```bash
+# Send a note; it is delivered at the start of the next task
+maestro-cli steer-auto-run send "Use the v3 endpoint for the rest of these tasks" -a <agent-id>
+
+# Read the notes still waiting, and each delivered note with its task's reply
+maestro-cli steer-auto-run list -a <agent-id>
+maestro-cli steer-auto-run list -a <agent-id> --json   # includes each full reply
+
+# Take back a note no task has read yet (accepts a unique id prefix)
+maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
+```
+
+`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
+
 ### Checking Status
 
-Check if the Maestro desktop app is running and reachable:
+Check if the Maestro desktop app, or a [headless host](#headless-host-maestro-cli-host), is running and reachable:
 
 ```bash
 maestro-cli status
 ```
 
-Returns the app version, uptime, and connection status.
+Returns the port and agent count, and names a headless host as one. With nothing running, it says so and points at `maestro-cli host start`.
 
 ### Diagnosing Problems (`doctor`)
 
@@ -1835,6 +2004,106 @@ maestro-cli completions fish > ~/.config/fish/completions/maestro-cli.fish
 ```
 
 The script is generated by introspecting the live command tree, so regenerating it after a CLI upgrade picks up new commands and flags automatically. The full command list is also available as `maestro-cli reference` (Markdown or `--format json`); [docs/cli-reference.md](cli-reference.md) is generated from it via `npm run gen:cli-reference`.
+
+## Headless Host (`maestro-cli host`)
+
+`maestro-cli host` runs Maestro's runtime with no desktop app: on a server, in a container, or on a laptop where the app is closed. The host owns the data directory the way the desktop does and serves the same WebSocket bridge, so `maestro-cli` commands attach to it exactly as they attach to the app. It runs:
+
+- **Agents**: create, update, rename, move between groups, and remove them.
+- **Chat turns** sent with `maestro-cli dispatch` (including `--new-tab` and `--queue`). A message to a busy agent waits its turn in the agent's queue instead of being turned away.
+- **Auto Run**: `maestro-cli auto-run --launch` and goal-driven runs, with `auto-run stop`, `resume`, `skip`, and `abort`. A run keeps going after the terminal that started it closes.
+- **Group chats** and **consults** between agents.
+- **Maestro Cue**, when Cue is on in the shared settings and no other engine holds the Cue lock. This is the only way to run Cue subscriptions with `action: autorun` without the desktop: `maestro-cli cue engine start` has no runtime to run an Auto Run in and fails those runs.
+
+```bash
+# Start a detached host on the default data directory
+maestro-cli host start
+
+# Is it up, and what is it doing?
+maestro-cli host status
+
+# Stop it (refuses while work is in flight)
+maestro-cli host stop
+
+# Wait up to 10 minutes for the work in flight, then stop
+maestro-cli host stop --wait 600
+```
+
+### `host start`
+
+Starts the host as a detached process and returns once it is listening. The host keeps running after the shell that started it exits.
+
+| Flag                     | Description                                                                                                                     | Default                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `--data-dir <path>`      | Maestro data directory to serve                                                                                                 | resolved like the desktop app |
+| `--dev`                  | Use the development data directory                                                                                              | -                             |
+| `--port <port>`          | Port to listen on (always `127.0.0.1`)                                                                                          | any free port                 |
+| `--stop-grace <seconds>` | On SIGTERM or SIGINT, wait this long for the work in flight before stopping. `0` stops at once                                  | `30`                          |
+| `--foreground`           | Serve in this process instead of detaching. What the detached child runs, and what a service manager such as systemd should run | -                             |
+| `--json`                 | Output as JSON (for scripting)                                                                                                  | -                             |
+
+`start` reports the pid, the port, the log file, and where Cue stands. A Cue that did not start does not fail the start: the host still serves turns and Auto Runs, and the output says Cue is not running and why.
+
+**Signals.** SIGTERM or SIGINT (`systemctl stop`, `systemctl restart`, Ctrl+C on `--foreground`) drains the host: it waits up to `--stop-grace` seconds for chat turns, Auto Runs, group chat rounds, consults, and Cue runs to finish, then stops. A second signal stops it at once. New work is not turned away during the wait, so work that starts in it is waited for too, up to the same deadline. Keep the grace below your service manager's own stop timeout (systemd sends SIGKILL after 90 seconds by default).
+
+### `host status`
+
+Reports the host's pid, uptime, version, the holder of the data directory's lock, how many clients are attached, the work in flight, and the Cue state. With no host it exits with code `3` and names whoever holds the lock, if anyone does (a TUI hosting in its own process, say).
+
+| Flag                | Description                        | Default                       |
+| ------------------- | ---------------------------------- | ----------------------------- |
+| `--data-dir <path>` | Maestro data directory             | resolved like the desktop app |
+| `--dev`             | Use the development data directory | -                             |
+| `--json`            | Output as JSON (for scripting)     | -                             |
+
+### `host stop`
+
+Asks the host to stop and waits for its process to exit. With work in flight (a chat turn, an Auto Run, a group chat round, a consult, or a Cue run) it refuses, names the work, and exits `1`, unless `--wait` or `--force` says otherwise.
+
+| Flag                | Description                                                                                                                                                        | Default                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
+| `--data-dir <path>` | Maestro data directory                                                                                                                                             | resolved like the desktop app |
+| `--dev`             | Use the development data directory                                                                                                                                 | -                             |
+| `--wait [seconds]`  | Instead of refusing, wait for the work in flight to finish, then stop. If work is still running at the deadline, exit `5` and leave the host running. Never forces | `300` when given no value     |
+| `--force`           | Stop even with work in flight. A running Auto Run records how it ended first                                                                                       | -                             |
+| `--json`            | Output as JSON (for scripting)                                                                                                                                     | -                             |
+
+### One Host Per Data Directory
+
+A data directory has one owner at a time: a lock file (`maestro-runtime.lock`) in the directory says who. `host start` refuses a directory the desktop app or another host already holds, and says which. The desktop app will not open on a directory a headless host holds: it shows a dialog naming the host and quits, because loading its stores on top of the host's would overwrite the host's writes. Stop the host with `maestro-cli host stop`, then open Maestro.
+
+The data directory is resolved the way the desktop app resolves it (under `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows). `--data-dir <path>` or the `MAESTRO_USER_DATA` environment variable points the host somewhere else, and every other `maestro-cli` command honors the same variable, so set it in the environment of the commands that should reach that host. A directory that settings sync through a custom sync path is refused: the lock cannot see another machine writing there.
+
+The host's log is `logs/maestro-host.log` inside the data directory. When `start` fails before the host is ready, it prints the last lines of that log.
+
+### What the Host Does Not Do
+
+The host refuses these in so many words, and nothing is started when it does:
+
+| Request                                                         | Why                                                                                      |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `update-agent --provider` or `--migration`                      | Native conversation translation requires the desktop app                                 |
+| Images on a turn                                                | Not sent from a headless host yet. Send the message without them, or use the desktop app |
+| A terminal-mode command                                         | The host has no terminal. Only AI messages can be sent to it                             |
+| `dispatch --notify-on-complete`                                 | The host cannot arm a completion callback. Dispatch without it and poll the tab          |
+| `dispatch --held`                                               | The host's queue would run the message as soon as the agent is free                      |
+| Auto Run for an agent on an SSH remote                          | Runs on the desktop for now                                                              |
+| `auto-run --worktree`, and Cue Auto Runs that target a worktree | The desktop app creates the worktree and its branch                                      |
+| `auto-run --save-as`                                            | Playbooks are saved by the desktop app                                                   |
+| `auto-run` without `--launch`                                   | The host has no Auto Run panel to fill                                                   |
+
+Commands that drive the desktop's window, such as opening a file or a browser tab, focusing an agent or tab, or raising a toast, fail with "The headless Maestro host (`maestro-cli host`) does not support the '...' command".
+
+### Installing on a Machine With No Desktop
+
+The host is the CLI bundle, run with Node.js. On a machine without the Maestro app:
+
+- **Node.js 22 or newer.**
+- **The CLI bundle with its prompts**: copy `maestro-cli.js` together with the `prompts/core` directory beside it. Without the prompts the host refuses to start, because a turn would have no Maestro system prompt and an Auto Run could not run.
+- **`better-sqlite3` built for that Node**, installed next to the bundle: `npm install --prefix <dir of maestro-cli.js> better-sqlite3`. The host records usage and Cue history in SQLite.
+- **The provider CLIs** your agents use (Claude Code, Codex, OpenCode, and so on), on the host's `PATH`.
+
+To keep the host running across reboots, have your service manager run `maestro-cli host start --foreground` (with `--data-dir` if the directory is not the default) and stop it with SIGTERM, which drains as described above.
 
 ## Cue Automation
 
@@ -1915,6 +2184,9 @@ maestro-cli cue schedule --cancel standup
 | `--pipeline <name>`        | Pipeline to file the task under (default: `Tasks`)                       |
 | `--grace-minutes <n>`      | One-shot only: how late a missed fire may still run (default 360)        |
 | `--keep-on-failure`        | One-shot only: keep the task on disk after a failed run                  |
+| `--tier <level>`           | Model tier for the prompt run: `low`, `medium`, `high`                   |
+| `--model <id>`             | Exact model id for the prompt run (instead of `--tier`)                  |
+| `--effort <level>`         | Effort for the prompt run: `low`, `medium`, `high`                       |
 | `--json`                   | Output as JSON (for scripting)                                           |
 
 Notes:
@@ -1923,10 +2195,50 @@ Notes:
 - A task with both `--prompt` and `--notify` becomes two subscriptions sharing one fire time (`<name>-prompt` and `<name>-notify`).
 - `--agent` is a hard scope on `--cancel`, `--reschedule`, `--pause`, and `--resume`. When one name exists on two agents the command refuses to guess and lists the candidates.
 - One-shot tasks delete themselves from the YAML after they fire. Repeating tasks stay until you cancel them.
+- `--tier`, `--model`, and `--effort` apply to the prompt run and need `--prompt`. To change them on a task that already exists, use `cue model` below.
+
+### Setting a Subscription's Model
+
+`cue model` shows or changes the model one Cue subscription runs on: a model tier or an exact model, plus an effort level. It works on any subscription that runs an agent, including scheduled tasks and pipeline steps, and it is the CLI twin of the **Model** and **Effort** selectors on a Pipeline Graph agent node and in the Scheduled Tasks form. Like `cue schedule`, it edits the agent's `.maestro/cue.yaml` directly, so it works with the desktop app closed.
+
+```bash
+# Show the current choice and what it resolves to for that agent's provider
+maestro-cli cue model nightly-review
+
+# Run a step on the provider's top model at low effort
+maestro-cli cue model nightly-review --tier high --effort low
+
+# Pin an exact model (for providers with no tier mapping, such as Codex)
+maestro-cli cue model triage --model gpt-5.5-codex
+
+# Go back to the agent's own model and effort
+maestro-cli cue model nightly-review --clear-model --clear-effort
+```
+
+| Flag                       | Description                                                       |
+| -------------------------- | ----------------------------------------------------------------- |
+| `--tier <level>`           | Model tier: `low`, `medium`, `high`, mapped per provider          |
+| `--model <id>`             | Exact model id, passed to the agent as-is                         |
+| `--effort <level>`         | Effort: `low`, `medium`, `high`, mapped to the provider's ladder  |
+| `--clear-model`            | Remove the tier or model and use the agent's own model            |
+| `--clear-effort`           | Remove the effort and use the agent's own effort                  |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)         |
+| `--json`                   | Output as JSON (for scripting)                                    |
+| `--data-dir <path>`        | Read agents from this Maestro data directory (must already exist) |
+
+Notes:
+
+- On a server, pass `--data-dir` (or set `MAESTRO_USER_DATA`) so the command reads the same agents the Cue engine runs. A running engine picks the edited `cue.yaml` up on its own.
+- With no setting flag the command only reads. Its output names the stored choice and the model and effort the run resolves to.
+- `--tier` and `--model` are two spellings of one choice. Setting one removes the other.
+- When the agent's provider cannot honor a tier or an effort, the command still saves it and prints a warning. The run then uses the agent's own value.
+- Subscriptions with `action: command` or `action: notify` run no agent, so the command refuses to set a model on them.
 
 ### Triggering a Subscription
 
-Manually trigger a Cue subscription by name, bypassing its normal event conditions:
+Manually trigger a Cue subscription by name, bypassing its normal event conditions.
+
+A subscription in a pipeline fires together with its siblings: every subscription in the same pipeline whose trigger settings (event, schedule, interval, filter, and so on) are identical to its own. That is what a real tick does, since the pipeline editor writes a fan-out to several targets as one subscription per target, each repeating the trigger. To fire one subscription alone, give it a pipeline of its own or trigger settings that differ from the others'. A chain step (`agent.completed`), a subscription with no pipeline, and a trigger with `--prompt` fire only the named subscription.
 
 ```bash
 # Trigger a subscription

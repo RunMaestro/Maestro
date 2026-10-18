@@ -101,3 +101,52 @@ export function isCoarsePointer(): boolean {
 		return false;
 	}
 }
+
+/** `pointerType` of the most recent pointer to enter or press anything, or null before the first. */
+let lastPointerType: string | null = null;
+let pointerTypeTrackingInstalled = false;
+
+/** Module-scoped so a second `addEventListener` with it is deduped by the DOM. */
+function recordPointerType(e: PointerEvent): void {
+	lastPointerType = e.pointerType || null;
+}
+
+/**
+ * Start recording which kind of pointer is driving the page. Idempotent, and
+ * a no-op outside a browser. Listens at capture on `document`, so it sees the
+ * pointer event before any element handler sees the mouse event that follows.
+ */
+export function installPointerTypeTracking(): void {
+	if (pointerTypeTrackingInstalled || typeof document === 'undefined') return;
+	pointerTypeTrackingInstalled = true;
+	document.addEventListener('pointerover', recordPointerType, { capture: true, passive: true });
+	document.addEventListener('pointerdown', recordPointerType, { capture: true, passive: true });
+}
+
+/**
+ * True when the mouse event being handled right now was emulated from a touch
+ * rather than produced by a real mouse.
+ *
+ * iOS answers every tap with the compatibility sequence mouseover -> mouseenter
+ * -> mousedown -> click, and never follows it with a mouseleave. A hover
+ * affordance wired to `mouseenter` therefore arms on every tap and then stays
+ * up, because nothing ever tells it the "hover" ended. Pointer events fire
+ * BEFORE their compatibility mouse events, so the pointer type recorded by
+ * `installPointerTypeTracking` describes the mouse event currently being
+ * dispatched. Asking the primary pointer instead (`isCoarsePointer`) would be
+ * wrong on a hybrid device: an iPad with a trackpad, or a touchscreen laptop,
+ * has both, and each event has to be judged by the pointer that produced it.
+ *
+ * Before any pointer event has been seen (tracking not installed, or a browser
+ * without Pointer Events) this falls back to the primary pointer.
+ */
+export function isTouchEmulatedMouseEvent(): boolean {
+	if (lastPointerType === null) return isCoarsePointer();
+	return lastPointerType === 'touch' || lastPointerType === 'pen';
+}
+
+/** Test-only: forget the recorded pointer type and listener state. */
+export function resetPointerTypeTrackingForTests(): void {
+	lastPointerType = null;
+	pointerTypeTrackingInstalled = false;
+}

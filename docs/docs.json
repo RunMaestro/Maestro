@@ -55,6 +55,7 @@
 					"agent-collaboration",
 					"group-chat",
 					"cross-agent-mentions",
+					"codex-directives",
 					"image-annotator",
 					"media-player",
 					"file-formats",
@@ -87,8 +88,12 @@
 					"usage-dashboard",
 					"symphony",
 					"concerto",
+					"throughput-gauge",
+					"quick-chat",
 					"pianola",
 					"coworking",
+					"computer-history",
+					"maestro-run",
 					{
 						"group": "Maestro Cue",
 						"icon": "bolt",
@@ -98,7 +103,9 @@
 							"maestro-cue-configuration",
 							"maestro-cue-events",
 							"maestro-cue-advanced",
+							"maestro-cue-server",
 							"maestro-cue-examples",
+							"maestro-cue-bundles",
 							"maestro-cue-karpathy-loop",
 							"maestro-cue-marketing-example"
 						]
@@ -107,7 +114,7 @@
 			},
 			{
 				"group": "Providers & CLI",
-				"pages": ["provider-notes", "multi-provider", "cli", "cli-reference"]
+				"pages": ["provider-notes", "multi-provider", "cli", "cli-reference", "maestro-lib"]
 			},
 			{
 				"group": "Integrations",

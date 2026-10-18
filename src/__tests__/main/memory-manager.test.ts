@@ -1,3 +1,7 @@
+import {
+	analyzeMemoryLinks,
+	resolveMemoryRepositoryRoot,
+} from '../../shared/maestro-lib/translation/memory';
 /**
  * Tests for memory-manager.ts - project memory CRUD operations.
  *
@@ -36,6 +40,33 @@ describe('memory-manager', () => {
 		}
 	});
 
+	it('resolves repository memory identity separately from worktree session cwd', async () => {
+		const repositoryRoot = path.join(tempHome, 'repo');
+		const worktree = path.join(tempHome, 'repo-worktrees', 'branch');
+		expect(
+			await resolveMemoryRepositoryRoot(worktree, async () => path.join(repositoryRoot, '.git'))
+		).toBe(repositoryRoot);
+		const plain = path.join(tempHome, 'plain');
+		expect(await resolveMemoryRepositoryRoot(plain, async () => undefined)).toBe(plain);
+	});
+	it('reads and edits the explicitly resolved translated directory without touching a native home', async () => {
+		const managed = path.join(tempHome, 'managed/memory');
+		await writeMemoryEntry(
+			'/project',
+			'MEMORY.md',
+			'Managed knowledge',
+			'codex',
+			undefined,
+			managed
+		);
+		expect(await readMemoryEntry('/project', 'MEMORY.md', 'codex', undefined, managed)).toBe(
+			'Managed knowledge'
+		);
+		expect((await listMemoryEntries('/project', 'codex', undefined, managed)).directoryPath).toBe(
+			managed
+		);
+		expect(fs.existsSync(path.join(tempHome, '.claude'))).toBe(false);
+	});
 	it('resolves the memory directory using the Claude project-path encoding', () => {
 		const projectPath = '/Users/me/Projects/My App';
 		const dir = getMemoryDirectoryPath(projectPath, 'claude-code', tempHome);
@@ -268,5 +299,21 @@ describe('memory-manager', () => {
 			const { orphans } = await findOrphanMemories(projectPath, 'claude-code', tempHome);
 			expect(orphans).toEqual(['a_note.md']);
 		});
+	});
+});
+
+describe('shared memory link discovery', () => {
+	it('resolves nested relative topics, skips web links, and retains missing-link evidence', () => {
+		const result = analyzeMemoryLinks(
+			new Map([
+				[
+					'memory/MEMORY.md',
+					'[topic](nested/topic.md) [web](https://example.test/docs.md) [missing](absent.md)',
+				],
+				['memory/nested/topic.md', 'synthetic fact'],
+			])
+		);
+		expect(result.referenced.has('memory/nested/topic.md')).toBe(true);
+		expect(result.brokenLinks).toEqual([{ source: 'memory/MEMORY.md', target: 'absent.md' }]);
 	});
 });

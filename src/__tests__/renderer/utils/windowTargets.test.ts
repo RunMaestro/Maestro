@@ -5,6 +5,9 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	buildGroupWindowMoveTargets,
+	collectGroupAgentIds,
+	resolveOwningWindowId,
 	buildWindowMoveTargets,
 	scopeSessionsToOwningWindow,
 	MAIN_WINDOW_LABEL,
@@ -159,5 +162,53 @@ describe('scopeSessionsToOwningWindow', () => {
 		const owns = (id: string) => id === 'b';
 		const scoped = scopeSessionsToOwningWindow(list, owns).map((s) => s.id);
 		expect(scoped).toEqual(['b', 'b-wt']);
+	});
+});
+
+describe('group window moves', () => {
+	const windows: WindowInfo[] = [
+		makeInfo({ id: 'p', isMain: true }),
+		makeInfo({ id: 'w2', sessionIds: ['b'] }),
+	];
+
+	it('resolves an agent to its claiming secondary, else the primary', () => {
+		expect(resolveOwningWindowId(windows, 'b')).toBe('w2');
+		expect(resolveOwningWindowId(windows, 'a')).toBe('p');
+		expect(resolveOwningWindowId([], 'a')).toBeNull();
+	});
+
+	it('marks a window as the owner only when it holds EVERY agent in the group', () => {
+		const split = buildGroupWindowMoveTargets(windows, ['a', 'b']);
+		expect(split.map((t) => [t.windowId, t.isCurrentOwner])).toEqual([
+			['p', false],
+			['w2', false],
+		]);
+		const whole = buildGroupWindowMoveTargets(windows, ['b']);
+		expect(whole.find((t) => t.windowId === 'w2')?.isCurrentOwner).toBe(true);
+	});
+
+	it('offers nothing for an empty group', () => {
+		expect(buildGroupWindowMoveTargets(windows, [])).toEqual([]);
+	});
+
+	it('collects top-level members, adding subgroups only when asked', () => {
+		const sessions = [
+			{ id: 'a', groupId: 'g' },
+			{ id: 'wt', groupId: 'g', parentSessionId: 'a' },
+			{ id: 'c', groupId: 'child' },
+			{ id: 'x', groupId: 'other' },
+			{ id: 'u' },
+		];
+		const groups = [
+			{ id: 'g' },
+			{ id: 'child', parentGroupId: 'g' },
+			{ id: 'other' },
+			// A malformed cycle must not loop forever.
+			{ id: 'loop1', parentGroupId: 'loop2' },
+			{ id: 'loop2', parentGroupId: 'loop1' },
+		];
+		expect(collectGroupAgentIds(sessions, groups, 'g', false)).toEqual(['a']);
+		expect(collectGroupAgentIds(sessions, groups, 'g', true)).toEqual(['a', 'c']);
+		expect(collectGroupAgentIds(sessions, groups, 'loop1', true)).toEqual([]);
 	});
 });

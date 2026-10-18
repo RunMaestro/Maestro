@@ -1,3 +1,4 @@
+import { requestProviderTranslation } from '../../services/providerTranslation';
 /**
  * useAppRemoteEventListeners.ts
  *
@@ -12,8 +13,16 @@ import { useEventListener } from '../utils/useEventListener';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { buildNewAgentRecord } from '../../../shared/newAgentRecord';
 import { asThinkingMode } from '../../../shared/types';
+import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
+import {
+	getRemoteMediaKind,
+	getRemoteMediaName,
+	isRemoteMediaUrl,
+	type MediaOpenMode,
+} from '../../../shared/mediaTypes';
+import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -23,7 +32,8 @@ import {
 	getTerminalTabDisplayName,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
+import type { Session, ToolType, Group, BatchRunConfig } from '../../types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
 import {
@@ -31,6 +41,7 @@ import {
 	workingDirectoryChangeBlocker,
 } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
+import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
 import { useTabStore } from '../../stores/tabStore';
 import {
 	createTabPidChangeHandler,
@@ -40,12 +51,15 @@ import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
+import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
 import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
+import { killAgentAiProcesses } from '../../services/process';
 import {
 	canCreateGroupInside,
 	canSetGroupParent,
 	removeGroupAndPromoteChildren,
+	setGroupHidden,
 	setGroupParent,
 } from '../../../shared/groupHierarchy';
 import {
@@ -53,6 +67,7 @@ import {
 	validateGroupUpdate,
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
+import { isCodexTransport } from '../../../shared/codexTransport';
 
 // ============================================================================
 // Group update helpers
@@ -93,6 +108,9 @@ function applyGroupUpdate(
 		next = setGroupParent(next, groupId, request.parentGroupId);
 	} else if (clear.has('parent')) {
 		next = setGroupParent(next, groupId, undefined);
+	}
+	if (request.hidden !== undefined) {
+		next = setGroupHidden(next, groupId, request.hidden);
 	}
 
 	return next.map((group) => {
@@ -139,7 +157,7 @@ export interface UseAppRemoteEventListenersDeps {
 			/** Optional 1-based line to jump to once the editor mounts (deep links). */
 			pendingScrollToLine?: number;
 		},
-		options?: { targetSessionId?: string; activate?: boolean }
+		options?: { targetSessionId?: string; activate?: boolean; mediaMode?: MediaOpenMode }
 	) => void;
 	/** Refresh the file tree for a session */
 	refreshFileTree: (sessionId: string) => void;
@@ -199,7 +217,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, background, switchToAgent, line } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, background, switchToAgent, mediaMode, line } = (e as CustomEvent)
+			.detail as {
 			sessionId: string;
 			filePath: string;
 			/**
@@ -214,6 +233,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			 * but still activate the tab inside the target one. Absent means switch.
 			 */
 			switchToAgent?: boolean;
+			/**
+			 * 'queue' = audio/video goes into the player's queue without starting
+			 * (`maestro-cli open-file --queue`). Absent means open-and-play.
+			 */
+			mediaMode?: MediaOpenMode;
 			/** Optional 1-based line to jump to once the file is open. Set by
 			 *  maestro://file/...#L<n> deep links. */
 			line?: number;
@@ -221,6 +245,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
 			logger.error('[Remote] Session not found for openFileTab:', undefined, sessionId);
+			return;
+		}
+		// An http(s) URL is remote media (`maestro-cli open-file <url>`). There is
+		// no file to read and no preview tab to make, so it goes straight to the
+		// player. No agent switch either: the player is app-wide, so the agent the
+		// URL was filed under is not somewhere the user needs to be.
+		if (isRemoteMediaUrl(filePath)) {
+			const request = {
+				path: filePath,
+				name: getRemoteMediaName(filePath),
+				kind: getRemoteMediaKind(filePath),
+				sessionId: session.id,
+				sessionName: session.name,
+			};
+			const store = useMediaPlaybackStore.getState();
+			if (mediaMode === 'queue') store.enqueueMedia([request]);
+			else store.openMedia(request);
 			return;
 		}
 		const sshRemoteId =
@@ -236,17 +277,27 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// a file tab outranks the AI tab in the render precedence, so activating
 		// one changes the view even when the caller stayed on the same agent.
 		// That is exactly why `--no-switch` reads like `--background` and is not.
-		if (!background && switchToAgent !== false) {
+		//
+		// Queueing media never switches agents either: the player is app-wide, so
+		// the agent the file belongs to is not somewhere the user needs to be.
+		if (!background && switchToAgent !== false && mediaMode !== 'queue') {
 			switchActiveSession(sessionId, 'open-file');
 		}
 		try {
-			const [content, stat] = await Promise.all([
-				window.maestro.fs.readFile(filePath, sshRemoteId),
-				window.maestro.fs.stat(filePath, sshRemoteId).catch(() => null),
-			]);
-			if (content !== null) {
+			const target = await readPathForOpen(filePath, sshRemoteId);
+			if (target?.kind === 'directory') {
+				// `maestro-cli open-file <folder>` reveals it in the Files panel, the
+				// same thing clicking a folder link in the chat does. Focus follows
+				// the agent switch: a background or --no-switch open stays put.
+				const focus = !background && switchToAgent !== false;
+				if (!revealPathInFileTree(sessionId, filePath, { focus })) {
+					logger.error('[Remote] Folder is outside the agent file tree:', undefined, filePath);
+				}
+				return;
+			}
+			if (target) {
+				const { content, lastModified } = target;
 				const filename = filePath.split(/[\\/]/).pop() || filePath;
-				const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : undefined;
 				handleOpenFileTab(
 					{
 						path: filePath,
@@ -256,7 +307,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						sshRemoteId,
 						pendingScrollToLine: line,
 					},
-					{ targetSessionId: sessionId, activate: !background }
+					{ targetSessionId: sessionId, activate: !background, mediaMode }
 				);
 			}
 		} catch (error) {
@@ -377,7 +428,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	useEventListener('maestro:openTerminalTab', (e: Event) => {
 		const { sessionId, config, responseChannel, background } = (e as CustomEvent).detail as {
 			sessionId: string;
-			config: { cwd?: string; shell?: string; name?: string | null; command?: string };
+			config: {
+				cwd?: string;
+				shell?: string;
+				name?: string | null;
+				command?: string;
+				inputRequired?: boolean;
+			};
 			responseChannel?: string;
 			background?: boolean;
 		};
@@ -427,14 +484,33 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// usable immediately no matter which agent is on screen.
 		//
 		// Safe to call unconditionally: the spawn dedupes in-flight calls by process
-		// id, and once the PID lands TerminalView's own `pid !== 0` check stops it
-		// spawning a second one when it later mounts.
+		// id, and the runtime initialization marker stops TerminalView spawning
+		// a second one when it later mounts, including ConPTY with PID 0.
 		const sessionForSpawn = selectSessionById(sessionId)(useSessionStore.getState());
 		if (sessionForSpawn) {
 			void spawnPtyForTab({
 				session: sessionForSpawn,
 				tab,
-				onPid: createTabPidChangeHandler(sessionId),
+				onPid: (tabId, pid) => {
+					createTabPidChangeHandler(sessionId)(tabId, pid);
+					if (config?.inputRequired) {
+						const currentSession = selectSessionById(sessionId)(useSessionStore.getState());
+						const currentIndex =
+							currentSession?.terminalTabs?.findIndex((item) => item.id === tabId) ?? -1;
+						if (!currentSession || currentIndex < 0) return;
+						const currentTab = currentSession.terminalTabs![currentIndex];
+						const tabName = getTerminalTabDisplayName(currentTab, currentIndex);
+						notifyToast({
+							color: 'yellow',
+							title: 'Terminal needs your input',
+							message: 'Your input is needed.',
+							project: currentSession.name,
+							tabName,
+							sessionId,
+							clickAction: { kind: 'open-terminal', sessionId, tabRef: tab.id },
+						});
+					}
+				},
 				onSpawnFailure: (tabId, isPersistent, message) => {
 					// No xterm to write into from here, so report through the store and a
 					// toast. Persistent tabs stay as restartable husks exactly as they do
@@ -502,27 +578,28 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		// The PTY lives in the main process and outlives its React view, so a
 		// write lands even when the owning agent is not on screen. A tab that was
-		// never rendered has no PTY at all though (pid 0), and only the ACTIVE
+		// never initialized has no PTY at all, and only the ACTIVE
 		// session has a live TerminalView that would spawn one. Waiting for a
 		// background agent would stall until the timeout for a shell that is
 		// never coming, so wait only when it can actually arrive - and never
 		// switch agents to force it, since that would yank the screen away to
 		// service a background command.
-		let pid = tab.pid;
-		if (pid === 0 && tab.state !== 'exited') {
+		let initialized = tab.ptyInitialized || tab.pid !== 0;
+		if (!initialized && tab.state !== 'exited') {
 			const isActiveSession = useSessionStore.getState().activeSessionId === owner.id;
 			if (isActiveSession) {
 				const deadline = Date.now() + 4000;
-				while (pid === 0 && Date.now() < deadline) {
+				while (!initialized && Date.now() < deadline) {
 					await new Promise((resolve) => setTimeout(resolve, 100));
-					pid =
-						(sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []).find(
-							(t) => t.id === tab.id
-						)?.pid ?? 0;
+					const current = (
+						sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []
+					).find((t) => t.id === tab.id);
+					initialized = !!current && (current.ptyInitialized || current.pid !== 0);
+					if (current?.state === 'exited') break;
 				}
 			}
 		}
-		if (pid === 0) {
+		if (!initialized || tab.state === 'exited') {
 			ack(false, {
 				error:
 					tab.state === 'exited'
@@ -718,11 +795,39 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			// Saved playbooks and launched runs both name documents relative to the
+			// Auto Run folder without `.md`, which is what every runner joins back
+			// to a path. The CLI and Cue send absolute `.md` paths, so both cases
+			// convert them here and refuse a document outside the folder by name.
+			let folderRelativeDocuments: Array<{ filename: string; resetOnCompletion?: boolean }> = [];
+			if (config.saveAsPlaybook || config.launch) {
+				const folderPath = session.autoRunFolderPath;
+				if (!folderPath) {
+					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+						success: false,
+						error: 'No Auto Run folder configured for this session',
+					});
+					return;
+				}
+				const resolved = resolveAutoRunDocumentNames(config.documents || [], folderPath);
+				if ('error' in resolved) {
+					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+						success: false,
+						error: resolved.error,
+					});
+					return;
+				}
+				folderRelativeDocuments = resolved.documents;
+			}
+
 			// Case 1: Save as playbook
 			if (config.saveAsPlaybook) {
 				const result = await window.maestro.playbooks.create(sessionId, {
 					name: config.saveAsPlaybook,
-					documents: config.documents || [],
+					documents: folderRelativeDocuments.map((doc) => ({
+						filename: doc.filename,
+						resetOnCompletion: doc.resetOnCompletion || false,
+					})),
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
 					prompt: config.prompt || '',
@@ -737,43 +842,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			// Case 2: Launch auto-run immediately
 			if (config.launch) {
-				const folderPath = session.autoRunFolderPath;
-				if (!folderPath) {
-					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
-						success: false,
-						error: 'No Auto Run folder configured for this session',
-					});
-					return;
-				}
-
-				const documents = (config.documents || []).map(
-					(doc: { filename: string; resetOnCompletion?: boolean }) => {
-						// Compute path relative to the session's autoRunFolderPath.
-						// CLI sends full absolute paths (e.g., "/path/to/Auto Run Docs/subdir/temp.md")
-						// but the batch processor expects the path relative to folderPath without .md
-						// (e.g., "subdir/temp").
-						let name = doc.filename.replace(/\.md$/i, '');
-						// Normalize separators to forward slash for comparison
-						const normalized = name.replace(/\\/g, '/');
-						const normalizedFolder = (folderPath || '').replace(/\\/g, '/');
-						// Case-insensitive prefix check for cross-platform compatibility (Windows drive letters)
-						const normalizedLower = normalized.toLowerCase();
-						const folderLower = normalizedFolder.toLowerCase();
-						if (normalizedFolder && normalizedLower.startsWith(folderLower + '/')) {
-							name = normalized.substring(normalizedFolder.length + 1);
-						} else {
-							// Fallback for paths not under folderPath: use basename only
-							const lastSlash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-							if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-						}
-						return {
-							id: generateId(),
-							filename: name,
-							resetOnCompletion: doc.resetOnCompletion || false,
-							isDuplicate: false,
-						};
-					}
-				);
+				const folderPath = session.autoRunFolderPath as string;
+				const documents = folderRelativeDocuments.map((doc) => ({
+					id: generateId(),
+					filename: doc.filename,
+					resetOnCompletion: doc.resetOnCompletion || false,
+					isDuplicate: false,
+				}));
 
 				if (documents.length === 0) {
 					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
@@ -782,10 +857,6 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					});
 					return;
 				}
-
-				// Capture whether the launch enables worktree dispatch - used below to
-				// decide whether to spawn a child session via the desktop helper.
-				const worktreeEnabled = Boolean(config.worktree?.enabled);
 
 				// CLI/web callers omit prompt → fall back to the default Auto Run prompt
 				// template (autorun-default.md), matching what BatchRunnerModal does for
@@ -799,10 +870,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// (e.g. "Cue Dashboard") and a path computed before sanitization, both
 				// of which can drift from what spawnWorktreeAgentAndDispatch actually
 				// resolves on disk (sanitized branch, or an existingPath returned by
-				// `git worktree add` when the branch already had a worktree). The spawn
-				// helper writes the resolved values back into config.worktree when
-				// createPROnCompletion is true; we mirror that result onto batchConfig
-				// below so PR creation downstream sees the correct path/branch.
+				// `git worktree add` when the branch already had a worktree). The
+				// resolver below writes the resolved values onto batchConfig.worktree
+				// when a pull request was asked for, so PR creation downstream sees
+				// the correct path/branch.
 				// Per-run model/effort override (CLI `--model` / `--effort`). Spread
 				// only when set so an omitted flag never serializes as an empty string,
 				// which would pin the run to a nonexistent model instead of falling
@@ -815,95 +886,64 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					...(config.model && { model: config.model }),
 					...(config.effort && { effort: config.effort }),
 					...(config.ignoreModelHints && { ignoreModelHints: true }),
+					// Only the non-default is forwarded; `task` is what the batch
+					// processor does when the field is absent.
+					...(config.taskSelectionMode === 'document' && {
+						taskSelectionMode: 'document' as const,
+					}),
+					// Auto-resume: absent means the documented default, so each field
+					// is forwarded only when the caller actually chose it.
+					...(config.autoResumeOnError === false && { autoResumeOnError: false }),
+					...(typeof config.autoResumeAfterMin === 'number' && {
+						autoResumeAfterMin: config.autoResumeAfterMin,
+					}),
+					...(typeof config.maxAutoResumes === 'number' && {
+						maxAutoResumes: config.maxAutoResumes,
+					}),
 				};
 
-				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,
-				// spawn a child session linked to the launching parent BEFORE calling
-				// startBatchRun. Without this, startBatchRun creates the worktree on
-				// disk but no session is bound to the launching agent - chokidar in
-				// useWorktreeHandlers eventually attaches the new directory to whichever
-				// sibling's worktreeConfig.basePath matches first, producing the wrong-
-				// parent attachment reported in PR #946.
-				let targetSessionId = sessionId;
-				if (worktreeEnabled && config.worktree) {
-					// If the launching session is itself a worktree child, resolve to
-					// its parent so basePath/cwd used for worktree creation come from
-					// the main repo. Falls back to the launching session if the parent
-					// can't be loaded (mirrors desktop behavior).
-					let parentForSpawn = session;
-					if (session.parentSessionId) {
-						const parent = selectSessionById(session.parentSessionId)(useSessionStore.getState());
-						if (parent) parentForSpawn = parent;
-					}
-
-					// Build a WorktreeRunTarget from the mobile/web LaunchWorktreeConfig.
-					// Mobile currently only supports create-new; existing-open/closed are
-					// desktop-only flows.
-					//
-					// baseBranch resolution order: explicit `worktree.baseBranch` from the
-					// caller (CLI `--base-branch`, mobile picker) wins. Fall back to
-					// `prTargetBranch` only for older clients that conflated the two, then
-					// to "main" as a final default. This keeps payloads from pre-baseBranch
-					// CLIs working while letting newer callers pick a base independent of
-					// the PR target.
-					const spawnConfig: BatchRunConfig = {
-						...batchConfig,
-						worktreeTarget: {
-							mode: 'create-new',
-							newBranchName: config.worktree.branchName,
-							baseBranch: config.worktree.baseBranch || config.worktree.prTargetBranch || 'main',
-							createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
-						},
+				// Where the run executes. A scheduled run (Cue) names its target the
+				// way the Auto Run window does, as a `worktreeTarget` in any of the
+				// three modes. The CLI and the web client send the older
+				// `worktree` block, which only ever meant "create a new one".
+				//
+				// baseBranch resolution order for that older block: explicit
+				// `worktree.baseBranch` from the caller (CLI `--base-branch`, mobile
+				// picker) wins. Fall back to `prTargetBranch` only for older clients
+				// that conflated the two, then to "main" as a final default.
+				//
+				// Setting worktreeTarget also tells startBatchRun to skip its own
+				// setupWorktree call - the resolver below has already created the
+				// directory and built the agent, bound to the launching parent.
+				// Without that, startBatchRun creates the worktree on disk with no
+				// agent bound to it, and chokidar attaches the new directory to
+				// whichever sibling's worktreeConfig.basePath matches first (PR #946).
+				if (config.worktreeTarget) {
+					batchConfig.worktreeTarget = config.worktreeTarget;
+				} else if (config.worktree?.enabled) {
+					batchConfig.worktreeTarget = {
+						mode: 'create-new',
+						newBranchName: config.worktree.branchName,
+						baseBranch: config.worktree.baseBranch || config.worktree.prTargetBranch || 'main',
+						createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
 					};
-
-					try {
-						const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, spawnConfig);
-						if (!newSessionId) {
-							window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
-								success: false,
-								error: 'Failed to spawn worktree agent',
-							});
-							return;
-						}
-						targetSessionId = newSessionId;
-						// spawnWorktreeAgentAndDispatch writes the resolved worktree
-						// path/branch back into spawnConfig.worktree when PR creation is
-						// requested (sanitized branch name, or the existingPath that
-						// `git worktree add` returned for an already-attached branch).
-						// Forward that authoritative value to startBatchRun; when PR
-						// creation is off, leave batchConfig.worktree undefined and rely
-						// on worktreeTarget + the spawned session's cwd - the same shape
-						// the desktop launch path produces.
-						if (spawnConfig.worktree) {
-							batchConfig.worktree = spawnConfig.worktree;
-						}
-						// Setting worktreeTarget tells startBatchRun to skip its own
-						// setupWorktree call - the spawn helper already created the
-						// directory and built the session.
-						batchConfig.worktreeTarget = spawnConfig.worktreeTarget;
-					} catch (err) {
-						captureException(err, {
-							extra: {
-								event: 'maestro:configureAutoRun',
-								sessionId,
-								parentSessionId: parentForSpawn.id,
-								worktree: config.worktree,
-								responseChannel,
-							},
-						});
-						logger.error('[Remote] Failed to spawn worktree agent:', undefined, err);
-						notifyToast({
-							type: 'error',
-							title: 'Worktree Error',
-							message: err instanceof Error ? err.message : String(err),
-						});
-						window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
-							success: false,
-							error: err instanceof Error ? err.message : String(err),
-						});
-						return;
-					}
 				}
+
+				// Resolves to the launching agent when there is no worktree target.
+				// Any failure ends the launch: nobody is at the keyboard to redirect
+				// a scheduled or scripted run, and quietly running it in the
+				// launching agent's own checkout is the one outcome a worktree
+				// target exists to prevent.
+				const dispatch = await resolveAutoRunDispatchTarget(session, batchConfig);
+				if (!dispatch.ok) {
+					logger.error('[Remote] Auto Run worktree target unavailable:', undefined, dispatch);
+					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+						success: false,
+						error: dispatch.message,
+					});
+					return;
+				}
+				const targetSessionId = dispatch.sessionId;
 
 				// Send success response immediately - startBatchRun is long-running
 				// and would exceed the IPC/CLI timeout if awaited.
@@ -1441,20 +1481,6 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			const currentDefaults = useSettingsStore.getState();
 			const newId = generateId();
-			const initialTabId = generateId();
-			const initialTab: AITab = {
-				id: initialTabId,
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: Date.now(),
-				state: 'idle',
-				saveToHistory: currentDefaults.defaultSaveToHistory,
-				showThinking: currentDefaults.defaultShowThinking,
-			};
 
 			// Probe git repo state for the cwd so the header badge shows the branch
 			// instead of "LOCAL". Mirrors the GUI's useSessionCrud flow. For SSH
@@ -1481,57 +1507,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 
 			const newSession: Session = {
-				id: newId,
-				name,
+				...buildNewAgentRecord(
+					{
+						id: newId,
+						name,
+						toolType,
+						cwd,
+						groupId: groupId || undefined,
+						saveToHistory: currentDefaults.defaultSaveToHistory,
+						showThinking: currentDefaults.defaultShowThinking,
+					},
+					{ generateId }
+				),
 				toolType: toolType as ToolType,
-				state: 'idle',
-				createdAt: Date.now(),
-				cwd,
-				fullPath: cwd,
-				projectRoot: cwd,
 				isGitRepo,
 				...(gitBranches !== undefined && { gitBranches }),
 				...(gitTags !== undefined && { gitTags }),
 				...(gitRefsCacheTime !== undefined && { gitRefsCacheTime }),
-				aiLogs: [],
-				shellLogs: [
-					{
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'system',
-						text: 'Shell Session Ready.',
-					},
-				],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: toolType === 'terminal' ? 'terminal' : 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 3000 + Math.floor(Math.random() * 100),
-				isLive: false,
-				changedFiles: [],
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				fileTreeAutoRefreshInterval: 180,
-				shellCwd: cwd,
-				aiCommandHistory: [],
-				shellCommandHistory: [],
-				executionQueue: [],
-				activeTimeMs: 0,
-				aiTabs: [initialTab],
-				activeTabId: initialTabId,
-				closedTabHistory: [],
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				browserTabs: [],
-				activeBrowserTabId: null,
-				terminalTabs: [],
-				activeTerminalTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-				unifiedClosedTabHistory: [],
-				groupId: groupId || undefined,
-				autoRunFolderPath: `${cwd}/${PLAYBOOKS_DIR}`,
 				// Apply optional config fields from CLI/web
 				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
 				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
@@ -1606,7 +1598,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		// Kill processes
 		try {
-			await window.maestro.process.kill(`${sessionId}-ai`);
+			await killAgentAiProcesses(sessionId);
 		} catch {
 			/* ignore */
 		}
@@ -1749,70 +1741,31 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		const patchObj = configPatch as Record<string, unknown>;
 
-		// Provider switch (toolType change) is destructive and handled separately
-		// from plain settings edits: it resets tabs, clears provider-specific
-		// config, and kills the running agent process - mirroring the Edit Agent
-		// modal's toolType-change branch. The CLI gates this behind --force. When a
-		// toolType is present and actually differs, do the switch and ignore any
-		// other keys in the same patch (the CLI sends it exclusively).
 		const requestedToolType =
 			typeof patchObj.toolType === 'string' ? (patchObj.toolType as ToolType) : undefined;
-		if (requestedToolType && requestedToolType !== session.toolType) {
-			const newTabId = generateId();
-			const freshTab: AITab = {
-				id: newTabId,
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: Date.now(),
-				state: 'idle',
-				saveToHistory: true,
-			};
-			const providerSwitch: Partial<Session> = {
-				toolType: requestedToolType,
-				aiTabs: [freshTab],
-				activeTabId: newTabId,
-				closedTabHistory: [],
-				// Clear provider-specific overrides - they don't carry across providers.
-				customPath: undefined,
-				customArgs: undefined,
-				customEnvVars: undefined,
-				customModel: undefined,
-				customContextWindow: undefined,
-				// Provenance describes the value cleared above and must not outlive
-				// it (finding AD1); mirrors the Edit Agent modal's switch branch.
-				contextWindowSource: undefined,
-				enableMaestroP: undefined,
-				maestroPPath: undefined,
-				maestroPMode: undefined,
-				// Reset file preview tabs and unified tab order to just the new AI tab.
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: newTabId }],
-				unifiedClosedTabHistory: [],
-				// Reset runtime state.
-				state: 'idle' as const,
-				aiPid: 0,
-				executionQueue: [],
-			};
-
-			// Kill the existing AI process for the old provider (no-op if none).
-			window.maestro.process.kill(`${sessionId}-ai`).catch(() => {});
-
-			setSessions((prev: Session[]) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, ...providerSwitch } : s))
-			);
-			try {
-				await window.maestro.sessions.setMany([{ ...session, ...providerSwitch } as any], []);
-			} catch (persistErr) {
-				logger.error('[Remote] Failed to persist provider switch:', undefined, persistErr);
+		const migrationAction =
+			typeof patchObj.migrationAction === 'string' ? patchObj.migrationAction : undefined;
+		if (requestedToolType || migrationAction) {
+			const action = migrationAction ?? 'apply';
+			if (!['plan', 'apply', 'status', 'recover', 'rollback'].includes(action)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Invalid migration action',
+				});
+				return;
 			}
-			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
-				success: true,
+			const report = await requestProviderTranslation({
+				agentId: sessionId,
+				destination:
+					requestedToolType ?? session.providerMigration?.destination ?? session.toolType,
+				action: action as 'plan' | 'apply' | 'status' | 'recover' | 'rollback',
+				acceptLimitations: patchObj.acceptTranslationLimitations === true,
+				planId: typeof patchObj.migrationPlanId === 'string' ? patchObj.migrationPlanId : undefined,
+				selectedUserResources: Array.isArray(patchObj.selectedUserResources)
+					? (patchObj.selectedUserResources as string[])
+					: undefined,
 			});
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, report);
 			return;
 		}
 
@@ -1930,6 +1883,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
+			// Codex transport opt-in (`update-agent --codex-transport`). Validated
+			// below, since an unknown value must never reach the spawner.
+			'codexTransport',
 			// UI state
 			'bookmarked',
 		]);
@@ -1941,6 +1897,19 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		for (const key of Object.keys(patch)) {
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
+			if (key === 'codexTransport' && value !== null && !isCodexTransport(value)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Invalid value for field '${key}'`,
+				});
+				return;
+			}
+			// `exec` is the default, so it is stored the way the Edit Agent modal
+			// stores it: as an unset field.
+			if (key === 'codexTransport' && value === 'exec') {
+				updated.codexTransport = undefined;
+				continue;
+			}
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
 		}
 

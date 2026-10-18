@@ -51,17 +51,17 @@ export function handleToggleCueSubscription(
 	const enabled = message.enabled as boolean;
 
 	if (!subscriptionId) {
-		ctx.sendError(client, 'Missing subscriptionId');
+		ctx.sendError(client, 'Missing subscriptionId', { requestId: message.requestId });
 		return;
 	}
 
 	if (typeof enabled !== 'boolean') {
-		ctx.sendError(client, 'Missing or invalid enabled flag');
+		ctx.sendError(client, 'Missing or invalid enabled flag', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.toggleCueSubscription) {
-		ctx.sendError(client, 'Cue toggle not available');
+		ctx.sendError(client, 'Cue toggle not available', { requestId: message.requestId });
 		return;
 	}
 
@@ -78,7 +78,9 @@ export function handleToggleCueSubscription(
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to toggle Cue subscription: ${error.message}`);
+			ctx.sendError(client, `Failed to toggle Cue subscription: ${error.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -94,7 +96,7 @@ export function handleGetCueActivity(
 	const limit = (message.limit as number) ?? 50;
 
 	if (!ctx.callbacks.getCueActivity) {
-		ctx.sendError(client, 'Cue activity not available');
+		ctx.sendError(client, 'Cue activity not available', { requestId: message.requestId });
 		return;
 	}
 
@@ -109,7 +111,9 @@ export function handleGetCueActivity(
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to get Cue activity: ${error.message}`);
+			ctx.sendError(client, `Failed to get Cue activity: ${error.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -313,4 +317,76 @@ export function handleCuePipelineRemove(
 			logger.error(`Failed to remove Cue pipeline: ${err.message}`, 'WebSocket');
 			ctx.sendError(client, `Failed to remove Cue pipeline: ${err.message}`);
 		});
+}
+
+/**
+ * Run a bundle operation the CLI routed to the running app and send back its
+ * outcome. The outcome carries refusals as data (code, message, details), so
+ * only a failure to run at all is sent as an error.
+ */
+function relayBundleOutcome(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage,
+	type: 'cue_bundle_export' | 'cue_bundle_import',
+	run: (() => Promise<unknown>) | undefined
+): void {
+	if (!message.request || typeof message.request !== 'object') {
+		ctx.sendError(client, 'Missing bundle request');
+		return;
+	}
+	if (!run) {
+		ctx.sendError(client, 'Cue bundles are not available');
+		return;
+	}
+	run()
+		.then((outcome) => {
+			ctx.send(client, {
+				type: `${type}_result`,
+				outcome,
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		})
+		.catch((error) => {
+			const err = error instanceof Error ? error : new Error(String(error));
+			logger.error(`Cue bundle ${type} failed: ${err.message}`, 'WebSocket');
+			ctx.sendError(client, `Cue bundle operation failed: ${err.message}`);
+		});
+}
+
+/** Handle cue_bundle_export - `maestro-cli bundle export` while the app runs. */
+export function handleCueBundleExport(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const exportCueBundle = ctx.callbacks.exportCueBundle;
+	relayBundleOutcome(
+		ctx,
+		client,
+		message,
+		'cue_bundle_export',
+		exportCueBundle
+			? () => exportCueBundle(message.request as Parameters<typeof exportCueBundle>[0])
+			: undefined
+	);
+}
+
+/** Handle cue_bundle_import - `maestro-cli bundle import` while the app runs. */
+export function handleCueBundleImport(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const importCueBundle = ctx.callbacks.importCueBundle;
+	relayBundleOutcome(
+		ctx,
+		client,
+		message,
+		'cue_bundle_import',
+		importCueBundle
+			? () => importCueBundle(message.request as Parameters<typeof importCueBundle>[0])
+			: undefined
+	);
 }

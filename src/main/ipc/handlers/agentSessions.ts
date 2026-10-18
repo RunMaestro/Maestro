@@ -24,7 +24,11 @@ import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
-import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { calculateModelCost } from '../../utils/pricing';
+import {
+	computeClaudeUsageWithSubagents,
+	readClaudeSubagentTranscripts,
+} from '../../../shared/claudeSessionUsage';
 import { CodexTokenCounts } from '../../../shared/codexTokenUsage';
 import {
 	loadGlobalStatsCache,
@@ -32,6 +36,7 @@ import {
 	GlobalStatsCache,
 	CachedSessionStats,
 	GLOBAL_STATS_CACHE_VERSION,
+	rescaleArchivedEntries,
 } from '../../utils/statsCache';
 import type {
 	AgentSessionInfo,
@@ -54,6 +59,13 @@ import {
 	type MirrorRetainReason,
 } from '../../storage/starred-transcript-mirror';
 import { getHistoryManager } from '../../history-manager';
+import {
+	mapWithConcurrency,
+	LOCAL_SESSION_READ_CONCURRENCY,
+	LOCAL_SESSION_PARSE_CONCURRENCY,
+} from '../../utils/concurrency';
+import { countClaudeTranscriptMessages } from '../../../shared/claudeTranscriptMessages';
+import { resolveAgentAccountDir } from '../../agents/provider-account-dirs';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -77,7 +89,10 @@ export interface AgentSessionOriginsData {
 		string,
 		Record<
 			string,
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		>
 	>;
 }
@@ -114,23 +129,23 @@ interface SessionFileInfo {
 	filePath: string;
 	sessionKey: string;
 	mtimeMs: number;
+	sizeBytes: number;
 }
 
 /**
- * Parse a Claude Code session file and extract stats
+ * Parse a Claude Code session file and extract stats. Usage and cost include the
+ * session's subagent transcripts, which Claude Code keeps in separate files.
  */
 function parseClaudeSessionContent(
 	content: string,
-	sizeBytes: number
+	sizeBytes: number,
+	subagentContents: readonly string[]
 ): Omit<CachedSessionStats, 'fileMtimeMs'> {
-	const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-	const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-
 	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-		computeClaudeUsageCost(content);
+		computeClaudeUsageWithSubagents(content, subagentContents);
 
 	return {
-		messages: userMessageCount + assistantMessageCount,
+		messages: countClaudeTranscriptMessages(content),
 		inputTokens,
 		outputTokens,
 		cacheReadTokens,
@@ -188,49 +203,63 @@ function parseCodexSessionContent(
 }
 
 /**
+ * Read a directory's entry names, or nothing when it is missing or not a
+ * directory (readdir on a file throws ENOTDIR, which replaces a separate stat).
+ */
+async function readdirOrEmpty(dir: string): Promise<string[]> {
+	try {
+		return await fs.readdir(dir);
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Stat every candidate transcript in parallel, bounded, and keep the non-empty
+ * ones. Discovery stats every transcript on disk before the first number can
+ * reach the renderer; one at a time that was ~3.8s for 30k Claude sessions,
+ * bounded-parallel it is ~0.5s.
+ */
+async function statSessionFiles(
+	candidates: Array<{ filePath: string; sessionKey: string }>
+): Promise<SessionFileInfo[]> {
+	const stats = await mapWithConcurrency(candidates, LOCAL_SESSION_READ_CONCURRENCY, async (c) => {
+		try {
+			const fileStat = await fs.stat(c.filePath);
+			// Skip 0-byte sessions (created but abandoned before any content was written)
+			if (fileStat.size === 0) return null;
+			return { ...c, mtimeMs: fileStat.mtimeMs, sizeBytes: fileStat.size };
+		} catch {
+			// Skip files we can't stat
+			return null;
+		}
+	});
+	return stats.filter((f): f is SessionFileInfo => f !== null);
+}
+
+/**
  * Discover Claude Code session files from ~/.claude/projects/
  * Returns list of files with their mtime for cache comparison
  */
 async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
-	const homeDir = os.homedir();
-	const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
-	const files: SessionFileInfo[] = [];
+	const claudeProjectsDir = path.join(os.homedir(), '.claude', 'projects');
+	const projectDirs = await readdirOrEmpty(claudeProjectsDir);
 
-	try {
-		await fs.access(claudeProjectsDir);
-	} catch {
-		return files;
-	}
-
-	const projectDirs = await fs.readdir(claudeProjectsDir);
-
-	for (const projectDir of projectDirs) {
-		const projectPath = path.join(claudeProjectsDir, projectDir);
-		try {
-			const stat = await fs.stat(projectPath);
-			if (!stat.isDirectory()) continue;
-
-			const dirFiles = await fs.readdir(projectPath);
-			const sessionFiles = dirFiles.filter((f) => f.endsWith('.jsonl'));
-
-			for (const filename of sessionFiles) {
-				const filePath = path.join(projectPath, filename);
-				try {
-					const fileStat = await fs.stat(filePath);
-					// Skip 0-byte sessions (created but abandoned before any content was written)
-					if (fileStat.size === 0) continue;
-					const sessionKey = `${projectDir}/${filename.replace('.jsonl', '')}`;
-					files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
-				} catch {
-					// Skip files we can't stat
-				}
-			}
-		} catch {
-			// Skip directories we can't access
+	const listings = await mapWithConcurrency(
+		projectDirs,
+		LOCAL_SESSION_READ_CONCURRENCY,
+		async (projectDir) => {
+			const projectPath = path.join(claudeProjectsDir, projectDir);
+			return (await readdirOrEmpty(projectPath))
+				.filter((f) => f.endsWith('.jsonl'))
+				.map((filename) => ({
+					filePath: path.join(projectPath, filename),
+					sessionKey: `${projectDir}/${filename.replace('.jsonl', '')}`,
+				}));
 		}
-	}
+	);
 
-	return files;
+	return statSessionFiles(listings.flat());
 }
 
 /**
@@ -238,72 +267,37 @@ async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
  * Returns list of files with their mtime for cache comparison
  */
 async function discoverCodexSessionFiles(): Promise<SessionFileInfo[]> {
-	const homeDir = os.homedir();
-	const codexSessionsDir = path.join(homeDir, '.codex', 'sessions');
-	const files: SessionFileInfo[] = [];
+	const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions');
 
-	try {
-		await fs.access(codexSessionsDir);
-	} catch {
-		return files;
-	}
-
-	const years = await fs.readdir(codexSessionsDir);
-	for (const year of years) {
+	// Walk down to the day directories. The year and month levels are small, so
+	// only the day listings and the per-file stats are worth running in parallel.
+	const dayDirs: Array<{ dir: string; prefix: string }> = [];
+	for (const year of await readdirOrEmpty(codexSessionsDir)) {
 		if (!/^\d{4}$/.test(year)) continue;
 		const yearDir = path.join(codexSessionsDir, year);
-
-		try {
-			const yearStat = await fs.stat(yearDir);
-			if (!yearStat.isDirectory()) continue;
-
-			const months = await fs.readdir(yearDir);
-			for (const month of months) {
-				if (!/^\d{2}$/.test(month)) continue;
-				const monthDir = path.join(yearDir, month);
-
-				try {
-					const monthStat = await fs.stat(monthDir);
-					if (!monthStat.isDirectory()) continue;
-
-					const days = await fs.readdir(monthDir);
-					for (const day of days) {
-						if (!/^\d{2}$/.test(day)) continue;
-						const dayDir = path.join(monthDir, day);
-
-						try {
-							const dayStat = await fs.stat(dayDir);
-							if (!dayStat.isDirectory()) continue;
-
-							const dirFiles = await fs.readdir(dayDir);
-							for (const file of dirFiles) {
-								if (!file.endsWith('.jsonl')) continue;
-								const filePath = path.join(dayDir, file);
-
-								try {
-									const fileStat = await fs.stat(filePath);
-									// Skip 0-byte sessions (created but abandoned before any content was written)
-									if (fileStat.size === 0) continue;
-									const sessionKey = `${year}/${month}/${day}/${file.replace('.jsonl', '')}`;
-									files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
-								} catch {
-									// Skip files we can't stat
-								}
-							}
-						} catch {
-							continue;
-						}
-					}
-				} catch {
-					continue;
-				}
+		for (const month of await readdirOrEmpty(yearDir)) {
+			if (!/^\d{2}$/.test(month)) continue;
+			const monthDir = path.join(yearDir, month);
+			for (const day of await readdirOrEmpty(monthDir)) {
+				if (!/^\d{2}$/.test(day)) continue;
+				dayDirs.push({ dir: path.join(monthDir, day), prefix: `${year}/${month}/${day}` });
 			}
-		} catch {
-			continue;
 		}
 	}
 
-	return files;
+	const listings = await mapWithConcurrency(
+		dayDirs,
+		LOCAL_SESSION_READ_CONCURRENCY,
+		async ({ dir, prefix }) =>
+			(await readdirOrEmpty(dir))
+				.filter((f) => f.endsWith('.jsonl'))
+				.map((file) => ({
+					filePath: path.join(dir, file),
+					sessionKey: `${prefix}/${file.replace('.jsonl', '')}`,
+				}))
+	);
+
+	return statSessionFiles(listings.flat());
 }
 
 /**
@@ -415,7 +409,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			async (
 				agentId: string,
 				projectPath: string,
-				options?: SessionListOptions,
+				options?: { cursor?: string; limit?: number; ownerAgentId?: string },
 				sshRemoteId?: string
 			): Promise<PaginatedSessionsResult> => {
 				const storage = getSessionStorage(agentId);
@@ -427,7 +421,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				// Get SSH config if provided
 				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 
-				const result = await storage.listSessionsPaginated(projectPath, options, sshConfig);
+				// List the pool of the account this agent actually runs under: its
+				// provider only resumes sessions from that config dir.
+				const listOptions: SessionListOptions = {
+					cursor: options?.cursor,
+					limit: options?.limit,
+					configDir: options?.ownerAgentId
+						? resolveAgentAccountDir(options.ownerAgentId)
+						: undefined,
+				};
+				const result = await storage.listSessionsPaginated(projectPath, listOptions, sshConfig);
 				logger.info(
 					`Listed paginated sessions for agent ${agentId}: ${result.sessions.length} of ${result.totalCount}${sshRemoteId ? ' (remote via SSH)' : ''}`,
 					LOG_CONTEXT
@@ -781,7 +784,10 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				agentId: string,
 				projectPath: string
 			): Promise<
-				Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+				Record<
+					string,
+					{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+				>
 			> => {
 				if (!originsStore) {
 					logger.warn('Origins store not available for getOrigins', LOG_CONTEXT);
@@ -996,8 +1002,11 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				safeSend('agentSessions:globalStatsUpdate', stats);
 			};
 
-			// Load existing cache or create new one
+			// Load existing cache or create new one. An older-but-compatible cache
+			// holds Claude entries from an earlier parser: every live Claude session
+			// is re-parsed and the archived ones rescaled once that is done.
 			let cache = await loadGlobalStatsCache();
+			const claudeDerivationStale = !!cache && cache.version < GLOBAL_STATS_CACHE_VERSION;
 			if (!cache) {
 				cache = {
 					version: GLOBAL_STATS_CACHE_VERSION,
@@ -1047,10 +1056,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				}
 			}
 
+			// Snapshot taken before re-parsing replaces any entry, so the upgrade
+			// below can measure how far the fix moved the live sessions.
+			const claudeSessionsBefore = claudeDerivationStale
+				? { ...cache.providers['claude-code'].sessions }
+				: null;
+
 			// Find sessions that need processing (new or modified)
 			const claudeToProcess = claudeFiles.filter((f) => {
 				const cached = cache!.providers['claude-code'].sessions[f.sessionKey];
-				return !cached || cached.fileMtimeMs < f.mtimeMs;
+				return claudeDerivationStale || !cached || cached.fileMtimeMs < f.mtimeMs;
 			});
 			const codexToProcess = codexFiles.filter((f) => {
 				const cached = cache!.providers['codex'].sessions[f.sessionKey];
@@ -1068,89 +1083,87 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			// Send initial update with cached data
 			sendUpdate(cache, totalToProcess === 0);
 
-			// Process Claude sessions incrementally
+			// Parse new and modified transcripts through one bounded pool shared by
+			// both providers. The cap is low because each worker holds a whole
+			// transcript in memory, and some run to hundreds of MB.
+			const toProcess = [
+				...claudeToProcess.map((file) => ({ file, provider: 'claude-code' as const })),
+				...codexToProcess.map((file) => ({ file, provider: 'codex' as const })),
+			];
 			let processedCount = 0;
-			for (const file of claudeToProcess) {
-				try {
-					const content = await fs.readFile(file.filePath, 'utf-8');
-					const fileStat = await fs.stat(file.filePath);
-					const stats = parseClaudeSessionContent(content, fileStat.size);
+			await mapWithConcurrency(
+				toProcess,
+				LOCAL_SESSION_PARSE_CONCURRENCY,
+				async ({ file, provider }) => {
+					const label = provider === 'claude-code' ? 'Claude' : 'Codex';
+					try {
+						const content = await fs.readFile(file.filePath, 'utf-8');
+						const stats =
+							provider === 'claude-code'
+								? parseClaudeSessionContent(
+										content,
+										file.sizeBytes,
+										await readClaudeSubagentTranscripts(file.filePath)
+									)
+								: parseCodexSessionContent(content, file.sizeBytes);
 
-					cache.providers['claude-code'].sessions[file.sessionKey] = {
-						...stats,
-						fileMtimeMs: file.mtimeMs,
-						archived: false,
-					};
+						cache.providers[provider].sessions[file.sessionKey] = {
+							...stats,
+							fileMtimeMs: file.mtimeMs,
+							archived: false,
+						};
 
-					processedCount++;
+						processedCount++;
 
-					// Send streaming update every 10 sessions or at end
-					if (processedCount % 10 === 0 || processedCount === claudeToProcess.length) {
-						sendUpdate(cache, false);
-					}
-				} catch (error) {
-					// A session file too large to read into a single V8 string throws
-					// `RangeError: Invalid string length` (MAESTRO-M9). That's an expected
-					// boundary for huge sessions, not a bug - skip it and keep aggregating
-					// the rest. Mirrors the storage-layer carve-out in
-					// claude-/codex-session-storage.ts.
-					if (error instanceof RangeError) {
-						logger.warn(`Claude session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
-					} else if (isExpectedSessionReadError(error)) {
-						// Unreadable or vanished transcript - environmental, see
-						// EXPECTED_SESSION_READ_ERROR_CODES (MAESTRO-W9).
-						logger.warn(`Claude session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
-							error,
-						});
-					} else {
-						void captureException(error);
-						logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, {
-							error,
-						});
-					}
-				}
-			}
-
-			// Process Codex sessions incrementally
-			for (const file of codexToProcess) {
-				try {
-					const content = await fs.readFile(file.filePath, 'utf-8');
-					const fileStat = await fs.stat(file.filePath);
-					const stats = parseCodexSessionContent(content, fileStat.size);
-
-					cache.providers['codex'].sessions[file.sessionKey] = {
-						...stats,
-						fileMtimeMs: file.mtimeMs,
-						archived: false,
-					};
-
-					processedCount++;
-
-					// Send streaming update every 10 sessions or at end
-					if (processedCount % 10 === 0 || processedCount === totalToProcess) {
-						sendUpdate(cache, false);
-					}
-				} catch (error) {
-					// See the Claude loop above: oversized session files throw
-					// `RangeError: Invalid string length` (MAESTRO-M9), an expected
-					// boundary we skip rather than report.
-					if (error instanceof RangeError) {
-						logger.warn(`Codex session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
-					} else if (isExpectedSessionReadError(error)) {
-						// See the Claude loop above (MAESTRO-W9).
-						logger.warn(`Codex session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
-							error,
-						});
-					} else {
-						void captureException(error);
-						logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, {
-							error,
-						});
+						// Stream an update every 10 sessions; the final one is sent below
+						if (processedCount % 10 === 0) {
+							sendUpdate(cache, false);
+						}
+					} catch (error) {
+						// A session file too large to read into a single V8 string throws
+						// `RangeError: Invalid string length` (MAESTRO-M9). That's an expected
+						// boundary for huge sessions, not a bug - skip it and keep aggregating
+						// the rest. Mirrors the storage-layer carve-out in
+						// claude-/codex-session-storage.ts.
+						if (error instanceof RangeError) {
+							logger.warn(
+								`${label} session file too large to parse: ${file.sessionKey}`,
+								LOG_CONTEXT
+							);
+						} else if (isExpectedSessionReadError(error)) {
+							// Unreadable or vanished transcript - environmental, see
+							// EXPECTED_SESSION_READ_ERROR_CODES (MAESTRO-W9).
+							logger.warn(`${label} session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
+								error,
+							});
+						} else {
+							void captureException(error);
+							logger.warn(`Failed to parse ${label} session: ${file.sessionKey}`, LOG_CONTEXT, {
+								error,
+							});
+						}
 					}
 				}
+			);
+
+			if (claudeSessionsBefore) {
+				rescaleArchivedEntries(
+					cache.providers['claude-code'].sessions,
+					claudeSessionsBefore,
+					[
+						'inputTokens',
+						'outputTokens',
+						'cacheReadTokens',
+						'cacheCreationTokens',
+						'costUsd',
+						'messages',
+					],
+					['costUsd']
+				);
 			}
 
 			// Update cache timestamp and save
+			cache.version = GLOBAL_STATS_CACHE_VERSION;
 			cache.lastUpdated = Date.now();
 			await saveGlobalStatsCache(cache);
 

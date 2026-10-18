@@ -4,6 +4,8 @@ import { selectActiveSession, useSessionStore } from '../../../stores/sessionSto
 import type { Session } from '../../../types';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
+import { isWebDesktop } from '../../../utils/runtimeContext';
+import { requestDesktopTabCloses } from '../../../services/desktopTabClose';
 import {
 	closeBrowserTab as closeBrowserTabHelper,
 	hasActiveWizard,
@@ -28,6 +30,7 @@ interface UseUnifiedTabHandlersOptions {
 	handleCloseFileTab: (tabId: string) => void;
 }
 
+/** Manage mixed tab actions, confirming browser AI closes through the desktop owner. */
 export function useUnifiedTabHandlers({
 	handleCloseFileTab,
 }: UseUnifiedTabHandlersOptions): UnifiedTabHandlersReturn {
@@ -62,8 +65,17 @@ export function useUnifiedTabHandlers({
 			const session = sessions.find((s) => s.id === activeSessionId);
 			if (!session) return;
 
-			const refsToClose = getRefs(session);
+			let refsToClose = getRefs(session);
 			if (refsToClose.length === 0) return;
+			if (isWebDesktop()) {
+				void requestDesktopTabCloses(
+					session.id,
+					refsToClose.filter((ref) => ref.type === 'ai').map((ref) => ref.id),
+					endInlineWizard
+				);
+				refsToClose = refsToClose.filter((ref) => ref.type !== 'ai');
+				if (refsToClose.length === 0) return;
+			}
 
 			const terminalTabIds = getTerminalTabIds(refsToClose);
 			refsToClose.filter((ref) => ref.type === 'ai').forEach((ref) => clearLiveDraft(ref.id));

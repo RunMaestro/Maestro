@@ -55,6 +55,10 @@ The Overview tab gives you a high-level summary of your AI usage:
 - **Top Agent** - Your most-used AI agent
 - **Interactive vs Auto** - How the selected range's AI time divides between work you waited on and work that ran without you, with a split bar underneath
 
+**Tokens per Second:**
+
+Average and peak token speed for input, output, and the two combined. Speed is measured per API call, from the moment the request was sent to the moment the response finished, so it includes the wait for the first token. See [Token speed](#token-speed) for how the numbers are worked out.
+
 **Delegation Score:**
 
 One number for how much of your AI work runs without you. Auto Run documents and Maestro Cue pipelines count as delegated; a turn you typed and waited on does not. It is a share of **time**, not of turns, because an Auto Run batch is a handful of long turns while an afternoon of chat is hundreds of short ones.
@@ -190,6 +194,26 @@ Two things it is careful about:
 
 Every chart on the dashboard also gains a **Tokens** metric mode, so charts that would otherwise plot query counts or time can plot token consumption over the same range.
 
+#### Token speed
+
+How fast tokens moved, in tokens per second. The **Output / Input / Total** toggle picks which rate every chart in the section shows:
+
+- **Average and peak cards** for input, output, and total.
+- **Speed over time**, with the average and the peak for each day (each hour on **Today**, each week or month on longer ranges).
+- **Speed by provider** and **speed by model** over time, one line each. The model chart shows the six busiest models.
+- **Speed by hour of day**, naming the fastest and the slowest hour.
+- **By Provider** and **By Model** tables with calls, average, and peak rates. Click a column header to sort.
+
+How the numbers are worked out:
+
+- **Per API call.** Each call is timed from the line that sent its request (your prompt, or the tool result before it) to the last line of its response. A whole turn is not used: it includes tool runs and subagents, which measures how busy the agent was, not how fast the model was.
+- **Averages are token-weighted.** All tokens divided by all measured call time, so a 2-minute call counts for more than a 2-second one.
+- **A peak is the fastest model-hour.** That is one model's calls within one clock hour, across every agent, with at least 5 minutes of call time. A single call is not used: transcript lines are written per block, so a short call can appear to finish thousands of tokens in two seconds.
+- **Input includes cache reads.** It counts every prompt token a call processed, which is why it runs hundreds of times higher than output.
+- **Busiest hour** (under Peak Total) is the clock hour in which the most tokens finished across all agents at once, divided by 3,600 seconds. Unlike a peak, it grows with the number of agents running in parallel.
+
+Speed is measured from Claude Code and Codex transcripts. Other providers do not record when each call started, and their calls are left out rather than counted as zero.
+
 ### OpenAI Usage
 
 One row per Codex account (`CODEX_HOME`), each with its plan badge, its email, and a bar per usage window: **Session (5h)**, **Weekly**, and any per-model limits the account reports, every one labelled with when it reopens.
@@ -238,6 +262,7 @@ The **Unused Shortcuts** list is the useful half: bound chords you have never pr
 
 The Activity tab shows your usage patterns over time:
 
+- **Prompts** - how often you prompt your agents. A prompt is a message you sent an agent; Auto Run tasks are left out, which is what separates it from **Queries** (every agent turn, Auto Run included). Tiles show the total, average per day and per active day, the busiest and quietest days, the median day, your current and longest daily streak, your peak hour (and the most prompts you sent in a single hour), the median time between prompts while you are working, and how many working stretches you had (a break longer than 30 minutes starts a new one). Below them: prompts per day with the range average and a 7-day rolling average, prompts by hour of day, the average for each weekday, and the full per-day and time-between-prompts percentiles. Days are calendar days (a week is the last seven days including today, quiet days counted as zero), and today is left out of the per-day figures because it is still in progress. `maestro-cli stats` prints the same numbers, and `--json` carries them under `prompts`
 - **Interactive vs Delegated** - stacked bars, one per day, splitting each day into interactive work and delegated work (Auto Run + Cue). Toggle between **Time** and **Queries**; hovering a bar breaks the day out into Interactive, Auto Run, and Cue, with that day's delegated share. On a long range the bars are grouped into equal blocks of days so the chart stays readable, and quiet days are drawn as gaps rather than skipped. Because Cue run rows are pruned after 7 days, ranges longer than a week show Auto Run only for the older days, and the chart says so under the legend
 - Duration trends chart showing how your usage varies
 - Time-based filtering to spot patterns
@@ -262,6 +287,10 @@ A mini bar chart showing task completions by date (last 14 days). Hover over bar
 **How a run's duration is measured:** wall-clock time from start to finish, minus any time the machine spent asleep. Whether the Maestro window was on screen makes no difference - the agent runs in its own process and keeps working while you do something else, so a run you walked away from is timed the same as one you watched.
 
 Older builds also subtracted time the window was hidden, which on macOS includes being minimized or fully covered by another app. That under-recorded exactly the unattended overnight runs whose length matters most, and recorded some as zero. If your history predates the fix, `scripts/repair-autorun-durations.mjs` rebuilds each affected run's duration from its own task timestamps (dry run by default; `--apply` writes, after a backup). Runs with no recorded tasks cannot be reconstructed and are left as they are.
+
+## Reopening the Dashboard
+
+The dashboard keeps the last result for each time range. When you close it and open it again, the last numbers show at once and refresh in place. A small indicator shows when newer data arrives.
 
 ## Time Range Filtering
 
@@ -297,7 +326,7 @@ Click **Export** in the top-right corner and pick a format. Both cover the selec
 | **JSON** | One file with every table and the dashboard's computed totals. Best for scripts and `jq`.           |
 | **CSV**  | A `.zip` with one CSV per table, plus `export-info.json` holding the totals. Best for spreadsheets. |
 
-The export includes query events (with per-turn tokens and cost), Auto Run sessions and tasks, agent lifecycle, Agent Resilience outages, wizard runs, daily shortcut usage, multi-window usage, token usage by agent, model, project, and account, and Maestro Cue runs when Cue is on. Cue keeps 7 days of run history, so a longer range includes only the last week of Cue runs.
+The export includes query events (with per-turn tokens and cost), Auto Run sessions and tasks, agent lifecycle, Agent Resilience outages, wizard runs, daily shortcut usage, multi-window usage, token usage by agent, model, project, and account, token speed by provider, model, hour of day, and over time, and Maestro Cue runs when Cue is on. Cue keeps 7 days of run history, so a longer range includes only the last week of Cue runs.
 
 A toast confirms where the file was saved and how many rows it holds.
 

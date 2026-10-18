@@ -13,6 +13,14 @@
  * Built on the shared `useLongPress` hook, so it inherits scroll-awareness (a
  * long-press does not fire while the user is scrolling a list) and a haptic on
  * open.
+ *
+ * A host may also be `draggable` (tab chips reorder, agent rows move between
+ * groups). A long-press is how iPadOS, Android and touchscreen Chrome START an
+ * HTML5 drag, so a press from a finger or pen switches the native drag off and
+ * the next mouse press switches it back on. The decision is made per press from
+ * `pointerType`, not once from the primary pointer: an iPad with a trackpad or
+ * a touchscreen laptop has both, and a trackpad drag there must still reorder
+ * while a finger held on the same chip opens its menu.
  */
 
 import React, { useCallback, useRef } from 'react';
@@ -58,13 +66,39 @@ export function longPressMouseEvent(rect: DOMRect): React.MouseEvent {
 	} as unknown as React.MouseEvent;
 }
 
+/** React's `draggable` is Booleanish: `true`, `'true'`, `false`, `'false'` or absent. */
+function isDraggableProp(value: LongPressableProps['draggable']): boolean {
+	return value === true || value === 'true';
+}
+
 export function LongPressable({
 	onLongPress,
 	onClick,
 	innerRef,
 	children,
+	onPointerDown,
 	...rest
 }: LongPressableProps) {
+	// Latest `draggable` prop, so a restore puts back what the host wants NOW.
+	const draggablePropRef = useRef(rest.draggable);
+	draggablePropRef.current = rest.draggable;
+
+	const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+		if (isDraggableProp(draggablePropRef.current)) {
+			// Written to the DOM node, not through state: the browser decides
+			// whether a held finger lifts the element into a drag long before
+			// React could re-render, and React leaves the attribute alone while
+			// its prop is unchanged. A finger or pen switches drag off; the next
+			// mouse press switches it back on before a mouse drag can begin.
+			// Nothing restores it when the touch ends, on purpose: iOS fires
+			// pointercancel partway through a held press (a scroll or system
+			// gesture taking over), and restoring there re-arms the very lift
+			// this exists to prevent.
+			e.currentTarget.draggable = e.pointerType === 'mouse';
+		}
+		onPointerDown?.(e);
+	};
+
 	// A long-press that opens a menu is usually followed by a synthesized click
 	// on touch; swallow that one click so the element's own click action does
 	// not also fire. Time-bounded (see POST_LONG_PRESS_CLICK_WINDOW_MS): a
@@ -94,7 +128,13 @@ export function LongPressable({
 	);
 
 	return (
-		<div {...rest} ref={setRef} onClick={handleClick} {...handlers}>
+		<div
+			{...rest}
+			ref={setRef}
+			onClick={handleClick}
+			onPointerDown={handlePointerDown}
+			{...handlers}
+		>
 			{children}
 		</div>
 	);

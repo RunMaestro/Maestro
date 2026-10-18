@@ -105,7 +105,7 @@ describe('useCueAutoDiscovery', () => {
 			expect(mockRefreshSession).toHaveBeenCalledWith('s2', '/project/b');
 		});
 
-		it('should scan sessions even if maestroCue is disabled (indicator always shows)', () => {
+		it('should not scan sessions while maestroCue is disabled (no footprint)', () => {
 			const sessions = [makeSession('s1', '/project/a')];
 			const encoreFeatures = makeEncoreFeatures(false);
 
@@ -116,8 +116,7 @@ describe('useCueAutoDiscovery', () => {
 				useSessionStore.setState({ sessionsLoaded: true });
 			});
 
-			expect(mockRefreshSession).toHaveBeenCalledTimes(1);
-			expect(mockRefreshSession).toHaveBeenCalledWith('s1', '/project/a');
+			expect(mockRefreshSession).not.toHaveBeenCalled();
 		});
 
 		it('should skip sessions without projectRoot', () => {
@@ -276,22 +275,41 @@ describe('useCueAutoDiscovery', () => {
 		});
 	});
 
-	describe('discovery always runs', () => {
-		it('should refresh new sessions even when maestroCue is disabled', () => {
+	describe('discovery is gated on the encore flag', () => {
+		it('should not refresh or remove sessions while maestroCue is disabled', () => {
 			const initialSessions = [makeSession('s1', '/project/a')];
 			const encoreFeatures = makeEncoreFeatures(false);
 
 			seedSessions(initialSessions, true);
 			renderHook(() => useCueAutoDiscovery(encoreFeatures));
 
-			mockRefreshSession.mockClear();
-
-			// Add a new session while feature is disabled - should still refresh
+			// Add and remove agents while the feature is off - no IPC either way
 			act(() => {
-				seedSessions([...initialSessions, makeSession('s2', '/project/b')], true);
+				seedSessions([makeSession('s2', '/project/b')], true);
 			});
 
+			expect(mockRefreshSession).not.toHaveBeenCalled();
+			expect(mockRemoveSession).not.toHaveBeenCalled();
+		});
+
+		it('rescans each agent exactly once when maestroCue is switched back on', async () => {
+			seedSessions([makeSession('s1', '/project/a')], true);
+			const { rerender } = renderHook(({ encore }) => useCueAutoDiscovery(encore), {
+				initialProps: { encore: makeEncoreFeatures(false) },
+			});
+
+			// An agent added while off is picked up by the enable rescan, not twice
+			act(() => {
+				seedSessions([makeSession('s1', '/project/a'), makeSession('s2', '/project/b')], true);
+			});
+			rerender({ encore: makeEncoreFeatures(true) });
+			await act(async () => {});
+
+			expect(mockEnable).toHaveBeenCalledTimes(1);
+			expect(mockRefreshSession).toHaveBeenCalledTimes(2);
+			expect(mockRefreshSession).toHaveBeenCalledWith('s1', '/project/a');
 			expect(mockRefreshSession).toHaveBeenCalledWith('s2', '/project/b');
+			expect(mockRemoveSession).not.toHaveBeenCalled();
 		});
 	});
 

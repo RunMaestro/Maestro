@@ -47,25 +47,34 @@ export function ProviderAvailabilityBar({
 	variant = 'full',
 }: ProviderAvailabilityBarProps): JSX.Element {
 	const isCompact = variant === 'compact';
+	// Nothing detected: `filterToAvailableProviders` already shows every row, so a
+	// toggle drawn OFF beside a full list reads as a filter that does not work.
+	// Draw it on and locked, and say why the list is full.
+	const isFallback = availableCount === 0;
+	const fallbackHint = `No providers detected ${locationLabel}. Showing all ${totalCount} so you can set a custom path.`;
 	const summary = isCompact
 		? `${availableCount} of ${totalCount} ${locationLabel}`
-		: `${availableCount} providers available ${locationLabel} of ${totalCount} supported`;
+		: isFallback
+			? `No providers detected ${locationLabel}, showing all ${totalCount} supported`
+			: `${availableCount} providers available ${locationLabel} of ${totalCount} supported`;
 
 	return (
 		<div
 			className={`flex items-center text-xs ${isCompact ? 'gap-2' : 'justify-center gap-3'}`}
 			style={{ color: theme.colors.textDim }}
 		>
-			<span>{summary}</span>
+			<span title={isFallback ? fallbackHint : undefined}>{summary}</span>
 
 			<label
 				{...{ [PROVIDER_BAR_NAV_EXEMPT_ATTR]: true }}
-				className="flex items-center gap-2 cursor-pointer select-none"
+				className={`flex items-center gap-2 select-none ${isFallback ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+				title={isFallback ? fallbackHint : undefined}
 			>
 				<ToggleSwitch
 					theme={theme}
-					checked={showAll}
+					checked={showAll || isFallback}
 					onChange={onShowAllChange}
+					disabled={isFallback}
 					ariaLabel="Show all supported providers"
 				/>
 				{isCompact ? 'Show All' : 'Show All Supported'}

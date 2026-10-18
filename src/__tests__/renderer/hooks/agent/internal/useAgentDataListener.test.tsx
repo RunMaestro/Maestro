@@ -4,6 +4,7 @@ import { useAgentDataListener } from '../../../../../renderer/hooks/agent/intern
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
+import { useRetryStore } from '../../../../../renderer/stores/retryStore';
 import type { BatchedUpdater } from '../../../../../renderer/hooks/agent/internal/types';
 
 let handler: ((sessionId: string, data: string) => void) | undefined;
@@ -139,5 +140,52 @@ describe('useAgentDataListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.agentError).toBeUndefined();
 		expect(updated.state).toBe('busy');
+	});
+
+	// Claude prints "Prompt is too long" on the result envelope as ordinary
+	// output, after the error that started the compaction recovery. Rendered, it
+	// puts the failure the recovery is masking straight back into the transcript.
+	it('drops output from a turn that failed on the context limit and is being re-run', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		useRetryStore.setState({
+			retries: {
+				'sess-1:tab-1': {
+					sessionId: 'sess-1',
+					tabId: 'tab-1',
+					key: 'sess-1:tab-1',
+					outageId: 'o1',
+					strategy: 'context-compaction',
+					mode: 'resend',
+					status: 'scheduled',
+					attempt: 0,
+					startedAt: 0,
+					nextRetryAt: 0,
+					lastMessage: 'Prompt is too long',
+					compaction: { pill: null, error: {} as any, compacted: false },
+				},
+			},
+			outages: {},
+		});
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentDataListener({ batchedUpdater: batched, activeHiddenToolRef: makeRef() })
+		);
+
+		handler!('sess-1-ai-tab-1', 'Prompt is too long');
+		expect(batched.appendLog).not.toHaveBeenCalled();
+
+		// Once the compaction is under way the tab's next writer is the resend.
+		useRetryStore.setState((state) => ({
+			retries: {
+				'sess-1:tab-1': { ...state.retries['sess-1:tab-1'], status: 'in-flight' },
+			},
+		}));
+		handler!('sess-1-ai-tab-1', 'Here is the answer.');
+		expect(batched.appendLog).toHaveBeenCalledWith('sess-1', 'tab-1', true, 'Here is the answer.');
+
+		useRetryStore.setState({ retries: {}, outages: {} });
 	});
 });

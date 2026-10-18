@@ -8,6 +8,8 @@ import { hasUnreadVisibleTab } from './unifiedTabOrderUtils';
  * (batchStore / retryStore), so the caller passes them in as id sets.
  */
 export interface AttentionContext {
+	/** Started host-owned headless processes, independent of desktop state. */
+	headlessCounts?: Readonly<Record<string, number>>;
 	/** Session ids with an active Auto Run batch (the AUTO badge). */
 	batchSessionIds: ReadonlySet<string>;
 	/** Session ids stuck auto-retrying an outage. */
@@ -46,6 +48,7 @@ export function sessionNeedsAttention(session: Session, ctx: AttentionContext): 
 	// unread on one is a badge the user has no way to clear.
 	if (hasUnreadVisibleTab(session.aiTabs)) return true;
 	if (session.state === 'busy' || session.state === 'error') return true;
+	if ((ctx.headlessCounts?.[session.id] ?? 0) > 0) return true;
 	if (ctx.batchSessionIds.has(session.id)) return true;
 	if (ctx.stuckOutageIds.has(session.id)) return true;
 	return false;

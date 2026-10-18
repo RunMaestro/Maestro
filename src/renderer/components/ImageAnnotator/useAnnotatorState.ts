@@ -22,7 +22,7 @@
  * pre-crop image and drawables, so undoing one restores the whole prior state.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { generateId } from '../../utils/ids';
 import type { CropRect } from './cropImageDataUrl';
 
@@ -194,6 +194,13 @@ export function useAnnotatorState(initialImage: string): UseAnnotatorStateReturn
 	// destructure to keep the hook lean.
 	const [, setHistory] = useState<HistoryEntry[]>([]);
 
+	// The tool that was active when the crop tool was armed. Applying a crop
+	// hands control back to it, so the selection frame closes with the cut
+	// instead of re-opening on the freshly cropped image.
+	const toolRef = useRef(tool);
+	toolRef.current = tool;
+	const toolBeforeCropRef = useRef<AnnotatorTool>(tool);
+
 	// Switching tools deselects any shape so the user gets a clean slate. The
 	// in-progress shape is also cleared if they were mid-draw. Text editing
 	// is committed (not cancelled) so a tool change doesn't silently discard
@@ -201,6 +208,9 @@ export function useAnnotatorState(initialImage: string): UseAnnotatorStateReturn
 	// was never applied, and leaving it armed would re-open the crop tool on a
 	// stale rectangle.
 	const setTool = useCallback((next: AnnotatorTool) => {
+		if (next === 'crop' && toolRef.current !== 'crop') {
+			toolBeforeCropRef.current = toolRef.current;
+		}
 		setToolInternal(next);
 		setSelectedShapeId(null);
 		setCurrentShape(null);
@@ -356,6 +366,10 @@ export function useAnnotatorState(initialImage: string): UseAnnotatorStateReturn
 	 * being flattened into the pixels. Drawables that fell outside the crop keep
 	 * their (now negative) coordinates and are simply clipped by the SVG
 	 * viewport - undoing the crop brings them back intact.
+	 *
+	 * The crop tool is left on the way out: a cut is a finished action, and a
+	 * frame that re-opens over the result reads as the crop not having taken.
+	 * Cropping again is a deliberate second press of the tool.
 	 */
 	const applyCrop = useCallback(
 		(nextImage: string, rect: CropRect) => {
@@ -383,6 +397,7 @@ export function useAnnotatorState(initialImage: string): UseAnnotatorStateReturn
 			setTexts((prev) => prev.map((t) => ({ ...t, x: t.x + dx, y: t.y + dy })));
 			setCropCount((c) => c + 1);
 			setCropRect(null);
+			setToolInternal(toolBeforeCropRef.current);
 			setCurrentPoints([]);
 			setCurrentShape(null);
 			setSelectedShapeId(null);
@@ -398,11 +413,17 @@ export function useAnnotatorState(initialImage: string): UseAnnotatorStateReturn
 			const last = prev[prev.length - 1];
 			if (last.kind === 'crop') {
 				// Restore the entire pre-crop state, and re-arm the selection at
-				// the rect that was applied so the user can adjust and retry.
+				// the rect that was applied so the user can adjust and retry. The
+				// crop tool comes back with it: applying the crop left the tool,
+				// and a rect armed under any other tool is never drawn.
 				setImage(last.image);
 				setStrokes(last.strokes);
 				setShapes(last.shapes);
 				setTexts(last.texts);
+				if (toolRef.current !== 'crop') {
+					toolBeforeCropRef.current = toolRef.current;
+				}
+				setToolInternal('crop');
 				setCropRect(last.rect);
 				setCropCount((c) => Math.max(0, c - 1));
 				setSelectedShapeId(null);

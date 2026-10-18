@@ -21,13 +21,13 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
-vi.mock('../../../../main/parsers/error-patterns', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	matchSshErrorPattern: vi.fn(() => null),
 	getErrorPatterns: vi.fn(() => []),
 	matchErrorPattern: vi.fn(() => null),
 }));
 
-vi.mock('../../../../main/parsers/usage-aggregator', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
 	aggregateModelUsage: vi.fn(() => ({
 		inputTokens: 100,
 		outputTokens: 50,
@@ -81,7 +81,7 @@ import { DataBufferManager } from '../../../../main/process-manager/handlers/Dat
 import { CursorCliOutputParser } from '../../../../main/parsers/cursor-cli-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { captureException } from '../../../../main/utils/sentry';
-import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import { waitForCopilotShutdown } from '../../../../main/process-manager/CopilotShutdownWaiter';
@@ -89,7 +89,11 @@ import { waitForCopilotShutdown } from '../../../../main/process-manager/Copilot
 const { waitForCopilotShutdown: actualWaitForCopilotShutdown } = await vi.importActual<
 	typeof import('../../../../main/process-manager/CopilotShutdownWaiter')
 >('../../../../main/process-manager/CopilotShutdownWaiter');
-import type { AgentError, ManagedProcess } from '../../../../main/process-manager/types';
+import type {
+	AgentError,
+	ManagedProcess,
+	TurnSettlement,
+} from '../../../../main/process-manager/types';
 import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -205,6 +209,65 @@ describe('ExitHandler', () => {
 			expect(mockParser.parseJsonLine).toHaveBeenCalledWith(resultJson);
 			expect(mockParser.isResultMessage).toHaveBeenCalled();
 			expect(dataEvents).toContain('Auth Bug Fix');
+		});
+
+		it('hands the flushed line on as a parsed event when something is subscribed', async () => {
+			// The last line of a stream that ended without a newline never passes
+			// through StdoutHandler, so this is the only place it can be handed on.
+			const resultJson = '{"type":"result","result":"Auth Bug Fix","session_id":"abc"}';
+			const event = { type: 'result', text: 'Auth Bug Fix', sessionId: 'abc' };
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => event) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({
+					isStreamJsonMode: true,
+					isBatchMode: true,
+					jsonBuffer: resultJson,
+					outputParser: mockParser,
+				})
+			);
+
+			const order: string[] = [];
+			const parsedEvents: unknown[][] = [];
+			emitter.on('parsed-event', (...args: unknown[]) => {
+				order.push('parsed-event');
+				parsedEvents.push(args);
+			});
+			emitter.on('exit', () => order.push('exit'));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(parsedEvents).toEqual([['test-session', event]]);
+			// Ahead of the exit, so the line belongs to the turn that printed it.
+			expect(order).toEqual(['parsed-event', 'exit']);
+		});
+
+		it('does not emit a parsed event for the flushed line while nobody is subscribed', async () => {
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'result',
+					text: 'Auth Bug Fix',
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({
+					isStreamJsonMode: true,
+					isBatchMode: true,
+					jsonBuffer: '{"type":"result","result":"Auth Bug Fix"}',
+					outputParser: mockParser,
+				})
+			);
+			const emitSpy = vi.spyOn(emitter, 'emit');
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(emitSpy.mock.calls.filter((call) => call[0] === 'parsed-event')).toEqual([]);
+			expect(emitSpy.mock.calls.some((call) => call[0] === 'exit')).toBe(true);
 		});
 
 		it('emits an error, not data, when the trailing envelope reports a failure', async () => {
@@ -685,6 +748,29 @@ describe('ExitHandler', () => {
 			expect(proc.provisionalError).toBeUndefined();
 		});
 
+		// Output that reaches the renderer after an error reads as recovery and
+		// deletes the error card, so the partial answer has to go out first.
+		it('emits the partial answer before the held notice', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				provisionalError: heldError,
+				streamedText: 'partial answer',
+			});
+			processes.set('test-session', proc);
+
+			const order: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => order.push(`data:${data}`));
+			emitter.on('agent-error', (_sid: string, error: AgentError) =>
+				order.push(`agent-error:${error.message}`)
+			);
+			emitter.on('exit', () => order.push('exit'));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(order).toEqual(['data:partial answer', 'agent-error:server_error', 'exit']);
+		});
+
 		it('drops a held notice when the user interrupted the turn', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
@@ -701,6 +787,48 @@ describe('ExitHandler', () => {
 
 			expect(onAgentError).not.toHaveBeenCalled();
 			expect(proc.provisionalError).toBeUndefined();
+		});
+
+		it('skips detectErrorFromExit and the SSH error match entirely when the user interrupted the turn', async () => {
+			// Regression test for the maestro-lib turn-contract migration:
+			// previously `interrupted` only suppressed the held provisional-
+			// error notice and the omp silent-exit override - detectErrorFromExit
+			// and the SSH pattern match ran regardless, so a stopped turn could
+			// still surface as a crash (e.g. opencode-output-parser flags exit
+			// code 0 with empty stdout and non-empty stderr, a shape a stop can
+			// produce). `interrupted` now suppresses the whole cascade.
+			const detectErrorFromExit = vi.fn(() => ({
+				type: 'agent_crashed' as const,
+				message: 'would have been reported as a crash',
+				recoverable: true,
+				agentId: 'claude-code',
+			}));
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'would also have been reported as a crash',
+				recoverable: true,
+			});
+
+			const proc = createMockProcess({
+				interrupted: true,
+				outputParser: createMockOutputParser({ detectErrorFromExit }),
+				sshRemoteId: 'remote-1',
+				stderrBuffer: 'bash: opencode: command not found',
+			});
+			processes.set('test-session', proc);
+
+			const onAgentError = vi.fn();
+			emitter.on('agent-error', onAgentError);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(detectErrorFromExit).not.toHaveBeenCalled();
+			expect(mockedMatchSsh).not.toHaveBeenCalled();
+			expect(onAgentError).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+
+			mockedMatchSsh.mockReset();
 		});
 
 		it('does not emit a held notice after an error was already emitted', async () => {
@@ -916,6 +1044,37 @@ describe('ExitHandler', () => {
 			expect(dataEvents).toContain('Useful response before an unusual exit');
 		});
 
+		// The fallback text is batched for 50ms while the exit error is not, so
+		// without a flush the error overtook it and the text then erased the error.
+		it('emits the fallback text before an error detected from the exit code', async () => {
+			const exitError: AgentError = {
+				type: 'agent_crashed',
+				message: 'Agent exited with code 3',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 1,
+			};
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				resultEmitted: false,
+				streamedText: 'Partial response text',
+				outputParser: createMockOutputParser({
+					detectErrorFromExit: vi.fn(() => exitError),
+				}),
+			});
+			processes.set('test-session', proc);
+
+			const order: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => order.push(`data:${data}`));
+			emitter.on('agent-error', (_sid: string, error: AgentError) =>
+				order.push(`agent-error:${error.message}`)
+			);
+
+			await exitHandler.handleExit('test-session', 3);
+
+			expect(order).toEqual(['data:Partial response text', 'agent-error:Agent exited with code 3']);
+		});
+
 		it('should not emit streamedText when result was already emitted', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
@@ -972,7 +1131,9 @@ describe('ExitHandler', () => {
 			expect(dataEvents).toEqual([]);
 		});
 
-		it('emits an unterminated Cursor error result on successful process exit without data recovery', async () => {
+		// The partial text goes out once, BEFORE the error card (5b7a39c97): text
+		// arriving after the card reads as recovery and erases it.
+		it('emits an unterminated Cursor error result on successful process exit, after the partial text and with nothing after it', async () => {
 			const proc = createMockProcess({
 				toolType: 'cursor-cli',
 				isStreamJsonMode: true,
@@ -990,11 +1151,14 @@ describe('ExitHandler', () => {
 			});
 			processes.set('test-session', proc);
 
-			const dataEvents: string[] = [];
+			const order: string[] = [];
 			const errors: Array<[string, { sessionId?: string; sshRemoteId?: string; message: string }]> =
 				[];
-			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
-			emitter.on('agent-error', (sid: string, error) => errors.push([sid, error]));
+			emitter.on('data', (_sid: string, data: string) => order.push(`data:${data}`));
+			emitter.on('agent-error', (sid: string, error) => {
+				errors.push([sid, error]);
+				order.push('agent-error');
+			});
 			const sessionIds: string[] = [];
 			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
 				sessionIds.push(agentSessionId)
@@ -1011,7 +1175,7 @@ describe('ExitHandler', () => {
 					message: 'Cursor agent failed',
 				}),
 			]);
-			expect(dataEvents).toEqual([]);
+			expect(order).toEqual(['data:Partial assistant output', 'agent-error']);
 			expect(sessionIds).toEqual(['cursor-session']);
 		});
 
@@ -1554,6 +1718,183 @@ describe('ExitHandler', () => {
 
 			expect(errors).toHaveLength(1);
 			expect(errors[0].message).toContain('code 1');
+		});
+	});
+
+	describe('exit event settlement argument', () => {
+		it('emits completed-with-warning when result was emitted but process exited with code 1', async () => {
+			const mockParser = createMockOutputParser();
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: 'Final answer text',
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'completed-with-warning',
+				answerCaptured: true,
+			});
+		});
+
+		it('emits completed-with-warning when batch mode JSON result was parsed followed by exit 1', async () => {
+			const batchResultJson = JSON.stringify({ result: 'Batch task finished' });
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isBatchMode: true,
+				isStreamJsonMode: false,
+				jsonBuffer: batchResultJson,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'completed-with-warning',
+				answerCaptured: true,
+			});
+		});
+
+		it('emits interrupted when process was marked as interrupted', async () => {
+			const mockParser = createMockOutputParser();
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				interrupted: true,
+				streamedText: 'partial answer',
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'interrupted',
+				answerCaptured: true,
+			});
+		});
+
+		it('emits crashed when provider classifies an exit error', async () => {
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'rate_limited',
+					message: 'Rate limit exceeded',
+					recoverable: true,
+					agentId: 'claude-code',
+				})) as unknown as AgentOutputParser['detectErrorFromExit'],
+			});
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'crashed',
+				answerCaptured: false,
+			});
+		});
+
+		it('emits crashed when errorEmitted was already set', async () => {
+			const mockParser = createMockOutputParser();
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				errorEmitted: true,
+				streamedText: 'some partial output',
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'crashed',
+				answerCaptured: true,
+			});
+		});
+
+		it('emits crashed with answerCaptured false on handleError', () => {
+			const proc = createMockProcess({ toolType: 'claude-code' });
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			let receivedCode: number | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedCode = code;
+					receivedSettlement = settlement;
+				}
+			);
+
+			exitHandler.handleError('test-session', new Error('spawn failed'));
+
+			expect(receivedCode).toBe(1);
+			expect(receivedSettlement).toEqual({
+				outcome: 'crashed',
+				answerCaptured: false,
+			});
+		});
+
+		it('does not include settlement argument when no managed process exists', async () => {
+			let receivedArgs: unknown[] = [];
+			emitter.on('exit', (...args: unknown[]) => {
+				receivedArgs = args;
+			});
+
+			await exitHandler.handleExit('unknown-session', 0);
+
+			expect(receivedArgs).toEqual(['unknown-session', 0]);
+			expect(receivedArgs[3]).toBeUndefined();
 		});
 	});
 });

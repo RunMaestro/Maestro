@@ -15,6 +15,7 @@ import type {
 	CommandNodeData,
 	CueEventType,
 } from '../../../../shared/cue-pipeline-types';
+import { hasWebhookTriggerConfig } from './webhookTriggerConfig';
 
 export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'app.startup': 'Startup',
@@ -30,6 +31,14 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'cli.trigger': 'CLI Trigger',
 	'webhook.received': 'Webhook',
 };
+
+/** True when a trigger's webhook settings carry a secret (env var or literal). */
+function hasWebhookSecret(cfg: TriggerNodeData['config']): boolean {
+	return (
+		(typeof cfg.webhook_secret_env === 'string' && cfg.webhook_secret_env.trim().length > 0) ||
+		(typeof cfg.webhook_secret === 'string' && cfg.webhook_secret.trim().length > 0)
+	);
+}
 
 /**
  * Validate trigger node config against the YAML schema's per-event
@@ -76,14 +85,23 @@ function validateTriggerConfig(
 		case 'github.pull_request':
 		case 'github.issue':
 		case 'github.label':
-			// repo is optional in the YAML schema (defaults to current repo via gh CLI)
-			// but if provided it must be non-empty.
+			// The trigger needs repo to run at all: without it the engine gives the
+			// subscription no trigger source (the repo is never detected), and
+			// `cue engine check` reports it. Only a present-but-empty repo is an
+			// error here; a missing one is left to readiness.
 			if (
 				cfg.repo !== undefined &&
 				(typeof cfg.repo !== 'string' || cfg.repo.trim().length === 0)
 			) {
 				errors.push(
-					`"${pipelineName}": ${label} trigger has an empty "repo" - leave blank or set "owner/repo"`
+					`"${pipelineName}": ${label} trigger has an empty "repo" - set it to "owner/repo", since the trigger never runs without one`
+				);
+			}
+			// Webhooks are optional here, but once any webhook setting is filled
+			// in the same secret rule as `webhook.received` applies.
+			if (hasWebhookTriggerConfig(cfg) && !hasWebhookSecret(cfg)) {
+				errors.push(
+					`"${pipelineName}": ${label} trigger needs a secret environment variable to take GitHub webhooks - webhooks must be authenticated`
 				);
 			}
 			break;
@@ -91,11 +109,7 @@ function validateTriggerConfig(
 			// Mirrors the YAML validator: a webhook with no secret is a remote
 			// trigger anyone on the machine can fire, so block it at save time
 			// rather than letting the loader reject the whole file on restart.
-			if (
-				(typeof cfg.webhook_secret_env !== 'string' ||
-					cfg.webhook_secret_env.trim().length === 0) &&
-				(typeof cfg.webhook_secret !== 'string' || cfg.webhook_secret.trim().length === 0)
-			) {
+			if (!hasWebhookSecret(cfg)) {
 				errors.push(
 					`"${pipelineName}": ${label} trigger needs a secret environment variable - webhooks must be authenticated`
 				);

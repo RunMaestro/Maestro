@@ -1,3 +1,7 @@
+import type {
+	TranslationRequest,
+	TranslationReport,
+} from '../shared/maestro-lib/translation/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -97,6 +101,9 @@ interface ProcessConfig {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/** maestro-p idle cap (`--max-wait`) for a TUI turn. Unset keeps maestro-p's
+	 *  300s default; Auto Run raises it to its own inactivity budget. */
+	maestroPMaxWaitSeconds?: number;
 }
 
 type AgentConfigOption = import('../shared/types').AgentConfigOption;
@@ -107,6 +114,7 @@ type DirectoryEntry = import('../shared/types').DirectoryEntry;
 type ShellInfo = import('../shared/types').ShellInfo;
 
 type UsageStats = import('../shared/types').UsageStats;
+type CallUsage = import('../shared/types').CallUsage;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
@@ -176,9 +184,17 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
-import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
+import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type {
+	CotAgentConfig,
+	CotAgentStatus,
+	CotChainVerifyResult,
+	CotFolderValidation,
+	CotSetResult,
+} from '../shared/cotExport/types';
 import type { DebugPackageOptions } from '../shared/debugPackage';
+import type { QueueSteerResult, SteeringResultFrame } from '../shared/chatSteering';
 import type {
 	ParquetFetchProgress,
 	ParquetFileInfo,
@@ -211,10 +227,22 @@ import type { AggregatedContributions as PluginContributions } from '../shared/p
 import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
+import type { QuickChatApi } from '../main/preload/quickChat';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../shared/throughputGaugeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../shared/autoRunSteeringCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
+import type { ComputerHistoryApi } from '../main/preload/computerHistory';
+import type { MaestroRunApi } from '../main/preload/maestroRun';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -224,7 +252,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			sessionId: string
 		) => Promise<SessionMessagesResult | null>;
-		// NEW: Single-call grooming (recommended) - spawns batch process and returns response
+		// Single-call grooming: spawns a batch process and returns its response
 		groomContext: (
 			projectRoot: string,
 			agentType: string,
@@ -245,33 +273,70 @@ interface MaestroAPI {
 				// grooming or transfer - their output becomes the context every later
 				// turn reads, so a cheap compaction compounds silently.
 				cheapTurn?: boolean;
+				// For a turn that only answers (a classification): no tools, no
+				// writes, and a deadline shorter than the grooming default.
+				readOnly?: boolean;
+				disableTools?: boolean;
+				timeoutMs?: number;
+				// The agent's Claude token source: a TUI agent runs this turn through maestro-p.
+				claudeTokenSource?: import('../shared/claudeTokenMode').ClaudeTokenSourceFields;
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions
 		cancelGrooming: () => Promise<void>;
-		// DEPRECATED: Use groomContext instead
-		createGroomingSession: (projectRoot: string, agentType: string) => Promise<string>;
-		sendGroomingPrompt: (sessionId: string, prompt: string) => Promise<string>;
-		cleanupGroomingSession: (sessionId: string) => Promise<void>;
 	};
 	settings: {
 		get: (key: string) => Promise<unknown>;
 		set: (key: string, value: unknown) => Promise<boolean>;
 		getAll: () => Promise<Record<string, unknown>>;
+		getMediaStatus?: () => Promise<import('../shared/plugins/media-tools').MediaToolStatus>;
 		onExternalChange: (handler: () => void) => () => void;
 	};
 	sessions: {
 		getAll: () => Promise<any[]>;
-		setAll: (sessions: any[]) => Promise<boolean>;
+		getBootstrap: () => Promise<any[]>;
+		getDeferredContent: (
+			sessionId: string,
+			tabId: string | null,
+			includeCommands: boolean
+		) => Promise<{
+			logs?: import('./types').LogEntry[];
+			shellLogs?: import('./types').LogEntry[];
+			agentCommands?: NonNullable<import('./types').Session['agentCommands']>;
+			aiCommandHistory?: string[];
+			transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
+		}>;
+		setAll: (sessions: any[], baselines?: any[]) => Promise<boolean>;
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and
 		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
 		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
-		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
+		setMany: (updates: any[], removeIds?: string[], baselines?: any[]) => Promise<boolean>;
 		getActiveSessionId: () => Promise<string>;
 		setActiveSessionId: (id: string) => Promise<void>;
+		publishTranscript: (
+			patch: import('../shared/sessionTranscript').SessionTranscriptPatch<
+				import('./types').LogEntry
+			>,
+			requestId?: string
+		) => Promise<boolean>;
+		onTranscriptSync: (
+			handler: (
+				patch: import('../shared/sessionTranscript').SessionTranscriptPatch<
+					import('./types').LogEntry
+				>
+			) => void
+		) => () => void;
+		onTranscriptRequest: (
+			handler: (request: {
+				sessionId: string;
+				tabId: string;
+				requestId: string;
+				metadataOnly?: boolean;
+			}) => void
+		) => () => void;
 		/**
 		 * Listen for main-side focus requests emitted by the plugin `sessions.focus`
 		 * verb. The renderer applies the jump through its canonical helpers because
@@ -286,7 +351,12 @@ interface MaestroAPI {
 		 * follows along instead of only finding out on reload.
 		 */
 		onLifecycleSync: (
-			handler: (payload: { added: any[]; removedIds: string[] }) => void
+			handler: (payload: {
+				added: any[];
+				removedIds: string[];
+				updated?: any[];
+				baselines?: any[];
+			}) => void
 		) => () => void;
 	};
 	groups: {
@@ -294,6 +364,25 @@ interface MaestroAPI {
 		setAll: (groups: any[]) => Promise<boolean>;
 	};
 	process: {
+		onRemoteStartAutoRun: (
+			callback: (
+				sessionId: string,
+				config: import('./types').BatchRunConfig,
+				folderPath: string,
+				responseChannel: string
+			) => void
+		) => () => void;
+		onRemoteControlAutoRun: (
+			callback: (
+				sessionId: string,
+				control: import('../shared/autoRunRemote').AutoRunRemoteControl,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteAutoRunResponse: (
+			responseChannel: string,
+			result: import('../shared/autoRunRemote').AutoRunRemoteResult
+		) => void;
 		spawn: (config: ProcessConfig) => Promise<{ pid: number; success: boolean }>;
 		spawnTerminalTab: (config: {
 			sessionId: string;
@@ -311,8 +400,17 @@ interface MaestroAPI {
 				workingDirOverride?: string;
 				syncHistory?: boolean;
 			};
-		}) => Promise<{ pid: number; success: boolean }>;
+		}) => Promise<{ pid: number; success: boolean; attached?: boolean }>;
 		write: (sessionId: string, data: string) => Promise<boolean>;
+		/**
+		 * Steer a Claude turn that is already running (chat steering). The verdict is
+		 * the point: only `absorbed` means the turn in flight changed course, and
+		 * `refused` means the message was NOT delivered and is still the caller's to
+		 * send. Aliases the canonical shared type rather than restating the shape - a
+		 * declaration that spells its own union compiles fine and then hands the UI a
+		 * verdict nothing branches on.
+		 */
+		steer: (sessionId: string, text: string) => Promise<SteeringResultFrame>;
 		broadcastUserInput: (payload: {
 			originId: string;
 			sessionId: string;
@@ -345,6 +443,12 @@ interface MaestroAPI {
 		}) => Promise<{ exitCode: number }>;
 		/** Terminate an in-flight `runCommand`. False when nothing is running under that id. */
 		cancelCommand: (sessionId: string) => Promise<boolean>;
+		getHeadlessActivity: () => Promise<
+			import('../shared/headlessAgentActivity').HeadlessAgentActivity
+		>;
+		onHeadlessActivity: (
+			handler: (activity: import('../shared/headlessAgentActivity').HeadlessAgentActivity) => void
+		) => () => void;
 		getActiveProcesses: (options?: { includeChildProcesses?: boolean }) => Promise<
 			Array<{
 				sessionId: string;
@@ -410,6 +514,10 @@ interface MaestroAPI {
 		) => Promise<boolean>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
+		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */
+		onSteeringVerdict: (
+			callback: (sessionId: string, verdict: SteeringResultFrame) => void
+		) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
 		onToolExecution: (
 			callback: (
@@ -465,7 +573,17 @@ interface MaestroAPI {
 			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
-		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
+		onRemoteCloseTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCloseTabResponse: (responseChannel: string, closed: boolean) => void;
+		onRemoteReopenTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteReopenTabResponse: (
+			responseChannel: string,
+			result: { tabId: string } | null
+		) => void;
 		onRemoteRenameTab: (
 			callback: (sessionId: string, tabId: string, newName: string, responseChannel: string) => void
 		) => () => void;
@@ -480,6 +598,14 @@ interface MaestroAPI {
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;
 		sendRemoteSnoozeCommandResponse: (responseChannel: string, result: SnoozeCommandResult) => void;
+		// `maestro-cli throughput-gauge` requests (primary window only); returns unsubscribe.
+		onRemoteThroughputGaugeCommand: (
+			callback: (request: ThroughputGaugeCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteThroughputGaugeCommandResponse: (
+			responseChannel: string,
+			result: ThroughputGaugeCommandResult
+		) => void;
 		onRemoteReorderTab: (
 			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
 		) => () => void;
@@ -488,8 +614,19 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				filePath: string,
-				options: { background: boolean; switchToAgent: boolean }
+				options: {
+					background: boolean;
+					switchToAgent: boolean;
+					mediaMode: import('../shared/mediaTypes').MediaOpenMode;
+				}
 			) => void
+		) => () => void;
+		onRemoteNotificationInbox: (
+			callback: (
+				request: import('../shared/notificationInbox').NotificationInboxRequest
+			) =>
+				| import('../shared/notificationInbox').NotificationInboxResult
+				| Promise<import('../shared/notificationInbox').NotificationInboxResult>
 		) => () => void;
 		onRemoteOpenModal: (
 			callback: (params: { surface: string; tab?: string }) => void
@@ -628,7 +765,13 @@ interface MaestroAPI {
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					inputRequired?: boolean;
+				},
 				responseChannel: string,
 				options: { background?: boolean }
 			) => void
@@ -674,12 +817,45 @@ interface MaestroAPI {
 				totalLines?: number;
 			}
 		) => void;
+		onRemoteGetGroupChats: (callback: (responseChannel: string) => void) => () => void;
+		sendRemoteGetGroupChatsResponse: (
+			responseChannel: string,
+			result: import('../shared/groupChatRemote').RemoteGroupChatState[]
+		) => void;
+		onRemoteStartGroupChat: (
+			callback: (
+				topic: string,
+				participantIds: string[],
+				responseChannel: string,
+				options?: { moderatorAgentId?: string; message?: string }
+			) => void
+		) => () => void;
+		sendRemoteStartGroupChatResponse: (
+			responseChannel: string,
+			result: { chatId?: string; error?: string } | null
+		) => void;
+		onRemoteGetGroupChatState: (
+			callback: (chatId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteGetGroupChatStateResponse: (
+			responseChannel: string,
+			result: import('../shared/groupChatRemote').RemoteGroupChatState | null
+		) => void;
+		onRemoteStopGroupChat: (
+			callback: (chatId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteStopGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSendGroupChatMessage: (
+			callback: (chatId: string, message: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSendGroupChatMessageResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteNewAITabWithPrompt: (
 			callback: (
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
-				background?: boolean
+				background?: boolean,
+				hidden?: boolean
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -723,7 +899,8 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -754,6 +931,32 @@ interface MaestroAPI {
 		sendRemoteRemoveQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
+		) => void;
+		onRemoteSetQueueItemPaused: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				paused: boolean,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteSetQueueItemPausedResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; paused?: boolean; error?: string }
+		) => void;
+		onRemoteMergeQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMergeQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		) => void;
+		onRemoteSteerQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSteerQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; result?: QueueSteerResult; error?: string }
 		) => void;
 		onRemoteRefreshAutoRunDocs: (
 			callback: (sessionId: string, background?: boolean) => void
@@ -839,6 +1042,13 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
+		onRemoteAutoRunSteeringCommand: (
+			callback: (request: SteeringCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteAutoRunSteeringCommandResponse: (
+			responseChannel: string,
+			result: SteeringCommandResult
+		) => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
 		) => () => void;
@@ -927,7 +1137,7 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: { success: boolean; error?: string }
+			result: TranslationReport
 		) => void;
 		onRemoteCreateGroup: (
 			callback: (
@@ -989,6 +1199,7 @@ interface MaestroAPI {
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
+		onCallUsage: (callback: (sessionId: string, usage: CallUsage) => void) => () => void;
 		onAgentError: (
 			callback: (
 				sessionId: string,
@@ -1019,7 +1230,10 @@ interface MaestroAPI {
 		) => () => void;
 	};
 	feedback: {
-		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
+		checkGhAuth: (options?: {
+			fresh?: boolean;
+		}) => Promise<import('../shared/feedback').FeedbackAuthResponse>;
+		getGhLoginCommand: () => Promise<import('../shared/feedback').FeedbackGhLoginCommand>;
 		submit: (payload: {
 			sessionId: string;
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
@@ -1049,7 +1263,7 @@ interface MaestroAPI {
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
-		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
+		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
 				number: number;
@@ -1065,7 +1279,9 @@ interface MaestroAPI {
 		subscribeIssue: (
 			issueNumber: number,
 			comment?: string
-		) => Promise<{ success: boolean; error?: string }>;
+		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
+		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
+		rememberAccount: (key: string | null) => Promise<void>;
 		drafts: {
 			list: () => Promise<{
 				drafts: Array<{
@@ -1211,9 +1427,33 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
-		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
+		onLiteReady: (getReady: () => boolean) => () => void;
+		startAutoRun: (
+			sessionId: string,
+			config: import('./types').BatchRunConfig,
+			folderPath: string
+		) => Promise<import('../shared/autoRunRemote').AutoRunRemoteResult>;
+		controlAutoRun: (
+			sessionId: string,
+			control: import('../shared/autoRunRemote').AutoRunRemoteControl
+		) => Promise<import('../shared/autoRunRemote').AutoRunRemoteResult>;
+		claimAutoRunStart: (
+			sessionId: string,
+			owner?: import('../shared/autoRunBroadcast').AutoRunOwner<import('./types').BatchRunConfig>
+		) => Promise<boolean>;
 		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
+		takeOrphanedAutoRuns: (
+			instanceId: string
+		) => Promise<
+			import('../shared/autoRunBroadcast').OrphanedAutoRun<
+				Partial<import('../shared/autoRunBroadcast').AutoRunBroadcastState>,
+				import('./types').BatchRunConfig
+			>[]
+		>;
+		abandonAutoRunReclaim: (sessionId: string, instanceId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
+		requestCloseTab: (sessionId: string, tabId: string) => Promise<boolean>;
+		requestReopenTab: (sessionId: string, tabId: string) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
 			command: string,
@@ -1246,7 +1486,7 @@ interface MaestroAPI {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		) => Promise<{ stdout: string; stderr: string }>;
+		) => Promise<{ stdout: string; stderr: string; timedOut?: boolean }>;
 		diff: (
 			cwd: string,
 			file?: string,
@@ -1269,12 +1509,12 @@ interface MaestroAPI {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		) => Promise<{ stdout: string; stderr: string }>;
+		) => Promise<{ stdout: string; stderr: string; timedOut?: boolean }>;
 		branch: (
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		) => Promise<{ stdout: string; stderr: string }>;
+		) => Promise<{ stdout: string; stderr: string; timedOut?: boolean }>;
 		/**
 		 * Get list of all branches
 		 */
@@ -1305,6 +1545,8 @@ interface MaestroAPI {
 			behind: number;
 			ahead: number;
 			uncommittedChanges: number;
+			/** One of the underlying queries timed out; the zero/empty fields are placeholders. */
+			timedOut?: boolean;
 		}>;
 		log: (
 			cwd: string,
@@ -1463,10 +1705,23 @@ interface MaestroAPI {
 		// Supports SSH remote execution via optional sshRemoteId parameter
 		listWorktrees: (
 			cwd: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			basePath?: string,
+			sessionPaths?: string[]
 		) => Promise<{
+			resolvedCwd?: string;
+			resolvedBasePath?: string;
+			resolvedSessionPaths?: Record<string, string>;
+			// Missing candidates are safe to reconcile only after a successful registry read.
+			missingSessionPaths?: string[];
+			/** Individual aliases that could not be resolved; keep their existing sessions. */
+			unresolvedSessionPaths?: string[];
 			worktrees: Array<{
 				path: string;
+				resolvedPath?: string;
+				pathUnresolved?: boolean;
+				pathMissing?: boolean;
+				isPrunable?: boolean;
 				head: string;
 				branch: string | null;
 				isBare: boolean;
@@ -1484,6 +1739,8 @@ interface MaestroAPI {
 				repoRoot: string | null;
 			}>;
 			scanFailed?: boolean;
+			/** Uncertain candidate or group roots whose existing sessions must be preserved. */
+			unresolvedPaths?: string[];
 		}>;
 		// File watching is not available for SSH remote sessions.
 		// For remote sessions, returns isRemote: true indicating polling should be used instead.
@@ -1650,6 +1907,7 @@ interface MaestroAPI {
 		getPathForFile: (file: File) => string;
 	};
 	webserver: {
+		openLitePairing: () => Promise<void>;
 		getUrl: () => Promise<string>;
 		getConnectedClients: () => Promise<number>;
 	};
@@ -1689,7 +1947,19 @@ interface MaestroAPI {
 		setDisabled: (id: string, disabled: boolean) => Promise<WebUserPublic>;
 		deleteUser: (id: string) => Promise<void>;
 	};
+	/**
+	 * Computer History (the recorder's status, config, rules, pause, clear,
+	 * permission flow, and recent-activity query). Desktop-only: the web-desktop
+	 * bridge refuses every `computerHistory:*` channel (D15).
+	 */
+	computerHistory: ComputerHistoryApi;
+	/**
+	 * MaestroRun (macOS launcher install, the Full Disk Access walkthrough, and
+	 * the readiness that gates its system-prompt section).
+	 */
+	maestroRun: MaestroRunApi;
 	agents: {
+		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
 		refresh: (
 			agentId?: string,
@@ -1742,7 +2012,8 @@ interface MaestroAPI {
 			agentId: string,
 			cwd: string,
 			customPath?: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			customEnvVars?: Record<string, string>
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 
 		// Capability snapshots - persisted per-agent readiness + version info.
@@ -1845,7 +2116,7 @@ interface MaestroAPI {
 		listPaginated: (
 			agentId: string,
 			projectPath: string,
-			options?: { cursor?: string; limit?: number },
+			options?: { cursor?: string; limit?: number; ownerAgentId?: string },
 			sshRemoteId?: string
 		) => Promise<{
 			sessions: Array<{
@@ -2271,7 +2542,10 @@ interface MaestroAPI {
 				isComplete: boolean;
 			}) => void
 		) => () => void;
-		getProjectStats: (projectPath: string) => Promise<{
+		getProjectStats: (
+			projectPath: string,
+			ownerAgentId?: string
+		) => Promise<{
 			totalSessions: number;
 			totalMessages: number;
 			totalCostUsd: number;
@@ -2284,6 +2558,15 @@ interface MaestroAPI {
 				totalSessions: number;
 				totalMessages: number;
 				totalTokens: number;
+				/** `totalTokens` by kind, over the sessions that recorded one. */
+				tokenSplit?: {
+					inputTokens: number;
+					outputTokens: number;
+					cacheReadTokens: number;
+					cacheCreationTokens: number;
+				};
+				/** Archived tokens counted in `totalTokens` with no record of their kind. */
+				unsplitTokens?: number;
 				totalCostUsd: number;
 				totalSizeBytes: number;
 				oldestTimestamp: string | null;
@@ -2527,12 +2810,35 @@ interface MaestroAPI {
 		reload: () => Promise<boolean>;
 	};
 	notification: {
+		changeHistory: (
+			change: import('../shared/notificationHistory').NotificationHistoryChange
+		) => Promise<import('../shared/notificationHistory').NotificationHistorySnapshot>;
+		onHistoryChanged: (
+			callback: (
+				snapshot: import('../shared/notificationHistory').NotificationHistorySnapshot
+			) => void
+		) => () => void;
+		navigateToSource: (
+			sessionId: string,
+			tabId?: string,
+			action?: import('../shared/toastClickAction').ToastClickAction
+		) => Promise<{ success: boolean }>;
+		onActivateAction: (
+			callback: (
+				action: import('../shared/toastClickAction').ToastClickAction
+			) => boolean | Promise<boolean>
+		) => () => void;
+
 		show: (
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: import('../shared/toastClickAction').ToastClickAction
 		) => Promise<{ success: boolean; error?: string }>;
+		onClickAction: (
+			handler: (action: import('../shared/toastClickAction').ToastClickAction) => void
+		) => () => void;
 		speak: (
 			text: string,
 			command?: string,
@@ -2972,6 +3278,7 @@ interface MaestroAPI {
 			bufferExhausted?: boolean;
 			error?: string;
 		}>;
+		profilingRunInBackground: () => Promise<{ success: boolean }>;
 		// Stop + bundle to a temp .zip without a save dialog (for feedback attach)
 		stopProfilingToFile: () => Promise<{
 			success: boolean;
@@ -3143,6 +3450,10 @@ interface MaestroAPI {
 			refused: boolean;
 		}>;
 		queueResume: (id: string) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		queueSteer: (
+			id: string,
+			itemId: string
+		) => Promise<import('../shared/groupChatSteering').GroupChatSteerResult>;
 		onQueueState: (
 			callback: (
 				groupChatId: string,
@@ -3316,6 +3627,7 @@ interface MaestroAPI {
 			longestRunMs?: number;
 			longestRunDate?: string;
 			currentRunMs?: number;
+			currentRunKind?: AutoRunKind;
 			theme?: string;
 			clientToken?: string;
 			authToken?: string;
@@ -3612,6 +3924,7 @@ interface MaestroAPI {
 			startTime: number;
 			tasksTotal?: number;
 			projectPath?: string;
+			kind?: AutoRunKind;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
 		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;
@@ -3763,6 +4076,7 @@ interface MaestroAPI {
 			exchanges: number;
 			documents: number;
 			tasks: number;
+			activeMs?: number;
 			projectPath?: string;
 		}) => Promise<string | null>;
 		getWizardRuns: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
@@ -3778,6 +4092,7 @@ interface MaestroAPI {
 				exchanges: number;
 				documents: number;
 				tasks: number;
+				activeMs?: number;
 				projectPath?: string;
 			}>
 		>;
@@ -4240,6 +4555,7 @@ interface MaestroAPI {
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
 			customEffort?: string;
+			claudeTokenSource?: import('../shared/claudeTokenMode').ClaudeTokenSourceFields;
 			recentCommands?: {
 				command: string;
 				exitCode?: number;
@@ -4503,6 +4819,9 @@ interface MaestroAPI {
 		delete: (filePath: string) => Promise<void>;
 	};
 
+	// Cue Bundle API (export / import a pipeline or an agent as a portable zip)
+	cueBundle: import('../main/preload/cueBundle').CueBundleApi;
+
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {
@@ -4545,7 +4864,7 @@ interface MaestroAPI {
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;
 		getGroupings: () => Promise<PluginGroupingSnapshot>;
-		onChanged: (callback: () => void) => () => void;
+		onChanged: (callback: (activePanelIds?: string[]) => void) => () => void;
 		onGroupingsChanged: (callback: () => void) => () => void;
 		onPanelData: (
 			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
@@ -4596,6 +4915,11 @@ interface MaestroAPI {
 			id: string
 		) => Promise<{ success: boolean; content?: string; error?: string }>;
 		getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
+		getSystemPromptPaths: () => Promise<{
+			success: boolean;
+			computerHistoryDir?: string;
+			error?: string;
+		}>;
 		listFiles: () => Promise<{
 			success: boolean;
 			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;
@@ -4749,9 +5073,7 @@ interface MaestroAPI {
 	};
 
 	// Browser Session API (clear per-partition browsing data of embedded browser tabs)
-	browserSession: {
-		clearSessionData: (partition: string) => Promise<{ ok: boolean; error?: string }>;
-	};
+	browserSession: import('../main/preload/browserSession').BrowserSessionApi;
 	// Multi-window API - enumerate/create/focus/close windows and inspect or
 	// move the agents (sessions) each window owns. `sessionIds` are agent IDs.
 	windows: {
@@ -4837,6 +5159,11 @@ interface MaestroAPI {
 		onHighlightDropZone: (
 			callback: (payload: { windowId: string; active: boolean }) => void
 		) => () => void;
+		// Subscribe to `maestro-cli window` requests (primary window only); returns unsubscribe.
+		onRemoteCommand: (
+			callback: (request: WindowCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCommandResponse: (responseChannel: string, result: WindowCommandResult) => void;
 	};
 	/**
 	 * Session Images API. Pasted transcript images are stored content-addressed
@@ -4847,6 +5174,32 @@ interface MaestroAPI {
 	 */
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
+	};
+	/**
+	 * Chain of thought export, operated only from the Edit Agent dialog. The
+	 * handlers refuse every sender that is not the desktop window. Mirrors
+	 * `src/main/preload/cotExport.ts`.
+	 */
+	cotExport: {
+		get: (agentId: string) => Promise<CotAgentConfig>;
+		set: (
+			agentId: string,
+			choice: { enabled: boolean; folder: string | null }
+		) => Promise<CotSetResult>;
+		status: (agentId: string) => Promise<CotAgentStatus>;
+		validateFolder: (agentId: string, folder: string) => Promise<CotFolderValidation>;
+		verify: (agentId: string) => Promise<CotChainVerifyResult[]>;
+	};
+	/** Quick Chat: the floating chat window and the engine that runs it. */
+	quickChat: QuickChatApi;
+	/**
+	 * Codex `visualize` content references. `load` builds the isolated document
+	 * for one fragment and returns the id/revision to frame it by.
+	 */
+	codexVisualization: {
+		load: (
+			request: import('../shared/codexVisualization').CodexVisualizationLoadRequest
+		) => Promise<import('../shared/codexVisualization').CodexVisualizationLoadResult>;
 	};
 }
 

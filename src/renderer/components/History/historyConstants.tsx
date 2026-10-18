@@ -73,6 +73,8 @@ export const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 			return tintedPillColors(CUE_COLOR);
 		case 'AGENT':
 			return tintedPillColors(AGENT_COLOR);
+		case 'RELAY':
+			return tintedPillColors(theme.colors.accent);
 		default:
 			return {
 				bg: theme.colors.bgActivity,
@@ -93,6 +95,8 @@ export const getEntryIcon = (type: HistoryEntryType) => {
 			return Zap;
 		case 'AGENT':
 			return MessagesSquare;
+		case 'RELAY':
+			return MessagesSquare;
 		default:
 			return Bot;
 	}
@@ -107,7 +111,7 @@ export const getEntryIcon = (type: HistoryEntryType) => {
  * completed or it didn't, and a failed one must be visibly marked.
  */
 export const hasRunOutcome = (type: HistoryEntryType): boolean =>
-	type === 'AUTO' || type === 'CUE' || type === 'AGENT';
+	type === 'AUTO' || type === 'CUE' || type === 'AGENT' || type === 'RELAY';
 
 // Estimated row heights for virtualization. Used by the row virtualizer
 // before measureElement reports the actual rendered size. If these

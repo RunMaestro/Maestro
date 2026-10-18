@@ -40,6 +40,7 @@ import {
 	type ScheduledTask,
 	type ScheduledTaskKind,
 } from '../../../shared/cue/scheduled-tasks';
+import { formatCueTurnSettings } from '../../../shared/cue/turn-settings';
 import { ScheduledTaskForm, type ScheduledTaskFormAgent } from './ScheduledTaskForm';
 
 export interface ScheduledTasksTabProps {
@@ -108,6 +109,8 @@ function subtitleFor(task: ScheduledTask): string {
 	const parts = [task.name];
 	if (task.pipelineName && task.pipelineName !== task.agentName) parts.push(task.pipelineName);
 	if (task.action !== 'prompt') parts.push(task.action);
+	const model = formatCueTurnSettings(task);
+	if (model) parts.push(model);
 	if (!task.enabled) parts.push('paused');
 	return parts.join(' · ');
 }

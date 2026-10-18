@@ -76,9 +76,11 @@ describe('extensionModel Pianola first-party plugin backing', () => {
 	});
 
 	it('keeps Pianola first-party and plugin-backed when merged with installed plugins', () => {
-		const extensions = buildExtensions(flags({ pianola: false }), [
-			pluginRecord('com.example.demo'),
-		]);
+		const extensions = buildExtensions(
+			flags({ pianola: false }),
+			[pluginRecord('com.example.demo')],
+			'darwin'
+		);
 		const pianola = extensions.find((ext) => ext.id === 'pianola');
 		const plugin = extensions.find((ext) => ext.id === 'com.example.demo');
 
@@ -106,6 +108,10 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'concerto',
 			'groupsPlus',
 			'webLogin',
+			'computerHistory',
+			'quickChat',
+			'maestroRun',
+			'throughputGauge',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {
@@ -166,9 +172,33 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 	});
 
 	it('off flags project as not-installed tiles', () => {
-		const extensions = buildExtensions(flags(), []);
+		const extensions = buildExtensions(flags(), [], 'darwin');
 		for (const ext of extensions) {
 			expect(ext.state).toBe('not-installed');
+		}
+	});
+});
+
+describe('extensionModel platform-restricted features', () => {
+	const ids = (platform: string) => buildExtensions(flags(), [], platform).map((ext) => ext.id);
+
+	it('offers MaestroRun on macOS only', () => {
+		expect(ids('darwin')).toContain('maestroRun');
+		expect(ids('win32')).not.toContain('maestroRun');
+		expect(ids('linux')).not.toContain('maestroRun');
+	});
+
+	it('hides a restricted feature when the host platform is unknown (web-desktop)', () => {
+		// hostPlatform() answers '' in a browser: the tile cannot be set up from there.
+		expect(ids('')).not.toContain('maestroRun');
+	});
+
+	it('never hides a feature that has no platform list', () => {
+		const everywhere = BUILTIN_FEATURES.filter((def) => !def.pluginBacking.platforms).map(
+			(def) => def.flag
+		);
+		for (const platform of ['darwin', 'win32', 'linux', '']) {
+			expect(ids(platform)).toEqual(expect.arrayContaining(everywhere));
 		}
 	});
 });
@@ -231,7 +261,7 @@ describe('extensionModel Encore filter', () => {
 	});
 
 	it('narrows to graduated built-ins regardless of their category', () => {
-		const all = buildExtensions(flags(), [pluginRecord('com.example.plain')]);
+		const all = buildExtensions(flags(), [pluginRecord('com.example.plain')], 'darwin');
 		const encoreOnly = filterExtensions(all, {
 			category: 'encore',
 			onlyInstalled: false,
@@ -246,7 +276,7 @@ describe('extensionModel Encore filter', () => {
 	});
 
 	it('still combines with the search box', () => {
-		const all = buildExtensions(flags(), []);
+		const all = buildExtensions(flags(), [], 'darwin');
 		const named = all.find((e) => e.encore)!.name;
 		const hits = filterExtensions(all, {
 			category: 'encore',

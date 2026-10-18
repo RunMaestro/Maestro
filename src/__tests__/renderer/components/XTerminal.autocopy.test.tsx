@@ -12,6 +12,7 @@ const { mockSafeClipboardWrite, mockTerminalInstances, mockFit, mockResize, mock
 			selectionListeners: Array<() => void>;
 			triggerSelectionChange(): void;
 			focus: ReturnType<typeof vi.fn>;
+			oscHandlers: Map<number, (data: string) => boolean>;
 		}>,
 		mockFit: vi.fn(),
 		mockResize: vi.fn(),
@@ -66,6 +67,14 @@ vi.mock('@xterm/xterm', () => ({
 			mockTerminalInstances.push(this);
 		}
 
+		oscHandlers = new Map<number, (data: string) => boolean>();
+		parser = {
+			registerOscHandler: vi.fn((ident: number, handler: (data: string) => boolean) => {
+				this.oscHandlers.set(ident, handler);
+				return { dispose: () => this.oscHandlers.delete(ident) };
+			}),
+		};
+
 		loadAddon = vi.fn();
 		registerLinkProvider = vi.fn(() => ({ dispose: vi.fn() }));
 		attachCustomKeyEventHandler = vi.fn();
@@ -106,6 +115,75 @@ const theme = {
 		border: '#222222',
 	},
 } as unknown as Theme;
+
+describe('XTerminal OSC 52 clipboard', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.process.write).mockClear();
+		mockSafeClipboardWrite.mockReset();
+		mockSafeClipboardWrite.mockResolvedValue(true);
+		mockTerminalInstances.length = 0;
+		mockOnData.mockReset();
+		mockOnData.mockReturnValue(() => {});
+		window.maestro.process.onData = mockOnData;
+		window.maestro.process.resize = mockResize.mockResolvedValue(undefined);
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	/** The handler a program reaches by emitting `ESC ] 52 ; ... BEL`. */
+	const osc52 = () => {
+		render(
+			<XTerminal
+				sessionId="session-1-terminal-tab-1"
+				theme={theme}
+				fontFamily="Menlo"
+				fontSize={12}
+			/>
+		);
+		const handler = mockTerminalInstances[0].oscHandlers.get(52);
+		if (!handler) throw new Error('no OSC 52 handler registered');
+		return handler;
+	};
+
+	it('copies what the program in the PTY asked to copy', async () => {
+		const handler = osc52();
+		const url = 'https://claude.com/cai/oauth/authorize?code=true&state=abc';
+
+		let consumed = false;
+		await act(async () => {
+			consumed = handler(`c;${btoa(url)}`);
+			await Promise.resolve();
+		});
+
+		expect(consumed).toBe(true);
+		expect(mockSafeClipboardWrite).toHaveBeenCalledWith(url);
+	});
+
+	it('consumes a clipboard query without answering it', async () => {
+		const handler = osc52();
+
+		let consumed = false;
+		await act(async () => {
+			consumed = handler('c;?');
+			await Promise.resolve();
+		});
+
+		// Consumed so the sequence is not printed, but nothing is read or written:
+		// a reply would type the clipboard into the PTY for the program to read.
+		expect(consumed).toBe(true);
+		expect(mockSafeClipboardWrite).not.toHaveBeenCalled();
+		expect(window.maestro.process.write).not.toHaveBeenCalled();
+	});
+
+	it('stops handling OSC 52 once the terminal unmounts', () => {
+		osc52();
+		const terminal = mockTerminalInstances[0];
+		cleanup();
+		expect(terminal.oscHandlers.has(52)).toBe(false);
+	});
+});
 
 describe('XTerminal auto-copy selection', () => {
 	beforeEach(() => {

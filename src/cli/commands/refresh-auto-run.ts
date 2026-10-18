@@ -2,6 +2,7 @@
 
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface RefreshAutoRunOptions {
 	agent?: string;
@@ -12,9 +13,9 @@ interface RefreshAutoRunOptions {
 
 export async function refreshAutoRun(options: RefreshAutoRunOptions): Promise<void> {
 	const sessionId = resolveTargetSessionId(options.agent);
-	// The desktop switches to the target agent to refresh it. `--background`
-	// refreshes it where it is instead: the documents are re-read either way, so
-	// the only thing the flag costs is being taken there.
+	// Background unless `--focus`: the documents are re-read either way, and an
+	// unflagged refresh from a Cue script or agent turn must not take the user
+	// to the target agent. `--focus` switches there and flashes the count.
 	const background = resolveBackgroundFlag(options, 'refresh-auto-run');
 
 	try {
@@ -35,6 +36,7 @@ export async function refreshAutoRun(options: RefreshAutoRunOptions): Promise<vo
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);

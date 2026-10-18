@@ -21,7 +21,9 @@
  * The defect being fixed is that an agent which wants to be polite has no way to
  * ask, on seven of nine verbs. It is NOT that the verbs focus. Every verb keeps
  * the behaviour it has today when the flag is absent, so no existing script,
- * playbook, Cue prompt, or muscle-memory invocation changes.
+ * playbook, Cue prompt, or muscle-memory invocation changes. The one exception
+ * is `refresh-auto-run`, whose focusing default only ever interrupted (see its
+ * entry in `CLI_BACKGROUND_DEFAULTS`).
  *
  * That makes the protocol rule dead simple, and deliberately so: **absent means
  * today's behaviour.** `readBackgroundField` therefore returns true only for a
@@ -97,13 +99,17 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 */
 	'create-worktree': false,
 	/**
-	 * maestro-cli refresh-auto-run - switches to the target agent today.
+	 * maestro-cli refresh-auto-run - background by default, `--focus` to opt out.
 	 *
-	 * Like `switch-mode`, it creates nothing, so `--background` means "refresh the
-	 * documents where they are rather than moving me to them". The refresh itself
-	 * still happens either way.
+	 * The one deliberate exception to "no verb changes its default". An unflagged
+	 * refresh only moved the view when the target was NOT the agent on screen, so
+	 * the switch never helped anyone: it fired exactly when the user was looking
+	 * somewhere else. Cue scripts and agent turns that write into a vault end with
+	 * a refresh, and every one that forgot `--background` yanked the user to that
+	 * agent mid-keystroke. A background refresh still re-reads the documents: the
+	 * on-screen agent in place, an off-screen one the moment the user opens it.
 	 */
-	'refresh-auto-run': false,
+	'refresh-auto-run': true,
 	/**
 	 * maestro-cli switch-mode - proceeds today.
 	 *
@@ -125,6 +131,14 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	snooze: false,
 	/** maestro-cli snooze dismiss - raises the "Snooze dismissed" toast today. */
 	'snooze-dismiss': false,
+	/**
+	 * maestro-cli steer-auto-run send - flashes "Steering note queued".
+	 *
+	 * Nothing is created and no selection moves; the flash is the only thing on
+	 * screen. `--background` suppresses it and nothing else: the note is parked
+	 * for the next task either way.
+	 */
+	'steer-auto-run': false,
 } as const;
 
 /** A CLI verb whose placement can be negotiated. */
@@ -207,6 +221,9 @@ export const ALREADY_QUIET_VERBS = [
 	'snooze-wake',
 	'snooze-reschedule',
 	'snooze-history',
+	// Reading the notes and taking one back render nothing.
+	'steer-auto-run-list',
+	'steer-auto-run-cancel',
 ] as const;
 
 /** A verb that accepts `--background` purely so the flag is always safe to pass. */

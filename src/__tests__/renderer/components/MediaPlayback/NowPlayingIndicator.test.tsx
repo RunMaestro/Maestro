@@ -154,14 +154,24 @@ describe('NowPlayingIndicator', () => {
 		render(<NowPlayingIndicator theme={mockTheme} />);
 		const pill = screen.getByTestId('now-playing-indicator');
 		expect(pill.className).not.toContain('shrink-0');
-		// It needs min-w-0 to be able to shrink at all: a flex item defaults to
-		// min-width:auto and would refuse to go below its content.
-		expect(pill.className).toContain('min-w-0');
-		// The shrinking stops at the toggle, though. The label span inside it is
-		// `truncate`, which already gives it a zero automatic minimum, so the button
-		// needs no `min-w-0` of its own - and must not have one: with it the button
-		// shrank past its own padding box and the `shrink-0` glyph spilled out over
-		// the divider.
+		// The label track is `minmax(0, max-content)`: it takes the filename's
+		// natural width when there is room and contributes nothing to the pill's
+		// minimum, so the filename is what yields.
+		expect(screen.getByTestId('now-playing-toggle').className).toContain(
+			'grid-cols-[auto_minmax(0,max-content)]'
+		);
+	});
+
+	it('never shrinks past its own transport', () => {
+		// It used to be `min-w-0 overflow-hidden`, so a squeezed header band could
+		// shrink the pill below its buttons and clip the restore button in half.
+		// Its automatic minimum is the transport now, so both must stay off.
+		render(<NowPlayingIndicator theme={mockTheme} />);
+		const pill = screen.getByTestId('now-playing-indicator');
+		expect(pill.className).not.toContain('min-w-0');
+		expect(pill.className).not.toContain('overflow-hidden');
+		// With `min-w-0` the toggle shrank past its own padding box and the glyph
+		// spilled over the divider.
 		expect(screen.getByTestId('now-playing-toggle').className).not.toContain('min-w-0');
 	});
 

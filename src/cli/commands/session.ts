@@ -12,6 +12,7 @@
 // silently get back stale data.
 
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { formatRelativeTime } from '../../shared/formatters';
 import type { DesktopTabEntry as DesktopSessionEntry } from '../../shared/desktopTabs';
 
@@ -44,36 +45,6 @@ interface SessionShowResult {
 
 function emitErrorJson(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
-}
-
-/**
- * Translate transport-layer errors into CLI error codes consistent with
- * `dispatch`. MaestroClient throws three distinct strings before any WebSocket
- * activity ("Maestro desktop app is not running", "Maestro discovery file is
- * stale (app may have crashed)", "Not connected to Maestro"); without these
- * mappings, those errors fall through to a generic CLI error and break the
- * error-code contract downstream consumers (Maestro-Discord) rely on to
- * distinguish "app down" from "command rejected".
- */
-function mapTransportError(error: unknown): { error: string; code: string } | null {
-	const msg = error instanceof Error ? error.message : String(error);
-	const lowerMsg = msg.toLowerCase();
-	if (
-		lowerMsg.includes('econnrefused') ||
-		lowerMsg.includes('connection refused') ||
-		lowerMsg.includes('websocket') ||
-		lowerMsg.includes('enotfound') ||
-		lowerMsg.includes('etimedout') ||
-		lowerMsg.includes('maestro desktop app is not running') ||
-		lowerMsg.includes('discovery file is stale') ||
-		lowerMsg.includes('not connected to maestro')
-	) {
-		return {
-			error: 'Maestro desktop is not running or not reachable',
-			code: 'MAESTRO_NOT_RUNNING',
-		};
-	}
-	return null;
 }
 
 /**
@@ -140,13 +111,9 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 			);
 		}
 	} catch (error) {
-		const mapped = mapTransportError(error);
-		if (mapped) {
-			emitErrorJson(mapped.error, mapped.code);
-		} else {
-			const msg = error instanceof Error ? error.message : String(error);
-			emitErrorJson(`Failed to list sessions: ${msg}`, 'COMMAND_FAILED');
-		}
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
+		const msg = error instanceof Error ? error.message : String(error);
+		emitErrorJson(`Failed to list sessions: ${msg}`, 'COMMAND_FAILED');
 		process.exit(1);
 	}
 }
@@ -247,13 +214,9 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 			console.log('');
 		}
 	} catch (error) {
-		const mapped = mapTransportError(error);
-		if (mapped) {
-			emitErrorJson(mapped.error, mapped.code);
-		} else {
-			const msg = error instanceof Error ? error.message : String(error);
-			emitErrorJson(`Failed to show session: ${msg}`, 'COMMAND_FAILED');
-		}
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
+		const msg = error instanceof Error ? error.message : String(error);
+		emitErrorJson(`Failed to show session: ${msg}`, 'COMMAND_FAILED');
 		process.exit(1);
 	}
 }

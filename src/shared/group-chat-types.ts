@@ -123,14 +123,15 @@ export function mentionMatches(mentionedName: string, actualName: string): boole
 export function findUniqueMentionMatch<T>(
 	mentionedName: string,
 	items: readonly T[],
-	getName: (item: T) => string
+	getName: (item: T) => string,
+	minPriority = 1
 ): T | undefined {
 	let bestPriority = 0;
 	let bestMatches: T[] = [];
 
 	for (const item of items) {
 		const priority = getMentionMatchPriority(mentionedName, getName(item));
-		if (priority === 0) continue;
+		if (priority === 0 || priority < minPriority) continue;
 
 		if (priority > bestPriority) {
 			bestPriority = priority;
@@ -144,6 +145,28 @@ export function findUniqueMentionMatch<T>(
 	}
 
 	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+}
+
+/**
+ * Find the agent a persisted participant name came from.
+ *
+ * This receives a persisted participant name, not a user-typed mention, so it
+ * matches the originating agent conservatively. Priority-1 ("safe folded")
+ * matches collapse bracket styles (e.g. "Review Bot [Linux]" vs
+ * "Review Bot (Linux)") and could borrow the wrong agent's cwd, custom args, or
+ * SSH config. Only exact (4), legacy (3), or safe-normalized (2) matches are
+ * accepted, and a tie returns undefined so an ambiguous lookup never silently
+ * picks one.
+ *
+ * The group chat router uses it to pick the agent a participant runs as, and
+ * the chain of thought export uses it to decide whose log a participant's turn
+ * belongs in. Both must reach the same answer, so both call this.
+ */
+export function findSessionForParticipantName<T extends { name: string }>(
+	participantName: string,
+	sessions: readonly T[]
+): T | undefined {
+	return findUniqueMentionMatch(participantName, sessions, (session) => session.name, 2);
 }
 
 /**
@@ -187,6 +210,45 @@ export function formatGroupMentionExpansion(
 ): string {
 	if (memberNames.length === 0) return '';
 	return memberNames.map((name) => `@${getMentionNameForContext(name, peerNames)}`).join(' ') + ' ';
+}
+
+/**
+ * Strips leading/trailing markdown formatting characters from a mention name.
+ * AI moderators often wrap mentions in bold/italic/code/strikethrough markdown
+ * (e.g. `**@name**`, `_@name_`, `` `@name` ``), which leaves formatting chars
+ * attached to the extracted name and breaks participant matching.
+ */
+export function stripMarkdownFormatting(name: string): string {
+	return cleanMentionName(name);
+}
+
+/**
+ * Extracts ALL @mentions from text (regardless of whether they're participants).
+ * Handles markdown-formatted mentions (e.g. **@name**, _@name_).
+ *
+ * The pattern captures characters after @ excluding whitespace, @, and the
+ * punctuation that typically follows a mention (:,;!?'"<>). Names with emojis,
+ * Unicode, dots, hyphens, underscores, and the bracket punctuation of legacy
+ * normalized display names survive: @RunMaestro.ai, @my-agent,
+ * @CIA-Agent-(Super-Cool), @日本語.
+ *
+ * @param text - The text to search for mentions
+ * @returns Array of unique names that were mentioned (without @ prefix)
+ */
+export function extractAllMentions(text: string): string[] {
+	const mentions: string[] = [];
+	const mentionPattern = /@([^\s@:,;!?'"<>]+)/g;
+	let match;
+
+	while ((match = mentionPattern.exec(text)) !== null) {
+		const name = stripMarkdownFormatting(match[1]);
+		if (!name) continue;
+		if (!mentions.includes(name)) {
+			mentions.push(name);
+		}
+	}
+
+	return mentions;
 }
 
 // ============================================================================
@@ -300,6 +362,8 @@ export interface GroupChatMessage {
 	readOnly?: boolean;
 	/** Base64 data URLs of images attached to this message */
 	images?: string[];
+	/** Set on a user message that was steered into a running round: the turns that took it. */
+	steeredTo?: string[];
 }
 
 /**

@@ -23,6 +23,7 @@ import {
 	toClaudeTokenModeSource,
 	type ClaudeTokenMode,
 } from '../../../shared/claudeTokenMode';
+import { CODEX_TRANSPORTS, type CodexTransport } from '../../../shared/codexTransport';
 import { readOpenCodeAgentArg, writeOpenCodeAgentArg } from '../../../shared/opencodeAgentArg';
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
@@ -30,6 +31,7 @@ import { logger } from '../../utils/logger';
 import { useKnownAuthDirs } from '../../hooks/agent/useKnownAuthDirs';
 import { AuthPathValueInput } from './AuthPathValueInput';
 import { EnvVarKeyInput } from './EnvVarKeyInput';
+import { BLANK_ENV_VAR_KEY } from '../../../shared/envVarCatalog';
 import { useKnownEnvVarKeys } from '../../hooks/agent/useKnownEnvVarKeys';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
@@ -50,10 +52,23 @@ const CLAUDE_TOKEN_MODE_OPTIONS: { value: ClaudeTokenMode; label: string }[] = [
 ];
 
 const CLAUDE_TOKEN_MODE_HINTS: Record<ClaudeTokenMode, string> = {
-	api: 'Always use claude --print (per-token API credit).',
-	interactive: 'Always drive the maestro-p TUI against your Max plan quota.',
-	dynamic: 'Start on the Max plan TUI, then auto-switch to API when the quota is near exhaustion.',
+	api: 'Run every turn through claude --print. Signed in with a Claude plan, it draws from your plan limits; with an API key set, it bills that key.',
+	interactive:
+		'Run every turn through the Claude TUI via maestro-p. Signed in with a Claude plan, it draws from your plan limits.',
+	dynamic:
+		'Start on the TUI, switch to claude --print near a plan limit. The switch only helps with an API key set: signed in with a plan alone, both draw from the same limits.',
 };
+
+// Codex transport selector (codex only). Labels follow CODEX_TRANSPORTS order,
+// so the default (`exec`) is always the first segment.
+const CODEX_TRANSPORT_LABELS: Record<CodexTransport, string> = {
+	exec: 'codex exec',
+	'app-server': 'codex app-server',
+};
+
+const CODEX_TRANSPORT_OPTIONS: { value: CodexTransport; label: string }[] = CODEX_TRANSPORTS.map(
+	(value) => ({ value, label: CODEX_TRANSPORT_LABELS[value] })
+);
 
 // Built-in environment variables that Maestro sets automatically
 const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] = [
@@ -387,13 +402,6 @@ export interface AgentConfigPanelProps {
 	onMaestroPPathBlur?: () => void;
 	/** Auto-detected maestro-p path shown as helper text when `maestroPPath` is empty. */
 	detectedMaestroPPath?: string;
-	/** Last resolved Claude headless-mode state for this session. When provided and Adaptive Mode is on,
-	 *  the panel renders a small pill next to the toggle so the user can see whether the spawner is
-	 *  currently on Time Limits (Max plan) or has fallen back to API Limits. */
-	claudeInteractive?: {
-		mode: 'interactive' | 'api';
-		modeReason: 'auto' | 'limit';
-	};
 	// === Codex usage resets (codex agent only) ===
 	/**
 	 * Spend a rate-limit reset credit automatically when this agent hits a
@@ -403,6 +411,13 @@ export interface AgentConfigPanelProps {
 	 */
 	codexAutoResetOnExhaustion?: boolean;
 	onCodexAutoResetChange?: (value: boolean) => void;
+	/**
+	 * How this agent's chat turns reach Codex. `undefined` means `exec`, the
+	 * default. Rendered beside the Claude Token Source slot (the two are never
+	 * shown together) and only when the handler is supplied.
+	 */
+	codexTransport?: CodexTransport;
+	onCodexTransportChange?: (transport: CodexTransport) => void;
 }
 
 export function AgentConfigPanel({
@@ -448,9 +463,10 @@ export function AgentConfigPanel({
 	onMaestroPPathChange,
 	onMaestroPPathBlur,
 	detectedMaestroPPath,
-	claudeInteractive,
 	codexAutoResetOnExhaustion = false,
 	onCodexAutoResetChange,
+	codexTransport = 'exec',
+	onCodexTransportChange,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
 		const maybePromise = onConfigBlur(key, committedValue);
@@ -503,6 +519,10 @@ export function AgentConfigPanel({
 	const showMaestroPDetails = displayClaudeTokenMode !== 'api';
 	// Track which built-in env var tooltip is showing
 	const knownEnvVarKeys = useKnownEnvVarKeys();
+	// Set when the user presses "Add Variable", cleared once the new unnamed row
+	// has taken the caret. Not derived from "is this row blank": a blank row can
+	// also arrive from disk, and that one must not steal focus on modal open.
+	const [focusNewEnvVarRow, setFocusNewEnvVarRow] = useState(false);
 	const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
 
 	// Track stable IDs for env var entries to prevent focus loss when keys change
@@ -697,10 +717,11 @@ export function AgentConfigPanel({
 			</div>
 
 			{/* Claude Token Source selector - Claude Code only. Picks how this agent
-			    spends Claude quota: API (claude --print, per-token), TUI (maestro-p
-			    driving the Claude TUI against the Max plan), or Dynamic (start on the
-			    TUI, fall back to API when the 5-hour or weekly window is near
-			    exhaustion, then snap back once both windows reset). Over SSH only
+			    runs a turn: claude --print, the Claude TUI via maestro-p, or Dynamic
+			    (start on the TUI, switch to claude --print when the 5-hour or weekly
+			    window is near its limit, then snap back once both windows reset).
+			    The mode does not pick the bill: signed in with a plan, both draw
+			    from the same plan limits; an API key in the env bills that key. Over SSH only
 			    API / TUI are offered (Dynamic needs a local quota snapshot that
 			    doesn't reflect the remote account) and maestro-p runs on the remote
 			    host's PATH, so the local Maestro-P Path override is hidden. */}
@@ -728,25 +749,6 @@ export function AgentConfigPanel({
 								<RefreshCw className={`w-3 h-3 ${remoteMaestroPProbing ? 'animate-spin' : ''}`} />
 								Re-check
 							</button>
-						)}
-						{showMaestroPDetails && claudeInteractive && (
-							<span
-								className="text-2xs font-mono px-1.5 py-0.5 rounded whitespace-nowrap"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									color:
-										claudeInteractive.mode === 'interactive'
-											? theme.colors.accent
-											: (theme.colors.warning ?? theme.colors.accent),
-								}}
-								title={
-									claudeInteractive.modeReason === 'limit'
-										? 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.'
-										: 'Selected automatically based on current usage.'
-								}
-							>
-								{claudeInteractive.mode === 'interactive' ? 'Time Limits' : 'API Limits'}
-							</span>
 						)}
 					</div>
 					<ToggleButtonGroup
@@ -812,6 +814,37 @@ export function AgentConfigPanel({
 							</p>
 						</div>
 					)}
+				</div>
+			)}
+
+			{/* Codex Transport selector - Codex only, in the same slot the Claude
+			    Token Source occupies for Claude. App server is an opt-in preference,
+			    not a guarantee: turns the app-server spawner cannot carry (SSH,
+			    images, Auto Run, Cue) still run on codex exec. Gated on the handler
+			    so a surface that does not persist the field shows nothing. */}
+			{agent.id === 'codex' && onCodexTransportChange && (
+				<div
+					className={`${padding} rounded border`}
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					data-testid="codex-transport-option"
+				>
+					<span className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+						Codex Transport
+					</span>
+					<ToggleButtonGroup
+						options={CODEX_TRANSPORT_OPTIONS}
+						value={codexTransport}
+						onChange={onCodexTransportChange}
+						theme={theme}
+					/>
+					<p className="text-xs opacity-50 mt-2">
+						codex exec is the default and runs every turn. codex app-server is experimental: it runs
+						local interactive chat turns so a queued message can steer a turn that is already
+						running. SSH, image, Auto Run, and Cue turns keep using codex exec.
+						{isSshEnabled && codexTransport === 'app-server'
+							? ' This agent runs over SSH, so its turns use codex exec.'
+							: ''}
+					</p>
 				</div>
 			)}
 
@@ -971,6 +1004,8 @@ export function AgentConfigPanel({
 									toolType={agent.id}
 									knownEnvVarKeys={knownEnvVarKeys}
 									usedKeys={envVarKeys}
+									autoFocus={focusNewEnvVarRow && key === BLANK_ENV_VAR_KEY}
+									onAutoFocused={() => setFocusNewEnvVarRow(false)}
 									className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									style={{
 										borderColor: theme.colors.border,
@@ -1015,6 +1050,7 @@ export function AgentConfigPanel({
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
+							setFocusNewEnvVarRow(true);
 							onEnvVarAdd();
 						}}
 						className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

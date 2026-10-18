@@ -31,6 +31,17 @@ export interface EnvVarKeyInputProps {
 	knownEnvVarKeys?: KnownEnvVarKeys;
 	/** Names used by other rows in this editor, so none is offered twice. */
 	usedKeys?: readonly string[];
+	/**
+	 * Take the caret and open the list as soon as this row appears.
+	 *
+	 * Set by the editor for the row the user just added with "Add Variable".
+	 * That row has no name yet, so landing on it with the suggestions already
+	 * showing IS the feature - otherwise the user has to click the empty field
+	 * to discover that the provider's variables were on offer.
+	 */
+	autoFocus?: boolean;
+	/** Called once {@link autoFocus} has been honored, so the editor can clear it. */
+	onAutoFocused?: () => void;
 	className: string;
 	containerClassName?: string;
 	style: CSSProperties;
@@ -46,6 +57,8 @@ export function EnvVarKeyInput({
 	toolType,
 	knownEnvVarKeys = EMPTY_KNOWN_ENV_VAR_KEYS,
 	usedKeys,
+	autoFocus,
+	onAutoFocused,
 	className,
 	containerClassName = 'relative flex-1 min-w-0',
 	style,
@@ -55,6 +68,7 @@ export function EnvVarKeyInput({
 	const [open, setOpen] = useState(false);
 	const [activeIndex, setActiveIndex] = useState(0);
 	const containerRef = useRef<HTMLDivElement>(null);
+	const inputRef = useRef<HTMLInputElement>(null);
 
 	// The row's own name never excludes itself: a user re-opening the list on a
 	// filled row is usually correcting that very name.
@@ -72,6 +86,18 @@ export function EnvVarKeyInput({
 	useEffect(() => {
 		setActiveIndex(0);
 	}, [value]);
+
+	// Keyed on the flag rather than on mount, so a row that merely happens to be
+	// unnamed (a blank row restored from disk when the modal opens) never grabs
+	// the caret - only the row the user just asked for does. `onAutoFocused` is
+	// deliberately not a dependency: it is an inline arrow at every call site, so
+	// depending on it would re-steal focus on every parent render.
+	useEffect(() => {
+		if (!autoFocus) return;
+		inputRef.current?.focus();
+		setOpen(true);
+		onAutoFocused?.();
+	}, [autoFocus]);
 
 	// A click elsewhere in the modal closes the list without waiting for blur,
 	// which never fires when the click lands on a non-focusable surface.
@@ -119,6 +145,7 @@ export function EnvVarKeyInput({
 	return (
 		<div ref={containerRef} className={containerClassName}>
 			<input
+				ref={inputRef}
 				type="text"
 				role="combobox"
 				aria-expanded={showList}

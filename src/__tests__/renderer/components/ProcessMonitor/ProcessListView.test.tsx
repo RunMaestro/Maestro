@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProcessListView } from '../../../../renderer/components/ProcessMonitor/ProcessListView';
 import type { ProcessNode } from '../../../../renderer/components/ProcessMonitor/types';
 import type { Theme } from '../../../../renderer/types';
+import { restorePointer, setCoarsePointer } from '../../../helpers/mockPointer';
 
 const theme: Theme = {
 	id: 'test',
@@ -117,6 +118,70 @@ describe('ProcessListView', () => {
 		expect(onOpenDetail).toHaveBeenCalledWith(
 			expect.objectContaining({ id: 'process-session-1-ai-tab-a' })
 		);
+	});
+
+	it('under a coarse pointer a single tap on a process row opens its detail', () => {
+		// A finger cannot double-tap, so on touch the process row itself is the
+		// way into its detail. Session and group rows keep expanding on tap: they
+		// have no detail view, and the toggle is what a tap on them means.
+		setCoarsePointer(true);
+		try {
+			const onOpenDetail = vi.fn();
+			render(<ProcessListView {...baseProps} onOpenDetail={onOpenDetail} />);
+			fireEvent.click(screen.getByText(/AI Agent \(claude-code\)/));
+			expect(onOpenDetail).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'process-session-1-ai-tab-a' })
+			);
+		} finally {
+			restorePointer();
+		}
+	});
+
+	it('a process row with children exposes a chevron that toggles without opening', () => {
+		// On touch the row tap is spoken for (it opens the detail), so the
+		// chevron is the only way to expand or collapse a parent process there.
+		// It must stop the click, or the row underneath opens on the same tap.
+		const parent: ProcessNode = {
+			id: 'process-parent',
+			type: 'process',
+			label: 'Parent process',
+			pid: 1,
+			processType: 'terminal',
+			sessionId: 'session-1',
+			processSessionId: 'session-1-terminal',
+			isAlive: true,
+			children: [
+				{
+					id: 'process-child',
+					type: 'process',
+					label: 'Child process',
+					pid: 2,
+					processType: 'terminal',
+					sessionId: 'session-1',
+					processSessionId: 'session-1-terminal-child',
+					isAlive: true,
+				},
+			],
+		};
+		const onToggleNode = vi.fn();
+		const onOpenDetail = vi.fn();
+		setCoarsePointer(true);
+		try {
+			render(
+				<ProcessListView
+					{...baseProps}
+					tree={[parent]}
+					expandedIds={new Set(['process-parent'])}
+					onToggleNode={onToggleNode}
+					onOpenDetail={onOpenDetail}
+				/>
+			);
+			fireEvent.click(screen.getByLabelText('Collapse'));
+			expect(onToggleNode).toHaveBeenCalledWith('process-parent');
+			expect(onOpenDetail).not.toHaveBeenCalled();
+		} finally {
+			restorePointer();
+		}
 	});
 
 	it('the jump-to-agent button calls onNavigateToSession + closes modal', () => {

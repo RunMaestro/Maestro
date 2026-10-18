@@ -14,8 +14,8 @@ import {
 	ExternalLink,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { ShortcutHint } from './ui/ShortcutHint';
 import type { Theme, Shortcut } from '../types';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useClickOutside } from '../hooks';
 import { WelcomeContent } from './WelcomeContent';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
@@ -116,15 +116,7 @@ export function EmptyStateView({
 											Get started with AI
 										</div>
 									</div>
-									<span
-										className="text-xs font-mono px-1.5 py-0.5 rounded"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textDim,
-										}}
-									>
-										{shortcuts.openWizard ? formatShortcutKeys(shortcuts.openWizard.keys) : '⇧⌘N'}
-									</span>
+									<ShortcutHint theme={theme} keys={shortcuts.openWizard?.keys ?? []} />
 								</button>
 
 								{onStartTour && (
@@ -162,15 +154,7 @@ export function EmptyStateView({
 											Settings
 										</div>
 									</div>
-									<span
-										className="text-xs font-mono px-1.5 py-0.5 rounded"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textDim,
-										}}
-									>
-										{shortcuts.settings ? formatShortcutKeys(shortcuts.settings.keys) : '⌘,'}
-									</span>
+									<ShortcutHint theme={theme} keys={shortcuts.settings?.keys ?? []} />
 								</button>
 
 								<button
@@ -186,15 +170,7 @@ export function EmptyStateView({
 											Keyboard Shortcuts
 										</div>
 									</div>
-									<span
-										className="text-xs font-mono px-1.5 py-0.5 rounded"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textDim,
-										}}
-									>
-										{shortcuts.help ? formatShortcutKeys(shortcuts.help.keys) : '?'}
-									</span>
+									<ShortcutHint theme={theme} keys={shortcuts.help?.keys ?? []} />
 								</button>
 
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />

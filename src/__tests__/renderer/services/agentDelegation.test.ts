@@ -49,11 +49,11 @@ describe('resolveDelegationSourceTab', () => {
 		expect(resolveDelegationSourceTab(maestro(), 'closed-tab')).toBeUndefined();
 	});
 
-	it('falls back to the lone busy tab, then to the active tab', () => {
+	it('refuses to guess a tab when the spawn named none (a Cue run, a bare --from)', () => {
 		const session = maestro();
-		expect(resolveDelegationSourceTab(session)?.id).toBe('other-tab');
+		expect(resolveDelegationSourceTab(session)).toBeUndefined();
 		session.aiTabs[0] = { ...session.aiTabs[0], state: 'busy' };
-		expect(resolveDelegationSourceTab(session)?.id).toBe('caller-tab');
+		expect(resolveDelegationSourceTab(session)).toBeUndefined();
 	});
 });
 

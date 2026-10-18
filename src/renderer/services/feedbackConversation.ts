@@ -9,6 +9,9 @@
 
 import type { ToolType } from '../types';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import type { FeedbackAccount } from '../../shared/feedbackAccounts';
+import { redactSecrets } from '../../shared/redactSecrets';
+import { MAX_FEEDBACK_FIELD_LENGTH } from '../../shared/feedback';
 
 // ============================================================================
 // Types
@@ -55,11 +58,12 @@ export interface FeedbackConversationConfig {
 	 * .app and made every diagnostic command fail.
 	 */
 	cwd?: string;
-	sshRemoteConfig?: {
-		enabled: boolean;
-		remoteId: string | null;
-		workingDirOverride?: string;
-	};
+	/**
+	 * The account to run as (see `shared/feedbackAccounts`). Its env replaces the
+	 * provider-level set, the way an agent's own env does, so the chat signs in
+	 * as that account rather than the provider's default login.
+	 */
+	account?: Pick<FeedbackAccount, 'env' | 'customPath' | 'sshRemoteId' | 'remoteCwd'>;
 }
 
 /** A diagnostic command the feedback agent ran while investigating. */
@@ -77,6 +81,18 @@ export interface FeedbackSendCallbacks {
 	onDiagnostic?: (diagnostic: FeedbackDiagnostic) => void;
 	onComplete?: (response: FeedbackParsedResponse) => void;
 	onError?: (error: string) => void;
+}
+
+/** What one turn produced, and whether the agent behind it ran at all. */
+export interface FeedbackTurnResult {
+	response: FeedbackParsedResponse;
+	/**
+	 * The agent could not answer: it was missing, or exited non-zero (a refused
+	 * login lands here). The caller decides whether to try another account.
+	 */
+	failed: boolean;
+	/** Why it failed, with the tail of the agent's output when there was any. */
+	error?: string;
 }
 
 // ============================================================================
@@ -255,16 +271,19 @@ function normalizeResponse(raw: any): FeedbackParsedResponse {
 	};
 }
 
+/**
+ * Failure output is shown to the user and may be filed in a GitHub issue, so
+ * scrub it through the canonical redactor. The labels keep this surface's
+ * historical wording (`OPENAI_API_KEY=[REDACTED]`, `[REDACTED_GITHUB_TOKEN]`).
+ */
 function redactProviderSecrets(output: string): string {
-	return output
-		.replace(
-			/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|TOKEN|ACCESS_TOKEN|SECRET)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,
-			'$1[REDACTED]'
-		)
-		.replace(/\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
-		.replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
-		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
-		.replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]');
+	return redactSecrets(output, {
+		labels: {
+			secret: '[REDACTED]',
+			bearer: '[REDACTED]',
+			github_token: '[REDACTED_GITHUB_TOKEN]',
+		},
+	}).text;
 }
 
 function summarizeProcessFailure(output: string): string {
@@ -331,7 +350,7 @@ export class FeedbackConversationManager {
 	private thinkingCleanup?: () => void;
 	private toolCleanup?: () => void;
 	private timeoutId?: ReturnType<typeof setTimeout>;
-	private sshRemoteConfig?: FeedbackConversationConfig['sshRemoteConfig'];
+	private account?: FeedbackConversationConfig['account'];
 	private cwd = '.';
 
 	/**
@@ -343,10 +362,23 @@ export class FeedbackConversationManager {
 		this.sessionId = `feedback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 		this.agentType = config.agentType;
 		this.systemPrompt = config.systemPrompt;
-		this.sshRemoteConfig = config.sshRemoteConfig;
+		this.account = config.account;
 		this.cwd = config.cwd || '.';
 
 		return this.sessionId;
+	}
+
+	/**
+	 * Run the next turn as a different account. Every turn is a fresh process
+	 * that is handed the whole conversation, so switching between turns loses
+	 * nothing.
+	 */
+	switchAccount(agentType: ToolType, account: FeedbackConversationConfig['account']): void {
+		if (!this.sessionId) {
+			throw new Error('No active feedback conversation. Call start() first.');
+		}
+		this.agentType = agentType;
+		this.account = account;
 	}
 
 	/**
@@ -357,6 +389,18 @@ export class FeedbackConversationManager {
 		history: FeedbackMessage[],
 		callbacks?: FeedbackSendCallbacks
 	): Promise<FeedbackParsedResponse> {
+		return (await this.sendTurn(userMessage, history, callbacks)).response;
+	}
+
+	/**
+	 * Send a user message and report whether the agent actually answered, so a
+	 * caller can fall through to another account when it did not.
+	 */
+	async sendTurn(
+		userMessage: string,
+		history: FeedbackMessage[],
+		callbacks?: FeedbackSendCallbacks
+	): Promise<FeedbackTurnResult> {
 		if (!this.sessionId || !this.agentType) {
 			throw new Error('No active feedback conversation. Call start() first.');
 		}
@@ -364,7 +408,7 @@ export class FeedbackConversationManager {
 		const currentSessionId = this.sessionId;
 		const currentAgentType = this.agentType;
 		const currentSystemPrompt = this.systemPrompt;
-		const currentSshRemoteConfig = this.sshRemoteConfig;
+		const account = this.account;
 
 		const agent = await window.maestro.agents.get(currentAgentType);
 		if (!agent) {
@@ -372,20 +416,26 @@ export class FeedbackConversationManager {
 		}
 
 		const binaryPath = agent.path || agent.command || currentAgentType;
+		// What the failure messages name: an account's own binary is the one that
+		// actually runs (the main process swaps it in via sessionCustomPath).
+		const displayBinaryPath = account?.customPath || binaryPath;
 		const agentName = agent.name || currentAgentType;
-		const isRemote = currentSshRemoteConfig?.enabled && currentSshRemoteConfig?.remoteId;
-		if (!isRemote && !agent.available) {
-			throw new Error(
-				`The ${agentName} provider is not available. Maestro resolved its binary to "${binaryPath}", but it reported as not runnable. Check that it is installed, on your PATH, and authenticated.`
-			);
+		const isRemote = Boolean(account?.sshRemoteId);
+		// An account's own binary stands in for detection, which only knows the
+		// provider-level path. A missing agent is reported as a failed turn rather
+		// than thrown, so the caller can fall through to another account.
+		if (!isRemote && !agent.available && !account?.customPath) {
+			const error = `The ${agentName} provider is not available. Maestro resolved its binary to "${binaryPath}", but it reported as not runnable. Check that it is installed, on your PATH, and authenticated.`;
+			callbacks?.onError?.(error);
+			return { response: { ...DEFAULT_FEEDBACK_RESPONSE, message: error }, failed: true, error };
 		}
 
 		const prompt = this.buildPrompt(userMessage, history, currentSystemPrompt);
 
 		let outputBuffer = '';
 		let settled = false;
-		return new Promise<FeedbackParsedResponse>((resolve) => {
-			const resolveOnce = (response: FeedbackParsedResponse) => {
+		return new Promise<FeedbackTurnResult>((resolve) => {
+			const resolveOnce = (result: FeedbackTurnResult) => {
 				if (settled) return;
 				settled = true;
 				if (this.sessionId === currentSessionId) {
@@ -394,8 +444,8 @@ export class FeedbackConversationManager {
 				// Surface the terminal response to the caller for *every* outcome
 				// (success, provider failure, timeout) so UI state like feedback
 				// readiness always reflects the final result instead of going stale.
-				callbacks?.onComplete?.(response);
-				resolve(response);
+				callbacks?.onComplete?.(result.response);
+				resolve(result);
 			};
 
 			// Activity timeout
@@ -403,8 +453,11 @@ export class FeedbackConversationManager {
 				if (this.timeoutId) clearTimeout(this.timeoutId);
 				this.timeoutId = setTimeout(() => {
 					resolveOnce({
-						...DEFAULT_FEEDBACK_RESPONSE,
-						message: 'The agent took too long to respond. Please try again.',
+						response: {
+							...DEFAULT_FEEDBACK_RESPONSE,
+							message: 'The agent took too long to respond. Please try again.',
+						},
+						failed: false,
 					});
 				}, INACTIVITY_TIMEOUT_MS);
 			};
@@ -470,11 +523,11 @@ export class FeedbackConversationManager {
 				if (code === 0) {
 					const parsed = extractJsonFromOutput(outputBuffer);
 					const response = parsed ?? DEFAULT_FEEDBACK_RESPONSE;
-					resolveOnce(response);
+					resolveOnce({ response, failed: false });
 				} else {
 					const message = buildProviderFailureMessage({
 						agentName,
-						binaryPath,
+						binaryPath: displayBinaryPath,
 						reason: `exited with code ${code} before it could respond`,
 						output: outputBuffer,
 					});
@@ -483,8 +536,9 @@ export class FeedbackConversationManager {
 						message,
 					};
 					const detail = summarizeProcessFailure(outputBuffer);
-					callbacks?.onError?.(`Agent exited with code ${code}: ${detail || '(no output)'}`);
-					resolveOnce(errorResponse);
+					const error = `Agent exited with code ${code}: ${detail || '(no output)'}`;
+					callbacks?.onError?.(error);
+					resolveOnce({ response: errorResponse, failed: true, error });
 				}
 			});
 
@@ -511,12 +565,18 @@ export class FeedbackConversationManager {
 					window.maestro.process.spawn({
 						sessionId: currentSessionId,
 						toolType: currentAgentType,
-						cwd: this.cwd,
+						cwd: isRemote && account?.remoteCwd ? account.remoteCwd : this.cwd,
 						command: binaryPath,
 						args: argsForSpawn,
 						prompt,
 						readOnlyMode: true,
-						sessionSshRemoteConfig: currentSshRemoteConfig,
+						// The account: its env replaces the provider-level set, exactly as
+						// the agent it came from is spawned.
+						sessionCustomEnvVars: account?.env,
+						sessionCustomPath: account?.customPath,
+						sessionSshRemoteConfig: account?.sshRemoteId
+							? { enabled: true, remoteId: account.sshRemoteId }
+							: undefined,
 					} as any)
 				);
 			} catch (error: unknown) {
@@ -532,12 +592,16 @@ export class FeedbackConversationManager {
 					}`;
 					const message = buildProviderFailureMessage({
 						agentName,
-						binaryPath,
+						binaryPath: displayBinaryPath,
 						reason: 'could not be started',
 						output,
 					});
 					callbacks?.onError?.(output);
-					resolveOnce({ ...DEFAULT_FEEDBACK_RESPONSE, message });
+					resolveOnce({
+						response: { ...DEFAULT_FEEDBACK_RESPONSE, message },
+						failed: true,
+						error: output,
+					});
 				})
 				.catch((error: unknown) => {
 					const output = redactProviderSecrets(
@@ -545,12 +609,16 @@ export class FeedbackConversationManager {
 					);
 					const message = buildProviderFailureMessage({
 						agentName,
-						binaryPath,
+						binaryPath: displayBinaryPath,
 						reason: 'could not be started',
 						output,
 					});
 					callbacks?.onError?.(output);
-					resolveOnce({ ...DEFAULT_FEEDBACK_RESPONSE, message });
+					resolveOnce({
+						response: { ...DEFAULT_FEEDBACK_RESPONSE, message },
+						failed: true,
+						error: output,
+					});
 				});
 		});
 	}
@@ -658,6 +726,7 @@ export class FeedbackConversationManager {
 		}
 		this.sessionId = null;
 		this.agentType = null;
+		this.account = undefined;
 		this.systemPrompt = '';
 	}
 
@@ -682,3 +751,75 @@ export function getConfidenceColor(confidence: number): string {
 }
 
 export { FEEDBACK_CONFIDENCE_THRESHOLD };
+
+// ============================================================================
+// What gets filed
+// ============================================================================
+
+/** Title length when the summary has to be derived from the user's words. */
+const DERIVED_SUMMARY_LENGTH = 72;
+
+/** The fields an issue is filed with, plus whether the interview finished. */
+export interface FeedbackSubmission {
+	category: FeedbackCategory;
+	summary: string;
+	structured: FeedbackStructured;
+	/** True when filed before the agent reported it had enough. */
+	early: boolean;
+}
+
+function clip(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max - 3).trimEnd()}...` : text;
+}
+
+/**
+ * Resolve what to file right now. Submitting is never gated on the agent's
+ * understanding: the user can file at any point, and whatever the interview
+ * has not filled yet is backed by the user's own words, so nothing they typed
+ * is lost and the required fields are never empty. Returns null only when the
+ * user has not said anything yet - there is nothing to file.
+ */
+export function resolveFeedbackSubmission(
+	lastResponse: FeedbackParsedResponse | null,
+	messages: FeedbackMessage[],
+	ready: boolean,
+	confidence: number
+): FeedbackSubmission | null {
+	const userWords = messages
+		.filter((m) => m.role === 'user')
+		.map((m) => m.content.trim())
+		.filter(Boolean);
+	if (userWords.length === 0) return null;
+
+	const structured = lastResponse?.structured;
+	const early = !ready || !lastResponse;
+	const firstLine = userWords[0].split('\n')[0].trim();
+	const transcript = userWords.join('\n\n');
+	const quoted = transcript
+		.split('\n')
+		.map((line) => `> ${line}`)
+		.join('\n');
+
+	const actual = structured?.actualBehavior?.trim() || transcript;
+	const contextParts = [structured?.additionalContext?.trim() || ''];
+	if (early) {
+		contextParts.push(
+			`Submitted before the interview finished (understanding ${confidence}%).` +
+				(actual === transcript ? '' : ` The reporter's own words:\n\n${quoted}`)
+		);
+	}
+
+	return {
+		category: lastResponse?.category ?? 'general_feedback',
+		summary: lastResponse?.summary?.trim() || clip(firstLine, DERIVED_SUMMARY_LENGTH),
+		structured: {
+			expectedBehavior:
+				structured?.expectedBehavior?.trim() ||
+				'Not provided (submitted before the interview finished).',
+			actualBehavior: clip(actual, MAX_FEEDBACK_FIELD_LENGTH),
+			reproductionSteps: structured?.reproductionSteps?.trim() || '',
+			additionalContext: clip(contextParts.filter(Boolean).join('\n\n'), MAX_FEEDBACK_FIELD_LENGTH),
+		},
+		early,
+	};
+}

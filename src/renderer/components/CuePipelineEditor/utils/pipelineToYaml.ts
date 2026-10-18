@@ -18,7 +18,9 @@ import type {
 } from '../../../../shared/cue-pipeline-types';
 import { commandNodeDataToCueCommand } from '../../../../shared/cue-pipeline-types';
 import type { CueSubscription, CueSettings } from '../../../../shared/cue';
+import { cueTurnSettingsOf, sameCueTurnSettings } from '../../../../shared/cue/turn-settings';
 import { cuePromptFilePath } from '../../../../shared/maestro-paths';
+import { hasWebhookTriggerConfig, webhookFromTriggerConfig } from './webhookTriggerConfig';
 
 /**
  * Pad single-digit hours to `HH:MM` so the on-disk YAML is canonical. The
@@ -201,6 +203,9 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 					sub.max_notifications = triggerData.config.max_notifications;
 				}
 			}
+			if (hasWebhookTriggerConfig(triggerData.config)) {
+				sub.webhook = webhookFromTriggerConfig(triggerData.config);
+			}
 			break;
 		case 'github.label':
 			if (triggerData.config.repo) sub.repo = triggerData.config.repo;
@@ -212,25 +217,15 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 			if (triggerData.config.gh_labels?.length) {
 				sub.gh_labels = triggerData.config.gh_labels;
 			}
+			if (hasWebhookTriggerConfig(triggerData.config)) {
+				sub.webhook = webhookFromTriggerConfig(triggerData.config);
+			}
 			break;
 		case 'task.pending':
 			sub.watch = triggerData.config.watch ?? '**/*.md';
 			break;
 		case 'webhook.received': {
-			// `secret` and `secret_env` are mutually exclusive in the schema, so
-			// emit the literal only when the trigger has no env var - that's the
-			// hand-written-YAML case we're preserving rather than encouraging.
-			const webhook: CueSubscription['webhook'] = {};
-			if (triggerData.config.webhook_path) webhook.path = triggerData.config.webhook_path;
-			if (triggerData.config.webhook_secret_env) {
-				webhook.secret_env = triggerData.config.webhook_secret_env;
-			} else if (triggerData.config.webhook_secret) {
-				webhook.secret = triggerData.config.webhook_secret;
-			}
-			if (triggerData.config.webhook_signature_header) {
-				webhook.signature_header = triggerData.config.webhook_signature_header;
-			}
-			sub.webhook = webhook;
+			sub.webhook = webhookFromTriggerConfig(triggerData.config);
 			if (triggerData.config.filter) {
 				sub.filter = triggerData.config.filter;
 			}
@@ -286,6 +281,7 @@ function populateTargetWork(
 		const agentData = target.data as AgentNodeData;
 		sub.prompt = edge?.prompt ?? agentData.inputPrompt ?? '';
 		if (agentData.outputPrompt) sub.output_prompt = agentData.outputPrompt;
+		Object.assign(sub, cueTurnSettingsOf(agentData));
 	}
 	const targetKey = getNodeKey(target);
 	if (targetKey) sub.target_node_key = targetKey;
@@ -418,6 +414,12 @@ export function pipelineToYamlSubscriptions(
 		//     read back as the user having dragged one agent in twice.
 		const hasNotifyBranch = branches.some((b) => !!b.edge.notify);
 		const hasDuplicateTarget = new Set(workTargets.map((n) => n.id)).size < workTargets.length;
+		// One `fan_out` sub carries ONE tier / model / effort for every target.
+		// Agents that disagree fall through to per-branch emission, one sub
+		// each, so no node's model choice is overwritten by a sibling's.
+		const sharesTurnSettings = workTargets.every((n) =>
+			sameCueTurnSettings(n.data as AgentNodeData, workTargets[0].data as AgentNodeData)
+		);
 
 		if (branches.length === 1) {
 			// === Single target: agent or command ===
@@ -453,7 +455,7 @@ export function pipelineToYamlSubscriptions(
 				usedSubNames,
 				ownerOut
 			);
-		} else if (allAgents && !hasNotifyBranch && !hasDuplicateTarget) {
+		} else if (allAgents && !hasNotifyBranch && !hasDuplicateTarget && sharesTurnSettings) {
 			// === Fan-out to agents only - canonical `fan_out` shape ===
 			// The engine's fan_out array addresses sessions by name, which
 			// only makes sense for agent targets (commands have no session
@@ -474,6 +476,7 @@ export function pipelineToYamlSubscriptions(
 
 			const fanOutAgents = workTargets;
 			sub.fan_out = fanOutAgents.map((a) => (a.data as AgentNodeData).sessionName);
+			Object.assign(sub, cueTurnSettingsOf(fanOutAgents[0].data as AgentNodeData));
 			// Stable-id mirror so the dispatcher can resolve a target after
 			// it's been renamed. The dispatcher prefers `fan_out_ids[i]` over
 			// `fan_out[i]`; without this, a rename silently drops the target.
@@ -771,6 +774,7 @@ function buildChain(
 					? ensureSourceOutputVariable(targetData.inputPrompt ?? '')
 					: (targetData.inputPrompt ?? ''),
 				output_prompt: targetData.outputPrompt || undefined,
+				...cueTurnSettingsOf(targetData),
 			};
 
 			if (incomingWorkEdges.length > 1) {
@@ -993,6 +997,7 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.forward_output_from != null) record.forward_output_from = sub.forward_output_from;
 			if (sub.target_node_key != null) record.target_node_key = sub.target_node_key;
 			if (sub.fan_out_node_keys != null) record.fan_out_node_keys = sub.fan_out_node_keys;
+			Object.assign(record, cueTurnSettingsOf(sub));
 
 			// Command action: emit `action: command` + the structured `command`
 			// object inline. Skip prompt_file emission - the dispatcher uses

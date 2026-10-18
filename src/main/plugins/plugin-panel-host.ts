@@ -8,9 +8,10 @@
  * - **Web preferences** (`hardenPluginPanelWebPreferences`, applied in
  *   `will-attach-webview`): no Node, contextIsolation ON, OS sandbox ON,
  *   renderer-supplied preload stripped and replaced with the broker-only
- *   panel preload (`plugin-panel-preload.js`) whose entire surface is a
- *   one-way forward of the panel's `maestro:invokeCommand` postMessage to the
- *   embedder - the message contract of the old srcdoc iframe, unchanged.
+ *   panel preload (`plugin-panel-preload.js`), which forwards the panel's
+ *   `maestro:invokeCommand` postMessage to the embedder and applies only the
+ *   host-approved theme palette sent into the guest. The command contract of
+ *   the old srcdoc iframe is unchanged.
  * - **Session** (`hardenPluginPanelSession`): a per-session protocol handler
  *   serves ONLY that plugin's own panel documents (grant-gated via the
  *   injected provider) with a restrictive CSP header + meta; `webRequest`

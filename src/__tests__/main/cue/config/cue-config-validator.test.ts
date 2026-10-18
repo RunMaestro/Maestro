@@ -15,6 +15,43 @@ function errs(sub: unknown): string[] {
 	return validateSubscription(sub, 'sub');
 }
 
+describe('validateSubscription - structured CLI send tab placement', () => {
+	const base = {
+		name: 'triage',
+		event: 'app.startup',
+		action: 'command',
+	};
+
+	it.each([true, false, undefined])('accepts new_tab: %s', (newTab) => {
+		expect(
+			errs({
+				...base,
+				command: {
+					mode: 'cli',
+					cli: {
+						command: 'send',
+						target: 'agent-xyz',
+						message: '/triage',
+						...(newTab !== undefined ? { new_tab: newTab } : {}),
+					},
+				},
+			})
+		).toEqual([]);
+	});
+
+	it.each(['true', 1, null, [], {}])('rejects nonboolean new_tab: %s', (newTab) => {
+		expect(
+			errs({
+				...base,
+				command: {
+					mode: 'cli',
+					cli: { command: 'send', target: 'agent-xyz', new_tab: newTab },
+				},
+			})
+		).toContain('sub: "command.cli.new_tab" must be a boolean when provided');
+	});
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 // time.once event validation
 // ────────────────────────────────────────────────────────────────────────────
@@ -242,7 +279,163 @@ describe('validateSubscription - action: notify', () => {
 	it('rejects unknown action values', () => {
 		const found = errs({ ...base, action: 'explode' });
 		expect(
-			found.some((e) => /"action" must be "prompt", "command", or "notify" when provided/.test(e))
+			found.some((e) =>
+				/"action" must be "prompt", "command", "notify", or "autorun" when provided/.test(e)
+			)
+		).toBe(true);
+	});
+});
+
+describe('validateSubscription - action: autorun', () => {
+	const base = {
+		name: 'autorun-1',
+		event: 'time.once',
+		action: 'autorun' as const,
+		agent_id: 'agent-xyz',
+		fire_at: '2026-05-22T14:30:00-05:00',
+		auto_run: { documents: ['/proj/Auto Run Docs/ship.md'] },
+	};
+
+	it('accepts action: autorun without a prompt field', () => {
+		// An autorun subscription's work is its document list; `prompt` is
+		// deliberately absent.
+		expect(errs(base)).toEqual([]);
+	});
+
+	it('requires auto_run', () => {
+		const { auto_run: _omitted, ...withoutAutoRun } = base;
+		expect(
+			errs(withoutAutoRun).some((e) =>
+				/"auto_run" is required and must be an object when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects an empty document list', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: [] } }).some((e) =>
+				/"auto_run\.documents" is required and must be a non-empty array/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects a reset_on_completion array that does not align with documents', () => {
+		// Misaligned flags would reset the wrong document.
+		expect(
+			errs({
+				...base,
+				auto_run: { documents: ['/a.md', '/b.md'], reset_on_completion: [true] },
+			}).some((e) => /must have one entry per "auto_run\.documents" entry/.test(e))
+		).toBe(true);
+	});
+
+	it('requires agent_id', () => {
+		const { agent_id: _omitted, ...withoutAgent } = base;
+		expect(
+			errs(withoutAgent).some((e) =>
+				/"agent_id" is required and must be a non-empty string when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects fan_out - one Auto Run belongs to one agent', () => {
+		expect(
+			errs({ ...base, fan_out: ['other-agent'] }).some((e) =>
+				/"fan_out" is not supported when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects a non-positive max_loops', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], max_loops: 0 } }).some((e) =>
+				/"auto_run\.max_loops" must be a positive integer when provided/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('accepts both task selection modes and the model-hint opt-out', () => {
+		for (const mode of ['task', 'document']) {
+			expect(
+				errs({
+					...base,
+					auto_run: { documents: ['/a.md'], task_selection_mode: mode, ignore_model_hints: true },
+				})
+			).toEqual([]);
+		}
+	});
+
+	// A typo must not fall back to the default: a per-document schedule would
+	// then run one task at a time with nobody watching.
+	it('rejects an unknown task_selection_mode', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], task_selection_mode: 'file' } }).some((e) =>
+				/"auto_run\.task_selection_mode" must be "task" or "document"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('accepts the auto-resume settings and a worktree in every mode', () => {
+		const worktrees = [
+			{ mode: 'create-new', branch: 'nightly', base_branch: 'rc', create_pr: true },
+			{ mode: 'existing-open', agent_id: 'agent-9' },
+			{ mode: 'existing-closed', path: '/wt/nightly' },
+		];
+		for (const worktree of worktrees) {
+			expect(
+				errs({
+					...base,
+					auto_run: {
+						documents: ['/a.md'],
+						auto_resume_on_error: false,
+						auto_resume_after_min: 10,
+						max_auto_resumes: 3,
+						worktree,
+					},
+				})
+			).toEqual([]);
+		}
+	});
+
+	// A worktree block that cannot be resolved must be an error, never "no
+	// worktree": the run would otherwise land in the agent's own checkout.
+	it('rejects a worktree block that cannot be resolved', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], worktree: { mode: 'create-new' } } }).some(
+				(e) => /"auto_run\.worktree" "branch" is required/.test(e)
+			)
+		).toBe(true);
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], worktree: 'nightly' } }).some((e) =>
+				/"auto_run\.worktree" must be an object/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects wrongly typed auto-resume settings', () => {
+		const bad = errs({
+			...base,
+			auto_run: {
+				documents: ['/a.md'],
+				auto_resume_on_error: 'no',
+				auto_resume_after_min: '10',
+				max_auto_resumes: null,
+			},
+		});
+		expect(bad.some((e) => /"auto_run\.auto_resume_on_error" must be a boolean/.test(e))).toBe(
+			true
+		);
+		expect(bad.some((e) => /"auto_run\.auto_resume_after_min" must be a number/.test(e))).toBe(
+			true
+		);
+		expect(bad.some((e) => /"auto_run\.max_auto_resumes" must be a number/.test(e))).toBe(true);
+	});
+
+	it('rejects a non-boolean ignore_model_hints', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], ignore_model_hints: 'yes' } }).some((e) =>
+				/"auto_run\.ignore_model_hints" must be a boolean when provided/.test(e)
+			)
 		).toBe(true);
 	});
 });
@@ -297,5 +490,111 @@ describe('validateSubscription - github.label', () => {
 				/"gh_state" value "merged" cannot be combined with "gh_label_target: issue"/.test(e)
 			)
 		).toBe(true);
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// GitHub triggers with an optional webhook block
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('validateSubscription - GitHub triggers with a webhook', () => {
+	const base = {
+		name: 'review-prs',
+		event: 'github.pull_request',
+		prompt: 'Review it',
+		agent_id: 'agent-xyz',
+		repo: 'org/repo',
+	};
+
+	it('accepts a GitHub trigger with no webhook block', () => {
+		expect(errs(base)).toEqual([]);
+	});
+
+	it('accepts a webhook block with a secret env var', () => {
+		expect(errs({ ...base, webhook: { secret_env: 'GH_WEBHOOK_SECRET' } })).toEqual([]);
+		expect(
+			errs({ ...base, event: 'github.label', webhook: { secret_env: 'GH_WEBHOOK_SECRET' } })
+		).toEqual([]);
+	});
+
+	it('rejects a webhook block with no secret, naming the event', () => {
+		const found = errs({ ...base, event: 'github.issue', webhook: { path: 'issues' } });
+		expect(
+			found.some((e) =>
+				/"webhook.secret" or "webhook.secret_env" is required for github.issue/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects both a literal secret and a secret env var', () => {
+		const found = errs({ ...base, webhook: { secret: 'x', secret_env: 'Y' } });
+		expect(found.some((e) => /mutually exclusive/.test(e))).toBe(true);
+	});
+
+	it('rejects a webhook that is not an object', () => {
+		const found = errs({ ...base, event: 'github.label', webhook: 'yes' });
+		expect(found.some((e) => /"webhook" must be an object for github.label/.test(e))).toBe(true);
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// tier / model / effort
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('validateSubscription - tier / model / effort', () => {
+	const base = {
+		name: 'review',
+		event: 'time.heartbeat',
+		interval_minutes: 30,
+		prompt: 'Review the latest changes',
+	};
+
+	it('accepts a tier with an effort', () => {
+		expect(errs({ ...base, tier: 'high', effort: 'low' })).toEqual([]);
+	});
+
+	it('accepts an exact model with an effort', () => {
+		expect(errs({ ...base, model: 'gpt-5.5-codex', effort: 'medium' })).toEqual([]);
+	});
+
+	it('rejects a misspelled tier rather than silently running the default model', () => {
+		const found = errs({ ...base, tier: 'hgih' });
+		expect(found.some((e) => /"tier" must be one of: low, medium, high/.test(e))).toBe(true);
+	});
+
+	it('rejects a misspelled effort', () => {
+		const found = errs({ ...base, effort: 'max' });
+		expect(found.some((e) => /"effort" must be one of: low, medium, high/.test(e))).toBe(true);
+	});
+
+	it('rejects an empty model', () => {
+		const found = errs({ ...base, model: '   ' });
+		expect(found.some((e) => /"model" must be a non-empty string/.test(e))).toBe(true);
+	});
+
+	it('rejects tier and model together', () => {
+		const found = errs({ ...base, tier: 'high', model: 'opus' });
+		expect(found.some((e) => /set "tier" or "model", not both/.test(e))).toBe(true);
+	});
+
+	it('rejects model settings on a notify subscription', () => {
+		const found = errs({
+			...base,
+			action: 'notify',
+			notify: { message: 'hi' },
+			agent_id: 'agent-xyz',
+			tier: 'low',
+		});
+		expect(found.some((e) => /not supported when action is "notify"/.test(e))).toBe(true);
+	});
+
+	it('rejects model settings on a command subscription', () => {
+		const found = errs({
+			...base,
+			action: 'command',
+			command: { mode: 'shell', shell: 'echo hi' },
+			effort: 'high',
+		});
+		expect(found.some((e) => /not supported when action is "command"/.test(e))).toBe(true);
 	});
 });

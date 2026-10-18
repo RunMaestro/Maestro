@@ -15,7 +15,7 @@
  * 6. Client can send messages which are delegated to WebSocketMessageHandler
  */
 
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { logger } from '../../utils/logger';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
@@ -35,6 +35,9 @@ export type { LiveSessionInfo, CustomAICommand } from '../types';
 // Logger context for all WebSocket route logs
 const LOG_CONTEXT = 'WebServer:WS';
 
+/** RFC 6455 close code for a connection refused on policy grounds. */
+const WS_CLOSE_POLICY_VIOLATION = 1008;
+
 /**
  * Session data for WebSocket initial sync.
  * Uses SessionData as the base type.
@@ -45,6 +48,13 @@ export type WsSessionData = SessionData;
  * Callbacks required by WebSocket route
  */
 export interface WsRouteCallbacks {
+	/**
+	 * Whether an upgrade with these `Origin` / `Host` headers may connect.
+	 * Browsers send `Origin` on every WebSocket upgrade and never enforce CORS
+	 * on one, so this is the only thing stopping a hostile page that knows the
+	 * URL from driving the server. Missing callback = refuse.
+	 */
+	isOriginAllowed: (origin: string | string[] | undefined, host: string | undefined) => boolean;
 	getSessions: () => SessionData[];
 	getTheme: () => Theme | null;
 	getBionifyReadingMode: () => boolean;
@@ -100,10 +110,24 @@ export class WsRoute {
 	/**
 	 * Register the WebSocket route on the Fastify server
 	 */
-	registerRoute(server: FastifyInstance): void {
-		const token = this.securityToken;
-
+	registerRoute(
+		server: FastifyInstance,
+		token = this.securityToken,
+		admission?: (request: FastifyRequest) => boolean
+	): void {
 		server.get(`/${token}/ws`, { websocket: true }, (socket, request) => {
+			// Origin first, before Web Login: a refused page must not even learn
+			// whether a login is required.
+			if (this.callbacks.isOriginAllowed?.(request.headers.origin, request.headers.host) !== true) {
+				logger.warn(`Refused WebSocket from origin ${String(request.headers.origin)}`, LOG_CONTEXT);
+				socket.close(WS_CLOSE_POLICY_VIOLATION, 'Origin not allowed');
+				return;
+			}
+			if (admission && !admission(request)) {
+				socket.close(4403, 'Host admission expired or revoked');
+				return;
+			}
+
 			const clientId = `web-client-${++this.clientIdCounter}`;
 
 			// The Web Login gate. The bridge is the whole app, so this is the
@@ -147,11 +171,30 @@ export class WsRoute {
 				socket,
 				id: clientId,
 				connectedAt: Date.now(),
+				cliAuthenticated: auth.cli,
 				subscribedSessionId: sessionId,
 				// Resolved once, here: the cookie is only on the upgrade request, so
 				// there is no later point at which a frame can say who sent it.
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
+				// Same moment, same reason: only the upgrade carries the CLI secret.
+				...(auth.cli ? { cli: true } : {}),
+				isAuthorized: () => {
+					if (admission && !admission(request)) {
+						socket.close(4403, 'Host admission expired or revoked');
+						return false;
+					}
+					const currentAuth = resolveWebRequestAuth(request);
+					if (!isWebRequestAuthorized(currentAuth)) {
+						socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+						return false;
+					}
+					client.user = currentAuth.user;
+					return true;
+				},
 			};
+			const admissionCheck = admission
+				? setInterval(() => client.isAuthorized?.(), 1000)
+				: undefined;
 
 			// Notify parent about connection
 			this.callbacks.onClientConnect?.(client);
@@ -264,6 +307,7 @@ export class WsRoute {
 
 			// Handle incoming messages
 			socket.on('message', (message) => {
+				if (!client.isAuthorized?.()) return;
 				try {
 					const data = JSON.parse(message.toString()) as WebClientMessage;
 					this.callbacks.handleMessage?.(clientId, data);
@@ -279,6 +323,7 @@ export class WsRoute {
 
 			// Handle disconnection
 			socket.on('close', () => {
+				clearInterval(admissionCheck);
 				this.callbacks.onClientDisconnect?.(clientId);
 				logger.info(`Client disconnected: ${clientId}`, LOG_CONTEXT);
 			});

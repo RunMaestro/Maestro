@@ -22,25 +22,17 @@ import {
 	sendCrossAgentRequest,
 	type CrossAgentCompletion,
 } from '../hooks/agent/useCrossAgentDispatch';
-import { recordAgentDelegation, settleAgentDelegation } from './agentDelegation';
+import {
+	recordAgentDelegation,
+	resolveDelegationSourceTab,
+	settleAgentDelegation,
+} from './agentDelegation';
 import type { LogEntry } from '../types';
+import { CROSS_AGENT_ASK_SESSION_ID, CROSS_AGENT_ASK_TAB_ID } from '../../shared/crossAgentTypes';
 
-/**
- * Stand-in source tab id for a consult nobody typed. The consult tab on the
- * target is keyed by (source agent, source tab), so a constant here means one
- * consult tab per CALLING AGENT rather than one per tab the agent happened to
- * have selected - which is what makes a follow-up `ask` resume the earlier
- * conversation instead of starting over. It matches no real tab on purpose:
- * the answer belongs to the caller's tool result, not to its transcript, so the
- * attribution-bubble write finds no tab and harmlessly no-ops.
- */
-export const CROSS_AGENT_ASK_TAB_ID = 'cli-ask';
-
-/**
- * Stand-in source agent id used when the caller does not name itself. Consults
- * from unattributed callers share one consult tab on each target.
- */
-export const CROSS_AGENT_ASK_SESSION_ID = 'cli-ask';
+// The stand-in ids live in shared code: the headless consult keys its tab the same way, so a
+// TUI cannot tell a headless host from a desktop (req-D2).
+export { CROSS_AGENT_ASK_TAB_ID, CROSS_AGENT_ASK_SESSION_ID };
 
 /** Display name for an unattributed caller (names the target's consult tab). */
 const CROSS_AGENT_ASK_FALLBACK_NAME = 'CLI';
@@ -64,7 +56,8 @@ export interface CrossAgentAskRequest {
 	 */
 	fromTabId?: string;
 	/**
-	 * Forward the caller's active-tab transcript as context. Off by default -
+	 * Forward the asking tab's transcript as context (the active tab when the
+	 * caller named no tab). Off by default -
 	 * `ask` exists to send a fresh, self-contained question, and a relayed
 	 * transcript is what `@mention` is for.
 	 */
@@ -114,8 +107,14 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 
 	// Only forwarded when explicitly asked for; `selectContextWindow` inside
 	// `sendCrossAgentRequest` narrows it the same way a typed mention's would be.
-	const sourceLogs: LogEntry[] =
-		request.withContext && source ? (getActiveTab(source)?.logs ?? []) : [];
+	// The stamped tab is the transcript that asked; the active tab is only a
+	// guess for a bare `--from` typed outside any turn.
+	const sourceTab = !source
+		? undefined
+		: request.fromTabId
+			? resolveDelegationSourceTab(source, request.fromTabId)
+			: (getActiveTab(source) ?? undefined);
+	const sourceLogs: LogEntry[] = request.withContext ? (sourceTab?.logs ?? []) : [];
 
 	// Mark the consult in the asking agent's transcript, the way a typed @mention
 	// shows who answered. An unattributed caller has no transcript to mark.

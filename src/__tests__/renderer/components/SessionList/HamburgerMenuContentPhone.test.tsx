@@ -8,9 +8,11 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { HamburgerMenuContent } from '../../../../renderer/components/SessionList/HamburgerMenuContent';
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
@@ -19,14 +21,14 @@ vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOrig
 }));
 const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
 
-function renderMenu() {
+function renderMenu(setMenuOpen = vi.fn()) {
 	return render(
 		<HamburgerMenuContent
 			theme={mockTheme}
 			onNewAgentSession={vi.fn()}
 			openWizard={vi.fn()}
 			startTour={vi.fn()}
-			setMenuOpen={vi.fn()}
+			setMenuOpen={setMenuOpen}
 		/>
 	);
 }
@@ -36,6 +38,25 @@ afterEach(() => {
 });
 
 describe('HamburgerMenuContent on a phone', () => {
+	it.each([false, true])('opens notification history without a header on phone=%s', (phone) => {
+		mockedUsePhoneLayout.mockReturnValue(phone);
+		useSettingsStore.setState({ notificationCenterEnabled: true });
+		useNotificationStore.getState().setNotificationCenterOpen(false);
+		const closeMenu = vi.fn();
+		renderMenu(closeMenu);
+		fireEvent.click(screen.getByRole('button', { name: /Notification Center/ }));
+		expect(useNotificationStore.getState().notificationCenterOpen).toBe(true);
+		expect(closeMenu).toHaveBeenCalledWith(false);
+		useNotificationStore.getState().setNotificationCenterOpen(false);
+		useSettingsStore.setState({ notificationCenterEnabled: false });
+	});
+
+	it('hides Notification Center while it is switched off', () => {
+		useSettingsStore.setState({ notificationCenterEnabled: false });
+		renderMenu();
+		expect(screen.queryByRole('button', { name: /Notification Center/ })).not.toBeInTheDocument();
+	});
+
 	it('offers the keyboard-only entries on desktop', () => {
 		mockedUsePhoneLayout.mockReturnValue(false);
 		renderMenu();
@@ -57,7 +78,7 @@ describe('HamburgerMenuContent on a phone', () => {
 	it('tags every chord badge so the phone stylesheet can hide them', () => {
 		mockedUsePhoneLayout.mockReturnValue(false);
 		const { container } = renderMenu();
-		const badges = container.querySelectorAll('span.font-mono');
+		const badges = container.querySelectorAll('[data-shortcut-keys]');
 		expect(badges.length).toBeGreaterThan(0);
 		for (const badge of badges) {
 			expect(badge).toHaveAttribute('data-shortcut-hint');

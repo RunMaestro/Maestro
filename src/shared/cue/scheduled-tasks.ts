@@ -14,8 +14,10 @@
  * `src/main/cue/cue-scheduled-tasks.ts`.
  */
 
-import type { CueAction, CueScheduleDay } from './contracts';
+import type { CueAction, CueAutoRunConfig, CueScheduleDay } from './contracts';
 import { CUE_SCHEDULE_DAYS } from './contracts';
+import { getBasename } from '../formatters';
+import type { CueTurnSettings, CueTurnSettingsPatch } from './turn-settings';
 
 /** Cue events that make a subscription a scheduled task. */
 export const SCHEDULED_TASK_EVENTS = ['time.once', 'time.scheduled', 'time.heartbeat'] as const;
@@ -36,8 +38,9 @@ export const DEFAULT_GRACE_MINUTES = 360;
 /** Upper bound the Cue validator enforces on both grace and interval minutes. */
 export const MAX_SCHEDULE_MINUTES = 10080;
 
-/** One scheduled task, resolved against the agent that owns it. */
-export interface ScheduledTask {
+/** One scheduled task, resolved against the agent that owns it. `tier` /
+ *  `model` / `effort` are the prompt run's model choice, when it set one. */
+export interface ScheduledTask extends CueTurnSettings {
 	/** Subscription name - unique within one agent's cue.yaml. */
 	name: string;
 	kind: ScheduledTaskKind;
@@ -65,6 +68,10 @@ export interface ScheduledTask {
 	notifyMessage?: string;
 	/** Whether the notify toast sticks until dismissed. */
 	notifySticky?: boolean;
+	/** Captured Auto Run payload when `action === 'autorun'`. Present so the
+	 *  Scheduled Tasks tab can show WHICH documents a pending run will launch
+	 *  rather than just "an Auto Run". */
+	autoRun?: CueAutoRunConfig;
 	/**
 	 * Epoch ms of the next projected fire, or `null` when it cannot be known
 	 * (an `interval` task's phase depends on engine run state, and an expired
@@ -73,8 +80,9 @@ export interface ScheduledTask {
 	nextFireAtMs: number | null;
 }
 
-/** Fields accepted when creating a task. */
-export interface ScheduledTaskCreateInput {
+/** Fields accepted when creating a task. `tier` (or an exact `model`) and
+ *  `effort` apply to the prompt run only; a notify-only task rejects them. */
+export interface ScheduledTaskCreateInput extends CueTurnSettings {
 	/** Agent that runs the task. Resolved to a projectRoot by the caller. */
 	agentId: string;
 	kind: ScheduledTaskKind;
@@ -85,9 +93,13 @@ export interface ScheduledTaskCreateInput {
 	scheduleDays?: CueScheduleDay[];
 	/** Required for `interval`. */
 	intervalMinutes?: number;
-	/** Prompt to send. One of `prompt` / `notify` is required. */
+	/** Prompt to send. One of `prompt` / `notify` / `autoRun` is required. */
 	prompt?: string;
 	notify?: { message: string; sticky?: boolean };
+	/** Launch an Auto Run instead of sending a prompt. Mutually exclusive with
+	 *  `prompt` and `notify`: an Auto Run is the whole job, not a step
+	 *  alongside one. */
+	autoRun?: CueAutoRunConfig;
 	/** Subscription name. Auto-generated when omitted. */
 	name?: string;
 	label?: string;
@@ -112,6 +124,9 @@ export interface ScheduledTaskUpdateInput {
 	label?: string;
 	enabled?: boolean;
 	notify?: { message: string; sticky?: boolean };
+	/** Change the prompt run's model choice. The one field here that CAN be
+	 *  cleared: a `null` axis falls back to the agent's own model or effort. */
+	turnSettings?: CueTurnSettingsPatch;
 }
 
 /** Map a scheduled-task event to its recurrence kind. */
@@ -203,6 +218,19 @@ export function truncateTaskLabel(text: string): string {
 	const collapsed = text.replace(/\s+/g, ' ').trim();
 	if (collapsed.length <= SCHEDULED_TASK_LABEL_MAX) return collapsed;
 	return collapsed.slice(0, SCHEDULED_TASK_LABEL_MAX - 1).trimEnd() + '…';
+}
+
+/**
+ * Human label for an Auto Run task: the document basenames, so the Scheduled
+ * Tasks row reads "Auto Run: ship-it.md" rather than an absolute path nobody
+ * can scan. Falls back to a count once the list stops fitting a label.
+ */
+export function autoRunTaskLabel(documents: string[]): string {
+	const names = documents.map((doc) => getBasename(doc));
+	const joined = names.join(', ');
+	return joined.length <= SCHEDULED_TASK_LABEL_MAX - 'Auto Run: '.length
+		? `Auto Run: ${joined}`
+		: `Auto Run: ${names.length} documents`;
 }
 
 /**

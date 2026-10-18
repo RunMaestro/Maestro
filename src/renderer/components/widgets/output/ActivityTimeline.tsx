@@ -51,6 +51,11 @@ interface ActivityTimelineProps extends WidgetProps {
 	showLegend?: boolean;
 	/** Series hidden on first render. The user can toggle any of them back on. */
 	defaultHiddenSeries?: TimelineSeries[];
+	/**
+	 * Series left out entirely: no bar segment, no legend toggle, no tooltip row.
+	 * For a source that cannot exist here (Cue, while Maestro Cue is off).
+	 */
+	omitSeries?: TimelineSeries[];
 }
 
 function LegendToggle({
@@ -94,7 +99,10 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 	height = 96,
 	showLegend = true,
 	defaultHiddenSeries,
+	omitSeries,
 }: ActivityTimelineProps) {
+	const omitted = new Set(omitSeries ?? []);
+	const isDrawn = (key: TimelineSeries) => !hidden.has(key) && !omitted.has(key);
 	// Seeded once from the prop: later prop changes do not clobber a choice the
 	// user has already made in this session.
 	const [hidden, setHidden] = useState<Set<TimelineSeries>>(
@@ -124,7 +132,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 		agent: b.agent ?? 0,
 	}));
 
-	const visible = SERIES_ORDER.filter((s) => !hidden.has(s.key));
+	const visible = SERIES_ORDER.filter((s) => isDrawn(s.key));
 	const totals = counts.map((c) => visible.reduce((sum, s) => sum + c[s.key], 0));
 	const max = Math.max(1, ...totals);
 	const hasActivity = totals.some((t) => t > 0);
@@ -139,7 +147,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 						const colHeightPct = (total / max) * 100;
 						// Tooltip mirrors what is drawn: a hidden series is not in the
 						// column, so quoting its count here would misread the bar.
-						const title = TOOLTIP_ORDER.filter((s) => !hidden.has(s.key))
+						const title = TOOLTIP_ORDER.filter((s) => isDrawn(s.key))
 							.map((s) => `${s.label} ${count[s.key]}`)
 							.join(' · ');
 						return (
@@ -156,7 +164,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 									{/* Stack order is fixed (cue, agent, user, auto) so hiding a
 									    series never reshuffles the ones that remain. */}
 									{(['cue', 'agent', 'user', 'auto'] as TimelineSeries[]).map((key) =>
-										!hidden.has(key) && count[key] > 0 ? (
+										isDrawn(key) && count[key] > 0 ? (
 											<div
 												key={key}
 												style={{ flexGrow: count[key], backgroundColor: palette[key] }}
@@ -184,7 +192,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 					className="flex items-center gap-4 text-xs-plus select-none"
 					style={{ color: theme.colors.textDim }}
 				>
-					{SERIES_ORDER.map((s) => (
+					{SERIES_ORDER.filter((s) => !omitted.has(s.key)).map((s) => (
 						<LegendToggle
 							key={s.key}
 							color={palette[s.key]}

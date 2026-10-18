@@ -87,6 +87,7 @@ const mockWebContents = {
 		webContentsEventHandlers.set(event, handler);
 	}),
 	setWindowOpenHandler: vi.fn(),
+	reload: vi.fn(),
 	session: {
 		setPermissionRequestHandler: vi.fn(),
 	},
@@ -251,6 +252,14 @@ vi.mock('../../../main/auto-updater', () => ({
 
 vi.mock('../../../main/maestro-cli-manager', () => ({
 	resolveBundledCliPathSync: vi.fn(() => '/resolved/maestro-cli.js'),
+}));
+
+// Linux window icon resolution (fs + platform) is covered by app-icon.test.ts.
+const { mockResolveLinuxWindowIconPath } = vi.hoisted(() => ({
+	mockResolveLinuxWindowIconPath: vi.fn((): string | undefined => undefined),
+}));
+vi.mock('../../../main/app-lifecycle/app-icon', () => ({
+	resolveLinuxWindowIconPath: mockResolveLinuxWindowIconPath,
 }));
 
 // Mock electron-devtools-installer (for development mode)
@@ -1637,6 +1646,47 @@ describe('app-lifecycle/window-manager', () => {
 			expect(lastBrowserWindowOptions).toHaveProperty('autoHideMenuBar', true);
 		});
 
+		it('should set the window icon when a Linux icon resolves', async () => {
+			mockResolveLinuxWindowIconPath.mockReturnValueOnce('/opt/Maestro/resources/icon.png');
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions).toHaveProperty('icon', '/opt/Maestro/resources/icon.png');
+		});
+
+		it('should omit the window icon when no Linux icon resolves', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions).not.toHaveProperty('icon');
+		});
+
 		it('should allow clipboard permissions and deny all others', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -2045,7 +2095,11 @@ describe('app-lifecycle/window-manager', () => {
 				expect(webContentsEventHandlers.has('crashed')).toBe(false);
 			});
 
-			async function fireRenderProcessGone(reason: string, exitCode: number) {
+			async function fireRenderProcessGone(
+				reason: string,
+				exitCode: number,
+				getIsQuitting?: () => boolean
+			) {
 				const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 				const windowManager = createWindowManager({
 					windowStateStore: mockWindowStateStore as unknown as Parameters<
@@ -2057,6 +2111,7 @@ describe('app-lifecycle/window-manager', () => {
 					devServerUrl: 'http://localhost:5173',
 					useNativeTitleBar: false,
 					autoHideMenuBar: false,
+					getIsQuitting,
 				});
 				windowManager.createWindow();
 				const handler = webContentsEventHandlers.get('render-process-gone');
@@ -2075,6 +2130,50 @@ describe('app-lifecycle/window-manager', () => {
 				await fireRenderProcessGone('clean-exit', 0);
 				await Promise.resolve();
 				expect(sentryCaptureMessageMock).not.toHaveBeenCalled();
+			});
+
+			describe('reload after the renderer exits', () => {
+				beforeEach(() => {
+					vi.useFakeTimers();
+					mockWebContents.reload.mockClear();
+				});
+				afterEach(() => {
+					vi.useRealTimers();
+				});
+
+				it('reloads after a crash', async () => {
+					await fireRenderProcessGone('crashed', 139, () => false);
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(1);
+				});
+
+				// A stray `pkill -f` from an agent's shell SIGTERMs the renderer while
+				// the app keeps running; skipping the reload left the window black.
+				it('reloads a renderer killed while the app keeps running', async () => {
+					await fireRenderProcessGone('killed', 15, () => false);
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(1);
+				});
+
+				it('does not reload a renderer killed by the app quitting', async () => {
+					await fireRenderProcessGone('killed', 15, () => true);
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).not.toHaveBeenCalled();
+				});
+
+				it('does not reload when the app starts quitting before the reload fires', async () => {
+					let quitting = false;
+					await fireRenderProcessGone('killed', 15, () => quitting);
+					quitting = true;
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).not.toHaveBeenCalled();
+				});
+
+				it('does not reload after a clean exit', async () => {
+					await fireRenderProcessGone('clean-exit', 0, () => false);
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).not.toHaveBeenCalled();
+				});
 			});
 
 			it('reports Sentry for a genuine renderer crash', async () => {

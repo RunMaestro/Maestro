@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { steerNewMessage, steerQueuedItem } from '../../group-chat/group-chat-queue';
 
 export function registerGroupChatCallbacks(
 	server: WebServer,
@@ -50,7 +51,7 @@ export function registerGroupChatCallbacks(
 	});
 
 	// Start a group chat - uses IPC request-response pattern
-	server.setStartGroupChatCallback(async (topic: string, participantIds: string[]) => {
+	server.setStartGroupChatCallback(async (topic, participantIds, options) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for startGroupChat', 'WebServer');
@@ -75,15 +76,24 @@ export function registerGroupChatCallbacks(
 				resolve(null);
 				return;
 			}
-			mainWindow.webContents.send('remote:startGroupChat', topic, participantIds, responseChannel);
+			mainWindow.webContents.send(
+				'remote:startGroupChat',
+				topic,
+				participantIds,
+				responseChannel,
+				options
+			);
 
+			// Longer than the other group chat calls: the renderer creates the chat,
+			// spawns its moderator, auto-adds every @mentioned participant, and hands
+			// the opening message over before it answers.
 			const timeoutId = setTimeout(() => {
 				if (resolved) return;
 				resolved = true;
 				ipcMain.removeListener(responseChannel, handleResponse);
 				logger.warn(`startGroupChat callback timed out`, 'WebServer');
 				resolve(null);
-			}, 15000);
+			}, 60000);
 		});
 	});
 
@@ -200,4 +210,13 @@ export function registerGroupChatCallbacks(
 			}, 10000);
 		});
 	});
+
+	// Steer into a running round. Answered by MAIN directly, unlike the relays
+	// above: the queue and the running turns both live here, so the CLI reaches
+	// the same function the Steer button does.
+	server.setSteerGroupChatCallback(async (chatId, request) =>
+		request.itemId
+			? steerQueuedItem(chatId, request.itemId)
+			: steerNewMessage(chatId, request.message ?? '', request.readOnly)
+	);
 }

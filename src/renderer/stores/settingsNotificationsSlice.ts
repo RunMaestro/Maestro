@@ -10,32 +10,88 @@
 import type { StateCreator } from 'zustand';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { isToastWidth, TOAST_WIDTH_LABELS, describeToastWidth } from '../../shared/toastWidth';
+import type { ToastPosition } from '../../shared/toastPosition';
+import {
+	DEFAULT_TOAST_POSITION,
+	describeToastPosition,
+	isToastPosition,
+	TOAST_POSITION_LABELS,
+	toastSidePanel,
+} from '../../shared/toastPosition';
+import {
+	areToastsEnabled,
+	DEFAULT_TOAST_DURATION,
+	resolveEnabledToastDuration,
+	TOAST_DURATION_OFF,
+} from '../../shared/toastDuration';
 import { notifyToast, useNotificationStore } from './notificationStore';
 import type { SettingsStore } from './settingsStore';
 
-/** How long the toast-width preview stays up. Long enough to read, short enough not to linger. */
-const TOAST_WIDTH_PREVIEW_DURATION_MS = 5000;
+/** How long a toast-setting preview stays up. Long enough to read, short enough not to linger. */
+const TOAST_PREVIEW_DURATION_MS = 5000;
 
-// The preview toast currently on screen, so picking a second preset replaces it
-// rather than stacking a fourth toast beside the three already fading out.
-let toastWidthPreviewId: string | null = null;
+/**
+ * ID of the live toast-setting preview (width or position), so a new pick
+ * replaces it instead of stacking.
+ */
+let toastPreviewId: string | null = null;
+
+/**
+ * Fire a sample toast so a width or position change is visible the moment it
+ * is picked, instead of waiting for the next real notification. Replaces its
+ * own previous preview so clicking through the presets updates one toast
+ * rather than stacking several.
+ */
+function showToastSettingPreview(title: string, message: string): void {
+	if (toastPreviewId) {
+		useNotificationStore.getState().removeToast(toastPreviewId);
+	}
+	toastPreviewId = notifyToast({
+		color: 'theme',
+		title,
+		message,
+		duration: TOAST_PREVIEW_DURATION_MS,
+		// In-app preview only: no TTS command, no Notification Center entry.
+		skipCustomNotification: true,
+		skipOsNotification: true,
+		skipHistory: true,
+	});
+}
 
 export interface NotificationsState {
 	toastWidth: ToastWidth;
+	toastPosition: ToastPosition;
 	osNotificationsEnabled: boolean;
 	audioFeedbackEnabled: boolean;
 	audioFeedbackCommand: string;
 	toastDuration: number;
+	notificationCenterEnabled: boolean;
+	/** Duration in effect before toasts were last switched off; restored when they come back on. */
+	toastDurationBeforeOff: number;
+	notificationCenterLarge: boolean;
+	notificationCenterDetails: boolean;
+	notificationCenterKeyboardNavigation: boolean;
+	notificationHistoryQueuedReplies: boolean;
+	notificationHistoryAutoRunTasks: boolean;
 	idleNotificationEnabled: boolean;
 	idleNotificationCommand: string;
 }
 
 export interface NotificationsActions {
 	setToastWidth: (value: ToastWidth) => void;
+	setToastPosition: (value: ToastPosition) => void;
 	setOsNotificationsEnabled: (value: boolean) => void;
 	setAudioFeedbackEnabled: (value: boolean) => void;
 	setAudioFeedbackCommand: (value: string) => void;
 	setToastDuration: (value: number) => void;
+	setNotificationCenterEnabled: (value: boolean) => void;
+	/** Switch in-app toasts off, or back on at the duration they had before. */
+	setToastsEnabled: (enabled: boolean) => void;
+	setNotificationCenterLarge: (value: boolean) => void;
+	setNotificationCenterDetails: (value: boolean) => void;
+	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
+	setNotificationHistoryQueuedReplies: (value: boolean) => void;
+	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setIdleNotificationEnabled: (value: boolean) => void;
 	setIdleNotificationCommand: (value: string) => void;
 }
@@ -47,32 +103,38 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	get
 ) => ({
 	toastWidth: 'dynamic',
+	toastPosition: DEFAULT_TOAST_POSITION,
 	osNotificationsEnabled: true,
 	audioFeedbackEnabled: false,
 	audioFeedbackCommand: 'say',
-	toastDuration: 20,
+	toastDuration: DEFAULT_TOAST_DURATION,
+	toastDurationBeforeOff: DEFAULT_TOAST_DURATION,
+	notificationCenterEnabled: false,
+	notificationCenterLarge: false,
+	notificationCenterDetails: false,
+	notificationCenterKeyboardNavigation: false,
+	notificationHistoryQueuedReplies: false,
+	notificationHistoryAutoRunTasks: false,
 	idleNotificationEnabled: false,
 	idleNotificationCommand: 'say Maestro is idle',
 
 	setToastWidth: (value) => {
 		set({ toastWidth: value });
 		window.maestro.settings.set('toastWidth', value);
-		// Fire a sample toast at the new width so the size is visible the
-		// moment it is picked, instead of waiting for the next real
-		// notification. Replaces its own previous preview so clicking
-		// through the presets updates one toast rather than stacking four.
-		if (toastWidthPreviewId) {
-			useNotificationStore.getState().removeToast(toastWidthPreviewId);
-		}
-		toastWidthPreviewId = notifyToast({
-			color: 'theme',
-			title: `Toast Width: ${TOAST_WIDTH_LABELS[value]}`,
-			message: describeToastWidth(value, get().rightPanelWidth),
-			duration: TOAST_WIDTH_PREVIEW_DURATION_MS,
-			// In-app preview only: no TTS command, no Notification Center entry.
-			skipCustomNotification: true,
-			skipOsNotification: true,
-		});
+		const sidePanel = toastSidePanel(get().toastPosition, get());
+		showToastSettingPreview(
+			`Toast Width: ${TOAST_WIDTH_LABELS[value]}`,
+			describeToastWidth(value, sidePanel.width, sidePanel.name)
+		);
+	},
+
+	setToastPosition: (value) => {
+		set({ toastPosition: value });
+		window.maestro.settings.set('toastPosition', value);
+		showToastSettingPreview(
+			`Toast Position: ${TOAST_POSITION_LABELS[value]}`,
+			describeToastPosition(value)
+		);
 	},
 
 	setOsNotificationsEnabled: (value) => {
@@ -91,8 +153,53 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	},
 
 	setToastDuration: (value) => {
+		// Remember the duration being switched away from, whichever surface turns
+		// toasts off (Settings "Off", the bell popover, the palette), so turning
+		// them back on restores it instead of the factory default.
+		const current = get().toastDuration;
+		if (!areToastsEnabled(value) && areToastsEnabled(current)) {
+			set({ toastDurationBeforeOff: current });
+			window.maestro.settings.set('toastDurationBeforeOff', current);
+		}
 		set({ toastDuration: value });
 		window.maestro.settings.set('toastDuration', value);
+	},
+
+	setNotificationCenterEnabled: (value) => {
+		set({ notificationCenterEnabled: value });
+		window.maestro.settings.set('notificationCenterEnabled', value);
+	},
+
+	setToastsEnabled: (enabled) => {
+		if (enabled === areToastsEnabled(get().toastDuration)) return;
+		get().setToastDuration(
+			enabled ? resolveEnabledToastDuration(get().toastDurationBeforeOff) : TOAST_DURATION_OFF
+		);
+	},
+
+	setNotificationCenterLarge: (value) => {
+		set({ notificationCenterLarge: value });
+		window.maestro.settings.set('notificationCenterLarge', value);
+	},
+
+	setNotificationCenterDetails: (value) => {
+		set({ notificationCenterDetails: value });
+		window.maestro.settings.set('notificationCenterDetails', value);
+	},
+
+	setNotificationCenterKeyboardNavigation: (value) => {
+		set({ notificationCenterKeyboardNavigation: value });
+		window.maestro.settings.set('notificationCenterKeyboardNavigation', value);
+	},
+
+	setNotificationHistoryQueuedReplies: (value) => {
+		set({ notificationHistoryQueuedReplies: value });
+		window.maestro.settings.set('notificationHistoryQueuedReplies', value);
+	},
+
+	setNotificationHistoryAutoRunTasks: (value) => {
+		set({ notificationHistoryAutoRunTasks: value });
+		window.maestro.settings.set('notificationHistoryAutoRunTasks', value);
 	},
 
 	setIdleNotificationEnabled: (value) => {
@@ -117,6 +224,12 @@ export function hydrateNotificationsSettings(
 			: 'small';
 	}
 
+	if (allSettings['toastPosition'] !== undefined) {
+		patch.toastPosition = isToastPosition(allSettings['toastPosition'])
+			? allSettings['toastPosition']
+			: DEFAULT_TOAST_POSITION;
+	}
+
 	if (allSettings['osNotificationsEnabled'] !== undefined)
 		patch.osNotificationsEnabled = allSettings['osNotificationsEnabled'] as boolean;
 
@@ -128,6 +241,34 @@ export function hydrateNotificationsSettings(
 
 	if (allSettings['toastDuration'] !== undefined)
 		patch.toastDuration = allSettings['toastDuration'] as number;
+
+	if (typeof allSettings['notificationCenterEnabled'] === 'boolean')
+		patch.notificationCenterEnabled = allSettings['notificationCenterEnabled'] as boolean;
+	if (typeof allSettings['toastDurationBeforeOff'] === 'number')
+		patch.toastDurationBeforeOff = resolveEnabledToastDuration(
+			allSettings['toastDurationBeforeOff']
+		);
+
+	if (typeof allSettings['notificationCenterLarge'] === 'boolean')
+		patch.notificationCenterLarge = allSettings['notificationCenterLarge'] as boolean;
+
+	if (typeof allSettings['notificationCenterDetails'] === 'boolean')
+		patch.notificationCenterDetails = allSettings['notificationCenterDetails'] as boolean;
+
+	if (typeof allSettings['notificationCenterKeyboardNavigation'] === 'boolean')
+		patch.notificationCenterKeyboardNavigation = allSettings[
+			'notificationCenterKeyboardNavigation'
+		] as boolean;
+
+	if (typeof allSettings['notificationHistoryQueuedReplies'] === 'boolean')
+		patch.notificationHistoryQueuedReplies = allSettings[
+			'notificationHistoryQueuedReplies'
+		] as boolean;
+
+	if (typeof allSettings['notificationHistoryAutoRunTasks'] === 'boolean')
+		patch.notificationHistoryAutoRunTasks = allSettings[
+			'notificationHistoryAutoRunTasks'
+		] as boolean;
 
 	if (allSettings['idleNotificationEnabled'] !== undefined)
 		patch.idleNotificationEnabled = allSettings['idleNotificationEnabled'] as boolean;

@@ -684,6 +684,23 @@ describe('CallbackRegistry', () => {
 		});
 	});
 
+	describe('setSteerGroupChatCallback / steerGroupChat()', () => {
+		it('answers unavailable when no callback is registered', async () => {
+			expect(await registry.steerGroupChat('chat-1', { message: 'hi' })).toMatchObject({
+				outcome: 'unavailable',
+			});
+		});
+
+		it('passes the chat id and request through and returns the result', async () => {
+			const result = { outcome: 'delivered' as const, targets: ['Moderator'] };
+			const callback = vi.fn().mockResolvedValue(result);
+			registry.setSteerGroupChatCallback(callback);
+
+			expect(await registry.steerGroupChat('chat-1', { itemId: 'item-1' })).toBe(result);
+			expect(callback).toHaveBeenCalledWith('chat-1', { itemId: 'item-1' });
+		});
+	});
+
 	// =========================================================================
 	// Callback replacement
 	// =========================================================================
@@ -756,6 +773,16 @@ describe('CallbackRegistry', () => {
 			registry.setTriggerCueSubscriptionCallback(callback);
 			await registry.triggerCueSubscription('my-sub');
 			expect(callback).toHaveBeenCalledWith('my-sub', undefined, undefined);
+		});
+
+		it('getDebugPackageDeps() returns null when no callback set', () => {
+			expect(registry.getDebugPackageDeps()).toBeNull();
+		});
+
+		it('getDebugPackageDeps() returns what the registered callback returns', () => {
+			const deps = { getAgentDetector: () => null } as any;
+			registry.setGetDebugPackageDepsCallback(() => deps);
+			expect(registry.getDebugPackageDeps()).toBe(deps);
 		});
 
 		it('multiple callbacks can be set and work independently', async () => {

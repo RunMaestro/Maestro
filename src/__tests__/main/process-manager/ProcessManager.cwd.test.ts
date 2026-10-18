@@ -47,6 +47,13 @@ vi.mock('../../../main/coworking/coworking-socket-path', () => ({
 	getBridgeSocketPath: () => mockGetBridgeSocketPath(),
 }));
 
+// The subject here is tilde expansion, so the directories are deliberately
+// fictional and never touched. Stand the existence guard down for this file;
+// it has its own suite in ProcessManager.missingCwd.test.ts.
+vi.mock('../../../main/process-manager/utils/spawnCwd', () => ({
+	unusableCwdReason: () => null,
+}));
+
 import { ProcessManager } from '../../../main/process-manager';
 
 type PtySpawnOptions = {

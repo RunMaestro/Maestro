@@ -4,7 +4,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ENCORE_FEATURE_DEFAULTS, resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import {
+	ENCORE_FEATURE_DEFAULTS,
+	isEncoreFeatureEnabled,
+	requireEncoreFeature,
+	resolveEncoreFeatures,
+} from '../../shared/encoreFeatureDefaults';
 
 describe('ENCORE_FEATURE_DEFAULTS', () => {
 	it('ships every graduated feature on', () => {
@@ -13,7 +18,12 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 			usageStats: true,
 			symphony: true,
 			maestroCue: true,
+			quickChat: true,
 		});
+	});
+
+	it('ships the Throughput Gauge off', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.throughputGauge).toBe(false);
 	});
 });
 
@@ -62,5 +72,26 @@ describe('resolveEncoreFeatures', () => {
 		const resolved = resolveEncoreFeatures({ symphony: false });
 		expect(resolved).not.toBe(ENCORE_FEATURE_DEFAULTS);
 		expect(ENCORE_FEATURE_DEFAULTS.symphony).toBe(true);
+	});
+});
+
+describe('isEncoreFeatureEnabled / requireEncoreFeature', () => {
+	const storeWith = (encoreFeatures: unknown) => ({
+		get: (key: string) => (key === 'encoreFeatures' ? encoreFeatures : undefined),
+	});
+
+	it('reads through the defaults, so an unsaved default-on flag is on', () => {
+		expect(isEncoreFeatureEnabled(storeWith(undefined), 'maestroCue')).toBe(true);
+		expect(isEncoreFeatureEnabled(storeWith(undefined), 'coworking')).toBe(false);
+		expect(isEncoreFeatureEnabled(storeWith({ maestroCue: false }), 'maestroCue')).toBe(false);
+	});
+
+	it('throws the given code only when the flag is off', () => {
+		expect(() =>
+			requireEncoreFeature(storeWith({ symphony: true }), 'symphony', 'X')
+		).not.toThrow();
+		expect(() => requireEncoreFeature(storeWith({ symphony: false }), 'symphony', 'X')).toThrow(
+			new Error('X')
+		);
 	});
 });

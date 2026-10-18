@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
 import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
+import { ClaudeOutputParser } from '../../../shared/maestro-lib/parsers/claude-output-parser';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -16,6 +17,7 @@ import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
 const mockGetOutputParser = vi.fn(() => null as any);
 vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
+	createOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 }));
 
 // Mock Sentry
@@ -51,6 +53,7 @@ class MockChildProcess extends EventEmitter {
 	stdin = {
 		write: vi.fn(),
 		end: vi.fn(),
+		on: vi.fn(),
 	};
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
@@ -90,10 +93,18 @@ vi.mock('child_process', async (importOriginal) => {
 	};
 });
 
+const { mockSignalRemoteAgent } = vi.hoisted(() => ({ mockSignalRemoteAgent: vi.fn() }));
+vi.mock('../../../main/utils/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/utils/ssh-remote-signal')>()),
+	signalRemoteAgent: mockSignalRemoteAgent,
+}));
+
 // Must import after mocks
 import {
 	runProcess,
 	stopProcess,
+	stopAllProcesses,
+	trackCueProcess,
 	getActiveProcessMap,
 	getProcessList,
 } from '../../../main/cue/cue-process-lifecycle';
@@ -180,7 +191,97 @@ describe('cue-process-lifecycle', () => {
 		});
 	});
 
+	// The result's `stdout` is cleaned text, so a caller that needs the stream
+	// the agent actually printed (the chain of thought export) reads it here.
+	describe('onRawStdout (raw stream hook)', () => {
+		// `mockReturnValue` outlives `clearAllMocks`, so put the no-parser default
+		// back for the tests that run after these.
+		afterEach(() => {
+			mockGetOutputParser.mockReturnValue(null);
+		});
+
+		const parsingParser = {
+			parseJsonLine: (line: string) => {
+				const msg = JSON.parse(line);
+				return msg.type === 'result' ? { type: 'result', text: msg.result } : null;
+			},
+		};
+
+		it('hands over the raw stream while the result carries the cleaned text', async () => {
+			mockGetOutputParser.mockReturnValue(parsingParser as any);
+			const onRawStdout = vi.fn();
+			const raw = [
+				JSON.stringify({ type: 'system', note: 'init' }),
+				JSON.stringify({ type: 'result', result: 'Cleaned answer' }),
+			].join('\n');
+
+			const resultPromise = runProcess(
+				'run-1',
+				createSpec(),
+				createOptions({ toolType: 'claude-code', onRawStdout })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+			mockChild.stdout.emit('data', raw.slice(0, 20));
+			mockChild.stdout.emit('data', raw.slice(20));
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.stdout).toBe('Cleaned answer');
+			expect(onRawStdout).toHaveBeenCalledTimes(1);
+			expect(onRawStdout).toHaveBeenCalledWith(raw);
+		});
+
+		it('leaves the result unchanged when the observer throws', async () => {
+			mockGetOutputParser.mockReturnValue(parsingParser as any);
+			const raw = JSON.stringify({ type: 'result', result: 'Answer' });
+
+			const run = async (options: Record<string, unknown>) => {
+				const resultPromise = runProcess('run-1', createSpec(), createOptions(options));
+				await vi.advanceTimersByTimeAsync(0);
+				mockChild.stdout.emit('data', raw);
+				mockChild.emit('close', 0);
+				return resultPromise;
+			};
+
+			const without = await run({ toolType: 'claude-code' });
+			const throwing = await run({
+				toolType: 'claude-code',
+				onRawStdout: () => {
+					throw new Error('observer failed');
+				},
+			});
+
+			expect(throwing).toEqual(without);
+			expect(throwing.status).toBe('completed');
+		});
+
+		it('is not called when the process never started', async () => {
+			mockSpawn.mockImplementationOnce(() => {
+				throw new Error('spawn blew up');
+			});
+			const onRawStdout = vi.fn();
+
+			const result = await runProcess('run-1', createSpec(), createOptions({ onRawStdout }));
+
+			expect(result.status).toBe('failed');
+			expect(onRawStdout).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('runProcess', () => {
+		it('neither spawns nor registers a process for a run already stopped', async () => {
+			const controller = new AbortController();
+			controller.abort();
+			const result = await runProcess(
+				'stopped-run',
+				createSpec(),
+				createOptions({ signal: controller.signal })
+			);
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(getActiveProcessMap().has('stopped-run')).toBe(false);
+			expect(result).toMatchObject({ status: 'stopped', exitCode: null, stdout: '', stderr: '' });
+		});
+
 		it('spawns process with correct command, args, and cwd', async () => {
 			const spec = createSpec();
 			const resultPromise = runProcess('run-1', spec, createOptions());
@@ -293,10 +394,107 @@ describe('cue-process-lifecycle', () => {
 				);
 				await vi.advanceTimersByTimeAsync(0);
 
-				expect(mockChild.stdin.write).toHaveBeenCalledWith('#!/bin/bash\nclaude "prompt"');
+				expect(mockChild.stdin.write).toHaveBeenCalledWith(
+					'#!/bin/bash\nclaude "prompt"',
+					expect.any(Function)
+				);
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			// Killing the local ssh client alone leaves the remote agent running, so a
+			// stop must also reach the remote host.
+			it('records the remote pid and terminates the remote agent on stop', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh',
+					spec,
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const written = mockChild.stdin.write.mock.calls[0][0] as string;
+				const pidFile = getActiveProcessMap().get('run-ssh')?.sshRemotePidFile;
+				expect(pidFile).toMatch(/^\/tmp\/maestro-agent-/);
+				expect(written).toContain(pidFile);
+				expect(written.endsWith('exec claude\n')).toBe(true);
+
+				expect(stopProcess('run-ssh')).toBe(true);
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh' },
+					'terminate'
+				);
+
+				mockChild.emit('close', 143);
+				await resultPromise;
+			});
+
+			it('terminates the remote agent when the run times out', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh-timeout',
+					spec,
+					createOptions({
+						sshRemoteEnabled: true,
+						sshStdinScript: 'exec claude\n',
+						timeoutMs: 5000,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				const pidFile = getActiveProcessMap().get('run-ssh-timeout')?.sshRemotePidFile;
+				expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
+
+				await vi.advanceTimersByTimeAsync(5000);
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh-timeout' },
+					'terminate'
+				);
+
+				mockChild.emit('close', null);
+				expect((await resultPromise).status).toBe('timeout');
+			});
+
+			it('terminates the remote agent on shutdown', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh-shutdown',
+					spec,
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				const pidFile = getActiveProcessMap().get('run-ssh-shutdown')?.sshRemotePidFile;
+
+				stopAllProcesses();
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh-shutdown' },
+					'terminate'
+				);
+
+				mockChild.emit('close', 143);
+				await resultPromise;
+			});
+
+			// The pid record only fits a script piped to `bash -s`; any other spawn
+			// keeps its stdin byte for byte and has nothing remote to signal.
+			it('records no remote pid for a spawn that is not a stdin-script ssh', async () => {
+				const resultPromise = runProcess(
+					'run-local',
+					createSpec(),
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(getActiveProcessMap().get('run-local')?.sshRemotePidFile).toBeUndefined();
+				expect(mockChild.stdin.write.mock.calls[0][0]).toBe('exec claude\n');
+				stopProcess('run-local');
+				expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
+
+				mockChild.emit('close', 143);
 				await resultPromise;
 			});
 
@@ -312,7 +510,7 @@ describe('cue-process-lifecycle', () => {
 				);
 				await vi.advanceTimersByTimeAsync(0);
 
-				expect(mockChild.stdin.write).toHaveBeenCalledWith('large prompt');
+				expect(mockChild.stdin.write).toHaveBeenCalledWith('large prompt', expect.any(Function));
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
@@ -383,6 +581,370 @@ describe('cue-process-lifecycle', () => {
 
 				mockChild.emit('close', null);
 				await resultPromise;
+			});
+		});
+
+		describe('turn outcome', () => {
+			const resultParser = (detectErrorFromExit?: () => unknown) =>
+				({
+					parseJsonLine: (line: string) => {
+						try {
+							const msg = JSON.parse(line);
+							if (msg.type === 'result') return { type: 'result', text: msg.result || '' };
+							return { type: 'system', raw: msg };
+						} catch {
+							return null;
+						}
+					},
+					detectErrorFromExit: detectErrorFromExit ?? (() => null),
+				}) as any;
+
+			it('completes a run that answered in full and then exited non-zero', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'all done' }));
+				mockChild.emit('close', 1, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('all done');
+				expect(result.exitCode).toBe(1);
+			});
+
+			it('fails a run whose provider classified the exit as an error', async () => {
+				mockGetOutputParser.mockReturnValue(
+					resultParser(() => ({ type: 'auth_required', message: 'token expired' }))
+				);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'partial' }));
+				mockChild.emit('close', 1, null);
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
+			it('reports a stopped run as stopped, not failed', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(stopProcess('run-1')).toBe(true);
+				mockChild.emit('close', null, 'SIGTERM');
+
+				expect((await resultPromise).status).toBe('stopped');
+			});
+
+			it('sums per-step usage across a run', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'system', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'copilot-cli' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'step', usage: { inputTokens: 10, outputTokens: 5 } }) +
+						'\n' +
+						JSON.stringify({
+							type: 'result',
+							result: 'done',
+							usage: { inputTokens: 3, outputTokens: 7, costUsd: 0.5 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(13);
+				expect(result.usage?.outputTokens).toBe(12);
+				expect(result.usage?.totalCostUsd).toBe(0.5);
+			});
+
+			it('takes Claude usage from the last event, which carries the turn total', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'text', isPartial: true, text: '', usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Per-call usage, then the result's whole-turn total. Summing would
+				// report 130 input tokens instead of 100.
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'assistant', usage: { inputTokens: 30, outputTokens: 4 } }) +
+						'\n' +
+						JSON.stringify({
+							type: 'result',
+							result: 'done',
+							usage: { inputTokens: 100, outputTokens: 12 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(100);
+				expect(result.usage?.outputTokens).toBe(12);
+			});
+
+			it('keeps the Codex occupancy snapshot and reported window on the result (#1669)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '' }
+							: { type: 'usage', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Running session totals, as Codex reports them.
+				const tokenCount = (inputTokens: number, outputTokens: number) =>
+					JSON.stringify({
+						type: 'token_count',
+						usage: {
+							inputTokens,
+							outputTokens,
+							contextWindow: 272_000,
+							contextWindowReported: true,
+						},
+					}) + '\n';
+				mockChild.stdout.emit(
+					'data',
+					tokenCount(100, 10) +
+						tokenCount(300, 30) +
+						JSON.stringify({ type: 'result', result: 'done' }) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(300);
+				expect(result.usage?.outputTokens).toBe(30);
+				expect(result.usage?.absoluteUsage).toEqual({
+					inputTokens: 300,
+					outputTokens: 30,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				});
+				expect(result.usage?.contextWindow).toBe(272_000);
+				expect(result.usage?.contextWindowResolved).toBe(true);
+			});
+
+			it('keeps the Claude occupancy snapshot when a later usage event carries none (#1669)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'usage', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const occupancy = {
+					inputTokens: 1000,
+					outputTokens: 20,
+					cacheReadInputTokens: 500,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				};
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({
+						type: 'result',
+						result: 'done',
+						usage: {
+							inputTokens: 4000,
+							outputTokens: 60,
+							costUsd: 0.1,
+							contextWindow: 1_000_000,
+							contextWindowReported: true,
+							absoluteUsage: occupancy,
+						},
+					}) +
+						'\n' +
+						JSON.stringify({
+							type: 'usage',
+							usage: { inputTokens: 4000, outputTokens: 60, costUsd: 0.1, contextWindow: 200_000 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				// Last write wins for the totals, as before...
+				expect(result.usage?.inputTokens).toBe(4000);
+				expect(result.usage?.totalCostUsd).toBe(0.1);
+				// ...but the trailing event does not erase the metadata.
+				expect(result.usage?.absoluteUsage).toEqual(occupancy);
+				expect(result.usage?.contextWindow).toBe(1_000_000);
+				expect(result.usage?.contextWindowResolved).toBe(true);
+			});
+
+			it('fails a parser-less agent that exits non-zero, whatever it printed', async () => {
+				mockGetOutputParser.mockReturnValue(null);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', 'command not found: something\n');
+				mockChild.emit('close', 127, null);
+
+				const result = await resultPromise;
+				expect(result.status).toBe('failed');
+				expect(result.stdout).toBe('command not found: something\n');
+			});
+
+			// `null` rather than `undefined` at this layer: the streaming capture
+			// starts null and `cue-executor` maps it to undefined on the way out.
+			it('leaves usage unset when the provider reports none', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'done' }));
+				mockChild.emit('close', 0, null);
+
+				expect((await resultPromise).usage).toBeNull();
+			});
+
+			it('fails a signal kill even when the agent had streamed an answer', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				// A truncated answer must not chain onward as a success.
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'half an ans' }));
+				mockChild.emit('close', null, 'SIGKILL');
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
+			it('fails a signal kill nobody requested', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.emit('close', null, 'SIGKILL');
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
+			// Claude Code reports a failed turn in-band (a result flagged
+			// `is_error: true`) and then exits 0. The real parser is used so the
+			// classification under test is the one production runs.
+			it('fails a run whose provider reported the failure in-band and exited 0', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({
+						type: 'result',
+						subtype: 'error_max_turns',
+						is_error: true,
+						session_id: 'sess-1',
+					}) + '\n'
+				);
+				mockChild.emit('close', 0, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toContain('maximum number of turns');
+			});
+
+			it('still completes a run whose provider recovered past an in-turn API error notice', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				const lines = [
+					{
+						type: 'assistant',
+						error: 'server_error',
+						is_api_error_message: true,
+						message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error' }] },
+					},
+					{ type: 'assistant', message: { content: [{ type: 'text', text: 'Recovered.' }] } },
+					{ type: 'result', subtype: 'success', is_error: false, result: 'Recovered.' },
+				];
+				mockChild.stdout.emit('data', lines.map((l) => JSON.stringify(l) + '\n').join(''));
+				mockChild.emit('close', 0, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('Recovered.');
+			});
+
+			it('reports a stopped run as stopped even when the provider flushes a failed result', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(stopProcess('run-1')).toBe(true);
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true }) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				expect((await resultPromise).status).toBe('stopped');
 			});
 		});
 
@@ -466,6 +1028,111 @@ describe('cue-process-lifecycle', () => {
 				const result = await resultPromise;
 
 				expect(result.stdout).toBe('Hello from the agent');
+			});
+		});
+
+		// Live stream capture (Plans/maestro-lib-cli-migration.md, "Cue"): the
+		// same single pass that builds clean stdout also tracks the provider
+		// session id and delta-normalized usage, so the dashboard has a token
+		// figure for a run even when it executed over SSH (whose on-disk
+		// session file cue-token-accessor.ts can never read).
+		describe('providerSessionId and usage capture', () => {
+			it('captures the last session id the parser reports', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: (event: any) => event.session_id ?? null,
+					extractUsage: () => null,
+				} as any);
+
+				const lines = [
+					JSON.stringify({ session_id: 'sess-1' }),
+					JSON.stringify({ session_id: 'sess-2' }),
+				].join('\n');
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', lines + '\n');
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.providerSessionId).toBe('sess-2');
+			});
+
+			it('returns null providerSessionId/usage when no parser is registered', async () => {
+				mockGetOutputParser.mockReturnValue(null);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', 'plain text\n');
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.providerSessionId).toBeNull();
+				expect(result.usage).toBeNull();
+			});
+
+			it('passes through per-turn usage unmodified for a non-combined-context provider', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: () => null,
+					extractUsage: (event: any) => event.usage ?? null,
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 100, outputTokens: 50 } }) + '\n'
+				);
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.usage).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+			});
+
+			it('delta-normalizes cumulative usage for a combined-context-window provider (codex)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: () => null,
+					extractUsage: (event: any) => event.usage ?? null,
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec({ command: 'codex' }),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Codex reports a running SESSION TOTAL on every event, not a
+				// per-turn delta - exactly the shape the CLI migration's
+				// UsageAccumulator test pins (100, then 100+200=300 cumulative).
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 100, outputTokens: 0 } }) + '\n'
+				);
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 300, outputTokens: 0 } }) + '\n'
+				);
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				// Deltas are 100, then 300 - 100 = 200, and the run consumed both:
+				// 300. Keeping only the newest delta would report 200 and lose
+				// the first event; taking the raw value would double-count.
+				expect(result.usage).toMatchObject({ inputTokens: 300 });
 			});
 		});
 
@@ -630,12 +1297,50 @@ describe('cue-process-lifecycle', () => {
 			const resultPromise = runProcess('win-dead', createSpec(), createOptions());
 			await vi.advanceTimersByTimeAsync(0);
 
+			// The child exited before taskkill ran. The exit code, not the
+			// (localized) error text, is what marks the failure as benign.
+			mockChild.exitCode = 1;
 			stopProcess('win-dead');
 			// Already-dead is expected on Windows and must not be reported to Sentry.
 			expect(mockCaptureException).not.toHaveBeenCalled();
 
 			mockChild.emit('close', null);
 			await resultPromise;
+		});
+	});
+
+	describe('trackCueProcess', () => {
+		function trackedEntry(child: MockChildProcess) {
+			return {
+				child: child as unknown as ChildProcess,
+				command: 'sh',
+				args: ['-c', 'true'],
+				cwd: '/projects/test',
+				toolType: 'terminal',
+				startTime: Date.now(),
+				getStdout: () => '',
+				getStderr: () => '',
+			};
+		}
+
+		it('a stale unregister does not drop a newer run under the same id', () => {
+			const untrackOld = trackCueProcess('same-id', trackedEntry(new MockChildProcess()));
+			const newer = trackedEntry(new MockChildProcess());
+			trackCueProcess('same-id', newer);
+
+			untrackOld();
+			expect(getActiveProcessMap().get('same-id')).toBe(newer);
+		});
+
+		it('stopAllProcesses escalates to SIGKILL at once (shutdown cannot wait on a timer)', () => {
+			const child = new MockChildProcess();
+			const childKill = vi.spyOn(child, 'kill');
+			trackCueProcess('shutdown-run', trackedEntry(child));
+
+			stopAllProcesses();
+			expect(childKill).toHaveBeenCalledWith('SIGTERM');
+			expect(childKill).toHaveBeenCalledWith('SIGKILL');
+			expect(getActiveProcessMap().size).toBe(0);
 		});
 	});
 

@@ -19,7 +19,13 @@
 
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
-import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	selectSessionById,
+	updateSessionWith,
+} from '../../stores/sessionStore';
+import { stopRetriesForAgent } from '../../stores/retryStore';
 import { generateId } from '../../utils/ids';
 import {
 	getActiveTab,
@@ -29,6 +35,8 @@ import {
 } from '../../utils/tabHelpers';
 import { nextRunnableQueueItem, takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { logger } from '../../utils/logger';
+import { dropMentionHandoffs } from '../../services/crossAgentHandoff';
+import { cancelContextCompaction } from '../../stores/retryStore';
 
 // ============================================================================
 // Dependencies interface
@@ -133,6 +141,17 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				? `${activeSession.id}-ai-${activeTab?.id || 'default'}`
 				: `${activeSession.id}-terminal`;
 
+		// An automatic context compaction is part of the turn the user is stopping.
+		// Ended first, so the kill below (the compaction runs as a synopsis-style
+		// process) reads as a cancel and not as a compaction that failed, and so
+		// the prompt it was holding is not picked up as queued work further down.
+		cancelContextCompaction(activeSession.id);
+
+		// A pending Agent Resilience retry is work this agent WILL do: left alone it
+		// resent the stopped prompt when its countdown ran out. Ended first and
+		// synchronously, so no timer can fire it during the awaits below.
+		if (currentMode === 'ai') stopRetriesForAgent(activeSession.id);
+
 		// Cancel any pending synopsis processes (non-critical, shouldn't block interrupt)
 		try {
 			await cancelPendingSynopsis(activeSession.id);
@@ -152,6 +171,11 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 		// authoritative list) so a Stop pressed before `crossAgent.send` resolved
 		// still lands. Non-critical: a failure here must not block the interrupt.
 		if (currentMode === 'ai') {
+			// A hand-off armed for this turn must not fire when it stops: Stop means
+			// stop, and forwarding a half-finished answer would act for the user
+			// after they said no. Cleared before the kill below, so the exit it
+			// causes finds nothing armed.
+			dropMentionHandoffs(activeSession.id);
 			try {
 				await window.maestro.crossAgent.cancel(activeSession.id);
 			} catch (crossAgentErr) {
@@ -181,8 +205,11 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				throw results[0].reason;
 			}
 
-			// Check if there are queued items to process after interrupt
-			const currentSession = sessionsRef.current?.find((s) => s.id === activeSession.id);
+			// Check if there are queued items to process after interrupt. Read the
+			// store, not the render-time ref: the updater below dequeues from the
+			// store, and an item paused a moment ago (a retry Stop just ended) must
+			// not be dispatched off a stale copy.
+			const currentSession = selectSessionById(activeSession.id)(useSessionStore.getState());
 			let queuedItemToProcess: {
 				sessionId: string;
 				item: QueuedItem;

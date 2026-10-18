@@ -5,7 +5,7 @@
  * Mounted in EncoreTab in place of the old plugins-only section.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Search, FolderPlus, Puzzle, ChevronLeft } from 'lucide-react';
 import type { EncoreFeatureFlags, Theme } from '../../../types';
 import type { ReactNode } from 'react';
@@ -19,11 +19,13 @@ import { ExtensionsGrid, ACTIVE_EXTENSION_TILE_SELECTOR } from './ExtensionsGrid
 import { ExtensionDetails } from './ExtensionDetails';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { FirstPartyEnableModal } from './FirstPartyEnableModal';
+import type { EncoreTileRequest } from '../tabs/EncoreTab/types';
 import {
 	CATEGORY_FILTERS,
 	EXTENSION_SORT_STORAGE_KEY,
 	EXTENSION_SORT_VALUES,
 	SORT_OPTIONS,
+	builtinExtensionKey,
 	filterExtensions,
 	filterLabel,
 	sortExtensions,
@@ -37,9 +39,11 @@ interface ExtensionsViewProps {
 	/** Config bodies for first-party tiles' Settings sub-tab, keyed by Encore
 	 * flag. Supplied by the Plugins tab; absent when mounted standalone. */
 	settingsBodies?: Partial<Record<keyof EncoreFeatureFlags, ReactNode>>;
+	/** Open this built-in tile's details pane (a deep link into its settings). */
+	tileRequest?: EncoreTileRequest | null;
 }
 
-export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
+export function ExtensionsView({ theme, settingsBodies, tileRequest }: ExtensionsViewProps) {
 	const {
 		extensions,
 		contributions,
@@ -52,6 +56,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 		enablePluginsSubsystem,
 		togglePlugin,
 		installPlugin,
+		updatePlugin,
 		uninstallPlugin,
 		revokePlugin,
 		getGrants,
@@ -61,6 +66,10 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	const [category, setCategory] = useState<CategoryFilter>('all');
 	const [onlyInstalled, setOnlyInstalled] = useState(false);
 	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+	// A cleared request (the user picked a tab) returns to the grid too.
+	useEffect(() => {
+		setSelectedKey(tileRequest ? builtinExtensionKey(tileRequest.flag) : null);
+	}, [tileRequest]);
 	// Remembered rather than reset per visit: which order the grid reads in is a
 	// standing preference, and Settings unmounts this view on every tab switch.
 	const { value: sort, setValue: setSort } = usePersistedChoice<ExtensionSort>(
@@ -163,7 +172,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					>
 						<ChevronLeft className="w-3.5 h-3.5" /> All plugins
 					</button>
-				) : (
+				) : !pluginsSubsystemEnabled ? null : (
 					<button
 						type="button"
 						data-testid="extensions-install"
@@ -210,9 +219,11 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					onTogglePlugin={togglePlugin}
 					onToggleBuiltin={toggleBuiltin}
 					onUninstall={uninstallPlugin}
+					onUpdate={updatePlugin}
 					onRevoke={revokePlugin}
 					getGrants={getGrants}
 					settingsBody={selected.flag ? settingsBodies?.[selected.flag] : undefined}
+					settingsRequest={tileRequest?.flag === selected.flag ? tileRequest : null}
 				/>
 			) : (
 				<>

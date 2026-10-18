@@ -8,6 +8,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import {
+	MaestroNotRunningError,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+} from '../../../cli/services/maestro-not-running';
 import type * as MaestroClientModule from '../../../cli/services/maestro-client';
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
@@ -99,7 +103,7 @@ describe('dispatch command', () => {
 	});
 
 	describe('--new-tab flow', () => {
-		it('sends new_ai_tab_with_prompt in the background by default and returns the freshly-created tabId', async () => {
+		it('sends new_ai_tab_with_prompt hidden and in the background by default and returns the freshly-created tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
 				type: 'new_ai_tab_with_prompt_result',
@@ -121,6 +125,8 @@ describe('dispatch command', () => {
 					// The dispatched tab is created in the background; the tabId we
 					// return is how the caller follows it without stealing the view.
 					background: true,
+					// ...and hidden, so a hand-off adds no chip to the target's strip.
+					hidden: true,
 				},
 				'new_ai_tab_with_prompt_result'
 			);
@@ -264,6 +270,38 @@ describe('dispatch command', () => {
 			);
 		});
 
+		it('gives the new tab a chip with --visible (still in the background)', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'new_ai_tab_with_prompt_result',
+				success: true,
+				tabId: 'tab-fresh-42',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Open a new conversation', { newTab: true, visible: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'new_ai_tab_with_prompt',
+					sessionId: 'agent-abc-123',
+					prompt: 'Open a new conversation',
+					background: true,
+				},
+				'new_ai_tab_with_prompt_result'
+			);
+		});
+
+		it('rejects --visible without --new-tab', async () => {
+			const result = await runDispatch('agent-abc', 'Fix it', { visible: true });
+
+			expect(result).toMatchObject({ success: false, code: 'INVALID_OPTIONS' });
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
 		it('forwards tabId but omits background when --tab is combined with --focus', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -372,6 +410,78 @@ describe('dispatch command', () => {
 			expect(output.error).toBe('--new-tab cannot be combined with --tab');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('a refused send_command', () => {
+		const replyWith = (reply: Record<string, unknown>): void => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: vi.fn().mockResolvedValue(reply) } as never)
+			);
+		};
+
+		it('fails with the reply reason instead of reporting a dropped message as delivered', async () => {
+			// What a headless host answers for a message it cannot take. The reply
+			// resolves like any other, so only reading `success` tells them apart.
+			replyWith({
+				type: 'command_result',
+				success: false,
+				sessionId: 'agent-abc-123',
+				error: 'A headless host cannot attach images to a turn. Nothing was sent.',
+			});
+
+			await dispatch('agent-abc', 'Hello', { tab: 'tab-xyz' });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toEqual({
+				success: false,
+				error: 'A headless host cannot attach images to a turn. Nothing was sent.',
+				code: 'DISPATCH_REFUSED',
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('fails when the reply says success: false with no reason (the desktop renderer turned it away)', async () => {
+			replyWith({ type: 'command_result', success: false, sessionId: 'agent-abc-123' });
+
+			const result = await runDispatch('agent-abc', 'Hello', {});
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Maestro refused the message',
+				code: 'DISPATCH_REFUSED',
+			});
+		});
+
+		it('does not reclassify a refusal by the words in its reason', async () => {
+			replyWith({ type: 'command_result', success: false, error: 'Session not found' });
+
+			const result = await runDispatch('agent-abc', 'Hello', {});
+
+			expect(result.code).toBe('DISPATCH_REFUSED');
+			expect(result.error).toBe('Session not found');
+		});
+
+		it('says so when a headless host queued the message behind a running turn', async () => {
+			replyWith({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-xyz',
+				queued: true,
+				itemId: 'item-4',
+				queuePosition: 1,
+			});
+
+			const result = await runDispatch('agent-abc', 'Hello', { tab: 'tab-xyz' });
+
+			expect(result).toMatchObject({
+				success: true,
+				tabId: 'tab-xyz',
+				queued: true,
+				itemId: 'item-4',
+				queuePosition: 1,
+			});
 		});
 	});
 
@@ -527,6 +637,42 @@ describe('dispatch command', () => {
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
+		it('--held sends held:true, implies --queue, and reports held on a queued item', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'enqueue_command_result',
+				success: true,
+				tabId: 'tab-1',
+				queued: true,
+				queuePosition: 1,
+				itemId: 'item-held',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await dispatch('agent-abc', 'Later', { held: true, tab: 'tab-1' });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'enqueue_command', tabId: 'tab-1', held: true }),
+				'enqueue_command_result'
+			);
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({
+				success: true,
+				queued: true,
+				held: true,
+				itemId: 'item-held',
+			});
+		});
+
+		it('rejects --held combined with --new-tab as INVALID_OPTIONS', async () => {
+			await dispatch('agent-abc', 'Hello', { held: true, newTab: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
 		it('maps a renderer tab-not-found reply to TAB_NOT_FOUND', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -548,35 +694,45 @@ describe('dispatch command', () => {
 	});
 
 	describe('error mapping', () => {
-		it('maps connection errors to MAESTRO_NOT_RUNNING', async () => {
-			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
-			vi.mocked(withMaestroClient).mockRejectedValue(new Error('ECONNREFUSED'));
-
-			await dispatch('agent-abc', 'Hello', {});
-
-			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-			expect(output.success).toBe(false);
-			expect(output.code).toBe('MAESTRO_NOT_RUNNING');
-			expect(processExitSpy).toHaveBeenCalledWith(1);
-		});
-
-		// MaestroClient throws three distinct error strings before any WebSocket
-		// activity. They must map to MAESTRO_NOT_RUNNING - not COMMAND_FAILED -
-		// so downstream consumers (Maestro-Discord, Cue) can distinguish "app
-		// down" from "command rejected" via the error code.
+		// The client classifies an absent app by TYPE, every cause gets the same
+		// message, and the exit is 3. Downstream consumers (Maestro-Discord, Cue)
+		// tell "app down" from "command rejected" by the code.
 		it.each([
-			['Maestro desktop app is not running'],
-			['Maestro discovery file is stale (app may have crashed)'],
-			['Not connected to Maestro'],
-		])('maps MaestroClient error "%s" to MAESTRO_NOT_RUNNING', async (errorMessage) => {
+			['no-discovery-file'],
+			['stale-discovery-file'],
+			['connect-timeout'],
+			['connect-failed'],
+		] as const)(
+			'maps a %s MaestroNotRunningError to MAESTRO_NOT_RUNNING, exit 3',
+			async (reason) => {
+				vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+				vi.mocked(withMaestroClient).mockRejectedValue(new MaestroNotRunningError(reason));
+
+				await dispatch('agent-abc', 'Hello', {});
+
+				const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+				expect(output).toEqual({
+					success: false,
+					error: MAESTRO_NOT_RUNNING_MESSAGE,
+					code: 'MAESTRO_NOT_RUNNING',
+				});
+				expect(processExitSpy).toHaveBeenCalledWith(3);
+			}
+		);
+
+		// The old classifier matched English substrings, so a desktop-side
+		// failure that happened to say "websocket" or "not running" was reported
+		// as an absent app. Only the type counts now.
+		it('does not reclassify an ordinary error by its wording', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
-			vi.mocked(withMaestroClient).mockRejectedValue(new Error(errorMessage));
+			vi.mocked(withMaestroClient).mockRejectedValue(
+				new Error('Maestro desktop app is not running a websocket ECONNREFUSED')
+			);
 
 			await dispatch('agent-abc', 'Hello', {});
 
 			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-			expect(output.success).toBe(false);
-			expect(output.code).toBe('MAESTRO_NOT_RUNNING');
+			expect(output.code).toBe('COMMAND_FAILED');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 

@@ -4,12 +4,14 @@ import {
 	sessionOrChildrenNeedAttention,
 	type AttentionContext,
 } from '../../utils/sessionAttention';
+import { passesHiddenGroupFilter, resolveHiddenGroupIds } from '../../utils/sidebarMembership';
 
 /**
  * Inputs for {@link computeSortedSessions}. Pure - safe to call from a Zustand
  * sync host or tests without React.
  */
 export interface ComputeSortedSessionsInput {
+	headlessCounts?: AttentionContext['headlessCounts'];
 	sessions: Session[];
 	groups: Group[];
 	bookmarksCollapsed: boolean;
@@ -19,6 +21,9 @@ export interface ComputeSortedSessionsInput {
 	activeBatchSessionIds?: string[];
 	/** Session ids stuck auto-retrying an Agent Resilience outage. */
 	stuckOutageSessionIds?: string[];
+	/** The Left Bar's "Show Hidden" toggle. Hidden groups are not on screen, so
+	 *  their agents are not jump targets either. */
+	showHiddenGroups?: boolean;
 }
 
 /**
@@ -49,8 +54,10 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 		activeSessionId,
 		activeBatchSessionIds,
 		stuckOutageSessionIds,
+		showHiddenGroups,
 	} = input;
 	const attentionCtx: AttentionContext = {
+		headlessCounts: input.headlessCounts,
 		batchSessionIds: new Set(activeBatchSessionIds),
 		stuckOutageIds: new Set(stuckOutageSessionIds),
 	};
@@ -100,6 +107,17 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 		groupsById.set(g.id, g);
 	}
 
+	// Both projections below number or step through what is ON SCREEN, so a
+	// hidden group's agents are in neither - the same suppression
+	// `useSessionCategories` applies to the render path, resolved through the one
+	// shared helper so the list and the keyboard cannot disagree about which rows
+	// exist. `sortedSessions` above stays COMPLETE: it is the full ordering other
+	// callers index into, not a statement about visibility.
+	const hiddenGroupIds = resolveHiddenGroupIds(groups, {
+		showHiddenGroups: showHiddenGroups ?? false,
+		activeGroupId: sessions.find((s) => s.id === activeSessionId)?.groupId ?? null,
+	});
+
 	const navSessions: Session[] = [];
 	const navIndexMap = new Map<string, number>();
 	let idx = 0;
@@ -119,8 +137,12 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 		}
 	};
 
+	// A bookmark is a second ROW for an agent, not a second membership: the
+	// render path drops a hidden group's agents before it builds the bookmark
+	// list, so one that stayed here would hold a jump slot and be an arrow-key
+	// target with no row on screen.
 	const bookmarkedParents = sessions
-		.filter((s) => s.bookmarked && !s.parentSessionId)
+		.filter((s) => s.bookmarked && !s.parentSessionId && passesHiddenGroupFilter(s, hiddenGroupIds))
 		.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 	for (const session of bookmarkedParents) {
 		addWithWorktrees(session, 'bookmark');
@@ -128,6 +150,7 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 	const bookmarkNavSize = idx;
 
 	for (const group of sortedGroups) {
+		if (hiddenGroupIds.has(group.id)) continue;
 		const groupSessions = sessions
 			.filter((s) => s.groupId === group.id && !s.parentSessionId)
 			.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
@@ -160,7 +183,13 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 	const visibleSessions: Session[] = [];
 	if (!bookmarksCollapsed) {
 		const bookmarkedSessions = sessions
-			.filter((s) => s.bookmarked && !s.parentSessionId && passesUnreadFilter(s))
+			.filter(
+				(s) =>
+					s.bookmarked &&
+					!s.parentSessionId &&
+					passesUnreadFilter(s) &&
+					passesHiddenGroupFilter(s, hiddenGroupIds)
+			)
 			.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 		visibleSessions.push(...bookmarkedSessions);
 	}
@@ -170,7 +199,7 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 		if (!passesUnreadFilter(session)) return false;
 		if (!session.groupId) return true;
 		const group = groupsById.get(session.groupId);
-		return group && !group.collapsed;
+		return group && !group.collapsed && !hiddenGroupIds.has(group.id);
 	});
 	visibleSessions.push(...groupAndUngrouped);
 

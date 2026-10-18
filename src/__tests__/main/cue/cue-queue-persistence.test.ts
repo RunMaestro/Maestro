@@ -61,14 +61,45 @@ describe('cue-queue-persistence', () => {
 		onLog = vi.fn();
 	});
 
-	function makePersistence(opts?: { timeoutMs?: number; known?: string[]; now?: number }) {
+	function makePersistence(opts?: {
+		timeoutMs?: number;
+		known?: string[];
+		knownSubscriptions?: string[];
+		now?: number;
+	}) {
 		return createCueQueuePersistence({
 			onLog,
 			getSessionTimeoutMs: () => opts?.timeoutMs ?? 30 * 60 * 1000,
 			knownSessionIds: () => new Set(opts?.known ?? ['s-1']),
+			...(opts?.knownSubscriptions
+				? { knownSubscriptionNames: () => new Set(opts.knownSubscriptions) }
+				: {}),
 			now: () => opts?.now ?? NOW,
 		});
 	}
+
+	describe('restoring only what a previous run left behind', () => {
+		// The engine snapshots persistedIds() before sessions initialize. A row
+		// persisted after that (this boot's own app.startup queued behind a
+		// busy slot) is still live in memory, so restoring it would run it twice.
+		it('restores only the ids in the snapshot and leaves later rows alone', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'from-last-run', makeEntry({ subscriptionName: 'old' }));
+			const before = p.persistedIds();
+			p.persist('s-1', 'queued-this-boot', makeEntry({ subscriptionName: 'startup' }));
+
+			const restored = p.restoreAll(before).get('s-1')!;
+			expect(restored.map((e) => e.persistId)).toEqual(['from-last-run']);
+			expect(p.persistedIds()).toEqual(new Set(['from-last-run', 'queued-this-boot']));
+		});
+
+		it('restores every row when no snapshot is given', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'a', makeEntry());
+			p.persist('s-1', 'b', makeEntry());
+			expect(p.restoreAll().get('s-1')).toHaveLength(2);
+		});
+	});
 
 	describe('persist + restore round-trip', () => {
 		it('round-trips all scalar + nested fields', () => {
@@ -96,6 +127,43 @@ describe('cue-queue-persistence', () => {
 			expect(entries[0].command).toEqual({ mode: 'shell', shell: 'echo hi' });
 			expect(entries[0].chainDepth).toBe(2);
 			expect(entries[0].event.type).toBe('time.heartbeat');
+		});
+
+		it('round-trips the model choice so a restored run keeps its tier / model / effort', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'pid-tier', makeEntry({ turnSettings: { tier: 'high', effort: 'low' } }));
+			p.persist('s-1', 'pid-model', makeEntry({ turnSettings: { model: 'gpt-5.5-codex' } }));
+			p.persist('s-1', 'pid-none', makeEntry());
+
+			const entries = p.restoreAll().get('s-1')!;
+			const byId = new Map(entries.map((e) => [e.persistId, e]));
+			expect(byId.get('pid-tier')!.turnSettings).toEqual({ tier: 'high', effort: 'low' });
+			expect(byId.get('pid-model')!.turnSettings).toEqual({ model: 'gpt-5.5-codex' });
+			expect(byId.get('pid-none')!.turnSettings).toBeUndefined();
+		});
+
+		it('restores a row persisted before turn_settings_json existed', () => {
+			const p = makePersistence();
+			// Pre-column row: the field is absent rather than null.
+			getSharedDb().persistQueuedEvent({
+				id: 'legacy',
+				sessionId: 's-1',
+				subscriptionName: 'sub',
+				eventJson: JSON.stringify(makeEvent()),
+				prompt: 'p',
+				outputPrompt: null,
+				cliOutputJson: null,
+				action: null,
+				commandJson: null,
+				chainDepth: 0,
+				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
+			});
+
+			const entries = p.restoreAll().get('s-1')!;
+			expect(entries).toHaveLength(1);
+			expect(entries[0].turnSettings).toBeUndefined();
 		});
 
 		it('round-trips chain lineage (chainRootId + parentEventId) through the queue table', () => {
@@ -130,6 +198,64 @@ describe('cue-queue-persistence', () => {
 			// to their chain root after a crash.
 			expect(child.chainRootId).toBe('run-root');
 			expect(child.parentEventId).toBe('run-root');
+		});
+
+		// A queued `action: autorun` run launches from the payload captured when
+		// it was scheduled. Losing it across a restart leaves a run with no
+		// documents, which fails to launch a schedule nobody is watching.
+		it('round-trips the Auto Run payload through the queue table', () => {
+			const p = makePersistence();
+			const autoRun = {
+				documents: ['/repo/.maestro/playbooks/ship-it.md'],
+				reset_on_completion: [true],
+				prompt: 'work the list',
+				loop_enabled: true,
+				max_loops: 3,
+				model: 'opus',
+			};
+			p.persist('s-1', 'pid-autorun', makeEntry({ action: 'autorun', autoRun }));
+			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
+
+			const restored = p.restoreAll().get('s-1')!;
+			expect(restored.find((e) => e.action === 'autorun')!.autoRun).toEqual(autoRun);
+			expect(restored.find((e) => e.subscriptionName === 'plain')!.autoRun).toBeUndefined();
+		});
+
+		// The message of a queued notify also rides the `prompt` slot, but
+		// `sticky` lives only here. Losing it turned a toast the user asked to
+		// stay on screen into one that dismissed itself after a restart.
+		it('round-trips the notify config through the queue table', () => {
+			const p = makePersistence();
+			const notify = { message: 'Deploy finished', sticky: true };
+			p.persist('s-1', 'pid-notify', makeEntry({ action: 'notify', notify }));
+			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
+
+			const restored = p.restoreAll().get('s-1')!;
+			expect(restored.find((e) => e.action === 'notify')!.notify).toEqual(notify);
+			expect(restored.find((e) => e.subscriptionName === 'plain')!.notify).toBeUndefined();
+		});
+
+		it('drops a row whose Auto Run payload is not valid JSON', () => {
+			const p = makePersistence();
+			getSharedDb().persistQueuedEvent({
+				id: 'bad-autorun',
+				sessionId: 's-1',
+				subscriptionName: 'scheduled',
+				eventJson: JSON.stringify(makeEvent()),
+				prompt: '',
+				outputPrompt: null,
+				cliOutputJson: null,
+				action: 'autorun',
+				commandJson: null,
+				chainDepth: 0,
+				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
+				autoRunJson: '{not json',
+			});
+
+			expect(p.restoreAll().size).toBe(0);
+			expect(getSharedDb().getQueuedEvents()).toHaveLength(0);
 		});
 
 		it('groups by session and preserves queuedAt ordering', () => {
@@ -204,6 +330,57 @@ describe('cue-queue-persistence', () => {
 				droppedFromQueue: true,
 				reason: 'session-missing',
 			});
+		});
+
+		it('drops rows whose subscription is in no agent config, and records why', () => {
+			const p = makePersistence({ known: ['s-1'], knownSubscriptions: ['kept'] });
+			p.persist('s-1', 'alive', makeEntry({ subscriptionName: 'kept' }));
+			p.persist('s-1', 'orphan', makeEntry({ subscriptionName: 'removed-by-import' }));
+
+			const restored = p.restoreAll();
+
+			expect(restored.get('s-1')?.map((e) => e.persistId)).toEqual(['alive']);
+			expect(
+				getSharedDb()
+					.getQueuedEvents()
+					.map((row) => row.id)
+			).toEqual(['alive']);
+			expect(onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('whose subscription is no longer in any agent'),
+				{ type: 'queueDropped', count: 1, reason: 'subscription-missing' }
+			);
+			const orphan = getSharedDb()
+				.getRecentCueEvents(0)
+				.find((e) => e.id === 'orphan');
+			expect(JSON.parse(orphan?.payload ?? '{}')).toMatchObject({
+				droppedFromQueue: true,
+				reason: 'subscription-missing',
+			});
+		});
+
+		it("keeps a fan-out row whose subscription lives in another agent's config", () => {
+			// The target agent's own config has no `owner-fanout`; the owner's does,
+			// and the names are checked across every agent.
+			const p = makePersistence({
+				known: ['s-1', 's-target'],
+				knownSubscriptions: ['owner-fanout'],
+			});
+			p.persist('s-target', 'fanout', makeEntry({ subscriptionName: 'owner-fanout' }));
+
+			expect(
+				p
+					.restoreAll()
+					.get('s-target')
+					?.map((e) => e.persistId)
+			).toEqual(['fanout']);
+		});
+
+		it('skips the subscription check when the dep is omitted', () => {
+			const p = makePersistence({ known: ['s-1'] });
+			p.persist('s-1', 'any', makeEntry({ subscriptionName: 'whatever' }));
+
+			expect(p.restoreAll().get('s-1')).toHaveLength(1);
 		});
 
 		it('drops stale rows whose age exceeds session timeout, records timeout event', () => {
@@ -281,6 +458,37 @@ describe('cue-queue-persistence', () => {
 
 		it('returns empty map when no rows exist', () => {
 			const p = makePersistence();
+			expect(p.restoreAll().size).toBe(0);
+		});
+	});
+
+	describe('rows a drain deferred', () => {
+		const timeoutMs = 30 * 60 * 1000;
+
+		it('measures age while an engine was up, not the downtime, and rebases queuedAt', () => {
+			const p = makePersistence({ timeoutMs });
+			// Queued 5 minutes before the drain, restored 5 hours later.
+			const drainedAt = NOW - 5 * 60 * 60 * 1000;
+			p.persist('s-1', 'deferred', makeEntry({ queuedAt: drainedAt - 5 * 60_000, drainedAt }));
+
+			const [entry] = p.restoreAll().get('s-1')!;
+			expect(entry.persistId).toBe('deferred');
+			expect(entry.drainedAt).toBe(drainedAt);
+			expect(entry.queuedAt).toBe(NOW - 5 * 60_000);
+			// The stamp is the module's; the event itself never carries it.
+			expect(entry.event).not.toHaveProperty('maestroDrainedAt');
+		});
+
+		it('still drops a deferred row that was already stale when the engine stopped', () => {
+			const p = makePersistence({ timeoutMs });
+			const drainedAt = NOW - 60_000;
+			p.persist('s-1', 'old', makeEntry({ queuedAt: drainedAt - 31 * 60_000, drainedAt }));
+			expect(p.restoreAll().size).toBe(0);
+		});
+
+		it('keeps the wall-clock rule for an unstamped row of the same age', () => {
+			const p = makePersistence({ timeoutMs });
+			p.persist('s-1', 'crash', makeEntry({ queuedAt: NOW - 5 * 60 * 60 * 1000 - 5 * 60_000 }));
 			expect(p.restoreAll().size).toBe(0);
 		});
 	});

@@ -22,6 +22,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../renderer/stores/tabStore';
 import { createMockSession, createMockAITab } from '../../helpers';
 import { mockTheme } from '../../helpers/mockTheme';
+import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
 
 const MODELS = ['claude-sonnet-4.5', 'gpt-5', 'gemini-2.5-pro'];
 const EFFORTS = ['', 'low', 'medium', 'high'];
@@ -313,6 +314,53 @@ describe('ModelEffortModal', () => {
 		fireEvent.doubleClick(screen.getByText('high'));
 
 		expect(setTabEffort).toHaveBeenCalledWith('tab-1', 'high');
+	});
+
+	it('applies on the SECOND tap of a picked row under a coarse pointer', async () => {
+		// A phone cannot double-tap (iOS reserves it, and the home-screen web app
+		// never sees a dblclick), so on touch the tap that lands on the row that
+		// is already picked is the apply. The first tap only picks.
+		setCoarsePointer(true);
+		try {
+			renderModal();
+			const row = await screen.findByText('claude-sonnet-4.5');
+
+			fireEvent.click(row);
+			expect(setTabModel).not.toHaveBeenCalled();
+
+			fireEvent.click(row);
+			expect(setTabModel).toHaveBeenCalledWith('tab-1', 'claude-sonnet-4.5');
+		} finally {
+			restorePointer();
+		}
+	});
+
+	it('a second click on a picked row does NOT apply under a mouse', async () => {
+		// The mouse path is unchanged: clicks pick, only Enter or a double-click
+		// commits, so a user re-clicking the row they are on is not thrown out.
+		renderModal();
+		const row = await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.click(row);
+		fireEvent.click(row);
+
+		expect(setTabModel).not.toHaveBeenCalled();
+	});
+
+	it('applies on the second tap of a picked effort stop under a coarse pointer', async () => {
+		setCoarsePointer(true);
+		try {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			const stop = screen.getByText('high');
+
+			fireEvent.click(stop);
+			expect(setTabEffort).not.toHaveBeenCalled();
+			fireEvent.click(stop);
+			expect(setTabEffort).toHaveBeenCalledWith('tab-1', 'high');
+		} finally {
+			restorePointer();
+		}
 	});
 
 	it('closes when the scrim behind the composition is clicked', async () => {

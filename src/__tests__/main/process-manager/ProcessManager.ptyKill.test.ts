@@ -1,3 +1,4 @@
+import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockPtySpawn, mockChildSpawn, mockExecFile, mockExecFileSync, mockIsWindows } = vi.hoisted(
@@ -92,7 +93,9 @@ function spawnTerminal(pm: ProcessManager, sessionId: string) {
 	return pm.spawn({
 		sessionId,
 		toolType: 'terminal',
-		cwd: '/tmp/project',
+		// A real directory: ProcessManager refuses to spawn into one that is
+		// missing (see utils/spawnCwd.ts), and this suite is about kill, not cwd.
+		cwd: os.tmpdir(),
 		command: 'bash',
 		args: [],
 	});

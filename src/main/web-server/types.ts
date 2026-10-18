@@ -1,13 +1,27 @@
+import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
+import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../../shared/throughputGaugeCommands';
 import type { UsageStats } from '../../shared/types';
+import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
@@ -21,6 +35,8 @@ import type {
 	ConcertoDesignerActionResult,
 	MovementDesignerInspection,
 } from '../../shared/concerto-html';
+import type { MediaOpenMode } from '../../shared/mediaTypes';
+import type { DebugPackageDependencies } from '../debug-package';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -217,6 +233,10 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
+	cliAuthenticated?: boolean;
+	/** Revalidate the upgrade session/current login policy before commands and delivery. */
+	isAuthorized?: () => boolean;
 	/**
 	 * The Web Login account behind this socket, resolved once at the upgrade
 	 * from the session cookie. Undefined when the gate is off and for
@@ -231,6 +251,13 @@ export interface WebClient {
 	 * while the account stays, and the socket must still go.
 	 */
 	sessionId?: string;
+	/**
+	 * True when the upgrade presented this boot's CLI secret (`maestro-cli`).
+	 * A browser cannot set custom headers on a WebSocket upgrade, so this is
+	 * how a handler tells the CLI from a web client. Handlers for data a
+	 * browser must never touch (Computer History) refuse sockets without it.
+	 */
+	cli?: boolean;
 }
 
 /**
@@ -258,8 +285,12 @@ export interface WebClientMessage {
 	callbackTimeout?: number;
 	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
 	background?: boolean;
+	/** new_ai_tab_with_prompt only: create the tab with no chip in the strip. */
+	hidden?: boolean;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
+	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
+	mediaMode?: MediaOpenMode;
 	[key: string]: unknown;
 }
 
@@ -344,6 +375,10 @@ export type NewTabCallback = (
 	sessionId: string,
 	background?: boolean
 ) => Promise<{ tabId: string } | null>;
+export type ReopenTabCallback = (
+	sessionId: string,
+	tabId: string
+) => Promise<{ tabId: string } | null>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export interface RenameTabResult {
 	success: boolean;
@@ -381,21 +416,50 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * One Auto Run steering verb, forwarded to the renderer - which holds the notes
+ * its run loop reads - and answered with whatever it did. Resolves rather than
+ * rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type AutoRunSteeringCommandCallback = (
+	request: SteeringCommandRequest
+) => Promise<SteeringCommandResult>;
+/**
+ * `maestro-cli window` - list windows, or move an agent or a whole group
+ * between them. Answered by the primary window through the same WindowContext
+ * methods the Left Bar menus call. Resolves rather than rejects on a miss.
+ */
+export type WindowCommandCallback = (request: WindowCommandRequest) => Promise<WindowCommandResult>;
+/**
+ * `maestro-cli throughput-gauge` - show, hide, configure, or read the gauge.
+ * Answered by the primary window, which owns the live rates. Resolves rather
+ * than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type ThroughputGaugeCommandCallback = (
+	request: ThroughputGaugeCommandRequest
+) => Promise<ThroughputGaugeCommandResult>;
 export type ReorderTabCallback = (
 	sessionId: string,
 	fromIndex: number,
 	toIndex: number
 ) => Promise<boolean>;
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
+/**
+ * Placement for `open_file_tab`. `switchToAgent: false` (`--no-switch`) stays on
+ * the current agent but still activates the new tab inside the target.
+ * `background: true` changes nothing currently rendered anywhere, and wins when
+ * both are given. `mediaMode: 'queue'` (`--queue`) adds audio/video to the
+ * player's queue without starting playback.
+ */
+export interface OpenFileTabOptions {
+	background: boolean;
+	switchToAgent: boolean;
+	mediaMode: MediaOpenMode;
+}
 export type OpenFileTabCallback = (
 	sessionId: string,
 	filePath: string,
-	/**
-	 * `switchToAgent: false` (`--no-switch`) stays on the current agent but still
-	 * activates the new tab inside the target. `background: true` changes nothing
-	 * currently rendered anywhere, and wins when both are given.
-	 */
-	options: { background: boolean; switchToAgent: boolean }
+	options: OpenFileTabOptions
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
@@ -480,7 +544,9 @@ export type NewAITabWithPromptResult = {
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
 	prompt: string,
-	background?: boolean
+	background?: boolean,
+	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
+	hidden?: boolean
 ) => Promise<NewAITabWithPromptResult>;
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
@@ -516,7 +582,9 @@ export type EnqueueCommandCallback = (
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
 	images?: string[],
-	background?: boolean
+	background?: boolean,
+	/** Queue Held: always queue, paused, even on an idle agent. */
+	held?: boolean
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI
@@ -555,6 +623,35 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
+/** `maestro-cli queue hold|resume`: whether the item was found, and its paused state after. */
+export type SetQueueItemPausedResult = {
+	success: boolean;
+	found: boolean;
+	paused?: boolean;
+	error?: string;
+};
+export type SetQueueItemPausedCallback = (
+	sessionId: string,
+	itemId: string,
+	paused: boolean
+) => Promise<SetQueueItemPausedResult>;
+/** `maestro-cli queue merge`: whether the item was merged, and the item it was folded into. */
+export type MergeQueueItemResult = {
+	success: boolean;
+	merged: boolean;
+	mergedIntoId?: string;
+	error?: string;
+};
+export type MergeQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<MergeQueueItemResult>;
+/** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
+export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
+export type SteerQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<SteerQueueItemResult>;
 /**
  * Opens a URL as a browser tab in the desktop app.
  *
@@ -582,6 +679,8 @@ export type OpenBrowserTabCallback = (
  */
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
+	/** Explicit signal that the agent is waiting for a person at this terminal. */
+	inputRequired?: boolean;
 	cwd?: string;
 	shell?: string;
 	name?: string | null;
@@ -740,7 +839,7 @@ export interface NotifyToastParams {
 	message: string;
 	/** One of the 5 canonical colors. Default: `'theme'`. */
 	color: NotifyToastColor;
-	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
+	/** Normalized auto-dismiss milliseconds; the raw WebSocket duration remains seconds. */
 	duration?: number;
 	/**
 	 * Sticky toast - no auto-dismiss, requires the user to click the close
@@ -798,6 +897,12 @@ export type InteractMovementDesignerCallback = (
 	action: ConcertoDesignerAction
 ) => Promise<ConcertoDesignerActionResult>;
 export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
+/**
+ * Everything a support package collects from (agent detector, process manager,
+ * stores). `maestro-cli support-package` and `feedback submit --support-package`
+ * need it to build the same zip the desktop's Create Debug Package does.
+ */
+export type GetDebugPackageDepsCallback = () => DebugPackageDependencies;
 export type ConfigureAutoRunCallback = (
 	sessionId: string,
 	config: {
@@ -1197,15 +1302,15 @@ export type UpdateSessionSshCallback = (
  * Update an agent's editable per-session config from the CLI/web. `configPatch`
  * is a partial bag of the fields the Edit Agent modal exposes (nudge / new
  * session message, custom binary path / args / env vars, model, effort, context
- * window, and the Claude token-source tri-state `enableMaestroP` /
- * `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
+ * window, the Codex transport `codexTransport`, and the Claude token-source
+ * tri-state `enableMaestroP` / `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
  * present with value `null` clears that field to undefined. Typed as a plain
  * record because the payload crosses the IPC bridge to the renderer.
  */
 export type UpdateSessionConfigCallback = (
 	sessionId: string,
 	configPatch: Record<string, unknown>
-) => Promise<{ success: boolean; error?: string }>;
+) => Promise<TranslationReport>;
 export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
 export type GetAutoRunDocContentCallback = (sessionId: string, filename: string) => Promise<string>;
 export type SaveAutoRunDocCallback = (
@@ -1284,40 +1389,54 @@ export type ListWorktreesForSessionCallback = (sessionId: string) => Promise<Lis
 // =============================================================================
 
 /**
- * Group chat message for web interface.
+ * Group chat message and state as the web interface and maestro-cli see them.
+ * The shapes live in shared/groupChatRemote so the renderer that answers these
+ * requests and the bridge that relays them cannot drift.
  */
-export interface GroupChatMessage {
-	id: string;
-	participantId: string;
-	participantName: string;
-	content: string;
-	timestamp: number;
-	role: 'user' | 'assistant';
-}
-
-/**
- * Group chat state for web interface.
- */
-export interface GroupChatState {
-	id: string;
-	topic: string;
-	participants: Array<{ sessionId: string; name: string; toolType: string }>;
-	messages: GroupChatMessage[];
-	isActive: boolean;
-	currentTurn?: string;
-}
+export type GroupChatMessage = RemoteGroupChatMessage;
+export type GroupChatState = RemoteGroupChatState;
 
 // =============================================================================
 // Group Chat Callback Types
 // =============================================================================
 
+/**
+ * Optional knobs for starting a group chat remotely. `topic` names the chat; the
+ * opening `message` (defaulting to the topic) is what the moderator receives,
+ * with every participant @mentioned so the router adds them with their full
+ * agent config (SSH, custom args, env).
+ */
+export interface StartGroupChatOptions {
+	/** Agent type that moderates (e.g. 'claude-code'). Defaults to the first participant's type. */
+	moderatorAgentId?: string;
+	/** Opening message for the moderator. Defaults to the topic. */
+	message?: string;
+}
+
+/** `chatId` on success; `error` names why nothing (or only the empty chat) was created. */
+export interface StartGroupChatResult {
+	chatId?: string;
+	error?: string;
+}
+
 export type StartGroupChatCallback = (
 	topic: string,
-	participantIds: string[]
-) => Promise<{ chatId: string } | null>;
+	participantIds: string[],
+	options?: StartGroupChatOptions
+) => Promise<StartGroupChatResult | null>;
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
+/** What to steer into a chat's running round: a queued message by id, or new text. */
+export interface SteerGroupChatRequest {
+	itemId?: string;
+	message?: string;
+	readOnly?: boolean;
+}
+export type SteerGroupChatCallback = (
+	chatId: string,
+	request: SteerGroupChatRequest
+) => Promise<GroupChatSteerResult>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 
 // =============================================================================
@@ -1362,6 +1481,10 @@ export interface CueSubscriptionInfo {
 	enabled: boolean;
 	lastTriggered?: number;
 	triggerCount: number;
+	/** The run's model choice, when the subscription sets one. */
+	tier?: CueTurnSettings['tier'];
+	model?: string;
+	effort?: CueTurnSettings['effort'];
 }
 
 /** Web-specific Cue activity log entry (simplified from engine types) */

@@ -1,0 +1,10 @@
+{"type":"session_meta","payload":{"id":"synthetic-codex","cwd":"/isolated/project","cli_version":"0.162.1"}}
+{"type":"response_item","payload":{"type":"message","id":"u1","role":"user","content":[{"type":"input_text","text":"repeat"}]}}
+{"type":"response_item","payload":{"type":"message","id":"u2","role":"user","content":[{"type":"input_text","text":"repeat"}]}}
+{"type":"response_item","payload":{"type":"function_call","id":"call-row","call_id":"call-1","name":"read_file","arguments":"{\"path\":\"synthetic.md\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","id":"result-row","call_id":"call-1","output":"synthetic fact: azure kite"}}
+{"type":"response_item","payload":{"type":"reasoning","id":"opaque","encrypted_content":"SYNTHETIC_NOT_CIPHERTEXT"}}
+{"type":"response_item","payload":{"type":"message","id":"a1","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"synthetic answer"}]}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"synthetic answer"}}
+{"type":"compacted","payload":{"message":"synthetic boundary"}}
+{"type":"fork","forked_from_id":"synthetic-parent"}

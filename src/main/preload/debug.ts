@@ -157,6 +157,11 @@ export function createDebugApi() {
 
 		stopProfiling: (): Promise<StopProfilingResponse> => ipcRenderer.invoke('debug:stopProfiling'),
 
+		// The user dismissed the progress modal mid-stop: skip the save dialog and
+		// write to the default location instead.
+		profilingRunInBackground: (): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('debug:profilingRunInBackground'),
+
 		// Stop the recording and bundle it to a temp .zip without a save dialog,
 		// for attaching a trace to in-app feedback.
 		stopProfilingToFile: (): Promise<StopProfilingToFileResponse> =>

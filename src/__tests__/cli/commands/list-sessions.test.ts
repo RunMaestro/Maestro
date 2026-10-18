@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import path from 'path';
 import type { SessionInfo } from '../../../shared/types';
 
 // Mock storage
@@ -18,6 +19,8 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
 	readSessions: vi.fn().mockReturnValue([]),
+	readAgentConfig: vi.fn().mockReturnValue({}),
+	readSettings: vi.fn().mockReturnValue({}),
 }));
 
 // Mock agent-sessions
@@ -97,11 +100,14 @@ describe('list sessions command', () => {
 		listSessions('agent-abc', {});
 
 		expect(resolveAgentId).toHaveBeenCalledWith('agent-abc');
-		expect(listClaudeSessions).toHaveBeenCalledWith('/path/to/project', {
-			limit: 25,
-			skip: 0,
-			search: undefined,
-		});
+		expect(listClaudeSessions).toHaveBeenCalledWith(
+			'/path/to/project',
+			expect.objectContaining({
+				limit: 25,
+				skip: 0,
+				search: undefined,
+			})
+		);
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
 		// Human-readable output should contain agent name
 		expect(consoleSpy.mock.calls[0][0]).toContain('Test Agent');
@@ -115,11 +121,14 @@ describe('list sessions command', () => {
 
 		listSessions('agent-abc', { limit: '5' });
 
-		expect(listClaudeSessions).toHaveBeenCalledWith('/path/to/project', {
-			limit: 5,
-			skip: 0,
-			search: undefined,
-		});
+		expect(listClaudeSessions).toHaveBeenCalledWith(
+			'/path/to/project',
+			expect.objectContaining({
+				limit: 5,
+				skip: 0,
+				search: undefined,
+			})
+		);
 	});
 
 	it('should pass skip value to service for pagination', () => {
@@ -129,11 +138,14 @@ describe('list sessions command', () => {
 
 		listSessions('agent-abc', { skip: '10' });
 
-		expect(listClaudeSessions).toHaveBeenCalledWith('/path/to/project', {
-			limit: 25,
-			skip: 10,
-			search: undefined,
-		});
+		expect(listClaudeSessions).toHaveBeenCalledWith(
+			'/path/to/project',
+			expect.objectContaining({
+				limit: 25,
+				skip: 10,
+				search: undefined,
+			})
+		);
 	});
 
 	it('should pass both skip and limit for pagination', () => {
@@ -143,11 +155,14 @@ describe('list sessions command', () => {
 
 		listSessions('agent-abc', { limit: '10', skip: '20' });
 
-		expect(listClaudeSessions).toHaveBeenCalledWith('/path/to/project', {
-			limit: 10,
-			skip: 20,
-			search: undefined,
-		});
+		expect(listClaudeSessions).toHaveBeenCalledWith(
+			'/path/to/project',
+			expect.objectContaining({
+				limit: 10,
+				skip: 20,
+				search: undefined,
+			})
+		);
 	});
 
 	it('should exit with error for invalid skip', () => {
@@ -171,11 +186,14 @@ describe('list sessions command', () => {
 
 		listSessions('agent-abc', { search: 'tests' });
 
-		expect(listClaudeSessions).toHaveBeenCalledWith('/path/to/project', {
-			limit: 25,
-			skip: 0,
-			search: 'tests',
-		});
+		expect(listClaudeSessions).toHaveBeenCalledWith(
+			'/path/to/project',
+			expect.objectContaining({
+				limit: 25,
+				skip: 0,
+				search: 'tests',
+			})
+		);
 	});
 
 	it('should output JSON when --json flag is used', () => {
@@ -380,5 +398,20 @@ describe('list sessions command', () => {
 
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
 		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it("lists the agent's own Claude account, not the default ~/.claude", () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({ customEnvVars: { CLAUDE_CONFIG_DIR: '/accounts/work' } })
+		);
+		vi.mocked(listClaudeSessions).mockReturnValue(mockSessionResult);
+
+		listSessions('agent-abc', {});
+
+		expect(listClaudeSessions).toHaveBeenCalledWith(
+			'/path/to/project',
+			expect.objectContaining({ configDir: path.resolve('/accounts/work') })
+		);
 	});
 });

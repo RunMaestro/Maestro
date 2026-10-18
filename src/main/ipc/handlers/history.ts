@@ -5,7 +5,7 @@
  * HistoryManager for improved scalability and session isolation.
  *
  * Features:
- * - 5,000 entries per session (up from 1,000 global)
+ * - A per-session cap set by `maxLogBuffer` (default 10,000, up from 1,000 global)
  * - Per-session file storage in history/ directory
  * - Cross-session queries for global views
  * - Pagination support for large datasets

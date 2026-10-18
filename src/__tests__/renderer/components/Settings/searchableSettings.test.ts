@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	searchSettings,
 	ALL_SEARCHABLE_SETTINGS,
+	encoreTileForSetting,
 } from '../../../../renderer/components/Settings/searchableSettings';
 
 const RENDERER_ROOT = resolve(__dirname, '../../../../renderer');
@@ -39,6 +40,16 @@ function collectRenderedSettingIds(): { id: string; file: string }[] {
 }
 
 describe('searchableSettings', () => {
+	it.each([
+		'notification center',
+		'queued reply',
+		'expand details',
+		'keyboard navigation',
+		'auto run task',
+	])('finds inbox preferences for %s', (query) => {
+		expect(searchSettings(query).some((s) => s.id === 'notifications-center')).toBe(true);
+	});
+
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
 		it('should contain entries from all tabs', () => {
 			const tabs = new Set(ALL_SEARCHABLE_SETTINGS.map((s) => s.tab));
@@ -87,6 +98,18 @@ describe('searchableSettings', () => {
 			expect(results.some((s) => s.id === 'general-rendering')).toBe(true);
 		});
 
+		it.each([
+			'Whisper',
+			'Relay',
+			'speech recognition',
+			'model-directory',
+			'MAESTRO_MEDIA_MODEL_DIR',
+			'Available models',
+			'Check status',
+		])('finds host media settings for %s', (query) => {
+			expect(searchSettings(query).some((s) => s.id === 'environment-host-media')).toBe(true);
+		});
+
 		it('should be case insensitive', () => {
 			const lower = searchSettings('font');
 			const upper = searchSettings('FONT');
@@ -105,6 +128,100 @@ describe('searchableSettings', () => {
 				expect(all).toContain('tab');
 				expect(all).toContain('naming');
 			}
+		});
+
+		// A disabled Encore Feature's options must not be findable; its tile must,
+		// because the tile is how it gets switched on.
+		it('hides the sub-settings of an Encore Feature that is off, but keeps its tile', () => {
+			const off = searchSettings('cue', [], { maestroCue: false }).map((s) => s.id);
+			expect(off).toContain('encore-cue');
+			expect(off).not.toContain('cue-history-retention');
+			expect(off).not.toContain('general-group-cue-entries');
+
+			const on = searchSettings('cue', [], { maestroCue: true }).map((s) => s.id);
+			expect(on).toEqual(
+				expect.arrayContaining(['encore-cue', 'cue-history-retention', 'general-group-cue-entries'])
+			);
+		});
+
+		// An always-present setting that also touches a feature names it only
+		// through encoreKeywords, so the feature's name leads nowhere while off.
+		it('matches encoreKeywords only while their feature is on', () => {
+			const off = searchSettings('cue', [], { maestroCue: false }).map((s) => s.id);
+			expect(off).not.toContain('general-power');
+			expect(off).not.toContain('display-left-side-panel');
+
+			const on = searchSettings('cue', [], { maestroCue: true }).map((s) => s.id);
+			expect(on).toEqual(expect.arrayContaining(['general-power', 'display-left-side-panel']));
+
+			// The setting itself stays findable by its own terms either way.
+			expect(searchSettings('prevent sleep', [], { maestroCue: false }).map((s) => s.id)).toContain(
+				'general-power'
+			);
+		});
+
+		it('hides the Throughput Gauge display settings while the gauge is off, but keeps its tile', () => {
+			const off = searchSettings('throughput gauge', [], { throughputGauge: false }).map(
+				(s) => s.id
+			);
+			expect(off).toContain('encore-throughput-gauge');
+			expect(off).not.toContain('encore-throughput-gauge-display');
+
+			const on = searchSettings('throughput gauge', [], { throughputGauge: true }).map((s) => s.id);
+			expect(on).toEqual(
+				expect.arrayContaining(['encore-throughput-gauge', 'encore-throughput-gauge-display'])
+			);
+		});
+
+		it('never gates an Encore tile entry on its own flag', () => {
+			const tiles = ALL_SEARCHABLE_SETTINGS.filter(
+				(s) => s.tab === 'encore' && s.requiresEncore && !s.jumpToId
+			);
+			// Every gated Encore-tab entry is a sub-setting: its id extends a tile id
+			// or names a control inside one, never the bare tile.
+			const tileIds = new Set([
+				'encore-usage-stats',
+				'encore-symphony',
+				'encore-cue',
+				'encore-computer-history',
+				'encore-coworking',
+				'encore-director-notes',
+				'encore-pianola',
+				'encore-concerto',
+				'encore-groups-plus',
+				'encore-web-login',
+				'encore-maestro-run',
+				'encore-quick-chat',
+				'encore-throughput-gauge',
+				'encore-plugins',
+			]);
+			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);
+		});
+
+		it('maps a jump to the Plugins tile whose details pane holds it', () => {
+			expect(encoreTileForSetting('encore-computer-history')).toBe('computerHistory');
+			expect(encoreTileForSetting('encore-cue')).toBe('maestroCue');
+			// A sub-setting opens its feature's tile through requiresEncore.
+			expect(encoreTileForSetting('encore-director-notes-provider')).toBe('directorNotes');
+			// Grid-level anchors and other tabs open nothing.
+			expect(encoreTileForSetting('encore-pianola')).toBeUndefined();
+			expect(encoreTileForSetting('encore-plugins')).toBeUndefined();
+			expect(encoreTileForSetting('nope')).toBeUndefined();
+		});
+
+		it('every tile entry with a settings body names its tile', () => {
+			const withBodies = [
+				'encore-usage-stats',
+				'encore-symphony',
+				'encore-cue',
+				'encore-computer-history',
+				'encore-coworking',
+				'encore-director-notes',
+				'encore-maestro-run',
+				'encore-quick-chat',
+				'encore-throughput-gauge',
+			];
+			for (const id of withBodies) expect(encoreTileForSetting(id), id).toBeDefined();
 		});
 
 		it('should return no results for gibberish', () => {
@@ -142,6 +259,8 @@ describe('searchableSettings', () => {
 			['shift+enter', 'general-input-behavior'],
 			['prompt composer', 'general-input-behavior'],
 			['ai interaction mode', 'general-input-behavior'],
+			['send button menu', 'general-send-button-menu'],
+			['just send', 'general-send-button-menu'],
 			['cross-agent mentions', 'general-cross-agent-mentions'],
 			['consult or delegate', 'general-cross-agent-mentions'],
 			['delegation', 'general-cross-agent-mentions'],
@@ -170,6 +289,8 @@ describe('searchableSettings', () => {
 			// by a per-surface stepper plus a global zoom, so "font size" now
 			// leads to Zoom and to the individual surface pickers.
 			['zoom', 'display-font-zoom'],
+			['Show provider in subagent list', 'display-left-side-panel'],
+			['provider source', 'display-left-side-panel'],
 			['bigger', 'display-font-zoom'],
 			['factory reset', 'display-typography-reset'],
 			['hacker', 'display-typography-reset'],
@@ -228,6 +349,20 @@ describe('searchableSettings', () => {
 			['global cue settings', 'encore-cue'],
 			['playbook registry', 'encore-symphony'],
 			['synopsis provider', 'encore-director-notes'],
+			['computer history', 'encore-computer-history'],
+			['digest agent', 'encore-computer-history'],
+			['throughput gauge', 'encore-throughput-gauge'],
+			['tokens per second', 'encore-throughput-gauge'],
+			['tps', 'encore-throughput-gauge'],
+			['speedometer', 'encore-throughput-gauge'],
+			['show gauge now', 'encore-throughput-gauge'],
+			['active agent', 'encore-throughput-gauge-display'],
+			['all three', 'encore-throughput-gauge-display'],
+			['vu meter', 'encore-throughput-gauge-display'],
+			['lcd', 'encore-throughput-gauge-display'],
+			['sparkline', 'encore-throughput-gauge-display'],
+			['rate window', 'encore-throughput-gauge-display'],
+			['reset peak', 'encore-throughput-gauge-display'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],

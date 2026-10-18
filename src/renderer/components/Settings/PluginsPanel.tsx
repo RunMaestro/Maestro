@@ -8,6 +8,7 @@
  * sandboxed and require permission consent before they are enabled.
  */
 
+import { pluginSettingsId } from '../../../shared/plugins/panel-host';
 import { useState, useEffect, useCallback } from 'react';
 import {
 	Puzzle,
@@ -24,6 +25,7 @@ import type { PluginListSnapshot } from '../../../main/ipc/handlers/plugins';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
 import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 import { notifyToast } from '../../stores/notificationStore';
+import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { launchFromSettings } from '../../utils/launchFromSettings';
 import { PluginActivityView } from './PluginActivityView';
@@ -386,7 +388,14 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 															backgroundColor: theme.colors.accent + '18',
 															color: theme.colors.accent,
 														}}
-														onClick={() => launchFromSettings(() => setOpenPluginPanelId(panel.id))}
+														onClick={() =>
+															panel.placement === 'settings'
+																? useModalStore.getState().openModal('settings', {
+																		tab: 'encore',
+																		settingId: pluginSettingsId(panel.id),
+																	})
+																: launchFromSettings(() => setOpenPluginPanelId(panel.id))
+														}
 														title={`Open ${panel.title}`}
 													>
 														<PanelTop className="w-3 h-3" />

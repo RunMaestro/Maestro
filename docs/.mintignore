@@ -7,3 +7,8 @@ agent-guides/
 # Internal architecture note, not user documentation and not in the navigation.
 # It documents how the env-var layers are composed in the main process.
 env-vars.md
+
+# Internal design specs for Sketch Book, not user documentation and not in the
+# navigation. They carry TypeScript wire types that are not meant for the site.
+sketch-book-spec.md
+sketch-book-wire-contract.md

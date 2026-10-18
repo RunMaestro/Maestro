@@ -272,7 +272,13 @@ export function UpdatesChoiceModal({
 									<div style={{ color: theme.colors.warning }}>{cli.statusError}</div>
 								)}
 								{cli.installMessage && (
-									<div style={{ color: theme.colors.success }}>{cli.installMessage}</div>
+									<div
+										style={{
+											color: cli.installMessage.ok ? theme.colors.success : theme.colors.warning,
+										}}
+									>
+										{cli.installMessage.text}
+									</div>
 								)}
 							</div>
 						)}

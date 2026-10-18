@@ -19,6 +19,8 @@ import {
 import { captureException } from '../../../utils/sentry';
 import { shouldOpenExternally } from '../../../utils/fileExplorer';
 import { joinPath } from '../../../../shared/formatters';
+import { isWebDesktop } from '../../../utils/runtimeContext';
+import { downloadHostFile } from '../../../utils/clientDownload';
 import type { ContextMenuState, MultiDeleteModalState } from '../types';
 import { PREVIEW_ALL_CONFIRM_THRESHOLD } from '../types';
 import { collectPreviewableFiles, findNodeAtPath } from '../utils/pathHelpers';
@@ -632,17 +634,22 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [contextMenu]);
 
-	// Download a remote SSH file to a user-chosen local location. Only wired up
-	// for remote sessions (the menu item is hidden when sshRemoteId is undefined);
-	// local files are already on disk and use "Reveal in Finder" instead.
+	// Browser/Lite downloads transfer from the host to this client. Desktop SSH
+	// downloads keep the existing native destination dialog on the owning desktop.
 	const handleDownloadFile = useCallback(async () => {
 		const menu = contextMenu;
 		setContextMenu(null);
-		if (!menu || !menu.node || menu.node.type !== 'file' || !sshRemoteId) return;
+		if (!menu || !menu.node || menu.node.type !== 'file' || (!sshRemoteId && !isWebDesktop()))
+			return;
 
-		const remotePath = `${session.fullPath}/${menu.path}`;
+		const remotePath = joinPath(session.fullPath, menu.path);
 		const fileName = menu.node.name;
 		try {
+			if (isWebDesktop()) {
+				await downloadHostFile(remotePath, fileName, sshRemoteId);
+				onShowFlash?.(`Downloaded "${fileName}" to this client`);
+				return;
+			}
 			const destPath = await window.maestro.dialog.saveFile({
 				defaultPath: fileName,
 				title: 'Download File',
@@ -650,7 +657,7 @@ export function useFileContextMenu({
 			// User cancelled the save dialog.
 			if (!destPath) return;
 
-			await window.maestro.fs.downloadRemoteFile(remotePath, sshRemoteId, destPath);
+			await window.maestro.fs.downloadRemoteFile(remotePath, sshRemoteId!, destPath);
 			onShowFlash?.(`Downloaded "${fileName}"`);
 		} catch (error) {
 			captureException(error, {

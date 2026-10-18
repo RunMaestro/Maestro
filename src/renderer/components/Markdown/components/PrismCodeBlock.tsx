@@ -3,7 +3,8 @@
  * react-syntax-highlighter (Prism) wrapped in SyntaxHighlightBoundary, with
  * optional per-language custom renderers (e.g. mermaid) and caller style
  * overrides. Extracted verbatim from createMarkdownComponents so the chat and
- * document paths share a single set of leaf renderers.
+ * document paths share a single set of leaf renderers. Every block carries
+ * the shared CodeCopyButton.
  */
 
 import React from 'react';
@@ -12,6 +13,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import type { Theme } from '../../../types';
 import { getSyntaxStyle } from '../../../utils/syntaxTheme';
 import { SyntaxHighlightBoundary } from '../../SyntaxHighlightBoundary';
+import { CodeCopyButton } from '../../CodeFence/CodeCopyButton';
 
 export interface PrismCodeBlockOptions {
 	theme: Theme;
@@ -68,24 +70,31 @@ export function createPrismCodeBlock(options: PrismCodeBlockOptions) {
 					color: theme.colors.textMain,
 				},
 			};
-			return React.createElement(SyntaxHighlightBoundary, {
-				code: codeContent,
-				theme,
-				children: React.createElement(SyntaxHighlighter, {
-					language,
-					style: themedStyle,
-					customStyle: {
-						margin: codeBlockStyle?.margin ?? '0.5em 0',
-						padding: codeBlockStyle?.padding ?? '1em',
-						background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
-						fontSize: codeBlockStyle?.fontSize ?? '0.9em',
-						borderRadius: codeBlockStyle?.borderRadius ?? '6px',
-					},
-					PreTag: 'div',
-					translate: 'no',
-					children: codeContent,
+			// The margin lives on the wrapper so the copy button's top-right anchor
+			// is the block's visible corner, not the margin box.
+			return React.createElement(
+				'div',
+				{ className: 'relative', style: { margin: codeBlockStyle?.margin ?? '0.5em 0' } },
+				React.createElement(SyntaxHighlightBoundary, {
+					code: codeContent,
+					theme,
+					children: React.createElement(SyntaxHighlighter, {
+						language,
+						style: themedStyle,
+						customStyle: {
+							margin: 0,
+							padding: codeBlockStyle?.padding ?? '1em',
+							background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
+							fontSize: codeBlockStyle?.fontSize ?? '0.9em',
+							borderRadius: codeBlockStyle?.borderRadius ?? '6px',
+						},
+						PreTag: 'div',
+						translate: 'no',
+						children: codeContent,
+					}),
 				}),
-			});
+				React.createElement(CodeCopyButton, { code: codeContent, theme })
+			);
 		}
 
 		// Fallback: render as-is

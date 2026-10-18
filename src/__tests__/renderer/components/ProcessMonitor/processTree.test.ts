@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildProcessTree,
+	cueSourceBadgeLabel,
 	findParentNode,
 	getExpandableIdsByDepth,
 	getProcessType,
@@ -130,6 +131,19 @@ describe('parseTabId', () => {
 
 	it('returns null for unmatched session ids', () => {
 		expect(parseTabId('cue-run-x')).toBeNull();
+	});
+});
+
+describe('cueSourceBadgeLabel', () => {
+	it('leads with CUE and spells out the trigger', () => {
+		expect(cueSourceBadgeLabel('time.heartbeat')).toBe('CUE · TIME HEARTBEAT');
+		expect(cueSourceBadgeLabel('cli.trigger')).toBe('CUE · CLI TRIGGER');
+		expect(cueSourceBadgeLabel('github.pull_request')).toBe('CUE · GITHUB PULL REQUEST');
+	});
+
+	it('reads CUE rather than an empty pill when the event type is gone', () => {
+		expect(cueSourceBadgeLabel(undefined)).toBe('CUE');
+		expect(cueSourceBadgeLabel('')).toBe('CUE');
 	});
 });
 

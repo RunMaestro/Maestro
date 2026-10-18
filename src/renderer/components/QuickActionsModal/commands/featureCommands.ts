@@ -2,6 +2,8 @@ import type { Session } from '../../../types';
 import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
 import { requestEditLastQueuedMessage } from '../../../services/editQueuedMessage';
+import { requestSteerSend } from '../../../services/chatSteering';
+import { useGroupChatStore } from '../../../stores/groupChatStore';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
@@ -38,6 +40,8 @@ interface BuildFeatureCommandsArgs {
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
 	onOpenPianola?: () => void;
+	/** Present only when Computer History can be opened here (Encore on, desktop). */
+	onOpenComputerHistory?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onOpenLastDocumentGraph?: () => void;
 	onOpenCurrentFileInGraph?: () => void;
@@ -56,9 +60,11 @@ interface BuildFeatureCommandsArgs {
 		openMemoryViewer?: QuickAction['shortcut'];
 		executionQueue?: QuickAction['shortcut'];
 		editLastQueuedMessage?: QuickAction['shortcut'];
+		steerSend?: QuickAction['shortcut'];
 		openSymphony?: QuickAction['shortcut'];
 		directorNotes?: QuickAction['shortcut'];
 		openCue?: QuickAction['shortcut'];
+		computerHistory?: QuickAction['shortcut'];
 		fuzzyFileSearch?: QuickAction['shortcut'];
 		editClipboardImage?: QuickAction['shortcut'];
 	};
@@ -99,6 +105,7 @@ export function buildFeatureCommands({
 	onOpenDirectorNotes,
 	onOpenMaestroCue,
 	onOpenPianola,
+	onOpenComputerHistory,
 	onConfigureCue,
 	onOpenLastDocumentGraph,
 	onOpenCurrentFileInGraph,
@@ -219,6 +226,22 @@ export function buildFeatureCommands({
 				requestEditLastQueuedMessage();
 			},
 		});
+		// Listed for every AI-mode agent rather than only a steerable one, for the
+		// same reason as the entry above: the service says why a steer cannot run
+		// (wrong transport, nothing queued), which a hidden entry never could.
+		// Not offered over a group chat, which covers the agent this would act on.
+		if (activeSession.inputMode === 'ai' && !useGroupChatStore.getState().activeGroupChatId) {
+			commands.push({
+				id: 'steerSend',
+				label: 'Steer Running Turn',
+				subtext: 'Send the draft, or the newest queued message, into the turn in progress',
+				shortcut: shortcuts.steerSend,
+				action: () => {
+					setQuickActionOpen(false);
+					requestSteerSend();
+				},
+			});
+		}
 	}
 
 	if (setUsageDashboardOpen) {
@@ -378,6 +401,19 @@ export function buildFeatureCommands({
 			subtext: 'Autonomous manager: rules and decision log',
 			action: () => {
 				onOpenPianola();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenComputerHistory) {
+		commands.push({
+			id: 'computer-history',
+			label: 'Computer History',
+			shortcut: shortcuts.computerHistory,
+			subtext: 'Browse and search what you saw and typed across apps',
+			action: () => {
+				onOpenComputerHistory();
 				setQuickActionOpen(false);
 			},
 		});

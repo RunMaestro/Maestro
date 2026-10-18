@@ -23,7 +23,7 @@
  * been taught yet.
  */
 
-import { isBlankEnvValue } from './agentEnvironment';
+import { isBlankEnvKey, isBlankEnvValue } from './agentEnvironment';
 
 /** One suggested variable name. */
 export interface EnvVarSuggestion {
@@ -198,17 +198,47 @@ export function suggestEnvVarKeys({
 }
 
 /**
+ * The name a freshly added row carries: none.
+ *
+ * "Add Variable" used to seed `NEW_VAR`, `NEW_VAR_1`, and so on. That put a
+ * name in the field that is not a name anyone wants, so the first thing the
+ * user had to do was select it and delete it - and with the field non-empty the
+ * suggestion list has nothing to offer, because it filters on what is typed.
+ * An empty name is what lets the new row open straight onto the provider's own
+ * variables.
+ *
+ * Because these records are keyed BY name, the blank row is inherently unique:
+ * pressing Add twice cannot produce two unnamed rows, which is the right
+ * behavior anyway.
+ */
+export const BLANK_ENV_VAR_KEY = '';
+
+/**
+ * Add the unnamed row to an env-var record.
+ *
+ * One helper rather than six copies of a placeholder-naming loop, so the rule
+ * that a new row starts unnamed lives in exactly one place. Spawn paths drop
+ * unnamed rows (`isBlankEnvKey()` in `agentEnvironment.ts`), so this row is
+ * inert until the user names it.
+ */
+export function withBlankEnvVarRow(vars: Record<string, string>): Record<string, string> {
+	return { ...vars, [BLANK_ENV_VAR_KEY]: '' };
+}
+
+/**
  * Names worth remembering out of one env-var record.
  *
- * A name with no value is a half-finished editor row (`VAR`, added by the "Add
- * Variable" button and never filled in), not a choice the user made, and
- * offering it back later would spread the placeholder rather than the setting.
+ * A row with no name, or a name with no value, is a half-finished editor row
+ * rather than a choice the user made. Offering either back later would spread
+ * an unfinished row instead of a setting.
  */
 export function rememberableEnvVarKeys(
 	record: Record<string, unknown> | undefined | null
 ): string[] {
 	if (!record || typeof record !== 'object') return [];
 	return Object.entries(record)
-		.filter(([key, value]) => key && typeof value === 'string' && !isBlankEnvValue(value))
+		.filter(
+			([key, value]) => !isBlankEnvKey(key) && typeof value === 'string' && !isBlankEnvValue(value)
+		)
 		.map(([key]) => key);
 }

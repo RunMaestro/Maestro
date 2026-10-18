@@ -1,3 +1,8 @@
+import { requestProviderTranslation } from '../../../renderer/services/providerTranslation';
+import { commitTranslationSession } from '../../../shared/maestro-lib/translation/session';
+vi.mock('../../../renderer/services/providerTranslation', () => ({
+	requestProviderTranslation: vi.fn(),
+}));
 /**
  * Tests for useSessionLifecycle hook (Phase 2H)
  *
@@ -23,7 +28,7 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import type { Session, AITab } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
 import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
@@ -34,23 +39,6 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.f
 // ============================================================================
 // Test Helpers
 // ============================================================================
-
-function createMockAITab(overrides: Partial<AITab> = {}): AITab {
-	return {
-		id: 'tab-1',
-		agentSessionId: null,
-		name: null,
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
-		state: 'idle' as const,
-		hasUnread: false,
-		isAtBottom: true,
-		...overrides,
-	} as AITab;
-}
 
 // Thin wrapper: lifecycle tests need a session with a pre-populated AI tab
 // and a group membership so deletion/rename code paths execute.
@@ -90,6 +78,7 @@ function createDeps(overrides: Partial<SessionLifecycleDeps> = {}): SessionLifec
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.mocked(requestProviderTranslation).mockReset();
 	vi.useFakeTimers();
 
 	// Reset stores
@@ -239,6 +228,52 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customEnvVarsDisabled).toEqual({ PARKED: 'b' });
 		});
 
+		// Only the app-server opt-in is stored; choosing Standard clears the field
+		// so a saved `exec` and a never-configured agent read the same.
+		it.each([
+			[undefined, 'app-server', 'app-server'],
+			['app-server', 'exec', undefined],
+		] as const)('saves codexTransport (stored %s, chosen %s) as %s', (before, chosen, after) => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'codex',
+				codexTransport: before,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'Agent',
+					undefined, // toolType unchanged
+					undefined, // nudgeMessage
+					undefined, // newSessionMessage
+					undefined, // customPath
+					undefined, // customArgs
+					undefined, // customEnvVars
+					undefined, // customModel
+					undefined, // customEffort
+					undefined, // customContextWindow
+					undefined, // sessionSshRemoteConfig
+					undefined, // enableMaestroP
+					undefined, // maestroPPath
+					undefined, // maestroPMode
+					undefined, // retryOnAvailabilityErrors
+					undefined, // retryOnTokenExhaustion
+					undefined, // additionalDirectories
+					undefined, // contextWindowSource
+					undefined, // customEnvVarsDisabled
+					undefined, // workingDirectory
+					undefined, // codexAutoResetOnExhaustion
+					chosen
+				);
+			});
+
+			expect(useSessionStore.getState().sessions[0].codexTransport).toBe(after);
+		});
+
 		it('only modifies the targeted session', () => {
 			const session1 = createMockSession({ id: 'session-1', name: 'Session 1' });
 			const session2 = createMockSession({ id: 'session-2', name: 'Session 2' });
@@ -256,6 +291,24 @@ describe('useSessionLifecycle', () => {
 			const sessions = useSessionStore.getState().sessions;
 			expect(sessions[0].name).toBe('Session 1');
 			expect(sessions[1].name).toBe('Updated Session 2');
+		});
+
+		it('writes the save to disk right away, since the next spawn routes from it', () => {
+			// Persistence is debounced and re-armed by every store change; a streaming
+			// agent would otherwise hold a transport change past the next turn.
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', toolType: 'codex' })],
+				activeSessionId: 'session-1',
+			});
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			mockFlushSessionPersistence.mockClear();
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'Renamed');
+			});
+			vi.runAllTimers();
+
+			expect(mockFlushSessionPersistence).toHaveBeenCalledTimes(1);
 		});
 
 		it('sets optional fields to undefined when not provided', () => {
@@ -360,126 +413,77 @@ describe('useSessionLifecycle', () => {
 			expect(updated.projectRoot).toBe('/projects/myapp');
 		});
 
-		it('preserves tabs and parks the old provider session when toolType changes', () => {
+		it('keeps the source and every tab intact when the shared migration refuses', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [createMockAITab({ id: 'old-tab', agentSessionId: 'claude-session' })],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			vi.mocked(requestProviderTranslation).mockResolvedValue({
+				success: false,
+				error: 'missing attachment',
+			});
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			await expect(
+				result.current.handleSaveEditAgent(session.id, 'My Agent', 'codex')
+			).rejects.toThrow('missing attachment');
+			expect(useSessionStore.getState().sessions[0]).toBe(session);
+			expect(requestProviderTranslation).toHaveBeenCalledWith(
+				expect.objectContaining({ agentId: session.id, destination: 'codex', action: 'apply' }),
+				{ waitForDeferred: true }
+			);
+		});
+
+		it('waits for shared mapping commit, then applies normal edits without resetting state', async () => {
 			const tab = createMockAITab({
 				id: 'old-tab',
 				agentSessionId: 'claude-session',
-				logs: [{ id: 'log-1', timestamp: 1, source: 'user', text: 'hello' }] as any,
-				usageStats: { inputTokens: 10 } as any,
+				inputValue: 'draft',
 			});
 			const session = createMockSession({
 				id: 'session-1',
-				name: 'My Agent',
-				toolType: 'claude-code' as any,
+				toolType: 'claude-code',
 				aiTabs: [tab],
-				activeTabId: 'old-tab',
-				customPath: '/old/claude/path',
-				customArgs: '--old-args',
-				customEnvVars: { OLD_KEY: 'old' },
-				customEnvVarsDisabled: { OLD_PARKED: 'old' },
-				customModel: 'sonnet',
-				customEffort: 'high',
-				customContextWindow: 200000,
+				filePreviewTabs: [createMockFileTab({ id: 'file' })],
+				executionQueue: [{ id: 'queued', tabId: tab.id }] as any,
 			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			vi.mocked(requestProviderTranslation).mockImplementation(async () => {
+				useSessionStore.setState({
+					sessions: [
+						commitTranslationSession(session, 'codex', 'operation', [
+							{
+								tabId: tab.id,
+								sourceSessionId: tab.agentSessionId,
+								destinationSessionId: 'codex-imported',
+								artifacts: [],
+								lineage: {},
+							},
+						]),
+					],
+				});
+				return { success: true };
+			});
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			act(() => {
-				result.current.handleSaveEditAgent(
-					'session-1',
-					'My Agent',
-					'opencode' as any // Change provider
-				);
+			await act(async () => {
+				await result.current.handleSaveEditAgent(session.id, 'Changed Name', 'codex');
 			});
-
 			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.toolType).toBe('opencode');
-
-			// The tab and its transcript survive - same tab, same logs, still active.
-			expect(updated.aiTabs).toHaveLength(1);
-			expect(updated.aiTabs[0].id).toBe('old-tab');
-			expect(updated.aiTabs[0].logs).toHaveLength(1);
-			expect(updated.activeTabId).toBe('old-tab');
-
-			// The incoming provider starts fresh in the live slot...
-			expect(updated.aiTabs[0].agentSessionId).toBeNull();
-			expect(updated.aiTabs[0].usageStats).toBeUndefined();
-			// ...while the outgoing provider's session is parked for the trip back.
-			expect(updated.aiTabs[0].providerSessions?.['claude-code']).toEqual({
-				agentSessionId: 'claude-session',
-				usageStats: { inputTokens: 10 },
-				customModel: undefined,
-				customEffort: undefined,
+			expect(updated).toMatchObject({
+				id: session.id,
+				toolType: 'codex',
+				name: 'Changed Name',
+				projectRoot: session.projectRoot,
+				cwd: session.cwd,
 			});
-			// The live provider must never hold a parked entry of its own.
-			expect(updated.aiTabs[0].providerSessions?.['opencode']).toBeUndefined();
-
-			// Agent-level provider-specific config is still cleared.
-			expect(updated.customPath).toBeUndefined();
-			expect(updated.customArgs).toBeUndefined();
-			expect(updated.customEnvVars).toBeUndefined();
-			expect(updated.customEnvVarsDisabled).toBeUndefined();
-			expect(updated.customModel).toBeUndefined();
-			expect(updated.customEffort).toBeUndefined();
-			expect(updated.customContextWindow).toBeUndefined();
-
-			// A running turn is codified at send, so nothing is killed.
-			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
-		});
-
-		it('restores a provider session when switching back to it', () => {
-			const tab = createMockAITab({
-				id: 'tab-1',
-				agentSessionId: 'codex-session',
-				providerSessions: { 'claude-code': { agentSessionId: 'claude-session' } },
+			expect(updated.aiTabs[0]).toMatchObject({
+				id: tab.id,
+				agentSessionId: 'codex-imported',
+				inputValue: 'draft',
 			});
-			const session = createMockSession({
-				id: 'session-1',
-				toolType: 'codex' as any,
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			act(() => {
-				result.current.handleSaveEditAgent('session-1', 'My Agent', 'claude-code' as any);
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			// Back on Claude: its original session is live again, Codex is parked.
-			expect(updated.aiTabs[0].agentSessionId).toBe('claude-session');
-			expect(updated.aiTabs[0].providerSessions?.['codex']?.agentSessionId).toBe('codex-session');
-			expect(updated.aiTabs[0].providerSessions?.['claude-code']).toBeUndefined();
-		});
-
-		it('preserves closed-tab history and file preview tabs across a provider change', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				toolType: 'claude-code' as any,
-				aiTabs: [createMockAITab({ id: 'tab-1' })],
-				activeTabId: 'tab-1',
-				closedTabHistory: [{ tab: createMockAITab({ id: 'gone' }), index: 0, closedAt: 1 }] as any,
-				unifiedClosedTabHistory: [{ kind: 'ai', index: 0, closedAt: 1 }] as any,
-				filePreviewTabs: [{ id: 'file-1' }] as any,
-				activeFileTabId: 'file-1',
-			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			act(() => {
-				result.current.handleSaveEditAgent('session-1', 'My Agent', 'codex' as any);
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			// Undo (Cmd+Shift+T) must still work after a provider change.
-			expect(updated.closedTabHistory).toHaveLength(1);
-			expect(updated.unifiedClosedTabHistory).toHaveLength(1);
-			expect(updated.filePreviewTabs).toHaveLength(1);
-			expect(updated.activeFileTabId).toBe('file-1');
+			expect(updated.filePreviewTabs).toEqual(session.filePreviewTabs);
+			expect(updated.executionQueue).toBe(session.executionQueue);
 		});
 
 		it('does not reset tabs when toolType is same as current', () => {
@@ -509,32 +513,6 @@ describe('useSessionLifecycle', () => {
 			expect(updated.activeTabId).toBe('my-tab');
 			// Process should NOT be killed
 			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
-		});
-
-		it('preserves session identity fields when changing provider', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				name: 'My Agent',
-				toolType: 'claude-code' as any,
-				projectRoot: '/projects/myapp',
-				cwd: '/projects/myapp',
-			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			act(() => {
-				result.current.handleSaveEditAgent('session-1', 'My Agent', 'codex' as any);
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			// Identity fields preserved
-			expect(updated.id).toBe('session-1');
-			expect(updated.name).toBe('My Agent');
-			expect(updated.projectRoot).toBe('/projects/myapp');
-			expect(updated.cwd).toBe('/projects/myapp');
-			// Provider changed
-			expect(updated.toolType).toBe('codex');
 		});
 	});
 

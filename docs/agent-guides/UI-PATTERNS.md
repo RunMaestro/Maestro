@@ -478,7 +478,7 @@ Tests: query the pill by role, not by index. It is a real `<button>` now, so `ge
 
 ### Arrow-Key Navigation Inside a Modal Belongs on the Element, Not `window`
 
-A `useEventListener('keydown', ...)` on `window` never sees a key pressed inside a `<Modal>`: the overlay stops keydown before it reaches the window, and whatever held focus when the surface opened (a composer textarea, a tab strip) can swallow the key first. Put the handler on the scrolling container or the card itself with `onKeyDown`, give it `tabIndex={-1}` plus `outline-none`, and make sure something focuses it - `initialFocusRef` for a `<Modal>`, a mount effect for a card. `ExecutionQueueBrowser` handles rows on its card and menu items on the action list for exactly this reason.
+A `useEventListener('keydown', ...)` on `window` never sees a key pressed inside a `<Modal>`: the overlay stops keydown before it reaches the window, and whatever held focus when the surface opened (a composer textarea, a tab strip) can swallow the key first. Put the handler on the scrolling container or the card itself with `onKeyDown`, give it `tabIndex={-1}` plus `outline-none`, and make sure something focuses it - `initialFocusRef` for a `<Modal>`, `useFocusOnMount(ref, 0, isOpen)` for a card. Use the shared focus hooks rather than a hand-written timer. `ExecutionQueueBrowser` handles rows on its card and menu items on the action list for exactly this reason.
 
 Two rules go with it. **Let a focused control keep its own keys**: bail out when the event target is inside an `input`, `textarea`, or `[contenteditable]`, and leave `Enter` to a focused `<button>`, or the list steals the key from the control the user is actually on. And **take focus back when a child surface closes** (`useFocusOnClose`), because the focused element was just unmounted, focus falls to `<body>`, and the next arrow key silently does nothing - which reads as the keyboard dying halfway through.
 
@@ -764,7 +764,7 @@ Ideas worth reusing:
 - **A scale only reads as a scale on one line.** A provider with seven stops is wider than the wheel's column, so the effort row sizes to its content (`w-max`) and breaks out of that column rather than folding `max` and `ultra` onto a second row; `max-w-[92vw]` is what brings wrapping back on a window too narrow to hold the line at all. Sizing to content is also why the space either side of the pills is still scrim - a `w-full` row swallows the mousedown across the whole column, so clicking beside the pills stopped closing the modal.
 - **Type-to-jump beats a scrollbar.** A printable key jumps the wheel to the matching model; repeating a letter walks every model starting with it. Gate it on `isTypeaheadKey` (no `metaKey` / `ctrlKey` / `altKey`) - swallowing modified keys would stop `Cmd+W` reaching the window and trap the user inside the surface.
 
-**No legend, but still a graphical exit.** The surface shows no shortcut caption: the axes are self-describing, and the caption was the only thing on screen that had to be read rather than seen. [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton) is still satisfied without a button row - clicking the scrim cancels and double-clicking a row applies, both routed through the same handlers Escape and Enter use, so pointer and keyboard cannot drift.
+**No legend, but still a graphical exit.** The surface shows no shortcut caption: the axes are self-describing, and the caption was the only thing on screen that had to be read rather than seen. [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton) is still satisfied without a button row - clicking the scrim cancels and double-clicking a row applies, both routed through the same handlers Escape and Enter use, so pointer and keyboard cannot drift. Under a coarse pointer there is no double-tap to give (iOS reserves it, and a home-screen web app never sees a `dblclick`), so there the second tap on the row that is ALREADY picked is the apply - the first tap still only picks, and a mouse user re-clicking the row they are on is not thrown out of the console.
 
 Anything with an inline `transition` must carry a class the reduced-motion block can name (`.maestro-wheel-row`, `.maestro-effort-stop`, `.maestro-keycap`); the blanket `.transition-*` reset in `index.css` only matches Tailwind's utility classes.
 
@@ -1371,6 +1371,8 @@ flashCopiedToClipboard(value, 'Session ID Copied'); // custom title
 ```
 
 **Always** prefer `flashCopiedToClipboard` for clipboard-success acks so wording, color, and duration stay consistent across the app.
+
+Clipboard acknowledgments and their dismissal are application-owned. Do not keep modal-local copied state or reset timers: the modal can close while a clipboard write or its feedback is pending. Let the shared Center Flash store own the feedback lifetime.
 
 ### Firing a flash (external - `maestro-cli`)
 
@@ -2303,7 +2305,9 @@ const showWordmark =
 
 The wand button stays at every width, so the header never loses its identity or its switch-agent affordance.
 
-**The now-playing pill is the row's shrink target of last resort.** Something has to yield, and the filename inside that pill is the only thing in the row that can be clipped without looking broken. It is therefore `min-w-0` rather than `shrink-0` (a flex item defaults to `min-width: auto` and refuses to go below its content, so both the pill and the button inside it need `min-w-0`), while both transport buttons, both icons, and the divider stay `shrink-0` - they are the entire transport a minimized player has.
+**The now-playing pill is the row's shrink target of last resort.** Something has to yield, and the filename inside that pill is the only thing in the row that can be clipped without looking broken. The filename is the ONLY thing that yields, and the pill must never shrink past its own transport. So the pill is NOT `min-w-0` and NOT `overflow-hidden` (that pair let a squeezed band shrink it below its buttons and clip the restore button in half); it keeps its automatic minimum, and that minimum is exactly the transport, because the toggle is a grid whose label track is `minmax(0, max-content)`. The label takes its natural width when there is room and contributes nothing to the pill's min-content. The toggle itself stays free of `min-w-0` too, or the glyph spills over the divider. Without the pill's clip, the hover backgrounds carry their own corner radius so they do not square off its rounded ends.
+
+**Reserves built from rem units scale with the root.** The trophy badge and the now-playing pill are padding and icon boxes with no label to measure, so `useHeaderTextDelta().remScale` (root size over the 14px baseline, floored at 1) multiplies `HEADER_BADGE_WIDTH` and both now-playing reserves. Without it a larger root drew both wider than the header had reserved.
 
 **The wordmark yields ahead of the indicators, so it stops charging them once it is gone.** The LIVE toggle's label threshold adds the badge's reserve only while `showWordmark` is true:
 

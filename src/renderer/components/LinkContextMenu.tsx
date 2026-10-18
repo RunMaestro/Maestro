@@ -11,6 +11,7 @@ import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { openInMaestroBrowser, openInSystemBrowser } from '../utils/openUrl';
+import { isWebUrl, stripUrlRoutingHint } from '../../shared/urlRoutingHint';
 
 export interface LinkContextMenuState {
 	x: number;
@@ -51,11 +52,13 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 	}, []);
 
 	const handleCopy = useCallback(() => {
-		safeClipboardWrite(menu.url);
+		// A routing hint (`maestro+https://`) is an instruction to Maestro, not
+		// part of the address: copy what a browser can load.
+		safeClipboardWrite(stripUrlRoutingHint(menu.url));
 		onDismiss();
 	}, [menu.url, onDismiss]);
 
-	const isOpenable = /^https?:\/\/|^mailto:/.test(menu.url);
+	const isOpenable = isWebUrl(menu.url) || /^mailto:/.test(menu.url);
 
 	const handleOpenMaestro = useCallback(() => {
 		if (isOpenable) openInMaestroBrowser(menu.url);

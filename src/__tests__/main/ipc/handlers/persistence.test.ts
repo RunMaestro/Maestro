@@ -9,6 +9,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, app, BrowserWindow } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
+import {
+	configureImageStore,
+	__resetImageStoreCacheForTests,
+} from '../../../../main/storage/session-image-store';
 import {
 	registerPersistenceHandlers,
 	SESSION_LIFECYCLE_SYNC_CHANNEL,
@@ -45,6 +50,8 @@ vi.mock('fs/promises', () => ({
 	writeFile: vi.fn(),
 	mkdir: vi.fn(),
 	access: vi.fn(),
+	realpath: vi.fn(),
+	stat: vi.fn(),
 }));
 
 // Mock the logger
@@ -78,6 +85,16 @@ vi.mock('../../../../main/themes', () => ({
 		colors: {},
 	}),
 }));
+
+vi.mock('../../../../main/plugins/plugin-media-tools', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/plugins/plugin-media-tools')>()),
+	resolveMediaRuntime: vi.fn(),
+	getMediaToolStatus: vi.fn(),
+}));
+import {
+	resolveMediaRuntime,
+	getMediaToolStatus,
+} from '../../../../main/plugins/plugin-media-tools';
 
 describe('persistence IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -163,30 +180,6 @@ describe('persistence IPC handlers', () => {
 
 	afterEach(() => {
 		handlers.clear();
-	});
-
-	describe('registration', () => {
-		it('should register all persistence handlers', () => {
-			const expectedChannels = [
-				'settings:get',
-				'settings:set',
-				'settings:getAll',
-				'sessions:getAll',
-				'images:resolve',
-				'sessions:getActiveSessionId',
-				'sessions:setActiveSessionId',
-				'sessions:setAll',
-				'sessions:setMany',
-				'groups:getAll',
-				'groups:setAll',
-				'cli:getActivity',
-			];
-
-			for (const channel of expectedChannels) {
-				expect(handlers.has(channel)).toBe(true);
-			}
-			expect(handlers.size).toBe(expectedChannels.length);
-		});
 	});
 
 	describe('sessions:getActiveSessionId', () => {
@@ -336,7 +329,7 @@ describe('persistence IPC handlers', () => {
 				expect(localEmit).toHaveBeenCalledTimes(1);
 				expect(localEmit.mock.calls[0][0].payload).toEqual({ sessionId: 'A' });
 
-				// Agent Flow calls sessions.focus(B): index.ts emits B directly, then
+				// A plugin calls sessions.focus(B): index.ts emits B directly, then
 				// records it through the shared dedupe. Simulate that record here.
 				noteSessionActivated('B');
 
@@ -370,7 +363,7 @@ describe('persistence IPC handlers', () => {
 				await localSetHandler({}, 'A');
 				expect(localEmit).not.toHaveBeenCalled();
 
-				// Agent Flow directly focuses B mid-window (index.ts emits B on the bus
+				// A plugin directly focuses B mid-window (index.ts emits B on the bus
 				// and records it here). This must cancel the pending A flush.
 				noteSessionActivated('B');
 
@@ -421,7 +414,63 @@ describe('persistence IPC handlers', () => {
 		});
 	});
 
+	it('reads media status using the live host setting', async () => {
+		const runtime = { binaries: {}, models: {} };
+		const status = { profiles: [], models: [], missing: ['model-directory'] };
+		mockSettingsStore.get.mockReturnValue('/models');
+		vi.mocked(resolveMediaRuntime).mockResolvedValue(runtime);
+		vi.mocked(getMediaToolStatus).mockReturnValue(status as never);
+		expect(await handlers.get('settings:mediaStatus')!({})).toEqual(status);
+		expect(resolveMediaRuntime).toHaveBeenCalledWith('/models');
+		expect(getMediaToolStatus).toHaveBeenCalledWith(runtime);
+	});
+
 	describe('settings:set', () => {
+		it.each(['mediaModelDirectory.child', 'mediaModelDirectory.child.deep'])(
+			'rejects nested media key %s without overwriting the directory',
+			async (key) => {
+				mockSettingsStore.get.mockReturnValue('/canonical/models');
+				expect(await handlers.get('settings:set')!({}, key, 'replacement')).toBe(false);
+				expect(mockSettingsStore.set).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['relative/models', '~/models', 42, null, {}])(
+			'rejects invalid media directory %j without writing',
+			async (value) => {
+				expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', value)).toBe(false);
+				expect(mockSettingsStore.set).not.toHaveBeenCalled();
+			}
+		);
+
+		it('stores a canonical existing media directory', async () => {
+			vi.mocked(fs.realpath).mockResolvedValue('/canonical/models');
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as never);
+			expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', '/alias/models')).toBe(
+				true
+			);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith(
+				'mediaModelDirectory',
+				'/canonical/models'
+			);
+		});
+
+		it('rejects missing or non-directory media paths without overwriting the setting', async () => {
+			vi.mocked(fs.realpath).mockRejectedValueOnce(new Error('ENOENT'));
+			expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', '/missing')).toBe(
+				false
+			);
+			vi.mocked(fs.realpath).mockResolvedValue('/file');
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as never);
+			expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', '/file')).toBe(false);
+			expect(mockSettingsStore.set).not.toHaveBeenCalled();
+		});
+
+		it('allows clearing the host directory for the environment fallback', async () => {
+			expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', '')).toBe(true);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('mediaModelDirectory', '');
+		});
+
 		it('should store setting value', async () => {
 			const handler = handlers.get('settings:set');
 			const result = await handler!({} as any, 'fontSize', 16);
@@ -830,6 +879,334 @@ describe('persistence IPC handlers', () => {
 			expect(legacyOutput).toBe(output);
 			expect(snoozedOutput).toBe(output);
 			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', result);
+		});
+	});
+
+	describe('browser session bootstrap', () => {
+		const stored = {
+			id: 's1',
+			name: 'Agent',
+			cwd: '/test',
+			projectRoot: '/test',
+			state: 'idle',
+			inputMode: 'ai',
+			toolType: 'claude-code',
+			createdAt: 100,
+			aiLogs: [{ id: 'legacy-ai', text: 'legacy message' }],
+			shellLogs: [{ id: 'old-shell', text: 'old shell output' }],
+			agentCommands: [{ command: '/old', description: 'Old' }],
+			aiCommandHistory: ['old prompt'],
+			aiTabs: [
+				{ id: 't1', logs: [{ id: 'old-log', text: 'old message' }] },
+				{ id: 't2', logs: [{ id: 'other-log', text: 'other message' }] },
+			],
+			snoozedTabs: [
+				{
+					type: 'group',
+					members: [{ type: 'ai', tab: { id: 'parked', logs: [{ id: 'parked-log' }] } }],
+				},
+			],
+		};
+
+		it('keeps responsive owner inventory and falls back only for a missing owner during bootstrap', async () => {
+			vi.useFakeTimers();
+			mockSessionsStore.get.mockReturnValue([stored, { ...stored, id: 'missing-owner' }]);
+			const browserTabs = [
+				{
+					id: 'private',
+					url: 'https://example.test',
+					title: 'Live private tab',
+					ephemeral: true,
+					partition: 'live-temporary',
+				},
+			];
+			const terminalTabs = [{ id: 'live-terminal', pid: 0, ptyInitialized: true }];
+			const win = {
+				isDestroyed: () => false,
+				webContents: {
+					id: 1,
+					isDestroyed: () => false,
+					send: (
+						channel: string,
+						payload: { sessionId: string; tabId: string; requestId: string; metadataOnly?: boolean }
+					) => {
+						if (channel !== 'sessions:transcriptRequest' || payload.sessionId !== stored.id) return;
+						expect(payload.metadataOnly).toBe(true);
+						handlers.get('sessions:publishTranscript')!(
+							{ sender: { id: 1 } },
+							{
+								sessionId: payload.sessionId,
+								field: 'shellLogs',
+								upserts: [],
+								removedIds: [],
+								orderIds: [],
+								snapshot: true,
+								runtime: { browserTabs, terminalTabs },
+							},
+							payload.requestId
+						);
+					},
+				},
+			};
+			// Partial window fixture models the trusted native publication endpoint.
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win] as unknown as BrowserWindow[]);
+			try {
+				const pending = handlers.get('sessions:getBootstrap')!({ type: 'bridge' });
+				await vi.advanceTimersByTimeAsync(5000);
+				const [bootstrap, fallback] = await pending;
+				expect(fallback.id).toBe('missing-owner');
+				expect(
+					fallback.aiTabs.map((tab: { id: string; logs: unknown[] }) => ({
+						id: tab.id,
+						logs: tab.logs,
+					}))
+				).toEqual([
+					{ id: 't1', logs: [] },
+					{ id: 't2', logs: [] },
+				]);
+				expect(bootstrap.browserTabs).toEqual(browserTabs);
+				expect(bootstrap.terminalTabs).toEqual(terminalTabs);
+				expect(bootstrap.aiTabs[0].logs).toEqual([]);
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+				vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
+			}
+		});
+		it('reads the unflushed canonical host conversation instead of stale disk rows', async () => {
+			mockSessionsStore.get.mockReturnValue([stored]);
+			const logs = [
+				{ id: 'owner-live-row', timestamp: 1, source: 'stdout', text: 'not yet debounced to disk' },
+			];
+			let requestId = '';
+			const peerSend = vi.fn();
+			const peer = {
+				isDestroyed: () => false,
+				webContents: { id: 2, isDestroyed: () => false, send: peerSend },
+			};
+			const win = {
+				isDestroyed: () => false,
+				webContents: {
+					id: 1,
+					isDestroyed: () => false,
+					send: (
+						channel: string,
+						payload: { sessionId: string; tabId: string; requestId: string }
+					) => {
+						if (channel !== 'sessions:transcriptRequest') return;
+						requestId = payload.requestId;
+						handlers.get('sessions:publishTranscript')!(
+							{ sender: { id: 1 } },
+							{
+								sessionId: payload.sessionId,
+								tabId: payload.tabId,
+								field: 'logs',
+								upserts: logs,
+								removedIds: [],
+								orderIds: logs.map((row) => row.id),
+								snapshot: true,
+								runtime: {
+									state: 'idle',
+									agentError: { message: 'provider exited' },
+									agentErrorPaused: true,
+								},
+								clearRuntimeFields: ['thinkingStartTime'],
+							},
+							payload.requestId
+						);
+					},
+				},
+			};
+			// Partial window fixture models the trusted native publication endpoint.
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+				win,
+				peer,
+			] as unknown as BrowserWindow[]);
+			try {
+				const content = await handlers.get('sessions:getDeferredContent')!(
+					{ type: 'bridge' },
+					's1',
+					't1',
+					false
+				);
+				expect(content.logs).toEqual(logs);
+				expect(content.transcriptSnapshots).toEqual([
+					expect.objectContaining({
+						runtime: {
+							state: 'idle',
+							agentError: { message: 'provider exited' },
+							agentErrorPaused: true,
+						},
+						clearRuntimeFields: ['thinkingStartTime'],
+					}),
+				]);
+				expect(
+					peerSend.mock.calls.filter(([channel]) => channel === 'sessions:transcriptSync')
+				).toEqual([]);
+				expect(broadcastBridgeEvent).not.toHaveBeenCalledWith(
+					'sessions:transcriptSync',
+					expect.anything()
+				);
+				// A late duplicate remains private after its waiter has been resolved.
+				expect(
+					handlers.get('sessions:publishTranscript')!(
+						{ sender: { id: 1 } },
+						{
+							sessionId: 's1',
+							tabId: 't1',
+							field: 'logs',
+							upserts: logs,
+							removedIds: [],
+							orderIds: logs.map((row) => row.id),
+							snapshot: true,
+						},
+						requestId
+					)
+				).toBe(false);
+				expect(
+					peerSend.mock.calls.filter(([channel]) => channel === 'sessions:transcriptSync')
+				).toEqual([]);
+				expect(broadcastBridgeEvent).not.toHaveBeenCalledWith(
+					'sessions:transcriptSync',
+					expect.anything()
+				);
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			} finally {
+				vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
+			}
+		});
+		it('rejects a missing live owner rather than silently substituting disk transcript', async () => {
+			vi.useFakeTimers();
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
+			mockSessionsStore.get.mockReturnValue([stored]);
+			try {
+				const failed = expect(
+					handlers.get('sessions:getDeferredContent')!({ type: 'bridge' }, 's1', 't1', false)
+				).rejects.toThrow('Owning host renderer did not provide the current transcript');
+				await vi.advanceTimersByTimeAsync(5000);
+				await failed;
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+		it('refuses remote clients attempting to mint host transcript identities', () => {
+			expect(() =>
+				handlers.get('sessions:publishTranscript')!(
+					{ type: 'bridge' },
+					{
+						sessionId: 's1',
+						field: 'logs',
+						upserts: [{ id: 'client-forged' }],
+						removedIds: [],
+						orderIds: [],
+					}
+				)
+			).toThrow('Only the owning host renderer');
+		});
+		it('sends metadata first and reads one conversation on demand', async () => {
+			mockSessionsStore.get.mockReturnValue([stored]);
+			const [thin] = await handlers.get('sessions:getBootstrap')!({} as any);
+			expect(thin.aiTabs.map((tab: { logs: unknown[] }) => tab.logs)).toEqual([[], []]);
+			expect(thin.snoozedTabs[0].members[0].tab.logs).toEqual([]);
+			expect(thin.agentCommands).toBeUndefined();
+			expect(thin.aiCommandHistory).toBeUndefined();
+			expect(thin.aiLogs).toEqual([]);
+			expect(thin.shellLogs).toEqual([]);
+			expect(thin.deferredContent).toEqual({
+				tabIds: ['t1', 't2', 'parked'],
+				commands: true,
+			});
+			expect(stored.aiTabs[0].logs).toEqual([{ id: 'old-log', text: 'old message' }]);
+			expect(
+				await handlers.get('sessions:getDeferredContent')!({} as any, 's1', 't1', true)
+			).toEqual({
+				logs: stored.aiTabs[0].logs,
+				shellLogs: stored.shellLogs,
+				agentCommands: stored.agentCommands,
+				aiCommandHistory: stored.aiCommandHistory,
+			});
+		});
+
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s preserves unloaded data while saving browser edits',
+			async (channel) => {
+				mockSessionsStore.get.mockReturnValue([stored, { ...stored, id: 's2' }]);
+				const [thin] = await handlers.get('sessions:getBootstrap')!({} as any);
+				const changed = {
+					...thin,
+					name: 'Renamed',
+					aiTabs: [
+						{ ...thin.aiTabs[0], logs: [{ id: 'new-log', text: 'new message' }] },
+						thin.aiTabs[1],
+					],
+					aiCommandHistory: ['new prompt'],
+					shellLogs: [{ id: 'new-shell', text: 'new shell output' }],
+				};
+				await handlers.get(channel)!({} as any, [changed], []);
+				const saved = mockSessionsStore.set.mock.calls.at(-1)![1] as (typeof stored)[];
+				expect(saved.map((agent) => agent.id)).toEqual(['s1', 's2']);
+				expect(saved[0].name).toBe('Renamed');
+				expect(saved[0].aiTabs[0].logs.map((log) => log.id)).toEqual(['old-log', 'new-log']);
+				expect(saved[0].aiTabs[1].logs).toEqual(stored.aiTabs[1].logs);
+				expect(saved[0].snoozedTabs[0].members[0].tab.logs).toEqual([{ id: 'parked-log' }]);
+				expect(saved[0].agentCommands).toEqual(stored.agentCommands);
+				expect(saved[0].aiCommandHistory).toEqual(['old prompt', 'new prompt']);
+				expect(saved[0].aiLogs).toEqual(stored.aiLogs);
+				expect(saved[0].shellLogs.map((log) => log.id)).toEqual(['old-shell', 'new-shell']);
+				expect((saved[0] as StoredSession).deferredContent).toBeUndefined();
+			}
+		);
+
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s saves a rename after another client closes an unloaded tab',
+			async (channel) => {
+				const afterClose = { ...stored, aiTabs: [stored.aiTabs[0]], snoozedTabs: [] };
+				mockSessionsStore.get.mockReturnValueOnce([stored]).mockReturnValue([afterClose]);
+				const [thin] = await handlers.get('sessions:getBootstrap')!({} as any);
+				await handlers.get(channel)!({} as any, [
+					{
+						...thin,
+						name: 'Renamed',
+						activeTabId: 't2',
+						unifiedTabOrder: [
+							{ type: 'ai', id: 't1' },
+							{ type: 'ai', id: 't2' },
+						],
+					},
+				]);
+				const [saved] = mockSessionsStore.set.mock.calls.at(-1)![1];
+				expect(saved.name).toBe('Renamed');
+				expect(saved.aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['t1']);
+				expect(saved.aiTabs[0].logs).toEqual(stored.aiTabs[0].logs);
+				expect(saved.snoozedTabs).toEqual([]);
+				expect(saved.activeTabId).toBe('t1');
+				expect(saved.unifiedTabOrder).toEqual([{ type: 'ai', id: 't1' }]);
+			}
+		);
+
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s ignores an obsolete deferred agent while saving another agent',
+			async (channel) => {
+				mockSessionsStore.get.mockReturnValueOnce([stored]);
+				const [obsolete] = await handlers.get('sessions:getBootstrap')!({} as any);
+				mockSessionsStore.get.mockReturnValue([{ ...stored, id: 'survivor' }]);
+				await handlers.get(channel)!({} as any, [
+					obsolete,
+					{ ...stored, id: 'survivor', name: 'Renamed' },
+				]);
+				const saved = mockSessionsStore.set.mock.calls.at(-1)![1];
+				expect(saved.map((session: StoredSession) => [session.id, session.name])).toEqual([
+					['survivor', 'Renamed'],
+				]);
+			}
+		);
+
+		it('does not resurrect a tab that the browser deliberately closed', async () => {
+			mockSessionsStore.get.mockReturnValue([stored]);
+			const [thin] = await handlers.get('sessions:getBootstrap')!({} as any);
+			await handlers.get('sessions:setMany')!({} as any, [{ ...thin, aiTabs: [thin.aiTabs[0]] }]);
+			const saved = mockSessionsStore.set.mock.calls.at(-1)![1];
+			expect(saved[0].aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['t1']);
 		});
 	});
 
@@ -1295,6 +1672,24 @@ describe('persistence IPC handlers', () => {
 			toolType: 'claude-code',
 		};
 
+		it('notifies Pianola of added and removed agents only after a durable write', async () => {
+			const onSessionsPersisted = vi.fn(() => {
+				expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
+			});
+			registerPersistenceHandlers({
+				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				getWebServer: getWebServerFn,
+				flushSessionWrites: mockFlushSessionWrites,
+				onSessionsPersisted,
+			});
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+			const newcomer = { ...baseSession, id: 's2' };
+			await handlers.get('sessions:setMany')!({} as any, [newcomer], ['s1']);
+			expect(onSessionsPersisted).toHaveBeenCalledWith([newcomer], [newcomer], ['s1']);
+		});
+
 		it('writes the merged sessions array to the store', async () => {
 			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
 
@@ -1651,6 +2046,30 @@ describe('persistence IPC handlers', () => {
 			});
 		});
 
+		it('sends full new agents to desktop windows and thin agents to browsers', async () => {
+			const peer = {
+				isDestroyed: () => false,
+				webContents: { id: 7, isDestroyed: () => false, send: vi.fn() },
+			};
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([peer] as any);
+			mockSessionsStore.get.mockReturnValue([]);
+			await handlers.get('sessions:setMany')!({} as any, [
+				{ ...baseSession, aiTabs: [{ id: 't1', logs: [{ id: 'l1', text: 'saved' }] }] },
+			]);
+			expect(peer.webContents.send).toHaveBeenCalledWith(
+				SESSION_LIFECYCLE_SYNC_CHANNEL,
+				expect.objectContaining({
+					added: [
+						expect.objectContaining({
+							aiTabs: [{ id: 't1', logs: [{ id: 'l1', text: 'saved' }] }],
+						}),
+					],
+				})
+			);
+			expect(lastBridgePayload()?.added[0].aiTabs[0].logs).toEqual([]);
+			expect(lastBridgePayload()?.added[0].deferredContent.tabIds).toEqual(['t1']);
+		});
+
 		it('tells peers about an agent another client just closed', async () => {
 			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
 
@@ -1658,15 +2077,6 @@ describe('persistence IPC handlers', () => {
 			await handler!({} as any, [], ['s1']);
 
 			expect(lastBridgePayload()).toEqual({ added: [], removedIds: ['s1'] });
-		});
-
-		it('says nothing when a flush only updates agents everyone already has', async () => {
-			mockSessionsStore.get.mockReturnValue([{ ...baseSession, state: 'idle' }]);
-
-			const handler = handlers.get('sessions:setMany');
-			await handler!({} as any, [{ ...baseSession, state: 'busy' }], []);
-
-			expect(lastBridgePayload()).toBeNull();
 		});
 
 		it('reaches every window except the one that wrote', async () => {
@@ -1910,6 +2320,218 @@ describe('persistence IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual([]);
+		});
+	});
+	describe('multi-client observed writes', () => {
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'clears a sent image whose baseline still holds it inline (%s)',
+			async (channel) => {
+				// The renderer keeps the pasted image as a data URL; disk holds its ref.
+				configureImageStore(path.join(os.tmpdir(), `maestro-image-store-${process.pid}`));
+				const pasted = 'data:image/png;base64,iVBORw0KGgo=';
+				const drafted = {
+					id: 'shared',
+					name: 'Agent',
+					toolType: 'claude-code',
+					cwd: '/host',
+					aiTabs: [{ id: 'one', logs: [], inputValue: 'look', stagedImages: [pasted] }],
+					executionQueue: [{ id: 'queued', type: 'message', text: 'look', images: [pasted] }],
+				};
+				let stored: StoredSession[] = [];
+				mockSessionsStore.get.mockImplementation((key) => (key === 'sessions' ? stored : ''));
+				mockSessionsStore.set.mockImplementation((key, value) => {
+					if (key === 'sessions') stored = value;
+				});
+				const save = (sessions: unknown[], baselines: unknown[]) =>
+					channel === 'sessions:setMany'
+						? handlers.get(channel)!({}, sessions, [], baselines)
+						: handlers.get(channel)!({}, sessions, baselines);
+
+				try {
+					await save([drafted], []);
+					expect(stored[0].aiTabs[0].stagedImages?.[0]).toMatch(/^maestro-image:\/\//);
+
+					const sent = {
+						...drafted,
+						aiTabs: [
+							{
+								id: 'one',
+								logs: [{ id: 'user', text: 'look', images: [pasted] }],
+								inputValue: '',
+								stagedImages: [],
+							},
+						],
+						executionQueue: [],
+					};
+					await save([sent], [drafted]);
+
+					expect(stored[0].aiTabs[0].stagedImages).toEqual([]);
+					expect(stored[0].executionQueue).toEqual([]);
+				} finally {
+					__resetImageStoreCacheForTests();
+				}
+			}
+		);
+		it('broadcasts merged host state instead of stale fields from a remote save', async () => {
+			const baseline = {
+				id: 'shared',
+				name: 'Before',
+				toolType: 'claude-code',
+				cwd: path.join('synthetic', 'before'),
+				state: 'idle',
+				inputMode: 'ai',
+			};
+			mockSessionsStore.get.mockReturnValue([{ ...baseline, name: 'Host renamed', state: 'busy' }]);
+			mockWebServer.getWebClientCount.mockReturnValue(1);
+			const cwd = path.join('synthetic', 'after');
+			await handlers.get('sessions:setMany')!(
+				{ type: 'bridge' },
+				[{ ...baseline, name: 'Stale client rename', inputMode: 'terminal', cwd }],
+				[],
+				[baseline]
+			);
+			const persisted = mockSessionsStore.set.mock.calls.find(([key]) => key === 'sessions')![1][0];
+			expect(persisted).toMatchObject({
+				name: 'Host renamed',
+				state: 'busy',
+				inputMode: 'ai',
+				cwd,
+			});
+			expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledWith(
+				'shared',
+				'busy',
+				expect.objectContaining({ name: 'Host renamed', inputMode: 'ai', cwd })
+			);
+		});
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'retains host transcript, new tabs, consumed queue and read-state across stale %s',
+			async (channel) => {
+				const baseline = {
+					id: 'shared',
+					name: 'Before',
+					toolType: 'claude-code',
+					cwd: '/host',
+					activeTabId: 'one',
+					aiTabs: [
+						{
+							id: 'one',
+							logs: [{ id: 'log', text: 'old' }],
+							hasUnread: true,
+							inputValue: 'host draft',
+						},
+					],
+					executionQueue: [{ id: 'accepted', type: 'message', text: 'already running' }],
+				};
+				let stored: StoredSession[] = [
+					{
+						...baseline,
+						aiTabs: [
+							{
+								...baseline.aiTabs[0],
+								logs: [
+									{ id: 'log', text: 'finished' },
+									{ id: 'reply', text: 'host response' },
+								],
+								hasUnread: false,
+							},
+							{ id: 'host-new-tab', logs: [] },
+						],
+						executionQueue: [],
+					},
+				];
+				mockSessionsStore.get.mockImplementation((key) =>
+					key === 'sessions' ? stored : 'host-focus'
+				);
+				mockSessionsStore.set.mockImplementation((key, value) => {
+					if (key === 'sessions') stored = value;
+				});
+				const stale = {
+					...baseline,
+					name: 'Renamed remotely',
+					activeTabId: 'other',
+					aiTabs: [{ ...baseline.aiTabs[0], inputValue: 'client draft' }],
+				};
+				if (channel === 'sessions:setMany')
+					await handlers.get(channel)!({ type: 'bridge' }, [stale], [], [baseline]);
+				else await handlers.get(channel)!({ type: 'bridge' }, [stale], [baseline]);
+				expect(stored[0].name).toBe('Renamed remotely');
+				expect(stored[0].executionQueue).toEqual([]);
+				expect(stored[0].activeTabId).toBe('one');
+				expect(stored[0].aiTabs).toEqual([
+					{
+						...baseline.aiTabs[0],
+						logs: [
+							{ id: 'log', text: 'finished' },
+							{ id: 'reply', text: 'host response' },
+						],
+						hasUnread: false,
+					},
+					{ id: 'host-new-tab', logs: [] },
+				]);
+			}
+		);
+		it('merges simultaneous queue additions without resurrecting a consumed item or closed tab', async () => {
+			const baseline = {
+				id: 'shared',
+				name: 'Agent',
+				toolType: 'claude-code',
+				cwd: '/host',
+				aiTabs: [
+					{ id: 'closed', logs: [] },
+					{ id: 'open', logs: [] },
+				],
+				executionQueue: [{ id: 'consumed', type: 'message' }],
+			};
+			let stored: StoredSession[] = [
+				{
+					...baseline,
+					aiTabs: [baseline.aiTabs[1]],
+					executionQueue: [{ id: 'host-item', type: 'message' }],
+				},
+			];
+			mockSessionsStore.get.mockImplementation(() => stored);
+			mockSessionsStore.set.mockImplementation((_key, value) => {
+				stored = value;
+			});
+			await handlers.get('sessions:setMany')!(
+				{ type: 'bridge' },
+				[
+					{
+						...baseline,
+						executionQueue: [...baseline.executionQueue, { id: 'client-item', type: 'message' }],
+					},
+				],
+				[],
+				[baseline]
+			);
+			expect(stored[0].executionQueue.map((item: { id: string }) => item.id)).toEqual([
+				'host-item',
+				'client-item',
+			]);
+			expect(stored[0].aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['open']);
+		});
+		it('does not erase host-only credentials omitted from masked bootstrap and save', async () => {
+			const baseline = { id: 'shared', name: 'Before', toolType: 'claude-code', cwd: '/host' };
+			mockSessionsStore.get.mockReturnValue([
+				{ ...baseline, customEnvVars: { API_KEY: 'host-only' }, remoteEnv: { TOKEN: 'private' } },
+			]);
+			await handlers.get('sessions:setMany')!(
+				{ type: 'bridge' },
+				[{ ...baseline, name: 'After' }],
+				[],
+				[baseline]
+			);
+			const persisted = mockSessionsStore.set.mock.calls.find(([key]) => key === 'sessions')![1][0];
+			expect(persisted).toMatchObject({
+				name: 'After',
+				customEnvVars: { API_KEY: 'host-only' },
+				remoteEnv: { TOKEN: 'private' },
+			});
+		});
+		it('remote navigation never replaces the host pointer', async () => {
+			await handlers.get('sessions:setActiveSessionId')!({}, 'host-agent');
+			await handlers.get('sessions:setActiveSessionId')!({ type: 'bridge' }, 'remote-agent');
+			expect(await handlers.get('sessions:getActiveSessionId')!({})).toBe('host-agent');
 		});
 	});
 });

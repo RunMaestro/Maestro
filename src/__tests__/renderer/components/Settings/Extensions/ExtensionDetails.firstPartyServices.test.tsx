@@ -120,6 +120,7 @@ describe('ExtensionDetails first-party permission disclosure', () => {
 				getGrants={getGrants}
 			/>
 		);
+		fireEvent.click(screen.getByTestId('extension-subtab-permissions'));
 		expect(screen.getAllByTestId('extension-permission').length).toBeGreaterThan(0);
 		expect(getGrants).not.toHaveBeenCalled();
 	});

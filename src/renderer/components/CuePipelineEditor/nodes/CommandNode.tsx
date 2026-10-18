@@ -25,7 +25,7 @@ export const CommandNode = memo(function CommandNode({
 	const theme = data.theme;
 	const accentColor = COMMAND_NODE_COLOR;
 	const ModeIcon = data.mode === 'cli' ? Send : Terminal;
-	const modeLabel = data.mode === 'cli' ? 'CLI' : 'Shell';
+	const modeLabel = data.mode === 'cli' ? 'Agent' : 'Shell';
 
 	return (
 		<div

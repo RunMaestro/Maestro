@@ -272,4 +272,27 @@ describe('maestro:remoteUpdateGroup', () => {
 		expect(setGroups).not.toHaveBeenCalled();
 		expect(updateAck).toHaveBeenCalledWith('ch', false);
 	});
+
+	it('parks a group out of the Left Bar and flushes before acking', async () => {
+		storeState.groups = [group({ id: 'g1' })];
+		const { setGroups } = setup();
+
+		dispatchUpdate('g1', { hidden: true });
+		await flush();
+
+		expect(resultingGroups(setGroups, storeState.groups)[0]).toMatchObject({ hidden: true });
+		expect(setAll).toHaveBeenCalled();
+		expect(updateAck).toHaveBeenCalledWith('ch', true);
+	});
+
+	it('brings a hidden group back, storing no hidden key', async () => {
+		storeState.groups = [group({ id: 'g1', hidden: true })];
+		const { setGroups } = setup();
+
+		dispatchUpdate('g1', { hidden: false });
+		await flush();
+
+		expect(resultingGroups(setGroups, storeState.groups)[0]).not.toHaveProperty('hidden');
+		expect(updateAck).toHaveBeenCalledWith('ch', true);
+	});
 });

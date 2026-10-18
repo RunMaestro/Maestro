@@ -241,7 +241,8 @@ export function createBrowserTabRemoteApi() {
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
-				background?: boolean
+				background?: boolean,
+				hidden?: boolean
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -249,10 +250,11 @@ export function createBrowserTabRemoteApi() {
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
-				background?: boolean
+				background?: boolean,
+				hidden?: boolean
 			) => {
 				try {
-					callback(sessionId, prompt, responseChannel, background);
+					callback(sessionId, prompt, responseChannel, background, hidden);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

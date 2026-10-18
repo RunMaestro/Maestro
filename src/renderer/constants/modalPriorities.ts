@@ -57,6 +57,11 @@ export const MODAL_PRIORITIES = {
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 
+	/** Full-screen pan/zoom viewer for a diagram or image. Opens from inside other
+	 * modals (Auto Run expanded, Director's Notes, file preview), so it sits
+	 * above all of them and Escape closes it first. */
+	ZOOM_VIEWER: 990,
+
 	/** Gist publish confirmation modal - high priority */
 	GIST_PUBLISH: 980,
 
@@ -270,11 +275,17 @@ export const MODAL_PRIORITIES = {
 	/** Feedback modal */
 	FEEDBACK: 595,
 
+	/** GitHub CLI login opened from Send Feedback. Above the Feedback modal. */
+	GH_LOGIN: 597,
+
 	/** Process monitor modal */
 	PROCESS_MONITOR: 550,
 
 	/** Document Graph modal */
 	DOCUMENT_GRAPH: 545,
+
+	/** Computer History viewer (destination surface) */
+	COMPUTER_HISTORY: 547,
 
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
@@ -365,6 +376,10 @@ export const MODAL_PRIORITIES = {
 	/** Header git pill dropdown - above the modals it launches so Escape closes
 	 * the menu first. */
 	GIT_PILL_MENU: 220,
+
+	/** Header notification center popover - same tier as the git pill menu:
+	 * Escape closes the popover before anything underneath it. */
+	NOTIFICATION_CENTER: 221,
 
 	/** Branch switcher (fuzzy branch picker from the header git pill) - above the
 	 * git viewers so it layers on top when opened while one is showing. 205, not

@@ -340,3 +340,96 @@ describe('MaestroPromptsTab selection precedence', () => {
 		expect(badge!.textContent).toMatch(/^~\d.*tokens$/);
 	});
 });
+
+describe('MaestroPromptsTab diff against the bundled default', () => {
+	const MODIFIED_PROMPT = {
+		id: 'maestro-system-prompt',
+		filename: 'maestro-system-prompt.md',
+		description: 'Maestro system context.',
+		category: 'system',
+		content: '# system\nkeep this line\nmy custom rule\n',
+		isModified: true,
+		hasDefaultDrifted: false,
+	};
+	const BUNDLED_DEFAULT = '# system\nkeep this line\nthe shipped rule\n';
+
+	beforeEach(() => {
+		mockSetLastSelectedPromptId.mockReset();
+		mockLastSelectedPromptId = null;
+		setupWindowMaestro();
+		(window as any).maestro.prompts.getBundledDefault = vi.fn(async () => ({
+			success: true,
+			content: BUNDLED_DEFAULT,
+		}));
+	});
+
+	it('opens a diff from the Modified badge and closes it on Escape', async () => {
+		(window as any).maestro.prompts.getAll = vi.fn(async () => ({
+			success: true,
+			prompts: [MODIFIED_PROMPT],
+		}));
+		let escapeHandler: (() => boolean) | null = null;
+		render(
+			<MaestroPromptsTab
+				theme={mockTheme}
+				onEscapeHandled={(handler) => {
+					escapeHandler = handler;
+				}}
+			/>
+		);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+
+		fireEvent.click(screen.getByTestId('dual-pane-modified-badge'));
+
+		const diff = await screen.findByTestId('prompt-diff');
+		expect((window as any).maestro.prompts.getBundledDefault).toHaveBeenCalledWith(
+			'maestro-system-prompt'
+		);
+		expect(diff.textContent).toContain('the shipped rule');
+		expect(diff.textContent).toContain('my custom rule');
+		expect(diff.textContent).not.toContain('including unsaved edits');
+
+		act(() => {
+			expect(escapeHandler!()).toBe(true);
+		});
+		await waitFor(() => expect(screen.queryByTestId('prompt-diff')).not.toBeInTheDocument());
+	});
+
+	it('offers no diff for a prompt that matches its default and has no edits', async () => {
+		render(<MaestroPromptsTab theme={mockTheme} />);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+		expect(screen.queryByTestId('dual-pane-modified-badge')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('prompt-diff-toggle')).not.toBeInTheDocument();
+	});
+
+	it('diffs unsaved edits too, since they are what Save would write', async () => {
+		(window as any).maestro.prompts.getBundledDefault = vi.fn(async () => ({
+			success: true,
+			content: '# system',
+		}));
+		render(<MaestroPromptsTab theme={mockTheme} />);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+
+		fireEvent.change(screen.getByRole('textbox', { name: '' }), {
+			target: { value: '# system\nan unsaved line' },
+		});
+		fireEvent.click(await screen.findByTestId('prompt-diff-toggle'));
+
+		const diff = await screen.findByTestId('prompt-diff');
+		expect(diff.textContent).toContain('an unsaved line');
+		expect(diff.textContent).toContain('including unsaved edits');
+	});
+
+	it('says so when the customization is identical to the default', async () => {
+		(window as any).maestro.prompts.getAll = vi.fn(async () => ({
+			success: true,
+			prompts: [{ ...MODIFIED_PROMPT, content: BUNDLED_DEFAULT }],
+		}));
+		render(<MaestroPromptsTab theme={mockTheme} />);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+
+		fireEvent.click(screen.getByTestId('dual-pane-modified-badge'));
+
+		expect(await screen.findByText('No differences from the bundled default.')).toBeInTheDocument();
+	});
+});

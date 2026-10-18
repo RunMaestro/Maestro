@@ -5,6 +5,7 @@ import {
 	adjustBrightness,
 	blendColors,
 	contrastRatio,
+	cssColorToHex,
 	hexToRgb,
 	isReadableOn,
 	readableTextOn,
@@ -79,6 +80,33 @@ describe('colorContrast', () => {
 			expect(transparentize('#ffffff', '#000000', 0.2)).toBe(
 				blendColors('#000000', '#ffffff', 0.2)
 			);
+		});
+	});
+
+	describe('cssColorToHex', () => {
+		it('normalizes the hex forms to #rrggbb', () => {
+			expect(cssColorToHex('#F9E79F')).toBe('#f9e79f');
+			expect(cssColorToHex('#fe9')).toBe('#ffee99');
+			expect(cssColorToHex('#f9e79fff')).toBe('#f9e79f');
+		});
+
+		it('reads what getComputedStyle reports, in comma and space syntax', () => {
+			expect(cssColorToHex('rgb(249, 231, 159)')).toBe('#f9e79f');
+			expect(cssColorToHex('rgb(249 231 159)')).toBe('#f9e79f');
+			expect(cssColorToHex('rgba(249, 231, 159, 1)')).toBe('#f9e79f');
+			expect(cssColorToHex('rgb(249 231 159 / 100%)')).toBe('#f9e79f');
+		});
+
+		it('refuses translucent colors, whose effective color depends on the backdrop', () => {
+			expect(cssColorToHex('rgba(0, 0, 0, 0)')).toBeNull();
+			expect(cssColorToHex('rgba(249, 231, 159, 0.5)')).toBeNull();
+			expect(cssColorToHex('#f9e79f80')).toBeNull();
+		});
+
+		it('refuses everything it cannot measure', () => {
+			for (const value of ['none', 'url(#grad)', 'red', 'hsl(0, 0%, 0%)', '', undefined, null]) {
+				expect(cssColorToHex(value)).toBeNull();
+			}
 		});
 	});
 

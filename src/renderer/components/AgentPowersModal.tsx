@@ -23,7 +23,8 @@ import {
 	LayoutDashboard,
 	Sparkles,
 } from 'lucide-react';
-import type { Theme } from '../types';
+import type { EncoreFeatureFlags, Theme } from '../types';
+import { useSettingsStore } from '../stores/settingsStore';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { ModalBackButton } from './ui/ModalBackButton';
@@ -67,6 +68,8 @@ const EXAMPLES: Array<{
 	icon: typeof Users;
 	label: string;
 	prompt: string;
+	/** Encore Feature the example needs; it is not offered while that is off. */
+	encoreFlag?: keyof EncoreFeatureFlags;
 }> = [
 	{
 		icon: SlidersHorizontal,
@@ -89,11 +92,13 @@ const EXAMPLES: Array<{
 		icon: CalendarClock,
 		label: 'Schedule a Task',
 		prompt: 'Every weekday at 9am, summarize what changed in this repo overnight.',
+		encoreFlag: 'maestroCue',
 	},
 	{
 		icon: Workflow,
 		label: 'Build a Cue Pipeline',
 		prompt: 'Whenever a pull request opens on this repo, have an agent review it and report back.',
+		encoreFlag: 'maestroCue',
 	},
 	{
 		icon: LayoutDashboard,
@@ -111,6 +116,13 @@ export function AgentPowersModal({
 	onTryExample,
 }: AgentPowersModalProps) {
 	const confirmRef = useRef<HTMLButtonElement>(null);
+	// An example that needs a switched-off Encore Feature is not offered: the
+	// agent could not carry it out, and the feature leaves no trace while off.
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
+	const cueEnabled = encoreFeatures.maestroCue === true;
+	const examples = EXAMPLES.filter(
+		(example) => !example.encoreFlag || encoreFeatures[example.encoreFlag] === true
+	);
 
 	const handleTry = useCallback(
 		(prompt: string) => {
@@ -161,7 +173,7 @@ export function AgentPowersModal({
 				</p>
 
 				<div className="grid grid-cols-2 gap-2">
-					{EXAMPLES.map(({ icon: Icon, label, prompt }) => {
+					{examples.map(({ icon: Icon, label, prompt }) => {
 						const interactive = Boolean(onTryExample);
 						return (
 							<button
@@ -204,9 +216,9 @@ export function AgentPowersModal({
 						Maestro is a power tool. If you are a hacker it will feel like home: keyboard shortcuts
 						all the way down, dozens of agents conducted at once, hands never leaving the keys. You
 						do not have to work that way to get the benefit. Every agent running in Maestro is
-						handed the knowledge of how to drive Maestro, down to the advanced parts like Auto Run
-						and Cue pipelines, so ask for what you want in plain language and let the agent find the
-						way there.
+						handed the knowledge of how to drive Maestro, down to the advanced parts like{' '}
+						{cueEnabled ? 'Auto Run and Cue pipelines' : 'Auto Run'}, so ask for what you want in
+						plain language and let the agent find the way there.
 						{onTryExample ? ' Pick an example above to drop it into the composer.' : ''}
 					</p>
 				</div>

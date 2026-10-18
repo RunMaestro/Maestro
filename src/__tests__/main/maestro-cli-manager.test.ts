@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockExecFileNoThrow } = vi.hoisted(() => ({
@@ -75,4 +78,34 @@ describe('MaestroCliManager', () => {
 		expect(script).toContain('if ($parts -notcontains $installDir) {\n');
 		expect(script).not.toContain('{;');
 	});
+
+	// Creating a symlink needs elevated rights on Windows CI; the bug is POSIX-only.
+	it.skipIf(process.platform === 'win32')(
+		'replaces a symlinked install path instead of writing through it into the bundled CLI',
+		async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cli-shim-'));
+			try {
+				const bundledCliPath = path.join(dir, 'maestro-cli.js');
+				const bundledContents = '// bundled maestro-cli.js\n';
+				fs.writeFileSync(bundledCliPath, bundledContents);
+				const installPath = path.join(dir, 'maestro-cli');
+				fs.symlinkSync(bundledCliPath, installPath);
+
+				const manager = new MaestroCliManager();
+				const writeUnixShim = (
+					manager as unknown as {
+						writeUnixShim(installPath: string, bundledCliPath: string): Promise<void>;
+					}
+				).writeUnixShim.bind(manager);
+				await writeUnixShim(installPath, bundledCliPath);
+
+				expect(fs.readFileSync(bundledCliPath, 'utf-8')).toBe(bundledContents);
+				expect(fs.lstatSync(installPath).isSymbolicLink()).toBe(false);
+				expect(fs.readFileSync(installPath, 'utf-8')).toContain(`'${bundledCliPath}' "$@"`);
+				expect(fs.statSync(installPath).mode & 0o777).toBe(0o755);
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		}
+	);
 });

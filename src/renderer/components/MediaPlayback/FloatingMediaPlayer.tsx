@@ -6,6 +6,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	type CSSProperties,
 	type ReactNode,
 } from 'react';
 import {
@@ -23,11 +24,15 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
 import { MediaListMenu } from './MediaListMenu';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useMobileLandscape } from '../../hooks/remote/useMobileLandscape';
+import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { notifyToast } from '../../stores/notificationStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
+import { APP_TITLE_STRIP_HEIGHT, shouldShowAppTitleStrip } from '../../utils/appTitleStrip';
 import {
 	DEFAULT_MEDIA_ASPECT,
 	MEDIA_FLOAT_DEFAULT_WIDTH,
@@ -91,7 +96,11 @@ const DRAG_SLOP_PX = 4;
 const FLOAT_Z_INDEX = 60;
 
 /** Current viewport, read at call time so a resize is always measured fresh. */
-const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
+const measureViewport = (top: number) => ({
+	width: window.innerWidth,
+	height: window.innerHeight,
+	top,
+});
 
 /**
  * The media player: a draggable, resizable now-playing widget.
@@ -141,6 +150,22 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	const setActiveItem = useMediaPlaybackStore((s) => s.setActiveItem);
 	const closeItem = useMediaPlaybackStore((s) => s.closeItem);
 	const setFloatFootprint = useMediaPlaybackStore((s) => s.setFloatFootprint);
+
+	// The custom title strip is an OS drag region, so the widget stays below it
+	// whenever AppShell draws it - asked through the same predicate AppShell uses.
+	const useNativeTitleBar = useSettingsStore((s) => s.useNativeTitleBar);
+	const isMobileLandscape = useMobileLandscape();
+	const { isMdDown: isMdDownViewport } = useViewportBreakpoint();
+	const topInset = shouldShowAppTitleStrip({
+		isMobileLandscape,
+		useNativeTitleBar,
+		isMdDownViewport,
+	})
+		? APP_TITLE_STRIP_HEIGHT
+		: 0;
+	const topInsetRef = useRef(topInset);
+	topInsetRef.current = topInset;
+	const viewport = useCallback(() => measureViewport(topInsetRef.current), []);
 
 	// The queue menu lists what is coming NEXT, so the loaded track is filtered
 	// out of it. It stays in `items` because that is how prev/next find their
@@ -387,7 +412,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	 */
 	useEffect(() => {
 		setFloatFootprint(hidden ? null : mediaFloatFootprint(rect, viewport()));
-	}, [rect, hidden, setFloatFootprint]);
+	}, [rect, hidden, setFloatFootprint, viewport]);
 
 	// The widget is unmounted when the last item closes, which no `hidden` change
 	// announces.
@@ -423,7 +448,9 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 				viewport()
 			)
 		);
-	}, [fit, kind, storedWidths]);
+		// topInset: toggling the native title bar moves the strip the widget
+		// has to clear.
+	}, [fit, kind, storedWidths, topInset, viewport]);
 
 	const KindIcon = kind === 'video' ? FileVideo : FileAudio;
 
@@ -443,17 +470,23 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 			tabIndex={-1}
 			onKeyDown={handleKeyDown}
 			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none outline-none"
-			style={{
-				top: rect.top,
-				left: rect.left,
-				width: rect.width,
-				height: rect.height,
-				zIndex: hidden ? -1 : FLOAT_Z_INDEX,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
-				visibility: hidden ? 'hidden' : undefined,
-				pointerEvents: hidden ? 'none' : undefined,
-			}}
+			style={
+				{
+					top: rect.top,
+					left: rect.left,
+					width: rect.width,
+					height: rect.height,
+					zIndex: hidden ? -1 : FLOAT_Z_INDEX,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+					visibility: hidden ? 'hidden' : undefined,
+					pointerEvents: hidden ? 'none' : undefined,
+					// Belt and braces with the top clamp: if the widget ever overlaps the
+					// title strip's drag region, the OS would swallow clicks on its
+					// header (move, minimize, close). Opt the whole frame out.
+					WebkitAppRegion: hidden ? undefined : 'no-drag',
+				} as CSSProperties
+			}
 		>
 			{/* Title bar doubles as the drag handle */}
 			<div

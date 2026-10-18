@@ -1,12 +1,12 @@
 import React, { useState, useCallback, useEffect, useRef, memo, useMemo } from 'react';
-import { X, Star, Pencil, Loader2, AlertCircle, MessageSquare } from 'lucide-react';
+import { X, Star, Pencil, AlertCircle, MessageSquare } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { AITab as AITabType, Theme } from '../../types';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { setTabDragImage } from '../../utils/tabDragImage';
-import { isCoarsePointer } from '../../utils/touch';
 import { getTabKindColor } from './tabBarUtils';
 import { getConnectingColor } from '../../utils/theme';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
@@ -147,10 +147,6 @@ export const AITab = memo(function AITab({
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// Agent Resilience: pulsing orange dot when this tab is stuck auto-retrying.
 	const hasActiveOutage = useTabHasActiveOutage(sessionId ?? '', tabId);
-	// Coarse pointer (a finger): the action menu opens on a long-press and native
-	// drag is off - a long-press is also how the OS starts an HTML5 drag, and the
-	// two cannot share the gesture. Reordering stays reachable from the menu.
-	const coarse = isCoarsePointer();
 	const closeTabKeys = useSettingsStore((s) => s.tabShortcuts.closeTab?.keys);
 
 	// Clear copy feedback timeout on unmount
@@ -509,7 +505,7 @@ export const AITab = memo(function AITab({
 					handleTabSelect();
 				}
 			}}
-			draggable={!coarse}
+			draggable
 			onDragStart={handleTabDragStart}
 			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
@@ -552,10 +548,7 @@ export const AITab = memo(function AITab({
 			{/* Show regardless of busy state since tab naming runs in parallel with the main request */}
 			{tab.isGeneratingName && (
 				<span title="Generating tab name...">
-					<Loader2
-						className="w-3 h-3 shrink-0 animate-spin"
-						style={{ color: theme.colors.textDim }}
-					/>
+					<Spinner size={12} color={theme.colors.textDim} decorative />
 				</span>
 			)}
 
@@ -606,16 +599,28 @@ export const AITab = memo(function AITab({
 
 			{/* Tab name - always show the full name; the bar scrolls when crowded */}
 			<span
+				data-tab-label
 				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
 				{displayName}
 			</span>
 
+			{tab.origin === 'relay' && (
+				<span
+					className="text-3xs px-1 py-0.5 rounded shrink-0"
+					style={{ color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }}
+					title="Conversation started through Relay"
+				>
+					Relay
+				</span>
+			)}
+
 			{/* Close button - visible on hover or when active, takes space of busy indicator when not busy */}
 			{canClose && (isHovered || isActive) && (
 				<button
 					onClick={handleCloseClick}
+					data-tab-close
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
 					title={`Close tab${shortcutSuffix(closeTabKeys)}`}
 				>

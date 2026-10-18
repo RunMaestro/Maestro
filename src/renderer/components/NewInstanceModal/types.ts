@@ -1,6 +1,7 @@
 import type React from 'react';
 import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
+import type { CodexTransport } from '../../../shared/codexTransport';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -60,7 +61,9 @@ export interface NewInstanceModalProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+		codexTransport?: CodexTransport
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -98,8 +101,13 @@ export interface EditAgentModalProps {
 		/** New working directory; `undefined` when the user left it unchanged. */
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
-	) => void;
+		codexAutoResetOnExhaustion?: boolean,
+		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+		codexTransport?: CodexTransport,
+		acceptTranslationLimitations?: boolean,
+		selectedUserResources?: string[],
+		migrationPlanId?: string
+	) => void | Promise<void>;
 	theme: Theme;
 	session: Session | null;
 	existingSessions: Session[];
@@ -183,4 +191,7 @@ export interface AgentPickerGridProps {
 	/** Codex automatic usage resets, per agent id. Defaults off when absent. */
 	codexAutoResetByAgent?: Record<string, boolean>;
 	onCodexAutoResetChange?: (agentId: string, value: boolean) => void;
+	/** Codex transport, per agent id. Defaults to `exec` when absent. */
+	codexTransportByAgent?: Record<string, CodexTransport>;
+	onCodexTransportChange?: (agentId: string, value: CodexTransport) => void;
 }

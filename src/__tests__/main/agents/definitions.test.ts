@@ -13,6 +13,7 @@ import {
 	type AgentDefinition,
 	type AgentConfigOption,
 } from '../../../main/agents';
+import { getAgentCapabilities } from '../../../main/agents/capabilities';
 
 describe('agent-definitions', () => {
 	describe('AGENT_DEFINITIONS', () => {
@@ -316,6 +317,25 @@ describe('agent-definitions', () => {
 			expect(promptPrefix).toContain('@/tmp/screenshot-1.png');
 			expect(promptPrefix).toContain('@/tmp/screenshot-2.jpg');
 		});
+
+		// Neither CLI has an attachment flag, but both open an image path named in
+		// the prompt with their file tool (verified live, fresh and resumed). A
+		// leading `@` is literal text to both, so the paths go in bare.
+		it.each(['grok', 'antigravity'])(
+			'should embed %s images as plain paths and accept images on resume',
+			(agentId) => {
+				const agent = getAgentDefinition(agentId);
+				expect(agent?.imageArgs).toBeUndefined();
+				expect(agent?.imagePromptBuilder?.(['/tmp/a.png', '/tmp/b.jpg'])).toBe(
+					'Use these attached images as context:\n/tmp/a.png\n/tmp/b.jpg\n\n'
+				);
+				expect(agent?.imagePromptBuilder?.([])).toBe('');
+				expect(getAgentCapabilities(agentId)).toMatchObject({
+					supportsImageInput: true,
+					supportsImageInputOnResume: true,
+				});
+			}
+		);
 	});
 
 	describe('Agent config options', () => {
@@ -332,6 +352,24 @@ describe('agent-definitions', () => {
 			expect(reasoningOption).toBeDefined();
 			expect(reasoningOption?.type).toBe('select');
 			expect((reasoningOption as any)?.dynamic).toBe(true);
+			// The static fallback shown before models_cache.json exists. `minimal`
+			// is refused by every current Codex model with a 400, so offering it
+			// would hand the user a setting that fails every turn.
+			expect((reasoningOption as any)?.options).not.toContain('minimal');
+			expect((reasoningOption as any)?.options).toEqual(
+				expect.arrayContaining(['', 'low', 'medium', 'high', 'xhigh'])
+			);
+			expect(reasoningOption?.argBuilder?.('xhigh')).toEqual([
+				'-c',
+				'model_reasoning_effort="xhigh"',
+			]);
+			expect(reasoningOption?.argBuilder?.('')).toEqual([]);
+
+			const summaryOption = codex?.configOptions?.find((opt) => opt.key === 'reasoningSummary');
+			expect(summaryOption?.type).toBe('select');
+			expect(codex?.configOptions?.filter((opt) => opt.key === 'reasoningSummary')).toHaveLength(1);
+			expect(summaryOption?.default).toBe('');
+			expect((summaryOption as any)?.options).toEqual(['', 'auto', 'concise', 'detailed', 'none']);
 		});
 
 		it('should have configOptions for opencode', () => {

@@ -53,6 +53,46 @@ describe('buildThinkingItems', () => {
 		expect(items).toEqual([{ session: sessions[0], tab: orphan }]);
 	});
 
+	it('does not list a closed tab parked idle by a held queued item', () => {
+		// Regression: closing a tab that owns a HELD message parks it in
+		// orphanedThinkingTabs (idle) as a dispatch target. No process runs for
+		// it, yet the pill showed it as "Thinking..." until the item was removed.
+		const parked = createMockAITab({ id: 'closed', state: 'idle' });
+		const sessions = [
+			createMockSession({
+				id: 'a',
+				state: 'idle',
+				aiTabs: [createMockAITab({ id: 't1', state: 'idle' })],
+				orphanedThinkingTabs: [parked],
+				executionQueue: [
+					{
+						id: 'q1',
+						timestamp: 1,
+						tabId: 'closed',
+						type: 'message',
+						text: 'later',
+						paused: true,
+					},
+				],
+			}),
+		];
+		expect(buildThinkingItems(sessions)).toEqual([]);
+	});
+
+	it('keeps the legacy fallback when the only orphan is parked idle', () => {
+		const parked = createMockAITab({ id: 'closed', state: 'idle' });
+		const sessions = [
+			createMockSession({
+				id: 'a',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [createMockAITab({ id: 't1', state: 'idle' })],
+				orphanedThinkingTabs: [parked],
+			}),
+		];
+		expect(buildThinkingItems(sessions)).toEqual([{ session: sessions[0], tab: null }]);
+	});
+
 	it('skips the legacy fallback when only orphaned tabs are present (no double count)', () => {
 		const orphan = createMockAITab({ id: 'orphan', state: 'busy' });
 		const sessions = [

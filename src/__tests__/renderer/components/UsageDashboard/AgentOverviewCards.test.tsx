@@ -181,7 +181,9 @@ describe('AgentOverviewCards', () => {
 			screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement;
 
 		const worktreeCard = cardByName('Worktree One');
-		expect(worktreeCard.querySelector('[data-testid="agent-card-wt-badge"]')).not.toBeNull();
+		expect(
+			worktreeCard.querySelector('[data-testid="agent-card-wt-badge"]')?.getAttribute('title')
+		).toBe('Git worktree');
 		expect(worktreeCard.querySelector('[data-testid="agent-card-branch"]')?.textContent).toBe(
 			'feature/awesome'
 		);

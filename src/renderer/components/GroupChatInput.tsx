@@ -18,6 +18,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import type { GroupChatQueueState } from '../../shared/group-chat-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { mentionSessionEquality } from '../stores/sessionEquality';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { ArrowUp, Bell, ImageIcon, Eye, Keyboard, PenLine } from 'lucide-react';
 import type {
 	Theme,
@@ -52,7 +53,10 @@ import { useUIStore } from '../stores/uiStore';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
+import type { SteerEligibility } from '../utils/executionQueue';
+import { groupChatSteerBlockedReason } from '../../shared/groupChatSteering';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -94,6 +98,8 @@ interface GroupChatInputProps {
 	/** The chat's pending sends as MAIN reports them. Undefined until loaded. */
 	queueState?: GroupChatQueueState;
 	onResumeQueue?: () => void;
+	/** Steer a queued message into the round that is running. */
+	onSteerQueuedItem?: (itemId: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderQueuedItems?: (fromIndex: number, toIndex: number) => void;
 	// Input send behavior (synced with global settings)
@@ -127,6 +133,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	onOpenLightbox,
 	queueState,
 	onResumeQueue,
+	onSteerQueuedItem,
 	onRemoveQueuedItem,
 	onReorderQueuedItems,
 	enterToSendAI: enterToSendAIProp,
@@ -180,6 +187,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		(draft: string, targetGroupChatId: string) => queueDraftFlush(targetGroupChatId, draft),
 		[queueDraftFlush]
 	);
+	// Toasts lift above the composer instead of covering it (Right Bar closed).
+	const toastAvoidRef = useToastAvoidZone();
 
 	useEffect(() => {
 		if (!draftFlushRef) return;
@@ -190,10 +199,16 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	}, [draftFlushRef, flushDraft]);
 
 	// Narrow mention-shaped sessions so streaming logs do not rebuild @mentions.
-	const sessions = useStoreWithEqualityFn(
+	const storedSessions = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => s.sessions,
 		mentionSessionEquality
+	);
+	// Live agents only: a dormant Pianola (flag off) is never offered for @mention.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const sessions = useMemo(
+		() => filterLiveAgents(storedSessions, { pianola: pianolaEnabled }),
+		[storedSessions, pianolaEnabled]
 	);
 
 	// Unified `@` mention picker, locked to the Agents category (Group Chat has
@@ -557,8 +572,27 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const failedItem = queueState?.items.find((entry) => entry.failed);
 	const sendingItem = queueState?.items.find((entry) => entry.sending);
 
+	// Steer is offered while the round runs, on anything a turn can type. Which
+	// turn takes it (moderator, or the working participants it names) is main's
+	// call, and a refusal comes back as a toast with the reason.
+	const getSteerContext = useCallback(
+		(item: QueuedItem): SteerEligibility => {
+			const entry = queueState?.items.find((candidate) => candidate.id === item.id);
+			const blocked = groupChatSteerBlockedReason({
+				busy: isBusy,
+				text: entry?.text,
+				images: entry?.images,
+				sending: entry?.sending,
+				failed: entry?.failed,
+			});
+			return { canSteer: !!entry && blocked === null };
+		},
+		[queueState, isBusy]
+	);
+
 	return (
 		<div
+			ref={toastAvoidRef}
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
@@ -607,6 +641,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					onRemoveQueuedItem={onRemoveQueuedItem}
 					onReorderItems={onReorderQueuedItems}
 					onOpenLightbox={onOpenLightbox}
+					getSteerContext={onSteerQueuedItem ? getSteerContext : undefined}
+					onSteerQueuedItem={onSteerQueuedItem}
 				/>
 			)}
 

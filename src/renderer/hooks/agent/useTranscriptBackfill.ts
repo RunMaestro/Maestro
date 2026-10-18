@@ -39,6 +39,7 @@ import {
 	transcriptMessagesToLogEntries,
 	type TranscriptMessage,
 } from '../../utils/transcriptMessages';
+import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 
 /** Provider messages pulled in per "load earlier" step. */
 export const TRANSCRIPT_BACKFILL_PAGE = 250;
@@ -81,9 +82,9 @@ export function useTranscriptBackfill(
 	options: UseTranscriptBackfillOptions = {}
 ): TranscriptBackfill {
 	const sessionId = session.id;
-	const projectRoot = session.projectRoot;
+	// Same host and path the tab was resumed from (see handleResumeSession).
+	const { projectPathForSessions: projectRoot, sshRemoteId } = resolveSessionProjectPath(session);
 	const toolType = session.toolType;
-	const sshRemoteId = session.sshRemoteId;
 	const tabId = activeTab?.id ?? null;
 	const agentSessionId = activeTab?.agentSessionId ?? null;
 

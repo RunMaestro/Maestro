@@ -39,8 +39,14 @@ async function reportCrashToSentry(
 /**
  * Capture renderer crashes, unresponsive windows, load failures, and console
  * errors that the renderer process cannot report itself.
+ *
+ * `getIsQuitting` tells a renderer killed by the app's own shutdown apart from
+ * one killed by a stray signal while the app keeps running.
  */
-export function attachWindowCrashHandlers(mainWindow: BrowserWindow): void {
+export function attachWindowCrashHandlers(
+	mainWindow: BrowserWindow,
+	getIsQuitting?: () => boolean
+): void {
 	// Handle renderer process termination (crash, kill, OOM, etc.)
 	mainWindow.webContents.on('render-process-gone', (_event, details) => {
 		logger.error('Renderer process gone', 'Window', {
@@ -48,10 +54,8 @@ export function attachWindowCrashHandlers(mainWindow: BrowserWindow): void {
 			exitCode: details.exitCode,
 		});
 
-		// `killed` (signal-terminated, e.g. app quit / OS shutdown / user
-		// force-quit) and `clean-exit` are intentional terminations, not
-		// crashes - the auto-reload guard below already treats them as such.
-		// Reporting them as `fatal` Sentry events is pure noise; genuine
+		// `killed` (signal-terminated) and `clean-exit` are not crashes, so
+		// reporting them as `fatal` Sentry events is pure noise; genuine
 		// out-of-memory kills surface separately as reason `oom`. Only the
 		// real crash reasons (`crashed`, `oom`, `abnormal-exit`, etc.) are
 		// worth a breadcrumb. Fixes MAESTRO-4X/4Y.
@@ -62,11 +66,18 @@ export function attachWindowCrashHandlers(mainWindow: BrowserWindow): void {
 				reason: details.reason,
 				exitCode: details.exitCode,
 			});
+		}
 
-			// Auto-reload unless the process was intentionally killed
-			logger.info('Attempting to reload renderer after crash', 'Window');
+		// A `killed` renderer still needs a reload unless the app is quitting.
+		// The main process outlives a SIGTERM aimed at the renderer (a stray
+		// `pkill -f` whose pattern hits Chromium's `--lang=en-US` flag is
+		// enough), and without a reload the window stays black for good.
+		if (details.reason !== 'clean-exit' && !getIsQuitting?.()) {
+			logger.info('Attempting to reload renderer after it exited', 'Window', {
+				reason: details.reason,
+			});
 			setTimeout(() => {
-				if (!mainWindow.isDestroyed()) {
+				if (!mainWindow.isDestroyed() && !getIsQuitting?.()) {
 					mainWindow.webContents.reload();
 				}
 			}, 1000);

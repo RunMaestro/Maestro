@@ -1,15 +1,29 @@
-import React, { memo, useEffect, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
-import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
+import {
+	useNotificationStore,
+	type Toast as ToastType,
+	type ToastColor,
+} from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
-import { dispatchToastClickAction } from '../services/toastClickActions';
+import { runToastClick } from '../services/toastClickActions';
 import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
 import { getToastWidthDimensions, TOAST_VIEWPORT_GUTTER } from '../../shared/toastWidth';
 import { useMediaPlaybackStore } from '../stores/mediaPlaybackStore';
 import { mediaFloatLaneLift } from '../utils/mediaFloatGeometry';
 import { withMonoFallback } from '../../shared/fontStack';
+import {
+	isLeftToastPosition,
+	isTopToastPosition,
+	TOAST_BOTTOM_OFFSET,
+	TOAST_STACK_GAP,
+	TOAST_TOP_OFFSET,
+	toastSidePanel,
+} from '../../shared/toastPosition';
+import { useElementWidth } from '../hooks/ui/useElementWidth';
+import { toastBottomInset, useToastAvoidZoneStore } from '../hooks/ui/useToastAvoidZone';
 import { Z_LAYERS } from '../constants/zLayers';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { CopyIconButton } from './ui';
@@ -32,12 +46,100 @@ export function buildToastClipboardText(toast: ToastType): string {
 		.trim();
 }
 
+/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
+const ORANGE_HEX = '#f97316';
+
+/** The accent a toast color resolves to under a theme (icon, badge, progress bar). */
+export function toastAccentColor(color: ToastColor, theme: Theme): string {
+	switch (color) {
+		case 'green':
+			return theme.colors.success;
+		case 'red':
+			return theme.colors.error;
+		case 'yellow':
+			return theme.colors.warning;
+		case 'orange':
+			return ORANGE_HEX;
+		case 'theme':
+		default:
+			return theme.colors.accent;
+	}
+}
+
+/** Same glyph renderer for floating toasts and durable inbox entries. */
+export function ToastIcon({
+	color,
+	className = 'w-5 h-5',
+}: {
+	color: ToastColor;
+	className?: string;
+}) {
+	switch (color) {
+		case 'green':
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+				</svg>
+			);
+		case 'red':
+			// XCircle - error. Circled so it's not mistaken for the bare close (X) button.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+			);
+		case 'yellow':
+			// Info-style "i" - yellow is a soft heads-up.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+			);
+		case 'orange':
+			// AlertTriangle - more emphatic warning than yellow.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+					/>
+				</svg>
+			);
+		case 'theme':
+		default:
+			// Sparkles - themed default, no semantic.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+					/>
+				</svg>
+			);
+	}
+}
+
 const ToastItem = memo(function ToastItem({
 	toast,
 	theme,
 	onRemove,
 	onSessionClick,
 	widthDimensions,
+	fromLeft,
 }: {
 	toast: ToastType;
 	theme: Theme;
@@ -45,6 +147,8 @@ const ToastItem = memo(function ToastItem({
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
 	/** Pixel bounds from the toast-width setting, or null to fill the stack (phone). */
 	widthDimensions: { minWidth: number; maxWidth: number } | null;
+	/** Slide in from (and out to) the left edge instead of the right. */
+	fromLeft: boolean;
 }) {
 	const [isExiting, setIsExiting] = useState(false);
 	const [isEntering, setIsEntering] = useState(true);
@@ -67,127 +171,35 @@ const ToastItem = memo(function ToastItem({
 
 	const handleClose = (e?: React.MouseEvent) => {
 		e?.stopPropagation();
+		// Closing or clicking a toast is the user dealing with it; one that timed
+		// out on its own stays unread in the notification center.
+		useNotificationStore.getState().markNotificationRead(toast.id);
 		setIsExiting(true);
 		setTimeout(() => onRemove(toast.id), 300);
 	};
 
 	// Handle click on toast to navigate to session or trigger custom action.
-	// Order: onClick (renderer-only callback) → clickAction (data-driven, survives
-	// the IPC bridge from CLI/web) → legacy sessionId fallback.
+	// The precedence lives in runToastClick so the notification center's entry
+	// for this toast does the same thing.
 	const handleToastClick = () => {
-		if (toast.onClick) {
-			toast.onClick();
-			handleClose();
-			return;
-		}
-		if (toast.clickAction) {
-			// Every kind (AI tab, file preview, terminal tab, browser tab, external
-			// URL) is dispatched by one shared service so the behavior is identical
-			// wherever a toast came from.
-			dispatchToastClickAction(toast.clickAction, { onSessionClick });
-			handleClose();
-			return;
-		}
-		if (toast.sessionId && onSessionClick) {
-			onSessionClick(toast.sessionId, toast.tabId);
-			handleClose();
-		}
+		runToastClick(toast, { onSessionClick });
+		// An explicit click acknowledges this toast even if its destination is gone.
+		handleClose();
 	};
 
 	// Check if toast is clickable (has session navigation or custom action)
 	const isClickable = toast.onClick || toast.clickAction || (toast.sessionId && onSessionClick);
 
-	// Icon based on the toast color (5-color design language).
-	const getIcon = () => {
-		switch (toast.color) {
-			case 'green':
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-					</svg>
-				);
-			case 'red':
-				// XCircle - error. Circled so it's not mistaken for the bare close (X) button.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-				);
-			case 'yellow':
-				// Info-style "i" - yellow is a soft heads-up.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-				);
-			case 'orange':
-				// AlertTriangle - more emphatic warning than yellow.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-						/>
-					</svg>
-				);
-			case 'theme':
-			default:
-				// Sparkles - themed default, no semantic.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
-						/>
-					</svg>
-				);
-		}
-	};
+	const offscreen = fromLeft ? 'translateX(-100%)' : 'translateX(100%)';
 
-	/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
-	const ORANGE_HEX = '#f97316';
-
-	const getTypeColor = () => {
-		switch (toast.color) {
-			case 'green':
-				return theme.colors.success;
-			case 'red':
-				return theme.colors.error;
-			case 'yellow':
-				return theme.colors.warning;
-			case 'orange':
-				return ORANGE_HEX;
-			case 'theme':
-			default:
-				return theme.colors.accent;
-		}
-	};
+	const getTypeColor = () => toastAccentColor(toast.color, theme);
 
 	return (
 		<div
 			className="relative overflow-hidden transition-all duration-300 ease-out"
 			style={{
 				opacity: isEntering ? 0 : isExiting ? 0 : 1,
-				transform: isEntering
-					? 'translateX(100%)'
-					: isExiting
-						? 'translateX(100%)'
-						: 'translateX(0)',
-				marginBottom: '8px',
+				transform: isEntering || isExiting ? offscreen : 'translateX(0)',
 			}}
 		>
 			<div
@@ -212,7 +224,7 @@ const ToastItem = memo(function ToastItem({
 						backgroundColor: `${getTypeColor()}20`,
 					}}
 				>
-					{getIcon()}
+					<ToastIcon color={toast.color} />
 				</div>
 
 				{/* Content */}
@@ -293,6 +305,7 @@ const ToastItem = memo(function ToastItem({
 							style={{ color: theme.colors.accent }}
 							onClick={(e) => {
 								e.stopPropagation();
+								useNotificationStore.getState().markNotificationRead(toast.id);
 								openUrl(toast.actionUrl!);
 							}}
 						>
@@ -401,34 +414,70 @@ export const ToastContainer = memo(function ToastContainer({
 	const toasts = useNotificationStore((s) => s.toasts);
 	const removeToast = useNotificationStore((s) => s.removeToast);
 	const toastWidth = useSettingsStore((s) => s.toastWidth);
+	const toastPosition = useSettingsStore((s) => s.toastPosition);
+	const isTop = isTopToastPosition(toastPosition);
+	const isLeft = isLeftToastPosition(toastPosition);
 	// Subscribed so 'dynamic' toasts re-render (and re-resize) live as the user
-	// drags the Right Bar; ignored by the fixed presets.
+	// drags the side bar on the toast's side; ignored by the fixed presets.
+	const leftSidebarWidth = useSettingsStore((s) => s.leftSidebarWidth);
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	// Phone: every width preset is wider than the screen (small starts at 320px
-	// plus the gutter, on a 390px viewport), and the stack is pinned to the
-	// right edge, so the left half of each toast ran off screen. The stack spans
-	// the width instead and each toast fills it.
+	// plus the gutter, on a 390px viewport), so the stack spans the width
+	// instead and each toast fills it. A phone stack stays pinned to the bottom
+	// regardless of the corner setting: the top band belongs to the iOS status
+	// bar, and a stack spanning the screen has no left or right to pick.
 	const phone = usePhoneLayout();
-	const widthDimensions = phone ? null : getToastWidthDimensions(toastWidth, rightPanelWidth);
+	const stackAtTop = isTop && !phone;
+	const stackAtLeft = isLeft && !phone;
+	const widthDimensions = phone
+		? null
+		: getToastWidthDimensions(
+				toastWidth,
+				toastSidePanel(toastPosition, { leftSidebarWidth, rightPanelWidth }).width
+			);
 
-	// The floating media player opens in this same corner and sits far below
-	// toasts in z-order (toasts have to stay readable over modals), so an
+	// In a bottom corner, lift the stack above the composer when it would cover
+	// it (side bar closed or narrower than the toast). Width falls back to the
+	// preset max until the stack is measured, which errs toward lifting rather
+	// than covering. A top corner never meets the composer.
+	const avoidZones = useToastAvoidZoneStore((s) => s.zones);
+	const stackRef = useRef<HTMLDivElement>(null);
+	const stackWidth =
+		useElementWidth(stackRef, toasts.length > 0) ||
+		(widthDimensions ? widthDimensions.maxWidth : window.innerWidth - 2 * TOAST_PHONE_GUTTER);
+	const stackGutter = phone ? TOAST_PHONE_GUTTER : TOAST_VIEWPORT_GUTTER;
+	const stackLeft = stackAtLeft ? stackGutter : window.innerWidth - stackGutter - stackWidth;
+	const bottomInset = stackAtTop
+		? 0
+		: toastBottomInset(
+				avoidZones,
+				{ left: stackLeft, right: stackLeft + stackWidth },
+				window.innerHeight
+			);
+
+	// The floating media player opens in the bottom-right corner and sits far
+	// below toasts in z-order (toasts have to stay readable over modals), so an
 	// arriving notification used to paint straight over the widget - it looked
 	// like the player had closed itself. The stack steps over it instead: toasts
 	// are transient, and the widget is where the user deliberately put it.
 	//
 	// The lane is measured at the preset's FULL width rather than at the width
-	// this toast happens to render at. A narrower toast is right-aligned inside
-	// the same column, so the worst case is lifting when a short toast would have
-	// cleared the widget anyway - which costs nothing, while the other way round
-	// is the bug being fixed.
+	// this toast happens to render at, so the worst case is lifting when a short
+	// toast would have cleared the widget anyway - which costs nothing, while
+	// the other way round is the bug being fixed. The player's footprint is in
+	// right-edge coordinates, so a left-corner lane is translated into them.
 	const floatFootprint = useMediaPlaybackStore((s) => s.floatFootprint);
-	const playerLift = mediaFloatLaneLift(floatFootprint, {
-		fromRight: phone ? TOAST_PHONE_GUTTER : TOAST_VIEWPORT_GUTTER,
-		// A phone stack spans the screen, so it always shares the widget's column.
-		width: widthDimensions ? widthDimensions.maxWidth : Number.POSITIVE_INFINITY,
-		gap: TOAST_MEDIA_PLAYER_GAP,
-	});
+	const laneWidth = widthDimensions ? widthDimensions.maxWidth : Number.POSITIVE_INFINITY;
+	const playerLift = stackAtTop
+		? 0
+		: mediaFloatLaneLift(floatFootprint, {
+				fromRight: stackAtLeft
+					? Math.max(0, window.innerWidth - stackGutter - laneWidth)
+					: stackGutter,
+				// A phone stack spans the screen, so it always shares the widget's column.
+				width: laneWidth,
+				gap: TOAST_MEDIA_PLAYER_GAP,
+			});
 
 	// Toasts portal to document.body, which puts them OUTSIDE the app shell -
 	// the element that carries the interface font. Without restating it here
@@ -439,22 +488,39 @@ export const ToastContainer = memo(function ToastContainer({
 
 	if (toasts.length === 0) return null;
 
+	// The stack grows away from its corner with the newest toast nearest the
+	// corner: toasts are appended, so a bottom stack renders in order and a top
+	// stack renders reversed.
 	return createPortal(
 		<div
-			className={`fixed bottom-0 flex flex-col-reverse ${phone ? 'left-3 right-3' : 'right-4'}`}
+			className="fixed"
 			style={{
+				...(stackAtTop
+					? { top: TOAST_TOP_OFFSET }
+					: {
+							// Whichever obstacle reaches higher wins: the composer or the
+							// floating media player. Both are measured from the window bottom.
+							bottom: TOAST_BOTTOM_OFFSET + Math.max(bottomInset, playerLift),
+							transition: 'bottom 200ms ease-out',
+						}),
+				...(phone
+					? { left: TOAST_PHONE_GUTTER, right: TOAST_PHONE_GUTTER }
+					: stackAtLeft
+						? { left: TOAST_VIEWPORT_GUTTER }
+						: { right: TOAST_VIEWPORT_GUTTER }),
 				pointerEvents: 'none',
 				zIndex: Z_LAYERS.TOAST,
 				fontFamily,
 				paddingBottom: phone ? 'env(safe-area-inset-bottom, 0px)' : undefined,
-				// A margin rather than more padding: the stack is `bottom: 0`, so this
-				// offsets the whole thing upward and leaves the phone's safe-area
-				// padding to do its own job underneath.
-				marginBottom: playerLift || undefined,
 			}}
 			data-testid="toast-stack"
+			data-position={toastPosition}
 		>
-			<div style={{ pointerEvents: 'auto' }}>
+			<div
+				ref={stackRef}
+				className={`flex ${stackAtTop ? 'flex-col-reverse' : 'flex-col'}`}
+				style={{ pointerEvents: 'auto', gap: TOAST_STACK_GAP }}
+			>
 				{toasts.map((toast) => (
 					<ToastItem
 						key={toast.id}
@@ -463,6 +529,7 @@ export const ToastContainer = memo(function ToastContainer({
 						onRemove={removeToast}
 						onSessionClick={onSessionClick}
 						widthDimensions={widthDimensions}
+						fromLeft={stackAtLeft}
 					/>
 				))}
 			</div>

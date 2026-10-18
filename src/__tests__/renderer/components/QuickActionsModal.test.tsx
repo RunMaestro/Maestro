@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { getShortcutKeys } from '../../helpers/shortcutKeys';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
@@ -315,9 +316,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Toggle Sidebar')).toBeInTheDocument();
-			expect(
-				screen.getByText(formatShortcutKeys(mockShortcuts.toggleSidebar.keys))
-			).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.toggleSidebar.keys)).toBeInTheDocument();
 		});
 
 		it('renders Next Unread Tab action with shortcut', () => {
@@ -325,9 +324,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Next Unread / Draft Tab')).toBeInTheDocument();
-			expect(
-				screen.getByText(formatShortcutKeys(mockShortcuts.nextUnreadTab.keys))
-			).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.nextUnreadTab.keys)).toBeInTheDocument();
 		});
 
 		it('renders Previous Unread Tab with the chord that actually reaches it', () => {
@@ -337,9 +334,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Previous Unread / Draft Tab')).toBeInTheDocument();
-			expect(
-				screen.getByText(formatShortcutKeys(mockShortcuts.focusActiveTab.keys))
-			).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.focusActiveTab.keys)).toBeInTheDocument();
 		});
 
 		it('names the state the Unread Only entry puts you in, not the one you are in', () => {
@@ -374,10 +369,8 @@ describe('QuickActionsModal', () => {
 
 			expect(screen.getByText('Navigate Back')).toBeInTheDocument();
 			expect(screen.getByText('Navigate Forward')).toBeInTheDocument();
-			expect(screen.getByText(formatShortcutKeys(mockShortcuts.navBack.keys))).toBeInTheDocument();
-			expect(
-				screen.getByText(formatShortcutKeys(mockShortcuts.navForward.keys))
-			).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.navBack.keys)).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.navForward.keys)).toBeInTheDocument();
 		});
 
 		it('omits Navigate Back / Forward actions when handlers are absent', () => {
@@ -503,6 +496,58 @@ describe('QuickActionsModal', () => {
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
 				// The group stays collapsed - the bookmark row is the lighter reveal.
 				expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
+			});
+		});
+
+		describe('Opt+Cmd+# jump chord', () => {
+			const chord = (digit: string) => formatShortcutKeys(['Alt', 'Meta', digit]);
+			const rowFor = (label: string) => screen.getByText(label).closest('button')!;
+
+			it('shows the chord on jump rows for agents in the first ten Left Bar slots', () => {
+				const first = createMockSession({ id: 'session-1', name: 'First' });
+				const second = createMockSession({ id: 'session-2', name: 'Second' });
+				const props = createDefaultProps({
+					sessions: [first, second],
+					visibleSessions: [second, first],
+				});
+				render(<QuickActionsModal {...props} />);
+
+				// Slot order follows the Left Bar, not the sessions array.
+				expect(rowFor('Jump to: Second').textContent).toContain(chord('1'));
+				expect(rowFor('Jump to: First').textContent).toContain(chord('2'));
+			});
+
+			it('binds the tenth slot to 0 and gives the eleventh no chord', () => {
+				const sessions = Array.from({ length: 11 }, (_, i) =>
+					createMockSession({ id: `session-${i + 1}`, name: `Agent ${i + 1}` })
+				);
+				const props = createDefaultProps({ sessions, visibleSessions: sessions });
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Jump to: Agent 10').textContent).toContain(chord('0'));
+				expect(rowFor('Jump to: Agent 11').textContent).not.toContain(
+					formatShortcutKeys(['Alt', 'Meta'])
+				);
+			});
+
+			it('shows the chord in the agent switcher', () => {
+				const session = createMockSession({ id: 'session-1', name: 'Solo' });
+				const props = createDefaultProps({
+					sessions: [session],
+					visibleSessions: [session],
+					initialMode: 'agents',
+				});
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Solo').textContent).toContain(chord('1'));
+			});
+
+			it('shows no chord for an agent the Left Bar is not drawing', () => {
+				const session = createMockSession({ id: 'session-1', name: 'Hidden' });
+				const props = createDefaultProps({ sessions: [session], visibleSessions: [] });
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Jump to: Hidden').textContent).not.toContain(chord('1'));
 			});
 		});
 
@@ -1600,7 +1645,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText(formatShortcutKeys(['Alt', 'Cmd', 'R']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Alt', 'Cmd', 'R'])).toBeInTheDocument();
 		});
 
 		it('handles Refresh Files action', async () => {
@@ -1876,7 +1921,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText(formatShortcutKeys(['Cmd', 'Shift', 'D']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Cmd', 'Shift', 'D'])).toBeInTheDocument();
 		});
 	});
 
@@ -2057,7 +2102,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
-			expect(screen.getByText(formatShortcutKeys(['Alt', 'q']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Alt', 'q'])).toBeInTheDocument();
 		});
 	});
 
@@ -2073,7 +2118,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('View Execution Queue')).toBeInTheDocument();
-			expect(screen.getByText(formatShortcutKeys(['Cmd', 'Shift', 'X']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Cmd', 'Shift', 'X'])).toBeInTheDocument();
 		});
 	});
 

@@ -76,9 +76,10 @@ describe('Sessions Preload API', () => {
 			it('should invoke claude:getProjectStats', async () => {
 				mockInvoke.mockResolvedValue({ totalSessions: 5 });
 
-				await api.getProjectStats('/project');
+				await api.getProjectStats('/project', 'agent-7');
 
-				expect(mockInvoke).toHaveBeenCalledWith('claude:getProjectStats', '/project');
+				// The owner decides which Claude account's pool is totalled.
+				expect(mockInvoke).toHaveBeenCalledWith('claude:getProjectStats', '/project', 'agent-7');
 			});
 		});
 

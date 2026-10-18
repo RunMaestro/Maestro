@@ -4,6 +4,8 @@
 
 import { resolveAgentId, readSettingValue } from '../services/storage';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
+import { ExitCode } from '../exit-codes';
+import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
@@ -13,6 +15,14 @@ export interface DispatchOptions {
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
 	force?: boolean;
+	/**
+	 * With `--new-tab`: draw the new tab's chip in the strip. Without it the tab
+	 * is created hidden - named, running, and reachable from the completion toast
+	 * or the caller's delegation pill, but out of the user's tab space. A
+	 * hand-off between agents (or from a Cue pipeline) is background work, and a
+	 * chip per hand-off is clutter the user never asked for. `--focus` implies it.
+	 */
+	visible?: boolean;
 	/**
 	 * Ask for background placement: the active agent and the active tab both stay
 	 * where the user left them. Already the default with `--new-tab`; on the plain
@@ -30,6 +40,9 @@ export interface DispatchOptions {
 	queue?: boolean;
 	/** Alias for `queue`. */
 	wait?: boolean;
+	/** Queue Held: queue the prompt PAUSED, even on an idle agent, so it waits
+	 *  until `queue resume` (or the card's Resume). Implies `queue`. */
+	held?: boolean;
 	/**
 	 * Agent to wake with a real turn when THIS dispatch finishes. The callback is
 	 * correlated to (target agent, target tab) established at dispatch time, so
@@ -60,6 +73,8 @@ export interface DispatchResponse {
 	 *  Set by the --queue path and by --new-tab, whose fresh tab inherits the
 	 *  agent's busy state and so queues behind the turn already running. */
 	queued?: boolean;
+	/** True when --held queued the prompt paused; release it with `queue resume`. */
+	held?: boolean;
 	/** 1-based position in the execution queue (only when queued). */
 	queuePosition?: number;
 	/** Id of the queued item (only when queued); usable with `queue remove`. */
@@ -198,7 +213,19 @@ function callbackNotArmedResponse(agentId: string, tabId: string | null): Dispat
 	};
 }
 
+/** What an accepted `new_ai_tab_with_prompt` or `send_command` reply said. */
+interface DispatchedPrompt {
+	tabId?: string;
+	callbackId?: string;
+	queued: boolean;
+	itemId?: string;
+	queuePosition?: number;
+}
+
 function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
+	if (error instanceof MaestroNotRunningError) {
+		return { success: false, error: error.message, code: error.code };
+	}
 	if (error instanceof UnsupportedCommandError) {
 		return { success: false, error: error.message, code: 'UNSUPPORTED' };
 	}
@@ -206,30 +233,12 @@ function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 	// Checked before the substring sniffing below: this reason came from the
 	// desktop verbatim, so it must not be re-classified by whatever words it
 	// happens to contain.
-	if (msg.startsWith('NEW_TAB_REFUSED:')) {
-		return {
-			success: false,
-			error: msg.slice('NEW_TAB_REFUSED:'.length),
-			code: 'DISPATCH_REFUSED',
-		};
+	for (const prefix of ['NEW_TAB_REFUSED:', 'DISPATCH_REFUSED:']) {
+		if (msg.startsWith(prefix)) {
+			return { success: false, error: msg.slice(prefix.length), code: 'DISPATCH_REFUSED' };
+		}
 	}
 	const lowerMsg = msg.toLowerCase();
-	if (
-		lowerMsg.includes('econnrefused') ||
-		lowerMsg.includes('connection refused') ||
-		lowerMsg.includes('websocket') ||
-		lowerMsg.includes('enotfound') ||
-		lowerMsg.includes('etimedout') ||
-		lowerMsg.includes('maestro desktop app is not running') ||
-		lowerMsg.includes('discovery file is stale') ||
-		lowerMsg.includes('not connected to maestro')
-	) {
-		return {
-			success: false,
-			error: 'Maestro desktop is not running or not reachable',
-			code: 'MAESTRO_NOT_RUNNING',
-		};
-	}
 	if (
 		lowerMsg.includes('session not found') ||
 		lowerMsg.includes('no such session') ||
@@ -266,6 +275,14 @@ export async function runDispatch(
 		};
 	}
 
+	if (options.visible && !options.newTab) {
+		return {
+			success: false,
+			error: '--visible only applies to --new-tab (an existing tab is already in the strip)',
+			code: 'INVALID_OPTIONS',
+		};
+	}
+
 	// `--new-tab --force` is meaningless - the new tab owns no turn to bypass,
 	// and a prompt that cannot start because the AGENT is mid-turn is queued for
 	// the new tab rather than rejected. Reject the combo rather than silently
@@ -284,7 +301,7 @@ export async function runDispatch(
 	// contradictory. And --new-tab already does what --queue asks for - a prompt
 	// it cannot start now waits in the agent's queue - so the flag is redundant
 	// there; reject both combos rather than silently ignoring --queue.
-	const queue = options.queue === true || options.wait === true;
+	const queue = options.queue === true || options.wait === true || options.held === true;
 	if (queue && options.newTab) {
 		return {
 			success: false,
@@ -344,7 +361,7 @@ export async function runDispatch(
 		return runQueueDispatch(agentId, message, options, background, callback.fields, caller);
 	}
 	try {
-		const dispatched = await withMaestroClient(async (client) => {
+		const dispatched = await withMaestroClient(async (client): Promise<DispatchedPrompt> => {
 			if (options.newTab) {
 				const result = await client.sendCommand<{
 					success?: boolean;
@@ -360,6 +377,9 @@ export async function runDispatch(
 						// Background by default: a dispatched prompt is an agent talking to
 						// an agent, and the tab id we return is how the caller follows it.
 						...(background ? { background: true } : {}),
+						// Hidden by default too, so hand-offs do not pile up chips in the
+						// target's tab strip. A focused tab is never hidden.
+						...(background && !options.visible ? { hidden: true } : {}),
 						...callback.fields,
 						...caller,
 					},
@@ -390,7 +410,15 @@ export async function runDispatch(
 					queued: result.queued === true,
 				};
 			}
-			const result = await client.sendCommand<{ tabId?: string; callbackId?: string }>(
+			const result = await client.sendCommand<{
+				success?: boolean;
+				tabId?: string;
+				callbackId?: string;
+				queued?: boolean;
+				itemId?: string;
+				queuePosition?: number;
+				error?: string;
+			}>(
 				{
 					type: 'send_command',
 					sessionId: agentId,
@@ -410,7 +438,23 @@ export async function runDispatch(
 				},
 				'command_result'
 			);
-			return { tabId: result.tabId, callbackId: result.callbackId, queued: false };
+			// Same rule as the new-tab branch above: `sendCommand` resolves on any
+			// reply, so a `command_result` that says `success: false` (a headless
+			// host refusing what it cannot do, or the desktop renderer turning the
+			// command away) has to be read here. Reporting it as delivered would
+			// tell the caller a message landed that was in fact dropped.
+			if (result.success === false) {
+				throw new Error(`DISPATCH_REFUSED:${result.error || 'Maestro refused the message'}`);
+			}
+			return {
+				tabId: result.tabId,
+				callbackId: result.callbackId,
+				// The desktop turns a busy agent away; a headless host queues the
+				// message behind the running turn and says so.
+				queued: result.queued === true,
+				itemId: result.itemId,
+				queuePosition: result.queuePosition,
+			};
 		});
 		// `--tab <tabId>` is the authoritative target; the desktop handler
 		// echoes it back when we pass one. If the desktop omitted it (older
@@ -428,6 +472,10 @@ export async function runDispatch(
 			// `--new-tab` at a working agent creates the tab and queues the prompt
 			// behind the turn already running, so say which of the two happened.
 			...(dispatched.queued ? { queued: true } : {}),
+			...(dispatched.queued && dispatched.queuePosition !== undefined
+				? { queuePosition: dispatched.queuePosition }
+				: {}),
+			...(dispatched.queued && dispatched.itemId ? { itemId: dispatched.itemId } : {}),
 			...(dispatched.callbackId ? { callbackId: dispatched.callbackId } : {}),
 			...(callback.callerAgentId ? { notifyOnComplete: callback.callerAgentId } : {}),
 		};
@@ -471,6 +519,7 @@ async function runQueueDispatch(
 					inputMode: 'ai',
 					...(options.tab ? { tabId: options.tab } : {}),
 					...(background ? { background: true } : {}),
+					...(options.held ? { held: true } : {}),
 					...callbackFields,
 					...callerFields,
 				},
@@ -499,6 +548,7 @@ async function runQueueDispatch(
 			sessionId: resolvedTabId,
 			tabId: resolvedTabId,
 			queued: result.queued === true,
+			...(options.held && result.queued ? { held: true } : {}),
 			...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 			...(result.itemId ? { itemId: result.itemId } : {}),
 			...(result.callbackId ? { callbackId: result.callbackId } : {}),
@@ -520,7 +570,9 @@ export async function dispatch(
 
 	if (!result.success) {
 		emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
-		process.exit(1);
+		process.exit(
+			result.code === MAESTRO_NOT_RUNNING_CODE ? ExitCode.NotRunning : ExitCode.GeneralError
+		);
 		return;
 	}
 
@@ -532,6 +584,7 @@ export async function dispatch(
 				sessionId: result.sessionId,
 				tabId: result.tabId,
 				...(result.queued !== undefined ? { queued: result.queued } : {}),
+				...(result.held ? { held: true } : {}),
 				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 				...(result.itemId ? { itemId: result.itemId } : {}),
 				...(result.callbackId ? { callbackId: result.callbackId } : {}),

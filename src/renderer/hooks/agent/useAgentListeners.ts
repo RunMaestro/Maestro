@@ -15,6 +15,7 @@
  *    is encoded as named functions in `./internal/helpers/exit*.ts`.
  */
 
+import { subscribeHeadlessActivity } from '../../stores/headlessActivityStore';
 import { useEffect, useRef } from 'react';
 import type { ToolProgressState, UseAgentListenersDeps } from './internal/types';
 import { useAgentSlashCommandsListener } from './internal/useAgentSlashCommandsListener';
@@ -25,6 +26,7 @@ import { useAgentSessionIdListener } from './internal/useAgentSessionIdListener'
 import { useAgentThinkingListener } from './internal/useAgentThinkingListener';
 import { useThoughtStreamCaptureListener } from './internal/useThoughtStreamCaptureListener';
 import { useThoughtStreamToolListener } from './internal/useThoughtStreamToolListener';
+import { useSteeringVerdictListener } from './internal/useSteeringVerdictListener';
 import { useAgentSshRemoteListener } from './internal/useAgentSshRemoteListener';
 import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeModeResolvedListener';
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
@@ -32,6 +34,7 @@ import { useAgentDataListener } from './internal/useAgentDataListener';
 import { useAgentUserInputListener } from './internal/useAgentUserInputListener';
 import { useAgentErrorListener } from './internal/useAgentErrorListener';
 import { useAgentExitListener } from './internal/useAgentExitListener';
+import { registerContextCompactionSpawner } from '../../services/contextCompaction';
 
 export type { BatchedUpdater, UseAgentListenersDeps } from './internal/types';
 export { getErrorTitleForType } from './internal/helpers/errorTitles';
@@ -49,7 +52,7 @@ export {
  *
  * Handles: onData, onExit, onSessionId, onSlashCommands, onStderr,
  * onCommandExit, onUsage, onAgentError, onThinkingChunk, onSshRemote,
- * onToolExecution.
+ * onToolExecution, onSteeringVerdict.
  *
  * Call once in App.tsx. Empty dependency array - runs on mount, cleans up on unmount.
  */
@@ -92,8 +95,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		getBatchStateRef: deps.getBatchStateRef,
 		pauseBatchOnErrorRef: deps.pauseBatchOnErrorRef,
 		addHistoryEntryRef: deps.addHistoryEntryRef,
+		batchedUpdater: deps.batchedUpdater,
 		activeHiddenToolRef,
 	});
+	useEffect(subscribeHeadlessActivity, []);
 	useAgentThinkingListener();
 	useThoughtStreamCaptureListener();
 	useAgentSshRemoteListener();
@@ -103,6 +108,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// writes into a tab's logs and so can only serve tab-shaped spawns; this one
 	// feeds the Thought Stream's action feed for Auto Run batch spawns too.
 	useThoughtStreamToolListener();
+	// Chat steering: settles a steer the queue already let go of, re-queueing it
+	// when claude never took it.
+	useSteeringVerdictListener();
 
 	// Coordinator-level cleanup: clear the shared ref Map on unmount so any
 	// orphan tool entries are released for GC.
@@ -112,4 +120,18 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			activeHiddenTools.clear();
 		};
 	}, []);
+
+	// Automatic context compaction runs its hidden turn through the synopsis
+	// spawner. The retry engine that drives it lives outside React, so the
+	// spawner is handed across here. Read through the ref at call time: it is
+	// populated after this hook runs.
+	const spawnBackgroundSynopsisRef = deps.spawnBackgroundSynopsisRef;
+	useEffect(() => {
+		registerContextCompactionSpawner(async (...args) => {
+			const spawn = spawnBackgroundSynopsisRef.current;
+			if (!spawn) return { success: false, error: 'Agent execution is not ready.' };
+			return spawn(...args);
+		});
+		return () => registerContextCompactionSpawner(null);
+	}, [spawnBackgroundSynopsisRef]);
 }

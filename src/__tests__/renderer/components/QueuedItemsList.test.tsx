@@ -1,10 +1,12 @@
 /// <reference types="@testing-library/jest-dom/vitest" />
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { QueuedItemsList } from '../../../renderer/components/QueuedItemsList';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retryStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 
@@ -63,6 +65,112 @@ describe('QueuedItemsList pause/hold', () => {
 		setup({ onTogglePauseQueuedItem: undefined });
 		expect(screen.queryByTitle(/Hold this message/i)).toBeNull();
 		expect(screen.queryByText('HELD')).toBeNull();
+	});
+});
+
+describe('QueuedItemsList merge into the message above', () => {
+	const MERGE_TITLE = /Merge into the message above/i;
+
+	it('offers Merge on every card below another message', () => {
+		setup({
+			executionQueue: [item({ id: 'q1' }), item({ id: 'q2' }), item({ id: 'q3' })],
+			onMergeQueuedItem: vi.fn(),
+		});
+		expect(screen.getAllByTitle(MERGE_TITLE)).toHaveLength(2);
+	});
+
+	it('confirms with both messages shown and Merge focused before merging', async () => {
+		const onMergeQueuedItem = vi.fn();
+		setup({
+			executionQueue: [
+				item({ id: 'q1', text: 'first message' }),
+				item({ id: 'q2', text: 'second message' }),
+			],
+			onMergeQueuedItem,
+		});
+		fireEvent.click(screen.getByTitle(MERGE_TITLE));
+
+		// Nothing merges until the user accepts.
+		expect(onMergeQueuedItem).not.toHaveBeenCalled();
+		expect(screen.getByText('Merge Queued Messages?')).toBeInTheDocument();
+		expect(screen.getAllByText('first message').length).toBeGreaterThan(1);
+		expect(screen.getAllByText('second message').length).toBeGreaterThan(1);
+		expect(screen.getByText(/can't be undone/i)).toBeInTheDocument();
+
+		const confirm = screen.getByRole('button', { name: 'Merge' });
+		// The modal focuses Merge on the next frame, so Enter accepts.
+		await waitFor(() => expect(document.activeElement).toBe(confirm));
+		fireEvent.click(confirm);
+		expect(onMergeQueuedItem).toHaveBeenCalledWith('q2');
+		expect(screen.queryByText('Merge Queued Messages?')).toBeNull();
+	});
+
+	it('cancelling the confirmation leaves the queue alone', () => {
+		const onMergeQueuedItem = vi.fn();
+		setup({ executionQueue: [item({ id: 'q1' }), item({ id: 'q2' })], onMergeQueuedItem });
+		fireEvent.click(screen.getByTitle(MERGE_TITLE));
+		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+		expect(onMergeQueuedItem).not.toHaveBeenCalled();
+		expect(screen.queryByText('Merge Queued Messages?')).toBeNull();
+	});
+
+	it('hides Merge when the card above is a command or another tab', () => {
+		setup({
+			executionQueue: [
+				item({ id: 'q1', type: 'command', command: '/commit' }),
+				item({ id: 'q2' }),
+				item({ id: 'q3', tabId: 'tab-2' }),
+			],
+			onMergeQueuedItem: vi.fn(),
+		});
+		expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
+	});
+
+	it('omits Merge when no handler is wired', () => {
+		setup({ executionQueue: [item({ id: 'q1' }), item({ id: 'q2' })] });
+		expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
+	});
+});
+
+describe('QueuedItemsList held-for-retry badge', () => {
+	afterEach(() => {
+		act(() => useRetryStore.setState({ retries: {} }));
+	});
+
+	function holdForRetry(heldItemId: string) {
+		const entry = {
+			sessionId: 's1',
+			tabId: 'tab-1',
+			key: 's1:tab-1',
+			outageId: 'o1',
+			strategy: 'token-exhaustion',
+			mode: 'resend',
+			status: 'scheduled',
+			attempt: 0,
+			startedAt: 0,
+			nextRetryAt: 1,
+			lastMessage: 'limit',
+			heldItemId,
+		} as RetryEntry;
+		act(() => useRetryStore.setState({ retries: { [entry.key]: entry } }));
+	}
+
+	it('labels the parked failed turn, and only that item', () => {
+		setup({ executionQueue: [item({ id: 'failed' }), item({ id: 'next', text: 'follow-up' })] });
+		expect(screen.queryByTestId('held-for-retry-badge')).toBeNull();
+
+		holdForRetry('failed');
+		const badges = screen.getAllByTestId('held-for-retry-badge');
+		expect(badges).toHaveLength(1);
+		expect(badges[0]).toHaveAttribute('title', expect.stringMatching(/not a second copy/));
+	});
+
+	it('drops the label once the outage entry is gone', () => {
+		setup({ executionQueue: [item({ id: 'failed' })] });
+		holdForRetry('failed');
+		expect(screen.getByTestId('held-for-retry-badge')).toBeTruthy();
+		act(() => useRetryStore.setState({ retries: {} }));
+		expect(screen.queryByTestId('held-for-retry-badge')).toBeNull();
 	});
 });
 
@@ -408,7 +516,7 @@ describe('QueuedItemsList force send', () => {
 		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
 	});
 
-	it('shows Force Send disabled when another tab is busy and forced parallel is off', () => {
+	it('shows Force Send dimmed when another tab is busy and forced parallel is off', () => {
 		withForceSend(
 			eligibility({
 				otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
@@ -418,8 +526,35 @@ describe('QueuedItemsList force send', () => {
 			})
 		);
 		const button = screen.getByRole('button', { name: /Force Send/i });
-		expect(button).toBeDisabled();
+		expect(button).toHaveAttribute('aria-disabled', 'true');
 		expect(button.getAttribute('title')).toMatch(/Forced Parallel Execution/i);
+	});
+
+	it('clicking the dimmed Force Send explains the block and links to the setting', () => {
+		const onForceSendQueuedItem = vi.fn();
+		withForceSend(
+			eligibility({
+				otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+				requiresParallel: true,
+				canForce: false,
+				blockedReason: 'needs-forced-parallel',
+			}),
+			{ onForceSendQueuedItem }
+		);
+		fireEvent.click(screen.getByRole('button', { name: /Force Send/i }));
+		expect(screen.getByText('Force Send Is Off')).toBeInTheDocument();
+		// No send confirmation, and nothing dispatched.
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
+		expect(onForceSendQueuedItem).not.toHaveBeenCalled();
+
+		fireEvent.click(
+			screen.getByRole('button', { name: /Settings > General > Forced Parallel Execution/ })
+		);
+		const settings = useModalStore.getState().modals.get('settings');
+		expect(settings?.open).toBe(true);
+		expect(settings?.data).toEqual({ tab: 'general', settingId: 'general-forced-parallel' });
+		expect(screen.queryByText('Force Send Is Off')).toBeNull();
+		useModalStore.getState().closeModal('settings');
 	});
 
 	it('hides Force Send entirely when the item has no tab left to run on', () => {

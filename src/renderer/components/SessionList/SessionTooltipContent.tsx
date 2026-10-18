@@ -1,3 +1,4 @@
+import { useHasHeadlessActivity } from '../../stores/headlessActivityStore';
 import { memo } from 'react';
 import { Folder, GitBranch, Bot, Clock, Server } from 'lucide-react';
 import type { Session, Theme } from '../../types';
@@ -22,6 +23,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 	contextWarningYellowThreshold = 60,
 	contextWarningRedThreshold = 80,
 }: SessionTooltipContentProps) {
+	const hasHeadlessActivity = useHasHeadlessActivity(session.id);
 	const clampedContextUsage = Math.max(0, Math.min(100, session.contextUsage));
 
 	return (
@@ -115,7 +117,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				)}
 			</div>
 			<div className="text-2xs capitalize mb-2" style={{ color: theme.colors.textDim }}>
-				{session.state} • {session.toolType}
+				{hasHeadlessActivity ? 'busy' : session.state} • {session.toolType}
 				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
 

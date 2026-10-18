@@ -129,6 +129,30 @@ describe('useTranscriptBackfill', () => {
 		expect(onPrepend).toHaveBeenCalledWith(4);
 	});
 
+	it('reads from the configured SSH remote before the agent has spawned', async () => {
+		// Runtime `sshRemoteId` is empty after a restart; the saved config names the host.
+		const tab = makeTab({ logs: [] });
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			projectRoot: '/repo',
+			activeTabId: tab.id,
+			aiTabs: [tab],
+			sshRemoteId: undefined,
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'studio', workingDirOverride: '/remote' },
+		} as Partial<Session>);
+		useSessionStore.setState({ sessions: [session] } as never);
+		read.mockResolvedValue(page(2, 2));
+
+		const { result } = renderHook(() => useTranscriptBackfill(session, tab));
+
+		act(() => result.current.loadEarlier());
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		expect(read.mock.calls[0][1]).toBe('/remote');
+		expect(read.mock.calls[0][4]).toBe('studio');
+	});
+
 	it('widens the read window on each successive page', async () => {
 		const session = seedStore(makeTab({ logs: [] }));
 		read.mockResolvedValue(page(2000, 750));

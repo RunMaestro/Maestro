@@ -16,7 +16,10 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { encodeClaudeProjectPath } from '../shared/pathUtils';
+import {
+	resolveClaudeMemoryPath,
+	analyzeMemoryLinks,
+} from '../shared/maestro-lib/translation/memory';
 
 export interface MemoryEntry {
 	name: string; // filename, e.g. "MEMORY.md" or "user_role.md"
@@ -71,13 +74,14 @@ const SNIPPET_MAX_CHARS = 120;
 export function getMemoryDirectoryPath(
 	projectPath: string,
 	agentId: string = 'claude-code',
-	homeDir?: string
+	homeDir?: string,
+	directoryOverride?: string
 ): string {
+	if (directoryOverride) return directoryOverride;
 	if (agentId !== 'claude-code') {
 		throw new Error(`Memory viewer is not supported for agent "${agentId}"`);
 	}
-	const encoded = encodeClaudeProjectPath(projectPath);
-	return path.join(homeDir ?? os.homedir(), '.claude', 'projects', encoded, 'memory');
+	return resolveClaudeMemoryPath(projectPath, path.join(homeDir ?? os.homedir(), '.claude'));
 }
 
 function assertSafeFilename(filename: string): void {
@@ -92,9 +96,10 @@ function assertSafeFilename(filename: string): void {
 export async function listMemoryEntries(
 	projectPath: string,
 	agentId: string = 'claude-code',
-	homeDir?: string
+	homeDir?: string,
+	directoryOverride?: string
 ): Promise<MemoryListResult> {
-	const directoryPath = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+	const directoryPath = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
 	let names: string[];
 	try {
 		names = await fs.readdir(directoryPath);
@@ -163,10 +168,11 @@ export async function readMemoryEntry(
 	projectPath: string,
 	filename: string,
 	agentId: string = 'claude-code',
-	homeDir?: string
+	homeDir?: string,
+	directoryOverride?: string
 ): Promise<string> {
 	assertSafeFilename(filename);
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
 	return fs.readFile(path.join(dir, filename), 'utf8');
 }
 
@@ -175,10 +181,11 @@ export async function writeMemoryEntry(
 	filename: string,
 	content: string,
 	agentId: string = 'claude-code',
-	homeDir?: string
+	homeDir?: string,
+	directoryOverride?: string
 ): Promise<void> {
 	assertSafeFilename(filename);
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
 	await fs.mkdir(dir, { recursive: true });
 	await fs.writeFile(path.join(dir, filename), content, 'utf8');
 }
@@ -192,10 +199,11 @@ export async function createMemoryEntry(
 	filename: string,
 	content: string,
 	agentId: string = 'claude-code',
-	homeDir?: string
+	homeDir?: string,
+	directoryOverride?: string
 ): Promise<void> {
 	assertSafeFilename(filename);
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
 	await fs.mkdir(dir, { recursive: true });
 	const full = path.join(dir, filename);
 	try {
@@ -218,14 +226,15 @@ export async function deleteMemoryEntry(
 	projectPath: string,
 	filename: string,
 	agentId: string = 'claude-code',
-	homeDir?: string
+	homeDir?: string,
+	directoryOverride?: string
 ): Promise<void> {
 	assertSafeFilename(filename);
 	// MEMORY.md is the index and should not be casually deleted.
 	if (filename === 'MEMORY.md') {
 		throw new Error('MEMORY.md is the index and cannot be deleted from the viewer');
 	}
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
 	await fs.unlink(path.join(dir, filename));
 }
 
@@ -244,13 +253,14 @@ export async function searchMemoryEntries(
 	projectPath: string,
 	query: string,
 	agentId: string = 'claude-code',
-	homeDir?: string
+	homeDir?: string,
+	directoryOverride?: string
 ): Promise<MemorySearchMatch[]> {
-	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir);
+	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir, directoryOverride);
 	const needle = query.trim().toLowerCase();
 	if (!needle) return entries.map((e) => ({ name: e.name, matchedName: false }));
 
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
 	const matches: MemorySearchMatch[] = [];
 
 	for (const entry of entries) {
@@ -295,57 +305,22 @@ export async function searchMemoryEntries(
 export async function findOrphanMemories(
 	projectPath: string,
 	agentId: string = 'claude-code',
-	homeDir?: string
+	homeDir?: string,
+	directoryOverride?: string
 ): Promise<OrphanMemoryReport> {
-	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir);
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
-
-	/** Normalize a link target so `-` and `_` spellings collapse together. */
-	const normalize = (value: string): string =>
-		value
-			.trim()
-			.toLowerCase()
-			.replace(/\.(md|markdown)$/, '')
-			.replace(/[-_]/g, '-');
-
-	// Every alias a file answers to: its stem and its frontmatter name.
-	const aliasToFile = new Map<string, string>();
+	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir, directoryOverride);
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
 	const contents = new Map<string, string>();
 	for (const entry of entries) {
 		let content = '';
 		try {
 			content = await fs.readFile(path.join(dir, entry.name), 'utf8');
 		} catch {
-			// Unreadable mid-scan. It still exists as a link TARGET, so register
-			// its filename alias and move on rather than reporting it orphaned.
+			/* Retain unreadable files as link targets. */
 		}
 		contents.set(entry.name, content);
-		aliasToFile.set(normalize(entry.name), entry.name);
-		const frontMatterName = /^name:\s*(.+)$/m.exec(content)?.[1];
-		if (frontMatterName) aliasToFile.set(normalize(frontMatterName), entry.name);
 	}
-
-	const referenced = new Set<string>();
-	const brokenLinks: { source: string; target: string }[] = [];
-
-	for (const [source, content] of contents) {
-		const targets: string[] = [];
-		for (const match of content.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)) {
-			targets.push(match[1]);
-		}
-		for (const match of content.matchAll(/\]\(([^)]+\.(?:md|markdown))\)/gi)) {
-			targets.push(match[1]);
-		}
-		for (const target of targets) {
-			const resolved = aliasToFile.get(normalize(target));
-			if (!resolved) {
-				brokenLinks.push({ source, target: target.trim() });
-				continue;
-			}
-			// A file linking to itself does not make it referenced.
-			if (resolved !== source) referenced.add(resolved);
-		}
-	}
+	const { referenced, brokenLinks } = analyzeMemoryLinks(contents);
 
 	const orphans = entries
 		.map((e) => e.name)

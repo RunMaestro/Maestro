@@ -14,7 +14,8 @@
  */
 
 import { create } from 'zustand';
-import type { Session, Group, LogEntry, AITab, FilePreviewTab, BrowserTab } from '../types';
+import type { Session, Group, LogEntry, AITab, FilePreviewTab } from '../types';
+import type { BrowserTab } from '../../shared/browserPage';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { hasRunnableQueueItem } from '../utils/executionQueue';
@@ -27,6 +28,7 @@ import {
 	setGroupParent as updateGroupParent,
 } from '../../shared/groupHierarchy';
 import { useContextTimelineStore } from './contextTimelineStore';
+import { prependMergedContext } from '../../shared/maestro-lib/turns/prompt';
 import { forgetContextTimelineCaptures } from '../services/contextTimelineHydration';
 
 // ============================================================================
@@ -372,6 +374,11 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 				...(logEntry.images && { images: logEntry.images }),
 				...(logEntry.delivered !== undefined && { delivered: logEntry.delivered }),
 				...('aiCommand' in logEntry && logEntry.aiCommand && { aiCommand: logEntry.aiCommand }),
+				// A queued command's card is written here (see agentStore). Its
+				// stamps have to survive, or a failed dispatch cannot take the card
+				// back out and nothing can tell which queued item the card is.
+				...(logEntry.queuedItemId && { queuedItemId: logEntry.queuedItemId }),
+				...(logEntry.forceParallel && { forceParallel: true }),
 			};
 
 			const newSessions = s.sessions.map((session) => {
@@ -539,4 +546,24 @@ export function updateBrowserTab(
 			};
 		})
 	);
+}
+
+/**
+ * Prepend a tab's `pendingMergedContext` (set by merge, Send to Agent, and
+ * session-not-found recovery) to the prompt about to be spawned, and clear it
+ * so it is sent exactly once.
+ *
+ * Every spawn path must call this - the direct send AND the queue drain. A
+ * send that lands in the execution queue used to dispatch through
+ * `processQueuedItem`, which never read the context: the prompt went out bare
+ * and the context sat on the tab until some later, unrelated message.
+ *
+ * Reads the live store, so it is safe to call from async spawn code.
+ */
+export function takePendingMergedContext(sessionId: string, tabId: string, prompt: string): string {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	const context = session?.aiTabs.find((t) => t.id === tabId)?.pendingMergedContext;
+	if (!context) return prompt;
+	updateAiTab(sessionId, tabId, (tab) => ({ ...tab, pendingMergedContext: undefined }));
+	return prependMergedContext(prompt, context);
 }

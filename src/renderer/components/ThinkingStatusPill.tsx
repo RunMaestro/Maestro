@@ -5,13 +5,22 @@
  *
  * When AutoRun is active, shows a special AutoRun pill with total elapsed time instead.
  */
-import { memo, useState, useEffect, useRef } from 'react';
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { GitBranch, Compass } from 'lucide-react';
-import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
+import type {
+	Session,
+	Theme,
+	AITab,
+	BatchRunState,
+	ThinkingItem,
+	BackgroundAutoRun,
+} from '../types';
 import { formatTokensCompact } from '../utils/formatters';
-import { sleepAwareElapsedSince } from '../services/systemSleep';
+import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
 import { formatElapsedTicker } from '../../shared/duration';
 import { StopTurnButton } from './ui/StopTurnButton';
+import { useBackgroundAutoRuns } from '../hooks/batch/useBackgroundAutoRuns';
+import { useWindowContextOptional } from '../contexts/WindowContext';
 import {
 	selectPendingSteeringNotes,
 	useAutoRunSteeringStore,
@@ -38,19 +47,36 @@ interface ThinkingStatusPillProps {
 
 // ElapsedTimeDisplay - shows time since thinking (or the Auto Run) started.
 // Machine sleep is subtracted: the agent was suspended along with the app, so
-// counting the sleep would report an overnight wake as hours of work.
+// counting the sleep would report an overnight wake as hours of work. For an
+// Auto Run, pass the tracker fields too: a paused run's clock stops.
 const ElapsedTimeDisplay = memo(
-	({ startTime, textColor }: { startTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-			Math.floor(sleepAwareElapsedSince(startTime) / 1000)
+	({
+		startTime,
+		accumulatedElapsedMs,
+		lastActiveTimestamp,
+		textColor,
+	}: {
+		startTime: number;
+		accumulatedElapsedMs?: number;
+		lastActiveTimestamp?: number;
+		textColor: string;
+	}) => {
+		const measureSeconds = useCallback(
+			() =>
+				Math.floor(
+					autoRunActiveElapsedMs({ startTime, accumulatedElapsedMs, lastActiveTimestamp }) / 1000
+				),
+			[startTime, accumulatedElapsedMs, lastActiveTimestamp]
 		);
+		const [elapsedSeconds, setElapsedSeconds] = useState(measureSeconds);
 
 		useEffect(() => {
+			setElapsedSeconds(measureSeconds());
 			const interval = setInterval(() => {
-				setElapsedSeconds(Math.floor(sleepAwareElapsedSince(startTime) / 1000));
+				setElapsedSeconds(measureSeconds());
 			}, 1000);
 			return () => clearInterval(interval);
-		}, [startTime]);
+		}, [measureSeconds]);
 
 		return (
 			// Monospace on purpose, unlike the name slots around it: this counts up
@@ -167,6 +193,8 @@ function getAutoRunTaskCounts(autoRunState: BatchRunState): { completed: number;
 // AutoRun entry inside a "Running Processes" dropdown. When onStop is provided it renders a
 // per-row Stop button - used when AutoRun is demoted from the pill (because the focused tab is
 // busy) so the user can still stop AutoRun without losing it to a navigation-only list.
+// A run on ANOTHER agent passes agentName + onOpen instead: the row names that agent and
+// jumps to it, and carries no Stop (the pill's controls act on the viewed agent only).
 const AutoRunRow = memo(
 	({
 		theme,
@@ -174,56 +202,116 @@ const AutoRunRow = memo(
 		totalTasks,
 		isStopping,
 		onStop,
+		agentName,
+		onOpen,
 	}: {
 		theme: Theme;
 		completedTasks: number;
 		totalTasks: number;
 		isStopping?: boolean;
 		onStop?: () => void;
-	}) => (
-		<div
-			className="flex items-center justify-between gap-3 w-full px-3 py-2"
-			style={{ color: theme.colors.textMain }}
-		>
-			<div className="flex items-center gap-2 min-w-0">
+		agentName?: string;
+		onOpen?: () => void;
+	}) => {
+		const label = (
+			<>
 				<div
 					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
 					style={{ backgroundColor: theme.colors.accent }}
 				/>
-				<span className="text-xs font-medium">{isStopping ? 'AutoRun Stopping' : 'AutoRun'}</span>
-			</div>
-			<div className="flex items-center gap-2 shrink-0">
-				<span className="text-xs" style={{ color: theme.colors.textDim }}>
-					{completedTasks}/{totalTasks} tasks
+				<span className="text-xs truncate">
+					{agentName && (
+						<>
+							<span className="font-medium">{agentName}</span>
+							<span style={{ color: theme.colors.textDim }}> / </span>
+						</>
+					)}
+					<span className={agentName ? undefined : 'font-medium'}>
+						{isStopping ? 'AutoRun Stopping' : 'AutoRun'}
+					</span>
 				</span>
-				{onStop && (
+			</>
+		);
+		return (
+			<div
+				className="flex items-center justify-between gap-3 w-full px-3 py-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				{onOpen ? (
 					<button
-						onClick={() => !isStopping && onStop()}
-						disabled={isStopping}
-						className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium transition-colors ${
-							isStopping ? 'cursor-not-allowed' : 'hover:opacity-80'
-						}`}
-						style={{
-							backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
-							color: isStopping ? theme.colors.bgMain : 'white',
-							pointerEvents: isStopping ? 'none' : 'auto',
-						}}
-						title={
-							isStopping ? 'Stopping after current task...' : 'Stop auto-run after current task'
-						}
+						type="button"
+						onClick={onOpen}
+						className="flex items-center gap-2 min-w-0 text-left hover:underline"
+						style={{ color: theme.colors.textMain }}
 					>
-						<svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor">
-							<rect x="6" y="6" width="12" height="12" rx="1" />
-						</svg>
-						{isStopping ? 'Stopping' : 'Stop'}
+						{label}
 					</button>
+				) : (
+					<div className="flex items-center gap-2 min-w-0">{label}</div>
 				)}
+				<div className="flex items-center gap-2 shrink-0">
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						{completedTasks}/{totalTasks} tasks
+					</span>
+					{onStop && (
+						<button
+							onClick={() => !isStopping && onStop()}
+							disabled={isStopping}
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium transition-colors ${
+								isStopping ? 'cursor-not-allowed' : 'hover:opacity-80'
+							}`}
+							style={{
+								backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
+								color: isStopping ? theme.colors.bgMain : 'white',
+								pointerEvents: isStopping ? 'none' : 'auto',
+							}}
+							title={
+								isStopping ? 'Stopping after current task...' : 'Stop auto-run after current task'
+							}
+						>
+							<svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor">
+								<rect x="6" y="6" width="12" height="12" rx="1" />
+							</svg>
+							{isStopping ? 'Stopping' : 'Stop'}
+						</button>
+					)}
+				</div>
 			</div>
-		</div>
-	)
+		);
+	}
 );
 
 AutoRunRow.displayName = 'AutoRunRow';
+
+// Dropdown rows for Auto Runs on other agents. Clicking one jumps to that agent.
+function BackgroundAutoRunRows({
+	runs,
+	theme,
+	onSessionClick,
+}: {
+	runs: BackgroundAutoRun[];
+	theme: Theme;
+	onSessionClick?: (sessionId: string, tabId?: string) => void;
+}) {
+	return (
+		<>
+			{runs.map((run) => {
+				const { completed, total } = getAutoRunTaskCounts(run.state);
+				return (
+					<AutoRunRow
+						key={`autorun-${run.sessionId}`}
+						theme={theme}
+						completedTasks={completed}
+						totalTasks={total}
+						isStopping={run.state.isStopping}
+						agentName={run.sessionName}
+						onOpen={onSessionClick ? () => onSessionClick(run.sessionId) : undefined}
+					/>
+				);
+			})}
+		</>
+	);
+}
 
 /**
  * AutoRunPill - Shows when AutoRun is active
@@ -239,6 +327,8 @@ const AutoRunPill = memo(
 		thinkingItems,
 		namedSessions,
 		onSessionClick,
+		backgroundAutoRuns,
+		agentName,
 	}: {
 		theme: Theme;
 		autoRunState: BatchRunState;
@@ -248,13 +338,18 @@ const AutoRunPill = memo(
 		thinkingItems?: ThinkingItem[];
 		namedSessions?: Record<string, string>;
 		onSessionClick?: (sessionId: string, tabId?: string) => void;
+		/** Auto Runs on other agents, listed after the thinking items. */
+		backgroundAutoRuns?: BackgroundAutoRun[];
+		/** Set when this run belongs to an agent other than the viewed one: the pill
+		 *  names it, and the name jumps there. */
+		agentName?: string;
 	}) => {
 		const [isExpanded, setIsExpanded] = useState(false);
 		const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const startTime = autoRunState.startTime || Date.now();
 		const { isStopping } = autoRunState;
 		const { completed: completedTasks, total: totalTasks } = getAutoRunTaskCounts(autoRunState);
-		const concurrentCount = thinkingItems?.length || 0;
+		const concurrentCount = (thinkingItems?.length || 0) + (backgroundAutoRuns?.length || 0);
 		// Steering notes the operator typed that no task has picked up yet. The
 		// selector hands back a stable empty array, so a run with no notes never
 		// churns this subscription.
@@ -300,6 +395,22 @@ const AutoRunPill = memo(
 						className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse"
 						style={{ backgroundColor: theme.colors.accent }}
 					/>
+
+					{/* Owning agent - only when the run is not on the viewed agent */}
+					{agentName && (
+						<>
+							<button
+								type="button"
+								onClick={() => sessionId && onSessionClick?.(sessionId)}
+								className="text-xs font-medium shrink-0 hover:underline"
+								style={{ color: theme.colors.textMain }}
+								title={`Go to ${agentName}`}
+							>
+								{agentName}
+							</button>
+							<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
+						</>
+					)}
 
 					{/* AutoRun label */}
 					<span
@@ -373,7 +484,12 @@ const AutoRunPill = memo(
 						<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
 						<div className="flex items-center gap-1">
 							<span className="pill-label">Elapsed:</span>
-							<ElapsedTimeDisplay startTime={startTime} textColor={theme.colors.textMain} />
+							<ElapsedTimeDisplay
+								startTime={startTime}
+								accumulatedElapsedMs={autoRunState.accumulatedElapsedMs}
+								lastActiveTimestamp={autoRunState.lastActiveTimestamp}
+								textColor={theme.colors.textMain}
+							/>
 						</div>
 					</div>
 
@@ -478,6 +594,13 @@ const AutoRunPill = memo(
 										onSessionClick={onSessionClick}
 									/>
 								))}
+								{backgroundAutoRuns && (
+									<BackgroundAutoRunRows
+										runs={backgroundAutoRuns}
+										theme={theme}
+										onSessionClick={onSessionClick}
+									/>
+								)}
 							</div>
 						</div>
 					)}
@@ -510,6 +633,18 @@ function ThinkingStatusPillInner({
 }: ThinkingStatusPillProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Auto Runs on other agents. The viewed agent's run arrives as autoRunState.
+	// Multi-window: drop runs on agents another window owns, the same scoping
+	// buildThinkingItems applies to busy tabs.
+	const ownsSession = useWindowContextOptional()?.ownsSession;
+	const allBackgroundAutoRuns = useBackgroundAutoRuns(activeSessionId);
+	const backgroundAutoRuns = useMemo(
+		() =>
+			ownsSession
+				? allBackgroundAutoRuns.filter((run) => ownsSession(run.sessionId))
+				: allBackgroundAutoRuns,
+		[allBackgroundAutoRuns, ownsSession]
+	);
 
 	const handleHoverEnter = () => {
 		if (closeTimerRef.current) {
@@ -562,13 +697,28 @@ function ThinkingStatusPillInner({
 				thinkingItems={thinkingItems}
 				namedSessions={namedSessions}
 				onSessionClick={onSessionClick}
+				backgroundAutoRuns={backgroundAutoRuns}
 			/>
 		);
 	}
 
 	// thinkingItems is pre-filtered by caller (PERF optimization)
 	if (thinkingItems.length === 0) {
-		return null;
+		if (backgroundAutoRuns.length === 0) return null;
+		// Nothing is thinking, but another agent is mid Auto Run: show that run,
+		// named, with the rest in the dropdown. No Stop - it is not this agent's run.
+		const [firstRun, ...otherRuns] = backgroundAutoRuns;
+		return (
+			<AutoRunPill
+				theme={theme}
+				autoRunState={firstRun.state}
+				sessionId={firstRun.sessionId}
+				agentName={firstRun.sessionName}
+				namedSessions={namedSessions}
+				onSessionClick={onSessionClick}
+				backgroundAutoRuns={otherRuns}
+			/>
+		);
 	}
 
 	// AutoRun is running but demoted because the focused tab is busy - surface it in the dropdown.
@@ -589,8 +739,9 @@ function ThinkingStatusPillInner({
 	const primaryItem = activeItem || thinkingItems[0];
 	const additionalItems = thinkingItems.filter((item) => item !== primaryItem);
 	// The dropdown lists every other running process. A demoted AutoRun counts as one entry, so the
-	// +N badge and dropdown appear even when the focused tab is the only thinking item.
-	const extraCount = additionalItems.length + (demotedAutoRun ? 1 : 0);
+	// +N badge and dropdown appear even when the focused tab is the only thinking item. Auto Runs
+	// on other agents count too: they never mark a tab busy, so they are not thinking items.
+	const extraCount = additionalItems.length + (demotedAutoRun ? 1 : 0) + backgroundAutoRuns.length;
 	const hasMultiple = extraCount > 0;
 
 	const { session: primarySession, tab: primaryTab } = primaryItem;
@@ -764,7 +915,9 @@ function ThinkingStatusPillInner({
 									backgroundColor: theme.colors.bgActivity,
 								}}
 							>
-								{demotedAutoRun ? 'Running Processes' : 'All Thinking Sessions'}
+								{demotedAutoRun || backgroundAutoRuns.length > 0
+									? 'Running Processes'
+									: 'All Thinking Sessions'}
 							</div>
 							{demotedAutoRun && (
 								<AutoRunRow
@@ -784,6 +937,11 @@ function ThinkingStatusPillInner({
 									onSessionClick={onSessionClick}
 								/>
 							))}
+							<BackgroundAutoRunRows
+								runs={backgroundAutoRuns}
+								theme={theme}
+								onSessionClick={onSessionClick}
+							/>
 						</div>
 					</div>
 				)}
@@ -811,6 +969,8 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prevAutoRun?.totalTasksAcrossAllDocs !== nextAutoRun?.totalTasksAcrossAllDocs ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
 			prevAutoRun?.startTime !== nextAutoRun?.startTime ||
+			prevAutoRun?.accumulatedElapsedMs !== nextAutoRun?.accumulatedElapsedMs ||
+			prevAutoRun?.lastActiveTimestamp !== nextAutoRun?.lastActiveTimestamp ||
 			// Decides whether the Stop button is rendered at all
 			prevAutoRun?.mirrored !== nextAutoRun?.mirrored ||
 			// Goal-Driven progress fields drive the goal readout on the pill

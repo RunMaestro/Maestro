@@ -12,10 +12,15 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../../cli/services/storage', () => ({
-	readSessions: vi.fn(() => []),
-	getSessionHistoryMtimeMs: vi.fn(() => 0),
-}));
+vi.mock('../../../cli/services/storage', () => {
+	const readSessions = vi.fn(() => []);
+	return {
+		readSessions,
+		// The live list is the stored list here: no fixture holds a dormant agent.
+		readLiveSessions: (...args: unknown[]) => readSessions(...(args as [])),
+		getSessionHistoryMtimeMs: vi.fn(() => 0),
+	};
+});
 
 import {
 	isPathInside,

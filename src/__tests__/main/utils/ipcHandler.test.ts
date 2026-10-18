@@ -680,6 +680,27 @@ describe('ipcHandler.ts', () => {
 	});
 
 	describe('createIpcHandler', () => {
+		it('runs the precondition first and returns its throw as a failure, never calling the handler', async () => {
+			const body = vi.fn(async () => ({ ran: true }));
+			let allowed = false;
+			const handler = createIpcHandler(
+				{
+					context: '[Symphony]',
+					operation: 'getRegistry',
+					precondition: () => {
+						if (!allowed) throw new Error('SymphonyDisabled');
+					},
+				},
+				body
+			);
+
+			expect(await handler({})).toEqual({ success: false, error: 'Error: SymphonyDisabled' });
+			expect(body).not.toHaveBeenCalled();
+
+			allowed = true;
+			expect(await handler({})).toEqual({ success: true, ran: true });
+		});
+
 		it('should strip event argument and pass remaining args to handler', async () => {
 			const handler = createIpcHandler(
 				{ context: '[AutoRun]', operation: 'listDocs' },

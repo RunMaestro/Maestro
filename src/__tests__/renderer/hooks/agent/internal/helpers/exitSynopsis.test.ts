@@ -84,11 +84,62 @@ describe('shouldRunSynopsisOnExit', () => {
 		).toBe(false);
 	});
 
+	it('returns false while a consult hold is waiting to resume the session', () => {
+		// The hold is not runnable yet, but its continuation resumes this same
+		// provider session the moment the consult replies - a synopsis now would
+		// be a second writer on it.
+		const hold = {
+			id: 'hold',
+			timestamp: 0,
+			tabId: 't',
+			type: 'message' as const,
+			awaitingConsult: {
+				pending: [{ targetSessionId: 's-b', targetAgentName: 'Backend' }],
+				replies: [],
+			},
+		};
+		expect(
+			shouldRunSynopsisOnExit(
+				{ executionQueue: [hold], agentSessionId: 'a' },
+				{ agentSessionId: 'a', saveToHistory: true }
+			)
+		).toBe(false);
+	});
+
 	it('returns false when no agentSessionId on tab or session', () => {
 		expect(
 			shouldRunSynopsisOnExit(
 				{ executionQueue: [], agentSessionId: undefined, pendingAICommandForSynopsis: '/c' },
 				{ agentSessionId: null, saveToHistory: true }
+			)
+		).toBe(false);
+	});
+
+	it('ignores work queued for OTHER tabs', () => {
+		// The queue is agent-wide; a synopsis resumes one tab's provider session.
+		// Another tab's queued message must not drop this tab's History entry.
+		const other = { id: 'q1', timestamp: 0, tabId: 'tab-b', type: 'message' as const };
+		const otherHold = {
+			id: 'q2',
+			timestamp: 0,
+			tabId: 'tab-c',
+			type: 'message' as const,
+			awaitingConsult: { pending: [], replies: [] },
+		};
+		expect(
+			shouldRunSynopsisOnExit(
+				{ executionQueue: [other, otherHold] as any, agentSessionId: 'a' },
+				{ id: 'tab-a', agentSessionId: 'a', saveToHistory: true }
+			)
+		).toBe(true);
+	});
+
+	it('still defers when the completed tab has its own queued follow-up', () => {
+		const own = { id: 'q1', timestamp: 0, tabId: 'tab-a', type: 'message' as const };
+		expect(
+			shouldRunSynopsisOnExit(
+				{ executionQueue: [own] as any, agentSessionId: 'a' },
+				{ id: 'tab-a', agentSessionId: 'a', saveToHistory: true }
 			)
 		).toBe(false);
 	});

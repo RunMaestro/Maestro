@@ -1,8 +1,16 @@
+import { requestProviderTranslation } from '../../services/providerTranslation';
+import type { TranslationPlan } from '../../../shared/maestro-lib/translation/types';
+import { getDeclaredTranslationDirection } from '../../../shared/maestro-lib/translation/support';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X, Folder } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
+import { MiniBadge } from '../ui/MiniBadge';
+import { ThemedSelect } from '../shared/ThemedSelect';
 import { AgentResilienceSection } from './AgentResilienceSection';
+import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
+import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -32,6 +40,8 @@ import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
+import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
+import type { CodexTransport } from '../../../shared/codexTransport';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -86,6 +96,8 @@ export function EditAgentModal({
 	// on Session for why this one does NOT follow the resilience flags' default-on
 	// rule: reset credits are finite and irreversible.
 	const [codexAutoReset, setCodexAutoReset] = useState(false);
+	// Codex transport. `exec` is the default; app-server is an experimental opt-in.
+	const [codexTransport, setCodexTransport] = useState<CodexTransport>('exec');
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -130,6 +142,83 @@ export function EditAgentModal({
 
 	// Track whether provider has been changed from the original
 	const providerChanged = session ? selectedToolType !== session.toolType : false;
+	/** Live store entry for this agent; the form's session prop is an opening snapshot. */
+	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
+	const [migrationPlan, setMigrationPlan] = useState<TranslationPlan | null>(null);
+	const [migrationError, setMigrationError] = useState('');
+	const [migrationLoading, setMigrationLoading] = useState(false);
+	const [migrationSaving, setMigrationSaving] = useState(false);
+	const [acceptTranslationLimitations, setAcceptTranslationLimitations] = useState(false);
+	const [selectedUserResources, setSelectedUserResources] = useState<string[]>(['']);
+	const [selectionRevision, setSelectionRevision] = useState(0);
+	const carryOverBadge = useMemo(
+		() => (
+			<MiniBadge
+				label="Carry Over"
+				theme={theme}
+				className="inline-flex align-middle whitespace-nowrap"
+				style={{ textTransform: 'none', borderRadius: '9999px' }}
+			/>
+		),
+		[theme]
+	);
+	const providerOptions = useMemo(
+		() =>
+			SUPPORTED_AGENTS.map((provider) => ({
+				value: provider,
+				label: getAgentDisplayName(provider),
+				rightContent: getDeclaredTranslationDirection(session?.toolType ?? '', provider)
+					? carryOverBadge
+					: undefined,
+			})),
+		[session?.toolType, carryOverBadge]
+	);
+	const currentMigration = (liveSession ?? session)?.providerMigration;
+	const migrationState =
+		currentMigration?.operationId === migrationPlan?.id
+			? currentMigration?.state
+			: migrationPlan?.status;
+	const migrationActivity = migrationSaving
+		? migrationState === 'deferred'
+			? 'Waiting for the current turn to finish...'
+			: migrationState === 'staged' || migrationState === 'committing'
+				? 'Finishing provider switch...'
+				: 'Translating memory and session history...'
+		: migrationLoading
+			? 'Reading memory and session history...'
+			: null;
+	useEffect(() => {
+		if (!isOpen || !session || !providerChanged) {
+			setMigrationPlan(null);
+			return;
+		}
+		let disposed = false;
+		setMigrationLoading(true);
+		setAcceptTranslationLimitations(false);
+		setMigrationError('');
+		void requestProviderTranslation({
+			agentId: session.id,
+			destination: selectedToolType,
+			action: 'plan',
+			selectedUserResources: selectedUserResources.map((p) => p.trim()).filter(Boolean),
+		})
+			.then((report) => {
+				if (disposed) return;
+				setMigrationPlan(report.plan ?? null);
+				setMigrationError(report.error ?? '');
+				setMigrationLoading(false);
+			})
+			.catch((error) => {
+				if (disposed) return;
+				setMigrationPlan(null);
+				setMigrationError(error instanceof Error ? error.message : String(error));
+				setMigrationLoading(false);
+			});
+		return () => {
+			disposed = true;
+		};
+		// Resource edits are reviewed explicitly, so typing does not repeatedly scan native history.
+	}, [isOpen, session?.id, providerChanged, selectedToolType, selectionRevision]);
 
 	// Resolve the auto-detected maestro-p path so the Batch Mode toggle can show
 	// it as helper text in the path-override input.
@@ -320,6 +409,10 @@ export function EditAgentModal({
 			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
 			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
 			setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
+			// Read the stored value, not `resolveCodexTransport`: that answers `exec`
+			// for a non-Codex agent, and saving it back would erase the preference
+			// of an agent that was moved off Codex and may move back.
+			setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
 		}
 
 		return () => {
@@ -339,8 +432,11 @@ export function EditAgentModal({
 			setAdditionalDirectories((session.additionalDirectories ?? []).map((d) => ({ ...d })));
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
+			setSelectedUserResources(['']);
+			setAcceptTranslationLimitations(false);
+			setSelectionRevision((v) => v + 1);
 		}
-	}, [isOpen, session]);
+	}, [isOpen, session?.id]);
 
 	// Validate session name uniqueness (excluding current session)
 	const validation = useMemo(() => {
@@ -419,9 +515,6 @@ export function EditAgentModal({
 		if (folder) setWorkingDir(folder);
 	}, []);
 
-	/** Live store entry for this agent; see the snapshot note in the memo below. */
-	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
-
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
 	 * the one in use (#1370, following finding AD1).
@@ -470,8 +563,16 @@ export function EditAgentModal({
 		};
 	}, [liveSession, session, providerChanged]);
 
-	const handleSave = useCallback(() => {
-		if (!session) return;
+	const handleSave = useCallback(async () => {
+		if (!session || migrationSaving) return;
+		if (
+			providerChanged &&
+			(!migrationPlan ||
+				migrationLoading ||
+				migrationPlan.status === 'blocked' ||
+				(migrationPlan.limitations.length > 0 && !acceptTranslationLimitations))
+		)
+			return;
 		const name = instanceName.trim();
 		if (!name) return;
 
@@ -526,34 +627,55 @@ export function EditAgentModal({
 					};
 
 		// Save with per-session config fields including model, contextWindow, and SSH config
-		onSave(
-			session.id,
-			name,
-			providerChanged ? selectedToolType : undefined,
-			nudgeMessage.trim() || undefined,
-			newSessionMessage.trim() || undefined,
-			customPath.trim() || undefined,
-			customArgs.trim() || undefined,
-			Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
-			modelValue,
-			effortValue,
-			contextWindowValue,
-			sessionSshRemoteConfig,
-			// Preserve the explicit tri-state: an explicit `false` (API) must NOT
-			// collapse to `undefined`, or over SSH it reverts to the TUI default.
-			enableMaestroP,
-			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
-			enableMaestroP ? maestroPMode : undefined,
-			retryOnAvailabilityErrors,
-			retryOnTokenExhaustion,
-			normalizeAdditionalDirectories(additionalDirectories, homeDir),
-			contextWindowSource,
-			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
-			workingDirChanged ? trimmedWorkingDir : undefined,
-			codexAutoReset
-		);
-		onClose();
+		setMigrationSaving(true);
+		setMigrationError('');
+		try {
+			const saveArguments: Parameters<typeof onSave> = [
+				session.id,
+				name,
+				providerChanged ? selectedToolType : undefined,
+				nudgeMessage.trim() || undefined,
+				newSessionMessage.trim() || undefined,
+				customPath.trim() || undefined,
+				customArgs.trim() || undefined,
+				Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
+				modelValue,
+				effortValue,
+				contextWindowValue,
+				sessionSshRemoteConfig,
+				// Preserve the explicit tri-state: an explicit `false` (API) must NOT
+				// collapse to `undefined`, or over SSH it reverts to the TUI default.
+				enableMaestroP,
+				enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
+				enableMaestroP ? maestroPMode : undefined,
+				retryOnAvailabilityErrors,
+				retryOnTokenExhaustion,
+				normalizeAdditionalDirectories(additionalDirectories, homeDir),
+				contextWindowSource,
+				Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
+				workingDirChanged ? trimmedWorkingDir : undefined,
+				codexAutoReset,
+				codexTransport,
+			];
+			if (providerChanged) {
+				saveArguments[23] = acceptTranslationLimitations;
+				saveArguments[24] = selectedUserResources.map((p) => p.trim()).filter(Boolean);
+				saveArguments[25] = migrationPlan?.id;
+			}
+			const saved = onSave(...saveArguments);
+			if (saved) await saved;
+			onClose();
+		} catch (error) {
+			setMigrationError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setMigrationSaving(false);
+		}
 	}, [
+		migrationSaving,
+		migrationPlan,
+		migrationLoading,
+		acceptTranslationLimitations,
+		selectedUserResources,
 		session,
 		instanceName,
 		workingDirChanged,
@@ -574,6 +696,7 @@ export function EditAgentModal({
 		retryOnAvailabilityErrors,
 		retryOnTokenExhaustion,
 		codexAutoReset,
+		codexTransport,
 		agent,
 		agentConfig,
 		sshRemoteConfig,
@@ -618,9 +741,28 @@ export function EditAgentModal({
 		// The existing path stays informational so an agent whose remote is offline
 		// can still be edited.
 		return (
-			!!instanceName.trim() && validation.valid && !workingDirError && !newWorkingDirUnverified
+			!!instanceName.trim() &&
+			validation.valid &&
+			!workingDirError &&
+			!newWorkingDirUnverified &&
+			!migrationSaving &&
+			(!providerChanged ||
+				(!!migrationPlan &&
+					!migrationLoading &&
+					migrationPlan.status !== 'blocked' &&
+					(migrationPlan.limitations.length === 0 || acceptTranslationLimitations)))
 		);
-	}, [instanceName, validation.valid, workingDirError, newWorkingDirUnverified]);
+	}, [
+		instanceName,
+		validation.valid,
+		workingDirError,
+		newWorkingDirUnverified,
+		migrationSaving,
+		providerChanged,
+		migrationPlan,
+		migrationLoading,
+		acceptTranslationLimitations,
+	]);
 
 	// Handle keyboard shortcuts via window listener (Modal stops propagation on its backdrop)
 	useEffect(() => {
@@ -640,6 +782,13 @@ export function EditAgentModal({
 	if (!isOpen || !session) return null;
 
 	const agentName = getAgentDisplayName(selectedToolType);
+	// Whether a turn of this agent can run through the claude TUI, as the form
+	// stands now. Dynamic counts: it starts on the TUI and leaves it only near a
+	// limit. Read through the one resolver every spawn uses, so an SSH agent
+	// that was never configured (TUI by default) is answered the same way here.
+	const usesInteractiveTokenSource =
+		selectedToolType === 'claude-code' &&
+		getClaudeTokenMode({ enableMaestroP, maestroPMode }, { sshEnabled: !!isSshEnabled }) !== 'api';
 
 	return (
 		<Modal
@@ -685,7 +834,13 @@ export function EditAgentModal({
 					theme={theme}
 					onCancel={onClose}
 					onConfirm={handleSave}
-					confirmLabel="Save Changes"
+					confirmLabel={
+						migrationSaving
+							? migrationState === 'deferred'
+								? 'Waiting for current turn'
+								: 'Translating provider'
+							: 'Save Changes'
+					}
 					confirmDisabled={!isFormValid}
 				/>
 			}
@@ -712,37 +867,110 @@ export function EditAgentModal({
 					>
 						Agent Provider
 					</div>
-					<select
+					<ThemedSelect
+						aria-label="Agent Provider"
 						value={selectedToolType}
-						onChange={(e) => setSelectedToolType(e.target.value as ToolType)}
-						className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							backgroundColor: theme.colors.bgMain,
-						}}
-					>
-						{SUPPORTED_AGENTS.map((agentId) => (
-							<option key={agentId} value={agentId}>
-								{getAgentDisplayName(agentId)}
-							</option>
-						))}
-					</select>
+						options={providerOptions}
+						theme={theme}
+						disabled={migrationSaving}
+						onChange={(value) => setSelectedToolType(value as ToolType)}
+					/>
+					<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+						Some providers support the ability to transfer sessions, memories, subagents, etc
+						between them. They are denoted as {carryOverBadge} in the list.
+					</div>
+					{providerChanged && migrationActivity && (
+						<div role="status" aria-live="polite" className="mt-2 flex items-center gap-2 text-xs">
+							<Spinner size={14} color={theme.colors.accent} decorative />
+							<span>{migrationActivity}</span>
+						</div>
+					)}
 					{providerChanged && (
 						<div
-							className="mt-2 p-2 rounded border text-xs flex items-start gap-2"
+							className="mt-2 p-2 rounded border text-xs space-y-2"
 							style={{
 								borderColor: theme.colors.accent + '60',
 								backgroundColor: theme.colors.accent + '10',
-								color: theme.colors.accent,
+								color: theme.colors.textMain,
 							}}
 						>
-							<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-							<span>
-								Your tabs and their transcripts are kept. Each provider remembers its own session
-								per tab, so switching back picks up where you left off. Any turn already running
-								finishes on the current provider.
-							</span>
+							<div className="flex items-start gap-2">
+								<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+								<span>
+									Tabs, transcripts, drafts, queue and file previews are preserved. Native
+									conversion remains unverified until resume and round-trip acceptance are proved.
+								</span>
+							</div>
+							{selectedUserResources.map((resource, index) => (
+								<FormInput
+									key={index}
+									theme={theme}
+									label={`Selected user resource ${index + 1} (optional)`}
+									value={resource}
+									onChange={(value) => {
+										setSelectedUserResources((paths) =>
+											paths.map((p, i) => (i === index ? value : p))
+										);
+										setMigrationPlan(null);
+										setAcceptTranslationLimitations(false);
+									}}
+									placeholder="Absolute path to a selected skill, memory, instruction or subagent"
+									disabled={migrationSaving}
+								/>
+							))}
+							<div className="flex gap-3">
+								<button
+									type="button"
+									disabled={migrationSaving}
+									onClick={() => setSelectedUserResources((paths) => [...paths, ''])}
+								>
+									Add resource
+								</button>
+								<button
+									type="button"
+									disabled={migrationLoading || migrationSaving}
+									onClick={() => setSelectionRevision((v) => v + 1)}
+								>
+									Review selection
+								</button>
+							</div>
+							{migrationPlan && (
+								<div>
+									{migrationPlan.tabs.length} conversations, {migrationPlan.counts.records} native
+									records, {migrationPlan.counts.artifacts} artifacts.{' '}
+									{migrationPlan.status === 'deferred'
+										? 'Migration waits for the current turn to finish.'
+										: ''}
+								</div>
+							)}
+							{migrationPlan?.limitations.map((limit, index) => (
+								<div
+									key={`${limit.code}-${index}`}
+									style={{
+										color: limit.severity === 'block' ? theme.colors.error : theme.colors.textDim,
+									}}
+								>
+									{limit.message}
+								</div>
+							))}
+							{migrationPlan &&
+								migrationPlan.status !== 'blocked' &&
+								migrationPlan.limitations.length > 0 && (
+									<label className="flex items-center gap-2">
+										<input
+											type="checkbox"
+											checked={acceptTranslationLimitations}
+											disabled={migrationSaving}
+											onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
+										/>
+										Accept the listed conversion limitations
+									</label>
+								)}
+						</div>
+					)}
+					{migrationError && (
+						<div role="alert" className="mt-2 text-xs" style={{ color: theme.colors.error }}>
+							{migrationError}
 						</div>
 					)}
 				</div>
@@ -754,6 +982,18 @@ export function EditAgentModal({
 					retryOnTokenExhaustion={retryOnTokenExhaustion}
 					onChangeAvailability={setRetryOnAvailabilityErrors}
 					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
+				/>
+
+				{/* Chain of thought export. The section saves its own changes the
+				    moment they are made, into the feature's own store. It hands this
+				    dialog no state on purpose: nothing of it may reach `onSave`, and
+				    through that the Session object. */}
+				<AgentCotExportSection
+					theme={theme}
+					agentId={session.id}
+					agentName={session.name}
+					supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
+					usesInteractiveTokenSource={usesInteractiveTokenSource}
 				/>
 
 				{/* Working Directory */}
@@ -890,15 +1130,7 @@ export function EditAgentModal({
 								});
 							}}
 							onEnvVarAdd={() => {
-								let newKey = 'NEW_VAR';
-								let counter = 1;
-								// A parked key still occupies the name - reusing it would collide
-								// the moment the user switches that row back on.
-								while (newKey in customEnvVars || newKey in customEnvVarsDisabled) {
-									newKey = `NEW_VAR_${counter}`;
-									counter++;
-								}
-								setCustomEnvVars((prev) => ({ ...prev, [newKey]: '' }));
+								setCustomEnvVars((prev) => withBlankEnvVarRow(prev));
 							}}
 							onEnvVarsBlur={() => {
 								/* Saved on modal save */
@@ -948,7 +1180,6 @@ export function EditAgentModal({
 							onEnableMaestroPChange={setEnableMaestroP}
 							maestroPMode={maestroPMode}
 							onMaestroPModeChange={setMaestroPMode}
-							claudeInteractive={session?.claudeInteractive}
 							maestroPPath={maestroPPath}
 							onMaestroPPathChange={setMaestroPPath}
 							onMaestroPPathBlur={() => {
@@ -957,6 +1188,8 @@ export function EditAgentModal({
 							detectedMaestroPPath={detectedMaestroPPath}
 							codexAutoResetOnExhaustion={codexAutoReset}
 							onCodexAutoResetChange={setCodexAutoReset}
+							codexTransport={codexTransport}
+							onCodexTransportChange={setCodexTransport}
 						/>
 					</div>
 				)}

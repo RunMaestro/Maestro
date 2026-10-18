@@ -2,6 +2,7 @@ import React, {
 	forwardRef,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useImperativeHandle,
 	useRef,
 	useState,
@@ -21,18 +22,24 @@ import {
 	X,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
-import type { BrowserTab, Theme } from '../../types';
+import type { Theme } from '../../types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
 	DEFAULT_BROWSER_TAB_URL,
 	getBrowserTabTitle,
-	isHttpBrowserTabUrl,
 	resolveBrowserTabNavigationTarget,
+	toWebviewSrc,
 } from '../../utils/browserTabPersistence';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { RemoteBrowserTabView } from './RemoteBrowserTabView';
+import { useSessionStore } from '../../stores/sessionStore';
+import { createHostBrowserPageView } from '../../utils/browserPageView';
 
 type ElectronWebviewElement = HTMLElement & {
 	src: string;
+	setActive?: (active: boolean) => void;
 	canGoBack: () => boolean;
 	canGoForward: () => boolean;
 	goBack: () => void;
@@ -42,7 +49,7 @@ type ElectronWebviewElement = HTMLElement & {
 	getURL: () => string;
 	getTitle: () => string;
 	isLoading: () => boolean;
-	getWebContentsId?: () => number;
+	getWebContentsId?: () => number | undefined;
 	executeJavaScript: (code: string) => Promise<unknown>;
 	insertCSS?: (css: string) => Promise<string>;
 	findInPage: (
@@ -224,7 +231,7 @@ function syncWebviewLayout(webview: ElectronWebviewElement | null) {
 	}
 }
 
-export const BrowserTabView = React.memo(
+const NativeBrowserTabView = React.memo(
 	forwardRef<BrowserTabViewHandle, BrowserTabViewProps>(function BrowserTabView(
 		{ tab, theme, onUpdateTab, isActive = true },
 		ref
@@ -242,7 +249,10 @@ export const BrowserTabView = React.memo(
 		// navigation event, and re-assigning a <webview>'s src reloads it, so a
 		// redirecting/canonicalizing site (e.g. google.com to www.google.com/)
 		// refreshed forever. Capturing the initial url in a ref breaks the loop.
-		const initialSrcRef = useRef(tab.url || DEFAULT_BROWSER_TAB_URL);
+		// Must go through toWebviewSrc: Electron parses the webview's src attribute
+		// with `new URL()` while attaching, and an unparseable value throws
+		// mid-commit and crashes the renderer (MAESTRO-QX/QY/QZ).
+		const initialSrcRef = useRef(toWebviewSrc(tab.url));
 		const isAddressFocusedRef = useRef(false);
 		// Track whether the user explicitly clicked into the webview host area.
 		// Used to distinguish intentional focus (user click) from programmatic
@@ -269,12 +279,32 @@ export const BrowserTabView = React.memo(
 			};
 		}, []);
 
-		// In the web-desktop browser bundle the Electron <webview> element is inert
-		// (no goBack/executeJavaScript host APIs), so it would render a dead pane.
-		// Render a placeholder that links out to the page in a real browser tab
-		// instead. All the webview-driven effects below no-op because webviewRef
-		// stays null when the guest element is never mounted.
-		const webDesktop = isWebDesktop();
+		// Only tabs opened remotely without a live native guest use a streamed page.
+		// A local tab stays a real webview, including while a remote client captures it.
+		useLayoutEffect(() => {
+			if (!tab.remotePage) return;
+			const host = hostRef.current;
+			const session = useSessionStore
+				.getState()
+				.sessions.find((candidate) =>
+					candidate.browserTabs?.some((browser) => browser.id === tab.id)
+				);
+			if (!host || !session) return;
+			const page = createHostBrowserPageView(
+				{ sessionId: session.id, tabId: tab.id },
+				initialSrcRef.current,
+				theme.colors.bgMain
+			);
+			host.prepend(page);
+			webviewRef.current = page;
+			return () => {
+				webviewRef.current = null;
+				page.dispose();
+			};
+		}, [tab.id, tab.remotePage]);
+		useEffect(() => {
+			webviewRef.current?.setActive?.(isActive);
+		}, [isActive, tab.id, tab.remotePage]);
 
 		useEffect(() => {
 			latestTabRef.current = tab;
@@ -909,6 +939,10 @@ export const BrowserTabView = React.memo(
 			void window.maestro.shell.openExternal(tab.url);
 		}, [tab.url]);
 
+		// Only coworking agents read browser tabs, so the visibility toggle
+		// exists only while the Coworking Encore Feature is on.
+		const coworkingEnabled = useSettingsStore((s) => s.encoreFeatures.coworking === true);
+
 		const handleToggleHiddenFromAgent = useCallback(() => {
 			onUpdateTab(tab.id, { hiddenFromAgent: !tab.hiddenFromAgent });
 		}, [onUpdateTab, tab.id, tab.hiddenFromAgent]);
@@ -1069,22 +1103,24 @@ export const BrowserTabView = React.memo(
 						>
 							<ExternalLink className="w-4 h-4" />
 						</button>
-						<button
-							type="button"
-							onClick={handleToggleHiddenFromAgent}
-							className="flex items-center justify-center w-8 h-8 rounded transition-colors"
-							style={{
-								color: tab.hiddenFromAgent ? theme.colors.warning : theme.colors.textDim,
-							}}
-							title={
-								tab.hiddenFromAgent
-									? 'Hidden from agents - click to expose this tab to coworking agents'
-									: 'Visible to agents - click to hide this tab from coworking agents'
-							}
-							aria-pressed={tab.hiddenFromAgent === true}
-						>
-							{tab.hiddenFromAgent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-						</button>
+						{coworkingEnabled && (
+							<button
+								type="button"
+								onClick={handleToggleHiddenFromAgent}
+								className="flex items-center justify-center w-8 h-8 rounded transition-colors"
+								style={{
+									color: tab.hiddenFromAgent ? theme.colors.warning : theme.colors.textDim,
+								}}
+								title={
+									tab.hiddenFromAgent
+										? 'Hidden from agents - click to expose this tab to coworking agents'
+										: 'Visible to agents - click to hide this tab from coworking agents'
+								}
+								aria-pressed={tab.hiddenFromAgent === true}
+							>
+								{tab.hiddenFromAgent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+							</button>
+						)}
 						<button
 							type="button"
 							onClick={handleClearSessionData}
@@ -1112,31 +1148,7 @@ export const BrowserTabView = React.memo(
 					style={{ backgroundColor: theme.colors.bgMain }}
 					data-testid="browser-tab-host"
 				>
-					{webDesktop ? (
-						<div
-							className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center"
-							data-testid="browser-tab-web-placeholder"
-						>
-							<Globe className="w-8 h-8" style={{ color: theme.colors.textDim }} />
-							{/* Only linkify http(s) URLs. Skipping other schemes keeps a
-							    `javascript:`/`data:` href (XSS on click) from ever rendering,
-							    and noreferrer avoids leaking the token-bearing app URL. */}
-							{isHttpBrowserTabUrl(tab.url) ? (
-								<a
-									href={tab.url}
-									target="_blank"
-									rel="noopener noreferrer"
-									className="text-sm underline break-all"
-									style={{ color: theme.colors.accent }}
-								>
-									{tab.url}
-								</a>
-							) : null}
-							<p className="text-sm" style={{ color: theme.colors.textDim }}>
-								Browser tabs are available in the desktop app
-							</p>
-						</div>
-					) : (
+					{!tab.remotePage && (
 						<webview
 							ref={(element) => {
 								webviewRef.current = element as unknown as ElectronWebviewElement | null;
@@ -1146,6 +1158,7 @@ export const BrowserTabView = React.memo(
 							// Chromium's white.
 							style={{ backgroundColor: theme.colors.bgMain }}
 							className="w-full h-full border-0"
+							data-maestro-browser-tab={tab.id}
 							partition={tab.partition}
 							src={initialSrcRef.current}
 						/>
@@ -1247,6 +1260,20 @@ export const BrowserTabView = React.memo(
 					) : null}
 				</div>
 			</div>
+		);
+	})
+);
+
+export const BrowserTabView = React.memo(
+	forwardRef<BrowserTabViewHandle, BrowserTabViewProps>(function BrowserTabView(props, ref) {
+		return isWebDesktop() ? (
+			<RemoteBrowserTabView {...props} ref={ref} />
+		) : (
+			<NativeBrowserTabView
+				key={`${props.tab.id}:${!!props.tab.remotePage}`}
+				{...props}
+				ref={ref}
+			/>
 		);
 	})
 );

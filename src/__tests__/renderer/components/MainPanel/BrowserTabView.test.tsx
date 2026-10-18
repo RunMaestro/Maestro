@@ -61,6 +61,12 @@ describe('BrowserTabView', () => {
 		return screen.getByTestId('browser-tab-host').querySelector('webview') as MockWebview;
 	}
 
+	it('keeps a native webview for local tabs without starting a frame stream', () => {
+		render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+		expect(getWebview().tagName.toLowerCase()).toBe('webview');
+		expect(document.querySelector('img[alt="Host browser page"]')).toBeNull();
+	});
+
 	it('waits for dom-ready before reading webview navigation state', async () => {
 		const onUpdateTab = vi.fn();
 
@@ -1058,66 +1064,6 @@ describe('BrowserTabView', () => {
 		});
 	});
 
-	describe('web-desktop placeholder', () => {
-		it('renders a link-out placeholder instead of the inert webview', () => {
-			vi.mocked(isWebDesktop).mockReturnValue(true);
-
-			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
-
-			// The Electron <webview> is inert in a real browser and must not render.
-			expect(screen.getByTestId('browser-tab-host').querySelector('webview')).toBeNull();
-
-			const placeholder = screen.getByTestId('browser-tab-web-placeholder');
-			expect(placeholder).toHaveTextContent('Browser tabs are available in the desktop app');
-
-			const link = screen.getByRole('link', { name: 'https://example.com' });
-			expect(link).toHaveAttribute('href', 'https://example.com');
-			expect(link).toHaveAttribute('target', '_blank');
-			expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-		});
-
-		it('does not render an anchor for a non-http (e.g. javascript:) URL', () => {
-			vi.mocked(isWebDesktop).mockReturnValue(true);
-
-			render(
-				<BrowserTabView
-					// eslint-disable-next-line no-script-url
-					tab={{ ...mockTab, url: 'javascript:alert(1)' }}
-					theme={mockTheme}
-					onUpdateTab={vi.fn()}
-				/>
-			);
-
-			// The placeholder still renders, but the dangerous scheme must not become
-			// a clickable href (XSS-on-click guard).
-			expect(screen.getByTestId('browser-tab-web-placeholder')).toBeInTheDocument();
-			expect(screen.queryByRole('link')).toBeNull();
-		});
-
-		it('omits the clickable link for a blank browser tab', () => {
-			vi.mocked(isWebDesktop).mockReturnValue(true);
-
-			render(
-				<BrowserTabView
-					tab={{ ...mockTab, url: DEFAULT_BROWSER_TAB_URL }}
-					theme={mockTheme}
-					onUpdateTab={vi.fn()}
-				/>
-			);
-
-			expect(screen.getByTestId('browser-tab-web-placeholder')).toBeInTheDocument();
-			expect(screen.queryByRole('link')).toBeNull();
-		});
-
-		it('still renders the webview on desktop (non-web)', () => {
-			// isWebDesktop defaults to false via beforeEach.
-			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
-
-			expect(screen.getByTestId('browser-tab-host').querySelector('webview')).toBeTruthy();
-			expect(screen.queryByTestId('browser-tab-web-placeholder')).toBeNull();
-		});
-	});
-
 	describe('imperative handle: capturePage (covered capture)', () => {
 		// The stub frame the guest's capturePage resolves to. Its length must clear
 		// the >=64-char "real frame" gate the component uses to decide a retry.
@@ -1377,5 +1323,37 @@ describe('BrowserTabView', () => {
 
 			expect(webview.insertCSS).toHaveBeenCalledWith(expect.stringContaining('#101014'));
 		});
+	});
+
+	describe('webview src', () => {
+		it('mounts the tab URL as-is when it is parseable', () => {
+			render(
+				<BrowserTabView
+					tab={{ ...mockTab, url: 'https://example.com/docs' }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+				/>
+			);
+
+			expect(getWebview().getAttribute('src')).toBe('https://example.com/docs');
+		});
+
+		// A failed navigation writes `did-fail-load`'s validatedURL straight into
+		// tab.url, and for ERR_INVALID_URL that is the malformed target itself.
+		// Electron resolves the src attribute with `new URL()` while attaching the
+		// element, so handing it that value throws "Invalid URL" mid-commit and
+		// takes the renderer down (MAESTRO-QX/QY/QZ).
+		it.each(['http://', 'https://[bad', 'https://x y'])(
+			'falls back to about:blank rather than mounting the unparseable URL %s',
+			(url) => {
+				expect(() =>
+					render(
+						<BrowserTabView tab={{ ...mockTab, url }} theme={mockTheme} onUpdateTab={vi.fn()} />
+					)
+				).not.toThrow();
+
+				expect(getWebview().getAttribute('src')).toBe(DEFAULT_BROWSER_TAB_URL);
+			}
+		);
 	});
 });

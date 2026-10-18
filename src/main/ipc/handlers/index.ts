@@ -35,12 +35,7 @@ import { registerDebugHandlers, DebugHandlerDependencies } from './debug';
 import { registerSpeckitHandlers } from './speckit';
 import { registerOpenSpecHandlers } from './openspec';
 import { registerBmadHandlers } from './bmad';
-import {
-	registerContextHandlers,
-	ContextHandlerDependencies,
-	cleanupAllGroomingSessions,
-	getActiveGroomingSessionCount,
-} from './context';
+import { registerContextHandlers, ContextHandlerDependencies } from './context';
 import { registerMarketplaceHandlers, MarketplaceHandlerDependencies } from './marketplace';
 import { registerStatsHandlers, StatsHandlerDependencies } from './stats';
 import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-stats';
@@ -55,6 +50,7 @@ import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from 
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
 import { registerParquetHandlers } from './parquet';
+import { registerCodexVisualizationHandlers } from './codexVisualization';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
 import {
 	registerWebHandlers,
@@ -64,7 +60,10 @@ import {
 	WebHandlerDependencies,
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
+import { registerComputerHistoryHandlers } from './computerHistory';
+import { registerMaestroRunHandlers } from './maestroRun';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
+import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
@@ -74,11 +73,13 @@ import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from 
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
+import { registerCueBundleHandlers } from './cue-bundle';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerCoworkingHandlers } from './coworking';
 import { registerBrowserSessionHandlers } from './browser-session';
+import { registerCotExportHandlers } from './cot-export';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
@@ -100,6 +101,7 @@ import type { WindowManager } from '../../app-lifecycle/window-manager';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSshRemoteById } from '../../stores/getters';
+import { MAX_ENTRIES_PER_SESSION } from '../../../shared/history';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -122,7 +124,7 @@ export { registerDebugHandlers };
 export { registerSpeckitHandlers };
 export { registerOpenSpecHandlers };
 export { registerBmadHandlers };
-export { registerContextHandlers, cleanupAllGroomingSessions, getActiveGroomingSessionCount };
+export { registerContextHandlers };
 export { registerMarketplaceHandlers };
 export type { MarketplaceHandlerDependencies };
 export { registerStatsHandlers };
@@ -132,6 +134,7 @@ export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
 export { registerParquetHandlers };
+export { registerCodexVisualizationHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
 export {
@@ -142,9 +145,11 @@ export {
 };
 export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
+export { registerComputerHistoryHandlers };
+export { registerMaestroRunHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
-export { registerNotificationsHandlers };
+export { registerNotificationsHandlers, registerNotificationHistoryHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
@@ -155,6 +160,7 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
+export { registerCueBundleHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
 export { registerPluginsHandlers };
@@ -162,6 +168,8 @@ export type { PluginsHandlerDependencies };
 export { registerWakatimeHandlers };
 export { registerCoworkingHandlers };
 export { registerBrowserSessionHandlers };
+// Registered from setupIpcHandlers() only. See the header of ./cot-export.ts.
+export { registerCotExportHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
@@ -245,7 +253,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		);
 	registerHistoryHandlers({
 		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
-		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
+		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION) as number,
 		getSshRemoteById,
 		getSessionById: (id: string) => readSessionRecords().find((s) => s.id === id),
 		getAllSessions: readSessionRecords,
@@ -257,8 +265,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,
+		getProcessManager: deps.getProcessManager,
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
+		sessionsStore: deps.sessionsStore,
 	});
 	registerProcessHandlers({
 		getProcessManager: deps.getProcessManager,
@@ -351,6 +361,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
+	registerNotificationHistoryHandlers();
 	// Register notification handlers (OS notifications and TTS). The window
 	// registry getter lets a notification click focus the window that owns the
 	// completing agent rather than always the primary window (multi-window).
@@ -392,10 +403,20 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
+	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	registerCueBundleHandlers({
+		sessionsStore: deps.sessionsStore,
+		getMainWindow: deps.getMainWindow,
+	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
-	registerMemoryHandlers();
+	registerMemoryHandlers({
+		sessionsStore: deps.sessionsStore,
+		settingsStore: deps.settingsStore,
+		agentConfigsStore: deps.agentConfigsStore,
+		getAgentDetector: deps.getAgentDetector,
+	});
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
 	// Register Context Timeline capture handlers (per-agent turn history backfill)
@@ -406,7 +427,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 	// Register Coworking handlers (per-agent MCP installer + terminal registry sync)
-	registerCoworkingHandlers({ getMainWindow: deps.getMainWindow });
+	registerCoworkingHandlers({
+		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
 	// Register Browser Session handlers (clear per-partition browsing data)
 	registerBrowserSessionHandlers();
 	// Register multi-window handlers (windows:* channel surface). The registry

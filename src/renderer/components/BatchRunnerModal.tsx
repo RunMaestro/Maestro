@@ -17,6 +17,8 @@ import {
 	PlayCircle,
 	HelpCircle,
 	Target,
+	LogOut,
+	Clock,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { ToggleSwitch } from './ui/ToggleSwitch';
@@ -35,7 +37,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useBracketTabCycle } from '../hooks/utils/useBracketTabCycle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
+import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
 import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
@@ -43,10 +45,20 @@ import { DocumentsPanel } from './DocumentsPanel';
 import { GoalConfigPanel } from './GoalConfigPanel';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { WorktreeRunSection } from './WorktreeRunSection';
+import {
+	ScheduleRunSection,
+	fromDateTimeLocalValue,
+	validateScheduledStart,
+} from './ScheduleRunSection';
+import { cueWorktreeFromRunTarget } from '../../shared/cue/autorun-worktree';
 import { AutoRunnerHelpModal } from './AutoRun/AutoRunnerHelpModal';
 import { useSessionStore, selectSessionById } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { cueService } from '../services/cue';
+import { notifyToast } from '../stores/notificationStore';
+import { captureException } from '../utils/sentry';
 import {
 	usePlaybookManagement,
 	useTaskSelectionRecommendation,
@@ -54,10 +66,13 @@ import {
 	usePromptComposerState,
 	useSpecDrivenConfig,
 	useWorktreeRunTarget,
+	autoPlaybookName,
 	validateAgentPromptHasTaskReference,
 } from '../hooks';
 import { formatMetaKey } from '../utils/shortcutFormatter';
+import { joinPath } from '../../shared/formatters';
 import { logger } from '../utils/logger';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { ResizeHandles } from './ui/ResizeHandles';
 
 // Re-export for external consumers
@@ -118,6 +133,7 @@ function formatLastModified(timestamp: number): string {
 const AUTO_RUN_MODES: readonly ('spec' | 'goal')[] = ['spec', 'goal'];
 
 export function BatchRunnerModal(props: BatchRunnerModalProps) {
+	const templateVariables = useAvailableTemplateVariables();
 	const {
 		theme,
 		onClose,
@@ -170,6 +186,14 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const [autoResumeOnError, setAutoResumeOnError] = useState(true);
 	const [autoResumeAfterMin, setAutoResumeAfterMin] = useState(AUTO_RESUME_DEFAULT_MINUTES);
 	const [maxAutoResumes, setMaxAutoResumes] = useState(AUTO_RESUME_DEFAULT_MAX_ATTEMPTS);
+
+	// Scheduled start. Empty string means "now" (the default, and the behavior
+	// this modal has always had). A non-empty value is a local `datetime-local`
+	// string; the run is handed to Maestro Cue as a one-shot `time.once`
+	// subscription instead of being launched here.
+	const [scheduledStart, setScheduledStart] = useState('');
+	const [isScheduling, setIsScheduling] = useState(false);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
 
@@ -287,47 +311,6 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		hasUnsavedChanges,
 	} = usePromptComposerState({ initialPrompt, showConfirmation, onSave });
 
-	// Compute if there are unsaved configuration changes
-	// This checks if documents, loop settings, or prompt have changed from initial values
-	const hasUnsavedConfigChanges = useCallback(() => {
-		// Check if documents have changed (compare filenames)
-		const currentDocFilenames = documents.map((d) => d.filename).sort();
-		const initialDocFilenames = [...initialDocumentsRef.current].sort();
-		const documentsChanged =
-			currentDocFilenames.length !== initialDocFilenames.length ||
-			currentDocFilenames.some((f, i) => f !== initialDocFilenames[i]);
-
-		// Check if loop settings have changed
-		const loopChanged =
-			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
-
-		// Check if prompt has changed
-		const promptChanged = prompt !== initialPromptRef.current;
-
-		// Check if task-selection mode has changed
-		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
-
-		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
-	}, [documents, loopEnabled, maxLoops, prompt, taskSelectionMode]);
-
-	// Handler for closing with unsaved changes check
-	const handleCloseWithConfirmation = useCallback(() => {
-		// Persist any pending goal edits before closing so a quick close (before the
-		// debounce fires) doesn't drop the user's last keystrokes. Goal config auto-saves,
-		// so it isn't part of the spec-mode "unsaved changes" prompt below.
-		flushGoalConfig();
-		if (hasUnsavedConfigChanges()) {
-			showConfirmation(
-				'You have unsaved changes to your Auto Run configuration. Close without saving?',
-				() => {
-					onClose();
-				}
-			);
-		} else {
-			onClose();
-		}
-	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
-
 	// Playbook management callback to apply loaded playbook configuration
 	const handleApplyPlaybook = useCallback(
 		(data: {
@@ -400,6 +383,59 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		initialTaskSelectionModeRef,
 	});
 
+	// Compute if there are unsaved configuration changes
+	// This checks if documents, loop settings, or prompt have changed from initial values
+	// When a playbook is loaded, it is the saved baseline: comparing against the
+	// open-time snapshot flagged a just-saved playbook as unsaved.
+	const hasUnsavedConfigChanges = useCallback(() => {
+		if (loadedPlaybook) return isPlaybookModified;
+
+		// Check if documents have changed (compare filenames)
+		const currentDocFilenames = documents.map((d) => d.filename).sort();
+		const initialDocFilenames = [...initialDocumentsRef.current].sort();
+		const documentsChanged =
+			currentDocFilenames.length !== initialDocFilenames.length ||
+			currentDocFilenames.some((f, i) => f !== initialDocFilenames[i]);
+
+		// Check if loop settings have changed
+		const loopChanged =
+			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
+
+		// Check if prompt has changed
+		const promptChanged = prompt !== initialPromptRef.current;
+
+		// Check if task-selection mode has changed
+		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
+
+		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
+	}, [
+		loadedPlaybook,
+		isPlaybookModified,
+		documents,
+		loopEnabled,
+		maxLoops,
+		prompt,
+		taskSelectionMode,
+	]);
+
+	// Handler for closing with unsaved changes check
+	const handleCloseWithConfirmation = useCallback(() => {
+		// Persist any pending goal edits before closing so a quick close (before the
+		// debounce fires) doesn't drop the user's last keystrokes. Goal config auto-saves,
+		// so it isn't part of the spec-mode "unsaved changes" prompt below.
+		flushGoalConfig();
+		if (hasUnsavedConfigChanges()) {
+			showConfirmation(
+				'You have unsaved changes to your Auto Run configuration. Close without saving?',
+				() => {
+					onClose();
+				}
+			);
+		} else {
+			onClose();
+		}
+	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
+
 	// Validate agent prompt has task references
 	const hasValidPrompt = validateAgentPromptHasTaskReference(prompt);
 	const isPromptEmpty = !prompt || !prompt.trim();
@@ -426,11 +462,21 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// targets are already disabled in the WorktreeRunSection dropdown.)
 	const blocksLaunchWhileBusy = isAgentBusy && worktreeTarget === null;
 
+	// A scheduled run is only offered for Spec-Driven runs: the Cue autorun
+	// payload is a document list, and Goal-Driven runs have no documents.
+	const isScheduled = scheduledStart !== '' && !goalMode;
+	const scheduleError = isScheduled ? validateScheduledStart(scheduledStart) : null;
+
 	// Whether the Go button should be disabled, branching on the active mode.
+	// Scheduling deliberately ignores `blocksLaunchWhileBusy` and
+	// `isBatchRunningForSession`: those describe the agent right now, and a run
+	// scheduled for 6am has no reason to care what the agent is doing at 11pm.
+	// The engine re-checks readiness when the run actually fires.
 	const isGoDisabled =
 		isPreparingWorktree ||
-		blocksLaunchWhileBusy ||
-		isBatchRunningForSession ||
+		isScheduling ||
+		scheduleError !== null ||
+		(!isScheduled && (blocksLaunchWhileBusy || isBatchRunningForSession)) ||
 		(goalMode
 			? isGoalEmpty
 			: hasNoTasks ||
@@ -459,7 +505,122 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onChange: setAutoRunMode,
 	});
 
+	// One-click save: update the loaded playbook in place, or create a new one
+	// named YYYY-MM-DD-CODENAME from the first document, then close.
+	const handleSaveAndExit = async () => {
+		if (documents.length === 0 || savingPlaybook) return;
+		onSave(prompt);
+		let saved = loadedPlaybook;
+		if (!loadedPlaybook) {
+			const name = autoPlaybookName(
+				documents[0].filename,
+				playbooks.map((p) => p.name)
+			);
+			saved = await handleSaveAsPlaybook(name);
+		} else if (isPlaybookModified) {
+			saved = await handleSaveUpdate();
+		}
+		if (!saved) {
+			notifyCenterFlash({ message: 'Failed to save playbook', color: 'red' });
+			return;
+		}
+		notifyCenterFlash({ message: `Saved playbook "${saved.name}"`, color: 'green' });
+		onClose();
+	};
+
+	/**
+	 * Hand the run to Maestro Cue as a one-shot `time.once` subscription instead
+	 * of launching it now.
+	 *
+	 * Document paths are resolved to absolute here, at SCHEDULE time, and travel
+	 * with the subscription. The agent's Auto Run folder is a mutable setting,
+	 * so resolving late would mean repointing that folder between scheduling and
+	 * firing silently runs a different set of documents than the user picked.
+	 *
+	 * `keepOnFailure` leaves the subscription on disk when the launch fails.
+	 * A `time.once` sub is consumed on any terminal status, so without it a
+	 * failed 6am launch would delete itself and leave nothing to inspect - the
+	 * user would just find that their run never happened.
+	 */
+	const handleSchedule = async () => {
+		const validationError = validateScheduledStart(scheduledStart);
+		if (validationError) {
+			notifyToast({ color: 'red', title: 'Cannot schedule run', message: validationError });
+			return;
+		}
+		const fireAt = fromDateTimeLocalValue(scheduledStart);
+		if (!fireAt) return;
+
+		if (!folderPath) {
+			notifyToast({
+				color: 'red',
+				title: 'Cannot schedule run',
+				message: 'This agent has no Auto Run folder configured.',
+			});
+			return;
+		}
+
+		onSave(prompt);
+
+		const validDocuments = documents.filter((doc) => !doc.isMissing);
+		if (validDocuments.length === 0) return;
+
+		setIsScheduling(true);
+		try {
+			await cueService.createScheduledTask({
+				agentId: sessionId,
+				kind: 'once',
+				fireAt: fireAt.toISOString(),
+				keepOnFailure: true,
+				autoRun: {
+					documents: validDocuments.map((doc) => joinPath(folderPath, `${doc.filename}.md`)),
+					reset_on_completion: validDocuments.map((doc) => doc.resetOnCompletion),
+					prompt,
+					loop_enabled: loopEnabled,
+					...(loopEnabled && maxLoops ? { max_loops: maxLoops } : {}),
+					...(runModel && { model: runModel }),
+					...(runEffort && { effort: runEffort }),
+					// Everything else the immediate path hands `onGo` for a
+					// Spec-Driven run. Left out, a scheduled run fires with the
+					// defaults instead of what this window was set to.
+					...(taskSelectionMode === 'document' && { task_selection_mode: 'document' as const }),
+					...(ignoreModelHints && { ignore_model_hints: true }),
+					...(autoResumeOnError ? {} : { auto_resume_on_error: false }),
+					auto_resume_after_min: clampAutoResumeMinutes(autoResumeAfterMin),
+					max_auto_resumes: clampMaxAutoResumes(maxAutoResumes),
+					// The worktree is resolved when the run FIRES, not now: a new one
+					// is created then, and an existing one is looked up then.
+					...(worktreeTarget && { worktree: cueWorktreeFromRunTarget(worktreeTarget) }),
+				},
+			});
+			notifyToast({
+				color: 'green',
+				title: 'Auto Run scheduled',
+				message: `Starts ${fireAt.toLocaleString()}. Cancel it under Scheduled Tasks in the Cue window.`,
+				sessionId,
+			});
+			onClose();
+		} catch (err) {
+			captureException(err, { extra: { sessionId, scheduledStart } });
+			notifyToast({
+				color: 'red',
+				title: 'Could not schedule Auto Run',
+				message: err instanceof Error ? err.message : String(err),
+			});
+		} finally {
+			setIsScheduling(false);
+		}
+	};
+
 	const handleGo = async () => {
+		// A scheduled start hands the run to Cue rather than launching it. Checked
+		// first so none of the launch-time side effects below (worktree prep,
+		// batch dispatch) run for a run that is not starting yet.
+		if (isScheduled) {
+			await handleSchedule();
+			return;
+		}
+
 		// Also save when running
 		onSave(prompt);
 
@@ -897,6 +1058,19 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						/>
 					)}
 
+					{/* Start: Now / At a set time. Spec-Driven only - a scheduled run is
+					    stored as a Cue autorun subscription keyed on a document list, and
+					    Goal-Driven runs have no documents to key on. Scheduling is a Cue
+					    feature, so the control exists only while Maestro Cue is on. */}
+					{!goalMode && maestroCueEnabled && (
+						<ScheduleRunSection
+							theme={theme}
+							value={scheduledStart}
+							onChange={setScheduledStart}
+							cueEnabled={maestroCueEnabled}
+						/>
+					)}
+
 					{/* Spec-Driven config: Fresh-context selector + Agent Prompt. Hidden in
 					    goal mode, where the agent prompt is built internally by the goal
 					    runner and "Fresh context per" has no meaning without documents. */}
@@ -1016,7 +1190,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 											at runtime.
 										</p>
 										<div className="grid grid-cols-2 gap-x-4 gap-y-1 max-h-48 overflow-y-auto scrollbar-thin">
-											{TEMPLATE_VARIABLES.map(({ variable, description }) => (
+											{templateVariables.map(({ variable, description }) => (
 												<div key={variable} className="flex items-center gap-2 py-0.5">
 													<code
 														className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"
@@ -1258,13 +1432,29 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					className="p-4 border-t flex items-center justify-between shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					{/* Left side: Auto-follow toggle + Hint. Both are document-centric
-					    (following the active task, drag-to-copy a document) and have no
+					{/* Left side: Save & Exit, auto-follow toggle, hint. All three are document-centric
+					    (following the active task, drag-to-copy a document, saving a checklist playbook) and have no
 					    meaning in Goal-Driven mode, so they hide there. The container
 					    stays mounted to preserve the footer's justify-between layout. */}
 					<div className="flex items-center gap-4">
 						{!goalMode && (
 							<>
+								<button
+									onClick={handleSaveAndExit}
+									disabled={documents.length === 0 || savingPlaybook}
+									className="flex items-center gap-2 px-3 py-2 rounded border hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									title={
+										documents.length === 0
+											? 'No documents selected'
+											: loadedPlaybook
+												? `Save "${loadedPlaybook.name}" and close`
+												: 'Save as a dated playbook and close'
+									}
+								>
+									<LogOut className="w-4 h-4" style={{ color: theme.colors.accent }} />
+									{savingPlaybook ? 'Saving...' : 'Save & Exit'}
+								</button>
 								<label className="flex items-center gap-1.5 cursor-pointer">
 									<input
 										type="checkbox"
@@ -1329,29 +1519,45 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							title={
 								isPreparingWorktree
 									? 'Preparing worktree...'
-									: isBatchRunningForSession
-										? 'An Auto Run is already active for this agent - stop it before launching another'
-										: blocksLaunchWhileBusy
-											? 'Agent is thinking - finish or interrupt the current task before launching auto-run'
-											: goalMode
-												? isGoalEmpty
-													? 'Enter a goal to launch a Goal-Driven run'
-													: 'Start goal-driven auto-run'
-												: isPromptEmpty
-													? 'Agent prompt cannot be empty'
-													: !hasValidPrompt
-														? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
-														: documents.length === 0
-															? 'No documents selected'
-															: documents.length === missingDocCount
-																? 'All selected documents are missing'
-																: hasNoTasks
-																	? 'No unchecked tasks in documents'
-																	: 'Start auto-run'
+									: scheduleError
+										? scheduleError
+										: isScheduled
+											? 'Schedule this Auto Run to start at the chosen time'
+											: isBatchRunningForSession
+												? 'An Auto Run is already active for this agent - stop it before launching another'
+												: blocksLaunchWhileBusy
+													? 'Agent is thinking - finish or interrupt the current task before launching auto-run'
+													: goalMode
+														? isGoalEmpty
+															? 'Enter a goal to launch a Goal-Driven run'
+															: 'Start goal-driven auto-run'
+														: isPromptEmpty
+															? 'Agent prompt cannot be empty'
+															: !hasValidPrompt
+																? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
+																: documents.length === 0
+																	? 'No documents selected'
+																	: documents.length === missingDocCount
+																		? 'All selected documents are missing'
+																		: hasNoTasks
+																			? 'No unchecked tasks in documents'
+																			: 'Start auto-run'
 							}
 						>
-							{isPreparingWorktree ? <Spinner size={16} /> : <Play className="w-4 h-4" />}
-							{isPreparingWorktree ? 'Preparing Worktree...' : 'Go'}
+							{isPreparingWorktree || isScheduling ? (
+								<Spinner size={16} />
+							) : isScheduled ? (
+								<Clock className="w-4 h-4" />
+							) : (
+								<Play className="w-4 h-4" />
+							)}
+							{isPreparingWorktree
+								? 'Preparing Worktree...'
+								: isScheduling
+									? 'Scheduling...'
+									: isScheduled
+										? 'Schedule'
+										: 'Go'}
 						</button>
 					</div>
 				</div>

@@ -59,6 +59,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 	const autoBarColor = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const graphRef = useRef<HTMLDivElement>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -384,12 +385,16 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 								{bucketData[hoveredIndex].user}
 							</span>
 						</div>
-						<div className="flex items-center justify-between gap-3">
-							<span style={{ color: CUE_COLOR }}>Cue</span>
-							<span className="font-bold" style={{ color: CUE_COLOR }}>
-								{bucketData[hoveredIndex].cue}
-							</span>
-						</div>
+						{/* With Maestro Cue off the row would read "Cue 0" forever. Entries
+						    recorded while it was on still show their count. */}
+						{(maestroCueEnabled || bucketData[hoveredIndex].cue > 0) && (
+							<div className="flex items-center justify-between gap-3">
+								<span style={{ color: CUE_COLOR }}>Cue</span>
+								<span className="font-bold" style={{ color: CUE_COLOR }}>
+									{bucketData[hoveredIndex].cue}
+								</span>
+							</div>
+						)}
 						<div className="flex items-center justify-between gap-3">
 							<span style={{ color: AGENT_COLOR }}>Agent</span>
 							<span className="font-bold" style={{ color: AGENT_COLOR }}>

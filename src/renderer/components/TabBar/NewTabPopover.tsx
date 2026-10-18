@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { FileText, Globe, MessageSquare, Plus, Terminal, VenetianMask } from 'lucide-react';
+import { ShortcutHint } from '../ui/ShortcutHint';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { isWebDesktop } from '../../utils/runtimeContext';
@@ -173,13 +174,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: getTabKindColor('ai', theme) }}
 							/>
 							New AI Chat
-							<span
-								className="ml-auto text-xs"
-								data-shortcut-hint=""
-								style={{ color: theme.colors.textDim }}
-							>
-								{formatShortcutKeys(newTabKeys)}
-							</span>
+							<ShortcutHint theme={theme} keys={newTabKeys} />
 						</button>
 						{/* Terminal sits second: it is the most-reached-for tab after a chat. */}
 						<button
@@ -192,13 +187,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: getTabKindColor('terminal', theme) }}
 							/>
 							New Terminal
-							<span
-								className="ml-auto text-xs"
-								data-shortcut-hint=""
-								style={{ color: theme.colors.textDim }}
-							>
-								{formatShortcutKeys(terminalKeys)}
-							</span>
+							<ShortcutHint theme={theme} keys={terminalKeys} />
 						</button>
 						{onNewFileTab && (
 							<button
@@ -211,13 +200,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('file', theme) }}
 								/>
 								New File
-								<span
-									className="ml-auto text-xs"
-									data-shortcut-hint=""
-									style={{ color: theme.colors.textDim }}
-								>
-									{formatShortcutKeys(fileTabKeys)}
-								</span>
+								<ShortcutHint theme={theme} keys={fileTabKeys} />
 							</button>
 						)}
 						{/* Browser tabs rely on the Electron <webview>, which is inert in the
@@ -233,13 +216,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('browser', theme) }}
 								/>
 								New Browser
-								<span
-									className="ml-auto text-xs"
-									data-shortcut-hint=""
-									style={{ color: theme.colors.textDim }}
-								>
-									{formatShortcutKeys(browserTabKeys)}
-								</span>
+								<ShortcutHint theme={theme} keys={browserTabKeys} />
 							</button>
 						)}
 						{onNewBrowserTab && (

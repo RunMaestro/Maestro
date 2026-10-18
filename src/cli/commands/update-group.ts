@@ -1,5 +1,6 @@
-// Update group command - change a group's name, appearance, or parent in the
-// running desktop app via the update_group WS message.
+// Update group command - change a group's name, appearance, parent, or whether
+// it is parked out of the Left Bar, in the running desktop app via the
+// update_group WS message.
 //
 // `rename-group` stays as-is for backward compatibility; this is the verb that
 // covers everything the Left Bar's group editor can do, so a bootstrap script
@@ -7,7 +8,11 @@
 // clicking through the UI.
 
 import { resolveGroupId } from '../services/storage';
-import { sendSimpleCommand, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	failCommand,
+	exitIfMaestroNotRunning,
+} from '../services/session-command';
 import {
 	verifyPersistedGroup,
 	describePersistedGroup,
@@ -27,6 +32,8 @@ interface UpdateGroupOptions {
 	clearIcon?: boolean;
 	clearColor?: boolean;
 	clearParent?: boolean;
+	hide?: boolean;
+	show?: boolean;
 	json?: boolean;
 }
 
@@ -43,6 +50,13 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 	if (options.clearIcon) clear.push('icon');
 	if (options.clearColor) clear.push('color');
 	if (options.clearParent) clear.push('parent');
+
+	// One flag each way rather than a toggle: a script has to be able to say
+	// which state it wants without first reading the one the group is in.
+	if (options.hide && options.show) {
+		return failCommand('Cannot pass both --hide and --show', options.json);
+	}
+	const hidden = options.hide ? true : options.show ? false : undefined;
 
 	let parentGroupId: string | undefined;
 	if (options.parent) {
@@ -62,6 +76,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 		...(options.icon !== undefined ? { icon: options.icon } : {}),
 		...(options.color !== undefined ? { color: options.color } : {}),
 		...(parentGroupId ? { parentGroupId } : {}),
+		...(hidden !== undefined ? { hidden } : {}),
 		...(clear.length > 0 ? { clear } : {}),
 	});
 	if (!validated.ok) {
@@ -82,6 +97,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 			'update_group_result'
 		);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		return failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 
@@ -95,6 +111,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 		icon: validated.value.icon,
 		color: validated.value.color,
 		parentGroupId: validated.value.parentGroupId,
+		hidden: validated.value.hidden,
 		cleared: clear,
 	});
 	if (mismatch) {

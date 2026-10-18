@@ -38,6 +38,13 @@ describe('Settings Preload API', () => {
 			api = createSettingsApi();
 		});
 
+		it('exposes the read-only host media status', async () => {
+			const status = { profiles: [], models: ['base'], missing: ['ffmpeg'] };
+			mockInvoke.mockResolvedValue(status);
+			expect(await api.getMediaStatus()).toEqual(status);
+			expect(mockInvoke).toHaveBeenCalledWith('settings:mediaStatus');
+		});
+
 		describe('get', () => {
 			it('should invoke settings:get with key', async () => {
 				mockInvoke.mockResolvedValue('test-value');
@@ -107,21 +114,6 @@ describe('Settings Preload API', () => {
 
 				expect(mockInvoke).toHaveBeenCalledWith('sessions:getAll');
 				expect(result).toEqual(sessions);
-			});
-		});
-
-		describe('setAll', () => {
-			it('should invoke sessions:setAll with sessions array and return result', async () => {
-				const sessions = [
-					{ id: '1', name: 'Session 1' },
-					{ id: '2', name: 'Session 2' },
-				];
-				mockInvoke.mockResolvedValue(true);
-
-				const result = await api.setAll(sessions);
-
-				expect(mockInvoke).toHaveBeenCalledWith('sessions:setAll', sessions);
-				expect(result).toBe(true);
 			});
 		});
 	});

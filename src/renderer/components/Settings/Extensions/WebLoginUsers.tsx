@@ -22,6 +22,7 @@ import { AlertTriangle, KeyRound, Trash2, UserPlus, Power } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { MiniBadge } from '../../ui/MiniBadge';
 import { notifyToast } from '../../../stores/notificationStore';
+import { ipcErrorMessage } from '../../../utils/ipcErrorMessage';
 import { formatRelativeTime } from '../../../../shared/formatters';
 import {
 	validateWebPassword,
@@ -31,17 +32,6 @@ import {
 
 interface WebLoginUsersProps {
 	theme: Theme;
-}
-
-/** The message a rejected IPC call should show, without the `Error:` wrapper. */
-function errorText(err: unknown): string {
-	if (err instanceof Error && err.message) {
-		// Electron wraps a main-process throw as
-		// "Error invoking remote method 'webLogin:createUser': Error: <message>".
-		const tail = err.message.split(': Error: ').pop();
-		return (tail ?? err.message).trim();
-	}
-	return String(err);
 }
 
 export function WebLoginUsers({ theme }: WebLoginUsersProps) {
@@ -73,7 +63,7 @@ export function WebLoginUsers({ theme }: WebLoginUsersProps) {
 			setLoadError(null);
 		} catch (err) {
 			setUsers([]);
-			setLoadError(errorText(err));
+			setLoadError(ipcErrorMessage(err));
 		}
 	}, []);
 
@@ -124,7 +114,7 @@ export function WebLoginUsers({ theme }: WebLoginUsersProps) {
 				message: `Added the account "${created.username}".`,
 			});
 		} catch (err) {
-			setCreateError(errorText(err));
+			setCreateError(ipcErrorMessage(err));
 		} finally {
 			setCreating(false);
 		}
@@ -152,7 +142,7 @@ export function WebLoginUsers({ theme }: WebLoginUsersProps) {
 					message: `Reset the password for "${user.username}". Any browser signed in as that account is signed out.`,
 				});
 			} catch (err) {
-				setResetError(errorText(err));
+				setResetError(ipcErrorMessage(err));
 			} finally {
 				setRowBusyId(null);
 			}
@@ -174,7 +164,7 @@ export function WebLoginUsers({ theme }: WebLoginUsersProps) {
 						: `Disabled "${user.username}". Its history stays attributed to it.`,
 				});
 			} catch (err) {
-				notifyToast({ color: 'red', title: 'Web Login', message: errorText(err) });
+				notifyToast({ color: 'red', title: 'Web Login', message: ipcErrorMessage(err) });
 			} finally {
 				setRowBusyId(null);
 			}
@@ -195,7 +185,7 @@ export function WebLoginUsers({ theme }: WebLoginUsersProps) {
 					message: `Deleted the account "${user.username}".`,
 				});
 			} catch (err) {
-				notifyToast({ color: 'red', title: 'Web Login', message: errorText(err) });
+				notifyToast({ color: 'red', title: 'Web Login', message: ipcErrorMessage(err) });
 			} finally {
 				setRowBusyId(null);
 			}

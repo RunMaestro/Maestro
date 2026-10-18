@@ -12,9 +12,15 @@ import {
 	buildNameMap,
 	computeAxisLabelIndices,
 	PHONE_AXIS_LABELS,
+	BAR_CHART_GRID_STYLE,
+	BAR_CHART_ROW_STYLE,
 	DONUT_CHART,
 	describeDonutArc,
+	getSeriesColor,
+	chunkIntoEqualGroups,
 } from '../../../../renderer/components/UsageDashboard/chartUtils';
+import { COLORBLIND_AGENT_PALETTE } from '../../../../renderer/constants/colorblindPalettes';
+import { mockTheme } from '../../../helpers/mockTheme';
 import type { Session } from '../../../../renderer/types';
 
 let idCounter = 0;
@@ -325,6 +331,27 @@ describe('computeAxisLabelIndices', () => {
 	});
 });
 
+describe('chunkIntoEqualGroups', () => {
+	it('keeps one item per group when the series fits', () => {
+		expect(chunkIntoEqualGroups([1, 2, 3], 5)).toEqual([[1], [2], [3]]);
+	});
+
+	it('groups into equal runs with a shorter final run', () => {
+		expect(chunkIntoEqualGroups([1, 2, 3, 4, 5, 6, 7], 3)).toEqual([[1, 2, 3], [4, 5, 6], [7]]);
+	});
+
+	it('never returns more groups than asked for', () => {
+		const items = Array.from({ length: 365 }, (_, i) => i);
+		const groups = chunkIntoEqualGroups(items, 120);
+		expect(groups.length).toBeLessThanOrEqual(120);
+		expect(groups.flat()).toEqual(items);
+	});
+
+	it('treats a non-positive limit as one group', () => {
+		expect(chunkIntoEqualGroups([1, 2], 0)).toEqual([[1, 2]]);
+	});
+});
+
 describe('DONUT_CHART geometry', () => {
 	it('leaves the hovered slice inside the svg box', () => {
 		expect(DONUT_CHART.outerRadius + DONUT_CHART.hoverExpansion).toBeLessThanOrEqual(
@@ -356,5 +383,31 @@ describe('describeDonutArc', () => {
 	it('splits a full circle into two sub-paths so it renders at all', () => {
 		const d = describeDonutArc(100, 100, 88, 62, 0, 360);
 		expect(d.match(/M /g)).toHaveLength(2);
+	});
+});
+
+describe('bar chart grid', () => {
+	it('sizes the name column to its widest label, capped so the bars keep room', () => {
+		expect(BAR_CHART_GRID_STYLE.gridTemplateColumns).toBe('fit-content(50%) minmax(0, 1fr) auto');
+	});
+
+	it('rows join the parent columns through subgrid', () => {
+		expect(BAR_CHART_ROW_STYLE).toMatchObject({
+			display: 'grid',
+			gridTemplateColumns: 'subgrid',
+			gridColumn: '1 / -1',
+		});
+	});
+});
+
+describe('getSeriesColor', () => {
+	it('gives the first series the theme accent and cycles a fixed palette after it', () => {
+		expect(getSeriesColor(0, mockTheme)).toBe(mockTheme.colors.accent);
+		expect(getSeriesColor(1, mockTheme)).toBe('#10b981');
+		expect(getSeriesColor(9, mockTheme)).toBe('#10b981');
+	});
+
+	it('uses the colorblind palette when asked', () => {
+		expect(getSeriesColor(2, mockTheme, true)).toBe(COLORBLIND_AGENT_PALETTE[2]);
 	});
 });

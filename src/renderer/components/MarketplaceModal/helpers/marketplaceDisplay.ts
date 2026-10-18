@@ -50,13 +50,7 @@ export function getCategoryCount(category: string, playbooks: MarketplacePlayboo
 	return playbooks.filter((playbook) => playbook.category === category).length;
 }
 
-export function generateDefaultFolderName(title: string): string {
-	return title
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/-+/g, '-')
-		.replace(/^-|-$/g, '');
-}
+export { generateDefaultFolderName } from '../../../../shared/marketplaceFolderName';
 
 export function buildDocumentList(playbook: MarketplacePlaybook): Array<string | null> {
 	return [null, ...playbook.documents.map((doc) => doc.filename)];

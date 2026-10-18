@@ -8,6 +8,8 @@ export interface AutoRunErrorBannerProps {
 	errorMessage: string;
 	errorDocumentName?: string;
 	isRecoverable: boolean;
+	/** The pause is a HITL gate: Resume records that the person did the step. */
+	isHumanGate?: boolean;
 	onResumeAfterError?: () => void;
 	onAbortBatchOnError?: () => void;
 	/**
@@ -25,6 +27,7 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 	errorMessage,
 	errorDocumentName,
 	isRecoverable,
+	isHumanGate = false,
 	onResumeAfterError,
 	onAbortBatchOnError,
 	disabledReason,
@@ -52,10 +55,15 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 									color: theme.colors.accentForeground,
 									opacity: disabled ? 0.6 : 1,
 								}}
-								title={disabledReason ?? 'Retry and resume Auto Run'}
+								title={
+									disabledReason ??
+									(isHumanGate
+										? 'Tick the "Human step done" box under this gate and continue'
+										: 'Retry and resume Auto Run')
+								}
 							>
 								<Play className="w-3 h-3" />
-								Resume
+								{isHumanGate ? 'Done, Resume' : 'Resume'}
 							</button>
 						)}
 						{/* Abort button */}

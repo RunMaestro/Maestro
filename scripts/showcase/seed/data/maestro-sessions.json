@@ -36,7 +36,36 @@
 			"shellCwd": "/tmp/showcase-projects/data-ai",
 			"aiCommandHistory": ["Analyze our user engagement data and set up a processing pipeline."],
 			"shellCommandHistory": [],
-			"executionQueue": [],
+			"executionQueue": [
+				{
+					"id": "00000000-0000-4000-b000-000000000210",
+					"timestamp": 1758300610000,
+					"tabId": "00000000-0000-4000-a000-000000000004",
+					"type": "message",
+					"tabName": "Pipeline Analysis",
+					"paused": true,
+					"turnSettings": {
+						"model": "sonnet",
+						"effort": "medium"
+					},
+					"text": "Backfill the September rollups and re-run the anomaly pass over the corrected rows.",
+					"images": []
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000211",
+					"timestamp": 1758300671000,
+					"tabId": "00000000-0000-4000-a000-000000000004",
+					"type": "message",
+					"tabName": "Pipeline Analysis",
+					"paused": true,
+					"turnSettings": {
+						"model": "sonnet",
+						"effort": "medium"
+					},
+					"text": "Then export the weekly summary as CSV into ./reports and tell me which segments moved.",
+					"images": []
+				}
+			],
 			"activeTimeMs": 900000,
 			"aiTabs": [
 				{
@@ -57,7 +86,7 @@
 							"id": "1773568813000-showcase6",
 							"timestamp": 1773568813000,
 							"source": "stdout",
-							"text": "\n\nI'll set up a data pipeline for processing user engagement metrics. Here's the plan:\n\n1. **Ingestion**: Read raw events from the `user_events` table (clicks, page views, session duration)\n2. **Transform**: Aggregate by user cohort (weekly, monthly) and compute retention rates\n3. **Load**: Write summary tables to `engagement_metrics` for dashboard consumption\n\nKey metrics to track:\n- **DAU/MAU ratio**: Currently at 0.34, healthy range is 0.25–0.50\n- **Session duration**: Median 4.2 min, trending up 8% month-over-month\n- **Feature adoption**: Auto Run used by 62% of active users\n\nI've created the pipeline config at `src/pipelines/engagement.yaml`. Want me to set up the scheduling?"
+							"text": "\n\nI'll set up a data pipeline for processing user engagement metrics. Here's the plan:\n\n1. **Ingestion**: Read raw events from the `user_events` table (clicks, page views, session duration)\n2. **Transform**: Aggregate by user cohort (weekly, monthly) and compute retention rates\n3. **Load**: Write summary tables to `engagement_metrics` for dashboard consumption\n\nKey metrics to track:\n- **DAU/MAU ratio**: Currently at 0.34, healthy range is 0.25-0.50\n- **Session duration**: Median 4.2 min, trending up 8% month-over-month\n- **Feature adoption**: Auto Run used by 62% of active users\n\nI've created the pipeline config at `src/pipelines/engagement.yaml`. Want me to set up the scheduling?"
 						}
 					],
 					"inputValue": "",
@@ -76,7 +105,7 @@
 						"contextWindow": 1000000,
 						"totalCostUsd": 0.048
 					},
-					"hasUnread": false
+					"hasUnread": true
 				}
 			],
 			"activeTabId": "00000000-0000-4000-a000-000000000004",
@@ -165,7 +194,7 @@
 							"id": "1773655213000-showcase12",
 							"timestamp": 1773655213000,
 							"source": "stdout",
-							"text": "\n\nI'll refactor the auth middleware to add JWT refresh token support. Here's what I'll change:\n\n**Current flow**: Single access token, 24h expiry, no refresh mechanism.\n\n**New flow**:\n- Access token: 15min expiry (short-lived)\n- Refresh token: 7-day expiry, stored in httpOnly cookie\n- Token rotation: New refresh token issued on each refresh\n\nFiles to modify:\n- `src/middleware/auth.ts` — Add refresh token validation\n- `src/routes/auth.ts` — Add `/auth/refresh` endpoint\n- `src/models/token.ts` — New model for refresh token storage\n\nWant me to proceed with the implementation?"
+							"text": "\n\nI'll refactor the auth middleware to add JWT refresh token support. Here's what I'll change:\n\n**Current flow**: Single access token, 24h expiry, no refresh mechanism.\n\n**New flow**:\n- Access token: 15min expiry (short-lived)\n- Refresh token: 7-day expiry, stored in httpOnly cookie\n- Token rotation: New refresh token issued on each refresh\n\nFiles to modify:\n- `src/middleware/auth.ts` - Add refresh token validation\n- `src/routes/auth.ts` - Add `/auth/refresh` endpoint\n- `src/models/token.ts` - New model for refresh token storage\n\nWant me to proceed with the implementation?"
 						}
 					],
 					"inputValue": "",
@@ -271,7 +300,7 @@
 							"id": "1773741613000-showcase18",
 							"timestamp": 1773741613000,
 							"source": "stdout",
-							"text": "\n\n# Q1 2026 Investor Update — Draft\n\n## Headline Numbers\n- **MRR**: $142K (+38% QoQ)\n- **Active Users**: 8,400 (+52% QoQ)\n- **Net Revenue Retention**: 124%\n\n## Product Highlights\n- Launched **Maestro Cue** — event-driven automation engine, our most-requested feature\n- Added 3 new agent integrations (Factory Droid, Qwen3 Coder, Aider)\n- **Enterprise pipeline**: 12 qualified leads, 3 in POC stage\n\n## What's Working\n- Self-serve conversion rate improved from 4.2% → 6.8% after onboarding wizard redesign\n- Power users (5+ agents) grew 3x — validates the multi-agent thesis\n- Community contributions up 200% after open-sourcing the agent SDK\n\n## Key Risks\n- Burn rate increased 15% due to new hires — runway at 18 months\n- Enterprise sales cycle longer than expected (avg 45 days)\n\nShall I refine any section or adjust the tone?"
+							"text": "\n\n# Q1 2026 Investor Update - Draft\n\n## Headline Numbers\n- **MRR**: $142K (+38% QoQ)\n- **Active Users**: 8,400 (+52% QoQ)\n- **Net Revenue Retention**: 124%\n\n## Product Highlights\n- Launched **Maestro Cue** - event-driven automation engine, our most-requested feature\n- Added 3 new agent integrations (Factory Droid, Qwen3 Coder, Aider)\n- **Enterprise pipeline**: 12 qualified leads, 3 in POC stage\n\n## What's Working\n- Self-serve conversion rate improved from 4.2% \u2192 6.8% after onboarding wizard redesign\n- Power users (5+ agents) grew 3x - validates the multi-agent thesis\n- Community contributions up 200% after open-sourcing the agent SDK\n\n## Key Risks\n- Burn rate increased 15% due to new hires - runway at 18 months\n- Enterprise sales cycle longer than expected (avg 45 days)\n\nShall I refine any section or adjust the tone?"
 						}
 					],
 					"inputValue": "",
@@ -356,7 +385,50 @@
 			"shellCwd": "/tmp/showcase-projects/openapi-spec",
 			"aiCommandHistory": ["Generate an OpenAPI 3.0 spec for our REST API endpoints."],
 			"shellCommandHistory": [],
-			"executionQueue": [],
+			"executionQueue": [
+				{
+					"id": "00000000-0000-4000-b000-000000000220",
+					"timestamp": 1758301220000,
+					"tabId": "00000000-0000-4000-a000-000000000016",
+					"type": "command",
+					"tabName": "API Spec Generation",
+					"paused": true,
+					"turnSettings": {
+						"model": "gpt-5-codex",
+						"effort": "high"
+					},
+					"command": "/speckit.specify",
+					"commandDescription": "Turn the request into a written spec"
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000221",
+					"timestamp": 1758301281000,
+					"tabId": "00000000-0000-4000-a000-000000000016",
+					"type": "message",
+					"tabName": "API Spec Generation",
+					"paused": true,
+					"turnSettings": {
+						"model": "gpt-5-codex",
+						"effort": "high"
+					},
+					"text": "Regenerate the client from the updated schema and list every breaking change.",
+					"images": []
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000222",
+					"timestamp": 1758301342000,
+					"tabId": "00000000-0000-4000-a000-000000000016",
+					"type": "message",
+					"tabName": "API Spec Generation",
+					"paused": true,
+					"turnSettings": {
+						"model": "gpt-5-codex",
+						"effort": "medium"
+					},
+					"text": "Add contract tests for the three endpoints that changed shape.",
+					"images": []
+				}
+			],
 			"activeTimeMs": 540000,
 			"aiTabs": [
 				{
@@ -396,7 +468,7 @@
 						"contextWindow": 1000000,
 						"totalCostUsd": 0.051
 					},
-					"hasUnread": false
+					"hasUnread": true
 				}
 			],
 			"activeTabId": "00000000-0000-4000-a000-000000000016",
@@ -593,7 +665,7 @@
 							"id": "1774000813000-showcase36",
 							"timestamp": 1774000813000,
 							"source": "stdout",
-							"text": "\n\nI've set up the Kinesis stream consumer with robust error handling. Key configuration:\n\n**Consumer settings**:\n- Shard iterator type: `TRIM_HORIZON` (process from earliest available)\n- Batch size: 100 records per poll\n- Poll interval: 1 second\n- Max retries: 3 with exponential backoff\n\n**Error handling**:\n- Deserialization failures → dead letter queue (`kinesis-dlq`)\n- Transient errors → retry with backoff (1s, 4s, 16s)\n- Poison messages → skip after 3 failures, log to CloudWatch\n\n**Backpressure**:\n- In-flight limit: 500 records\n- When limit reached: pause polling until buffer drains below 200\n- Circuit breaker: if DLQ exceeds 100 messages/hour, pause consumer and alert\n\nConfig written to `src/consumers/kinesis-config.ts`. The consumer is idempotent — safe to restart at any time."
+							"text": "\n\nI've set up the Kinesis stream consumer with robust error handling. Key configuration:\n\n**Consumer settings**:\n- Shard iterator type: `TRIM_HORIZON` (process from earliest available)\n- Batch size: 100 records per poll\n- Poll interval: 1 second\n- Max retries: 3 with exponential backoff\n\n**Error handling**:\n- Deserialization failures \u2192 dead letter queue (`kinesis-dlq`)\n- Transient errors \u2192 retry with backoff (1s, 4s, 16s)\n- Poison messages \u2192 skip after 3 failures, log to CloudWatch\n\n**Backpressure**:\n- In-flight limit: 500 records\n- When limit reached: pause polling until buffer drains below 200\n- Circuit breaker: if DLQ exceeds 100 messages/hour, pause consumer and alert\n\nConfig written to `src/consumers/kinesis-config.ts`. The consumer is idempotent - safe to restart at any time."
 						}
 					],
 					"inputValue": "",
@@ -612,7 +684,7 @@
 						"contextWindow": 1000000,
 						"totalCostUsd": 0.055
 					},
-					"hasUnread": false
+					"hasUnread": true
 				}
 			],
 			"activeTabId": "00000000-0000-4000-a000-000000000022",
@@ -684,7 +756,106 @@
 				"Explain the architecture of this codebase. How is everything organized?"
 			],
 			"shellCommandHistory": [],
-			"executionQueue": [],
+			"executionQueue": [
+				{
+					"id": "00000000-0000-4000-b000-000000000100",
+					"timestamp": 1758300000000,
+					"tabId": "00000000-0000-4000-a000-000000000034",
+					"type": "message",
+					"tabName": "Demo Tab",
+					"turnSettings": {
+						"model": "opus[1m]",
+						"effort": "high"
+					},
+					"text": "Add a --dry-run flag to the release script so a press can be rehearsed without tagging anything.",
+					"images": [],
+					"paused": true
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000101",
+					"timestamp": 1758300047000,
+					"tabId": "00000000-0000-4000-a000-000000000034",
+					"type": "command",
+					"tabName": "Demo Tab",
+					"turnSettings": {
+						"model": "opus[1m]",
+						"effort": "high"
+					},
+					"command": "/commit",
+					"commandDescription": "Stage, write a message, and commit",
+					"paused": true
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000102",
+					"timestamp": 1758300094000,
+					"tabId": "00000000-0000-4000-a000-000000000038",
+					"type": "message",
+					"tabName": "Understanding the Architecture",
+					"turnSettings": {
+						"model": "opus[1m]",
+						"effort": "high"
+					},
+					"text": "Walk the Cue dispatch path end to end and tell me where a subscription can fire twice for one event.",
+					"images": [],
+					"paused": true
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000103",
+					"timestamp": 1758300141000,
+					"tabId": "00000000-0000-4000-a000-00000000002c",
+					"type": "message",
+					"tabName": "Growth Check",
+					"turnSettings": {
+						"model": "sonnet",
+						"effort": "medium"
+					},
+					"text": "Chart weekly active agents against queries per agent for the last eight weeks.",
+					"images": [],
+					"paused": true
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000104",
+					"timestamp": 1758300188000,
+					"tabId": "00000000-0000-4000-a000-000000000030",
+					"type": "message",
+					"tabName": "Monthly Stats",
+					"turnSettings": {
+						"model": "sonnet",
+						"effort": "medium"
+					},
+					"text": "Pull the token totals per provider for September and flag anything that moved more than 20% week over week.",
+					"images": [],
+					"paused": true
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000105",
+					"timestamp": 1758300235000,
+					"tabId": "00000000-0000-4000-a000-000000000028",
+					"type": "command",
+					"tabName": "Setup Report",
+					"turnSettings": {
+						"model": "opus[1m]",
+						"effort": "high"
+					},
+					"command": "/speckit.plan",
+					"commandDescription": "Draft an implementation plan from the spec",
+					"paused": true
+				},
+				{
+					"id": "00000000-0000-4000-b000-000000000106",
+					"timestamp": 1758300282000,
+					"tabId": "00000000-0000-4000-a000-000000000034",
+					"type": "message",
+					"tabName": "Demo Tab",
+					"turnSettings": {
+						"model": "opus[1m]",
+						"effort": "high"
+					},
+					"text": "Then push the branch and open a PR against main with the release checklist in the body.",
+					"images": [],
+					"paused": true
+				}
+			],
 			"activeTimeMs": 3600000,
 			"aiTabs": [
 				{
@@ -705,7 +876,7 @@
 							"id": "1774087213000-showcase42",
 							"timestamp": 1774087213000,
 							"source": "stdout",
-							"text": "\n\n# Project Setup Report: Maestro\n\n## Build Status ✅\n\n- **TypeScript compilation**: Clean (0 errors across 3 tsconfig files)\n- **Vite dev server**: Ready (renderer + web configs)\n- **Electron main process**: Compiles successfully\n- **Preload scripts**: Built and up to date\n\n## Dependencies\n\n| Category | Count | Outdated | Critical |\n|----------|-------|----------|----------|\n| Production | 47 | 3 | 0 |\n| Development | 38 | 5 | 0 |\n| Peer | 4 | 0 | 0 |\n\n**Notable updates available:**\n- `electron`: 33.2.0 → 34.0.1 (major)\n- `vite`: 6.0.7 → 6.1.2 (minor)\n- `@sentry/electron`: 5.10.0 → 5.12.1 (minor)\n\n## Configuration\n\n- **Electron Builder**: Configured for macOS (DMG, ZIP), Windows (NSIS), Linux (AppImage, deb)\n- **Code Signing**: macOS notarization enabled, Windows signing configured\n- **Auto-Update**: Enabled via electron-updater, pointing to GitHub releases\n- **Sentry**: DSN configured for both main and renderer processes\n\n## Test Suite\n\n- **Framework**: Vitest\n- **Test files**: 24\n- **Total tests**: 156 passing, 0 failing\n- **Coverage**: Not configured (recommend adding)"
+							"text": "\n\n# Project Setup Report: Maestro\n\n## Build Status \u2705\n\n- **TypeScript compilation**: Clean (0 errors across 3 tsconfig files)\n- **Vite dev server**: Ready (renderer + web configs)\n- **Electron main process**: Compiles successfully\n- **Preload scripts**: Built and up to date\n\n## Dependencies\n\n| Category | Count | Outdated | Critical |\n|----------|-------|----------|----------|\n| Production | 47 | 3 | 0 |\n| Development | 38 | 5 | 0 |\n| Peer | 4 | 0 | 0 |\n\n**Notable updates available:**\n- `electron`: 33.2.0 \u2192 34.0.1 (major)\n- `vite`: 6.0.7 \u2192 6.1.2 (minor)\n- `@sentry/electron`: 5.10.0 \u2192 5.12.1 (minor)\n\n## Configuration\n\n- **Electron Builder**: Configured for macOS (DMG, ZIP), Windows (NSIS), Linux (AppImage, deb)\n- **Code Signing**: macOS notarization enabled, Windows signing configured\n- **Auto-Update**: Enabled via electron-updater, pointing to GitHub releases\n- **Sentry**: DSN configured for both main and renderer processes\n\n## Test Suite\n\n- **Framework**: Vitest\n- **Test files**: 24\n- **Total tests**: 156 passing, 0 failing\n- **Coverage**: Not configured (recommend adding)"
 						}
 					],
 					"inputValue": "",
@@ -744,7 +915,7 @@
 							"id": "1774094413000-showcase46",
 							"timestamp": 1774094413000,
 							"source": "stdout",
-							"text": "\n\n# Growth Check: Maestro Repository\n\n## Codebase Size\n\n| Metric | Current | 3 Months Ago | Change |\n|--------|---------|--------------|--------|\n| TypeScript LOC | 42,850 | 28,200 | +52% |\n| Components | 87 | 54 | +61% |\n| Test files | 24 | 12 | +100% |\n| Total files | 312 | 198 | +58% |\n\n## Commit Activity (Last 90 Days)\n\n- **Total commits**: 487\n- **Average per week**: ~38\n- **Peak week**: Mar 10–16 (72 commits — Cue engine launch)\n- **Merge commits**: 89 PRs merged\n\n## Contributor Activity\n\n| Contributor | Commits | Lines Added | Focus Area |\n|------------|---------|-------------|------------|\n| Primary maintainer | 312 | +38,400 | Core architecture |\n| Contributor 2 | 98 | +12,100 | Agent integrations |\n| Contributor 3 | 45 | +5,800 | UI/UX, themes |\n| Community (12 others) | 32 | +3,200 | Bug fixes, docs |\n\n## Feature Velocity\n\n- **v0.12 → v0.16**: 4 minor releases in 90 days\n- **Major features shipped**: Cue engine, Document Graph, Usage Dashboard, Factory Droid, Tabbed terminals\n- **Release cadence**: ~biweekly"
+							"text": "\n\n# Growth Check: Maestro Repository\n\n## Codebase Size\n\n| Metric | Current | 3 Months Ago | Change |\n|--------|---------|--------------|--------|\n| TypeScript LOC | 42,850 | 28,200 | +52% |\n| Components | 87 | 54 | +61% |\n| Test files | 24 | 12 | +100% |\n| Total files | 312 | 198 | +58% |\n\n## Commit Activity (Last 90 Days)\n\n- **Total commits**: 487\n- **Average per week**: ~38\n- **Peak week**: Mar 10-16 (72 commits - Cue engine launch)\n- **Merge commits**: 89 PRs merged\n\n## Contributor Activity\n\n| Contributor | Commits | Lines Added | Focus Area |\n|------------|---------|-------------|------------|\n| Primary maintainer | 312 | +38,400 | Core architecture |\n| Contributor 2 | 98 | +12,100 | Agent integrations |\n| Contributor 3 | 45 | +5,800 | UI/UX, themes |\n| Community (12 others) | 32 | +3,200 | Bug fixes, docs |\n\n## Feature Velocity\n\n- **v0.12 \u2192 v0.16**: 4 minor releases in 90 days\n- **Major features shipped**: Cue engine, Document Graph, Usage Dashboard, Factory Droid, Tabbed terminals\n- **Release cadence**: ~biweekly"
 						}
 					],
 					"inputValue": "",
@@ -763,7 +934,7 @@
 						"contextWindow": 1000000,
 						"totalCostUsd": 0.27
 					},
-					"hasUnread": false
+					"hasUnread": true
 				},
 				{
 					"id": "00000000-0000-4000-a000-000000000030",
@@ -783,7 +954,7 @@
 							"id": "1774101613000-showcase50",
 							"timestamp": 1774101613000,
 							"source": "stdout",
-							"text": "\n\n# Monthly Development Summary — April 2026\n\n## Sprint Highlights\n\n### Features Shipped\n- ✅ **Maestro Cue**: Event-driven automation engine (file watch, GitHub events, cron triggers)\n- ✅ **Showcase Mode**: Curated demo environment for presentations\n- ✅ **Factory Droid**: New agent integration (beta)\n- ✅ **Terminal Tabs**: Multiple PTY sessions per agent\n\n### Bug Fixes\n- Fixed Auto Run button layout overflow on narrow windows\n- Fixed tab display fallback for sessions without names\n- Fixed unread navigation badge not clearing on focus\n- Resolved SSH spawn wrapper failing on custom agent paths\n\n### Infrastructure\n- Migrated CI to parallel test execution (2.5x faster)\n- Added Sentry breadcrumbs for IPC handler failures\n- Reduced bundle size by 12% via tree-shaking unused parsers\n\n## Metrics\n\n| Metric | This Month | Last Month | Delta |\n|--------|------------|------------|-------|\n| Commits | 142 | 118 | +20% |\n| PRs merged | 34 | 27 | +26% |\n| Issues closed | 48 | 31 | +55% |\n| New issues | 22 | 35 | -37% |\n| Active contributors | 8 | 6 | +33% |"
+							"text": "\n\n# Monthly Development Summary - April 2026\n\n## Sprint Highlights\n\n### Features Shipped\n- \u2705 **Maestro Cue**: Event-driven automation engine (file watch, GitHub events, cron triggers)\n- \u2705 **Showcase Mode**: Curated demo environment for presentations\n- \u2705 **Factory Droid**: New agent integration (beta)\n- \u2705 **Terminal Tabs**: Multiple PTY sessions per agent\n\n### Bug Fixes\n- Fixed Auto Run button layout overflow on narrow windows\n- Fixed tab display fallback for sessions without names\n- Fixed unread navigation badge not clearing on focus\n- Resolved SSH spawn wrapper failing on custom agent paths\n\n### Infrastructure\n- Migrated CI to parallel test execution (2.5x faster)\n- Added Sentry breadcrumbs for IPC handler failures\n- Reduced bundle size by 12% via tree-shaking unused parsers\n\n## Metrics\n\n| Metric | This Month | Last Month | Delta |\n|--------|------------|------------|-------|\n| Commits | 142 | 118 | +20% |\n| PRs merged | 34 | 27 | +26% |\n| Issues closed | 48 | 31 | +55% |\n| New issues | 22 | 35 | -37% |\n| Active contributors | 8 | 6 | +33% |"
 						}
 					],
 					"inputValue": "",
@@ -861,7 +1032,7 @@
 							"id": "1774116013000-showcase58",
 							"timestamp": 1774116013000,
 							"source": "stdout",
-							"text": "\n\n# Maestro Architecture Overview\n\n## High-Level Structure\n\nMaestro follows Electron's standard two-process model with a clear separation of concerns:\n\n```\nsrc/\n├── main/          # Electron main process (Node.js)\n├── renderer/      # React frontend (Chromium)\n├── shared/        # Types and utilities shared between processes\n├── web/           # Web/mobile interface (separate Vite build)\n├── cli/           # CLI tooling for batch automation\n└── prompts/       # System prompts (editable .md files)\n```\n\n## Main Process (`src/main/`)\n\nThe Node.js backend handles all system-level operations:\n\n- **Process Management** (`process-manager.ts`): Spawns and manages AI agent processes via PTY (node-pty) or child_process. Handles lifecycle, signal forwarding, and cleanup.\n- **Agent System** (`agents/`): Agent detection, capabilities registry, session storage. Each agent type has its own parser and storage adapter.\n- **IPC Handlers** (`ipc/handlers/`): Modular handler files for each domain (git, stats, playbooks, cue, etc.). All registered in `index.ts`.\n- **Cue Engine** (`cue/`): Event-driven automation — watches files, GitHub webhooks, cron schedules, and triggers agent prompts.\n\n## Renderer Process (`src/renderer/`)\n\nThe React frontend provides the user interface:\n\n- **App.tsx**: Main coordinator — keyboard handling, session management, layout orchestration.\n- **Components**: Modular UI pieces (SessionList, MainPanel, RightPanel, XTerminal, etc.)\n- **Hooks**: Custom React hooks for settings, sessions, keyboard shortcuts, resize handling.\n- **Stores**: Zustand-based state management (settingsStore, tabStore).\n\n## IPC Bridge\n\nCommunication between processes flows through Electron's contextBridge:\n\n1. Renderer calls `window.maestro.<namespace>.<method>()`\n2. Preload script (`preload.ts`) forwards via `ipcRenderer.invoke()`\n3. Main process handler in `ipc/handlers/` processes and returns\n\n## Data Flow\n\n```\nUser Input → Renderer → IPC → Main Process → Agent Process (PTY)\nAgent Output → Parser → Structured Logs → IPC → Renderer → UI\n```\n\n## Key Design Decisions\n\n- **PTY over stdio**: Agents run in pseudo-terminals for full terminal emulation\n- **Tab-per-conversation**: Each AI tab maps to an independent agent session\n- **Unified tab system**: AI, file preview, and terminal tabs share a single tab bar\n- **Agent-agnostic design**: New agents added via configuration without changing core logic"
+							"text": "\n\n# Maestro Architecture Overview\n\n## High-Level Structure\n\nMaestro follows Electron's standard two-process model with a clear separation of concerns:\n\n```\nsrc/\n\u251c\u2500\u2500 main/          # Electron main process (Node.js)\n\u251c\u2500\u2500 renderer/      # React frontend (Chromium)\n\u251c\u2500\u2500 shared/        # Types and utilities shared between processes\n\u251c\u2500\u2500 web/           # Web/mobile interface (separate Vite build)\n\u251c\u2500\u2500 cli/           # CLI tooling for batch automation\n\u2514\u2500\u2500 prompts/       # System prompts (editable .md files)\n```\n\n## Main Process (`src/main/`)\n\nThe Node.js backend handles all system-level operations:\n\n- **Process Management** (`process-manager.ts`): Spawns and manages AI agent processes via PTY (node-pty) or child_process. Handles lifecycle, signal forwarding, and cleanup.\n- **Agent System** (`agents/`): Agent detection, capabilities registry, session storage. Each agent type has its own parser and storage adapter.\n- **IPC Handlers** (`ipc/handlers/`): Modular handler files for each domain (git, stats, playbooks, cue, etc.). All registered in `index.ts`.\n- **Cue Engine** (`cue/`): Event-driven automation - watches files, GitHub webhooks, cron schedules, and triggers agent prompts.\n\n## Renderer Process (`src/renderer/`)\n\nThe React frontend provides the user interface:\n\n- **App.tsx**: Main coordinator - keyboard handling, session management, layout orchestration.\n- **Components**: Modular UI pieces (SessionList, MainPanel, RightPanel, XTerminal, etc.)\n- **Hooks**: Custom React hooks for settings, sessions, keyboard shortcuts, resize handling.\n- **Stores**: Zustand-based state management (settingsStore, tabStore).\n\n## IPC Bridge\n\nCommunication between processes flows through Electron's contextBridge:\n\n1. Renderer calls `window.maestro.<namespace>.<method>()`\n2. Preload script (`preload.ts`) forwards via `ipcRenderer.invoke()`\n3. Main process handler in `ipc/handlers/` processes and returns\n\n## Data Flow\n\n```\nUser Input \u2192 Renderer \u2192 IPC \u2192 Main Process \u2192 Agent Process (PTY)\nAgent Output \u2192 Parser \u2192 Structured Logs \u2192 IPC \u2192 Renderer \u2192 UI\n```\n\n## Key Design Decisions\n\n- **PTY over stdio**: Agents run in pseudo-terminals for full terminal emulation\n- **Tab-per-conversation**: Each AI tab maps to an independent agent session\n- **Unified tab system**: AI, file preview, and terminal tabs share a single tab bar\n- **Agent-agnostic design**: New agents added via configuration without changing core logic"
 						}
 					],
 					"inputValue": "",
@@ -880,7 +1051,7 @@
 						"contextWindow": 1000000,
 						"totalCostUsd": 0.35
 					},
-					"hasUnread": false
+					"hasUnread": true
 				}
 			],
 			"activeTabId": "00000000-0000-4000-a000-000000000034",
@@ -983,7 +1154,7 @@
 							"id": "1774260013000-showcase64",
 							"timestamp": 1774260013000,
 							"source": "stdout",
-							"text": "\n\nI've scaffolded a dashboard prototype at `src/prototypes/analytics-dashboard/`:\n\n**Layout** (3-column grid):\n- **Left**: Filter sidebar (date range, agent type, project)\n- **Center**: Main chart area (stacked area chart for token usage over time)\n- **Right**: Summary cards (total cost, active agents, context efficiency)\n\n**Components created**:\n- `DashboardLayout.tsx` — CSS Grid container with responsive breakpoints\n- `TokenUsageChart.tsx` — Recharts area chart with tooltip and legend\n- `SummaryCard.tsx` — Reusable metric card with trend indicator\n- `FilterSidebar.tsx` — Date picker + multi-select dropdowns\n\n**Mock data**: Generated 30 days of realistic usage data in `mockData.ts`.\n\nPreview: `npm run dev` then navigate to `/prototype/dashboard`. The layout adapts down to 768px width."
+							"text": "\n\nI've scaffolded a dashboard prototype at `src/prototypes/analytics-dashboard/`:\n\n**Layout** (3-column grid):\n- **Left**: Filter sidebar (date range, agent type, project)\n- **Center**: Main chart area (stacked area chart for token usage over time)\n- **Right**: Summary cards (total cost, active agents, context efficiency)\n\n**Components created**:\n- `DashboardLayout.tsx` - CSS Grid container with responsive breakpoints\n- `TokenUsageChart.tsx` - Recharts area chart with tooltip and legend\n- `SummaryCard.tsx` - Reusable metric card with trend indicator\n- `FilterSidebar.tsx` - Date picker + multi-select dropdowns\n\n**Mock data**: Generated 30 days of realistic usage data in `mockData.ts`.\n\nPreview: `npm run dev` then navigate to `/prototype/dashboard`. The layout adapts down to 768px width."
 						}
 					],
 					"inputValue": "",
@@ -1002,7 +1173,7 @@
 						"contextWindow": 1000000,
 						"totalCostUsd": 0.065
 					},
-					"hasUnread": false
+					"hasUnread": true
 				}
 			],
 			"activeTabId": "00000000-0000-4000-a000-00000000003e",
@@ -1197,7 +1368,7 @@
 							"id": "1774432813000-showcase76",
 							"timestamp": 1774432813000,
 							"source": "stdout",
-							"text": "\n\nI've implemented the MCP tool integration for the search/retrieval system. Three tools registered:\n\n**1. `SearchDocuments`** — Full-text search across indexed documents\n- Input: `{ query: string, limit?: number, filters?: { type, date_range } }`\n- Returns: Ranked results with snippets and relevance scores\n\n**2. `GetDocument`** — Retrieve a single document by ID\n- Input: `{ id: string, include_metadata?: boolean }`\n- Returns: Full document content with optional metadata\n\n**3. `ListCollections`** — Enumerate available document collections\n- Input: `{ include_stats?: boolean }`\n- Returns: Collection names, document counts, last updated timestamps\n\n**Architecture**: Tools connect to the existing Elasticsearch backend via the `search-service` API. Authentication uses service-to-service JWT tokens.\n\nTests added in `tests/mcp-tools.test.ts` — all 12 test cases passing."
+							"text": "\n\nI've implemented the MCP tool integration for the search/retrieval system. Three tools registered:\n\n**1. `SearchDocuments`** - Full-text search across indexed documents\n- Input: `{ query: string, limit?: number, filters?: { type, date_range } }`\n- Returns: Ranked results with snippets and relevance scores\n\n**2. `GetDocument`** - Retrieve a single document by ID\n- Input: `{ id: string, include_metadata?: boolean }`\n- Returns: Full document content with optional metadata\n\n**3. `ListCollections`** - Enumerate available document collections\n- Input: `{ include_stats?: boolean }`\n- Returns: Collection names, document counts, last updated timestamps\n\n**Architecture**: Tools connect to the existing Elasticsearch backend via the `search-service` API. Authentication uses service-to-service JWT tokens.\n\nTests added in `tests/mcp-tools.test.ts` - all 12 test cases passing."
 						}
 					],
 					"inputValue": "",
@@ -1413,7 +1584,7 @@
 							"id": "1774605613000-showcase88",
 							"timestamp": 1774605613000,
 							"source": "stdout",
-							"text": "\n\nHere's a complete dev environment setup checklist:\n\n## Prerequisites\n- Node.js 20+ (`nvm install 20`)\n- Git configured with SSH key for GitHub\n- macOS: Xcode CLI tools (`xcode-select --install`)\n\n## Repository Setup\n```bash\ngit clone git@github.com:user/project.git\ncd project\nnpm install\ncp .env.example .env.local  # Fill in local secrets\nnpm run dev                  # Verify everything starts\n```\n\n## IDE Configuration\n- VS Code extensions: ESLint, Prettier, TypeScript, GitLens\n- Settings synced via `.vscode/settings.json` (committed)\n- Recommended: install Maestro for AI-assisted development\n\n## Access & Permissions\n- [ ] GitHub org invite (admin to send)\n- [ ] Sentry project access\n- [ ] Staging environment credentials (in 1Password vault \"Engineering\")\n- [ ] Slack channels: #engineering, #deploys, #incidents\n\n## First Tasks\nI'd suggest starting with a small bug fix to get familiar with the codebase and PR flow. Issue #247 (tooltip clipping) is a good candidate — isolated scope, touches the renderer only."
+							"text": "\n\nHere's a complete dev environment setup checklist:\n\n## Prerequisites\n- Node.js 20+ (`nvm install 20`)\n- Git configured with SSH key for GitHub\n- macOS: Xcode CLI tools (`xcode-select --install`)\n\n## Repository Setup\n```bash\ngit clone git@github.com:user/project.git\ncd project\nnpm install\ncp .env.example .env.local  # Fill in local secrets\nnpm run dev                  # Verify everything starts\n```\n\n## IDE Configuration\n- VS Code extensions: ESLint, Prettier, TypeScript, GitLens\n- Settings synced via `.vscode/settings.json` (committed)\n- Recommended: install Maestro for AI-assisted development\n\n## Access & Permissions\n- [ ] GitHub org invite (admin to send)\n- [ ] Sentry project access\n- [ ] Staging environment credentials (in 1Password vault \"Engineering\")\n- [ ] Slack channels: #engineering, #deploys, #incidents\n\n## First Tasks\nI'd suggest starting with a small bug fix to get familiar with the codebase and PR flow. Issue #247 (tooltip clipping) is a good candidate - isolated scope, touches the renderer only."
 						}
 					],
 					"inputValue": "",

@@ -23,10 +23,10 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { useClaudeUsageStore } from '../../../stores/claudeUsageStore';
 import { notifyToast } from '../../../stores/notificationStore';
-import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { REGEX_AI_TAB, REGEX_BATCH } from '../../../utils/sessionIdParser';
 import { generateId } from '../../../utils/ids';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
 
 /**
@@ -82,7 +82,7 @@ function buildBatchModeBanner(
 }
 
 export function useAgentClaudeModeResolvedListener(): void {
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 
@@ -101,8 +101,12 @@ export function useAgentClaudeModeResolvedListener(): void {
 				// on the parent session that actually owns `claudeInteractive`.
 				let actualSessionId: string;
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
+				const batchMatch = sessionId.match(REGEX_BATCH);
 				if (aiTabMatch) {
 					actualSessionId = aiTabMatch[1];
+				} else if (batchMatch) {
+					// Desktop Auto Run task: `{agentId}-batch-{timestamp}`.
+					actualSessionId = batchMatch[1];
 				} else if (sessionId.endsWith('-ai') || sessionId.endsWith('-terminal')) {
 					actualSessionId = sessionId.replace(/-ai$|-terminal$/, '');
 				} else {
@@ -172,15 +176,16 @@ export function useAgentClaudeModeResolvedListener(): void {
 				if (providerTransitioned && resolution.mode === 'api') {
 					notifyToast({
 						color: 'yellow',
-						title: 'Switched to API Limits',
-						message: 'Max plan quota hit - agents on this account are falling back to billed API.',
+						title: 'Switched to claude -p',
+						message:
+							'Plan limit hit - agents on this account now run through claude -p. Without an API key set, that draws from the same limit.',
 					});
 				} else if (providerTransitioned && resolution.mode === 'interactive') {
 					notifyToast({
 						color: 'green',
-						title: 'Switched to Time Limits',
+						title: 'Switched back to the TUI',
 						message:
-							'Max plan quota window has reset - agents on this account are back on Time Limits.',
+							'Plan limit window has reset - agents on this account are back on the TUI Wrapper.',
 					});
 				}
 

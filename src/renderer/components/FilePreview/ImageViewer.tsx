@@ -1,18 +1,15 @@
-import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
+import React, { useState, useCallback, useEffect, memo } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, ImageOff } from 'lucide-react';
 
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
+import { usePanZoom } from '../../hooks/ui/usePanZoom';
+
 interface ImageViewerProps {
 	src: string;
 	alt: string;
 	theme: any;
 }
-
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 10;
-/** Zoom sensitivity - smaller = slower. Trackpads send small deltas, mice send large ones. */
-const ZOOM_SENSITIVITY = 0.002;
 
 /**
  * Zoomable, pannable image viewer for file preview.
@@ -20,18 +17,13 @@ const ZOOM_SENSITIVITY = 0.002;
  * and a toolbar with zoom controls + fit-to-view reset.
  */
 export const ImageViewer = memo(function ImageViewer({ src, alt, theme }: ImageViewerProps) {
-	const containerRef = useRef<HTMLDivElement>(null);
-	const [zoom, setZoom] = useState(1);
-	const [offset, setOffset] = useState({ x: 0, y: 0 });
-	const [dragging, setDragging] = useState(false);
-	const dragStart = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
+	const { containerRef, zoom, dragging, transform, onMouseDown, zoomIn, zoomOut, fitToView } =
+		usePanZoom({ resetKey: src });
 	const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
 	const [loadState, setLoadState] = useState<'loading' | 'loaded' | 'error'>('loading');
 
-	// Reset zoom/pan and load state when image source changes
+	// Reset load state when image source changes (usePanZoom resets the view)
 	useEffect(() => {
-		setZoom(1);
-		setOffset({ x: 0, y: 0 });
 		setNaturalSize(null);
 		setLoadState(src ? 'loading' : 'error');
 	}, [src]);
@@ -44,78 +36,6 @@ export const ImageViewer = memo(function ImageViewer({ src, alt, theme }: ImageV
 
 	const handleImageError = useCallback(() => {
 		setLoadState('error');
-	}, []);
-
-	// Zoom centered on the cursor position, proportional to scroll delta
-	const handleWheel = useCallback((e: React.WheelEvent) => {
-		e.preventDefault();
-		const container = containerRef.current;
-		if (!container) return;
-
-		const rect = container.getBoundingClientRect();
-		const cx = e.clientX - rect.left - rect.width / 2;
-		const cy = e.clientY - rect.top - rect.height / 2;
-
-		// Use delta magnitude for smooth trackpad + discrete mouse support
-		const delta = -e.deltaY * ZOOM_SENSITIVITY;
-		const factor = 1 + delta;
-
-		setZoom((prev) => {
-			const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev * factor));
-			const scale = next / prev;
-			setOffset((o) => ({
-				x: cx - scale * (cx - o.x),
-				y: cy - scale * (cy - o.y),
-			}));
-			return next;
-		});
-	}, []);
-
-	// Pan via mouse drag
-	const handleMouseDown = useCallback(
-		(e: React.MouseEvent) => {
-			if (e.button !== 0) return; // left click only
-			e.preventDefault();
-			setDragging(true);
-			dragStart.current = { x: e.clientX, y: e.clientY, offsetX: offset.x, offsetY: offset.y };
-		},
-		[offset]
-	);
-
-	const handleMouseMove = useCallback(
-		(e: React.MouseEvent) => {
-			if (!dragging) return;
-			setOffset({
-				x: dragStart.current.offsetX + (e.clientX - dragStart.current.x),
-				y: dragStart.current.offsetY + (e.clientY - dragStart.current.y),
-			});
-		},
-		[dragging]
-	);
-
-	const handleMouseUp = useCallback(() => {
-		setDragging(false);
-	}, []);
-
-	// Release drag if mouse leaves the container
-	useEffect(() => {
-		if (!dragging) return;
-		const up = () => setDragging(false);
-		window.addEventListener('mouseup', up);
-		return () => window.removeEventListener('mouseup', up);
-	}, [dragging]);
-
-	const fitToView = useCallback(() => {
-		setZoom(1);
-		setOffset({ x: 0, y: 0 });
-	}, []);
-
-	const zoomIn = useCallback(() => {
-		setZoom((z) => Math.min(MAX_ZOOM, z * 1.25));
-	}, []);
-
-	const zoomOut = useCallback(() => {
-		setZoom((z) => Math.max(MIN_ZOOM, z / 1.25));
 	}, []);
 
 	const zoomPercent = Math.round(zoom * 100);
@@ -163,15 +83,12 @@ export const ImageViewer = memo(function ImageViewer({ src, alt, theme }: ImageV
 					backgroundSize: '20px 20px',
 					backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
 				}}
-				onWheel={handleWheel}
-				onMouseDown={handleMouseDown}
-				onMouseMove={handleMouseMove}
-				onMouseUp={handleMouseUp}
+				onMouseDown={onMouseDown}
 			>
 				<div
 					className="absolute inset-0 flex items-center justify-center"
 					style={{
-						transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+						transform,
 						transformOrigin: 'center center',
 						willChange: 'transform',
 					}}

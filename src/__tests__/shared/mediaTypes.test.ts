@@ -5,6 +5,9 @@ import {
 	buildMediaStreamHttpPath,
 	buildMediaStreamUrl,
 	getMediaKind,
+	getRemoteMediaKind,
+	getRemoteMediaName,
+	isRemoteMediaUrl,
 	getMediaMimeType,
 	isMediaFile,
 	isMediaStreamUrl,
@@ -175,5 +178,32 @@ describe('normalizePlaybackRate', () => {
 
 	it('accepts numeric strings from the CLI settings path', () => {
 		expect(normalizePlaybackRate('1.5')).toBe(1.5);
+	});
+});
+
+describe('remote media URLs', () => {
+	it('recognizes http and https URLs, and nothing else', () => {
+		expect(isRemoteMediaUrl('https://cdn.example.com/clip.mp4')).toBe(true);
+		expect(isRemoteMediaUrl('HTTP://localhost:8080/a.mp3')).toBe(true);
+		expect(isRemoteMediaUrl('/Users/me/clip.mp4')).toBe(false);
+		expect(isRemoteMediaUrl('maestro-media://stream/t/aa')).toBe(false);
+		expect(isRemoteMediaUrl('file:///tmp/clip.mp4')).toBe(false);
+		expect(isRemoteMediaUrl(null)).toBe(false);
+	});
+
+	it('reads the kind off the path, ignoring the query string', () => {
+		expect(getRemoteMediaKind('https://x.test/a/clip.mp4?sig=abc.mp3')).toBe('video');
+		expect(getRemoteMediaKind('https://x.test/episode.mp3')).toBe('audio');
+	});
+
+	it('defaults an unknown extension to video, which plays audio-only streams too', () => {
+		expect(getRemoteMediaKind('https://x.test/stream?id=42')).toBe('video');
+		expect(getRemoteMediaKind('not a url')).toBe('video');
+	});
+
+	it('names an item by its decoded last segment, else its host', () => {
+		expect(getRemoteMediaName('https://x.test/videos/My%20Clip.mp4?t=1')).toBe('My Clip.mp4');
+		expect(getRemoteMediaName('https://x.test:8443/')).toBe('x.test:8443');
+		expect(getRemoteMediaName('https://x.test/bad%E0%A4%A.mp4')).toBe('bad%E0%A4%A.mp4');
 	});
 });

@@ -39,6 +39,40 @@ describe('CueSelect', () => {
 		expect(screen.getByText('Beta')).toBeInTheDocument();
 	});
 
+	it('keeps option badges out of the trigger and preserves keyboard selection', () => {
+		render(
+			<CueSelect
+				value="a"
+				options={[
+					{ value: 'a', label: 'Alpha' },
+					{ value: 'b', label: 'Beta', rightContent: <span>Carry Over</span> },
+				]}
+				onChange={onChange}
+				theme={theme}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+		expect(screen.getByRole('option', { name: 'Beta Carry Over' })).toHaveStyle({
+			justifyContent: 'space-between',
+		});
+		fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
+		fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Enter' });
+		expect(onChange).toHaveBeenCalledWith('b');
+		expect(screen.queryByText('Carry Over')).not.toBeInTheDocument();
+	});
+
+	it('disables the trigger and hides an open menu while disabled', () => {
+		const { rerender } = render(
+			<CueSelect value="a" options={options} onChange={onChange} theme={theme} />
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+		expect(screen.getByRole('listbox')).toBeInTheDocument();
+		rerender(<CueSelect value="a" options={options} onChange={onChange} theme={theme} disabled />);
+		expect(screen.getByRole('button', { name: 'Alpha' })).toBeDisabled();
+		expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
 	it('opens dropdown on click and shows all options', () => {
 		render(<CueSelect value="a" options={options} onChange={onChange} theme={theme} />);
 		const trigger = screen.getByText('Alpha').closest('button')!;
@@ -245,6 +279,74 @@ describe('CueSelect', () => {
 			expect(screen.getByRole('option', { name: 'Alpha' })).toBeInTheDocument();
 			expect(screen.getByRole('option', { name: 'Beta' })).toBeInTheDocument();
 			expect(screen.getByRole('option', { name: 'Gamma' })).toBeInTheDocument();
+		});
+
+		it('closes the filter with the pointer, restores trigger focus, and clears the query without changing selection', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			const trigger = screen.getByRole('button', { name: 'Alpha' });
+			fireEvent.click(trigger);
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'be' } });
+			expect(screen.getByRole('option', { name: 'Beta' })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: 'Gamma' })).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Close filter (Esc)' }));
+
+			expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+			expect(trigger).toHaveFocus();
+			expect(trigger).toHaveTextContent('Alpha');
+			expect(onChange).not.toHaveBeenCalled();
+
+			fireEvent.click(trigger);
+			expect(screen.getByPlaceholderText('Filter…')).toHaveValue('');
+			expect(screen.getAllByRole('option')).toHaveLength(3);
+		});
+
+		it('closes on Escape from the close button and restores the unfiltered dropdown', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			const trigger = screen.getByRole('button', { name: 'Alpha' });
+			fireEvent.click(trigger);
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'be' } });
+			const closeButton = screen.getByRole('button', { name: 'Close filter (Esc)' });
+			closeButton.focus();
+			expect(closeButton).toHaveFocus();
+
+			fireEvent.keyDown(closeButton, { key: 'Escape' });
+
+			expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+			expect(trigger).toHaveFocus();
+			expect(onChange).not.toHaveBeenCalled();
+			fireEvent.click(trigger);
+			expect(screen.getByPlaceholderText('Filter…')).toHaveValue('');
+			expect(screen.getAllByRole('option')).toHaveLength(3);
+		});
+
+		it.each([
+			{ label: 'Enter', key: 'Enter' },
+			{ label: 'Space', key: ' ' },
+		])('activates the close button with $label without selecting an option', ({ key }) => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			const trigger = screen.getByRole('button', { name: 'Alpha' });
+			fireEvent.click(trigger);
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'be' } });
+			const closeButton = screen.getByRole('button', { name: 'Close filter (Esc)' });
+			closeButton.focus();
+
+			// Keep the button's native keyboard action available. jsdom does not
+			// synthesize its click, so send that activation after the key events.
+			expect(fireEvent.keyDown(closeButton, { key })).toBe(true);
+			expect(fireEvent.keyUp(closeButton, { key })).toBe(true);
+			expect(onChange).not.toHaveBeenCalled();
+			fireEvent.click(closeButton);
+
+			expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+			expect(trigger).toHaveFocus();
+			expect(onChange).not.toHaveBeenCalled();
 		});
 	});
 

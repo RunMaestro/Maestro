@@ -434,6 +434,8 @@ Manages merging multiple conversation contexts across agents.
 4. Parse groomed output via `parseGroomedOutput` (from contextExtractor utils)
 5. Report token savings
 
+**Cancelling:** `cancelGrooming()` calls `window.maestro.context.cancelGrooming()`, the same call `cancelSummarization()` makes. The grooming turn runs in the main process, so that is the only place a cancel can reach it: main kills the process and the waiting `groomContext()` call rejects. It is sent only while this service has a call out (`isGroomingActive()`), because the main-side cancel stops every grooming turn in the app.
+
 Shared utilities imported from `renderer/utils/contextExtractor`:
 
 - `formatLogsForGrooming` - Formats LogEntry arrays into text
@@ -589,7 +591,8 @@ subtracts it.
 - `onSystemSleep(handler)` - for a live tracker that pauses its own clock (`useTimeTracking`
   walks its per-session timestamps forward by the gap).
 - `sleepAwareElapsedSince(startTime)` - for a display that only kept a start timestamp
-  (the Auto Run pill, the thinking timer).
+  (the thinking timer). Auto Run displays use `autoRunActiveElapsedMs()` from
+  `useTimeTracking.ts` instead, so a paused run's clock stops.
 - `getTotalSleepMs()`, `recordSystemSleep()` (tests), `resetSystemSleepTracking()` (tests).
 
 Singleton: one IPC listener, attached lazily on first use, one counter, so every consumer

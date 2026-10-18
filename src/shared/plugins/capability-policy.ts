@@ -19,6 +19,7 @@ import type { PluginCapability } from './permissions';
 
 /** Capabilities that can move data off the machine. */
 export const EGRESS_CAPABILITIES: readonly PluginCapability[] = [
+	'media:tools',
 	'net:fetch',
 	'net:connect',
 	'process:spawn',

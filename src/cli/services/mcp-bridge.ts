@@ -35,6 +35,7 @@ interface AppToolEntry {
 
 export interface McpBridgeDeps {
 	serverInfo: { name: string; version: string };
+	runToken?: string;
 	/** Send a command to the running app and await its typed response. */
 	request: <T>(
 		message: Record<string, unknown>,
@@ -111,7 +112,12 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 			blocked?: boolean;
 			reason?: string;
 		}>(
-			{ type: 'plugins_call_tool', toolId, args },
+			{
+				type: 'plugins_call_tool',
+				toolId,
+				args,
+				...(deps.runToken ? { runToken: deps.runToken } : {}),
+			},
 			'plugins_call_tool_result',
 			MCP_CALL_TIMEOUT_MS
 		);

@@ -27,6 +27,8 @@ import { Server, CheckCircle, XCircle, FileCode, ChevronDown } from 'lucide-reac
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types';
+import type { SshRemoteRemediation } from '../../../shared/sshRemoteShell';
+import { SshRemediationNotice } from './SshRemediationNotice';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { FormInput } from '../ui/FormInput';
@@ -135,6 +137,7 @@ export function SshRemoteModal({
 		success: boolean;
 		message: string;
 		hostname?: string;
+		remediation?: SshRemoteRemediation;
 	} | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [showEnvVars, setShowEnvVars] = useState(false);
@@ -408,6 +411,7 @@ export function SshRemoteModal({
 				setTestResult({
 					success: false,
 					message: result.error || 'Connection failed',
+					remediation: result.result?.remediation,
 				});
 			}
 		} catch (err) {
@@ -533,8 +537,12 @@ export function SshRemoteModal({
 					</div>
 				)}
 
-				{/* Test Result */}
-				{testResult && (
+				{/* Test Result. A recognized, fixable cause replaces the one-liner:
+				    its detail already says what went wrong, and it adds the fix. */}
+				{testResult?.remediation && (
+					<SshRemediationNotice remediation={testResult.remediation} theme={theme} />
+				)}
+				{testResult && !testResult.remediation && (
 					<div
 						className="p-3 rounded flex items-start gap-2 text-sm"
 						style={{

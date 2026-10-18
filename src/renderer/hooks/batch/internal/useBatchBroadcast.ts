@@ -51,6 +51,7 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 				currentDocumentIndex: state.currentDocumentIndex,
 				totalTasksAcrossAllDocs: state.totalTasksAcrossAllDocs,
 				completedTasksAcrossAllDocs: state.completedTasksAcrossAllDocs,
+				initialCompletedTasks: state.initialCompletedTasks,
 				errorPaused: state.errorPaused,
 				errorMessage: state.error?.message,
 				errorType: state.error?.type,

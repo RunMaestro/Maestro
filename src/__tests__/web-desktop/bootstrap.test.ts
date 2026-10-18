@@ -6,9 +6,35 @@ vi.mock('../../web/utils/serviceWorker', () => ({
 vi.mock('../../main/preload/index', () => ({}));
 vi.mock('../../renderer/main', () => ({}));
 
-const { bootWebDesktop, ensureWebProcess } = await import('../../web-desktop/bootstrap');
+const { bootWebDesktop, ensureWebProcess, reportBootFailure } =
+	await import('../../web-desktop/bootstrap');
 
 describe('web-desktop bootstrap process shim', () => {
+	it('uses the injected execution host before preload reads process.platform', async () => {
+		const browserWindow = {
+			__MAESTRO_CONFIG__: {
+				securityToken: 'test',
+				sessionId: null,
+				tabId: null,
+				apiBase: '/test/api',
+				wsUrl: '/test/ws',
+				hostPlatform: 'win32',
+			},
+			process: { env: {}, versions: {}, platform: 'darwin', argv: [] },
+		} as unknown as Window;
+		await bootWebDesktop(browserWindow, {
+			preload: async () => {
+				expect(browserWindow.process?.platform).toBe('win32');
+			},
+			renderer: async () => {},
+		});
+	});
+
+	it('initializes a missing process with the execution host OS', () => {
+		const browserWindow = { __MAESTRO_CONFIG__: { hostPlatform: 'win32' } } as unknown as Window;
+		ensureWebProcess(browserWindow);
+		expect(browserWindow.process?.platform).toBe('win32');
+	});
 	it('supplies an empty argv array before evaluating the shared preload', async () => {
 		const browserWindow = {
 			process: {
@@ -54,5 +80,40 @@ describe('web-desktop bootstrap process shim', () => {
 		ensureWebProcess(browserWindow);
 
 		expect(browserWindow.process?.argv).toEqual(['--maestro-cli-path=/tmp/maestro-cli']);
+	});
+});
+
+describe('web-desktop boot failure reporting', () => {
+	// A module that failed to fetch for a moment (a Cloudflare quick tunnel
+	// answering 429 while several tabs reload) used to go straight to the error
+	// screen, so the user had to refresh by hand. It must reach the load-failure
+	// policy, which reloads once for exactly that case.
+	it('hands the failure to the load-failure policy when it is installed', () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const handle = vi.fn();
+		const showBootError = vi.fn();
+		const target = {
+			__maestroHandleLoadFailure: handle,
+			__maestroShowBootError: showBootError,
+		} as unknown as Window;
+		const err = new TypeError('Importing a module script failed.');
+
+		reportBootFailure(target, err);
+
+		expect(handle).toHaveBeenCalledWith(err);
+		expect(showBootError).not.toHaveBeenCalled();
+	});
+
+	it('falls back to the inline error surface when the policy never installed', () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const showBootError = vi.fn();
+		const target = { __maestroShowBootError: showBootError } as unknown as Window;
+
+		reportBootFailure(target, new Error('boom'));
+
+		expect(showBootError).toHaveBeenCalledWith(
+			'Maestro web-desktop failed to load',
+			expect.stringContaining('boom')
+		);
 	});
 });

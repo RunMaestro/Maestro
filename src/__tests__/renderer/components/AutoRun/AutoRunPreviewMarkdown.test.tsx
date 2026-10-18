@@ -119,6 +119,30 @@ describe('Auto Run preview task checkboxes', () => {
 		);
 	});
 
+	// Saving on a toggle writes the whole draft, so with unsaved edits in play
+	// the toggle would persist them and leave Revert nothing to discard.
+	it('keeps a toggle in the draft while the document has unsaved edits', async () => {
+		const draft = TASK_DOC + '\nunsaved line\n';
+		const { container } = renderPreview(TASK_DOC, {
+			externalLocalContent: draft,
+			externalSavedContent: TASK_DOC,
+		});
+
+		fireEvent.click(container.querySelectorAll('input[type="checkbox"]')[0]);
+		await waitFor(() =>
+			expect(
+				(container.querySelectorAll('input[type="checkbox"]')[0] as HTMLInputElement).checked
+			).toBe(true)
+		);
+		expect(writeDoc).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByTitle('Discard changes'));
+		await waitFor(() => expect(container.textContent).not.toContain('unsaved line'));
+		expect(
+			(container.querySelectorAll('input[type="checkbox"]')[0] as HTMLInputElement).checked
+		).toBe(false);
+	});
+
 	// A document owned by a running Auto Run is read-only in the editor; its
 	// checkboxes must match rather than letting a click race the agent.
 	it('keeps checkboxes read-only while the document is locked by a run', () => {

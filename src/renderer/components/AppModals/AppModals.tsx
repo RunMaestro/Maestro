@@ -198,6 +198,8 @@ export interface AppModalsProps {
 	onConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
 
 	// --- AppUtilityModals props ---
+	/** Left Bar draw order; the first ten own the Opt+Cmd+# slots */
+	visibleSessions?: Session[];
 	quickActionInitialMode: 'main' | 'move-to-group' | 'agents';
 	setQuickActionOpen: (open: boolean) => void;
 	setActiveSessionId: (id: string) => void;
@@ -381,6 +383,7 @@ export interface AppModalsProps {
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -690,6 +693,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onConfirmDeleteWorktree,
 		onConfirmAndDeleteWorktreeOnDisk,
 		// Utility modals
+		visibleSessions,
 		quickActionInitialMode,
 		setQuickActionOpen,
 		setActiveSessionId,
@@ -850,6 +854,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onTogglePauseQueueItem,
 		onEditQueueItem,
 		onForceSendQueueItem,
+		onMergeQueueItem,
 		onQuickActionsNewTab,
 		onQuickActionsNewFileTab,
 		onQuickActionsNewBrowserTab,
@@ -1059,6 +1064,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				shortcuts={shortcuts}
 				tabShortcuts={tabShortcuts}
 				quickActionOpen={quickActionOpen}
+				visibleSessions={visibleSessions}
 				quickActionInitialMode={quickActionInitialMode}
 				setQuickActionOpen={setQuickActionOpen}
 				setActiveSessionId={setActiveSessionId}
@@ -1233,6 +1239,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onTogglePauseQueueItem={onTogglePauseQueueItem}
 				onEditQueueItem={onEditQueueItem}
 				onForceSendQueueItem={onForceSendQueueItem}
+				onMergeQueueItem={onMergeQueueItem}
 			/>
 
 			{/* Group Chat Modals */}

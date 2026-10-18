@@ -1,3 +1,4 @@
+import { useHeadlessActivityStore } from '../../stores/headlessActivityStore';
 import React, {
 	useState,
 	useEffect,
@@ -21,15 +22,25 @@ import {
 	Trash2,
 	Bot,
 	Star,
+	Eye,
+	EyeOff,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
-import { subscribeSidebarReveal, getSidebarRevealToken } from '../../utils/sidebarReveal';
+import { NotificationCenter } from '../NotificationCenter';
+import {
+	subscribeSidebarReveal,
+	getSidebarRevealToken,
+	markLeftBarPointerInput,
+	clearLeftBarPointerInput,
+	takeLeftBarPointerInput,
+} from '../../utils/sidebarReveal';
 import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/mediaPlaybackStore';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
+import { orderLeftBarGroups } from '../../utils/leftBarOrder';
 import { resolveGroupAppearance } from '../ui/groupAppearanceOptions';
 import { SafeSvgIcon } from '../ui/SafeSvgIcon';
 import { getBadgeForTime } from '../../constants/conductorBadges';
@@ -51,9 +62,17 @@ import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { rollUpWizardActivityToSessions } from '../../utils/wizardActivity';
+import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
+import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
-import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils/windowTargets';
+import {
+	buildGroupWindowMoveTargets,
+	buildWindowMoveTargets,
+	collectGroupAgentIds,
+	scopeSessionsToOwningWindow,
+} from '../../utils/windowTargets';
 import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
@@ -109,6 +128,12 @@ const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
  */
 const HEADER_BADGE_WIDTH = 39;
 /**
+ * Room the Notification Center bell takes while that Encore Feature is on: the
+ * icon button plus the band's gap. Charged like the badge, against the
+ * wordmark first.
+ */
+const HEADER_BELL_WIDTH = 30;
+/**
  * Width the header's left cluster needs before the MAESTRO wordmark is drawn:
  * the wand, the wordmark itself, the hamburger, and the row's own padding.
  * Excludes the LIVE pill and the now-playing pill, which are added below.
@@ -161,6 +186,8 @@ interface SessionListProps {
 	toggleGlobalLive: () => Promise<void>;
 	restartWebServer: () => Promise<string | null>;
 	toggleGroup: (groupId: string) => void;
+	/** Park a group out of this list, or bring it back. */
+	toggleGroupHidden: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;
 	handleDragOver: (e: React.DragEvent) => void;
 	handleDropOnGroup: (groupId: string) => void;
@@ -237,9 +264,10 @@ function SessionListInner(props: SessionListProps) {
 	// likewise outside a WindowProvider (isolation tests). Worktree children ride
 	// along with an owned parent so a detached agent keeps its worktrees together.
 	//
-	// Separately, a secondary window renders its owned agents as a FOCUSED flat
-	// list (no starred/bookmarks/group section headers - see the `isSecondaryWindow`
-	// gates below); the primary keeps its full sectioned layout, just scoped.
+	// Separately, a secondary window renders a FOCUSED list: no starred or
+	// bookmarks sections (see the `isSecondaryWindow` gates below), and group
+	// headers only for groups holding its owned agents (`displayGroups`); the
+	// primary keeps its full sectioned layout, just scoped.
 	const windowCtx = useWindowContextOptional();
 	const isSecondaryWindow = !!windowCtx && !windowCtx.isMainWindow;
 	const scopeSessionsToWindow = useCallback(
@@ -273,18 +301,39 @@ function SessionListInner(props: SessionListProps) {
 	const webInterfaceUseCustomPort = useSettingsStore((s) => s.webInterfaceUseCustomPort);
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const showHiddenGroups = useSettingsStore((s) => s.showHiddenGroups);
+	// The first settings load applies its whole snapshot in one write, so a
+	// toggle made before it lands is overwritten on screen (while disk keeps the
+	// click). The desktop splash covers that window; the browser build has none.
+	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
 	const starredSectionCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const pianolaSession = useSessionStore((s) => s.sessions.find((x) => x.isPianola));
+	// The agents the Left Bar may surface: drops a dormant Pianola agent (its
+	// Encore flag is off) so header tells - busy wand, unread bell dot, the
+	// "no agents" state, the group-chat agent count - never react to it.
+	const liveSessions = useMemo(
+		() => filterSessionsVisibleInSidebar(sessions, { pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
+	const showLeftPanelCollapsedInitials = useSettingsStore((s) => s.showLeftPanelCollapsedInitials);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
-	// The badge pill occupies part of the header's left cluster, so both label
-	// thresholds below shift by the same amount when it is showing.
+	// How much wider the header's own labels render in the current interface font
+	// than in the one the thresholds below were measured against. Zero when the
+	// user is on the original monospace face.
+	const headerTextDelta = useHeaderTextDelta();
+	// The badge pill and the notification bell occupy part of the indicator
+	// band, so both label thresholds below shift by the same amount when either
+	// is showing. Their boxes are rem-built, so they grow with the root size.
 	const headerBadgeWidth =
-		autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0;
+		(autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0) *
+			headerTextDelta.remScale +
+		(notificationCenterEnabled ? HEADER_BELL_WIDTH * headerTextDelta.remScale : 0);
 	// Whether the now-playing pill is on screen, and in which form. Read from the
 	// store's own selector rather than re-derived here, so the reserve below
 	// cannot end up describing a header nobody is looking at.
@@ -292,13 +341,8 @@ function SessionListInner(props: SessionListProps) {
 	const nowPlayingCompact = leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH + headerBadgeWidth;
 	const nowPlayingReserve = !nowPlayingVisible
 		? 0
-		: nowPlayingCompact
-			? NOW_PLAYING_COMPACT_RESERVE
-			: NOW_PLAYING_LABEL_RESERVE;
-	// How much wider the header's own labels render in the current interface font
-	// than in the one the thresholds below were measured against. Zero when the
-	// user is on the original monospace face.
-	const headerTextDelta = useHeaderTextDelta();
+		: (nowPlayingCompact ? NOW_PLAYING_COMPACT_RESERVE : NOW_PLAYING_LABEL_RESERVE) *
+			headerTextDelta.remScale;
 	// Constant on this build. The indirection is deliberate: a build that hides
 	// the LIVE toggle zeroes this one line instead of re-deriving the threshold.
 	// The label's own delta rides with it, since the reserve exists to hold it.
@@ -374,12 +418,18 @@ function SessionListInner(props: SessionListProps) {
 	}, [wizardActiveSessions, sessions]);
 
 	// Cue session status map: sessionId → { count, active }
-	// Always fetched - the indicator shows whenever a .maestro/cue.yaml has subscriptions,
-	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
+	// Fetched only while the Cue Encore Feature is on. A disabled feature has no
+	// footprint: no status poll, no activity subscription, and no row indicator,
+	// so the map is emptied the moment the flag goes off.
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 	const [cueSessionMap, setCueSessionMap] = useState<
 		Map<string, { count: number; active: boolean }>
 	>(new Map());
 	useEffect(() => {
+		if (!maestroCueEnabled) {
+			setCueSessionMap((prev) => (prev.size === 0 ? prev : new Map()));
+			return;
+		}
 		let mounted = true;
 
 		const fetchCueStatus = async () => {
@@ -429,7 +479,7 @@ function SessionListInner(props: SessionListProps) {
 			unsubscribe();
 		};
 		// Re-fetch when sessions change so newly added agents show their Cue indicator
-	}, [sessions.length]);
+	}, [sessions.length, maestroCueEnabled]);
 	// Starred Sessions: prefer sidebarNavStore (shared with Cmd+[ / ] cycling).
 	// Props remain for tests that inject fixtures without mounting SidebarNavSync.
 	const storeStarredItems = useSidebarNavStore((s) => s.starredItems);
@@ -475,25 +525,33 @@ function SessionListInner(props: SessionListProps) {
 		]
 	);
 
-	// Bring the keyboard cursor into view - and ONLY when something asked.
-	//
-	// This used to fire on any `activeSessionId` change, which meant a click
-	// re-aimed the list the user had just scrolled by hand. Intent is now
-	// declared by the caller (`requestSidebarReveal`) rather than inferred from
-	// the state a click and a keystroke both produce; see utils/sidebarReveal.ts.
+	// Bring the keyboard cursor into view whenever the active agent or group chat
+	// changes, or when a caller asks (`requestSidebarReveal`) - except when the
+	// switch came from a click in the Left Bar itself, where the user is already
+	// looking at the row. See utils/sidebarReveal.ts.
 	//
 	// Deferred to the next frame so the cursor has settled. Without that, a
 	// programmatic jump scrolls to the row the cursor is leaving and never
 	// corrects, because nothing asks a second time.
 	const revealToken = useSyncExternalStore(subscribeSidebarReveal, getSidebarRevealToken);
-	// Seeded with the token as it stands at mount, because MOUNTING IS NOT A
+	// Seeded with the state as it stands at mount, because MOUNTING IS NOT A
 	// REQUEST. The counter is global and monotonic, so a fresh SessionList (a new
 	// window, a remount) would otherwise run this effect once against whatever
 	// the last reveal left behind and scroll a list nobody had touched.
 	const handledRevealRef = useRef(revealToken);
+	const lastActiveRef = useRef({ sessionId: activeSessionId, groupChatId: activeGroupChatId });
 	useEffect(() => {
-		if (revealToken === handledRevealRef.current) return;
+		const requested = revealToken !== handledRevealRef.current;
 		handledRevealRef.current = revealToken;
+		const prev = lastActiveRef.current;
+		lastActiveRef.current = { sessionId: activeSessionId, groupChatId: activeGroupChatId };
+		// A switch is landing ON something. Closing a group chat drops the view back
+		// to the agent that was already active, which is not a switch.
+		const switched = activeGroupChatId
+			? activeGroupChatId !== prev.groupChatId
+			: activeSessionId !== prev.sessionId;
+		const revealSwitch = switched && !takeLeftBarPointerInput();
+		if (!requested && !revealSwitch) return;
 		const frame = requestAnimationFrame(() => {
 			const container = listScrollRef.current;
 			if (!container) return;
@@ -513,7 +571,15 @@ function SessionListInner(props: SessionListProps) {
 			el?.scrollIntoView({ block: 'nearest' });
 		});
 		return () => cancelAnimationFrame(frame);
-	}, [revealToken]);
+	}, [revealToken, activeSessionId, activeGroupChatId]);
+
+	// Track where the user's latest input went, so a switch made by clicking a
+	// Left Bar row is not re-aimed. Window capture runs before React's root
+	// listener (which fires the Left Bar's onPointerDownCapture below) and before
+	// any handler can stop a keydown, so the order is: clear, then re-mark if the
+	// press was ours. Portaled menus the Left Bar owns count as the Left Bar.
+	useEventListener('pointerdown', clearLeftBarPointerInput, { capture: true });
+	useEventListener('keydown', clearLeftBarPointerInput, { capture: true });
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
@@ -541,6 +607,7 @@ function SessionListInner(props: SessionListProps) {
 	const setWebInterfaceUseCustomPort = useSettingsStore.getState().setWebInterfaceUseCustomPort;
 	const setWebInterfaceCustomPort = useSettingsStore.getState().setWebInterfaceCustomPort;
 	const setUngroupedCollapsed = useSettingsStore.getState().setUngroupedCollapsed;
+	const setShowHiddenGroups = useSettingsStore.getState().setShowHiddenGroups;
 	const setLeftSidebarWidthState = useSettingsStore.getState().setLeftSidebarWidth;
 
 	// Modal actions (stable, accessed via store)
@@ -564,6 +631,7 @@ function SessionListInner(props: SessionListProps) {
 		toggleGlobalLive,
 		restartWebServer,
 		toggleGroup,
+		toggleGroupHidden,
 		handleDragStart,
 		handleDragOver,
 		handleDropOnGroup,
@@ -616,12 +684,13 @@ function SessionListInner(props: SessionListProps) {
 	// Derive whether any session is busy or in auto-run (for wand sparkle
 	// animation). A running group chat counts too: the room burns real agent
 	// time, and the wand is the app-wide "something is working" tell.
+	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 	const isAnyBusy = useMemo(
 		() =>
-			sessions.some((s) => s.state === 'busy') ||
+			liveSessions.some((s) => s.state === 'busy' || (headlessCounts[s.id] ?? 0) > 0) ||
 			activeBatchSessionIds.length > 0 ||
 			isAnyGroupChatBusy,
-		[sessions, activeBatchSessionIds, isAnyGroupChatBusy]
+		[liveSessions, activeBatchSessionIds, isAnyGroupChatBusy, headlessCounts]
 	);
 
 	const { sessionFilter, setSessionFilter } = useSessionFilterMode();
@@ -650,9 +719,10 @@ function SessionListInner(props: SessionListProps) {
 	const attentionCtx = useMemo<AttentionContext>(
 		() => ({
 			batchSessionIds: new Set(activeBatchSessionIds),
+			headlessCounts,
 			stuckOutageIds: outageIdsFromSignature(stuckOutageSignature),
 		}),
-		[activeBatchSessionIds, stuckOutageSignature]
+		[activeBatchSessionIds, stuckOutageSignature, headlessCounts]
 	);
 	// Drives the Bell button's dot. It must agree with what the unread filter
 	// would actually reveal, and that filter keeps unread group chats too - a
@@ -660,9 +730,9 @@ function SessionListInner(props: SessionListProps) {
 	// through sessionNeedsAttention so this can't drift from the filter itself.
 	const hasUnreadAgents = useMemo(
 		() =>
-			sessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
+			liveSessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
 			groupChats.some((c) => !c.archived && unreadGroupChatIds.has(c.id)),
-		[sessions, attentionCtx, groupChats, unreadGroupChatIds]
+		[liveSessions, attentionCtx, groupChats, unreadGroupChatIds]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -921,6 +991,7 @@ function SessionListInner(props: SessionListProps) {
 		sortedUngroupedParentSessions,
 		sortedFilteredSessions,
 		sortedGroups,
+		hiddenGroupIds,
 	} = useSessionCategories(
 		deferredSessionFilter,
 		sortedSessions,
@@ -961,42 +1032,47 @@ function SessionListInner(props: SessionListProps) {
 	}, []);
 
 	const { orderedGroups, groupById, childrenByParentId } = useMemo(() => {
+		// `groupById` stays COMPLETE - it resolves a nested group's parent, and a
+		// child whose parent is suppressed still has to find it to know it is
+		// nested. Only the rendered list is narrowed.
 		const groupById = new Map(sortedGroups.map((group) => [group.id, group]));
-		if (!groupsPlusEnabled) {
-			return {
-				orderedGroups: sortedGroups,
-				groupById,
-				childrenByParentId: new Map<string, Group[]>(),
-			};
-		}
+		const visibleGroups =
+			hiddenGroupIds.size > 0
+				? sortedGroups.filter((group) => !hiddenGroupIds.has(group.id))
+				: sortedGroups;
+		return { ...orderLeftBarGroups(visibleGroups, groupById, groupsPlusEnabled), groupById };
+	}, [groupsPlusEnabled, sortedGroups, hiddenGroupIds]);
 
-		const childrenByParentId = new Map<string, Group[]>();
-		const rootGroups: Group[] = [];
+	// Counted off the groups themselves, never off `hiddenGroupIds`: that set is
+	// EMPTY while "Show Hidden" is on, so counting it would make the button
+	// announce "0" at exactly the moment it has to offer the way back.
+	const hiddenGroupCount = useMemo(
+		() => sortedGroups.reduce((n, group) => (group.hidden ? n + 1 : n), 0),
+		[sortedGroups]
+	);
 
-		for (const group of sortedGroups) {
-			const parent = group.parentGroupId ? groupById.get(group.parentGroupId) : undefined;
-			if (!parent || parent.parentGroupId) {
-				rootGroups.push(group);
-				continue;
-			}
+	// Every group that is parked, whether by its own flag or by its parent's.
+	// The fade reads this rather than `group.hidden`: a child renders as its own
+	// sibling row, so its parent's opacity never reaches it, and a revealed
+	// child drawn at full strength looks like a group that was never hidden.
+	const parkedGroupIds = useMemo(() => collectHiddenGroupIds(sortedGroups), [sortedGroups]);
 
-			const children = childrenByParentId.get(parent.id);
-			if (children) {
-				children.push(group);
-			} else {
-				childrenByParentId.set(parent.id, [group]);
-			}
-		}
-
-		return {
-			orderedGroups: rootGroups.flatMap((group) => [
-				group,
-				...(childrenByParentId.get(group.id) ?? []),
-			]),
-			groupById,
-			childrenByParentId,
-		};
-	}, [groupsPlusEnabled, sortedGroups]);
+	// The group sections this window draws. The primary draws every group (empty
+	// ones included - it owns the fleet). A secondary draws only the groups that
+	// hold an agent it owns, so a group moved here with "Move Group to Window"
+	// arrives as a group instead of being flattened; a parent stays when only its
+	// subgroup holds owned agents. With no owned grouped agents it falls back to
+	// the flat focused list.
+	const displayGroups = useMemo(() => {
+		if (!isSecondaryWindow) return orderedGroups;
+		const holdsOwned = (groupId: string) => (sortedGroupSessionsById.get(groupId)?.length ?? 0) > 0;
+		return orderedGroups.filter(
+			(group) =>
+				holdsOwned(group.id) ||
+				(childrenByParentId.get(group.id) ?? []).some((child) => holdsOwned(child.id))
+		);
+	}, [isSecondaryWindow, orderedGroups, sortedGroupSessionsById, childrenByParentId]);
+	const hasDisplayGroups = isSecondaryWindow ? displayGroups.length > 0 : groups.length > 0;
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders.
 	// These Maps store stable function references keyed by session id. They only
@@ -1290,11 +1366,7 @@ function SessionListInner(props: SessionListProps) {
 	// Precomputed jump number map (1-9, 0=10th) for sessions based on position in visibleSessions
 	const jumpNumberMap = useMemo(() => {
 		if (!showSessionJumpNumbers) return new Map<string, string>();
-		const map = new Map<string, string>();
-		for (let i = 0; i < Math.min(visibleSessions.length, 10); i++) {
-			map.set(visibleSessions[i].id, i === 9 ? '0' : String(i + 1));
-		}
-		return map;
+		return buildSessionJumpSlotMap(visibleSessions);
 	}, [showSessionJumpNumbers, visibleSessions]);
 
 	const getSessionJumpNumber = (sessionId: string): string | null => {
@@ -1320,6 +1392,7 @@ function SessionListInner(props: SessionListProps) {
 							: undefined,
 				} as React.CSSProperties
 			}
+			onPointerDownCapture={markLeftBarPointerInput}
 			onClick={() => setActiveFocus('sidebar')}
 			onFocus={() => setActiveFocus('sidebar')}
 			onKeyDown={(e) => {
@@ -1497,6 +1570,9 @@ function SessionListInner(props: SessionListProps) {
 									)}
 								</div>
 							)}
+							{/* Notification Center bell (Encore Feature). App-wide history, so it
+							    lives with the other global indicators, not in an agent's header. */}
+							{notificationCenterEnabled && <NotificationCenter theme={theme} />}
 						</div>
 						<div className="flex items-center shrink-0">
 							{/* Hamburger Menu */}
@@ -1555,6 +1631,7 @@ function SessionListInner(props: SessionListProps) {
 						{/* Renders nothing unless the player is actually minimized, so
 						    the rail is unchanged for anyone not playing anything. */}
 						<NowPlayingIndicator theme={theme} compact />
+						{notificationCenterEnabled && <NotificationCenter theme={theme} />}
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>
@@ -1874,10 +1951,10 @@ function SessionListInner(props: SessionListProps) {
 								);
 							})}
 
-					{/* GROUPS - hidden in a secondary window, which renders its owned agents
-					    as a flat focused list (see the flat-list branch below). */}
+					{/* GROUPS - a secondary window draws only the groups holding its owned
+					    agents (see `displayGroups`). */}
 					{!activeVirtualGrouping &&
-						(isSecondaryWindow ? [] : orderedGroups).map((group) => {
+						displayGroups.map((group) => {
 							const groupSessions = sortedGroupSessionsById.get(group.id) || [];
 							const parentGroup =
 								groupsPlusEnabled && group.parentGroupId
@@ -1905,15 +1982,20 @@ function SessionListInner(props: SessionListProps) {
 									key={group.id}
 									data-group-depth={isNestedGroup ? 1 : 0}
 									className={`${isNestedGroup ? 'ml-4 ' : ''}mb-1 rounded`}
-									style={
-										dragOverTarget === group.id
+									style={{
+										// A parked group only reaches this list while "Show Hidden" is on
+										// (or while it holds the active agent), so it is drawn faded:
+										// without it a revealed group is indistinguishable from a normal
+										// one and the toggle reads as having done nothing.
+										...(parkedGroupIds.has(group.id) ? { opacity: 0.45 } : undefined),
+										...(dragOverTarget === group.id
 											? {
 													outline: `1px dashed ${theme.colors.accent}`,
 													outlineOffset: '-2px',
 													backgroundColor: `${theme.colors.accent}14`,
 												}
-											: undefined
-									}
+											: undefined),
+									}}
 									onDragEnter={() => handleDropTargetEnter(group.id)}
 									onDragLeave={handleDropTargetLeave}
 								>
@@ -2098,12 +2180,9 @@ function SessionListInner(props: SessionListProps) {
 							);
 						})}
 
-					{/* SESSIONS - Flat list when no groups exist (or in a secondary window, which
-					    always shows its owned agents as a flat focused list), otherwise the
-					    Ungrouped folder. */}
-					{!activeVirtualGrouping &&
-					sessions.length > 0 &&
-					(groups.length === 0 || isSecondaryWindow) ? (
+					{/* SESSIONS - Flat list when no groups are drawn (a secondary window with
+					    no owned grouped agents counts), otherwise the Ungrouped folder. */}
+					{!activeVirtualGrouping && sessions.length > 0 && !hasDisplayGroups ? (
 						/* FLAT LIST - No groups exist yet, show sessions directly with New Group button */
 						<>
 							<div className="flex flex-col">
@@ -2129,10 +2208,7 @@ function SessionListInner(props: SessionListProps) {
 								</div>
 							)}
 						</>
-					) : !activeVirtualGrouping &&
-					  !isSecondaryWindow &&
-					  groups.length > 0 &&
-					  ungroupedSessions.length > 0 ? (
+					) : !activeVirtualGrouping && hasDisplayGroups && ungroupedSessions.length > 0 ? (
 						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
 						<div
 							className="mb-1 mt-4 rounded"
@@ -2277,6 +2353,42 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					) : null}
 
+					{/* SHOW HIDDEN - only exists once something is actually parked, so the
+					    foot of the list stays empty for anyone not using the feature. It is
+					    the ONLY way back to a hidden group: its header is off the list, so
+					    the right-click that hid it is out of reach. Suppressed while the
+					    unread filter is on, like the other list-foot controls. */}
+					{!activeVirtualGrouping &&
+						!isSecondaryWindow &&
+						!showUnreadAgentsOnly &&
+						hiddenGroupCount > 0 && (
+							<div className="mt-2 px-3">
+								<button
+									type="button"
+									onClick={() => setShowHiddenGroups(!showHiddenGroups)}
+									disabled={!settingsLoaded}
+									aria-pressed={showHiddenGroups}
+									data-testid="show-hidden-groups-toggle"
+									className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-default"
+									style={{
+										backgroundColor: showHiddenGroups ? theme.colors.accent + '20' : 'transparent',
+										color: showHiddenGroups ? theme.colors.accent : theme.colors.textDim,
+										border: `1px solid ${showHiddenGroups ? theme.colors.accent + '40' : theme.colors.border}`,
+									}}
+									title={
+										showHiddenGroups
+											? 'Suppress hidden groups from this list again'
+											: `Reveal ${hiddenGroupCount} hidden group${hiddenGroupCount === 1 ? '' : 's'}`
+									}
+								>
+									{showHiddenGroups ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+									<span>
+										{showHiddenGroups ? 'Hide Hidden' : 'Show Hidden'} ({hiddenGroupCount})
+									</span>
+								</button>
+							</div>
+						)}
+
 					{/* Flexible spacer to push group chats to bottom */}
 					<div className="flex-grow min-h-4" />
 
@@ -2286,7 +2398,7 @@ function SessionListInner(props: SessionListProps) {
 						onEditGroupChat &&
 						onRenameGroupChat &&
 						onDeleteGroupChat &&
-						sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
+						liveSessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
 							<GroupChatList
 								theme={theme}
 								groupChats={groupChats}
@@ -2331,6 +2443,7 @@ function SessionListInner(props: SessionListProps) {
 					handleContextMenu={handleContextMenu}
 					showUnreadAgentsOnly={showUnreadAgentsOnly}
 					stuckOutageSignature={stuckOutageSignature}
+					showInitials={showLeftPanelCollapsedInitials}
 				/>
 			)}
 
@@ -2338,7 +2451,7 @@ function SessionListInner(props: SessionListProps) {
 			<SidebarActions
 				theme={theme}
 				leftSidebarOpen={leftSidebarOpen}
-				hasNoSessions={sessions.length === 0}
+				hasNoSessions={liveSessions.length === 0}
 				shortcuts={shortcuts}
 				showUnreadAgentsOnly={showUnreadAgentsOnly}
 				hasUnreadAgents={hasUnreadAgents}
@@ -2435,6 +2548,33 @@ function SessionListInner(props: SessionListProps) {
 					onMoveInto={(parentGroupId) => setGroupParent(groupContextMenuGroup.id, parentGroupId)}
 					onMoveToTopLevel={() => setGroupParent(groupContextMenuGroup.id, undefined)}
 					onNewGroupInside={() => createNewGroup(groupContextMenuGroup.id)}
+					onToggleHidden={() => toggleGroupHidden(groupContextMenuGroup.id)}
+					windowTargets={
+						windowCtx
+							? buildGroupWindowMoveTargets(
+									windowCtx.windows,
+									// Every agent in the group, not just the ones this window shows:
+									// "already here" means the WHOLE group is here.
+									collectGroupAgentIds(
+										allSessions,
+										groups,
+										groupContextMenuGroup.id,
+										groupsPlusEnabled
+									)
+								)
+							: undefined
+					}
+					onMoveToNewWindow={
+						windowCtx
+							? () => void windowCtx.moveGroupToNewWindow(groupContextMenuGroup.id)
+							: undefined
+					}
+					onMoveToWindow={
+						windowCtx
+							? (targetWindowId) =>
+									void windowCtx.moveGroupToWindow(groupContextMenuGroup.id, targetWindowId)
+							: undefined
+					}
 					onRename={() => {
 						const modalActions = getModalActions();
 						modalActions.setRenameGroupId(groupContextMenuGroup.id);

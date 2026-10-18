@@ -38,9 +38,15 @@ vi.mock('../../../main/stores/getters', () => ({
 	getAgentConfigsStore: () => {
 		throw new Error('stores must not be read when env vars are injected');
 	},
+	getSettingsStore: () => {
+		throw new Error('stores must not be read when shell env vars are injected');
+	},
 }));
 
-import { getProviderAccountDirs } from '../../../main/agents/provider-account-dirs';
+import {
+	getProviderAccountDirs,
+	resolveAgentAccountDir,
+} from '../../../main/agents/provider-account-dirs';
 
 let homeDir: string;
 let outsideHome: string;
@@ -262,5 +268,90 @@ describe('getProviderAccountDirs', () => {
 		});
 
 		expect(dirs).toEqual([path.join(homeDir, '.codex')]);
+	});
+});
+
+// One agent's own account: what its session browser must list and total,
+// since claude only resumes sessions from the config dir it was started with.
+describe('resolveAgentAccountDir', () => {
+	const agent = (overrides: Record<string, unknown> = {}) => ({
+		id: 'agent-1',
+		toolType: 'claude-code',
+		...overrides,
+	});
+	const base = () => ({
+		homeDir,
+		env: {} as NodeJS.ProcessEnv,
+		agentLevelEnvVars: {},
+		globalShellEnvVars: {},
+	});
+
+	it("uses the agent's own CLAUDE_CONFIG_DIR, expanding ~", () => {
+		const dir = resolveAgentAccountDir('agent-1', {
+			...base(),
+			sessions: [agent({ customEnvVars: { CLAUDE_CONFIG_DIR: '~/.claude-work' } })],
+		});
+		expect(dir).toBe(path.join(homeDir, '.claude-work'));
+	});
+
+	it('lets the provider-level set stand in when the agent has none, and the agent set replace it', () => {
+		const providerDir = path.join(outsideHome, 'provider');
+		const agentDir = path.join(outsideHome, 'agent');
+		const options = { ...base(), agentLevelEnvVars: { CLAUDE_CONFIG_DIR: providerDir } };
+
+		expect(resolveAgentAccountDir('agent-1', { ...options, sessions: [agent()] })).toBe(
+			providerDir
+		);
+		expect(
+			resolveAgentAccountDir('agent-1', {
+				...options,
+				sessions: [agent({ customEnvVars: { CLAUDE_CONFIG_DIR: agentDir } })],
+			})
+		).toBe(agentDir);
+	});
+
+	it('falls back through Settings -> Environment, then Maestro env, then the default', () => {
+		const globalDir = path.join(outsideHome, 'global');
+		const envDir = path.join(outsideHome, 'env');
+		const sessions = [agent()];
+
+		expect(
+			resolveAgentAccountDir('agent-1', {
+				...base(),
+				sessions,
+				globalShellEnvVars: { CLAUDE_CONFIG_DIR: globalDir },
+				env: { CLAUDE_CONFIG_DIR: envDir },
+			})
+		).toBe(globalDir);
+		expect(
+			resolveAgentAccountDir('agent-1', { ...base(), sessions, env: { CLAUDE_CONFIG_DIR: envDir } })
+		).toBe(envDir);
+		expect(resolveAgentAccountDir('agent-1', { ...base(), sessions })).toBe(
+			path.join(homeDir, '.claude')
+		);
+	});
+
+	it('returns an SSH agent its remote path untouched, and nothing when it set none', () => {
+		const ssh = { sessionSshRemoteConfig: { enabled: true } };
+		expect(
+			resolveAgentAccountDir('agent-1', {
+				...base(),
+				sessions: [agent({ ...ssh, customEnvVars: { CLAUDE_CONFIG_DIR: '~/.claude-remote' } })],
+			})
+		).toBe('~/.claude-remote');
+		expect(
+			resolveAgentAccountDir('agent-1', {
+				...base(),
+				sessions: [agent(ssh)],
+				env: { CLAUDE_CONFIG_DIR: path.join(outsideHome, 'local-only') },
+			})
+		).toBeUndefined();
+	});
+
+	it('answers undefined for an unknown agent or a provider with no account dir', () => {
+		expect(resolveAgentAccountDir('missing', { ...base(), sessions: [agent()] })).toBeUndefined();
+		expect(
+			resolveAgentAccountDir('agent-1', { ...base(), sessions: [agent({ toolType: 'terminal' })] })
+		).toBeUndefined();
 	});
 });

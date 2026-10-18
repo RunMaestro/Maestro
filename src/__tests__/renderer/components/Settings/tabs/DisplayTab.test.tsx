@@ -64,12 +64,15 @@ const mockSetShowBrowserTabsInUnreadFilter = vi.fn();
 const mockSetFileEditWordWrap = vi.fn();
 const mockSetFileEditShowLineNumbers = vi.fn();
 const mockSetFilePreviewToolbarButtonVisibility = vi.fn();
+const mockSetShowWorktreeProvider = vi.fn();
 
 // Per-test overrides (merged into useSettings return)
 let mockUseSettingsOverrides: Record<string, any> = {};
 
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
+		showWorktreeProvider: false,
+		setShowWorktreeProvider: mockSetShowWorktreeProvider,
 		fontFamily: 'Menlo',
 		setFontFamily: mockSetFontFamily,
 		fontSize: 14,
@@ -265,6 +268,16 @@ describe('DisplayTab', () => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		mockUseSettingsOverrides = {};
+	});
+
+	it('threads worktree provider visibility through the Display tab', () => {
+		render(<DisplayTab theme={mockTheme} />);
+		const toggle = screen.getByRole('switch', {
+			name: 'Show provider in left panel agent list',
+		});
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+		fireEvent.click(toggle);
+		expect(mockSetShowWorktreeProvider).toHaveBeenCalledWith(true);
 	});
 
 	describe('Group Chats', () => {

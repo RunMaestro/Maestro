@@ -10,11 +10,19 @@ import {
 	applyQueuedItemRelease,
 	getForceSendEligibility,
 	shouldOfferForceSend,
+	describeSteerBlocked,
+	getSteerEligibility,
+	shouldOfferSteer,
 	applyQueuedItemEdit,
 	applyQueuedItemDispatchFailure,
 	isSameQueuedPrompt,
 	findQueuedDuplicate,
 	releaseConnectionHeldQueueItems,
+	hasConsultHoldForTab,
+	dropConsultHold,
+	findQueuedMergeTarget,
+	mergeQueuedItemIntoPrevious,
+	applyReplayDispatch,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -82,6 +90,80 @@ describe('executionQueue helpers', () => {
 		const { item: taken, remaining } = takeNextRunnableQueueItem(q);
 		expect(taken).toBeNull();
 		expect(remaining).toBe(q);
+	});
+});
+
+describe('mergeQueuedItemIntoPrevious', () => {
+	const msg = (id: string, overrides: Partial<QueuedItem> = {}): QueuedItem => ({
+		id,
+		timestamp: 0,
+		tabId: 'tab-1',
+		type: 'message',
+		text: `text ${id}`,
+		...overrides,
+	});
+
+	it('appends the text and images to the item above and keeps its id, place and settings', () => {
+		const q = [
+			msg('a', { images: ['img-a'], paused: true, turnSettings: { model: 'opus' } }),
+			msg('b', { images: ['img-b'], turnSettings: { model: 'haiku' } }),
+			msg('c'),
+		];
+		const result = mergeQueuedItemIntoPrevious(q, 'b');
+		expect(result?.targetId).toBe('a');
+		expect(result?.queue.map((i) => i.id)).toEqual(['a', 'c']);
+		expect(result?.queue[0]).toMatchObject({
+			text: 'text a\n\ntext b',
+			images: ['img-a', 'img-b'],
+			paused: true,
+			turnSettings: { model: 'opus' },
+		});
+	});
+
+	it('separates the two with exactly one blank line, whatever whitespace they carried', () => {
+		const q = [msg('a', { text: 'first\n\n\n  ' }), msg('b', { text: '\n\n  second' })];
+		expect(mergeQueuedItemIntoPrevious(q, 'b')?.queue[0].text).toBe('first\n\n  second');
+	});
+
+	it('merges into the previous item for the SAME tab, skipping other tabs', () => {
+		const q = [msg('a'), msg('x', { tabId: 'tab-2' }), msg('b')];
+		expect(findQueuedMergeTarget(q, 'b')?.id).toBe('a');
+		expect(mergeQueuedItemIntoPrevious(q, 'b')?.queue.map((i) => i.id)).toEqual(['a', 'x']);
+	});
+
+	it('keeps an @mention from either message so dispatch re-plans the consult', () => {
+		const q = [msg('a'), msg('b', { crossAgentMention: true })];
+		expect(mergeQueuedItemIntoPrevious(q, 'b')?.queue[0].crossAgentMention).toBe(true);
+	});
+
+	it('keeps a picked mention routing, preferring the earlier message', () => {
+		expect(
+			mergeQueuedItemIntoPrevious([msg('a'), msg('b', { mentionRouting: 'handoff' })], 'b')
+				?.queue[0].mentionRouting
+		).toBe('handoff');
+		expect(
+			mergeQueuedItemIntoPrevious(
+				[msg('a', { mentionRouting: 'parallel' }), msg('b', { mentionRouting: 'handoff' })],
+				'b'
+			)?.queue[0].mentionRouting
+		).toBe('parallel');
+	});
+
+	it('refuses the first item, commands, leading-mention messages, and consult holds', () => {
+		expect(mergeQueuedItemIntoPrevious([msg('a'), msg('b')], 'a')).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([msg('a', { type: 'command' }), msg('b')], 'b')).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([msg('a'), msg('b', { type: 'command' })], 'b')).toBeNull();
+		expect(
+			mergeQueuedItemIntoPrevious([msg('a'), msg('b', { crossAgentOnly: true })], 'b')
+		).toBeNull();
+		expect(
+			mergeQueuedItemIntoPrevious(
+				[msg('a', { awaitingConsult: {} as QueuedItem['awaitingConsult'] }), msg('b')],
+				'b'
+			)
+		).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([msg('a'), msg('x', { tabId: 'tab-2' })], 'x')).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([msg('a')], 'missing')).toBeNull();
 	});
 });
 
@@ -374,6 +456,26 @@ describe('applyQueuedItemEdit', () => {
 		expect(next[0]).toBe(queue[0]);
 	});
 
+	it('writes the re-derived @mention fields, dropping a routing the edit invalidated', () => {
+		const queue = [{ ...item('a'), crossAgentMention: true, mentionRouting: 'handoff' as const }];
+
+		const kept = applyQueuedItemEdit(queue, 'a', patch(), {
+			crossAgentMention: true,
+			crossAgentOnly: false,
+			mentionRouting: 'handoff',
+		});
+		expect(kept[0].mentionRouting).toBe('handoff');
+
+		// The edit removed every mention: no consult, no routing.
+		const dropped = applyQueuedItemEdit(queue, 'a', patch(), {
+			crossAgentMention: false,
+			crossAgentOnly: false,
+			mentionRouting: undefined,
+		});
+		expect(dropped[0].crossAgentMention).toBe(false);
+		expect(dropped[0].mentionRouting).toBeUndefined();
+	});
+
 	it('does not disturb an item paused state', () => {
 		const queue = [item('a', /* paused */ true)];
 
@@ -423,9 +525,7 @@ describe('applyQueuedItemDispatchFailure', () => {
 		const next = applyQueuedItemDispatchFailure(
 			sessionWithCard({ executionQueue: [later] }),
 			failed,
-			{
-				hold: false,
-			}
+			{ collision: false }
 		);
 
 		expect(next.aiTabs[0].state).toBe('idle');
@@ -436,11 +536,10 @@ describe('applyQueuedItemDispatchFailure', () => {
 		expect(next.aiTabs[0].logs.map((l) => l.id)).toEqual(['log-old']);
 		// Head of the queue, so it keeps its place ahead of everything behind it.
 		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1', 'q2']);
-		expect(next.executionQueue[0].paused).toBeFalsy();
 	});
 
 	it('holds the item when the failure is not a transient collision', () => {
-		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { hold: true });
+		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { collision: false });
 
 		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
 		// Preserved and visible, but it cannot spin the queue against a wall that
@@ -448,12 +547,26 @@ describe('applyQueuedItemDispatchFailure', () => {
 		expect(next.executionQueue[0].paused).toBe(true);
 	});
 
+	// "Agent process already running": a process still owns the tab's key, and
+	// only the exit handler removes it, so that exit will come and settle the tab.
+	it('leaves a colliding tab and the agent busy, with the item runnable', () => {
+		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { collision: true });
+
+		expect(next.aiTabs[0].state).toBe('busy');
+		expect(next.state).toBe('busy');
+		expect(next.busySource).toBe('ai');
+		// The card still goes: this prompt was never delivered.
+		expect(next.aiTabs[0].logs.map((l) => l.id)).toEqual(['log-old']);
+		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
+		expect(next.executionQueue[0].paused).toBeFalsy();
+	});
+
 	it('is idempotent when the item is already back in the queue', () => {
 		// `retryStore.holdFailedItemInQueue` parks the failed turn in the queue for
 		// the life of an outage. A second copy would double-send the prompt.
 		const held = sessionWithCard({ executionQueue: [failed] });
 
-		const next = applyQueuedItemDispatchFailure(held, failed, { hold: false });
+		const next = applyQueuedItemDispatchFailure(held, failed, { collision: true });
 
 		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
 	});
@@ -465,7 +578,7 @@ describe('applyQueuedItemDispatchFailure', () => {
 			aiTabs: [...base.aiTabs, createMockAITab({ id: 'tab-2', state: 'busy' })],
 		} as Session;
 
-		const next = applyQueuedItemDispatchFailure(withOther, failed, { hold: false });
+		const next = applyQueuedItemDispatchFailure(withOther, failed, { collision: false });
 
 		expect(next.aiTabs.find((t) => t.id === 'tab-1')!.state).toBe('idle');
 		expect(next.aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
@@ -490,9 +603,7 @@ describe('applyQueuedItemDispatchFailure', () => {
 		const next = applyQueuedItemDispatchFailure(
 			base,
 			{ ...failed, tabId: 'tab-9' },
-			{
-				hold: false,
-			}
+			{ collision: false }
 		);
 
 		expect(next.orphanedThinkingTabs![0].logs).toHaveLength(0);
@@ -503,6 +614,30 @@ describe('applyQueuedItemDispatchFailure', () => {
 // The re-authentication resume replays a snapshotted prompt. If the user
 // already re-sent that prompt by hand (which is what they do when the failed
 // turn is invisible), running both spends two turns on one question.
+describe('applyReplayDispatch', () => {
+	const busySession = () =>
+		createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			activeTabId: 'tab-1',
+			executionQueue: [],
+		} as Partial<Session>);
+
+	it('refuses a tab that is mid-turn', () => {
+		const result = applyReplayDispatch(busySession(), item('q1'));
+		expect(result.blocked).toBe('target-tab-busy');
+	});
+
+	it('resends onto a tab the caller itself marked busy for this turn', () => {
+		const result = applyReplayDispatch(busySession(), item('q1'), undefined, {
+			targetBusyIsOurs: true,
+		});
+		expect(result.blocked).toBeUndefined();
+		expect(result.session.aiTabs[0].state).toBe('busy');
+		expect(result.session.state).toBe('busy');
+	});
+});
+
 describe('isSameQueuedPrompt', () => {
 	const base: QueuedItem = { id: 'a', timestamp: 0, tabId: 'tab-1', type: 'message', text: 'hi' };
 
@@ -543,5 +678,483 @@ describe('isSameQueuedPrompt', () => {
 		const queue = [tabItem('other', 'tab-2'), { ...base, id: 'user-copy' }];
 		expect(findQueuedDuplicate({ executionQueue: queue }, base)?.id).toBe('user-copy');
 		expect(findQueuedDuplicate({ executionQueue: [] }, base)).toBeUndefined();
+	});
+});
+
+/**
+ * A consult hold is a barrier for ONE tab: the turn that @mentioned another
+ * agent is not finished until the reply lands, so nothing queued for that tab
+ * may run ahead of it - while other tabs carry on.
+ */
+describe('consult hold', () => {
+	const held = (tabId: string): QueuedItem => ({
+		id: `hold-${tabId}`,
+		timestamp: 0,
+		tabId,
+		type: 'message',
+		text: 'Waiting',
+		awaitingConsult: {
+			pending: [{ targetSessionId: 's-b', targetAgentName: 'Backend' }],
+			replies: [],
+		},
+	});
+
+	it('is not runnable while it waits', () => {
+		expect(isRunnableQueueItem(held('tab-1'))).toBe(false);
+	});
+
+	it('blocks later items for its own tab but not for other tabs', () => {
+		const queue = [held('tab-1'), tabItem('same', 'tab-1'), tabItem('other', 'tab-2')];
+
+		expect(nextRunnableQueueItem(queue)?.id).toBe('other');
+		const { item: taken, remaining } = takeNextRunnableQueueItem(queue);
+		expect(taken?.id).toBe('other');
+		expect(remaining.map((i) => i.id)).toEqual(['hold-tab-1', 'same']);
+	});
+
+	it('leaves nothing runnable when only its own tab has work', () => {
+		const queue = [held('tab-1'), tabItem('same', 'tab-1')];
+		expect(hasRunnableQueueItem(queue)).toBe(false);
+		expect(takeNextRunnableQueueItem(queue)).toEqual({ item: null, remaining: queue });
+	});
+
+	it('counts as work ahead of a new message', () => {
+		const session = createMockSession({ aiTabs: [], executionQueue: [held('tab-1')] });
+		expect(hasWorkAheadOfNewMessage(session)).toBe(true);
+	});
+
+	it('is found per tab', () => {
+		const queue = [held('tab-1')];
+		expect(hasConsultHoldForTab(queue, 'tab-1')).toBe(true);
+		expect(hasConsultHoldForTab(queue, 'tab-2')).toBe(false);
+		expect(hasConsultHoldForTab(queue, undefined)).toBe(false);
+	});
+
+	it('drops only its own tab, and returns the same queue when absent', () => {
+		const other = tabItem('other', 'tab-1');
+		const queue = [held('tab-1'), held('tab-2'), other];
+		expect(dropConsultHold(queue, 'tab-1').map((i) => i.id)).toEqual(['hold-tab-2', 'other']);
+		const plain = [other];
+		expect(dropConsultHold(plain, 'tab-1')).toBe(plain);
+	});
+
+	it('cannot be force sent: it has nothing to send until the reply lands', () => {
+		const session = { aiTabs: [{ id: 'tab-1', state: 'idle' }] } as unknown as Session;
+		const e = getForceSendEligibility(session, held('tab-1'), { forcedParallelEnabled: true });
+		expect(e.blockedReason).toBe('awaiting-consult');
+		expect(e.canForce).toBe(false);
+		expect(shouldOfferForceSend(e)).toBe(false);
+	});
+
+	it('is dropped when the turn that placed it fails to dispatch', () => {
+		// The restored item places a fresh hold when it dispatches again; the old
+		// one would otherwise deliver a continuation for a turn that never ran.
+		const failedMention: QueuedItem = {
+			id: 'q1',
+			timestamp: 0,
+			tabId: 'tab-1',
+			type: 'message',
+			text: 'ask @Backend',
+			crossAgentMention: true,
+		};
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			activeTabId: 'tab-1',
+			executionQueue: [held('tab-1')],
+		} as Partial<Session>);
+
+		const recovered = applyQueuedItemDispatchFailure(session, failedMention, {
+			collision: true,
+		});
+
+		expect(recovered.executionQueue.map((i) => i.id)).toEqual(['q1']);
+	});
+});
+
+// ============================================================================
+// getSteerEligibility / shouldOfferSteer  (chat steering)
+// ============================================================================
+
+describe('getSteerEligibility', () => {
+	function steerableSession(overrides: Partial<Session> = {}): Session {
+		return createMockSession({
+			id: 's1',
+			toolType: 'claude-code',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			activeTabId: 'tab-1',
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+			...overrides,
+		} as Partial<Session>);
+	}
+	const item = { tabId: 'tab-1', text: 'change course' };
+
+	it('allows steering a Claude interactive turn that is running', () => {
+		const eligibility = getSteerEligibility(steerableSession(), item);
+		expect(eligibility).toEqual({ canSteer: true });
+		expect(shouldOfferSteer(eligibility)).toBe(true);
+	});
+
+	it('refuses when the target tab is not working', () => {
+		// There is no turn in flight to steer, and this message is about to become
+		// that turn anyway.
+		const session = steerableSession({
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'idle' })],
+		});
+		expect(getSteerEligibility(session, item)).toEqual({
+			canSteer: false,
+			blockedReason: 'tab-not-working',
+		});
+	});
+
+	it('refuses when the API token source is resolved', () => {
+		// `claude --print` closes stdin and holds no writable PTY for the turn, so
+		// there is physically nothing to type into.
+		const session = steerableSession({
+			claudeInteractive: { mode: 'api', modeReason: 'limit' },
+		});
+		expect(getSteerEligibility(session, item)).toEqual({
+			canSteer: false,
+			blockedReason: 'api-token-source',
+		});
+	});
+
+	it('refuses a dynamic agent that has fallen back to API', () => {
+		// The whole reason this reads the RESOLVED mode: a dynamic agent is configured
+		// identically in both states, so only the resolved value knows which shape the
+		// turn in flight actually has.
+		const session = steerableSession({
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			claudeInteractive: { mode: 'api', modeReason: 'limit' },
+		} as Partial<Session>);
+		expect(getSteerEligibility(session, item).blockedReason).toBe('api-token-source');
+	});
+
+	it('allows a dynamic agent currently resolved to interactive', () => {
+		const session = steerableSession({
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+		} as Partial<Session>);
+		expect(getSteerEligibility(session, item).canSteer).toBe(true);
+	});
+
+	it('refuses when no mode has been resolved yet', () => {
+		// Absent until the agent has spawned at least once. Unknown is not interactive.
+		const session = steerableSession({ claudeInteractive: undefined });
+		expect(getSteerEligibility(session, item).blockedReason).toBe('api-token-source');
+	});
+
+	it('refuses a provider that has no steering channel', () => {
+		const session = steerableSession({ toolType: 'opencode' });
+		expect(getSteerEligibility(session, item).blockedReason).toBe('not-claude');
+	});
+
+	it('allows a Codex agent on the app-server transport', () => {
+		// `turn/steer` reaches a running app-server turn; the Claude token-mode check
+		// does not apply to Codex at all.
+		const session = steerableSession({
+			toolType: 'codex',
+			codexTransport: 'app-server',
+			claudeInteractive: undefined,
+		});
+		const eligibility = getSteerEligibility(session, item);
+		expect(eligibility).toEqual({ canSteer: true });
+		expect(shouldOfferSteer(eligibility)).toBe(true);
+	});
+
+	it('refuses a Codex agent on exec with codex-exec', () => {
+		// `codex exec` is the default and accepts nothing once a turn has started.
+		for (const codexTransport of [undefined, 'exec'] as const) {
+			const eligibility = getSteerEligibility(
+				steerableSession({ toolType: 'codex', codexTransport }),
+				item
+			);
+			expect(eligibility).toEqual({ canSteer: false, blockedReason: 'codex-exec' });
+			expect(shouldOfferSteer(eligibility)).toBe(false);
+		}
+	});
+
+	it('applies the item refusals to a Codex app-server agent unchanged', () => {
+		const session = steerableSession({ toolType: 'codex', codexTransport: 'app-server' });
+		expect(
+			getSteerEligibility(session, {
+				tabId: 'tab-1',
+				text: 'use this screenshot',
+				images: ['maestro-image://store/abc.png'],
+			}).blockedReason
+		).toBe('has-images');
+		expect(
+			getSteerEligibility(session, { tabId: 'tab-1', text: 'x'.repeat(8193) }).blockedReason
+		).toBe('too-long');
+	});
+
+	it('refuses a paused item, including one an unconfirmed steer just paused', () => {
+		// Steering it again would type the text a second time.
+		expect(getSteerEligibility(steerableSession(), { ...item, paused: true })).toEqual({
+			canSteer: false,
+			blockedReason: 'paused',
+		});
+	});
+
+	it('refuses a Claude steer the TUI would read as a slash or bash command', () => {
+		for (const text of ['/compact', '  /clear', '!rm -rf build']) {
+			expect(getSteerEligibility(steerableSession(), { tabId: 'tab-1', text }).blockedReason).toBe(
+				'tui-command-prefix'
+			);
+		}
+		// Codex takes turn/steer as plain input.
+		const codex = steerableSession({ toolType: 'codex', codexTransport: 'app-server' });
+		expect(getSteerEligibility(codex, { tabId: 'tab-1', text: '/compact' }).canSteer).toBe(true);
+	});
+
+	it('refuses a read-only message into a turn that started with full access', () => {
+		// Steering cannot narrow the permissions the running turn was spawned with.
+		const fullAccessTurn = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'refactor it' }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(fullAccessTurn, { ...item, readOnlyMode: true }).blockedReason).toBe(
+			'read-only'
+		);
+		// The tab flipped to read-only after the turn started: dispatch would honor it.
+		const flipped = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					readOnlyMode: true,
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'refactor it' }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(flipped, item).blockedReason).toBe('read-only');
+	});
+
+	it('allows a read-only message into a turn known to be read-only', () => {
+		const readOnlyTurn = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					readOnlyMode: true,
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'plan it', readOnly: true }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(readOnlyTurn, { ...item, readOnlyMode: true }).canSteer).toBe(true);
+	});
+
+	it('refuses an item held for a reconnect', () => {
+		expect(
+			getSteerEligibility(steerableSession(), { ...item, waitingForConnection: true }).blockedReason
+		).toBe('waiting-for-connection');
+	});
+
+	it('refuses an SSH Claude agent, whose TUI runs on another host', () => {
+		const claude = steerableSession({
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
+		} as Partial<Session>);
+		expect(getSteerEligibility(claude, item).blockedReason).toBe('ssh-remote');
+	});
+
+	it('steers an SSH Codex agent on app-server, and names the transport for one on exec', () => {
+		const remote = {
+			toolType: 'codex',
+			sshRemoteId: 'r1',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
+		} as Partial<Session>;
+		const appServer = steerableSession({ ...remote, codexTransport: 'app-server' });
+		const exec = steerableSession(remote);
+		expect(getSteerEligibility(appServer, item).canSteer).toBe(true);
+		expect(getSteerEligibility(exec, item).blockedReason).toBe('codex-exec');
+	});
+
+	it('refuses when the agent has no tabs at all', () => {
+		const session = steerableSession({ aiTabs: [], activeTabId: undefined });
+		expect(getSteerEligibility(session, item).blockedReason).toBe('no-target-tab');
+	});
+
+	it('refuses an item with nothing to type', () => {
+		// Steering TYPES into the composer, so an empty message has nothing to steer
+		// with.
+		expect(getSteerEligibility(steerableSession(), { tabId: 'tab-1', text: '   ' })).toEqual({
+			canSteer: false,
+			blockedReason: 'nothing-to-type',
+		});
+	});
+
+	it('refuses an item carrying images rather than silently dropping them', () => {
+		// Images reach a maestro-p turn as `@/path` mentions translated from a
+		// stream-json envelope on stdin, and stdin is long closed once a turn is
+		// running - there is no way to attach a file mid-turn. Typing the text alone
+		// would discard what the user attached, so the item stays queued and sends
+		// intact when the turn ends.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'use this screenshot',
+				images: ['maestro-image://store/abc.png'],
+			})
+		).toEqual({ canSteer: false, blockedReason: 'has-images' });
+	});
+
+	it('refuses a consult hold: its text is a placeholder until the reply lands', () => {
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'Waiting',
+				awaitingConsult: {
+					pending: [{ targetSessionId: 's-b', targetAgentName: 'Backend' }],
+					replies: [],
+				},
+			})
+		).toEqual({ canSteer: false, blockedReason: 'awaiting-consult' });
+	});
+
+	it('refuses an @mention whose consult has not fired yet', () => {
+		// The consult fires when processQueuedItem dispatches the item. Steering
+		// bypasses that, so the mentioned agent would never be asked.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'ask @Backend about the schema',
+				crossAgentMention: true,
+			})
+		).toEqual({ canSteer: false, blockedReason: 'cross-agent-mention' });
+	});
+
+	it('refuses an item carrying agent-only context rather than dropping it', () => {
+		// agentContext holds a consult's replies and is prepended only at spawn.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'continue',
+				agentContext: 'Backend replied: use v2',
+			})
+		).toEqual({ canSteer: false, blockedReason: 'has-agent-context' });
+	});
+
+	it('refuses an item over the steering byte cap', () => {
+		// maestro-p would refuse it; it waits and sends normally instead.
+		expect(
+			getSteerEligibility(steerableSession(), { tabId: 'tab-1', text: 'x'.repeat(8193) })
+		).toEqual({ canSteer: false, blockedReason: 'too-long' });
+	});
+
+	it('is mutually exclusive with Force Send', () => {
+		// Force Send needs the target tab IDLE, steering needs it BUSY, so a queued
+		// card offers exactly one of them and never both.
+		const busy = steerableSession();
+		const idle = steerableSession({
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'idle' })],
+		});
+		const forceOpts = { forcedParallelEnabled: true };
+
+		expect(getSteerEligibility(busy, item).canSteer).toBe(true);
+		expect(getForceSendEligibility(busy, item, forceOpts).canForce).toBe(false);
+
+		expect(getSteerEligibility(idle, item).canSteer).toBe(false);
+		expect(getForceSendEligibility(idle, item, forceOpts).canForce).toBe(true);
+	});
+
+	it('is mutually exclusive with Force Send for a Codex app-server agent', () => {
+		const codex = { toolType: 'codex', codexTransport: 'app-server' } as const;
+		const busy = steerableSession(codex);
+		const idle = steerableSession({
+			...codex,
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'idle' })],
+		});
+		const forceOpts = { forcedParallelEnabled: true };
+
+		expect(getSteerEligibility(busy, item).canSteer).toBe(true);
+		expect(getForceSendEligibility(busy, item, forceOpts).canForce).toBe(false);
+
+		expect(getSteerEligibility(idle, item).canSteer).toBe(false);
+		expect(getForceSendEligibility(idle, item, forceOpts).canForce).toBe(true);
+	});
+});
+
+describe('shouldOfferSteer', () => {
+	it('hides the control for every blocked reason', () => {
+		// None of them is actionable from a queued card, so a dimmed button would just
+		// be a dead control.
+		for (const blockedReason of [
+			'no-target-tab',
+			'tab-not-working',
+			'not-claude',
+			'codex-exec',
+			'api-token-source',
+			'nothing-to-type',
+			'has-images',
+			'awaiting-consult',
+			'cross-agent-mention',
+			'has-agent-context',
+			'too-long',
+			'paused',
+			'waiting-for-connection',
+			'ssh-remote',
+			'steer-in-flight',
+			'tui-command-prefix',
+		] as const) {
+			expect(shouldOfferSteer({ canSteer: false, blockedReason })).toBe(false);
+		}
+	});
+
+	it('handles a missing eligibility', () => {
+		expect(shouldOfferSteer(null)).toBe(false);
+		expect(shouldOfferSteer(undefined)).toBe(false);
+	});
+});
+
+describe('describeSteerBlocked', () => {
+	it('words every blocked reason as its own sentence', () => {
+		// A keyboard steer has no button to hide, so each reason has to say
+		// something the user can act on rather than fall through to the generic line.
+		const fallback = describeSteerBlocked(undefined);
+		const reasons = [
+			'no-target-tab',
+			'tab-not-working',
+			'not-claude',
+			'codex-exec',
+			'api-token-source',
+			'nothing-to-type',
+			'has-images',
+			'awaiting-consult',
+			'cross-agent-mention',
+			'has-agent-context',
+			'too-long',
+			'paused',
+			'waiting-for-connection',
+			'ssh-remote',
+			'steer-in-flight',
+			'tui-command-prefix',
+			'read-only',
+		];
+		const sentences = reasons.map((reason) => describeSteerBlocked(reason));
+		for (const sentence of sentences) {
+			expect(sentence).not.toBe(fallback);
+			expect(sentence).toMatch(/^[A-Z].*\.$/);
+		}
+		expect(new Set(sentences).size).toBe(reasons.length);
+	});
+
+	it('names the remedy where there is one', () => {
+		expect(describeSteerBlocked('codex-exec')).toContain('app server');
+		expect(describeSteerBlocked('too-long')).toContain('8 KB');
+	});
+
+	it('falls back for a reason this build does not know', () => {
+		// The reason crosses a process boundary as a plain string, so an unknown
+		// one (or an Object.prototype key) must not leak through as the sentence.
+		const fallback = describeSteerBlocked(undefined);
+		expect(describeSteerBlocked('some-future-reason')).toBe(fallback);
+		expect(describeSteerBlocked('toString')).toBe(fallback);
 	});
 });

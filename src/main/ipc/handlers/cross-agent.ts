@@ -52,7 +52,7 @@ export interface CrossAgentHandlerDependencies {
 	sessionsStore: Store<SessionsData>;
 	/** Per-agent config values (context window, model, effort, custom env vars). */
 	agentConfigsStore: Store<AgentConfigsData>;
-	/** App settings store; read for the `crossAgentMentionsWritable` opt-in. */
+	/** App settings store; read for the consult and hand-off write switches. */
 	settingsStore: SettingsStoreInterface;
 	/** SSH remote store adapter; null disables remote execution. */
 	sshStore: SshRemoteSettingsStore | null;
@@ -60,6 +60,23 @@ export interface CrossAgentHandlerDependencies {
 	getCustomEnvVars?: (toolType: string) => Record<string, string> | undefined;
 	/** Safe renderer push used to stream `cross-agent:chunk` events. */
 	safeSend: SafeSendFn;
+}
+
+/**
+ * Whether a cross-agent request may modify files. A consult answers a question,
+ * so it is read-only unless the user opted in (`crossAgentMentionsWritable`,
+ * default off). A hand-off passes work on - "feed what we learn to @X" usually
+ * means X should save it - so it may write unless the user opted out
+ * (`crossAgentHandoffsWritable`, default on). Exported for unit testing.
+ */
+export function resolveCrossAgentWritable(
+	request: Pick<CrossAgentRequest, 'handoffAnswer'>,
+	settingsStore: Pick<SettingsStoreInterface, 'get'>
+): boolean {
+	if (request.handoffAnswer !== undefined) {
+		return settingsStore.get('crossAgentHandoffsWritable', true) as boolean;
+	}
+	return settingsStore.get('crossAgentMentionsWritable', false) as boolean;
 }
 
 /**
@@ -132,12 +149,14 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					transcript: payload.transcript,
 					strategy: payload.strategy,
 					sourceCwd: payload.sourceCwd,
+					handoffAnswer: payload.handoffAnswer,
 					createdAt: Date.now(),
 				};
 
-				// Read-only by default; the user can opt into read/write consults via
-				// Settings > General > Cross-Agent Mentions.
-				const writable = settingsStore.get('crossAgentMentionsWritable', false) as boolean;
+				// Consults are read-only by default; hand-offs may write by default,
+				// because passing work on is their point. Each has its own switch
+				// under Settings > General > Cross-Agent Mentions.
+				const writable = resolveCrossAgentWritable(request, settingsStore);
 
 				logger.info(`${LOG_CONTEXT} Dispatching cross-agent request`, LOG_CONTEXT, {
 					requestId,

@@ -42,6 +42,7 @@ import {
 	AgentActivityBars,
 	SuccessFailureWidget,
 	Sparkline,
+	MultiLineChart,
 	ChartTooltip,
 	ChartErrorBoundary,
 	Slider,
@@ -58,6 +59,9 @@ import {
 
 const TREND_A = [3, 5, 4, 7, 6, 9, 8, 12, 10, 14];
 const TREND_B = [12, 10, 11, 8, 9, 6, 7, 5, 6, 4];
+const LINE_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const LINE_A = [92, 95, 88, 101, 97, null, 99];
+const LINE_B = [130, 128, 141, 135, null, null, 138];
 
 const TIMELINE: TimelineBucket[] = [
 	{ auto: 2, user: 5, cue: 1 },
@@ -218,6 +222,19 @@ export const WidgetGallery = memo(function WidgetGallery({ theme }: WidgetGaller
 									<Sparkline data={[]} color={theme.colors.textDim} width={120} height={32} />
 								</div>
 							</div>
+						</SectionCard>
+
+						<SectionCard theme={theme} title="Multi-Line Chart" icon={TrendingUp}>
+							<MultiLineChart
+								theme={theme}
+								ariaLabel="Example rates per series"
+								xLabels={LINE_LABELS}
+								series={[
+									{ key: 'a', label: 'Series A', color: theme.colors.accent, values: LINE_A },
+									{ key: 'b', label: 'Series B', color: theme.colors.success, values: LINE_B },
+								]}
+								height={120}
+							/>
 						</SectionCard>
 
 						<SectionCard theme={theme} title="ChartTooltip" icon={Activity}>

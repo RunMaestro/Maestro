@@ -236,6 +236,28 @@ describe('AgentConfigPanel', () => {
 			expect(screen.getByText('Add Variable')).toBeInTheDocument();
 		});
 
+		it('should focus the unnamed row and open its suggestions after Add Variable', () => {
+			// The parent owns the record, so simulate what it does: Add Variable
+			// fires the callback, the parent adds the unnamed row, we re-render.
+			const { rerender } = render(<AgentConfigPanel {...createDefaultProps()} />);
+
+			fireEvent.click(screen.getByText('Add Variable'));
+			rerender(<AgentConfigPanel {...createDefaultProps({ customEnvVars: { '': '' } })} />);
+
+			const keyInput = screen.getByTestId('env-var-key-input');
+			expect(keyInput).toHaveValue('');
+			expect(keyInput).toHaveFocus();
+			expect(screen.getByTestId('env-var-key-input-suggestions')).toBeInTheDocument();
+		});
+
+		it('should not focus an unnamed row that was already there on open', () => {
+			render(<AgentConfigPanel {...createDefaultProps({ customEnvVars: { '': '' } })} />);
+
+			// A blank row restored from disk is not something the user just asked
+			// for, so it must leave the caret where it was.
+			expect(screen.queryByTestId('env-var-key-input-suggestions')).not.toBeInTheDocument();
+		});
+
 		it('should display both built-in and custom env vars when showBuiltInEnvVars is true', () => {
 			const customEnvVars = {
 				CUSTOM_VAR: 'custom_value',
@@ -608,6 +630,99 @@ describe('AgentConfigPanel', () => {
 
 			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
 		});
+
+		it('shows no Time Limits / API Limits pill next to the selector', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.queryByText('API Limits')).not.toBeInTheDocument();
+			expect(screen.queryByText('Time Limits')).not.toBeInTheDocument();
+		});
+	});
+});
+
+// =============================================================================
+// CODEX TRANSPORT SELECTOR TESTS
+// =============================================================================
+
+describe('AgentConfigPanel - Codex Transport selector', () => {
+	const codexAgent = () =>
+		createMockAgent({
+			id: 'codex',
+			name: 'Codex',
+			path: '/usr/local/bin/codex',
+			binaryName: 'codex',
+		});
+
+	it('is hidden for a non-Codex agent even when the handler is supplied', () => {
+		render(<AgentConfigPanel {...createDefaultProps({ onCodexTransportChange: vi.fn() })} />);
+
+		expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
+		expect(screen.queryByText('codex exec')).not.toBeInTheDocument();
+	});
+
+	it('is hidden for a Codex agent when no surface persists the value', () => {
+		render(<AgentConfigPanel {...createDefaultProps({ agent: codexAgent() })} />);
+
+		expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
+	});
+
+	it('defaults a Codex agent to codex exec', () => {
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({ agent: codexAgent(), onCodexTransportChange: vi.fn() })}
+			/>
+		);
+
+		expect(screen.getByText('Codex Transport')).toBeInTheDocument();
+		const standard = screen.getByText('codex exec').closest('button');
+		const appServer = screen.getByText('codex app-server').closest('button');
+		expect(standard?.className).toContain('ring-2');
+		expect(appServer?.className).not.toContain('ring-2');
+		// The help text names the experimental status and the turns that stay on exec.
+		expect(screen.getByText(/codex app-server is experimental/)).toBeInTheDocument();
+		expect(
+			screen.getByText(/SSH, image, Auto Run, and Cue turns keep using codex exec/)
+		).toBeInTheDocument();
+	});
+
+	it('reports app-server when the user picks it', () => {
+		const onCodexTransportChange = vi.fn();
+		render(
+			<AgentConfigPanel {...createDefaultProps({ agent: codexAgent(), onCodexTransportChange })} />
+		);
+
+		fireEvent.click(screen.getByText('codex app-server'));
+
+		expect(onCodexTransportChange).toHaveBeenCalledWith('app-server');
+	});
+
+	it('shows a stored app-server choice as selected and notes that SSH overrides it', () => {
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: codexAgent(),
+					codexTransport: 'app-server',
+					onCodexTransportChange: vi.fn(),
+					isSshEnabled: true,
+				})}
+			/>
+		);
+
+		const appServer = screen.getByText('codex app-server').closest('button');
+		expect(appServer?.className).toContain('ring-2');
+		expect(
+			screen.getByText(/This agent runs over SSH, so its turns use codex exec/)
+		).toBeInTheDocument();
 	});
 });
 

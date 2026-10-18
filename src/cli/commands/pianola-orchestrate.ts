@@ -11,14 +11,14 @@
  * Encore-flag gating, so a headless CLI cannot run autonomous behavior on an
  * install that has not opted in.
  *
- * The Encore gate (ensurePianolaEnabled / pianolaEnabledNow) is replicated here
- * rather than imported because pianola.ts does not export it; the behavior is
- * identical and intentionally kept in lockstep.
+ * The Encore gate is the shared one in `utils/encore-gate.ts`, so the
+ * refusal reads the same as every other gated verb.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { readSettingValue } from '../services/storage';
+import { isEncoreEnabled, requireEncore } from '../utils/encore-gate';
 import { readPianolaPlans, getPianolaPlan, upsertPianolaPlan } from '../services/pianola-store';
 import {
 	appendAgentRunEvent,
@@ -50,6 +50,7 @@ import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
 import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -94,15 +95,7 @@ interface SessionHistoryResult {
 
 /** Exit with a clear message if the Pianola Encore feature is disabled. */
 function ensurePianolaEnabled(json?: boolean): void {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	if (flags?.pianola === true) return;
-	const message = 'Pianola is not enabled. Enable it with: maestro-cli encore set pianola on';
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message, code: 'PIANOLA_DISABLED' }));
-	} else {
-		console.error(message);
-	}
-	process.exit(1);
+	requireEncore('pianola', json);
 }
 
 /**
@@ -110,8 +103,7 @@ function ensurePianolaEnabled(json?: boolean): void {
  * Settings halts an in-flight orchestrate run (the startup guard only runs once).
  */
 function pianolaEnabledNow(): boolean {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	return flags?.pianola === true;
+	return isEncoreEnabled('pianola');
 }
 
 /** F8 (ISC-8.12/8.13): the reactive fix/merge loop is gated on autopilot, read
@@ -495,6 +487,7 @@ export async function pianolaOrchestrate(
 	try {
 		await client.connect();
 	} catch (error) {
+		exitIfMaestroNotRunning(error, {});
 		process.off('SIGINT', onSignal);
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`[orchestrator] could not connect to Maestro: ${message}`);

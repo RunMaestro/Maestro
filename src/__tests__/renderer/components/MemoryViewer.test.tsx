@@ -139,7 +139,11 @@ const memoryApi = {
 };
 
 function renderViewer(onClose = vi.fn()) {
-	const session = createMockSession({ projectRoot: '/test/project', toolType: 'claude-code' });
+	const session = createMockSession({
+		id: 'memory-agent',
+		projectRoot: '/test/project',
+		toolType: 'claude-code',
+	});
 	const utils = render(
 		<MemoryViewer theme={mockTheme} activeSession={session} onClose={onClose} />
 	);
@@ -201,7 +205,7 @@ describe('MemoryViewer', () => {
 		renderViewer();
 		// Opens on MEMORY.md, which does not match.
 		await waitFor(() =>
-			expect(memoryApi.read).toHaveBeenCalledWith('/test/project', 'MEMORY.md', 'claude-code')
+			expect(memoryApi.read).toHaveBeenCalledWith('/test/project', 'MEMORY.md', 'memory-agent')
 		);
 
 		await typeFilter('Worktrees');
@@ -210,7 +214,7 @@ describe('MemoryViewer', () => {
 			expect(memoryApi.read).toHaveBeenCalledWith(
 				'/test/project',
 				'project_worktrees.md',
-				'claude-code'
+				'memory-agent'
 			)
 		);
 	});
@@ -248,7 +252,7 @@ describe('MemoryViewer', () => {
 			expect(memoryApi.read).toHaveBeenCalledWith(
 				'/test/project',
 				'project_worktrees.md',
-				'claude-code'
+				'memory-agent'
 			)
 		);
 	});
@@ -593,7 +597,7 @@ describe('MemoryViewer', () => {
 		await confirmLastModal();
 
 		await waitFor(() => expect(listRowNames()).toEqual(['MEMORY.md', 'user_role.md']));
-		expect(memoryApi.read).toHaveBeenCalledWith('/test/project', 'user_role.md', 'claude-code');
+		expect(memoryApi.read).toHaveBeenCalledWith('/test/project', 'user_role.md', 'memory-agent');
 	});
 
 	it('falls back to the previous memory when the last one is deleted', async () => {
@@ -607,7 +611,7 @@ describe('MemoryViewer', () => {
 		expect(memoryApi.read).toHaveBeenCalledWith(
 			'/test/project',
 			'project_worktrees.md',
-			'claude-code'
+			'memory-agent'
 		);
 	});
 

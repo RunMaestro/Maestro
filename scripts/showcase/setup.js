@@ -235,7 +235,7 @@ if (cliTheme) {
 if (cliSize) {
 	const match = cliSize.match(/^(\d+)x(\d+)$/);
 	if (!match) {
-		console.error(`[showcase] ERROR: Invalid size format "${cliSize}". Use WxH (e.g., 2048x1280)`);
+		console.error(`[showcase] ERROR: Invalid size format "${cliSize}". Use WxH (e.g., 2304x1360)`);
 		process.exit(1);
 	}
 	const width = parseInt(match[1], 10);

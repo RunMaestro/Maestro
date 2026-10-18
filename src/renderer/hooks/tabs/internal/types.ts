@@ -1,10 +1,6 @@
-import type {
-	AITab,
-	BrowserTab,
-	FilePreviewHistoryEntry,
-	FilePreviewTab,
-	UnifiedTab,
-} from '../../../types';
+import type { AITab, FilePreviewHistoryEntry, FilePreviewTab, UnifiedTab } from '../../../types';
+import type { BrowserTab } from '../../../../shared/browserPage';
+import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 
 export interface CloseCurrentTabResult {
 	type: 'file' | 'browser' | 'ai' | 'terminal' | 'prevented' | 'none';
@@ -59,16 +55,8 @@ export interface AITabHandlersReturn {
 	handleToggleTabEnterToSend: () => void;
 }
 
-/**
- * What opening a playable audio/video file should do.
- *
- * `play` (the default) hands it to the floating player and starts it. `queue`
- * appends it instead, leaving whatever is playing alone - that is how opening
- * ten files at once plays the first and lines up the other nine.
- *
- * Ignored for everything that is not media.
- */
-export type MediaOpenMode = 'play' | 'queue';
+// Lives in shared/ because the CLI and the web server name it too.
+export type { MediaOpenMode };
 
 export interface FilePreviewTabHandlersReturn {
 	handleOpenFileTab: (

@@ -2088,7 +2088,7 @@ describe('ProcessMonitor', () => {
 			render(<ProcessMonitor theme={theme} sessions={[]} groups={[]} onClose={onClose} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('TIME HEARTBEAT')).toBeInTheDocument();
+				expect(screen.getByText('CUE · TIME HEARTBEAT')).toBeInTheDocument();
 			});
 		});
 
@@ -2103,7 +2103,7 @@ describe('ProcessMonitor', () => {
 			});
 
 			// Click kill button on the cue process
-			const killButtons = screen.getAllByTitle('Kill process');
+			const killButtons = await screen.findAllByTitle('Kill process');
 			expect(killButtons.length).toBeGreaterThanOrEqual(1);
 			fireEvent.click(killButtons[0]);
 

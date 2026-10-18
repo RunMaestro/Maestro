@@ -1,7 +1,8 @@
 import React from 'react';
 import { BarChart3, MessageSquare, Database, DollarSign, Zap, Clock, Loader2 } from 'lucide-react';
 import type { Theme } from '../../../types';
-import { formatSize, formatTokens } from '../../../utils/formatters';
+import { formatSize, formatTokens, formatTokensCompact } from '../../../utils/formatters';
+import type { AggregateStats } from '../types';
 
 interface SessionListStatsBarProps {
 	loading: boolean;
@@ -12,11 +13,34 @@ interface SessionListStatsBarProps {
 		totalSize: number;
 		totalCost: number;
 		totalTokens: number;
+		tokenSplit?: AggregateStats['tokenSplit'];
+		unsplitTokens?: number;
 		oldestSession: Date | null;
 		isComplete: boolean;
 	};
 	sessionSinceDate: Date | null;
 	theme: Theme;
+}
+
+/**
+ * Hover text for the token total. Cache reads dominate what a Claude session is
+ * billed for, so the total includes them; this says how it divides.
+ */
+function tokenBreakdownTitle(
+	split: AggregateStats['tokenSplit'],
+	unsplitTokens: number | undefined
+): string | undefined {
+	if (!split) return undefined;
+	const parts = [
+		`Input ${formatTokensCompact(split.inputTokens)}`,
+		`Output ${formatTokensCompact(split.outputTokens)}`,
+		`Cache reads ${formatTokensCompact(split.cacheReadTokens)}`,
+		`Cache writes ${formatTokensCompact(split.cacheCreationTokens)}`,
+	];
+	if (unsplitTokens && unsplitTokens > 0) {
+		parts.push(`Archived sessions, no breakdown ${formatTokensCompact(unsplitTokens)}`);
+	}
+	return parts.join('\n');
 }
 
 export const SessionListStatsBar = React.memo(function SessionListStatsBar({
@@ -70,7 +94,11 @@ export const SessionListStatsBar = React.memo(function SessionListStatsBar({
 				</div>
 			)}
 			{(stats.totalTokens > 0 || !stats.isComplete) && (
-				<div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
+				<div
+					className="flex items-center gap-2 shrink-0 whitespace-nowrap"
+					title={tokenBreakdownTitle(stats.tokenSplit, stats.unsplitTokens)}
+					data-testid="session-stats-tokens"
+				>
 					<Zap className="w-4 h-4" style={{ color: theme.colors.accent }} />
 					<span
 						className={`text-xs font-medium font-mono ${pulse}`}

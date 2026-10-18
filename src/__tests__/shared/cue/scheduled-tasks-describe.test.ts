@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	autoRunTaskLabel,
 	describeFireAt,
 	describeIntervalMinutes,
 	describeSchedule,
@@ -132,5 +133,24 @@ describe('describeSchedule', () => {
 		expect(
 			describeSchedule(task({ kind: 'once', event: 'time.once', scheduleTimes: undefined }))
 		).toBe('unscheduled');
+	});
+});
+
+describe('autoRunTaskLabel', () => {
+	it('names the documents by basename', () => {
+		expect(autoRunTaskLabel(['/proj/Auto Run Docs/ship-it.md', '/proj/Auto Run Docs/qa.md'])).toBe(
+			'Auto Run: ship-it.md, qa.md'
+		);
+	});
+
+	// The documents are absolute paths captured on the machine that scheduled
+	// the run, so a Windows path has to label the same way.
+	it('reads a Windows path the same way', () => {
+		expect(autoRunTaskLabel(['C:\\proj\\Auto Run Docs\\ship-it.md'])).toBe('Auto Run: ship-it.md');
+	});
+
+	it('falls back to a count once the names stop fitting a label', () => {
+		const documents = Array.from({ length: 12 }, (_, i) => `/proj/document-number-${i}.md`);
+		expect(autoRunTaskLabel(documents)).toBe('Auto Run: 12 documents');
 	});
 });

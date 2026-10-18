@@ -50,6 +50,7 @@ vi.mock('../../../../main/prompt-manager', () => ({
 }));
 
 vi.mock('../../../../main/utils/cliDetection', () => ({
+	clearGhCache: vi.fn(),
 	isGhInstalled: vi.fn(),
 	setCachedGhStatus: vi.fn(),
 	getCachedGhStatus: vi.fn(),
@@ -80,6 +81,7 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 import fs from 'fs/promises';
 import os from 'os';
 import {
+	clearGhCache,
 	getCachedGhStatus,
 	isGhInstalled,
 	setCachedGhStatus,
@@ -92,9 +94,25 @@ import {
 	saveImageToTempFile,
 } from '../../../../main/process-manager/utils/imageUtils';
 import { registerFeedbackHandlers } from '../../../../main/ipc/handlers/feedback';
+import { clearFeedbackRepoVerdicts } from '../../../../main/feedback';
+
+/** `gh auth status` for a signed-in account, in gh 2.40+ wording. */
+const statusOk = () => ({
+	exitCode: 0,
+	stdout: '',
+	stderr:
+		'github.com\n  ✓ Logged in to github.com account octocat (keyring)\n  - Active account: true',
+});
+/** The empty-issue probe on an account GitHub lets file: authorized, then 422. */
+const probeAllowed = () => ({
+	exitCode: 1,
+	stdout: '{"message":"Invalid request.","status":"422"}',
+	stderr: 'gh: Invalid request.\n\n"title" wasn\'t supplied. (HTTP 422)',
+});
 
 describe('feedback handlers', () => {
 	beforeEach(() => {
+		clearFeedbackRepoVerdicts();
 		vi.clearAllMocks();
 		registeredHandlers.clear();
 		mockProcessManager.write.mockReset();
@@ -109,15 +127,126 @@ describe('feedback handlers', () => {
 		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:compose-prompt', expect.any(Function));
 	});
 
-	it('returns cached gh auth result when available', async () => {
+	it('trusts a cached install, and still proves repo access once per minute', async () => {
 		vi.mocked(getCachedGhStatus).mockReturnValue({ installed: true, authenticated: true });
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce(statusOk() as any)
+			.mockResolvedValueOnce(probeAllowed() as any);
 
 		const handler = registeredHandlers.get('feedback:check-gh-auth');
-		const result = await handler!({});
+		const first = await handler!({});
+		const second = await handler!({});
 
-		expect(result).toEqual({ authenticated: true });
+		expect(first).toEqual({
+			authenticated: true,
+			account: { host: 'github.com', login: 'octocat' },
+		});
+		expect(second).toEqual(first);
 		expect(getCachedGhStatus).toHaveBeenCalledWith('gh');
 		expect(isGhInstalled).not.toHaveBeenCalled();
+		// auth status + probe, once: the second check is answered from memory.
+		expect(execFileNoThrow).toHaveBeenCalledTimes(2);
+	});
+
+	// `gh auth status` only proves the token is valid. What fails at submit is a
+	// WRITE refused by an org's OAuth App restriction, which still allows every
+	// public read - so the probe has to be a write that cannot create anything.
+	describe('the up-front repo access probe', () => {
+		beforeEach(() => {
+			vi.mocked(getCachedGhStatus).mockReturnValue(null);
+			vi.mocked(isGhInstalled).mockResolvedValue(true);
+		});
+
+		it('POSTs an empty issue, so GitHub authorizes the write and then rejects the missing title', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(statusOk() as any)
+				.mockResolvedValueOnce(probeAllowed() as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({ authenticated: true });
+			expect(execFileNoThrow).toHaveBeenLastCalledWith(
+				'gh',
+				['api', 'repos/RunMaestro/Maestro/issues', '--method', 'POST', '--input', '-'],
+				undefined,
+				expect.objectContaining({ input: '{}', env: { PATH: '/usr/bin' } })
+			);
+		});
+
+		it('fails up front on an OAuth restriction, names the fix, and offers the login', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(statusOk() as any)
+				.mockResolvedValueOnce({
+					exitCode: 1,
+					stdout: '',
+					stderr:
+						'gh: Although you appear to have the correct authorization credentials, the `RunMaestro` organization has enabled OAuth App access restrictions, meaning that data access to third-parties is limited. (HTTP 403)',
+				} as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({
+				authenticated: false,
+				reason: 'no-repo-access',
+				needsGhLogin: true,
+				account: { host: 'github.com', login: 'octocat' },
+				login: { args: expect.arrayContaining(['auth', 'login']) },
+			});
+			expect(result.message).toContain('settings/connections/applications');
+		});
+
+		it('blocks a 403 that a new login cannot fix, without offering one', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(statusOk() as any)
+				.mockResolvedValueOnce({
+					exitCode: 1,
+					stdout: '',
+					stderr: 'gh: You are blocked from this repository. (HTTP 403)',
+				} as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({
+				authenticated: false,
+				reason: 'no-repo-access',
+				needsGhLogin: false,
+			});
+			expect(result.login).toBeUndefined();
+		});
+
+		it('lets an inconclusive probe through: a network failure says nothing about the account', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(statusOk() as any)
+				.mockResolvedValueOnce({
+					exitCode: 1,
+					stdout: '',
+					stderr: 'error connecting to api.github.com',
+				} as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({ authenticated: true });
+		});
+
+		it('names the signed-out account so the user knows which login expired', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr:
+					'github.com\n  X Failed to log in to github.com account octocat (keyring)\n  - Active account: true\n  - The token in keyring is invalid.',
+			} as any);
+
+			const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+			expect(result).toMatchObject({
+				authenticated: false,
+				reason: 'not-authenticated',
+				needsGhLogin: true,
+				account: { host: 'github.com', login: 'octocat' },
+			});
+			// Signed out: there is nothing to probe.
+			expect(execFileNoThrow).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it('creates a structured bug report issue with uploaded screenshot markdown', async () => {
@@ -261,6 +390,35 @@ describe('feedback handlers', () => {
 			{ PATH: '/usr/bin' }
 		);
 		expect(result).toEqual({ success: true });
+	});
+
+	it('tells the user to re-run gh auth login when gh rejects an expired token', async () => {
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as any)
+			.mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr:
+					'HTTP 401: Bad credentials (https://api.github.com/graphql)\nTry authenticating with:  gh auth login',
+			} as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:submit');
+		const result = await handler!(
+			{},
+			{
+				sessionId: 'session-123',
+				category: 'feature_request',
+				summary: 'Add a diagnostics copy action',
+				expectedBehavior: 'Users should be able to copy a sanitized diagnostics block.',
+				details: 'Issue reporting still requires manual environment gathering.',
+			}
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Run "gh auth login"');
+		expect(result.error).not.toContain('HTTP 401');
 	});
 
 	it('composes feedback prompts with uploaded screenshot markdown', async () => {
@@ -540,8 +698,67 @@ describe('feedback handlers', () => {
 		expect(setCachedGhStatus).toHaveBeenCalledWith('/custom/bin/gh', false, false);
 		expect(result).toEqual({
 			authenticated: false,
+			reason: 'not-installed',
 			message: expect.stringContaining('not installed'),
 		});
+	});
+
+	it('reports a gh that is not signed in with the exact login command for that binary', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({
+			get: vi.fn(() => '/custom/bin/gh'),
+		} as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce({ exitCode: 0, stdout: 'gh version 2', stderr: '' } as any)
+			.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not logged in' } as any);
+
+		const result = await registeredHandlers.get('feedback:check-gh-auth')!({});
+
+		expect(result).toMatchObject({
+			authenticated: false,
+			reason: 'not-authenticated',
+			login: {
+				command: '/custom/bin/gh',
+				args: ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web'],
+				display: '/custom/bin/gh auth login --hostname github.com --git-protocol https --web',
+			},
+		});
+	});
+
+	it('skips the cached verdict when asked for a fresh check', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({ get: vi.fn(() => '') } as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(isGhInstalled).mockResolvedValue(true);
+		vi.mocked(execFileNoThrow).mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' } as any);
+
+		const result = await registeredHandlers.get('feedback:check-gh-auth')!({}, { fresh: true });
+
+		expect(clearGhCache).toHaveBeenCalledOnce();
+		expect(result).toEqual({ authenticated: true });
+	});
+
+	it('flags a submit that gh refused for an expired login, so the chat can offer to sign in', async () => {
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as any)
+			.mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr: 'HTTP 401: Bad credentials',
+			} as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+		const result = await registeredHandlers.get('feedback:submit-conversation')!(
+			{},
+			{
+				category: 'bug_report',
+				summary: 'Player stuck',
+				expectedBehavior: 'It moves',
+				actualBehavior: 'It does not',
+			}
+		);
+
+		expect(result).toMatchObject({ success: false, needsGhLogin: true });
 	});
 
 	it('falls back to which-based detection when no custom path is configured', async () => {

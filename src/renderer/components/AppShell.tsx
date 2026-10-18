@@ -7,7 +7,7 @@
  */
 
 import React, { useEffect, type ComponentProps, type ReactNode } from 'react';
-import { isWebDesktop } from '../utils/runtimeContext';
+import { shouldShowAppTitleStrip } from '../utils/appTitleStrip';
 import { SessionList } from './SessionList';
 import { RightPanel, type RightPanelHandle } from './RightPanel';
 import { MainPanel, type MainPanelHandle } from './MainPanel';
@@ -18,7 +18,9 @@ import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ImageContextMenuHost } from './ImageContextMenuHost';
+import { ZoomViewerHost } from './ZoomViewer';
 import { MediaPlaybackHost } from './MediaPlayback';
+import { ThroughputGaugeHost } from './ThroughputGauge';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
@@ -113,6 +115,7 @@ export function AppShell({
 	// App's chrome equality ignores state).
 	const titleGroupId = useSessionStore((s) => selectActiveSession(s)?.groupId);
 	const titleSessionName = useSessionStore((s) => selectActiveSession(s)?.name);
+	const sessionsReadOk = useSessionStore((s) => s.sessionsReadOk);
 	const titleTabLabel = useSessionStore((s) => {
 		const sess = selectActiveSession(s);
 		if (!sess) return null;
@@ -133,8 +136,11 @@ export function AppShell({
 		useMovementStore.getState().clearItems();
 	}, [concertoEnabled]);
 
-	const showTitleBar =
-		!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop();
+	const showTitleBar = shouldShowAppTitleStrip({
+		isMobileLandscape,
+		useNativeTitleBar,
+		isMdDownViewport,
+	});
 
 	return (
 		<div
@@ -205,11 +211,11 @@ export function AppShell({
 			{modals}
 			{standaloneModals}
 
-			{!hasSessions && !sessionsLoaded && !isMobileLandscape ? (
-				<AgentsLoadingView theme={theme} />
+			{!hasSessions && (!sessionsLoaded || !sessionsReadOk) && !isMobileLandscape ? (
+				<AgentsLoadingView theme={theme} readFailed={sessionsLoaded && !sessionsReadOk} />
 			) : null}
 
-			{!hasSessions && sessionsLoaded && !isMobileLandscape ? (
+			{!hasSessions && sessionsLoaded && sessionsReadOk && !isMobileLandscape ? (
 				<EmptyStateView theme={theme} {...emptyStateProps} />
 			) : null}
 
@@ -293,12 +299,20 @@ export function AppShell({
 			    right-click Copy / Save. Surfaces wire up nothing. See
 			    ImageContextMenuHost. */}
 			<ImageContextMenuHost theme={theme} />
+			{/* --- ZOOM VIEWER (single, app-wide) ---
+			    Full-screen pan/zoom for any diagram or image. Opened by expand
+			    buttons and the image right-click menu via openZoomViewer(). */}
+			<ZoomViewerHost theme={theme} />
 			{/* --- MEDIA PLAYBACK (single, app-wide, never unmounted) ---
 			    Owns the one <audio>/<video> element so playback survives switching
 			    tabs and agents. Media never gets a tab: it renders only as the
 			    floating player, which the user can drag anywhere. See
 			    MediaPlaybackHost. */}
 			<MediaPlaybackHost theme={theme} />
+			{/* --- THROUGHPUT GAUGE (single, app-wide; Encore Feature) ---
+			    Floating tokens/sec dial. Renders nothing and listens to nothing
+			    while the throughputGauge flag is off. See ThroughputGaugeHost. */}
+			<ThroughputGaugeHost theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
 			{/* --- CONTEXT TIMELINE (single, app-wide; opened from the header gauge) --- */}
 			<ContextTimelinePanel theme={theme} />

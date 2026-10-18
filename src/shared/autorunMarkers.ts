@@ -132,6 +132,54 @@ export function findPendingHitlGate(content: string): HitlGate | null {
 	return pendingGate;
 }
 
+/** Text of the checkbox Resume writes to record that a person passed a gate. */
+export const HITL_ACK_TASK_TEXT = 'Human step done';
+
+/** An acknowledgement box a looped run unchecked, so it can be ticked again. */
+const HITL_ACK_UNCHECKED_REGEX = /^(\s*[-*+]\s*)\[\s*\](\s*Human step done\b)/;
+
+/**
+ * Pass the pending HITL gate by writing a ticked box under it.
+ *
+ * Clicking Resume on a gate is the person saying the step is done, but the
+ * engine only treats a gate as passed when a checked task sits between it and
+ * the next unchecked one. A gate written the documented way (marker on its own
+ * line above the dependent tasks) has no such box, so without this Resume
+ * re-read the document, found the same gate, and paused again forever.
+ *
+ * The acknowledgement is a real checkbox in the document rather than run
+ * memory, so the pill turns to "Approved", the CLI agrees, and a re-run does
+ * not stop at a step the person already did. The box goes directly above the
+ * next unchecked task, which passes every marker in the pending chain at once -
+ * the same chain {@link findPendingHitlGate} reports as one pause. A looped run
+ * unchecks every box, so an unchecked acknowledgement there is ticked again
+ * instead of stacking a second one.
+ *
+ * Returns the new content, or null when there is no pending gate to pass.
+ */
+export function acknowledgeHitlGate(content: string): string | null {
+	const gate = findPendingHitlGate(content);
+	if (!gate) return null;
+
+	let nextTaskLine = -1;
+	forEachMarkdownLine(content, (line, i) => {
+		if (i > gate.line && UNCHECKED_TASK_REGEX.test(line)) {
+			nextTaskLine = i;
+			return false;
+		}
+	});
+	if (nextTaskLine < 0) return null;
+
+	const eol = content.includes('\r\n') ? '\r\n' : '\n';
+	const lines = content.replace(/\r\n?/g, '\n').split('\n');
+	if (HITL_ACK_UNCHECKED_REGEX.test(lines[nextTaskLine])) {
+		lines[nextTaskLine] = lines[nextTaskLine].replace(HITL_ACK_UNCHECKED_REGEX, '$1[x]$2');
+	} else {
+		lines.splice(nextTaskLine, 0, `- [x] ${HITL_ACK_TASK_TEXT}: ${gate.reason}`);
+	}
+	return lines.join(eol);
+}
+
 /**
  * A halt marker that is actually asking the engine to stop.
  *

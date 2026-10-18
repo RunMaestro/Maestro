@@ -13,12 +13,18 @@
 import { useState, useRef, useLayoutEffect, type ReactNode, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
+import { ShortcutKeys, type ShortcutChords } from './ShortcutHint';
 
 export interface HoverTooltipProps {
 	/** Main label rendered in the tooltip. */
 	label: ReactNode;
-	/** Optional shortcut hint rendered in muted text after the label. */
-	shortcut?: string;
+	/**
+	 * The chord that fires the control, drawn as key caps after the label.
+	 * Pass raw key names (`['Meta', 'k']`, or alternatives
+	 * `[['Escape'], ['Meta', 'w']]`) so each key gets its own cap; a string is
+	 * one cap (a single key such as `'Esc'` or `'V'`).
+	 */
+	shortcut?: string | ShortcutChords;
 	/** Single trigger element (button, link, etc.). */
 	children: ReactNode;
 	theme: Theme;
@@ -156,7 +162,7 @@ export function HoverTooltip({
 					<div
 						ref={tooltipRef}
 						role="tooltip"
-						className={`fixed px-2 py-1 rounded text-xs-plus pointer-events-none shadow-lg flex gap-2 ${
+						className={`fixed px-2 py-1 rounded text-xs-plus pointer-events-none shadow-lg flex gap-3 ${
 							maxWidth ? 'items-start leading-snug' : 'items-center whitespace-nowrap'
 						}`}
 						style={{
@@ -177,9 +183,12 @@ export function HoverTooltip({
 					>
 						<span>{label}</span>
 						{shortcut && (
-							<span className="opacity-60" style={{ color: theme.colors.textDim }}>
-								{shortcut}
-							</span>
+							// Never shrinks: a wrapping label column must not squeeze the
+							// chord into a vertical stack of keys.
+							<ShortcutKeys
+								theme={theme}
+								keys={typeof shortcut === 'string' ? [shortcut] : shortcut}
+							/>
 						)}
 					</div>,
 					portalTarget

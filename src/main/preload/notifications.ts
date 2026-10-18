@@ -1,3 +1,7 @@
+import type {
+	NotificationHistoryChange,
+	NotificationHistorySnapshot,
+} from '../../shared/notificationHistory';
 /**
  * Preload API for notifications
  *
@@ -8,6 +12,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 
 /**
  * Response from showing a notification
@@ -49,6 +54,43 @@ export interface NotificationCommandVars {
  */
 export function createNotificationApi() {
 	return {
+		/** Apply a history mutation in the main process and wait for durable acknowledgement. */
+		changeHistory: (change: NotificationHistoryChange): Promise<NotificationHistorySnapshot> =>
+			ipcRenderer.invoke('notification:changeHistory', change),
+		/** Observe the shared history after another window's committed mutation. */
+		onHistoryChanged: (callback: (snapshot: NotificationHistorySnapshot) => void): (() => void) => {
+			const handler = (_event: unknown, snapshot: NotificationHistorySnapshot) =>
+				callback(snapshot);
+			ipcRenderer.on('notification:historyChanged', handler);
+			return () => ipcRenderer.removeListener('notification:historyChanged', handler);
+		},
+		/** Focus the window and tab currently owning this source agent. */
+		navigateToSource: (
+			sessionId: string,
+			tabId?: string,
+			action?: ToastClickAction
+		): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('notification:navigateToSource', sessionId, tabId, action),
+		/** Run in the owning window and acknowledge whether its destination was available. */
+		onActivateAction: (
+			callback: (action: ToastClickAction) => boolean | Promise<boolean>
+		): (() => void) => {
+			const handler = async (
+				_event: unknown,
+				action: ToastClickAction,
+				responseChannel: string
+			) => {
+				if (!responseChannel?.startsWith('notification:activateAction:response:')) return;
+				try {
+					ipcRenderer.send(responseChannel, (await callback(action)) === true);
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('notification:activateAction', handler);
+			return () => ipcRenderer.removeListener('notification:activateAction', handler);
+		},
+
 		/**
 		 * Show an OS notification
 		 * @param title - Notification title
@@ -60,9 +102,20 @@ export function createNotificationApi() {
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: ToastClickAction
 		): Promise<NotificationShowResponse> =>
-			ipcRenderer.invoke('notification:show', title, body, sessionId, tabId),
+			clickAction === undefined
+				? ipcRenderer.invoke('notification:show', title, body, sessionId, tabId)
+				: ipcRenderer.invoke('notification:show', title, body, sessionId, tabId, clickAction),
+
+		onClickAction: (handler: (action: ToastClickAction) => void): (() => void) => {
+			const listener = (_event: Electron.IpcRendererEvent, action: ToastClickAction) =>
+				handler(action);
+			ipcRenderer.on('notification:clickAction', listener);
+			void ipcRenderer.invoke('notification:ready').catch(() => {});
+			return () => ipcRenderer.removeListener('notification:clickAction', listener);
+		},
 
 		/**
 		 * Execute a custom notification command (e.g., TTS, logging)

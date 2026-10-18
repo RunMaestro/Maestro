@@ -12,6 +12,8 @@ import { ExecutionQueueBrowser } from '../../../renderer/components/ExecutionQue
 import type { Session, Theme, QueuedItem } from '../../../renderer/types';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retryStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 
 // Mock the LayerStackContext
 const mockRegisterLayer = vi.fn().mockReturnValue('layer-1');
@@ -879,6 +881,32 @@ describe('ExecutionQueueBrowser', () => {
 				'title',
 				'This message will run after Maestro reconnects'
 			);
+		});
+
+		it('labels the failed turn an outage parked in the queue', () => {
+			const held = createQueuedItem({ id: 'held-item' });
+			const session = createSession({ id: 'active-session', executionQueue: [held] });
+			useRetryStore.setState({
+				retries: {
+					'active-session:tab': { heldItemId: 'held-item' } as RetryEntry,
+				},
+			});
+			try {
+				render(
+					<ExecutionQueueBrowser
+						isOpen={true}
+						onClose={mockOnClose}
+						sessions={[session]}
+						activeSessionId="active-session"
+						theme={theme}
+						onRemoveItem={mockOnRemoveItem}
+						onSwitchSession={mockOnSwitchSession}
+					/>
+				);
+				expect(screen.getByTestId('held-for-retry-badge')).toHaveTextContent('Awaiting retry');
+			} finally {
+				useRetryStore.setState({ retries: {} });
+			}
 		});
 
 		it('should render up to 4k characters of message text and rely on CSS line-clamp for visual truncation', () => {
@@ -2145,12 +2173,33 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.queryByText('Send Now')).not.toBeInTheDocument();
 		});
 
-		it('disables Send Now when another tab is working and forced parallel is off', () => {
+		it('dims Send Now when another tab is working and forced parallel is off', () => {
 			const onForceSendItem = vi.fn();
 			renderBrowser(forceSendSession(['idle', 'busy']), onForceSendItem);
 
-			expect(screen.getByText('Send Now').closest('button')).toBeDisabled();
+			const button = screen.getByText('Send Now').closest('button');
+			expect(button).toHaveAttribute('aria-disabled', 'true');
+			expect(button).toBeEnabled();
 			expect(onForceSendItem).not.toHaveBeenCalled();
+		});
+
+		it('explains the dimmed Send Now and deep-links to the Forced Parallel setting', () => {
+			const onForceSendItem = vi.fn();
+			renderBrowser(forceSendSession(['idle', 'busy']), onForceSendItem);
+
+			fireEvent.click(screen.getByText('Send Now'));
+			// The ghosted control is a way in, not a dead end - and it never sends.
+			expect(screen.getByText('Force Send Is Off')).toBeInTheDocument();
+			expect(onForceSendItem).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Open Setting'));
+			const settings = useModalStore.getState().modals.get('settings');
+			expect(settings?.open).toBe(true);
+			expect(settings?.data).toEqual({ tab: 'general', settingId: 'general-forced-parallel' });
+			// Settings sits below this browser in the layer stack, so it closes itself.
+			expect(mockOnClose).toHaveBeenCalled();
+			expect(screen.queryByText('Force Send Is Off')).not.toBeInTheDocument();
+			useModalStore.getState().closeModal('settings');
 		});
 
 		it('confirms before running in parallel with another working tab', () => {
@@ -2388,6 +2437,70 @@ describe('ExecutionQueueBrowser', () => {
 			fireEvent.keyDown(menuList(), { key: 'ArrowDown' });
 
 			expect(selectedIndexOf(container)).toBe(0);
+		});
+	});
+	describe('merge into the message above', () => {
+		const MERGE_TITLE = /Merge into the earlier message/i;
+
+		const renderMerge = (executionQueue: QueuedItem[], onMergeItem = vi.fn()) => {
+			const session = createSession({ id: 'active-session', executionQueue });
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onMergeItem={onMergeItem}
+				/>
+			);
+			return onMergeItem;
+		};
+
+		it('offers Merge only where an earlier message for the same tab exists', () => {
+			renderMerge([
+				createQueuedItem({ id: 'a1', text: 'first', tabId: 'tab-a' }),
+				createQueuedItem({ id: 'b1', text: 'other tab', tabId: 'tab-b' }),
+				createQueuedItem({ id: 'a2', text: 'second', tabId: 'tab-a' }),
+			]);
+			// a1 is first on its tab, b1 is the only message on tab-b: only a2 qualifies.
+			expect(screen.getAllByTitle(MERGE_TITLE)).toHaveLength(1);
+		});
+
+		it('hides Merge when nothing above it can take the merge', () => {
+			renderMerge([
+				createQueuedItem({ id: 'c1', type: 'command', command: '/commit', text: undefined }),
+				createQueuedItem({ id: 'm1', text: 'after a command' }),
+			]);
+			expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
+		});
+
+		it('confirms with both messages before merging', async () => {
+			const onMergeItem = renderMerge([
+				createQueuedItem({ id: 'a1', text: 'upper message' }),
+				createQueuedItem({ id: 'a2', text: 'lower message' }),
+			]);
+			fireEvent.click(screen.getByTitle(MERGE_TITLE));
+
+			expect(onMergeItem).not.toHaveBeenCalled();
+			expect(screen.getByText('Merge Queued Messages?')).toBeInTheDocument();
+			const confirm = screen.getByRole('button', { name: 'Merge' });
+			await waitFor(() => expect(document.activeElement).toBe(confirm));
+			fireEvent.click(confirm);
+			expect(onMergeItem).toHaveBeenCalledWith('active-session', 'a2');
+		});
+
+		it('lists Merge in the Enter action menu only for a mergeable message', () => {
+			renderMerge([
+				createQueuedItem({ id: 'a1', text: 'upper message' }),
+				createQueuedItem({ id: 'a2', text: 'lower message' }),
+			]);
+			const card = screen.getByLabelText('Execution Queue');
+			fireEvent.keyDown(card, { key: 'Enter' });
+			expect(within(screen.getByTestId('queue-action-list')).queryByText(/Merge/)).toBeNull();
+			fireEvent.keyDown(document.activeElement ?? card, { key: 'Escape' });
 		});
 	});
 });

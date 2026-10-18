@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileNoThrow } from './utils/execFile';
+import { atomicWriteFile } from './utils/atomic-json-store';
 import { getWhichCommand, isWindows } from '../shared/platformDetection';
 import { compareVersions } from '../shared/pathUtils';
 import { getExpandedEnv } from './utils/cliDetection';
@@ -163,6 +164,13 @@ export class MaestroCliManager {
 		return version;
 	}
 
+	/**
+	 * Shims are written via temp file + rename so the rename replaces whatever
+	 * sits at `installPath` itself. A plain `writeFile` follows a symlink, and a
+	 * hand-made `~/.local/bin/maestro-cli -> Maestro.app/.../maestro-cli.js` link
+	 * made it overwrite the app's own bundled CLI with this shim, which then
+	 * exec'd itself as JavaScript and broke every `maestro-cli` call.
+	 */
 	private async writeUnixShim(installPath: string, bundledCliPath: string): Promise<void> {
 		const safeCliPath = bundledCliPath.replace(/'/g, "'\\''");
 		const safeRuntimePath = process.execPath.replace(/'/g, "'\\''");
@@ -174,7 +182,7 @@ export class MaestroCliManager {
 			bundledCliPath,
 			runtimePath: process.execPath,
 		});
-		await fs.promises.writeFile(installPath, script, 'utf-8');
+		await atomicWriteFile(installPath, script);
 		await fs.promises.chmod(installPath, 0o755);
 	}
 
@@ -190,7 +198,7 @@ export class MaestroCliManager {
 			bundledCliPath,
 			runtimePath: process.execPath,
 		});
-		await fs.promises.writeFile(installPath, script, 'utf-8');
+		await atomicWriteFile(installPath, script);
 	}
 
 	private async ensurePosixPathExport(

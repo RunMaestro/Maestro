@@ -12,13 +12,13 @@
  * moving it to a different tab is a one-line change.
  */
 
-import { memo, useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useMemo } from 'react';
 import { Wand2, Clock, FileText, ListChecks, MessagesSquare, Sparkles } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, WizardRun } from '../../../shared/stats-types';
-import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { MetricCard } from './MetricCard';
+import { useDashboardResource } from './useDashboardResource';
 
 interface WizardStatsProps {
 	/** Current time range for filtering */
@@ -43,37 +43,28 @@ interface DayBucket {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const NO_RUNS: WizardRun[] = [];
+
 export const WizardStats = memo(function WizardStats({ timeRange, theme }: WizardStatsProps) {
-	const [runs, setRuns] = useState<WizardRun[]>([]);
-	const [loading, setLoading] = useState(true);
+	const { data, loading } = useDashboardResource(
+		`wizard-runs:${timeRange}`,
+		() => window.maestro.stats.getWizardRuns(timeRange),
+		'fetchWizardStats'
+	);
+	const runs = data ?? NO_RUNS;
 	const [hoveredDay, setHoveredDay] = useState<number | null>(null);
-
-	const fetchRuns = useCallback(async () => {
-		try {
-			setRuns(await window.maestro.stats.getWizardRuns(timeRange));
-		} catch (err) {
-			captureException(err, { extra: { operation: 'fetchWizardStats' } });
-		} finally {
-			setLoading(false);
-		}
-	}, [timeRange]);
-
-	useEffect(() => {
-		fetchRuns();
-		const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
-			fetchRuns();
-		});
-		return () => unsubscribe();
-	}, [fetchRuns]);
 
 	const summary = useMemo(() => {
 		const productive = runs.filter((r) => r.documents > 0);
 		const documents = runs.reduce((sum, r) => sum + r.documents, 0);
 		const tasks = runs.reduce((sum, r) => sum + r.tasks, 0);
 		const exchanges = runs.reduce((sum, r) => sum + r.exchanges, 0);
-		// Time in conversation, not wall clock between runs: endedAt is the last
-		// activity in a run, so a wizard left open overnight does not inflate this.
-		const totalMs = runs.reduce((sum, r) => sum + Math.max(0, r.endedAt - r.startedAt), 0);
+		// Active time only (agent turns plus capped user gaps), never
+		// endedAt - startedAt: a wizard tab left open for days is not time spent
+		// in the wizard. Rows recorded before activeMs existed are left out of
+		// the time figures rather than guessed at.
+		const timed = runs.filter((r) => r.activeMs !== undefined);
+		const totalMs = timed.reduce((sum, r) => sum + Math.max(0, r.activeMs ?? 0), 0);
 		return {
 			runs: runs.length,
 			inline: runs.filter((r) => r.surface === 'inline').length,
@@ -83,7 +74,8 @@ export const WizardStats = memo(function WizardStats({ timeRange, theme }: Wizar
 			tasks,
 			exchanges,
 			totalMs,
-			averageMs: runs.length > 0 ? Math.round(totalMs / runs.length) : 0,
+			untimed: runs.length - timed.length,
+			averageMs: timed.length > 0 ? Math.round(totalMs / timed.length) : 0,
 			averageExchanges: runs.length > 0 ? Math.round((exchanges / runs.length) * 10) / 10 : 0,
 			tasksPerDoc: documents > 0 ? Math.round((tasks / documents) * 10) / 10 : 0,
 			docsPerProductiveRun:
@@ -163,9 +155,20 @@ export const WizardStats = memo(function WizardStats({ timeRange, theme }: Wizar
 					testId="wizard-metric-card"
 					icon={<Clock className="w-4 h-4" />}
 					label="Time in the Wizard"
-					value={summary.totalMs > 0 ? formatDuration(summary.totalMs) : '0m'}
+					value={
+						summary.totalMs > 0
+							? formatDuration(summary.totalMs)
+							: summary.untimed === summary.runs
+								? '-'
+								: '0m'
+					}
 					subValue={
-						summary.averageMs > 0 ? `${formatDuration(summary.averageMs)} per run` : undefined
+						[
+							summary.averageMs > 0 ? `${formatDuration(summary.averageMs)} per run` : null,
+							summary.untimed > 0 ? `${summary.untimed} earlier untimed` : null,
+						]
+							.filter(Boolean)
+							.join(' · ') || undefined
 					}
 					theme={theme}
 				/>

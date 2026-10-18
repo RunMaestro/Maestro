@@ -1,5 +1,7 @@
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createNotificationApi } from '../../../../main/preload/notifications';
+import * as runtimeContext from '../../../../renderer/utils/runtimeContext';
 import { useSessionSwitchCallbacks } from '../../../../renderer/hooks/session/useSessionSwitchCallbacks';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { outputSearchKeyFor } from '../../../../renderer/utils/outputSearch';
@@ -15,8 +17,20 @@ import {
 	setupSession,
 } from '../tabs/internal/testUtils';
 
+const nativeIpc = vi.hoisted(() => ({
+	invoke: vi.fn(),
+	on: vi.fn(),
+	removeListener: vi.fn(),
+}));
+vi.mock('electron', () => ({ ipcRenderer: nativeIpc }));
+
+const originalOnClickAction = window.maestro.notification.onClickAction;
+
 describe('useSessionSwitchCallbacks', () => {
 	beforeEach(() => {
+		vi.clearAllMocks();
+		nativeIpc.invoke.mockResolvedValue(undefined);
+		window.maestro.notification.onClickAction = createNotificationApi().onClickAction;
 		resetTabHandlerStores();
 		clearDesktopAiTabSelections();
 		if (!window.maestro.app.onDeepLink) {
@@ -27,6 +41,8 @@ describe('useSessionSwitchCallbacks', () => {
 
 	afterEach(() => {
 		cleanup();
+		window.maestro.notification.onClickAction = originalOnClickAction;
+		vi.restoreAllMocks();
 	});
 
 	function renderCallbacks() {
@@ -44,6 +60,44 @@ describe('useSessionSwitchCallbacks', () => {
 		);
 		return { result, setActiveSessionId, handleResumeSession, handleFileClick };
 	}
+
+	it('keeps Lite toast navigation local without declaring host notification readiness', () => {
+		vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
+		const sessionId = setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-1',
+			activeFileTabId: 'file-1',
+			inputMode: 'terminal',
+		});
+		const { result, setActiveSessionId } = renderCallbacks();
+
+		expect(nativeIpc.invoke.mock.calls.map(([channel]) => channel)).not.toContain(
+			'notification:ready'
+		);
+		act(() => result.current.handleToastSessionClick(sessionId, 'ai-2'));
+		expect(setActiveSessionId).toHaveBeenCalledWith(sessionId);
+		expect(getSession()).toMatchObject({
+			activeTabId: 'ai-2',
+			activeFileTabId: null,
+			inputMode: 'ai',
+		});
+	});
+
+	it('still navigates the host renderer when a native notification is clicked', () => {
+		vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(false);
+		const sessionId = setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-1',
+			inputMode: 'terminal',
+		});
+		const { setActiveSessionId } = renderCallbacks();
+		const listener = nativeIpc.on.mock.calls.find(
+			([channel]) => channel === 'notification:clickAction'
+		)?.[1];
+		act(() => listener({}, { kind: 'jump-session', sessionId, tabId: 'ai-2' }));
+		expect(setActiveSessionId).toHaveBeenCalledWith(sessionId);
+		expect(getSession()).toMatchObject({ activeTabId: 'ai-2', inputMode: 'ai' });
+	});
 
 	it('handleToastSessionClick focuses the target AI tab and clears other view state', () => {
 		const sessionId = setupSession({

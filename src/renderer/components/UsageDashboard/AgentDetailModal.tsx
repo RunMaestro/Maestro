@@ -3,21 +3,25 @@
  *
  * Per-agent stats sub-modal opened by double-clicking an agent card on the
  * Usage Dashboard's Agents tab. Stays scoped to stats - no recent-queries list.
- * Per-agent token/cost is read from the agent's live-accumulated, persisted
- * `session.usageStats` (input/output/cache split + provider cost, falling back
- * to a rate-table estimate) via the shared `usageStats` helpers.
+ *
+ * Every figure covers the dashboard's SELECTED RANGE. Tokens and cost come from
+ * `data.bySessionTokens[session.id]` (per-turn rows in the stats database) with
+ * a coverage note, because rows recorded before the token columns existed carry
+ * none. The agent's running lifetime total (`session.usageStats`) is shown on
+ * its own labelled line: placed in the KPI row it read as the range's spend,
+ * putting an agent's whole history beside a 30-day query count.
  *
  * Reuses `data.bySessionByDay[session.id]` (already fetched by the dashboard)
  * for cheap aggregates and daily activity. Pulls the raw query events for the
- * session via `stats.getStats('all', { sessionId })` to compute the duration
- * distribution (median, p95) and user/auto split, since those aren't already
- * aggregated per session.
+ * session in the same range via `stats.getStats(timeRange, { sessionId })` to
+ * compute the duration distribution (median, p95) and user/auto split, since
+ * those aren't already aggregated per session.
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LogIn, Settings } from 'lucide-react';
 import type { Session, Theme } from '../../types';
-import type { QueryEvent, StatsAggregation } from '../../../shared/stats-types';
+import type { QueryEvent, StatsAggregation, StatsTimeRange } from '../../../shared/stats-types';
 import {
 	formatCost,
 	formatDurationHuman,
@@ -38,10 +42,13 @@ import { logger } from '../../utils/logger';
 import { Sparkline } from './Sparkline';
 import { Kpi, MetaField, SectionHeading } from './DetailPrimitives';
 import { TabBreakdown } from './TabBreakdown';
+import { usageCoverageNote } from './usageCoverage';
 
 interface AgentDetailModalProps {
 	session: Session;
 	data: StatsAggregation;
+	/** The dashboard's selected range; every figure in this modal covers it. */
+	timeRange: StatsTimeRange;
 	theme: Theme;
 	/** All visible agent sessions - used to surface worktree relationships. */
 	allSessions: Session[];
@@ -68,6 +75,7 @@ interface AutoRunSessionRow {
 export const AgentDetailModal = memo(function AgentDetailModal({
 	session,
 	data,
+	timeRange,
 	theme,
 	allSessions,
 	onClose,
@@ -85,7 +93,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		// user/auto source split. The aggregated `bySessionByDay` only carries
 		// daily totals, not per-event durations, so we fetch raw rows here.
 		window.maestro.stats
-			.getStats('all', { sessionId: session.id })
+			.getStats(timeRange, { sessionId: session.id })
 			.then((rows) => {
 				if (!cancelled) setEvents(rows as QueryEvent[]);
 			})
@@ -111,7 +119,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		return () => {
 			cancelled = true;
 		};
-	}, [session.id]);
+	}, [session.id, timeRange]);
 
 	const aggregates = useMemo(() => {
 		const byDay = data.bySessionByDay?.[session.id] ?? [];
@@ -124,19 +132,28 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		return { byDay, totalQueries, totalDuration, avgDuration, firstActive, lastActive };
 	}, [data, session.id]);
 
-	// Per-agent token/cost from the live-accumulated, persisted usageStats.
-	const usage = useMemo(() => {
+	// Token/cost for the selected range, from the per-turn stats rows.
+	const rangeUsage = useMemo(() => {
+		const t = data.bySessionTokens?.[session.id];
+		const pricedQueries = t?.pricedQueries ?? 0;
+		return {
+			pricedQueries,
+			total: t ? t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheCreationTokens : 0,
+			inputTokens: t?.inputTokens ?? 0,
+			outputTokens: t?.outputTokens ?? 0,
+			cacheReadTokens: t?.cacheReadTokens ?? 0,
+			costUsd: t?.costUsd ?? 0,
+			note: usageCoverageNote(pricedQueries, aggregates.totalQueries),
+		};
+	}, [data, session.id, aggregates.totalQueries]);
+
+	// The agent's running lifetime total, accumulated turn by turn since it was
+	// created. Not range-scoped, so it is labelled as lifetime wherever shown.
+	const lifetimeUsage = useMemo(() => {
 		const u = session.usageStats;
 		if (!hasUsage(u)) return null;
 		const { costUsd, estimated } = resolveUsageCost(u, session.customModel);
-		return {
-			total: sumUsageTokens(u),
-			inputTokens: u?.inputTokens ?? 0,
-			outputTokens: u?.outputTokens ?? 0,
-			cacheReadTokens: u?.cacheReadInputTokens ?? 0,
-			costUsd,
-			estimated,
-		};
+		return { total: sumUsageTokens(u), costUsd, estimated };
 	}, [session.usageStats, session.customModel]);
 
 	const sourceSplit = useMemo(() => {
@@ -290,29 +307,54 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 					/>
 				</section>
 
-				{/* Token & cost usage for this agent (from persisted usageStats). */}
-				{usage && (
+				{/* Token & cost for the selected range, from per-turn stats rows. */}
+				{(rangeUsage.pricedQueries > 0 || lifetimeUsage) && (
 					<section>
 						<SectionHeading theme={theme}>Tokens &amp; Cost</SectionHeading>
-						<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-							<Kpi label="Total tokens" value={formatTokensCompact(usage.total)} theme={theme} />
-							<Kpi
-								label="Input / Output"
-								value={`${formatTokensCompact(usage.inputTokens)} / ${formatTokensCompact(
-									usage.outputTokens
-								)}`}
-								theme={theme}
-							/>
-							<Kpi
-								label="Cache reads"
-								value={formatTokensCompact(usage.cacheReadTokens)}
-								theme={theme}
-							/>
-							<Kpi
-								label={usage.estimated ? 'Cost (est.)' : 'Cost'}
-								value={`${usage.estimated ? '~' : ''}${formatCost(usage.costUsd)}`}
-								theme={theme}
-							/>
+						{rangeUsage.pricedQueries > 0 && (
+							<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+								<Kpi
+									label="Total tokens"
+									value={formatTokensCompact(rangeUsage.total)}
+									title={rangeUsage.note}
+									theme={theme}
+								/>
+								<Kpi
+									label="Input / Output"
+									value={`${formatTokensCompact(rangeUsage.inputTokens)} / ${formatTokensCompact(
+										rangeUsage.outputTokens
+									)}`}
+									title={rangeUsage.note}
+									theme={theme}
+								/>
+								<Kpi
+									label="Cache reads"
+									value={formatTokensCompact(rangeUsage.cacheReadTokens)}
+									title={rangeUsage.note}
+									theme={theme}
+								/>
+								<Kpi
+									label="Cost"
+									value={formatCost(rangeUsage.costUsd)}
+									title={rangeUsage.note}
+									theme={theme}
+									testId="agent-detail-range-cost"
+								/>
+							</div>
+						)}
+						<div className="mt-2 space-y-1 text-xs-plus" style={{ color: theme.colors.textDim }}>
+							{rangeUsage.pricedQueries < aggregates.totalQueries && (
+								<p role="note">{rangeUsage.note}</p>
+							)}
+							{lifetimeUsage && (
+								<p data-testid="agent-detail-lifetime-usage">
+									Lifetime since {new Date(session.createdAt).toLocaleDateString()}:{' '}
+									{formatTokensCompact(lifetimeUsage.total)} tokens,{' '}
+									{lifetimeUsage.estimated ? '~' : ''}
+									{formatCost(lifetimeUsage.costUsd)}
+									{lifetimeUsage.estimated ? ' (est.)' : ''}
+								</p>
+							)}
 						</div>
 					</section>
 				)}

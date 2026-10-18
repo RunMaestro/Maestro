@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'fs';
 import fs from 'fs/promises';
+import os from 'os';
 import path from 'path';
 
 const { captureMessageMock } = vi.hoisted(() => ({
@@ -12,7 +14,8 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 import { sampleCodexUsage } from '../../../main/agents/codex-usage-sampler';
 
-const TEST_ROOT = path.join(process.cwd(), '.tmp-codex-usage-sampler');
+// Unique per run: a fixed path collides with a concurrent suite in the same checkout.
+const TEST_ROOT = mkdtempSync(path.join(os.tmpdir(), 'maestro-codex-usage-sampler-'));
 
 async function writeAuth(): Promise<void> {
 	await fs.writeFile(

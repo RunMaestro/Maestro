@@ -7,6 +7,7 @@
  * - formatNumber: Large numbers with k/M/B suffixes
  * - formatTokens: Token counts with K/M/B suffixes (~prefix)
  * - formatTokensCompact: Token counts without ~prefix
+ * - formatTokensPerSecond: Token throughput rates (dash when unmeasured)
  * - formatRelativeTime: Relative timestamps ("5m ago", "2h ago")
  * - formatCacheAge: Cache age labels ("just now", "5m ago", "2h ago")
  * - formatAgeShort: Compact age badge ("new", "5m", "3h", "5d", "3w", "6mo", "3.5y")
@@ -186,6 +187,18 @@ export function formatTokensCompact(tokens: number): string {
 }
 
 /**
+ * Format a tokens-per-second rate: one decimal below 100 (`42.7`), whole
+ * numbers below 1,000 (`412`), then compact (`38.4K`). A rate of zero means
+ * "not measured" on every surface that shows one, so it renders as a dash.
+ */
+export function formatTokensPerSecond(tps: number): string {
+	if (!Number.isFinite(tps) || tps <= 0) return '-';
+	if (tps < 100) return tps.toFixed(1);
+	if (tps < 1000) return Math.round(tps).toString();
+	return formatTokensCompact(tps);
+}
+
+/**
  * Format a date/timestamp as relative time (e.g., "just now", "5m ago", "2h ago").
  * Accepts either a timestamp (number of milliseconds) or a date string.
  *
@@ -293,6 +306,18 @@ export function formatAgeShort(dateOrTimestamp: Date | number | string): string 
 		return Number.isInteger(rounded) ? `${rounded}y` : `${rounded.toFixed(1)}y`;
 	}
 	return `${Math.floor(years)}y`;
+}
+
+/**
+ * Format an hour of day (0-23) as a clock label: 0 -> "12 AM", 13 -> "1 PM".
+ * The Usage Dashboard's peak-hour cards and `maestro-cli stats` both print it.
+ * (`PeakHoursChart` keeps its own lowercase "8pm" variant for axis labels - a
+ * different style, not a duplicate of this one.)
+ */
+export function formatHourOfDay(hour: number): string {
+	const suffix = hour >= 12 ? 'PM' : 'AM';
+	const displayHour = hour % 12 || 12;
+	return `${displayHour} ${suffix}`;
 }
 
 /**
@@ -544,6 +569,27 @@ export function truncateCommand(command: string, maxLength: number = 40): string
 export function truncateText(text: string, maxLength: number = 24): string {
 	if (text.length <= maxLength) return text;
 	return text.slice(0, maxLength - 1) + '…';
+}
+
+/**
+ * Truncate prose to a maximum length, cutting at the last space that fits so a
+ * word is never split. Falls back to a hard cut when the text has no usable
+ * space. The ellipsis counts toward `maxLength`.
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length of the returned string
+ * @param ellipsis - Marker appended when the text is cut (default: `…`)
+ * @returns Truncated string (e.g., "Donation Appeal Pages Japanese...")
+ */
+export function truncateAtWordBoundary(
+	text: string,
+	maxLength: number,
+	ellipsis: string = '…'
+): string {
+	if (text.length <= maxLength) return text;
+	const limit = Math.max(1, maxLength - ellipsis.length);
+	const boundary = text.lastIndexOf(' ', limit);
+	return text.substring(0, boundary > 0 ? boundary : limit).trimEnd() + ellipsis;
 }
 
 /**

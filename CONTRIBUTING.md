@@ -105,10 +105,11 @@ npm run dev:prod-data  # Start dev server using production data (requires closin
 npm run dev:demo       # Start in demo mode (fresh settings, isolated data)
 npm run dev:web-desktop # Start browser (web-desktop) build dev server
 npm run build          # Full production build (main + renderer + web-desktop + CLI)
-npm run build:main     # Build main process only
+npm run build:main     # Build main process + preload only (clears stale output first)
 npm run build:renderer # Build renderer only
 npm run build:web-desktop # Build browser (web-desktop) bundle only
 npm run build:cli      # Build CLI tool only
+npm run build:computer-history # Build the Computer History helper (needs the Rust toolchain)
 npm start              # Start built application
 npm run clean          # Clean build artifacts
 npm run lint           # Run TypeScript type checking
@@ -945,12 +946,16 @@ All PRs must pass these checks before review:
 
 ## Branching & Release Strategy
 
-Maestro uses a two-branch release model with **odd/even version numbering**:
+Maestro uses a two-branch release model with **odd/even version numbering**. The
+minor (`Y` in `X.Y.Z`) says which line a version belongs to:
 
-| Branch | Version Pattern | Audience                                                | Example |
-| ------ | --------------- | ------------------------------------------------------- | ------- |
-| `main` | `0.ODD.x`       | All users (stable)                                      | 0.15.x  |
-| `rc`   | `0.EVEN.x`      | Users who opt into "beta and release candidate updates" | 0.16.x  |
+| Branch | Version Pattern | Audience                                                | Example  |
+| ------ | --------------- | ------------------------------------------------------- | -------- |
+| `main` | `X.EVEN.z`      | All users (stable)                                      | 1.0.x    |
+| `rc`   | `X.ODD.z-RC`    | Users who opt into "beta and release candidate updates" | 1.1.x-RC |
+
+Before 1.0 the parity was the other way round (stable `0.17.x`, RC `0.18.x-RC`).
+It flipped at 1.0 so that `1.0.0` itself sits on the stable (even) line.
 
 ### How It Works
 
@@ -964,13 +969,13 @@ Maestro uses a two-branch release model with **odd/even version numbering**:
 When `rc` is mature and ready to become the next stable release:
 
 1. `rc` merges into `main`.
-2. `main` bumps to the next **odd** minor version (e.g., 0.15.x → 0.17.x).
-3. `rc` bumps to the next **even** minor version (e.g., 0.16.x → 0.18.x).
+2. `main` bumps to the next **even** minor version (e.g., 1.0.x → 1.2.0).
+3. `rc` bumps to the next **odd** minor version (e.g., 1.1.x-RC → 1.3.0-RC).
 
 ```
 Example timeline:
-  main: 0.15.0 → 0.15.1 → 0.15.2 ──────────────────→ 0.17.0 (rc merged in)
-  rc:   0.16.0 → 0.16.1 → 0.16.2 → 0.16.3 (merge) → 0.18.0 (new rc cycle)
+  main: 1.0.0 → 1.0.1 → 1.0.2 ──────────────────────────→ 1.2.0 (rc merged in)
+  rc:   1.1.0-RC → 1.1.1-RC → 1.1.2-RC (merge) → 1.3.0-RC (new rc cycle)
 ```
 
 ### Branch Guards
@@ -993,7 +998,7 @@ Each guard applies two checks to anything landing on `main`:
 | 2. Must not add 10+ commits that `rc` already has | Yes, for the declared promotion | `rc` history being absorbed into `main`                            |
 
 Check 1 is what separates an accident from a release: an accidental sync carries
-`0.EVEN.x-RC`, while a real promotion has already been bumped to its GA version.
+`X.ODD.z-RC`, while a real promotion has already been bumped to its GA version.
 
 **Merging `main` into `rc` is unaffected.** Only the `rc` -> `main` direction is
 guarded, so the usual "mirror safe fixes into rc" flow needs no special handling.
@@ -1007,12 +1012,12 @@ version bump comes **before** the merge, because guard check 1 is not bypassable
 
    ```bash
    git checkout rc && git pull
-   git checkout -b release/0.ODD.0
-   # set package.json version to the next ODD minor, e.g. 0.18.5-RC -> 0.19.0
-   git commit -am "chore(version): set version to 0.19.0"
+   git checkout -b release/1.2.0
+   # set package.json version to the next EVEN minor, e.g. 1.1.5-RC -> 1.2.0
+   git commit -am "chore(version): set version to 1.2.0"
    ```
 
-2. Open a PR from `release/0.ODD.0` into `main`. Put the marker
+2. Open a PR from `release/X.EVEN.0` into `main`. Put the marker
    `[release-promotion]` in the merge commit message so guard check 2 lets the
    `rc` history through. Without it CI fails with "rc reached main".
 
@@ -1027,15 +1032,15 @@ version bump comes **before** the merge, because guard check 1 is not bypassable
    until this step:
 
    ```bash
-   git tag v0.19.0 && git push origin v0.19.0
+   git tag v1.2.0 && git push origin v1.2.0
    ```
 
-5. Start the next RC cycle by bumping `rc` to the next EVEN minor:
+5. Start the next RC cycle by bumping `rc` to the next ODD minor:
 
    ```bash
    git checkout rc
-   # set package.json version to e.g. 0.20.0-RC
-   git commit -am "chore(version): set version to 0.20.0-RC"
+   # set package.json version to e.g. 1.3.0-RC
+   git commit -am "chore(version): set version to 1.3.0-RC"
    ```
 
 From here the cycle repeats: aggressive work lands on `rc`, safe fixes land on
@@ -1049,7 +1054,7 @@ From here the cycle repeats: aggressive work lands on `rc`, safe fixes land on
 
 ### Release Tags
 
-Tags follow the pattern `v0.MINOR.PATCH`. Tags with `-RC` suffix (e.g., `v0.16.0-RC`) are automatically marked as pre-releases on GitHub. The update checker in Maestro uses tag naming to route updates to the correct channel.
+Tags follow the pattern `vMAJOR.MINOR.PATCH`: an even minor for stable, an odd minor with an `-RC` suffix for release candidates. `node scripts/release.mjs tag` and `bump` refuse a version whose minor parity does not match its branch. Tags with `-RC` suffix (e.g., `v1.1.0-RC`) are automatically marked as pre-releases on GitHub. The update checker in Maestro uses tag naming to route updates to the correct channel.
 
 ## Building for Release
 
@@ -1080,7 +1085,7 @@ Place icons in `build/` directory:
 
 - `icon.icns` - macOS (512x512 or 1024x1024)
 - `icon.ico` - Windows (256x256)
-- `icon.png` - Linux (512x512)
+- `icon.png` - Linux (512x512 or larger). Also shipped as `<resources>/icon.png` and set as the window icon at runtime (`src/main/app-lifecycle/app-icon.ts`), since a Linux binary carries no embedded icon. `desktopName` in `package.json` must stay in sync with the `.desktop` entry so the desktop links running windows to it.
 
 ### 2. Update Version
 
@@ -1103,6 +1108,8 @@ npm run package:linux     # Linux (.AppImage, .deb, .rpm)
 
 Output in `release/` directory.
 
+The `package*` scripts also build the Computer History helper (`native/maestro-computer-history`), so they need the Rust toolchain. Packaging fails when the helper is missing from the package. To package without it anyway, set `MAESTRO_ALLOW_MISSING_COMPUTER_HISTORY_HELPER=1` and run `electron-builder` directly.
+
 ### GitHub Actions
 
 Create a release tag to trigger automated builds:
@@ -1112,7 +1119,10 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-GitHub Actions will build for all platforms and create a release.
+GitHub Actions builds all four platforms, attaches the 16 files to the release's
+curated draft, and publishes it. Releases are normally cut by agents following
+[docs/agent-guides/RELEASE-RUNBOOK.md](docs/agent-guides/RELEASE-RUNBOOK.md) and
+`scripts/release.mjs`, which check the draft and CI before pushing a tag.
 
 ## Documentation
 

@@ -24,6 +24,8 @@
  * - set_setting: Modify a single setting (allowlisted keys only)
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
+ * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
+ * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -56,11 +58,16 @@ import {
 	handleUpdateSessionCwd,
 	handleUpdateSessionSsh,
 	handleUpdateSessionConfig,
+	handleProviderTranslation,
 	handleListDesktopSessions,
 	handleGetSessionHistory,
 } from './sessions';
 import { handleRefreshFileTree, handleGetFileTree } from './fileTree';
-import { handleNotifyToast, handleNotifyCenterFlash } from './notifications';
+import {
+	handleNotifyToast,
+	handleNotifyCenterFlash,
+	handleNotificationInbox,
+} from './notifications';
 import { handleCadenza } from './cadenza';
 import {
 	handleMovement,
@@ -69,13 +76,24 @@ import {
 	handleInteractMovementDesigner,
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
+import { handleQuickChat } from './quickChat';
+import {
+	handleSupportPackageCreate,
+	handleFeedbackCheckAuth,
+	handleFeedbackGhLoginCommand,
+	handleFeedbackAccounts,
+	handleFeedbackDiagnose,
+	handleFeedbackSearch,
+	handleFeedbackSubmit,
+	handleFeedbackSubscribe,
+} from './feedback';
 import {
 	handleMarketplaceGetManifest,
 	handleMarketplaceGetDocument,
 	handleMarketplaceGetReadme,
 	handleMarketplaceImportPlaybook,
 } from './marketplace';
-import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
+import { handlePluginsListTools, handlePluginsCallTool, handlePluginsSendAgent } from './plugins';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -92,6 +110,11 @@ import {
 	handleAbortAutoRunError,
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
+import { handleComputerHistoryCommand } from './computerHistory';
+import { handleMaestroRunCommand } from './maestroRun';
+import { handleAutoRunSteeringCommand } from './autoRunSteering';
+import { handleWindowCommand } from './windows';
+import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -132,6 +155,7 @@ import {
 	handleStartGroupChat,
 	handleGetGroupChatState,
 	handleSendGroupChatMessage,
+	handleSteerGroupChat,
 	handleStopGroupChat,
 } from './groupChat';
 import {
@@ -149,8 +173,17 @@ import {
 	handleCuePipelineGet,
 	handleCuePipelineSet,
 	handleCuePipelineRemove,
+	handleCueBundleExport,
+	handleCueBundleImport,
 } from './cue';
-import { handleEnqueueCommand, handleListQueue, handleRemoveQueueItem } from './queue';
+import {
+	handleEnqueueCommand,
+	handleListQueue,
+	handleRemoveQueueItem,
+	handleSteerQueueItem,
+	handleSetQueueItemPaused,
+	handleMergeQueueItem,
+} from './queue';
 import {
 	handleListPlaybooks,
 	handleCreatePlaybook,
@@ -160,6 +193,7 @@ import {
 import {
 	handleGetUsageDashboard,
 	handleGetStatsAggregation,
+	handleGetTokenUsage,
 	handleStatsQuery,
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
@@ -185,6 +219,7 @@ export class WebSocketMessageHandler {
 	 * Helper to send a JSON message to a client with timestamp
 	 */
 	private send(client: WebClient, data: Record<string, unknown>): void {
+		if (client.isAuthorized?.() === false) return;
 		client.socket.send(JSON.stringify({ ...data, timestamp: Date.now() }));
 	}
 
@@ -296,6 +331,26 @@ export class WebSocketMessageHandler {
 				handleSnoozeCommand(this.ctx, client, message);
 				break;
 
+			case 'computer_history_command':
+				void handleComputerHistoryCommand(this.ctx, client, message);
+				break;
+
+			case 'maestro_run_command':
+				void handleMaestroRunCommand(this.ctx, client, message);
+				break;
+
+			case 'auto_run_steering_command':
+				handleAutoRunSteeringCommand(this.ctx, client, message);
+				break;
+
+			case 'window_command':
+				handleWindowCommand(this.ctx, client, message);
+				break;
+
+			case 'throughput_gauge_command':
+				handleThroughputGaugeCommand(this.ctx, client, message);
+				break;
+
 			case 'reorder_tab':
 				handleReorderTab(this.ctx, client, message);
 				break;
@@ -354,6 +409,18 @@ export class WebSocketMessageHandler {
 
 			case 'remove_queue_item':
 				handleRemoveQueueItem(this.ctx, client, message);
+				break;
+
+			case 'steer_queue_item':
+				handleSteerQueueItem(this.ctx, client, message);
+				break;
+
+			case 'set_queue_item_paused':
+				handleSetQueueItemPaused(this.ctx, client, message);
+				break;
+
+			case 'merge_queue_item':
+				handleMergeQueueItem(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -468,6 +535,10 @@ export class WebSocketMessageHandler {
 				handleUpdateSessionConfig(this.ctx, client, message);
 				break;
 
+			case 'provider_translation':
+				handleProviderTranslation(this.ctx, client, message);
+				break;
+
 			case 'get_groups':
 				handleGetGroups(this.ctx, client, message);
 				break;
@@ -524,6 +595,10 @@ export class WebSocketMessageHandler {
 				handleSendGroupChatMessage(this.ctx, client, message);
 				break;
 
+			case 'steer_group_chat':
+				handleSteerGroupChat(this.ctx, client, message);
+				break;
+
 			case 'stop_group_chat':
 				handleStopGroupChat(this.ctx, client, message);
 				break;
@@ -576,6 +651,14 @@ export class WebSocketMessageHandler {
 				handleCuePipelineRemove(this.ctx, client, message);
 				break;
 
+			case 'cue_bundle_export':
+				handleCueBundleExport(this.ctx, client, message);
+				break;
+
+			case 'cue_bundle_import':
+				handleCueBundleImport(this.ctx, client, message);
+				break;
+
 			case 'get_usage_dashboard':
 				handleGetUsageDashboard(this.ctx, client, message);
 				break;
@@ -586,6 +669,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_stats_aggregation':
 				handleGetStatsAggregation(this.ctx, client, message);
+				break;
+
+			case 'get_token_usage':
+				handleGetTokenUsage(this.ctx, client, message);
 				break;
 
 			case 'stats_query':
@@ -602,6 +689,10 @@ export class WebSocketMessageHandler {
 
 			case 'terminal_resize':
 				handleTerminalResize(this.ctx, client, message);
+				break;
+
+			case 'notification_inbox':
+				void handleNotificationInbox(this.ctx, client, message);
 				break;
 
 			case 'notify_toast':
@@ -640,6 +731,42 @@ export class WebSocketMessageHandler {
 				handleProfilingStatus(this.ctx, client, message);
 				break;
 
+			case 'quick_chat':
+				handleQuickChat(this.ctx, client, message);
+				break;
+
+			case 'support_package_create':
+				void handleSupportPackageCreate(this.ctx, client, message);
+				break;
+
+			case 'feedback_check_auth':
+				void handleFeedbackCheckAuth(this.ctx, client, message);
+				break;
+
+			case 'feedback_search':
+				void handleFeedbackSearch(this.ctx, client, message);
+				break;
+
+			case 'feedback_gh_login_command':
+				void handleFeedbackGhLoginCommand(this.ctx, client, message);
+				break;
+
+			case 'feedback_submit':
+				void handleFeedbackSubmit(this.ctx, client, message);
+				break;
+
+			case 'feedback_subscribe':
+				void handleFeedbackSubscribe(this.ctx, client, message);
+				break;
+
+			case 'feedback_accounts':
+				void handleFeedbackAccounts(this.ctx, client, message);
+				break;
+
+			case 'feedback_diagnose':
+				void handleFeedbackDiagnose(this.ctx, client, message);
+				break;
+
 			case 'marketplace_get_manifest':
 				handleMarketplaceGetManifest(this.ctx, client, message);
 				break;
@@ -662,6 +789,10 @@ export class WebSocketMessageHandler {
 
 			case 'plugins_list_tools':
 				handlePluginsListTools(this.ctx, client, message);
+				break;
+
+			case 'plugins_send_agent':
+				void handlePluginsSendAgent(this.ctx, client, message);
 				break;
 
 			case 'plugins_call_tool':

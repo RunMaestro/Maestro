@@ -12,6 +12,23 @@ import {
 	AgentsHandlerDependencies,
 } from '../../../../main/ipc/handlers/agents';
 import * as agentCapabilities from '../../../../main/agents';
+import { discoverCodexSkills } from '../../../../main/agents/codex-skills';
+import { checkCustomPath } from '../../../../main/agents/path-prober';
+import {
+	CodexRpcRequestError,
+	CodexRpcTransportError,
+} from '../../../../main/codex-app-server/rpc-client';
+import { captureException } from '../../../../main/utils/sentry';
+
+vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+
+vi.mock('../../../../main/agents/path-prober', () => ({
+	checkCustomPath: vi.fn(async (requestedPath: string) => ({ exists: true, path: requestedPath })),
+}));
+
+vi.mock('../../../../main/agents/codex-skills', () => ({
+	discoverCodexSkills: vi.fn().mockRejectedValue(new Error('Unsupported skills/list')),
+}));
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -123,6 +140,17 @@ describe('agents IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(discoverCodexSkills)
+			.mockReset()
+			.mockRejectedValue(
+				new CodexRpcRequestError('skills/list', { code: -32601, message: 'Method not found' })
+			);
+		vi.mocked(checkCustomPath)
+			.mockReset()
+			.mockImplementation(async (requestedPath: string) => ({
+				exists: true,
+				path: requestedPath,
+			}));
 		vi.mocked(fs.readdirSync).mockReturnValue([] as any);
 		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
 
@@ -164,6 +192,7 @@ describe('agents IPC handlers', () => {
 	describe('registration', () => {
 		it('should register all agents handlers', () => {
 			const expectedChannels = [
+				'agents:translateProvider',
 				'agents:detect',
 				'agents:refresh',
 				'agents:get',
@@ -212,6 +241,12 @@ describe('agents IPC handlers', () => {
 		});
 	});
 
+	it('reports a missing translation host without mutating configuration', async () => {
+		const handler = handlers.get('agents:translateProvider')!;
+		expect(
+			await (handler as any)({}, { agentId: 'agent', destination: 'codex', action: 'apply' })
+		).toEqual({ success: false, error: 'Provider translation host unavailable' });
+	});
 	describe('agents:getKnownAuthDirs', () => {
 		it('returns canonical local auth paths from agent and session env vars', async () => {
 			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {
@@ -1504,6 +1539,7 @@ describe('agents IPC handlers', () => {
 					'--output-format',
 					'stream-json',
 					'--dangerously-skip-permissions',
+					'--no-session-persistence',
 					'--',
 					'/help',
 				],
@@ -1946,6 +1982,123 @@ describe('agents IPC handlers', () => {
 		// renderer to substitute before sending.
 
 		const codexAgent = { id: 'codex', available: true, path: '/usr/bin/codex' };
+
+		it.each([
+			new CodexRpcRequestError('skills/list', { code: -32601, message: 'Method not found' }),
+			new CodexRpcTransportError('initialize', 'Codex skill discovery exited'),
+		])('falls back quietly for expected CLI failures: %s', async (error) => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			vi.mocked(discoverCodexSkills).mockRejectedValueOnce(error);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+			expect(await handlers.get('agents:discoverSlashCommands')!({}, 'codex', '/test')).toEqual([]);
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			new TypeError('Malformed skills/list response'),
+			new CodexRpcRequestError('skills/list', { code: -32603, message: 'Internal error' }),
+		])('reports unexpected discovery errors before falling back: %s', async (error) => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			vi.mocked(discoverCodexSkills).mockRejectedValueOnce(error);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+			expect(await handlers.get('agents:discoverSlashCommands')!({}, 'codex', '/test')).toEqual([]);
+			expect(captureException).toHaveBeenCalledWith(error, {
+				operation: 'discoverCodexSlashCommands',
+			});
+		});
+
+		it('resolves a session custom binary even when the default Codex is unavailable', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ ...codexAgent, available: false });
+			const resolvedPath = path.resolve('custom', 'codex');
+			vi.mocked(checkCustomPath).mockResolvedValueOnce({ exists: true, path: resolvedPath });
+			vi.mocked(discoverCodexSkills).mockResolvedValueOnce([]);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+
+			expect(
+				await handlers.get('agents:discoverSlashCommands')!({}, 'codex', '/test', '~/bin/codex')
+			).toEqual([]);
+			expect(checkCustomPath).toHaveBeenCalledWith('~/bin/codex');
+			expect(discoverCodexSkills).toHaveBeenCalledWith(resolvedPath, '/test', expect.anything());
+		});
+
+		it('falls back to the detected binary when a session custom binary is invalid', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			vi.mocked(checkCustomPath).mockResolvedValueOnce({ exists: false });
+			vi.mocked(discoverCodexSkills).mockResolvedValueOnce([]);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+			await handlers.get('agents:discoverSlashCommands')!({}, 'codex', '/test', '/missing/codex');
+			expect(discoverCodexSkills).toHaveBeenCalledWith(codexAgent.path, '/test', expect.anything());
+		});
+
+		it('offers plugin and system skills reported by Codex, even outside the legacy skill dirs', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			const skills = [
+				{
+					name: 'mattpocock-skills:code-review',
+					description: 'Review changes',
+					prompt: '$mattpocock-skills:code-review',
+				},
+				{ name: 'skill-creator', description: 'Create skills', prompt: '$skill-creator' },
+			];
+			vi.mocked(discoverCodexSkills).mockResolvedValueOnce(skills);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+
+			const result = await handlers.get('agents:discoverSlashCommands')!(
+				{} as any,
+				'codex',
+				'/test'
+			);
+
+			expect(result).toEqual(skills);
+		});
+
+		it('uses the session profile and custom binary for Codex skill discovery', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			mockAgentConfigsStore.get.mockReturnValue({
+				codex: { customEnvVars: { CODEX_HOME: '/provider' } },
+			});
+			vi.mocked(discoverCodexSkills).mockResolvedValueOnce([]);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+			await handlers.get('agents:discoverSlashCommands')!(
+				{} as any,
+				'codex',
+				'/test',
+				'/custom/codex',
+				undefined,
+				{ CODEX_HOME: '/session' }
+			);
+			expect(discoverCodexSkills).toHaveBeenCalledWith(
+				'/custom/codex',
+				'/test',
+				expect.objectContaining({ CODEX_HOME: '/session' })
+			);
+		});
+
+		it('does not reintroduce disk skills disabled in the native skill list', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			vi.mocked(discoverCodexSkills).mockResolvedValueOnce([]);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+			expect(
+				await handlers.get('agents:discoverSlashCommands')!({} as any, 'codex', '/test')
+			).toEqual([]);
+			expect(fs.promises.readdir).not.toHaveBeenCalledWith(expect.anything(), {
+				withFileTypes: true,
+			});
+		});
 		const enoentError = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 
 		/** Build a readdir/readFile pair backed by a virtual path -> content map. */

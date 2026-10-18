@@ -125,3 +125,31 @@ describe('getEnhancedStatusColor consult state', () => {
 		expect(label(boundSession({ state: 'idle' }))).toBe('Ready');
 	});
 });
+
+describe('headless status overlay', () => {
+	it('shows running headless work on an unbound agent without mutating desktop state', () => {
+		const session = createMockSession({ state: 'idle', agentSessionId: undefined, aiTabs: [] });
+		expect(
+			getEnhancedStatusColor(session, mockTheme, false, false, false, false, true)
+		).toMatchObject({
+			animate: true,
+			color: mockTheme.colors.warning,
+			label: 'Running headless turn',
+		});
+		expect(session.state).toBe('idle');
+		expect(session.aiTabs).toHaveLength(0);
+	});
+	it('leaves a desktop turn busy after headless work has ended', () => {
+		expect(
+			getEnhancedStatusColor(
+				boundSession({ state: 'busy' }),
+				mockTheme,
+				false,
+				false,
+				false,
+				false,
+				false
+			)
+		).toMatchObject({ animate: true, label: 'Thinking' });
+	});
+});

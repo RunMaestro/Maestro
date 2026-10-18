@@ -93,10 +93,14 @@ export async function readTaskCountsAndContent(
 
 export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 	const loadSequenceRef = useRef(0);
-	// Last (sessionId|folder|sshRemoteId) tuple - lets us distinguish a true
-	// session/folder change (full reload) from a `selectedFile`-only change
-	// (single-file content fetch).
-	const structureKeyRef = useRef<string | null>(null);
+	// (sessionId|folder|sshRemoteId) tuple whose document list has FINISHED
+	// loading - lets us distinguish a true session/folder change (full reload)
+	// from a `selectedFile`-only change (single-file content fetch). It is set
+	// only once the list and its task counts land, never when a load starts: switching to an agent
+	// mid-run makes auto-follow change the selected file while the list is still
+	// loading, which cancels that load, and a key recorded up front sent the
+	// next pass down the single-file branch and left the list empty for good.
+	const loadedStructureKeyRef = useRef<string | null>(null);
 
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
 	// wake App via this hook. Subscribe only to Auto Run path fields that
@@ -155,7 +159,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 		const currentLoadSequence = ++loadSequenceRef.current;
 
 		if (!autoRunFolderPath || !activeSessionId) {
-			structureKeyRef.current = null;
+			loadedStructureKeyRef.current = null;
 			setAutoRunDocumentList([]);
 			setAutoRunDocumentTree([]);
 			setAutoRunDocumentTaskCounts(new Map());
@@ -169,8 +173,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 		const sessionId = activeSessionId;
 
 		const structureKey = `${activeSessionId}|${folderPath}|${sshRemoteId ?? ''}`;
-		const structureChanged = structureKeyRef.current !== structureKey;
-		structureKeyRef.current = structureKey;
+		const structureChanged = loadedStructureKeyRef.current !== structureKey;
 
 		const load = async () => {
 			if (structureChanged) {
@@ -195,6 +198,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 						);
 						if (currentLoadSequence !== loadSequenceRef.current) return;
 						setAutoRunDocumentTaskCounts(counts);
+						loadedStructureKeyRef.current = structureKey;
 
 						if (selectedFile) {
 							let content: string;

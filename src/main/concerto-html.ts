@@ -35,6 +35,57 @@ export const CONCERTO_HTML_CSP = [
 	'sandbox allow-scripts',
 ].join('; ');
 
+/**
+ * CDN origins a Codex `visualize` fragment may load scripts, styles, fonts and
+ * images from. Mirrors the allowlist in the visualize skill's own `render.py`
+ * (`_RESOURCE_SOURCES`): the skill tells the model these are the only hosts it
+ * may use, so a narrower list breaks real charts and a wider one grants more
+ * than Codex itself does.
+ */
+const CODEX_VISUALIZATION_RESOURCE_SOURCES = [
+	'blob:',
+	'data:',
+	'https://cdnjs.cloudflare.com',
+	'https://cdn.jsdelivr.net',
+	'https://esm.sh',
+	'https://fonts.bunny.net',
+	'https://fonts.googleapis.com',
+	'https://fonts.gstatic.com',
+	'https://unpkg.com',
+].join(' ');
+
+/**
+ * The `visualization` surface's policy: Codex's frame CSP, plus the two lines
+ * every Concerto document carries (`webrtc 'block'`, `sandbox allow-scripts`).
+ * `connect-src` stays closed to the network, so a fragment can pull a charting
+ * library but cannot send anything anywhere.
+ */
+export const CODEX_VISUALIZATION_CSP = [
+	"default-src 'none'",
+	`script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${CODEX_VISUALIZATION_RESOURCE_SOURCES}`,
+	`style-src 'unsafe-inline' ${CODEX_VISUALIZATION_RESOURCE_SOURCES}`,
+	`img-src ${CODEX_VISUALIZATION_RESOURCE_SOURCES}`,
+	`font-src ${CODEX_VISUALIZATION_RESOURCE_SOURCES}`,
+	`media-src ${CODEX_VISUALIZATION_RESOURCE_SOURCES}`,
+	'worker-src blob:',
+	'connect-src blob: data:',
+	"webrtc 'block'",
+	"object-src 'none'",
+	"frame-src 'none'",
+	"child-src 'none'",
+	"form-action 'none'",
+	"base-uri 'none'",
+	'sandbox allow-scripts',
+].join('; ');
+
+/**
+ * Visualizations are registered as transcripts render, not opened and closed
+ * like a Movement panel, so nothing ever releases them. They get their own
+ * slice of the registry and the oldest one is evicted to make room, which only
+ * costs a reload if that message is scrolled back into view.
+ */
+export const MAX_CODEX_VISUALIZATION_DOCUMENTS = 24;
+
 interface ConcertoHtmlDocument {
 	html: string;
 	revision: number;
@@ -198,6 +249,28 @@ function setDocument(surface: ConcertoHtmlSurface, id: string, html: string): nu
 	return revision;
 }
 
+/**
+ * Register a Codex visualization document and return its revision.
+ *
+ * Re-registering identical HTML keeps the existing revision, so a transcript
+ * re-rendering (streaming, scrolling, a tab switch) hands the frame the same
+ * URL and it does not reload. Changed HTML (the agent rewrote the file) gets
+ * a new revision, which is what makes the frame pick it up.
+ */
+export function registerCodexVisualizationDocument(id: string, html: string): number {
+	const key = documentKey('visualization', id);
+	const existing = documents.get(key);
+	if (existing && existing.html === html) return existing.revision;
+	if (!existing) {
+		const held = [...documents.keys()].filter((k) => k.startsWith('visualization\0'));
+		const excess = Math.max(0, held.length + 1 - MAX_CODEX_VISUALIZATION_DOCUMENTS);
+		for (const stale of held.slice(0, excess)) {
+			documents.delete(stale);
+		}
+	}
+	return setDocument('visualization', id, html);
+}
+
 function deleteDocument(surface: ConcertoHtmlSurface, id: string): void {
 	documents.delete(documentKey(surface, id));
 }
@@ -290,6 +363,12 @@ export const CONCERTO_HTML_RESPONSE_HEADERS: Readonly<Record<string, string>> = 
 	'x-content-type-options': 'nosniff',
 };
 
+/** The response headers for one surface. Only the CSP differs between surfaces. */
+export function concertoHtmlResponseHeaders(surface: ConcertoHtmlSurface): Record<string, string> {
+	if (surface !== 'visualization') return { ...CONCERTO_HTML_RESPONSE_HEADERS };
+	return { ...CONCERTO_HTML_RESPONSE_HEADERS, 'content-security-policy': CODEX_VISUALIZATION_CSP };
+}
+
 /**
  * The registered document for a surface/id, with the designer harness injected,
  * or null when nothing is registered under that key. Shared by the Electron
@@ -311,7 +390,7 @@ export function createConcertoHtmlResponse(requestUrl: string): Response {
 	if (body === null) return new Response('not found', { status: 404 });
 	return new Response(body, {
 		status: 200,
-		headers: { ...CONCERTO_HTML_RESPONSE_HEADERS },
+		headers: concertoHtmlResponseHeaders(target.surface),
 	});
 }
 

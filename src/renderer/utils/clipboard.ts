@@ -17,6 +17,7 @@
 
 import { isSessionImageRef } from '../../shared/sessionImageRefs';
 import { isWebDesktop } from './runtimeContext';
+import { readBlobAsDataUrl } from './imageData';
 
 /**
  * Legacy clipboard write via a hidden textarea + document.execCommand('copy').
@@ -191,12 +192,7 @@ async function readImageViaNavigator(): Promise<string | null> {
 		const imageType = item.types.find((t) => t.startsWith('image/'));
 		if (!imageType) continue;
 		const blob = await item.getType(imageType);
-		return await new Promise<string>((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onload = () => resolve(reader.result as string);
-			reader.onerror = () => reject(reader.error);
-			reader.readAsDataURL(blob);
-		});
+		return await readBlobAsDataUrl(blob);
 	}
 	return null;
 }

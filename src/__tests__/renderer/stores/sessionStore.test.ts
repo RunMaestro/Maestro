@@ -1303,6 +1303,40 @@ describe('sessionStore', () => {
 			expect(updated.aiTabs[1].logs[0].text).toBe('Command executed');
 		});
 
+		it("keeps a queued command card's stamps, so the card can be traced to its queue item", () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			useSessionStore.getState().addLogToTab('session-1', {
+				source: 'user',
+				text: 'expanded /commit prompt',
+				queuedItemId: 'item-1',
+				forceParallel: true,
+			});
+			useSessionStore.getState().addLogToTab('session-1', { source: 'stdout', text: 'plain' });
+
+			const [card, plain] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+			expect(card).toMatchObject({ queuedItemId: 'item-1', forceParallel: true });
+			expect(plain).not.toHaveProperty('queuedItemId');
+			expect(plain).not.toHaveProperty('forceParallel');
+		});
+
 		it('generates id and timestamp when not provided', () => {
 			const session = createMockSession({
 				id: 'session-1',

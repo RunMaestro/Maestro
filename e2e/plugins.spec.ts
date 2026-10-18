@@ -999,6 +999,8 @@ test.describe('plugin system e2e', () => {
 			await cueCard.click();
 			const fpDetails = view.locator('[data-testid="extension-details"]');
 			await expect(fpDetails).toBeVisible();
+			// A disabled tile opens on Help; the disclosure is on Permissions.
+			await fpDetails.locator('[data-testid="extension-subtab-permissions"]').click();
 			await expect(
 				fpDetails.locator('[data-testid="extension-permission"][data-cap="fs:watch"]')
 			).toHaveCount(1);
@@ -1063,6 +1065,7 @@ test.describe('plugin system e2e', () => {
 			await card.click();
 			const details = view.locator('[data-testid="extension-details"]');
 			await expect(details).toBeVisible();
+			await details.locator('[data-testid="extension-subtab-permissions"]').click();
 			await expect(
 				details.locator('[data-testid="extension-permission"][data-cap="fs:write"]')
 			).toHaveCount(1);
@@ -1075,6 +1078,7 @@ test.describe('plugin system e2e', () => {
 			// the persisted value back instead of the manifest default.
 			const readDemoSetting = async (): Promise<unknown> =>
 				page.evaluate((id) => window.maestro.settings.get(`plugins.${id}.demoFlag`), PLUGIN_ID);
+			await details.locator('[data-testid="extension-subtab-settings"]').click();
 			await details.locator('[data-testid="extension-configure"]').click();
 			const settingInput = details.locator(
 				'[data-testid="extension-setting-input"][data-key="demoFlag"]'

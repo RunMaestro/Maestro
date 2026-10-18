@@ -15,6 +15,9 @@ import React from 'react';
 import type { PanelContribution } from '../../../../shared/plugins/contributions';
 import { THEMES } from '../../../../renderer/constants/themes';
 import { PluginPanelFrame } from '../../../../renderer/components/plugins/PluginPanelFrame';
+import { notifyToast } from '../../../../renderer/stores/notificationStore';
+
+vi.mock('../../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 
 const theme = THEMES.dracula;
 
@@ -38,6 +41,7 @@ function dispatchIpcMessage(webview: Element, channel: string, payload: unknown)
 }
 
 beforeEach(() => {
+	vi.mocked(notifyToast).mockClear();
 	vi.mocked(window.maestro.plugins.invokeCommand)
 		.mockReset()
 		.mockResolvedValue({ dispatched: true });
@@ -88,6 +92,38 @@ describe('PluginPanelFrame render isolation', () => {
 
 		await Promise.resolve();
 		expect(window.maestro.plugins.invokeCommand).not.toHaveBeenCalled();
+	});
+
+	it('reports an undelivered panel command without guessing plugin state or exposing arguments', async () => {
+		vi.mocked(window.maestro.plugins.invokeCommand).mockResolvedValue({ dispatched: false });
+		const { container } = render(React.createElement(PluginPanelFrame, { theme, panel: panel() }));
+		const webview = container.querySelector('webview')!;
+
+		dispatchIpcMessage(webview, 'maestro:invokeCommand', {
+			commandId: 'save-token',
+			args: { token: 'test-secret-must-not-appear' },
+		});
+
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith({
+				color: 'red',
+				title: 'Plugin',
+				message:
+					'Command could not be delivered to plugin "acme.tools". Check its status and the command input, then try again.',
+			})
+		);
+		expect(JSON.stringify(vi.mocked(notifyToast).mock.calls)).not.toContain(
+			'test-secret-must-not-appear'
+		);
+	});
+
+	it('does not announce success before a delivered panel command has completed', async () => {
+		const { container } = render(React.createElement(PluginPanelFrame, { theme, panel: panel() }));
+		dispatchIpcMessage(container.querySelector('webview')!, 'maestro:invokeCommand', {
+			commandId: 'save-token',
+		});
+		await waitFor(() => expect(window.maestro.plugins.invokeCommand).toHaveBeenCalledOnce());
+		expect(notifyToast).not.toHaveBeenCalled();
 	});
 
 	it('shows the error state when the panel document fails to load', async () => {

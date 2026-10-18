@@ -5,12 +5,21 @@
  * stay pixel-identical without copy-pasting markup.
  */
 
-import { memo, useEffect, useState } from 'react';
-import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
+import { memo, type ReactNode } from 'react';
+import {
+	ChevronDown,
+	Clock,
+	Eye,
+	EyeOff,
+	KeyRound,
+	Link2,
+	Loader2,
+	RefreshCw,
+	Users,
+} from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters';
 import {
-	formatLastRefreshed,
 	isSampleBehindLatest,
 	isSampleExpired,
 	QUOTA_REFRESH_OPTIONS,
@@ -285,8 +294,8 @@ export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
 /**
  * "Stale" chip for a row the latest refresh did not update.
  *
- * The footer reports the NEWEST sample, so one freshly-sampled account makes the
- * whole panel read "Last refreshed just now" - including a row whose bars are
+ * The dashboard footer reports the NEWEST sample, so one freshly-sampled account
+ * makes the whole panel read as just sampled - including a row whose bars are
  * hours old because its account could not be sampled this pass (every agent
  * using it runs over SSH, or the probe failed). The chip prints when that row
  * was actually read. A clock time rather than an age, so it stays true without
@@ -583,6 +592,57 @@ export const QuotaShowAllToggle = memo(function QuotaShowAllToggle({
 	);
 });
 
+/**
+ * Warning strip shown in place of an account's bars when it cannot be sampled.
+ * Given `onLogin`, it carries a "Log in" button that opens the provider login
+ * for this account (see `useQuotaAccountLogin`), so a logged-out row is fixed
+ * where it is reported instead of by hunting for a terminal.
+ */
+export const QuotaAuthNotice = memo(function QuotaAuthNotice({
+	theme,
+	message,
+	testId,
+	onLogin,
+}: {
+	theme: Theme;
+	message: ReactNode;
+	testId: string;
+	onLogin?: () => void;
+}) {
+	const tone = theme.colors.warning ?? theme.colors.accent;
+	return (
+		<div
+			className="flex items-center gap-2 px-3 py-2 rounded text-xs"
+			style={{
+				backgroundColor: `${tone}15`,
+				color: theme.colors.textMain,
+				border: `1px solid ${tone}40`,
+			}}
+			data-testid={testId}
+		>
+			<span style={{ color: tone }}>●</span>
+			<span className="flex-1 min-w-0">{message}</span>
+			{onLogin && (
+				<button
+					type="button"
+					onClick={onLogin}
+					className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 shrink-0"
+					style={{
+						backgroundColor: `${theme.colors.accent}22`,
+						color: theme.colors.accent,
+						border: `1px solid ${theme.colors.accent}40`,
+					}}
+					data-testid={`${testId}-login`}
+					title="Run the provider login for this account, then re-sample it"
+				>
+					<KeyRound className="w-3 h-3" aria-hidden="true" />
+					Log in
+				</button>
+			)}
+		</div>
+	);
+});
+
 /** Per-tab status dot state. `warning` = needs attention, `pending` = unsampled. */
 export type QuotaTabStatus = 'warning' | 'pending' | 'none';
 
@@ -676,56 +736,6 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 					</button>
 				);
 			})}
-		</div>
-	);
-});
-
-/**
- * Centered footer line reporting how stale the panel's numbers are:
- * "Last refreshed just now" / "Last refreshed 5 hours and 25 minutes ago".
- *
- * It reads the newest `sampledAt` in the provider's snapshot map rather than
- * remembering when the Refresh button was last clicked, so it stays truthful
- * across a reopened dashboard and across the main-process background sampler -
- * both of which produce fresh data with nobody clicking anything. A refresh
- * that fails therefore keeps counting up instead of resetting to "just now",
- * which is the point: the line describes the data, not the button press.
- *
- * Renders nothing when nothing has been sampled yet.
- */
-export const QuotaLastRefreshed = memo(function QuotaLastRefreshed({
-	sampledAtMs,
-	theme,
-	testIdPrefix,
-}: {
-	sampledAtMs: number | null;
-	theme: Theme;
-	testIdPrefix: string;
-}) {
-	// Minute-granularity display, so a half-minute tick keeps the printed value
-	// within one tick of the truth without a per-second re-render.
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		const id = window.setInterval(() => setNow(Date.now()), 30_000);
-		return () => window.clearInterval(id);
-	}, []);
-
-	// A fresh sample must read "just now" immediately, not on the next tick.
-	useEffect(() => {
-		setNow(Date.now());
-	}, [sampledAtMs]);
-
-	if (sampledAtMs === null) return null;
-
-	return (
-		<div
-			className="flex items-center justify-center gap-1.5 mt-4 text-xs"
-			style={{ color: theme.colors.textDim, opacity: 0.8 }}
-			data-testid={`${testIdPrefix}-last-refreshed`}
-			title={new Date(sampledAtMs).toLocaleString()}
-		>
-			<Clock className="w-3 h-3" />
-			<span>Last refreshed {formatLastRefreshed(sampledAtMs, now)}</span>
 		</div>
 	);
 });

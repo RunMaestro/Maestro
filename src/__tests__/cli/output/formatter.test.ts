@@ -26,6 +26,7 @@ import {
 	formatWarning,
 	formatSessions,
 	formatSshRemotes,
+	formatDirectorNotesHistory,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -56,6 +57,38 @@ describe('formatter', () => {
 	// ============================================================================
 	// Color and Style Helper Tests
 	// ============================================================================
+
+	it('labels Relay History entries with their host origin', () => {
+		const result = formatDirectorNotesHistory(
+			{
+				stats: {
+					agentCount: 1,
+					autoCount: 0,
+					userCount: 0,
+					cueCount: 0,
+					agentEntryCount: 0,
+					relayCount: 1,
+					totalCount: 1,
+					lookbackDays: 1,
+				},
+				total: 1,
+				showing: 1,
+				entries: [
+					{
+						id: 'relay-turn',
+						type: 'RELAY',
+						timestamp: 1,
+						summary: 'Relay answer',
+						sourceSessionId: 'agent-a',
+					},
+				],
+			},
+			1
+		);
+		expect(result).toContain('[RELAY]');
+		expect(result).toContain('1 relay');
+		expect(result).not.toContain('[USER]');
+	});
 
 	describe('Color and style handling', () => {
 		it('should include ANSI codes when stdout is TTY', () => {
@@ -109,6 +142,16 @@ describe('formatter', () => {
 			expect(result).toContain('🚀');
 			expect(result).toContain('My Project');
 			expect(result).toContain('group-123');
+		});
+
+		it('should mark a group parked out of the Left Bar', () => {
+			const result = formatGroups([
+				{ id: 'group-1', name: 'Shown' },
+				{ id: 'group-2', name: 'Parked', hidden: true },
+			]);
+
+			expect(result).toMatch(/Parked.*\(hidden\)/);
+			expect(result).not.toMatch(/Shown.*\(hidden\)/);
 		});
 
 		it('should format multiple groups', () => {
@@ -974,6 +1017,19 @@ describe('formatter', () => {
 
 			expect(result).toContain('Group:');
 			expect(result).toContain('My Group');
+		});
+
+		it('should show the Codex transport for a Codex agent only', () => {
+			const codex = formatAgentDetail({
+				...baseAgent,
+				toolType: 'codex',
+				codexTransport: 'app-server',
+			});
+			expect(codex).toContain('Codex transport:');
+			expect(codex).toContain('app-server');
+
+			const claude = formatAgentDetail({ ...baseAgent, codexTransport: 'app-server' });
+			expect(claude).not.toContain('Codex transport:');
 		});
 
 		it('should show auto run folder when provided', () => {

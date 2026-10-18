@@ -70,6 +70,69 @@ The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` i
 
 This is why the renderer's own Zustand stores, IPC service wrappers, and components all work in the browser with no web-specific fork.
 
+### Maestro Lite
+
+`src/main/bootstrap.ts` selects `--lite` before importing the full main process.
+The connection picker and managed SSH tunnel live in `src/main/lite/`; the remote
+view loads this same host-served web-desktop bundle with sandboxing, context
+isolation, no Node integration, and no privileged local preload. Lite does not
+initialize local agents, process management, chat stores, automation, or a host
+server. See [Remote Control](../remote-control.md) for startup and connection setup.
+
+The authenticated `/$TOKEN/api/lite/handshake` reports persistent host identity,
+protocol compatibility, owner-renderer readiness, and registered capabilities.
+SSH forwards only through client loopback and preserves host-key checks; direct
+HTTPS requires Web Login and valid TLS. Profiles pin host identity and isolate
+cookies, navigation, and drafts by connection/host. Disconnecting Lite never
+stops accepted host work; the full host and its owning renderer must stay alive.
+
+The guided device-pairing flow also offers Tailscale or LAN. `src/main/lite/lan.ts`
+owns private IPv4 origin validation and same-subnet interface binding; reuse it
+for direct LAN routes. `pairing/direct-lan.ts` owns persisted host consent and
+multicast discovery on the selected interface. Both direct modes use the existing
+paired-device admission and localhost relay, with no privileged preload in remote
+content. LAN traffic is unencrypted and requires a trusted local network.
+
+Browser tabs use one canonical page in `src/main/browser/browser-pages.ts`.
+Native and remote views are presentations of that page, not independent guests.
+Empty offscreen startup paints are not usable frames. Disconnect releases the
+remote input/capture lease without destroying the page; actual owner-window
+destruction ends its workload. Live bootstrap includes incognito tabs without
+persisting their browsing state to disk.
+
+The bridge has explicit remote method/event inventories in
+`src/main/web-server/handlers/bridgeDenyList.ts`; registering an IPC handler does
+not expose it remotely. Host administration, credentials, and trusted native
+request/reply channels stay private. Bridge reconnect can replay received events,
+not submitted mutations: uncertain submissions require inspecting host state
+before resubmitting. Disconnected diagnostics stay local rather than recursively
+reporting bridge failures through the broken bridge.
+
+Native OS notification click readiness (`notification:ready`) is acknowledged only
+by host Electron renderers. `useSessionSwitchCallbacks` skips that subscription in
+web-desktop and Lite; in-app toast click actions still navigate within the client.
+
+Native Lite's periodic handshake is a health read, not the WebSocket's connection
+state. Network failures and HTTP 502/503/504 retain the current view and drafts;
+the native status follows the live bridge. Authentication, host identity and
+compatibility failures still close access. An acknowledged session-save rejection
+does not itself block a later distinct save. A save whose acknowledgement is lost
+remains held until the host view is reloaded; reconnect never replays it.
+
+New AI composer submissions keep their draft and attachments while
+authoritative process readiness is pending. A failed remote readiness read
+returns before creating user rows or execution-queue entries and raises a
+client-visible refusal; bridge reconciliation does not submit that draft.
+Successful sends clear unchanged persisted text and attachments independently on
+the original agent/tab, even after the user switches away, without touching the
+new composer's draft or pending flush. Changed fields stay intact. The native
+host still owns its local queue and existing process-reconciliation holds.
+
+Settings hydration reads `settings:getAll` and `logger:getLogLevel` remotely but
+skips the native-only `logger:getMaxLogBuffer` call. That channel stays private:
+calling it from web-desktop aborts the settings patch, leaving `showToolCalls`
+disabled even when OMP tool rows have arrived in the canonical transcript.
+
 ### Two Clients, One Sessions Store
 
 The browser runs the same renderer as the desktop, which means every client
@@ -78,8 +141,21 @@ store. Nothing reconciled those trees, so an agent created in the browser never
 appeared on the desktop, and one closed in the browser was resurrected the moment
 the desktop's stale copy was written again (issues #1398 / #1492).
 
-Two rules follow, and both are load-bearing:
+These rules keep the clients in sync:
 
+- **Browser bootstrap is thin.** `sessions:getBootstrap` returns agent metadata and tab structure without AI tab logs, legacy session logs, or command history. The selected conversation and legacy shell output load through `sessions:getDeferredContent`; later selected tabs and every visible pane in an active tiled group load when opened. A failed pane read does not block the other visible panes. The `deferredContent` marker tells both `sessions:setMany` and `sessions:setAll` to merge any unloaded fields from the main store before saving, including snoozed tabs. A tab closed by another client is dropped from a stale browser write, and a projected agent absent from main cannot be restored by an old browser copy. A failed initial read shows Retry and keeps persistence disabled; a bridge reconnect retries it. Desktop `sessions:getAll` still reads the full tree.
+- **Live content comes from the owning renderer.** Bootstrap requests set
+  `metadataOnly` and return current incognito/browser/terminal inventory without
+  traversing or copying transcript rows. Deferred reads return the selected
+  canonical transcript and its runtime snapshot (including errors and explicit
+  cleared fields) only to their requester: request replies, including late
+  replies, never fan out as `sessions:transcriptSync` events. Snapshot runtime
+  applies only while the captured local turn and browser/terminal inventories
+  are unchanged; newer local state takes precedence. Normal live deltas still
+  apply owner-created row IDs and
+  runtime state on every mirror. Incognito tabs stay out of persisted sessions
+  while surviving client disconnects; only trusted native renderers may publish
+  or answer snapshot requests.
 - **Agent lifecycle is pushed, not polled.** `sessions:setMany` / `sessions:setAll`
   (`src/main/ipc/handlers/persistence.ts`) report what entered and left the store
   on the `sessions:lifecycleSync` channel, and every other client applies the
@@ -90,16 +166,16 @@ Two rules follow, and both are load-bearing:
   tombstones a closed id so a peer flush already in flight cannot re-add it -
   the newest 1000, bounded by COUNT rather than age, because a suspended browser
   tab can be away for hours and no agent id is ever reused, so an old tombstone
-  has nothing left to block but a stale write. A client away long enough to
-  outlive its tombstone reloads on reconnect regardless: `BridgeClient` has no
-  replay, so it re-reads the store rather than flushing what it still held.
-  `setAll` merges its opening snapshot into the stored tree and only broadcasts
-  additions: the client may not have heard about agents a peer created, so an
-  absent id is preserved rather than treated as a close. Real closes arrive as
-  explicit `removeIds` through `setMany`. Both handlers share one main-process
-  write queue, so a final-agent backup cannot overlap a peer addition and later
-  overwrite it. The delta is deliberately lifecycle-only - tab contents, read-state and
-  queued messages are still last-writer-wins.
+  has nothing left to block but a stale write. Reconnect replays only a retained
+  event gap from the same server epoch; otherwise the client reboots from host
+  state rather than writing its stale snapshot. Both save handlers share one
+  main-process write queue. Writes carry their observed baseline and merge
+  changed fields through `src/shared/sessionPersistenceMerge.ts`, preserving
+  peer additions/deletions and reconciling observed tab and queue ordering.
+  An absent agent is not a close: explicit `removeIds` through `setMany` are
+  authoritative. Remote writes cannot replace host-owned transcripts or run
+  state, and client-local navigation and drafts never become another client
+  or the host renderer's view.
 - **Which agent a client is looking at is per-client.** Write and read it through
   `src/renderer/utils/activeSessionPersistence.ts`, never
   `window.maestro.sessions.getActiveSessionId()` directly. A browser tab reloads
@@ -109,24 +185,22 @@ Two rules follow, and both are load-bearing:
   an origin, so a localStorage-only answer would have each tab overwriting the
   other's), then `localStorage` (the last choice made in this browser, for a
   freshly opened tab), then the shared value (a first visit should land where the
-  desktop is). Writing still reports to the shared store as well, which is what
-  plugin `session.activated` events and the CLI's current-agent answer are built
-  on. The same rule holds LIVE, not just on load: the web-desktop shim
+  desktop is). Browser writes stop at client view storage: only the full native
+  renderer updates the shared focus used by plugins and CLI. Lite additionally
+  keys its view/drafts by its stable client ID. The same rule holds LIVE: the web-desktop shim
   (`src/web-desktop/electron-shim.ts`) does not route the desktop's
   `active_session_changed` packet, and it drops the `activeTabChanged` flag off
   `tabs_changed`, which is an inventory snapshot and never a navigation request.
   With several operators connected, the desktop user switching agents used to
   yank every phone along with it.
-- **One-shot turn side effects run in the desktop renderer only.** Every
-  `safeSend` is fanned out to every browser, and a web-desktop client's
-  `ownsSession` is permit-all, so with three phones on the LAN one finished turn
-  wrote four History rows, four `query_events` rows and spawned four synopses.
-  `useOwnedSideEffectGate()` (`src/renderer/hooks/agent/internal/useOwnedSessionGate.ts`)
-  is false on web-desktop; the exit and error listeners still flip the tab idle
-  there but skip the History entry, synopsis, stats row, git refresh, queue
-  dequeue and spoken notification. A browser's own queued items still send,
-  through `useQueueProcessing`'s idle drain, which is why the exit reducer holds
-  the queue on a non-owning client instead of dequeuing without dispatching.
+- **One-shot turn side effects and queue consumption belong to the host.**
+  `useOwnedSideEffectGate()`
+  (`src/renderer/hooks/agent/internal/useOwnedSessionGate.ts`) is false on
+  web-desktop. Remote clients must not write History/statistics, spawn synopses,
+  dequeue work, or run completion notifications. `useQueueProcessing` also
+  refuses remote consumption: queued work must survive the client disconnecting.
+  Auto Run starts and controls route through `web:startAutoRun` /
+  `web:controlAutoRun` to the owning renderer, not a second client-side loop.
 - **A tab the browser creates is minted by the DESKTOP, and the browser draws it
   from the answer.** `createNewAITab` (`src/renderer/hooks/tabs/internal/useAITabHandlers.ts`)
   calls `window.maestro.web.requestNewTab` rather than `createTab`, because the
@@ -140,6 +214,24 @@ Two rules follow, and both are load-bearing:
   client already has. The broadcast can also win the race, so the adopt path
   checks for the id first and then only selects it - an inventory snapshot never
   moves a browser client's tab by itself.
+- **Closing a browser conversation also goes through the desktop.** Single-tab
+  and bulk AI-tab closes call `web.requestCloseTab`, which uses the existing
+  window-owner-aware `closeTab` callback. The browser waits for the desktop's
+  inventory snapshot instead of removing the tab locally: a local-only close
+  leaves the desktop free to save the conversation again, and closing the last
+  tab in both clients would mint two different replacement ids. The callback
+  uses `requestFromRenderer` to wait for the owning renderer to confirm the
+  actual mutation; delivery alone is NOT success. Missing tabs, a reloading
+  renderer, or a timeout leave browser drafts and wizard progress intact.
+  Confirmed closes record browser-local reopen history before cleanup and
+  starred-transcript mirroring. Bulk actions report one combined error.
+- **Browser reopen also belongs to the desktop.** `web.requestReopenTab` restores
+  the browser's selected history entry by its original tab id, so another
+  client's most recent close cannot be reopened by mistake. The browser adopts
+  the returned id through `reopenClosedAiTabById` and retains cached/deferred
+  transcript data. Its history entry is consumed only on success; an inventory
+  snapshot arriving before the reply must not create a duplicate. Close and
+  reopen requests share a per-agent queue in `desktopTabClose.ts`.
 - **Focus the composer INSIDE the tap, never when the round trip answers.** iOS
   raises the on-screen keyboard only for a `focus()` that runs in the user
   gesture's own call stack. Deferred into a `.then()`, the caret moves and the
@@ -285,7 +377,10 @@ It is viewport-driven on purpose, not pointer-driven: space is the constraint, a
 - A readout that shares a crowded row with controls carries an attribute the phone stylesheet hides, the same way `data-shortcut-hint` works: `data-turn-setting-pill` retires the model and effort badges. Hide the readout, keep every control - a control is narrowed (icon-only, label into the tooltip) rather than dropped.
 - **A fixed pixel width in a layout rule is what overflows a phone**, and it fails in three shapes that all read as one bug (the tab scrolls sideways and the values are unreadable): a `minmax(440px, 1fr)` grid floor produces a 440px track in a 340px column, so floor it at `min(<width>, 100%)`; a `repeat(<n>, 1fr)` with a hard-coded `n` has no responsive rung at all, so use `auto-fit` over a floor; and a row of `w-44` + `whitespace-nowrap` + gaps can add up to more than the screen before the flexible child gets any, so wrap it below `sm`. Measure rather than eyeball: compare the scroll container's `scrollWidth` to its `clientWidth` per tab, then report the outermost element whose `right` exceeds the container's.
 - A metric tile that TRUNCATES its value needs a column rung one step earlier than one that wraps. Two Auto Run tiles in a phone's content column rendered `4h 3...` and `10m ...`, which is the whole point of the tile gone; a wrapping card merely gets taller.
-- A modal that should fill a phone needs nothing: passing a `resizeKey` (or stamping `data-modal-resize-key`) is what the phone stylesheet keys on. A small dialog that should stay a dialog passes no key.
+- A modal that should fill a phone needs nothing: passing a `resizeKey` (or stamping `data-modal-resize-key`) is what the phone stylesheet keys on, for the full-screen size AND for the status-bar / home-indicator padding on the overlay (`:has(> [data-modal-resize-key])`). A bespoke `fixed inset-0` shell no longer has to carry `.modal-overlay` to get the padding - nine of them did not, and each floated with a dead band above and below and its top edge under the iOS status-bar layer that swallows taps. A small dialog that should stay a dialog passes no key.
+- A control whose only pointer path is a double-click gets a single-tap path under `isCoarsePointer()`. A finger cannot double-tap (iOS reserves the gesture and the home-screen web app never dispatches `dblclick`), and a phone has no Enter key, so the surface opens and then answers every tap with nothing. Where a click was inert, the coarse branch accepts on the first click (`SlashCommandPopover`, `ParquetGrid`, `CsvTableRenderer`); where the first click has a job, it accepts on the second tap of the row already picked (`ModelEffortModal`). The mouse path is unchanged. Test it with `setCoarsePointer()` / `restorePointer()` from `src/__tests__/helpers/mockPointer.ts`.
+- There is no 44px tap-target floor. `src/web/index.css` declares one on every button under 767px, but nothing imports that file - the web-desktop bundle loads only `src/renderer/index.css` - so header icons measure 26px and a tab's close x 18px. Grow a small control's hit area with a `::before` that hangs past its edges (`[data-tab-close]`, `.resize-handle`), never with a blanket `min-height`, which would stretch every dense row the codebase sizes by hand.
+- A tab chip is capped at `60vw` and only its label (`data-tab-label`) ellipsizes. Uncapped `whitespace-nowrap` labels made a chip wider than the strip between the two sticky clusters, and the keep-active-visible scroll then left the close x painted under the "+". A new chip type marks its label and its close button (`data-tab-close`) with the attributes; the rules key on those.
 - A surface that pans on drag (a canvas, a graph) opts out of the swipe-to-dismiss safety net with `data-no-swipe-dismiss` on its root.
 - Never host a gesture in an invisible `position: fixed` strip. The drawer-opening edge swipes used to live in two such strips, and the left one sat above the tab bar and swallowed every tap on the magnifier and the first chip. Gate the gesture on WHERE the touch starts instead (`useEdgeSwipeHandlers`, spread on the app shell).
 - A sheet that covers the element that opened it must ignore the synthesized mouse and click events that trail a long-press release (`PHONE_SHEET_SCRIM_ARM_MS`, the `scrimArmMs` default on `<PhoneBottomSheet>`), or it closes the instant the finger lifts. A sheet opened by a plain TAP has no such trailer and passes `scrimArmMs={0}`, so its first dismissal is not swallowed.

@@ -6,6 +6,8 @@
 // and the behavior consistent across the whole CLI surface.
 
 import { withMaestroClient } from './maestro-client';
+import { MaestroNotRunningError } from './maestro-not-running';
+import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import { resolveAgentId, readActiveAgentId } from './storage';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 
@@ -20,11 +22,24 @@ export interface SimpleResult {
 }
 
 /** Send one command to the desktop and return the typed result. */
-export async function sendSimpleCommand(
-	payload: Record<string, unknown>,
-	responseType: string
-): Promise<SimpleResult> {
-	return withMaestroClient((client) => client.sendCommand<SimpleResult>(payload, responseType));
+export async function sendSimpleCommand<
+	T extends Pick<SimpleResult, 'success' | 'error'> = SimpleResult,
+>(payload: Record<string, unknown>, responseType: string): Promise<T> {
+	return withMaestroClient((client) => client.sendCommand<T>(payload, responseType));
+}
+
+/**
+ * Older handlers answer a failure with a generic `{ type: 'error', message }`
+ * frame instead of their typed `*_result`. When that frame carries the
+ * requestId the client resolves with it, so a caller must check for it rather
+ * than read the missing typed fields as an empty success.
+ */
+export function errorFrameMessage(reply: unknown): string | null {
+	if (reply && typeof reply === 'object' && (reply as { type?: unknown }).type === 'error') {
+		const message = (reply as { message?: unknown }).message;
+		return typeof message === 'string' && message ? message : 'Command failed';
+	}
+	return null;
 }
 
 /** Print an error (JSON-aware) and exit non-zero. Never returns. */
@@ -37,11 +52,76 @@ export function failCommand(message: string, json?: boolean): never {
 	return process.exit(1);
 }
 
+export interface NotRunningReportOptions {
+	/** Report as JSON. Verbs that only speak JSON pass `true`. */
+	json?: boolean;
+	/** Fields a verb's error envelope always carries (e.g. `{ type: 'error' }`). */
+	jsonExtra?: Record<string, unknown>;
+	/** Write the JSON to stderr, for verbs whose JSON errors already go there. */
+	stderrJson?: boolean;
+	/** Pretty-print the JSON, for verbs that already indent their output. */
+	indent?: number;
+}
+
+/**
+ * If `error` says the desktop app is absent, report it the ONE way every
+ * app-dependent verb does - the fixed message, `code: MAESTRO_NOT_RUNNING`,
+ * exit 3 - and exit. Otherwise return, so the caller's own handling runs
+ * exactly as before.
+ *
+ * Put it first in any catch that wraps a bridge call. The point is that a
+ * catch which re-words the error (`Failed to X: ${msg}`) or flattens it to a
+ * string loses the type, and then nothing downstream can map it to exit 3.
+ */
+export function exitIfMaestroNotRunning(
+	error: unknown,
+	options: NotRunningReportOptions = {}
+): void {
+	if (!(error instanceof MaestroNotRunningError)) return;
+	if (options.json) {
+		const payload = JSON.stringify(
+			{ ...options.jsonExtra, success: false, error: error.message, code: error.code },
+			null,
+			options.indent
+		);
+		if (options.stderrJson) console.error(payload);
+		else console.log(payload);
+	} else {
+		console.error(formatError(error.message));
+		console.error(error.hint);
+	}
+	exitWith(ExitCode.NotRunning);
+}
+
+/**
+ * Report any failure from a bridge call and exit with its typed code: exit 3
+ * for an absent app (via {@link exitIfMaestroNotRunning}), 4 for an old app
+ * build, 5 for a renderer that never answered, 1 otherwise.
+ */
+export function failFromError(error: unknown, json?: boolean): never {
+	exitIfMaestroNotRunning(error, { json });
+	const message = error instanceof Error ? error.message : String(error);
+	if (json) console.log(JSON.stringify({ success: false, error: message }));
+	else console.error(`Error: ${message}`);
+	return exitWith(exitCodeForError(error));
+}
+
 /** Report a `{ success }` result: success line, or error + exit(1) on failure. */
 export function reportResult(
 	result: SimpleResult,
-	options: { json?: boolean; successMessage: string; jsonExtra?: Record<string, unknown> }
+	options: {
+		json?: boolean;
+		successMessage: string;
+		jsonExtra?: Record<string, unknown>;
+		/** Commands returning a live snapshot preserve it on success and failure. */
+		jsonResult?: Record<string, unknown>;
+	}
 ): void {
+	if (options.json && options.jsonResult) {
+		console.log(JSON.stringify(options.jsonResult));
+		if (!result.success) process.exit(1);
+		return;
+	}
 	if (result.success) {
 		if (options.json) {
 			console.log(JSON.stringify({ success: true, ...options.jsonExtra }));
@@ -51,7 +131,7 @@ export function reportResult(
 		}
 		return;
 	}
-	failCommand(result.error || 'Command failed', options.json);
+	failCommand(result.error || errorFrameMessage(result) || 'Command failed', options.json);
 }
 
 /** Resolve an agent ID (partial match) or fail loudly. Never returns on error. */
@@ -152,6 +232,7 @@ export async function runAgentCommand(
 		const result = await sendSimpleCommand({ type, sessionId, ...extraPayload }, responseType);
 		reportResult(result, { json: options.json, successMessage, jsonExtra: { sessionId } });
 	} catch (error) {
+		exitIfMaestroNotRunning(error, options);
 		failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 }

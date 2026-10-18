@@ -15,6 +15,7 @@ const mockRemoveSubscriptionFromYaml = vi.fn();
 
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: () => mockReadSessions(),
+	readLiveSessions: () => mockReadSessions(),
 }));
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({

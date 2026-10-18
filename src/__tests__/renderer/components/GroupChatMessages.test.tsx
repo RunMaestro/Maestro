@@ -342,3 +342,22 @@ describe('GroupChatMessages empty state', () => {
 		expect(queryByText(/^Beta$/)).toBeNull();
 	});
 });
+
+describe('GroupChatMessages steered user messages', () => {
+	it('marks a steered user message with the turns that took it, and only that one', async () => {
+		const { findAllByTestId, getByText } = renderChat([
+			{ timestamp: new Date(1700000000000).toISOString(), from: 'user', content: 'start' },
+			{
+				timestamp: new Date(1700000001000).toISOString(),
+				from: 'user',
+				content: 'also check the docs',
+				steeredTo: ['Alice'],
+			},
+		]);
+
+		const headers = await findAllByTestId('steered-message-header');
+		expect(headers).toHaveLength(1);
+		expect(headers[0].textContent).toContain('Steered to Alice');
+		expect(getByText('also check the docs')).toBeTruthy();
+	});
+});

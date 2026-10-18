@@ -7,13 +7,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 const mockGetSshRemoteConfig = vi.fn();
-vi.mock('../../../main/utils/ssh-remote-resolver', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-remote-resolver', () => ({
 	getSshRemoteConfig: (...args: unknown[]) => mockGetSshRemoteConfig(...args),
 }));
 
 const mockBuildSshCommand = vi.fn();
 const mockBuildSshCommandWithStdin = vi.fn();
-vi.mock('../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-command-builder', () => ({
 	buildSshCommand: (...args: unknown[]) => mockBuildSshCommand(...args),
 	buildSshCommandWithStdin: (...args: unknown[]) => mockBuildSshCommandWithStdin(...args),
 }));
@@ -114,6 +114,41 @@ describe('wrapSpawnWithSsh', () => {
 			);
 
 			expect(envPassedToBuilder(mockBuildSshCommand).MAESTRO_QUERY_SOURCE).toBe('cue');
+		});
+	});
+
+	describe('stdin-script launch', () => {
+		// Only a stdin-script launch can record the remote agent's pid, which is
+		// what lets Stop reach the agent and not only the local ssh client.
+		it('launches a small prompt through the stdin script when asked, prompt still in argv', async () => {
+			const result = await wrapSpawnWithSsh(
+				{ ...baseConfig, prompt: 'do the thing', launchViaStdinScript: true },
+				{ enabled: true, remoteId: 'jennifer-box' },
+				sshStore
+			);
+
+			expect(mockBuildSshCommand).not.toHaveBeenCalled();
+			expect(mockBuildSshCommandWithStdin).toHaveBeenCalledTimes(1);
+			const options = mockBuildSshCommandWithStdin.mock.calls[0][1] as {
+				args: string[];
+				stdinInput?: string;
+			};
+			expect(options.args).toContain('do the thing');
+			expect(options.stdinInput).toBeUndefined();
+			expect(result.sshStdinScript).toBe('#!/bin/bash');
+			expect(result.prompt).toBeUndefined();
+		});
+
+		it('keeps the inline command for a small prompt by default', async () => {
+			const result = await wrapSpawnWithSsh(
+				{ ...baseConfig, prompt: 'do the thing' },
+				{ enabled: true, remoteId: 'jennifer-box' },
+				sshStore
+			);
+
+			expect(mockBuildSshCommand).toHaveBeenCalledTimes(1);
+			expect(mockBuildSshCommandWithStdin).not.toHaveBeenCalled();
+			expect(result.sshStdinScript).toBeUndefined();
 		});
 	});
 

@@ -89,6 +89,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		onShowFlash,
 		showHiddenFiles,
 		fileExplorerIconTheme,
+		fileTreeBranchConnectors,
 		setShowHiddenFiles,
 		onFocusFileInGraph,
 		onOpenBrowserTabAt,
@@ -148,6 +149,23 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const [truncationCollapsedFor, setTruncationCollapsedFor] = useState<string | null>(null);
 	const truncationCollapsed = truncationCollapsedFor === session.id;
 	const showTruncationWarning = !session.fileTreeLoading && !!session.fileTreeTruncated;
+	// "Load more" / "Load all" call refreshFileTree directly, which never sets
+	// fileTreeLoading or isRefreshing, so the banner tracks its own scan. Keyed
+	// by session id for the same reason as the collapse state above.
+	const [pendingTreeLoad, setPendingTreeLoad] = useState<{
+		sessionId: string;
+		kind: 'more' | 'all';
+	} | null>(null);
+	const pendingLoad = pendingTreeLoad?.sessionId === session.id ? pendingTreeLoad.kind : null;
+	const startTruncatedTreeLoad = (kind: 'more' | 'all', maxEntriesOverride: number) => {
+		const sessionId = session.id;
+		setPendingTreeLoad({ sessionId, kind });
+		void refreshFileTree(sessionId, { maxEntriesOverride }).finally(() => {
+			setPendingTreeLoad((prev) =>
+				prev?.sessionId === sessionId && prev.kind === kind ? null : prev
+			);
+		});
+	};
 
 	const refreshFileTreeRef = useRef(refreshFileTree);
 	const sessionIdRef = useRef(session.id);
@@ -813,15 +831,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							theme={theme}
 							previousCap={session.fileTreeLoadedCap}
 							isRefreshing={isRefreshing}
-							onLoadMore={() => {
-								const next = (session.fileTreeLoadedCap ?? 100_000) * 2;
-								refreshFileTree(session.id, { maxEntriesOverride: next });
-							}}
-							onLoadAll={() => {
-								refreshFileTree(session.id, {
-									maxEntriesOverride: Number.POSITIVE_INFINITY,
-								});
-							}}
+							pendingLoad={pendingLoad}
+							onLoadMore={() =>
+								startTruncatedTreeLoad('more', (session.fileTreeLoadedCap ?? 100_000) * 2)
+							}
+							onLoadAll={() => startTruncatedTreeLoad('all', Number.POSITIVE_INFINITY)}
 							onCollapse={() => setTruncationCollapsedFor(session.id)}
 						/>
 					)}
@@ -878,6 +892,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											selectedPathsRef={selectedPathsRef}
 											setSelectedPaths={setSelectedPaths}
 											fileExplorerIconTheme={fileExplorerIconTheme}
+											fileTreeBranchConnectors={fileTreeBranchConnectors}
 											fileTreeFilter={fileTreeFilter}
 											htmlDoubleClickOpensInBrowser={htmlDoubleClickOpensInBrowser}
 											sshRemoteId={sshRemoteId}

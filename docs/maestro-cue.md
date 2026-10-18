@@ -178,6 +178,12 @@ Two layout buttons in the top-right corner clean up a messy canvas. Both snap no
 
 In the **All Pipelines** view there are no edges between pipeline cards to cross, so only **Arrange** appears there and it packs the cards into a balanced grid. Either button previews as a confirmation first, and the result can be undone with **Discard** before you save.
 
+### Sending a Slash Command to a New Agent Tab
+
+Add a command node, choose **Agent message**, and select the target agent. Enter the message or slash command, for example `/triage {{CUE_GH_NUMBER}}`, then enable **Run in a new agent tab** and connect the trigger. Every dispatch creates a fresh AI tab in that agent without changing your current view. Existing custom and project/provider prompt commands expand with their arguments as they do in the composer; the command must already exist for the target agent.
+
+The desktop app must be running. The command node completes when the message is delivered, so a downstream node starts after delivery rather than waiting for the AI's answer. See [Command Nodes](./maestro-cue-advanced#command-nodes) for the YAML equivalent.
+
 ## Pipeline List
 
 The Pipeline List tab is the same pipelines read as text rather than drawn as a graph. Once you have more than a handful, a canvas is good at showing how one pipeline is wired and bad at answering "what do all of these do, and is anything broken?" That is what this tab is for.
@@ -372,3 +378,4 @@ Filter by CUE entries in the History panel or in Director's Notes (when both Enc
 - **Prompt files vs inline** - For complex prompts, point the `prompt` field at a `.md` file instead of inlining YAML
 - **Hot reload** - The engine watches `.maestro/cue.yaml` for changes and reloads automatically - no need to restart Maestro
 - **Template variables** - Use `{{CUE_TRIGGER_NAME}}` in prompts so the agent knows which automation triggered it
+- **Standing instructions** - Every Cue run starts a new provider session, so the target agent's New Session Message is prefixed to each run's prompt. Its Nudge Message is not sent. See [When Each Message Is Sent](./general-usage#when-each-message-is-sent)

@@ -6,6 +6,7 @@ import { upsertCreatedFile } from '../utils/createdFiles';
 import { logger } from '../../../../../utils/logger';
 import { captureException, captureMessage } from '../../../../../utils/sentry';
 import { projectNameFromPath } from '../../../shared/projectIdentity';
+import { getClaudeTokenSourceFields } from '../../../../../../shared/claudeTokenMode';
 
 interface UsePreparingPlanGenerationParams {
 	state: WizardState;
@@ -118,6 +119,7 @@ export function usePreparingPlanGeneration({
 					customArgs: state.customArgs,
 					customEnvVars: state.customEnvVars,
 					agentConfigValues: state.agentConfigValues,
+					claudeTokenSource: getClaudeTokenSourceFields(state),
 				},
 				{
 					onStart: () => {

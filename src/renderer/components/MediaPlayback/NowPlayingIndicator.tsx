@@ -60,26 +60,31 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 	// inside is the only thing here that can be clipped without reading as a
 	// bug: a truncated filename is ordinary, a truncated brand is not. The
 	// wordmark drops out whole instead (see SessionList's width gate), so it is
-	// no longer available to squeeze. Both buttons, both icons, and the divider
-	// stay shrink-0 - they are the entire transport a minimized player has.
+	// no longer available to squeeze.
+	//
+	// The filename is the ONLY thing that yields. The pill used to be
+	// `min-w-0 overflow-hidden`, which let a squeezed header band shrink it past
+	// its own transport and clip the restore button in half. Now the pill keeps
+	// its automatic minimum (no overflow clip, no `min-w-0`), and that minimum is
+	// exactly the transport: the toggle is a grid whose label track is
+	// `minmax(0, max-content)`, so the label contributes nothing to the pill's
+	// min-content while still taking its natural width when there is room. The
+	// hover backgrounds carry their own corner radius, since without the clip on
+	// the pill they would otherwise square off its rounded ends.
 	return (
 		<div
 			data-testid="now-playing-indicator"
-			className="flex items-stretch min-w-0 rounded border overflow-hidden"
+			className="flex items-stretch rounded border"
 			style={{ borderColor: theme.colors.border }}
 		>
 			<button
 				type="button"
 				data-testid="now-playing-toggle"
 				onClick={requestToggle}
-				// No `min-w-0` here. The label span already contributes a zero
-				// minimum (it is `truncate`, and an overflow-hidden flex item has an
-				// automatic minimum size of 0), so the label still shrinks - while the
-				// button itself floors at padding + icon. With `min-w-0` the button
-				// could shrink past its own content box, and the `shrink-0` glyph then
-				// spilled out of the padding and across the divider.
-				className={`flex items-center justify-center gap-1 text-2xs font-bold transition-colors hover:bg-white/10 ${
-					compact ? 'px-2 py-1' : 'pl-2 pr-2 py-0.5'
+				className={`items-center gap-1 rounded-l-[3px] text-2xs font-bold transition-colors hover:bg-white/10 ${
+					compact
+						? 'flex justify-center px-2 py-1'
+						: 'grid grid-cols-[auto_minmax(0,max-content)] pl-2 pr-2 py-0.5'
 				}`}
 				style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
 				title={`${active.name} - click to ${playing ? 'pause' : 'play'}`}
@@ -101,7 +106,7 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 				type="button"
 				data-testid="now-playing-restore"
 				onClick={restore}
-				className="flex items-center justify-center shrink-0 px-2 transition-colors hover:bg-white/10"
+				className="flex items-center justify-center shrink-0 px-2 rounded-r-[3px] transition-colors hover:bg-white/10"
 				style={{ color: theme.colors.textDim }}
 				title="Show the media player"
 				aria-label="Show the media player"

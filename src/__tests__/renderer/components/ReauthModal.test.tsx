@@ -62,6 +62,7 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 		return React.createElement('div', {
 			'data-testid': 'xterm-mock',
 			'data-session-id': String(props.sessionId),
+			'data-copyable': String(typeof props.onCopySelection === 'function'),
 		});
 	});
 	XTerminal.displayName = 'XTerminal';
@@ -164,6 +165,17 @@ describe('ReauthModal', () => {
 		expect(ptySessionId.startsWith('reauth-sess-1-terminal-')).toBe(true);
 		expect(ptySessionId.split('-terminal-')[0]).not.toBe('sess-1');
 		expect(screen.getByTestId('xterm-mock').getAttribute('data-session-id')).toBe(ptySessionId);
+	});
+
+	it('gives the login terminal a copy handler so its right-click menu opens', async () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+
+		// XTerminal only raises its selection menu when a copy handler exists.
+		expect(screen.getByTestId('xterm-mock').getAttribute('data-copyable')).toBe('true');
 	});
 
 	// The bug this guards: spawn and kill used to live in separate effects, so

@@ -34,7 +34,7 @@ If a command fails with "unknown command" or an invalid path, run `node "$MAESTR
   Valid `--type` values: `claude-code` (default choice), `codex`, `opencode`, `factory-droid`, `copilot-cli`. Returns the new `agentId`. Creating an agent does not start a conversation; send the task separately with `dispatch`.
 
 - **Give an agent a task (visible chat):** `node "$MAESTRO_CLI_JS" dispatch <agentId> "<prompt>" --json`
-  This delivers the prompt into the agent's visible chat in the app, so the user can watch it. Add `--new-tab` to open a fresh tab instead of using the active one. The result includes a `tabId` - keep it; you need it to babysit that conversation.
+  This delivers the prompt into the agent's visible chat in the app, so the user can watch it. Add `--new-tab --visible` to open a fresh tab instead of using the active one (`--new-tab` alone creates the tab hidden, out of the user's tab strip). The result includes a `tabId` - keep it; you need it to babysit that conversation.
 
 - **Babysit a conversation (preferred):** `node "$MAESTRO_CLI_JS" pianola supervise watch <tabId> --agent <agentId>`
   This registers a supervised watcher. The Maestro desktop owns it as a managed child process: it restarts the watcher if it crashes, relaunches it when the app restarts, and shows its health in the dashboard. The watcher polls that tab, and when the agent stops and waits on the user, Pianola classifies the ask and, if a rule covers it and it is low risk, auto-answers; otherwise it records an escalation for the user. Registering returns a target id.

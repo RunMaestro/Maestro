@@ -299,10 +299,9 @@ describe('AgentSelectionScreen utils', () => {
 		expect(renameEnvVarKey({ OLD: '1' }, 'OLD', 'NEW', '2')).toEqual({ NEW: '2' });
 		expect(updateEnvVarValue({ A: '1' }, 'A', '2')).toEqual({ A: '2' });
 		expect(removeEnvVar({ A: '1', B: '2' }, 'A')).toEqual({ B: '2' });
-		expect(addEnvVar({ NEW_VAR: 'taken' })).toEqual({
-			NEW_VAR: 'taken',
-			NEW_VAR_1: '',
-		});
+		// A new row is UNNAMED: the name field offers the provider's variables
+		// rather than a placeholder the user has to delete first.
+		expect(addEnvVar({ TAKEN: 'value' })).toEqual({ TAKEN: 'value', '': '' });
 	});
 
 	it('normalizes SSH config for local and remote selection', () => {

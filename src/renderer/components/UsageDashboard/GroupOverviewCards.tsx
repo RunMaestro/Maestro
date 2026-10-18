@@ -45,6 +45,7 @@ import {
 	TILE_SCALE_RANGE,
 	tileGridColumns,
 } from './tileScale';
+import { usageCoverageNote } from './usageCoverage';
 
 const SPARKLINE_DAYS = 14;
 const EM_DASH = '—';
@@ -70,30 +71,6 @@ function buildGroupSparkline(byDay: GroupStatRollup['byDay']): number[] {
 	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
 }
 
-/**
- * Explain how complete a group's cost figure is.
- *
- * `pricedQueries` counts rows that actually carried token data. Everything
- * recorded before the token columns landed reports none, so a long-lived group
- * can show thousands of queries against a handful of priced ones. Saying so is
- * the difference between a number the user can trust and one that quietly
- * understates their spend by an order of magnitude.
- */
-function buildCoverageNote(rollup: GroupStatRollup): string {
-	const { pricedQueries } = rollup.tokens;
-	if (pricedQueries === 0) {
-		return 'No token data recorded for this group yet. Cost tracking starts with turns recorded after the upgrade.';
-	}
-	if (pricedQueries >= rollup.queries) {
-		return `Covers all ${formatNumber(rollup.queries)} recorded ${
-			rollup.queries === 1 ? 'query' : 'queries'
-		}.`;
-	}
-	return `Covers ${formatNumber(pricedQueries)} of ${formatNumber(
-		rollup.queries
-	)} queries - turns recorded before token tracking report no usage.`;
-}
-
 interface GroupCardProps {
 	rollup: GroupStatRollup;
 	theme: Theme;
@@ -113,7 +90,7 @@ const GroupCard = memo(function GroupCard({
 }: GroupCardProps) {
 	const tokens = totalTokens(rollup.tokens);
 	const hasUsage = rollup.tokens.pricedQueries > 0;
-	const coverageNote = buildCoverageNote(rollup);
+	const coverageNote = usageCoverageNote(rollup.tokens.pricedQueries, rollup.queries);
 	const sparkline = useMemo(() => buildGroupSparkline(rollup.byDay), [rollup.byDay]);
 
 	// Providers are the group's real composition - "which agents are in here"

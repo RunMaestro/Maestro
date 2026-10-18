@@ -46,7 +46,7 @@
  */
 
 import { vi } from 'vitest';
-import type { CueEventRecord } from '../../../main/cue/cue-db';
+import type { CueEventRecord, CueFanInStateRecord } from '../../../main/cue/cue-db';
 
 // ────────────────────────────────────────────────────────────────────────────
 // InMemoryCueDb - high-fidelity contract mirror of cue-db.ts
@@ -90,7 +90,17 @@ export interface InMemoryCueQueueRow {
 	 *  before usageStats was enabled. */
 	chainRootId: string | null;
 	parentEventId: string | null;
+	/** Serialized Auto Run payload for `action: autorun` rows. */
+	autoRunJson?: string | null;
+	/** Serialized notify config for `action: notify` rows. */
+	notifyJson?: string | null;
+	/** JSON of the subscription's tier / model / effort. Optional so rows
+	 *  built by older tests (and pre-column databases) stay valid. */
+	turnSettingsJson?: string | null;
 }
+
+/** One `cue_fan_in_state` row (durable fan-in progress, standalone engine). */
+export type InMemoryCueFanInRow = CueFanInStateRecord;
 
 export interface InMemoryCueDbState {
 	events: Map<string, InMemoryCueEventRow>;
@@ -100,6 +110,8 @@ export interface InMemoryCueDbState {
 	githubSeen: Map<string, number>; // key = `${subscriptionId}\0${itemKey}`
 	/** Phase 12A persistent queue rows, keyed by row id. Insertion order preserved. */
 	queueRows: Map<string, InMemoryCueQueueRow>;
+	/** Durable fan-in progress, keyed by `${owner}\0${subscription}\0${source}`. */
+	fanInRows: Map<string, InMemoryCueFanInRow>;
 	closed: boolean;
 	ready: boolean;
 }
@@ -141,6 +153,7 @@ export interface InMemoryCueDb {
 	getLastHeartbeat(): number | null;
 	// Housekeeping
 	pruneCueEvents(olderThanMs: number): void;
+	failOrphanedRunningEvents(message: string): number;
 	// GitHub seen set
 	isGitHubItemSeen(subscriptionId: string, itemKey: string): boolean;
 	markGitHubItemSeen(subscriptionId: string, itemKey: string): void;
@@ -154,6 +167,12 @@ export interface InMemoryCueDb {
 	clearPersistedQueue(sessionId?: string): void;
 	safePersistQueuedEvent(record: InMemoryCueQueueRow): void;
 	safeRemoveQueuedEvent(id: string): void;
+	// Durable fan-in progress
+	persistFanInSource(record: InMemoryCueFanInRow): void;
+	removeFanInState(ownerSessionId: string, subscriptionName: string): void;
+	getFanInState(): InMemoryCueFanInRow[];
+	safePersistFanInSource(record: InMemoryCueFanInRow): void;
+	safeRemoveFanInState(ownerSessionId: string, subscriptionName: string): void;
 	// Test-only controls
 	/** Force a specific current time for prune/heartbeat tests. Reset with clearNowOverride(). */
 	setNowOverride(ts: number): void;
@@ -174,6 +193,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 		heartbeat: null,
 		githubSeen: new Map(),
 		queueRows: new Map(),
+		fanInRows: new Map(),
 		closed: true,
 		ready: false,
 	};
@@ -322,6 +342,19 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			return state.heartbeat;
 		},
 
+		failOrphanedRunningEvents(message) {
+			requireReady();
+			let changed = 0;
+			for (const row of state.events.values()) {
+				if (row.status !== 'running') continue;
+				row.status = 'failed';
+				row.completedAt = now();
+				row.errorMessage = row.errorMessage ?? message;
+				changed++;
+			}
+			return changed;
+		},
+
 		pruneCueEvents(olderThanMs) {
 			requireReady();
 			const cutoff = now() - olderThanMs;
@@ -437,7 +470,49 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			}
 		},
 
+		persistFanInSource(record) {
+			requireReady();
+			consumePendingFailure();
+			state.fanInRows.set(
+				`${record.ownerSessionId}\0${record.subscriptionName}\0${record.sourceSessionId}`,
+				{ ...record }
+			);
+		},
+
+		removeFanInState(ownerSessionId, subscriptionName) {
+			requireReady();
+			for (const [key, row] of state.fanInRows) {
+				if (row.ownerSessionId === ownerSessionId && row.subscriptionName === subscriptionName) {
+					state.fanInRows.delete(key);
+				}
+			}
+		},
+
+		getFanInState() {
+			requireReady();
+			return Array.from(state.fanInRows.values())
+				.map((row) => ({ ...row }))
+				.sort((a, b) => a.startedAt - b.startedAt || a.completedAt - b.completedAt);
+		},
+
+		safePersistFanInSource(record) {
+			try {
+				this.persistFanInSource(record);
+			} catch {
+				// non-throwing
+			}
+		},
+
+		safeRemoveFanInState(ownerSessionId, subscriptionName) {
+			try {
+				this.removeFanInState(ownerSessionId, subscriptionName);
+			} catch {
+				// non-throwing
+			}
+		},
+
 		resetAll() {
+			state.fanInRows.clear();
 			state.events.clear();
 			state.eventOrder.length = 0;
 			state.heartbeat = null;
@@ -490,6 +565,7 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 		updateHeartbeat: () => getDb().updateHeartbeat(),
 		getLastHeartbeat: () => getDb().getLastHeartbeat(),
 		pruneCueEvents: (olderThanMs: number) => getDb().pruneCueEvents(olderThanMs),
+		failOrphanedRunningEvents: (message: string) => getDb().failOrphanedRunningEvents(message),
 		isGitHubItemSeen: (subscriptionId: string, itemKey: string) =>
 			getDb().isGitHubItemSeen(subscriptionId, itemKey),
 		markGitHubItemSeen: (subscriptionId: string, itemKey: string) =>
@@ -505,6 +581,11 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 		clearPersistedQueue: (sessionId?: string) => getDb().clearPersistedQueue(sessionId),
 		safePersistQueuedEvent: (record: InMemoryCueQueueRow) => getDb().safePersistQueuedEvent(record),
 		safeRemoveQueuedEvent: (id: string) => getDb().safeRemoveQueuedEvent(id),
+		persistFanInSource: (record: InMemoryCueFanInRow) => getDb().persistFanInSource(record),
+		removeFanInState: (owner: string, sub: string) => getDb().removeFanInState(owner, sub),
+		getFanInState: () => getDb().getFanInState(),
+		safePersistFanInSource: (record: InMemoryCueFanInRow) => getDb().safePersistFanInSource(record),
+		safeRemoveFanInState: (owner: string, sub: string) => getDb().safeRemoveFanInState(owner, sub),
 	};
 }
 

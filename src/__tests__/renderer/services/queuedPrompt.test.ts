@@ -8,7 +8,7 @@
  * with. The `@mention` flags must be STAMPED but not fired.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const planCrossAgentMentions = vi.fn();
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
@@ -18,7 +18,13 @@ vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
+	mergeQueuedItemIntoAbove,
+	removeQueuedItem,
+	sendQueuedItemNow,
+	setQueuedItemPaused,
+	toggleQueuedItemPaused,
 } from '../../../renderer/services/queuedPrompt';
+import { registerDispatchDepsProvider } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -98,6 +104,27 @@ describe('buildQueuedMessageItem', () => {
 		expect(item.crossAgentMention).toBeUndefined();
 		expect(item.crossAgentOnly).toBeUndefined();
 	});
+
+	it('queues a slash command with arguments and frozen turn settings', () => {
+		const session = seed();
+		const item = buildQueuedMessageItem({
+			session,
+			tab: session.aiTabs[1],
+			text: ' /triage\tissue 123 ',
+			slashCommand: true,
+		});
+
+		expect(item).toMatchObject({
+			type: 'command',
+			command: '/triage',
+			commandArgs: 'issue 123',
+			tabId: 'b',
+			tabName: 'Bravo',
+		});
+		expect(item.turnSettings).toBeDefined();
+		expect(item.text).toBeUndefined();
+		expect(planCrossAgentMentions).not.toHaveBeenCalled();
+	});
 });
 
 describe('enqueuePromptForTab', () => {
@@ -138,5 +165,228 @@ describe('enqueuePromptForTab', () => {
 		seed({ aiTabs: [], unifiedTabOrder: [], activeTabId: undefined });
 		expect(enqueuePromptForTab({ sessionId: 'session-1', tabId: 'a', text: 'nope' })).toBeNull();
 		expect(currentQueue()).toHaveLength(0);
+	});
+});
+
+describe('enqueuePromptForTab with expandCommands', () => {
+	const deps = {
+		conductorProfile: '',
+		customAICommands: [{ id: 'c', command: '/commit', description: 'Commit', prompt: 'do it' }],
+		speckitCommands: [],
+		openspecCommands: [],
+	};
+
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+		registerDispatchDepsProvider(() => deps as never);
+	});
+	afterEach(() => registerDispatchDepsProvider(null));
+
+	it('queues a message that is exactly a slash command as that command', () => {
+		seed();
+		const item = enqueuePromptForTab({
+			sessionId: 'session-1',
+			tabId: 'b',
+			text: ' /commit ',
+			slashCommand: false,
+			expandCommands: true,
+		});
+		expect(item).toMatchObject({
+			type: 'command',
+			command: '/commit',
+			commandDescription: 'Commit',
+			tabId: 'b',
+			tabName: 'Bravo',
+		});
+		expect(item?.text).toBeUndefined();
+		expect(currentQueue()).toEqual([item]);
+	});
+
+	it.each([
+		{ text: ' /commit\tissue 123 ', commandArgs: 'issue 123' },
+		{ text: '/commit', commandArgs: '' },
+	])(
+		'preserves explicit Cue command arguments for "$text" with both options enabled',
+		({ text, commandArgs }) => {
+			seed();
+			const item = enqueuePromptForTab({
+				sessionId: 'session-1',
+				tabId: 'b',
+				text,
+				slashCommand: true,
+				expandCommands: true,
+			});
+
+			expect(item).toMatchObject({
+				type: 'command',
+				command: '/commit',
+				commandArgs,
+				tabId: 'b',
+				tabName: 'Bravo',
+			});
+			expect(item?.turnSettings).toBeDefined();
+			expect(item?.text).toBeUndefined();
+			expect(currentQueue()).toEqual([item]);
+			expect(planCrossAgentMentions).not.toHaveBeenCalled();
+		}
+	);
+
+	it('leaves the same text a literal message for a caller that did not ask', () => {
+		seed();
+		expect(
+			enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: '/commit' })
+		).toMatchObject({ type: 'message', text: '/commit' });
+	});
+
+	it('leaves an unknown command, and a command inside a sentence, as messages', () => {
+		seed();
+		for (const text of ['/nope', 'please run /commit now', '/commit issue 123']) {
+			expect(
+				enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text, expandCommands: true })
+			).toMatchObject({ type: 'message', text });
+		}
+	});
+});
+
+describe('removeQueuedItem', () => {
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+	});
+
+	it('takes the item out and says it was there', () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+		expect(removeQueuedItem('session-1', item.id)).toBe(true);
+		expect(currentQueue()).toEqual([]);
+	});
+
+	it('says no when the item already left the queue, so it is not sent twice', () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+		removeQueuedItem('session-1', item.id);
+		expect(removeQueuedItem('session-1', item.id)).toBe(false);
+		expect(removeQueuedItem('missing-session', item.id)).toBe(false);
+	});
+});
+
+describe('setQueuedItemPaused / toggleQueuedItemPaused', () => {
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+	});
+
+	it('holds and resumes, the card toggle and the CLI writing the same flag', () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+
+		expect(toggleQueuedItemPaused('session-1', item.id)).toBe(true);
+		expect(currentQueue()[0].paused).toBe(true);
+		expect(toggleQueuedItemPaused('session-1', item.id)).toBe(true);
+		expect(currentQueue()[0].paused).toBeUndefined();
+
+		expect(setQueuedItemPaused('session-1', item.id, true)).toBe(true);
+		expect(setQueuedItemPaused('session-1', item.id, true)).toBe(true);
+		expect(currentQueue()[0].paused).toBe(true);
+		expect(setQueuedItemPaused('session-1', item.id, false)).toBe(true);
+		expect(currentQueue()[0].paused).toBeUndefined();
+	});
+
+	it('says no for an item that is not queued', () => {
+		seed();
+		expect(toggleQueuedItemPaused('session-1', 'ghost')).toBe(false);
+		expect(setQueuedItemPaused('missing-session', 'ghost', true)).toBe(false);
+	});
+});
+
+describe('mergeQueuedItemIntoAbove', () => {
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+	});
+
+	it('folds the item into the message above it and returns that id', () => {
+		seed();
+		const first = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'one' })!;
+		const second = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'two' })!;
+		expect(mergeQueuedItemIntoAbove('session-1', second.id)).toBe(first.id);
+		expect(currentQueue()).toHaveLength(1);
+		expect(currentQueue()[0]).toMatchObject({ id: first.id, text: 'one\n\ntwo' });
+	});
+
+	it('returns null and leaves the queue alone when nothing is above it', () => {
+		seed();
+		const only = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'one' })!;
+		expect(mergeQueuedItemIntoAbove('session-1', only.id)).toBeNull();
+		expect(currentQueue()).toHaveLength(1);
+		expect(mergeQueuedItemIntoAbove('missing-session', only.id)).toBeNull();
+	});
+});
+
+describe('sendQueuedItemNow', () => {
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+	});
+
+	function setTabState(tabId: string, state: 'idle' | 'busy') {
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, state } : t)),
+			})),
+		});
+	}
+
+	it('dequeues the item, marks its tab running, and dispatches it', () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+		const dispatch = vi.fn().mockResolvedValue(true);
+
+		expect(sendQueuedItemNow('session-1', item.id, dispatch)).toBe(true);
+		expect(currentQueue()).toEqual([]);
+		const target = useSessionStore.getState().sessions[0].aiTabs[1];
+		expect(target.state).toBe('busy');
+		expect(target.logs.at(-1)).toMatchObject({ source: 'user', text: 'hi', queuedItemId: item.id });
+		expect(dispatch).toHaveBeenCalledWith('session-1', item);
+	});
+
+	it('never runs over a turn already in flight on the same tab', () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+		setTabState('b', 'busy');
+		const dispatch = vi.fn().mockResolvedValue(true);
+
+		expect(sendQueuedItemNow('session-1', item.id, dispatch)).toBe(false);
+		expect(currentQueue()).toEqual([item]);
+		expect(dispatch).not.toHaveBeenCalled();
+	});
+
+	it('stamps forceParallel when another tab of the agent is mid-turn', () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+		setTabState('a', 'busy');
+		const dispatch = vi.fn().mockResolvedValue(true);
+
+		sendQueuedItemNow('session-1', item.id, dispatch);
+		expect(dispatch).toHaveBeenCalledWith('session-1', { ...item, forceParallel: true });
+	});
+
+	it('leaves the item queued when nothing could run it yet', () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+		// No dispatch deps are registered before the app's queue hook mounts.
+		registerDispatchDepsProvider(null);
+		expect(sendQueuedItemNow('session-1', item.id)).toBe(false);
+		expect(currentQueue()).toEqual([item]);
+	});
+
+	it('owns a failed dispatch so it is not an unhandled rejection', async () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+		const dispatch = vi.fn().mockRejectedValue(new Error('spawn failed'));
+		expect(sendQueuedItemNow('session-1', item.id, dispatch)).toBe(true);
+		await Promise.resolve();
 	});
 });

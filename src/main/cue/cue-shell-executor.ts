@@ -9,19 +9,25 @@
  * `agent.completed` subscriptions can read shell stdout via {{CUE_SOURCE_OUTPUT}}.
  */
 
-import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import type { CueEvent, CueRunResult, CueRunStatus, CueSubscription } from './cue-types';
 import type { AgentSshRemoteConfig, SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { captureException, captureMessage } from '../utils/sentry';
-import { isWindows } from '../../shared/platformDetection';
-import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
+import {
+	wrapSpawnWithSsh,
+	sshUnresolvedRemoteMessage,
+	type SshSpawnWrapResult,
+} from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getShellPath } from '../runtime/getShellPath';
 import { buildSpawnPath } from '../utils/spawnPath';
-
-const SIGKILL_DELAY_MS = 5000;
+import { filterServerProcessEnv, isServerModeActive } from '../../shared/maestro-lib/launch/env';
+import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
+import type { StopHandle } from '../../shared/maestro-lib/control/termination';
+import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
+import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 
 export interface CueShellExecutionConfig {
 	runId: string;
@@ -42,54 +48,10 @@ export interface CueShellExecutionConfig {
 	sshRemoteConfig?: AgentSshRemoteConfig;
 	/** Store adapter used by {@link wrapSpawnWithSsh}. Required for SSH mode. */
 	sshStore?: SshRemoteSettingsStore;
-}
-
-interface ActiveShellProcess {
-	child: ChildProcess;
-	startTime: number;
-}
-
-const activeShellProcesses = new Map<string, ActiveShellProcess>();
-
-function killShellProcess(
-	child: ChildProcess,
-	sync = false
-): ReturnType<typeof setTimeout> | undefined {
-	if (isWindows() && child.pid) {
-		if (sync) {
-			try {
-				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { timeout: 5000 });
-			} catch {
-				// taskkill returns non-zero when the process is already dead - fine.
-			}
-		} else {
-			execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
-				if (!error) return;
-				// If the child has already exited by the time taskkill runs, the
-				// non-zero exit is just "process already dead" - benign. Checking
-				// `child.exitCode` is locale-independent, unlike matching the
-				// error message text.
-				if (child.exitCode !== null || child.signalCode !== null) return;
-				captureException(error, { operation: 'cue:shell:taskkill', pid: child.pid });
-			});
-		}
-		return undefined;
-	}
-	child.kill('SIGTERM');
-	if (sync) {
-		// Shutdown path: the event loop may drain before a deferred timer
-		// fires, leaving any child that ignores SIGTERM alive. Escalate
-		// immediately so the child is guaranteed to be reaped.
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill('SIGKILL');
-		}
-		return undefined;
-	}
-	return setTimeout(() => {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill('SIGKILL');
-		}
-	}, SIGKILL_DELAY_MS);
+	/** Inherit only the server-mode env allowlist (see `filterServerProcessEnv`). */
+	isServerMode?: boolean;
+	/** Aborted when the run is stopped: a command not yet spawned returns `stopped` (see cue-launch-cancel.ts). */
+	signal?: AbortSignal;
 }
 
 /**
@@ -110,6 +72,8 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		onLog,
 		sshRemoteConfig,
 		sshStore,
+		isServerMode,
+		signal,
 	} = config;
 
 	const startedAt = new Date().toISOString();
@@ -153,12 +117,18 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 	let spawnCommand = substitutedCommand;
 	let spawnArgs: string[] = [];
 	let spawnCwd = projectRoot;
-	let spawnEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+	// In server mode the command sees only the allowlisted part of the engine's
+	// environment, the same cut the Cue agent spawn makes.
+	const inheritedEnv = isServerModeActive(isServerMode)
+		? filterServerProcessEnv(process.env)
+		: process.env;
+	let spawnEnv: Record<string, string> = { ...inheritedEnv } as Record<string, string>;
 	let useLocalShell = true;
 
 	if (sshRemoteConfig?.enabled && sshStore) {
+		let wrapped: SshSpawnWrapResult;
 		try {
-			const wrapped = await wrapSpawnWithSsh(
+			wrapped = await wrapSpawnWithSsh(
 				{
 					command: 'bash',
 					args: ['-c', substitutedCommand],
@@ -167,21 +137,27 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 				sshRemoteConfig,
 				sshStore
 			);
-			if (wrapped.sshRemoteUsed) {
-				spawnCommand = wrapped.command;
-				spawnArgs = wrapped.args;
-				spawnCwd = wrapped.cwd;
-				spawnEnv = { ...process.env, ...(wrapped.customEnvVars || {}) } as Record<string, string>;
-				useLocalShell = false;
-				onLog(
-					'cue',
-					`[CUE] Shell run ${runId} executing on SSH remote "${wrapped.sshRemoteUsed.name}"`
-				);
-			}
 		} catch (err) {
 			captureException(err, { operation: 'cue:shell:sshWrap', runId });
 			return failedResult(`SSH wrap error: ${err instanceof Error ? err.message : String(err)}`);
 		}
+		// A missing or disabled remote comes back unwrapped. Running it locally
+		// would execute the user's command on this machine in a cwd that is a
+		// REMOTE path, so fail the run instead.
+		if (!wrapped.sshRemoteUsed) {
+			const message = sshUnresolvedRemoteMessage(sshRemoteConfig);
+			onLog('error', `[CUE] Shell run ${runId} not started: ${message}`);
+			return failedResult(message);
+		}
+		spawnCommand = wrapped.command;
+		spawnArgs = wrapped.args;
+		spawnCwd = wrapped.cwd;
+		spawnEnv = { ...inheritedEnv, ...(wrapped.customEnvVars || {}) } as Record<string, string>;
+		useLocalShell = false;
+		onLog(
+			'cue',
+			`[CUE] Shell run ${runId} executing on SSH remote "${wrapped.sshRemoteUsed.name}"`
+		);
 	}
 
 	// macOS GUI apps inherit a minimal launchd PATH (no `~/.local/bin`,
@@ -204,6 +180,26 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		spawnEnv.PATH = shellPath || buildSpawnPath();
 	}
 
+	// A shell action is not an agent turn, but what it launches can start one
+	// (`maestro-cli send`). Claiming the origin here is what lets that turn be
+	// recorded as Cue's instead of as something the user typed.
+	spawnEnv[QUERY_SOURCE_ENV_VAR] = 'cue';
+
+	// Stopped while the SSH wrap or the PATH probe was awaited. Checked after
+	// the last await, so nothing can stop the run between here and the spawn
+	// without also reaching the registered child.
+	if (isLaunchCancelled(signal)) {
+		return stoppedBeforeLaunchResult({
+			runId,
+			sessionId: session.id,
+			sessionName: session.name,
+			subscriptionName: subscription.name,
+			pipelineName: subscription.pipeline_name,
+			event,
+			startedAt,
+		});
+	}
+
 	return new Promise<CueRunResult>((resolve) => {
 		let child: ChildProcess;
 		try {
@@ -223,22 +219,34 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 			return;
 		}
 
-		activeShellProcesses.set(runId, { child, startTime });
-
 		let stdout = '';
 		let stderr = '';
+
+		// Registered with the shared Cue registry so the Process Monitor lists
+		// the run and Stop reaches it. A shell command has no agent behind it,
+		// so it reports as a terminal process.
+		const untrack = trackCueProcess(runId, {
+			child,
+			command: spawnCommand,
+			args: spawnArgs,
+			cwd: spawnCwd,
+			toolType: 'terminal',
+			startTime,
+			getStdout: () => stdout,
+			getStderr: () => stderr,
+		});
 		let settled = false;
 		let timedOut = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-		let sigkillTimer: ReturnType<typeof setTimeout> | undefined;
+		let stopHandle: StopHandle | undefined;
 
 		const finish = (status: CueRunStatus, exitCode: number | null) => {
 			if (settled) return;
 			settled = true;
 
-			activeShellProcesses.delete(runId);
+			untrack();
 			if (timeoutTimer) clearTimeout(timeoutTimer);
-			if (sigkillTimer) clearTimeout(sigkillTimer);
+			stopHandle?.dispose();
 
 			resolve({
 				runId,
@@ -295,24 +303,8 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 				if (settled) return;
 				onLog('cue', `[CUE] Shell run ${runId} timed out after ${timeoutMs}ms, killing process`);
 				timedOut = true;
-				sigkillTimer = killShellProcess(child);
+				stopHandle = killCueProcess(child);
 			}, timeoutMs);
 		}
 	});
-}
-
-/** Stop a running shell process by runId. Returns true if found. */
-export function stopCueShellRun(runId: string): boolean {
-	const entry = activeShellProcesses.get(runId);
-	if (!entry) return false;
-	killShellProcess(entry.child);
-	return true;
-}
-
-/** Stop all active shell processes (called on app shutdown). */
-export function stopAllCueShellRuns(): void {
-	for (const [runId, entry] of activeShellProcesses) {
-		killShellProcess(entry.child, true);
-		activeShellProcesses.delete(runId);
-	}
 }

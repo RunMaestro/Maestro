@@ -100,7 +100,11 @@ export { useAutoRunUndo } from './useAutoRunUndo';
 export type { UseAutoRunUndoReturn, UseAutoRunUndoDeps, UndoState } from './useAutoRunUndo';
 
 // Playbook management
-export { usePlaybookManagement } from './usePlaybookManagement';
+export {
+	usePlaybookManagement,
+	autoPlaybookName,
+	extractPlaybookCodename,
+} from './usePlaybookManagement';
 export type {
 	UsePlaybookManagementReturn,
 	UsePlaybookManagementDeps,

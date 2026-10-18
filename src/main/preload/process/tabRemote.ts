@@ -1,6 +1,11 @@
 import { ipcRenderer } from 'electron';
 import type { AITabData } from '../../web-server/types';
+import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../../../shared/throughputGaugeCommands';
 
 export function createTabRemoteApi() {
 	return {
@@ -42,10 +47,33 @@ export function createTabRemoteApi() {
 		/**
 		 * Subscribe to remote close tab from web interface
 		 */
-		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string) => callback(sessionId, tabId);
+		onRemoteCloseTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, responseChannel: string) =>
+				callback(sessionId, tabId, responseChannel);
 			ipcRenderer.on('remote:closeTab', handler);
 			return () => ipcRenderer.removeListener('remote:closeTab', handler);
+		},
+		/** Reply after the owner has applied (or declined) a close. */
+		sendRemoteCloseTabResponse: (responseChannel: string, closed: boolean): void => {
+			ipcRenderer.send(responseChannel, closed);
+		},
+		/** Subscribe to a restore of a specific closed AI conversation. */
+		onRemoteReopenTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, responseChannel: string) =>
+				callback(sessionId, tabId, responseChannel);
+			ipcRenderer.on('remote:reopenTab', handler);
+			return () => ipcRenderer.removeListener('remote:reopenTab', handler);
+		},
+		/** Reply with the restored tab's canonical id, or null if it could not be restored. */
+		sendRemoteReopenTabResponse: (
+			responseChannel: string,
+			result: { tabId: string } | null
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**
@@ -108,6 +136,31 @@ export function createTabRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to a remote Throughput Gauge verb (`maestro-cli
+		 * throughput-gauge`). Main sends it to the primary window only. A round
+		 * trip, like snooze: every verb answers with the gauge's status after it
+		 * ran, so a script can verify the change.
+		 */
+		onRemoteThroughputGaugeCommand: (
+			callback: (request: ThroughputGaugeCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				request: ThroughputGaugeCommandRequest,
+				responseChannel: string
+			) => callback(request, responseChannel);
+			ipcRenderer.on('remote:throughputGaugeCommand', handler);
+			return () => ipcRenderer.removeListener('remote:throughputGaugeCommand', handler);
+		},
+
+		sendRemoteThroughputGaugeCommandResponse: (
+			responseChannel: string,
+			result: ThroughputGaugeCommandResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote reorder tab from web interface
 		 */
 		onRemoteReorderTab: (
@@ -135,23 +188,25 @@ export function createTabRemoteApi() {
 		 * neither the active agent nor the active tab within any agent changes.
 		 * `switchToAgent: false` is the older, weaker `--no-switch` ask - stay on
 		 * the current agent, but still activate the tab inside the target one.
+		 * `mediaMode: 'queue'` adds audio/video to the player without playing it.
 		 */
 		onRemoteOpenFileTab: (
 			callback: (
 				sessionId: string,
 				filePath: string,
-				options: { background: boolean; switchToAgent: boolean }
+				options: { background: boolean; switchToAgent: boolean; mediaMode: MediaOpenMode }
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				filePath: string,
-				options?: { background?: boolean; switchToAgent?: boolean }
+				options?: { background?: boolean; switchToAgent?: boolean; mediaMode?: MediaOpenMode }
 			) =>
 				callback(sessionId, filePath, {
 					background: options?.background === true,
 					switchToAgent: options?.switchToAgent !== false,
+					mediaMode: options?.mediaMode === 'queue' ? 'queue' : 'play',
 				});
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);

@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { FloatingMediaPlayer } from '../../../../renderer/components/MediaPlayback/FloatingMediaPlayer';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	MEDIA_FLOAT_DEFAULT_WIDTH,
 	MEDIA_FLOAT_EDGE_MARGIN,
@@ -737,6 +738,128 @@ describe('FloatingMediaPlayer', () => {
 			// button - the outside-click check has to know about both.
 			fireEvent.mouseDown(document.body);
 			expect(screen.queryByTestId('media-history-menu')).toBeNull();
+		});
+	});
+
+	// The custom title strip is an OS drag region that swallows every click over
+	// it. A player whose header slid under it could not be moved, minimized, or
+	// closed, so it has to stay below the strip wherever it was left.
+	describe('clearing the title strip', () => {
+		const TITLE_STRIP = 40;
+		const initialHeight = window.innerHeight;
+		const initialWidth = window.innerWidth;
+
+		const resizeWindowTo = (height: number) => {
+			act(() => {
+				Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+				window.dispatchEvent(new Event('resize'));
+			});
+		};
+
+		beforeEach(() => {
+			// Pinned rather than left to the platform default, which is on for Windows.
+			useSettingsStore.setState({ useNativeTitleBar: false });
+			// A desktop-wide window: AppShell drops the strip at md and below.
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+		});
+
+		afterEach(() => {
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: initialHeight });
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: initialWidth });
+		});
+
+		it('pulls a position stored under the strip down below it', () => {
+			useMediaPlaybackStore.setState({ floatPosition: { top: 0, left: 240 } });
+			renderPlayer();
+			expect(frame().style.top).toBe(`${TITLE_STRIP}px`);
+		});
+
+		it('keeps the header out of the drag region, so its buttons get clicks', () => {
+			renderPlayer();
+			// jsdom's CSS parser drops the property from the serialized style, so read
+			// the value React assigned to the declaration directly.
+			const style = frame().style as CSSStyleDeclaration & { WebkitAppRegion?: string };
+			expect(style.WebkitAppRegion).toBe('no-drag');
+		});
+
+		it('minimizes and closes from a position that was stored under the strip', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({
+				items: [a],
+				activeItemId: a.id,
+				playing: true,
+				floatPosition: { top: 0, left: 240 },
+			});
+			const { unmount } = renderPlayer();
+
+			fireEvent.click(screen.getByLabelText('Minimize player to the Left Bar'));
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+			unmount();
+
+			useMediaPlaybackStore.setState({ dismissed: false });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Close player and stop playback'));
+			expect(useMediaPlaybackStore.getState().activeItemId).toBeNull();
+		});
+
+		it('cannot be dragged up under the strip', () => {
+			useMediaPlaybackStore.setState({ floatPosition: { top: 200, left: 240 } });
+			renderPlayer();
+
+			const handle = screen.getByTitle('Drag to move');
+			fireEvent.mouseDown(handle, { button: 0, clientX: 300, clientY: 220 });
+			fireEvent.mouseMove(window, { clientX: 300, clientY: -400 });
+			fireEvent.mouseUp(window);
+
+			expect(frame().style.top).toBe(`${TITLE_STRIP}px`);
+		});
+
+		it('stays inside the window, below the strip, when the window shrinks', () => {
+			// Parked near the bottom of a tall window...
+			resizeWindowTo(900);
+			useMediaPlaybackStore.setState({ floatPosition: { top: 900 - CHROME - 10, left: 240 } });
+			renderPlayer();
+			expect(parseInt(frame().style.top, 10)).toBe(900 - CHROME - 10);
+
+			// ...then the window gets shorter. Still well above phone-landscape height,
+			// which drops the strip altogether.
+			resizeWindowTo(600);
+			const top = parseInt(frame().style.top, 10);
+			const height = parseInt(frame().style.height, 10);
+			expect(top).toBeGreaterThanOrEqual(TITLE_STRIP);
+			expect(top + height).toBeLessThanOrEqual(600);
+		});
+
+		it('uses the full height when the native title bar replaces the strip', () => {
+			useSettingsStore.setState({ useNativeTitleBar: true });
+			useMediaPlaybackStore.setState({ floatPosition: { top: 0, left: 240 } });
+			renderPlayer();
+			expect(frame().style.top).toBe('0px');
+		});
+
+		it('uses the full height at a md-down width, where AppShell draws no strip', () => {
+			// Same predicate AppShell asks, so the player never clears a strip that
+			// is not on screen.
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 900 });
+			useMediaPlaybackStore.setState({ floatPosition: { top: 0, left: 240 } });
+			renderPlayer();
+			expect(frame().style.top).toBe('0px');
+		});
+
+		it('drops the no-drag opt-out while minimized', () => {
+			render(
+				<FloatingMediaPlayer
+					title="podcast.mp3"
+					subtitle="Agent One"
+					kind="audio"
+					hidden
+					theme={mockTheme}
+				>
+					<div />
+				</FloatingMediaPlayer>
+			);
+			const style = frame().style as CSSStyleDeclaration & { WebkitAppRegion?: string };
+			expect(style.WebkitAppRegion).not.toBe('no-drag');
 		});
 	});
 });

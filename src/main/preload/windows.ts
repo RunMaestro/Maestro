@@ -16,6 +16,7 @@ import type {
 	WindowSessionMovedPayload,
 	WindowState,
 } from '../../shared/window-types';
+import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 
 export type { WindowBounds };
 
@@ -163,6 +164,24 @@ export function createWindowsApi() {
 			return () => {
 				ipcRenderer.removeListener('windows:highlightDropZone', handler);
 			};
+		},
+
+		/**
+		 * Subscribe to a remote window verb (`maestro-cli window`). Main sends it
+		 * to the primary window only. A round trip: the caller is told where the
+		 * agents landed, or why they did not move.
+		 */
+		onRemoteCommand: (
+			callback: (request: WindowCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_event: unknown, request: WindowCommandRequest, responseChannel: string) =>
+				callback(request, responseChannel);
+			ipcRenderer.on('remote:windowCommand', handler);
+			return () => ipcRenderer.removeListener('remote:windowCommand', handler);
+		},
+
+		sendRemoteCommandResponse: (responseChannel: string, result: WindowCommandResult): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 	};
 }

@@ -16,6 +16,7 @@
 
 import { ipcMain, BrowserWindow } from 'electron';
 import type { ClaudeSessionOrigin, ClaudeSessionOriginsData } from '../../stores/types';
+import { setClaudeSessionOrigin } from '../../storage/claude-session-origins';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -24,11 +25,15 @@ import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../../constants';
-import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { calculateModelCost } from '../../utils/pricing';
+import { computeClaudeSessionUsage } from '../../../shared/claudeSessionUsage';
 import {
 	encodeClaudeProjectPath,
 	loadStatsCache,
+	rescaleArchivedEntries,
 	saveStatsCache,
+	statsCacheScope,
+	type ProjectTokenSplit,
 	SessionStatsCache,
 	STATS_CACHE_VERSION,
 } from '../../utils/statsCache';
@@ -39,6 +44,8 @@ import {
 	snapshotStarredTranscript,
 	releaseTranscriptMirror,
 } from '../../storage/starred-transcript-mirror';
+import { countClaudeTranscriptMessages } from '../../../shared/claudeTranscriptMessages';
+import { resolveAgentAccountDir } from '../../agents/provider-account-dirs';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -73,7 +80,10 @@ interface LegacyGlobalStatsCache {
 	version: number;
 }
 
-const LEGACY_GLOBAL_STATS_CACHE_VERSION = 1;
+// v2: Claude usage counted once per API response, not once per JSONL line.
+// v3: subagent transcripts priced into their parent session.
+// v4: messages counted as prompts and responses, not transcript lines.
+const LEGACY_GLOBAL_STATS_CACHE_VERSION = 4;
 
 function getLegacyGlobalStatsCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', 'legacy-global-stats.json');
@@ -203,10 +213,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						let firstUserMessage = '';
 						let timestamp = stats.mtime.toISOString();
 
-						// Fast regex-based extraction
-						const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-						const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-						const messageCount = userMessageCount + assistantMessageCount;
+						const messageCount = countClaudeTranscriptMessages(content);
 
 						// Extract first meaningful message content
 						for (
@@ -243,7 +250,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							cacheReadTokens: totalCacheReadTokens,
 							cacheCreationTokens: totalCacheCreationTokens,
 							costUsd,
-						} = computeClaudeUsageCost(content);
+						} = await computeClaudeSessionUsage(filePath, content);
 
 						// Extract last timestamp for duration
 						let lastTimestamp = timestamp;
@@ -401,10 +408,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							let firstUserMessage = '';
 							let timestamp = new Date(fileInfo.modifiedAt).toISOString();
 
-							const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-							const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || [])
-								.length;
-							const messageCount = userMessageCount + assistantMessageCount;
+							const messageCount = countClaudeTranscriptMessages(content);
 
 							// Extract first meaningful message
 							for (
@@ -441,7 +445,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								cacheReadTokens: totalCacheReadTokens,
 								cacheCreationTokens: totalCacheCreationTokens,
 								costUsd,
-							} = computeClaudeUsageCost(content);
+							} = await computeClaudeSessionUsage(fileInfo.filePath, content);
 
 							// Extract last timestamp for duration
 							let lastTimestamp = timestamp;
@@ -522,218 +526,244 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 
 	ipcMain.handle(
 		'claude:getProjectStats',
-		withIpcErrorLogging(handlerOpts('getProjectStats'), async (projectPath: string) => {
-			// Helper to send progressive updates to renderer
-			const sendUpdate = (stats: {
-				totalSessions: number;
-				totalMessages: number;
-				totalCostUsd: number;
-				totalSizeBytes: number;
-				totalTokens: number;
-				oldestTimestamp: string | null;
-				processedCount?: number;
-				isComplete: boolean;
-			}) => {
-				safeSend('claude:projectStatsUpdate', { projectPath, ...stats });
-			};
+		withIpcErrorLogging(
+			handlerOpts('getProjectStats'),
+			async (projectPath: string, ownerAgentId?: string) => {
+				// Helper to send progressive updates to renderer
+				const sendUpdate = (stats: {
+					totalSessions: number;
+					totalMessages: number;
+					totalCostUsd: number;
+					totalSizeBytes: number;
+					totalTokens: number;
+					tokenSplit?: ProjectTokenSplit;
+					unsplitTokens?: number;
+					oldestTimestamp: string | null;
+					processedCount?: number;
+					isComplete: boolean;
+				}) => {
+					safeSend('claude:projectStatsUpdate', { projectPath, ...stats });
+				};
 
-			// Helper to parse a single session file
-			const parseSessionFile = async (content: string, fileStat: { size: number }) => {
-				const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-				const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-				const messages = userMessageCount + assistantMessageCount;
+				// Helper to parse a single session file
+				const parseSessionFile = async (
+					filePath: string,
+					content: string,
+					fileStat: { size: number }
+				) => {
+					const messages = countClaudeTranscriptMessages(content);
 
-				// Per-model token + cost extraction (a session may mix models).
-				const { inputTokens, outputTokens, costUsd } = computeClaudeUsageCost(content);
+					// Per-model token + cost extraction (a session may mix models).
+					const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
+						await computeClaudeSessionUsage(filePath, content);
 
-				let oldestTimestamp: string | null = null;
-				const lines = content.split('\n').filter((l) => l.trim());
-				for (
-					let j = 0;
-					j < Math.min(lines.length, CLAUDE_SESSION_PARSE_LIMITS.OLDEST_TIMESTAMP_SCAN_LINES);
-					j++
-				) {
+					let oldestTimestamp: string | null = null;
+					const lines = content.split('\n').filter((l) => l.trim());
+					for (
+						let j = 0;
+						j < Math.min(lines.length, CLAUDE_SESSION_PARSE_LIMITS.OLDEST_TIMESTAMP_SCAN_LINES);
+						j++
+					) {
+						try {
+							const entry = JSON.parse(lines[j]);
+							if (entry.timestamp) {
+								oldestTimestamp = entry.timestamp;
+								break;
+							}
+						} catch {
+							// Skip malformed lines
+						}
+					}
+
+					return {
+						messages,
+						costUsd,
+						sizeBytes: fileStat.size,
+						tokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
+						tokenSplit: { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens },
+						oldestTimestamp,
+					};
+				};
+
+				// Total the pool of the account the browsing agent runs under; without
+				// an owner (older callers) this is the default account, as before.
+				const encodedPath = encodeClaudeProjectPath(projectPath);
+				const defaultProjectDir = path.join(os.homedir(), '.claude', 'projects', encodedPath);
+				const configDir = ownerAgentId ? resolveAgentAccountDir(ownerAgentId) : undefined;
+				const projectDir = configDir
+					? path.join(configDir, 'projects', encodedPath)
+					: defaultProjectDir;
+				const cacheScope = await statsCacheScope(projectDir, defaultProjectDir);
+
+				// Check if the directory exists
+				try {
+					await fs.access(projectDir);
+				} catch {
+					return {
+						totalSessions: 0,
+						totalMessages: 0,
+						totalCostUsd: 0,
+						totalSizeBytes: 0,
+						totalTokens: 0,
+						oldestTimestamp: null,
+					};
+				}
+
+				// Load existing cache. An older-but-compatible cache was derived by an
+				// earlier parser, so every live session is re-parsed and the archived
+				// ones are rescaled once the re-parse is done.
+				const cache = await loadStatsCache(projectPath, cacheScope);
+				const derivationStale = !!cache && cache.version < STATS_CACHE_VERSION;
+
+				// List all .jsonl files
+				const files = await fs.readdir(projectDir);
+				const sessionFiles = files.filter((f) => f.endsWith('.jsonl'));
+
+				// Track which sessions need processing
+				const sessionsToProcess: { filename: string; filePath: string; mtimeMs: number }[] = [];
+				const currentSessionIds = new Set<string>();
+
+				for (const filename of sessionFiles) {
+					const sessionId = filename.replace('.jsonl', '');
+					const filePath = path.join(projectDir, filename);
+
 					try {
-						const entry = JSON.parse(lines[j]);
-						if (entry.timestamp) {
-							oldestTimestamp = entry.timestamp;
-							break;
+						const fileStat = await fs.stat(filePath);
+						// Skip 0-byte sessions (created but abandoned before any content was written)
+						if (fileStat.size === 0) continue;
+
+						currentSessionIds.add(sessionId);
+						const cachedSession = cache?.sessions[sessionId];
+
+						if (derivationStale || !cachedSession || cachedSession.fileMtimeMs < fileStat.mtimeMs) {
+							sessionsToProcess.push({ filename, filePath, mtimeMs: fileStat.mtimeMs });
 						}
 					} catch {
-						// Skip malformed lines
+						// Skip files we can't stat
 					}
 				}
 
-				return {
-					messages,
-					costUsd,
-					sizeBytes: fileStat.size,
-					tokens: inputTokens + outputTokens,
-					oldestTimestamp,
+				// Build new cache
+				const newCache: SessionStatsCache = {
+					version: STATS_CACHE_VERSION,
+					sessions: {},
+					totals: {
+						totalSessions: 0,
+						totalMessages: 0,
+						totalCostUsd: 0,
+						totalSizeBytes: 0,
+						totalTokens: 0,
+						oldestTimestamp: null,
+					},
+					lastUpdated: Date.now(),
 				};
-			};
 
-			const homeDir = os.homedir();
-			const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
-			const encodedPath = encodeClaudeProjectPath(projectPath);
-			const projectDir = path.join(claudeProjectsDir, encodedPath);
+				// ============================================================================
+				// Archive Preservation Pattern
+				// ============================================================================
+				// IMPORTANT: When JSONL files are deleted, we MUST preserve session stats by
+				// marking them as archived (not by dropping them). This ensures lifetime stats
+				// (costs, messages, tokens, oldest timestamp) survive file cleanup.
+				//
+				// This pattern MUST match the global stats cache behavior in agentSessions.ts.
+				// If you modify this logic, update both files and the corresponding tests.
+				// ============================================================================
 
-			// Check if the directory exists
-			try {
-				await fs.access(projectDir);
-			} catch {
-				return {
-					totalSessions: 0,
-					totalMessages: 0,
-					totalCostUsd: 0,
-					totalSizeBytes: 0,
-					totalTokens: 0,
-					oldestTimestamp: null,
-				};
-			}
+				if (cache) {
+					for (const [sessionId, sessionStats] of Object.entries(cache.sessions)) {
+						const existsOnDisk = currentSessionIds.has(sessionId);
+						const needsReparse = sessionsToProcess.some(
+							(s) => s.filename.replace('.jsonl', '') === sessionId
+						);
 
-			// Load existing cache
-			const cache = await loadStatsCache(projectPath);
-
-			// List all .jsonl files
-			const files = await fs.readdir(projectDir);
-			const sessionFiles = files.filter((f) => f.endsWith('.jsonl'));
-
-			// Track which sessions need processing
-			const sessionsToProcess: { filename: string; filePath: string; mtimeMs: number }[] = [];
-			const currentSessionIds = new Set<string>();
-
-			for (const filename of sessionFiles) {
-				const sessionId = filename.replace('.jsonl', '');
-				const filePath = path.join(projectDir, filename);
-
-				try {
-					const fileStat = await fs.stat(filePath);
-					// Skip 0-byte sessions (created but abandoned before any content was written)
-					if (fileStat.size === 0) continue;
-
-					currentSessionIds.add(sessionId);
-					const cachedSession = cache?.sessions[sessionId];
-
-					if (!cachedSession || cachedSession.fileMtimeMs < fileStat.mtimeMs) {
-						sessionsToProcess.push({ filename, filePath, mtimeMs: fileStat.mtimeMs });
+						if (existsOnDisk && !needsReparse) {
+							// Session file still exists and hasn't changed - keep cached stats
+							// Clear archived flag if it was previously set (file reappeared)
+							newCache.sessions[sessionId] = {
+								...sessionStats,
+								archived: false,
+							};
+						} else if (!existsOnDisk) {
+							// Session file was DELETED - preserve stats with archived flag
+							// This is critical: we must NOT drop deleted sessions!
+							// Archived sessions still count toward lifetime totals.
+							newCache.sessions[sessionId] = {
+								...sessionStats,
+								archived: true,
+							};
+						}
+						// If existsOnDisk && needsReparse: skip here, will be added below after parsing
 					}
-				} catch {
-					// Skip files we can't stat
 				}
-			}
 
-			// Build new cache
-			const newCache: SessionStatsCache = {
-				version: STATS_CACHE_VERSION,
-				sessions: {},
-				totals: {
-					totalSessions: 0,
-					totalMessages: 0,
-					totalCostUsd: 0,
-					totalSizeBytes: 0,
-					totalTokens: 0,
-					oldestTimestamp: null,
-				},
-				lastUpdated: Date.now(),
-			};
+				// Send immediate update with cached data (so UI shows something right away)
+				if (Object.keys(newCache.sessions).length > 0) {
+					const cachedTotals = calculateTotals(newCache);
+					sendUpdate({ ...cachedTotals, isComplete: sessionsToProcess.length === 0 });
+				}
 
-			// ============================================================================
-			// Archive Preservation Pattern
-			// ============================================================================
-			// IMPORTANT: When JSONL files are deleted, we MUST preserve session stats by
-			// marking them as archived (not by dropping them). This ensures lifetime stats
-			// (costs, messages, tokens, oldest timestamp) survive file cleanup.
-			//
-			// This pattern MUST match the global stats cache behavior in agentSessions.ts.
-			// If you modify this logic, update both files and the corresponding tests.
-			// ============================================================================
+				// Process new/modified sessions
+				let processedCount = 0;
+				for (const { filename, filePath, mtimeMs } of sessionsToProcess) {
+					const sessionId = filename.replace('.jsonl', '');
+					try {
+						const content = await fs.readFile(filePath, 'utf-8');
+						const fileStat = await fs.stat(filePath);
+						const stats = await parseSessionFile(filePath, content, { size: fileStat.size });
 
-			if (cache) {
-				for (const [sessionId, sessionStats] of Object.entries(cache.sessions)) {
-					const existsOnDisk = currentSessionIds.has(sessionId);
-					const needsReparse = sessionsToProcess.some(
-						(s) => s.filename.replace('.jsonl', '') === sessionId
+						newCache.sessions[sessionId] = {
+							fileMtimeMs: mtimeMs,
+							...stats,
+							archived: false, // Explicitly mark as active (file exists)
+						};
+
+						processedCount++;
+
+						// Send progress update
+						const totals = calculateTotals(newCache);
+						sendUpdate({
+							...totals,
+							processedCount,
+							isComplete: processedCount >= sessionsToProcess.length,
+						});
+					} catch (error) {
+						// A transcript we merely discovered under `~/.claude/projects` can be
+						// unreadable or gone by the time we read it - environmental, not a
+						// Maestro fault, so warn locally and keep it out of Sentry
+						// (MAESTRO-YJ). Everything else still reports.
+						if (isExpectedSessionReadError(error)) {
+							logger.warn(`Session file not readable: ${filename}`, LOG_CONTEXT, { error });
+						} else {
+							void captureException(error);
+							logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
+						}
+					}
+				}
+
+				if (derivationStale && cache) {
+					rescaleArchivedEntries(
+						newCache.sessions,
+						cache.sessions,
+						['costUsd', 'tokens', 'messages'],
+						['costUsd']
 					);
-
-					if (existsOnDisk && !needsReparse) {
-						// Session file still exists and hasn't changed - keep cached stats
-						// Clear archived flag if it was previously set (file reappeared)
-						newCache.sessions[sessionId] = {
-							...sessionStats,
-							archived: false,
-						};
-					} else if (!existsOnDisk) {
-						// Session file was DELETED - preserve stats with archived flag
-						// This is critical: we must NOT drop deleted sessions!
-						// Archived sessions still count toward lifetime totals.
-						newCache.sessions[sessionId] = {
-							...sessionStats,
-							archived: true,
-						};
-					}
-					// If existsOnDisk && needsReparse: skip here, will be added below after parsing
 				}
+
+				// Calculate final totals
+				const finalTotals = calculateTotals(newCache);
+
+				// Save cache
+				await saveStatsCache(projectPath, newCache, cacheScope);
+
+				const cachedCount = Object.keys(newCache.sessions).length - sessionsToProcess.length;
+				logger.info(
+					`Project stats: ${sessionsToProcess.length} new/modified, ${cachedCount} cached, $${finalTotals.totalCostUsd.toFixed(2)}`,
+					LOG_CONTEXT
+				);
+
+				return { ...finalTotals, isComplete: true };
 			}
-
-			// Send immediate update with cached data (so UI shows something right away)
-			if (Object.keys(newCache.sessions).length > 0) {
-				const cachedTotals = calculateTotals(newCache);
-				sendUpdate({ ...cachedTotals, isComplete: sessionsToProcess.length === 0 });
-			}
-
-			// Process new/modified sessions
-			let processedCount = 0;
-			for (const { filename, filePath, mtimeMs } of sessionsToProcess) {
-				const sessionId = filename.replace('.jsonl', '');
-				try {
-					const content = await fs.readFile(filePath, 'utf-8');
-					const fileStat = await fs.stat(filePath);
-					const stats = await parseSessionFile(content, { size: fileStat.size });
-
-					newCache.sessions[sessionId] = {
-						fileMtimeMs: mtimeMs,
-						...stats,
-						archived: false, // Explicitly mark as active (file exists)
-					};
-
-					processedCount++;
-
-					// Send progress update
-					const totals = calculateTotals(newCache);
-					sendUpdate({
-						...totals,
-						processedCount,
-						isComplete: processedCount >= sessionsToProcess.length,
-					});
-				} catch (error) {
-					// A transcript we merely discovered under `~/.claude/projects` can be
-					// unreadable or gone by the time we read it - environmental, not a
-					// Maestro fault, so warn locally and keep it out of Sentry
-					// (MAESTRO-YJ). Everything else still reports.
-					if (isExpectedSessionReadError(error)) {
-						logger.warn(`Session file not readable: ${filename}`, LOG_CONTEXT, { error });
-					} else {
-						void captureException(error);
-						logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
-					}
-				}
-			}
-
-			// Calculate final totals
-			const finalTotals = calculateTotals(newCache);
-
-			// Save cache
-			await saveStatsCache(projectPath, newCache);
-
-			const cachedCount = Object.keys(newCache.sessions).length - sessionsToProcess.length;
-			logger.info(
-				`Project stats: ${sessionsToProcess.length} new/modified, ${cachedCount} cached, $${finalTotals.totalCostUsd.toFixed(2)}`,
-				LOG_CONTEXT
-			);
-
-			return { ...finalTotals, isComplete: true };
-		})
+		)
 	);
 
 	// ============ Get Session Timestamps ============
@@ -954,13 +984,11 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const content = await fs.readFile(filePath, 'utf-8');
 					const fileStat = await fs.stat(filePath);
 
-					const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-					const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-					const messages = userMessageCount + assistantMessageCount;
+					const messages = countClaudeTranscriptMessages(content);
 
 					// Per-model token + cost extraction (a session may mix models).
 					const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-						computeClaudeUsageCost(content);
+						await computeClaudeSessionUsage(filePath, content);
 
 					newCache.sessions[sessionKey] = {
 						fileMtimeMs: mtimeMs,
@@ -1670,12 +1698,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				origin: 'user' | 'auto',
 				sessionName?: string
 			) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				origins[projectPath][agentSessionId] = sessionName ? { origin, sessionName } : origin;
-				claudeSessionOriginsStore.set('origins', origins);
+				// Called on every turn, so it must merge: replacing the record wipes
+				// the tab name and star other paths wrote.
+				setClaudeSessionOrigin(
+					claudeSessionOriginsStore,
+					projectPath,
+					agentSessionId,
+					sessionName ? { origin, sessionName } : { origin }
+				);
 				logger.debug(
 					`Registered Claude session origin: ${agentSessionId} = ${origin}${sessionName ? ` (name: ${sessionName})` : ''}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1691,19 +1721,9 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionName', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, sessionName: string) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, sessionName };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, sessionName };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', sessionName };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				setClaudeSessionOrigin(claudeSessionOriginsStore, projectPath, agentSessionId, {
+					sessionName,
+				});
 				logger.debug(
 					`Updated Claude session name: ${agentSessionId} = ${sessionName}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1719,19 +1739,12 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionStarred', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, starred: boolean) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, starred };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, starred };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', starred };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				const starEntry = setClaudeSessionOrigin(
+					claudeSessionOriginsStore,
+					projectPath,
+					agentSessionId,
+					{ starred }
+				);
 				logger.debug(
 					`Updated Claude session starred: ${agentSessionId} = ${starred}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1741,7 +1754,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				// Mirror the transcript on star / drop it on unstar so the conversation
 				// survives provider-side deletion. Fire-and-forget - see the generic
 				// agentSessions:setSessionStarred handler for the rationale.
-				const starEntry = origins[projectPath][agentSessionId];
 				const starSessionName = typeof starEntry === 'object' ? starEntry.sessionName : undefined;
 				if (starred) {
 					void snapshotStarredTranscript({
@@ -1763,19 +1775,9 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionContextUsage', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, contextUsage: number) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, contextUsage };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, contextUsage };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', contextUsage };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				setClaudeSessionOrigin(claudeSessionOriginsStore, projectPath, agentSessionId, {
+					contextUsage,
+				});
 				// Don't log - this updates frequently and would spam logs
 				return true;
 			}
@@ -1856,6 +1858,15 @@ function calculateTotals(cache: SessionStatsCache) {
 	let totalCostUsd = 0;
 	let totalSizeBytes = 0;
 	let totalTokens = 0;
+	const tokenSplit: ProjectTokenSplit = {
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheCreationTokens: 0,
+	};
+	// Tokens of archived sessions cached before the split existed: counted in the
+	// total, but nothing says which kind they were.
+	let unsplitTokens = 0;
 	let oldestTimestamp: string | null = null;
 
 	// Include ALL sessions (active + archived) for lifetime totals
@@ -1865,6 +1876,14 @@ function calculateTotals(cache: SessionStatsCache) {
 		totalCostUsd += stats.costUsd;
 		totalSizeBytes += stats.sizeBytes;
 		totalTokens += stats.tokens;
+		if (stats.tokenSplit) {
+			tokenSplit.inputTokens += stats.tokenSplit.inputTokens;
+			tokenSplit.outputTokens += stats.tokenSplit.outputTokens;
+			tokenSplit.cacheReadTokens += stats.tokenSplit.cacheReadTokens;
+			tokenSplit.cacheCreationTokens += stats.tokenSplit.cacheCreationTokens;
+		} else {
+			unsplitTokens += stats.tokens;
+		}
 
 		if (stats.oldestTimestamp) {
 			if (!oldestTimestamp || new Date(stats.oldestTimestamp) < new Date(oldestTimestamp)) {
@@ -1879,6 +1898,8 @@ function calculateTotals(cache: SessionStatsCache) {
 		totalCostUsd,
 		totalSizeBytes,
 		totalTokens,
+		tokenSplit,
+		unsplitTokens,
 		oldestTimestamp,
 	};
 }

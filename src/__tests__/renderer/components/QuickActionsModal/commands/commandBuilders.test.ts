@@ -114,6 +114,41 @@ describe('QuickActions command builders', () => {
 		).toMatchObject({ label: 'Atlas', isRunningAgent: true, isInBatch: true });
 
 		expect(
+			buildAgentSwitcherCommands({
+				sessions: [session],
+				activeBatchSessionIds: ['s1'],
+				batchRunStates: {
+					s1: {
+						totalTasksAcrossAllDocs: 3,
+						completedTasksAcrossAllDocs: 1,
+						totalTasks: 0,
+						completedTasks: 0,
+					},
+				},
+				setActiveSessionId: vi.fn(),
+				revealJumpTarget: vi.fn(),
+			})[0].autoRunProgress
+		).toEqual({ percent: 33, goalMode: false });
+
+		// A paused run is not in the active list, so it gets no progress either.
+		expect(
+			buildAgentSwitcherCommands({
+				sessions: [session],
+				activeBatchSessionIds: [],
+				batchRunStates: {
+					s1: {
+						totalTasksAcrossAllDocs: 3,
+						completedTasksAcrossAllDocs: 1,
+						totalTasks: 0,
+						completedTasks: 0,
+					},
+				},
+				setActiveSessionId: vi.fn(),
+				revealJumpTarget: vi.fn(),
+			})[0].autoRunProgress
+		).toBeUndefined();
+
+		expect(
 			buildGroupChatJumpCommands({
 				groupChats: [{ id: 'chat1', name: 'Squad', participants: ['s1', 's2'] } as any],
 				onOpenGroupChat: vi.fn(),
@@ -390,6 +425,12 @@ describe('QuickActions command builders', () => {
 			...featureArgs,
 			activeTabType: 'terminal',
 		}).map((a) => a.id);
+		// The AgentRun Dashboard is offered only when App hands the opener down,
+		// which it does only while the Pianola Encore Feature is on.
+		expect(aiFeatureIds).not.toContain('agent-run-dashboard');
+		expect(
+			buildFeatureCommands({ ...featureArgs, setAgentRunDashboardOpen: vi.fn() }).map((a) => a.id)
+		).toContain('agent-run-dashboard');
 		expect(terminalFeatureIds).not.toContain('summarizeAndContinue');
 		expect(terminalFeatureIds).not.toContain('mergeSession');
 		expect(terminalFeatureIds).not.toContain('sendToAgent');

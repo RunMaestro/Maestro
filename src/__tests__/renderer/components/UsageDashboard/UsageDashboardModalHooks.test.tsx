@@ -11,6 +11,7 @@ import {
 	useUsageDashboardLayout,
 	useUsageDashboardTabs,
 } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/hooks';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 const mockNotifyToast = vi.hoisted(() => vi.fn());
 vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
@@ -53,6 +54,7 @@ const sampleAggregation: StatsAggregation = {
 		parent: { count: 2, duration: 1000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 const mockGetAggregation = vi.fn();
@@ -219,6 +221,53 @@ describe('UsageDashboardModal hooks', () => {
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
+	it('renders the cached payload on reopen and refreshes it in place', async () => {
+		installMaestroMock();
+		const options = { isOpen: true, timeRange: 'week' as const, cueTabEnabled: true };
+
+		const first = renderHook(() => useUsageDashboardData(options));
+		await flushPromises();
+		expect(first.result.current.data).toBe(sampleAggregation);
+		first.unmount();
+
+		// The second open must not start from a skeleton: the last result is on
+		// the first render, while a fresh fetch replaces it underneath.
+		const refreshed = { ...sampleAggregation, totalQueries: 7 };
+		let resolveRefresh: (value: StatsAggregation) => void = () => {};
+		mockGetAggregation.mockReturnValueOnce(
+			new Promise<StatsAggregation>((resolve) => {
+				resolveRefresh = resolve;
+			})
+		);
+
+		const second = renderHook(() => useUsageDashboardData(options));
+		expect(second.result.current.loading).toBe(false);
+		expect(second.result.current.data).toBe(sampleAggregation);
+
+		await act(async () => {
+			resolveRefresh(refreshed);
+		});
+		await flushPromises();
+		expect(second.result.current.data).toBe(refreshed);
+	});
+
+	it('keeps the last good payload when a refresh fails', async () => {
+		installMaestroMock();
+		const options = { isOpen: true, timeRange: 'month' as const, cueTabEnabled: false };
+
+		const { result, rerender } = renderHook(() => useUsageDashboardData(options));
+		await flushPromises();
+		expect(result.current.data).toBe(sampleAggregation);
+
+		mockGetAggregation.mockRejectedValueOnce(new Error('db locked'));
+		await act(async () => {
+			await result.current.fetchStats();
+		});
+		rerender();
+		expect(result.current.data).toBe(sampleAggregation);
+		expect(result.current.error).toBeNull();
+	});
+
 	it('persists tabs, appends dynamic tabs, and falls back from disabled tabs', async () => {
 		installMaestroMock();
 		useUIStore.setState({ usageDashboardViewMode: 'cue' });
@@ -294,7 +343,7 @@ describe('UsageDashboardModal hooks', () => {
 
 		Object.defineProperty(content, 'offsetWidth', { value: 920, configurable: true });
 		act(() => observerCallback?.([], {} as ResizeObserver));
-		await waitFor(() => expect(result.current.autoRunStatsCols).toBe(6));
+		await waitFor(() => expect(result.current.autoRunStatsCols).toBe(7));
 
 		unmount();
 		expect(disconnect).toHaveBeenCalled();

@@ -651,7 +651,7 @@ describe('HistoryPanel', () => {
 				.types as string[];
 			// AGENT is rc's cross-agent consult type; it rides along with the
 			// always-on types, so the set is one wider than main's was.
-			expect([...typesOnLoad].sort()).toEqual(['AGENT', 'AUTO', 'CUE', 'USER']);
+			expect([...typesOnLoad].sort()).toEqual(['AGENT', 'AUTO', 'CUE', 'RELAY', 'USER']);
 
 			// Toggling the pill off must drop CUE from the request, not merely
 			// hide already-fetched rows.
@@ -661,7 +661,7 @@ describe('HistoryPanel', () => {
 				const types = getAllPaginated.mock.calls[getAllPaginated.mock.calls.length - 1][0]
 					.types as string[];
 				expect(types).not.toContain('CUE');
-				expect([...types].sort()).toEqual(['AGENT', 'AUTO', 'USER']);
+				expect([...types].sort()).toEqual(['AGENT', 'AUTO', 'RELAY', 'USER']);
 			});
 		});
 

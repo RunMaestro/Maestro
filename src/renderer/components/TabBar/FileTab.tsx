@@ -18,7 +18,6 @@ import { getExtensionColor } from '../../utils/extensionColors';
 import { getRevealLabel } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
-import { isCoarsePointer } from '../../utils/touch';
 import { LongPressable } from '../shared/LongPressable';
 import { TabOverlayPortal } from './TabOverlayPortal';
 import { getTabKindColor } from './tabBarUtils';
@@ -310,9 +309,6 @@ export const FileTab = memo(function FileTab({
 	const handleTabSelect = useCallback(() => {
 		onSelect(tab.id);
 	}, [onSelect, tab.id]);
-	// Coarse pointer: long-press owns the gesture, so native drag is off.
-	const coarse = isCoarsePointer();
-
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => {
 			onDragStart(tab.id, e);
@@ -414,7 +410,7 @@ export const FileTab = memo(function FileTab({
 					handleTabSelect();
 				}
 			}}
-			draggable={!coarse}
+			draggable
 			onDragStart={handleTabDragStart}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
@@ -449,6 +445,7 @@ export const FileTab = memo(function FileTab({
 
 			{/* Tab name - filename without extension, folder-prefixed when ambiguous */}
 			<span
+				data-tab-label
 				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
@@ -472,6 +469,7 @@ export const FileTab = memo(function FileTab({
 			{(isHovered || isActive) && (
 				<button
 					onClick={handleCloseClick}
+					data-tab-close
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
 					title={`Close tab${shortcutSuffix(tabShortcuts.closeTab?.keys)}`}
 				>

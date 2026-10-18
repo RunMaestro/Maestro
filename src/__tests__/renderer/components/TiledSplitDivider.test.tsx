@@ -170,4 +170,36 @@ describe('tiled layout resize divider', () => {
 
 		expect(paneWrapper.style.flexGrow).toBe(before);
 	});
+
+	it('Escape cancels a resize and puts the panes back at their pre-drag sizes', () => {
+		const session = makeSession();
+		useSessionStore.getState().setSessions([session]);
+		const { container } = render(
+			<TiledLayout group={makeGroup()} session={session} theme={theme} />
+		);
+
+		const divider = getDivider(container);
+		const paneWrapper = divider.nextElementSibling as HTMLElement;
+
+		act(() => {
+			divider.dispatchEvent(pointerEvent('pointerdown', 100));
+		});
+		// jsdom has no layout, so stand in for the flex-grow a live drag writes.
+		paneWrapper.style.flexGrow = '0.9';
+
+		const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+		act(() => {
+			window.dispatchEvent(escape);
+		});
+
+		expect(escape.defaultPrevented).toBe(true);
+		expect(paneWrapper.style.flexGrow).toBe('0.5');
+
+		// The gesture is over: a later release commits nothing.
+		act(() => {
+			window.dispatchEvent(pointerEvent('pointerup', 150));
+		});
+		const stored = useSessionStore.getState().sessions[0].tabGroups?.[0].layout;
+		expect(stored).toMatchObject({ sizes: [0.5, 0.5] });
+	});
 });

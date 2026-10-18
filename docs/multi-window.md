@@ -6,7 +6,7 @@ icon: window-restore
 
 Maestro can run across multiple windows so you can spread agents over more than one monitor or simply give a long-running agent its own dedicated space. Every window shares the same Left Bar agent list, but each agent is "owned" by exactly one window at a time. Maestro keeps that ownership consistent for you - an agent is never lost, duplicated, or stranded in a window you closed.
 
-Moving windows is an agent-level action: a whole agent (with all of its AI, terminal, browser, and file tabs) moves together as one unit. Individual tabs are never split across windows.
+Moving windows is an agent-level action: a whole agent (with all of its AI, terminal, browser, and file tabs) moves together as one unit, and you can move an entire group of agents in one step. Individual tabs are never split across windows.
 
 ## Creating a New Window
 
@@ -26,6 +26,16 @@ There is no keyboard shortcut bound directly to opening a new window. Windows ar
 The **Move to Window** submenu (and the matching Quick Actions commands) lists every open window by number - **Main Window**, **Window 2**, **Window 3**, and so on (or a custom name if you have renamed one). Pick any window to move the agent there; the window it currently lives in is marked **(current)**. Choosing **Main Window** brings an agent back to the primary window.
 
 A window can hold as many agents as you move into it. When you move the last agent out of a secondary window, that now-empty window closes automatically.
+
+## Moving a Whole Group
+
+Right-click a group header in the Left Bar and choose **Move Group to Window...** to move every agent in that group at once, either into a **New Window** or into any open window. With Groups+ nesting on, the group's subgroups come along too, and every agent brings its worktrees. In Quick Actions (`Cmd+K`), **Move Group to New Window** and **Move Group to Window N** act on the group the active agent belongs to.
+
+A group whose agents are split across windows is gathered into the window you pick. The window that already holds the entire group is shown disabled. A secondary window shows a group header for each group it holds agents from, so a moved group arrives as a group. As with single agents, Maestro refuses a move that would leave the main window empty.
+
+## Moving Windows from the CLI
+
+`maestro-cli window list` shows every window and the agents in it. `maestro-cli window move-agent <agent> --to <window>` and `maestro-cli window move-group <group> --to <window>` perform the same moves as the menus, where `<window>` is `new`, `main`, a window number, or a window name. See the [CLI guide](/cli) for details.
 
 ## Telling Windows Apart
 

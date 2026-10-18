@@ -4,7 +4,12 @@ import { registerLifecycleHandlers } from './lifecycle';
 import { registerContributionStartHandlers } from './contributionStart';
 import { registerContributionFinishHandlers } from './contributionFinish';
 import { registerSyncHandlers } from './sync';
-import { logHandlersRegistered, SymphonyHandlerDependencies } from './shared';
+import {
+	logHandlersRegistered,
+	setSymphonyEnabledCheck,
+	SymphonyHandlerDependencies,
+} from './shared';
+import { isEncoreFeatureEnabled } from '../../../../shared/encoreFeatureDefaults';
 
 export type { SymphonyHandlerDependencies } from './shared';
 
@@ -29,6 +34,8 @@ export type { SymphonyHandlerDependencies } from './shared';
  * - Force refresh bypasses cache
  */
 export function registerSymphonyHandlers(deps: SymphonyHandlerDependencies): void {
+	// Every channel below refuses with `SymphonyDisabled` while the flag is off.
+	setSymphonyEnabledCheck(() => isEncoreFeatureEnabled(deps.settingsStore, 'symphony'));
 	registerDiscoveryHandlers(deps);
 	registerDashboardHandlers(deps);
 	registerLifecycleHandlers(deps);

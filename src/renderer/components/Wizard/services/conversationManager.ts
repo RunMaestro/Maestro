@@ -26,6 +26,10 @@ import {
 import { wizardDebugLogger } from './phaseGenerator';
 import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
 import { readEffortFromConfig } from '../../../utils/agentEffort';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../../../shared/claudeTokenMode';
 
 /**
  * Configuration for starting a conversation
@@ -55,6 +59,8 @@ export interface ConversationConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -145,6 +151,8 @@ interface ConversationSession {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -201,6 +209,7 @@ class ConversationManager {
 			customArgs: config.customArgs,
 			customEnvVars: config.customEnvVars,
 			agentConfigValues: config.agentConfigValues,
+			claudeTokenSource: config.claudeTokenSource,
 		};
 
 		// Log conversation start
@@ -664,6 +673,8 @@ class ConversationManager {
 						typeof this.session!.agentConfigValues?.contextWindow === 'number'
 							? this.session!.agentConfigValues.contextWindow
 							: undefined,
+					// The wizard's process id names no agent, so the TUI pick travels inline.
+					...getClaudeTokenSourceFields(this.session!.claudeTokenSource),
 				})
 				.then(() => {
 					wizardDebugLogger.log('spawn', 'Agent process spawned successfully', {

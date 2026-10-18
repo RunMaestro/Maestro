@@ -13,6 +13,7 @@ import {
 	resolveUiSurface,
 	resolveUiSurfaceTab,
 	surfaceTabIds,
+	uiSurfaceRefusal,
 } from '../../shared/uiSurfaces';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
@@ -46,6 +47,26 @@ describe('resolveUiSurface', () => {
 		expect(resolveUiSurface('  Usage  ')?.id).toBe('usage-dashboard');
 	});
 
+	it('resolves the Send Feedback modal so `open feedback` works', () => {
+		const feedback = resolveUiSurface('feedback');
+		expect(feedback?.modal).toBe('feedback');
+		expect(resolveUiSurface('bug-report')?.id).toBe('feedback');
+	});
+
+	it('resolves the Throughput Gauge by id and by every alias', () => {
+		for (const name of ['throughput-gauge', 'gauge', 'tokens-per-second', 'tps']) {
+			expect(resolveUiSurface(name)?.id, name).toBe('throughput-gauge');
+		}
+		expect(resolveUiSurface('gauge')?.encore).toBe('throughputGauge');
+	});
+
+	it('points the Notification Center at the Left Bar bell, with no Encore gate', () => {
+		const surface = resolveUiSurface('inbox');
+		expect(surface?.id).toBe('notification-center');
+		expect(surface?.encore).toBeUndefined();
+		expect(surface?.click).toContain('the bell in the Left Bar header');
+	});
+
 	it('returns null for an unknown or empty name', () => {
 		expect(resolveUiSurface('nope')).toBeNull();
 		expect(resolveUiSurface('')).toBeNull();
@@ -64,6 +85,27 @@ describe('resolveUiSurfaceTab', () => {
 		expect(resolveUiSurfaceTab(cue, 'nope')).toBeNull();
 		const about = resolveUiSurface('about')!;
 		expect(resolveUiSurfaceTab(about, 'anything')).toBeNull();
+	});
+});
+
+describe('uiSurfaceRefusal', () => {
+	it('refuses a surface whose Encore Feature is off, and allows it when on', () => {
+		const notes = resolveUiSurface('director-notes')!;
+		expect(uiSurfaceRefusal(notes, null, { directorNotes: false })).toContain('Settings → Plugins');
+		expect(uiSurfaceRefusal(notes, null, { directorNotes: true })).toBeNull();
+	});
+
+	it("refuses the Usage Dashboard's Cue tab while Cue is off, but not the dashboard", () => {
+		const dashboard = resolveUiSurface('usage-dashboard')!;
+		const cueTab = resolveUiSurfaceTab(dashboard, 'cue');
+		const flags = { usageStats: true, maestroCue: false };
+		expect(uiSurfaceRefusal(dashboard, null, flags)).toBeNull();
+		expect(uiSurfaceRefusal(dashboard, cueTab, flags)).toContain('Cue');
+		expect(uiSurfaceRefusal(dashboard, cueTab, { ...flags, maestroCue: true })).toBeNull();
+	});
+
+	it('never refuses an ungated surface', () => {
+		expect(uiSurfaceRefusal(resolveUiSurface('about')!, null, {})).toBeNull();
 	});
 });
 

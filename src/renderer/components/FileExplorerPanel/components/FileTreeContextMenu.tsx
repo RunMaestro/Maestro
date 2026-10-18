@@ -24,6 +24,7 @@ import { getRevealLabel } from '../../../utils/platformUtils';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 import { isMediaFile } from '../../../../shared/mediaTypes';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
+import { isWebDesktop } from '../../../utils/runtimeContext';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
 
@@ -419,17 +420,15 @@ export function FileTreeContextMenu({
 							</button>
 						)}
 
-						{/* Download File option - remote files only; the local counterpart is
-						    "Reveal in Finder" / "Open in Default App", which act on the file
-						    already on disk. Remote files must be pulled down over SSH first. */}
-						{isFile && sshRemoteId && (
+						{/* Explicit host-to-client transfer in browser/Lite; SSH-to-desktop in full mode. */}
+						{isFile && (sshRemoteId || isWebDesktop()) && (
 							<button
 								onClick={onDownloadFile}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
 								<Download className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-								<span>Download File</span>
+								<span>{isWebDesktop() ? 'Download to This Client' : 'Download File'}</span>
 							</button>
 						)}
 

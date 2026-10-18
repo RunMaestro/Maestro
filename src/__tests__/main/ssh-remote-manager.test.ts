@@ -423,6 +423,70 @@ describe('SshRemoteManager', () => {
 			expect(result.error).toContain('Unexpected response');
 		});
 
+		it('reports a PowerShell remote instead of the raw parser dump', async () => {
+			mockExecSsh
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: [
+						'At line:1 char:15',
+						'+ echo "SSH_OK" && hostname',
+						"The token '&&' is not a valid statement separator in this version.",
+						'    + CategoryInfo          : ParserError: (:) []',
+						'    + FullyQualifiedErrorId : InvalidEndOfLine',
+					].join('\n'),
+					exitCode: 1,
+				})
+				.mockResolvedValueOnce({
+					stdout: 'PEDSIM\n',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const result = await manager.testConnection(validConfig);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('PEDSIM');
+			expect(result.error).toContain('Windows PowerShell');
+			expect(result.error).toContain('DefaultShell');
+			// The PowerShell noise must not leak into the user-facing message
+			expect(result.error).not.toContain('ParserError');
+			// The UI renders the fix from the structured form, not the sentence
+			expect(result.remediation?.code).toBe('non-posix-remote-shell');
+			expect(result.remediation?.command).toContain('DefaultShell');
+		});
+
+		it('names the remote generically when the hostname probe also fails', async () => {
+			mockExecSsh
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: "The token '&&' is not a valid statement separator in this version.",
+					exitCode: 1,
+				})
+				.mockResolvedValueOnce({ stdout: '', stderr: 'nope', exitCode: 1 });
+
+			const result = await manager.testConnection(validConfig);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Windows PowerShell');
+		});
+
+		it('reports a cmd.exe remote that echoes the marker with its quotes', async () => {
+			mockExecSsh.mockResolvedValue({
+				stdout: '"SSH_OK"\nPEDSIM\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await manager.testConnection(validConfig);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('cmd.exe');
+			expect(result.error).toContain('PEDSIM');
+			expect(result.remediation?.code).toBe('non-posix-remote-shell');
+			// A single round trip is enough: cmd already returned the hostname
+			expect(mockExecSsh).toHaveBeenCalledTimes(1);
+		});
+
 		it('handles exception during connection', async () => {
 			mockExecSsh.mockRejectedValue(new Error('Spawn failed'));
 

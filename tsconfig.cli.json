@@ -10,6 +10,12 @@
 		"ignoreDeprecations": "6.0",
 		"outDir": "dist/cli",
 		"rootDir": "src",
+		// Same shim as tsconfig.main.json: @opencode-ai/sdk exposes its types only
+		// through the "exports" map, which node10 resolution cannot read, and the
+		// standalone Cue engine reaches src/main/process-manager, which imports it.
+		"paths": {
+			"@opencode-ai/sdk": ["./node_modules/@opencode-ai/sdk/dist/index.d.ts"]
+		},
 		"resolveJsonModule": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,

@@ -19,11 +19,12 @@
 import { useEffect } from 'react';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
-import { getActiveTab, getWriteModeTab } from '../../../utils/tabHelpers';
+import { getActiveTab, getWriteModeTab, markTabBusyFromOutput } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { removeMatchingAgentErrorLog } from './helpers/agentErrorLogMatch';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { isAwaitingContextCompaction } from '../../../stores/retryStore';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { SessionState } from '../../../types';
 import type { BatchedUpdater, ToolProgressState } from './types';
 
@@ -35,7 +36,7 @@ export interface UseAgentDataListenerDeps {
 }
 
 export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 	useEffect(() => {
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
@@ -62,6 +63,13 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 			}
 
 			if (!isFromAi && !data.trim()) return;
+
+			// The turn on this tab already failed on the context limit and is about
+			// to be re-run after a compaction. Whatever it still prints is its own
+			// failure text, and showing it would put the masked error back on screen.
+			if (tabIdFromSession && isAwaitingContextCompaction(actualSessionId, tabIdFromSession)) {
+				return;
+			}
 
 			if (!isFromAi) {
 				deps.batchedUpdater.appendLog(actualSessionId, null, false, data);
@@ -95,6 +103,13 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 			deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${targetTabId}`);
 
 			const targetTab = session?.aiTabs?.find((t) => t.id === targetTabId);
+
+			// Output on this tab's own process key proves its turn is running, even
+			// when this client never saw it start (see markTabBusyFromOutput). Gated
+			// on the tab read above, so a busy tab - nearly every chunk - writes nothing.
+			if (tabIdFromSession && targetTab && targetTab.state !== 'busy') {
+				updateSessionWith(actualSessionId, (s) => markTabBusyFromOutput(s, tabIdFromSession));
+			}
 
 			// Only rewrite the sessions array when the target tab still carries a
 			// hidden-progress placeholder to strip. That holds on the first visible

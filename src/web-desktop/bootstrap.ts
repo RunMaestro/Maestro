@@ -11,7 +11,7 @@
  */
 
 import { registerServiceWorker } from '../web/utils/serviceWorker';
-import { installLoadFailureHandler, markBooted } from './loadFailure';
+import { detailOf, installLoadFailureHandler, markBooted } from './loadFailure';
 import { installStandaloneStatusBarInset } from '../renderer/utils/standaloneStatusBar';
 
 // Take over the failure policy from index.html's inline listeners as early as
@@ -31,19 +31,23 @@ declare global {
 }
 
 export function ensureWebProcess(target: Window): void {
+	const hostPlatform = target.__MAESTRO_CONFIG__?.hostPlatform;
 	if (!target.process) {
 		target.process = {
 			env: { NODE_ENV: 'production' },
 			versions: { electron: '0.0.0-web', chrome: '0.0.0', node: '0.0.0' },
-			platform: navigator.userAgent.includes('Mac')
-				? 'darwin'
-				: navigator.userAgent.includes('Win')
-					? 'win32'
-					: 'linux',
+			platform:
+				hostPlatform ??
+				(navigator.userAgent.includes('Mac')
+					? 'darwin'
+					: navigator.userAgent.includes('Win')
+						? 'win32'
+						: 'linux'),
 			argv: [],
 		};
 		return;
 	}
+	if (hostPlatform) target.process.platform = hostPlatform;
 
 	// The shared preload reads process.argv to resolve Electron-only launch
 	// arguments. Browser builds have no argv, so provide the empty Node shape
@@ -88,6 +92,43 @@ export async function bootWebDesktop(
 	await dependencies.renderer();
 }
 
+interface BootFailureWindow {
+	__maestroHandleLoadFailure?: (reason: unknown) => void;
+	__maestroShowBootError?: (title: string, detail: string) => void;
+}
+
+/**
+ * Report a boot that never mounted the renderer.
+ *
+ * It goes through the load-failure policy rather than straight to the error
+ * surface, because the commonest cause is a module fetch that failed for a
+ * moment rather than for good: a Cloudflare quick tunnel answering 429 while
+ * several tabs reload at once, or a stale hashed chunk. The policy reloads once
+ * for those (guarded against looping) - exactly what the user otherwise had to
+ * do by hand - and shows the error for everything else.
+ */
+export function reportBootFailure(target: Window, err: unknown): void {
+	console.error('[bootstrap] boot failed', err);
+	const bootWindow = target as unknown as BootFailureWindow;
+	if (bootWindow.__maestroHandleLoadFailure) {
+		bootWindow.__maestroHandleLoadFailure(err);
+		return;
+	}
+
+	const detail = detailOf(err);
+	// Prefer the shared error surface from index.html (HTML-escaped, styled, and
+	// includes the same-network hint). Fall back to a minimal inline render if
+	// the inline script somehow didn't run.
+	if (bootWindow.__maestroShowBootError) {
+		bootWindow.__maestroShowBootError('Maestro web-desktop failed to load', detail);
+		return;
+	}
+	const root = target.document.getElementById('root');
+	if (root) {
+		root.textContent = `Maestro web-desktop failed to load: ${detail}`;
+	}
+}
+
 void bootWebDesktop(window, {
 	preload: () => import('../main/preload/index'),
 	renderer: () => import('../renderer/main'),
@@ -97,30 +138,10 @@ void bootWebDesktop(window, {
 		// #root - React's error boundary reports app-level errors in context,
 		// and a stale-chunk failure recovers by reloading instead.
 		markBooted();
-		// Register the PWA service worker once the app is mounted. The server
-		// injects window.__MAESTRO_CONFIG__ inline before any module runs, so the
-		// security token is already available; registerServiceWorker() reads it to
-		// register /<token>/sw.js at scope /<token>/. It swallows its own failures
-		// (unsupported browser, registration error), so this never affects boot.
-		void registerServiceWorker();
-	})
-	.catch((err) => {
-		const detail = (err && (err.stack || err.message)) || String(err);
-		// Prefer the shared error surface from index.html (HTML-escaped, styled, and
-		// includes the same-network hint). Fall back to a minimal inline render if
-		// the inline script somehow didn't run.
-		const showBootError = (
-			window as unknown as {
-				__maestroShowBootError?: (title: string, detail: string) => void;
-			}
-		).__maestroShowBootError;
-		if (showBootError) {
-			showBootError('Maestro web-desktop failed to load', detail);
-		} else {
-			const root = document.getElementById('root');
-			if (root) {
-				root.textContent = `Maestro web-desktop failed to load: ${detail}`;
-			}
+		// Native Lite owns connection state and has no offline execution mode.
+		// Keep PWA caching out of its authenticated WebContentsView navigations.
+		if (new URLSearchParams(window.location.search).get('lite') !== '1') {
+			void registerServiceWorker();
 		}
-		console.error('[bootstrap] boot failed', err);
-	});
+	})
+	.catch((err) => reportBootFailure(window, err));

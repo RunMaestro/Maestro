@@ -29,3 +29,4 @@ export { markdownEditorModuleMock } from './mockMarkdownEditor';
 // "37,268 passed" while it was red. The one suite that needs real SQLite
 // (`main/cue/cue-history-query.test.ts`) imports `./nodeSqlite` directly and
 // declares `@vitest-environment node`. Keep it that way.
+export { setCoarsePointer, restorePointer } from './mockPointer';

@@ -283,7 +283,13 @@
 						head.appendChild(el('span', riskClassName(item.risk), item.risk));
 						body.appendChild(head);
 
-						if (item.scope) {
+						if (item.capability === 'agents:dispatch') {
+							var agents =
+								item.scope && item.scope !== 'CONFIGURE_IN_MAESTRO'
+									? item.scope
+									: 'none (dispatch denied until agents are selected in Maestro)';
+							body.appendChild(el('div', 'cap-scope', 'Agents: ' + agents));
+						} else if (item.scope) {
 							body.appendChild(el('div', 'cap-scope', 'scope: ' + item.scope));
 						}
 						if (item.reason) {

@@ -9,9 +9,10 @@ import { generateUUID } from '../shared/uuid';
  * The kind of a registered window. `app` windows own agents (sessions) and take
  * part in all the multi-window machinery (session moves, persistence, the "Move
  * to Window" menu, telemetry). Special kinds like `cadenza-hud` are host-owned
- * feature windows that own no sessions; the multi-window consumers skip them.
+ * feature windows that own no sessions (the cadenza HUD, the Quick Chat window);
+ * the multi-window consumers skip them.
  */
-export type WindowKind = 'app' | 'cadenza-hud';
+export type WindowKind = 'app' | 'cadenza-hud' | 'quick-chat';
 
 /**
  * A single window tracked by the registry. `sessionIds` are agent IDs (what

@@ -901,12 +901,11 @@ describe('AutoRun savedContent state reset behavior', () => {
 		// External change detected (file watcher)
 		rerender(<AutoRun {...props} ref={ref} content="Version 2 from disk" contentVersion={2} />);
 
-		// savedContent should now be 'Version 2 from disk'
-		expect(ref.current?.isDirty()).toBe(false);
-		expect(textarea).toHaveValue('Version 2 from disk');
+		// savedContent moves to 'Version 2 from disk', but the draft survives
+		expect(ref.current?.isDirty()).toBe(true);
+		expect(textarea).toHaveValue('Local edits');
 
 		// Revert should go to version 2
-		fireEvent.change(textarea, { target: { value: 'More local edits' } });
 		await act(async () => {
 			ref.current?.revert();
 		});

@@ -1,5 +1,8 @@
 import { useCallback, useRef } from 'react';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import {
+	autoRunMaestroPMaxWaitSeconds,
+	getClaudeTokenSourceFields,
+} from '../../../shared/claudeTokenMode';
 import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
 import {
 	getActiveTab,
@@ -15,15 +18,12 @@ import {
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
-import { cheapTurnSettings } from '../../../shared/modelTiers';
-import {
-	FALLBACK_CONTEXT_WINDOW,
-	getModelContextWindowOverride,
-} from '../../../shared/agentConstants';
+import { cheapResumeTurnSettings, cheapTurnSettings } from '../../../shared/modelTiers';
 import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
+import { armEffortFallback, settleEffortFallback } from '../../services/effortRejection';
 
 /**
  * Result from agent spawn operations.
@@ -39,6 +39,18 @@ export interface AgentSpawnResult {
 	error?: string;
 	/** Structured error category for downstream handling */
 	errorKind?: AgentSpawnErrorKind;
+}
+
+/**
+ * Options for a background turn that is NOT a synopsis but runs through
+ * `spawnBackgroundSynopsis` for what that gives it: a resumed session under a
+ * hidden process id, so nothing it prints reaches the transcript.
+ */
+export interface BackgroundTurnOptions {
+	/** Run on the caller's model and effort instead of the cheap synopsis tier. */
+	keepTurnSettings?: boolean;
+	/** The turn prints nothing on success, so an empty response is not a failure. */
+	allowEmptyResponse?: boolean;
 }
 
 /**
@@ -117,6 +129,7 @@ export interface UseAgentExecutionReturn {
 			customArgs?: string;
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
+			customEffort?: string;
 			customContextWindow?: number;
 			enableMaestroP?: boolean;
 			maestroPMode?: 'interactive' | 'dynamic';
@@ -126,33 +139,12 @@ export interface UseAgentExecutionReturn {
 				remoteId: string | null;
 				workingDirOverride?: string;
 			};
-		}
+		},
+		options?: BackgroundTurnOptions
 	) => Promise<AgentSpawnResult>;
 	/** Ref to spawnBackgroundSynopsis for use in callbacks that need latest version */
 	spawnBackgroundSynopsisRef: React.MutableRefObject<
-		| ((
-				sessionId: string,
-				cwd: string,
-				resumeAgentSessionId: string,
-				prompt: string,
-				toolType?: ToolType,
-				sessionConfig?: {
-					customPath?: string;
-					customArgs?: string;
-					customEnvVars?: Record<string, string>;
-					customModel?: string;
-					customContextWindow?: number;
-					enableMaestroP?: boolean;
-					maestroPMode?: 'interactive' | 'dynamic';
-					maestroPPath?: string;
-					sessionSshRemoteConfig?: {
-						enabled: boolean;
-						remoteId: string | null;
-						workingDirOverride?: string;
-					};
-				}
-		  ) => Promise<AgentSpawnResult>)
-		| null
+		UseAgentExecutionReturn['spawnBackgroundSynopsis'] | null
 	>;
 	/** Ref to spawnAgentWithPrompt for use in callbacks that need latest version */
 	spawnAgentWithPromptRef: React.MutableRefObject<
@@ -193,6 +185,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 		UseAgentExecutionReturn['spawnBackgroundSynopsis'] | null
 	>(null);
 	const spawnAgentWithPromptRef = useRef<((prompt: string) => Promise<AgentSpawnResult>) | null>(
+		null
+	);
+	// spawnAgentForSession re-runs itself once when the provider refuses the
+	// effort override it sent; a callback cannot name itself in its own deps.
+	const spawnAgentForSessionRef = useRef<UseAgentExecutionReturn['spawnAgentForSession'] | null>(
 		null
 	);
 
@@ -295,7 +292,19 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							clearInterval(inactivityTimer);
 							inactivityTimer = null;
 						}
+						// Disarm on every way out (watchdog kill, failed spawn), not just a
+						// clean exit, so a late error for this id is never swallowed.
+						settleEffortFallback(targetSessionId);
 					};
+
+					// An effort override here came off Maestro's static ladder (a document
+					// hint) or the run's own picker, and a provider can retire a value
+					// without notice. Arming tells the error listener to step aside for a
+					// refusal of it, and the exit handler below runs the task once more at
+					// the agent's own effort instead of parking the whole Auto Run.
+					if (options?.effortOverride) {
+						armEffortFallback(targetSessionId);
+					}
 
 					const resolveOnce = (result: AgentSpawnResult) => {
 						if (settled) return;
@@ -337,6 +346,27 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
+								// The provider refused the effort override: the turn never ran.
+								// Hand this promise to a second attempt without the override
+								// (which is not armed, so it cannot loop) and skip the exit
+								// bookkeeping below - that attempt's own exit does it.
+								const effortRejection = settleEffortFallback(targetSessionId);
+								const retry = spawnAgentForSessionRef.current;
+								if (effortRejection && retry && !settled) {
+									settled = true;
+									cleanup();
+									logger.warn(
+										'[spawnAgentForSession] Effort rejected by the provider; retrying at the agent default',
+										undefined,
+										{ sessionId, effort: options?.effortOverride, ...effortRejection }
+									);
+									void retry(sessionId, prompt, cwdOverride, {
+										...options,
+										effortOverride: undefined,
+									}).then(resolve);
+									return;
+								}
+
 								// Record query stats for Auto Run queries
 								const queryDuration = Date.now() - queryStartTime;
 								const activeTab = getActiveTab(session);
@@ -641,12 +671,24 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// whether it was launched from the app or maestro-cli, which passed it.
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
+							// Forward the agent's Claude token source (TUI / Dynamic / API). The
+							// spawn handler reads the persisted record first; this is the
+							// fallback, same as the synopsis spawn below.
+							...getClaudeTokenSourceFields(session),
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 							// Origin of the turn. Auto Run is the one dispatcher that reaches
 							// this path without a human in the loop; everything else here is a
 							// slash command or another user action, so it stays 'user'.
 							querySource: isBatchProcess ? 'auto' : 'user',
+							// The agent's TUI setting resolves server-side from the
+							// `{sessionId}-batch-` process id. What main cannot know is the
+							// idle budget: maestro-p's own 300s default would kill a silent
+							// test run long before the Auto Run watchdog above, so hand it
+							// that watchdog's budget (or a day when the watchdog is off).
+							maestroPMaxWaitSeconds: isBatchProcess
+								? autoRunMaestroPMaxWaitSeconds(useSettingsStore.getState())
+								: undefined,
 						})
 						.catch((err: unknown) => {
 							resolveOnce({
@@ -711,7 +753,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
-			}
+			},
+			options?: BackgroundTurnOptions
 		): Promise<AgentSpawnResult> => {
 			try {
 				const agent = await window.maestro.agents.get(toolType);
@@ -726,24 +769,18 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					throw new Error(`${toolType} agent has no command configured`);
 				}
 
-				const cheapSynopsis = cheapTurnSettings(toolType);
-
-				// The cheap tier is a MODEL swap, and a model carries a context
-				// window with it. Resuming replays the whole transcript, so
-				// downgrading an agent running Anthropic's 1M beta (`opus[1m]`)
-				// onto a 200k model makes every synopsis of a long conversation
-				// fail with "Prompt is too long" - the transcript fit the tab's
-				// model and cannot fit the cheap one. Keep the tab's model
-				// whenever the downgrade would shrink the window; effort still
-				// drops to the bottom rung, since that costs nothing to read.
-				const tabContextWindow = getModelContextWindowOverride(sessionConfig?.customModel);
-				const cheapContextWindow = getModelContextWindowOverride(cheapSynopsis.model);
-				const downgradeShrinksWindow =
-					(tabContextWindow ?? FALLBACK_CONTEXT_WINDOW) >
-					(cheapContextWindow ?? FALLBACK_CONTEXT_WINDOW);
-				const synopsisModel = downgradeShrinksWindow
-					? sessionConfig?.customModel
-					: (cheapSynopsis.model ?? sessionConfig?.customModel);
+				// Bottom of both ladders, except that the tab's model is kept when
+				// the cheap one has a smaller context window: resuming replays the
+				// whole transcript, which fit the tab's model and may not fit the
+				// cheap one. The rule lives in `cheapResumeTurnSettings` so the CLI's
+				// synopsis turn (`src/cli/services/synopsis.ts`) resolves the same way.
+				const synopsisTurn = cheapResumeTurnSettings(toolType, {
+					model: sessionConfig?.customModel,
+					effort: sessionConfig?.customEffort,
+				});
+				// The ladder's own effort, apart from the inherited fallback above:
+				// only a value Maestro picked arms the effort-refusal retry below.
+				const cheapEffort = cheapTurnSettings(toolType).effort;
 
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
@@ -759,6 +796,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let responseText = '';
 					let synopsisUsageStats: UsageStats | undefined;
 					let lastSynopsisUsageEvent: UsageStats | undefined;
+					// The provider's own reason, when it failed on stderr. A CLI that
+					// refuses before it starts (Codex: "thread already has an active
+					// writer") prints nothing to stdout, and the agent error is the only
+					// place its words survive. The tab's error listener ignores synopsis
+					// ids, so this is the one consumer.
+					let synopsisAgentError: string | undefined;
 
 					// Array to collect cleanup functions as listeners are registered
 					const cleanupFns: (() => void)[] = [];
@@ -767,7 +810,16 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						cleanupFns.forEach((fn) => fn());
 						// Remove from tracking
 						activeSynopsisSessionsRef.current.get(sessionId)?.delete(targetSessionId);
+						settleEffortFallback(targetSessionId);
 					};
+
+					// The cheap effort is a value Maestro picked off a static ladder. If
+					// the provider refuses it, the exit handler below runs the synopsis
+					// once more; by then the refusal is noted and `cheapTurnSettings`
+					// no longer hands the value out, so the retry inherits the tab's.
+					if (cheapEffort !== undefined) {
+						armEffortFallback(targetSessionId);
+					}
 
 					cleanupFns.push(
 						window.maestro.process.onData((sid: string, data: string) => {
@@ -781,6 +833,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						window.maestro.process.onSessionId((sid: string, capturedId: string) => {
 							if (sid === targetSessionId) {
 								agentSessionId = capturedId;
+							}
+						})
+					);
+
+					cleanupFns.push(
+						window.maestro.process.onAgentError((sid: string, error) => {
+							if (sid === targetSessionId && error?.message) {
+								synopsisAgentError = error.message;
 							}
 						})
 					);
@@ -800,7 +860,32 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
+								const effortRejection = settleEffortFallback(targetSessionId);
 								cleanup();
+								// Retry only when re-resolving really drops the refused value;
+								// otherwise the second attempt would send it again and loop.
+								const retry = spawnBackgroundSynopsisRef.current;
+								if (
+									effortRejection &&
+									retry &&
+									cheapTurnSettings(toolType).effort !== cheapEffort
+								) {
+									logger.warn(
+										'[spawnBackgroundSynopsis] Effort rejected by the provider; retrying at the agent default',
+										undefined,
+										{ sessionId, effort: cheapEffort, ...effortRejection }
+									);
+									void retry(
+										sessionId,
+										cwd,
+										resumeAgentSessionId,
+										prompt,
+										toolType,
+										sessionConfig,
+										options
+									).then(resolve);
+									return;
+								}
 								const ctx = lastSynopsisUsageEvent
 									? (estimateContextUsage(lastSynopsisUsageEvent, toolType) ?? undefined)
 									: undefined;
@@ -811,9 +896,13 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								// lastSynopsisTime - so the next synopsis skips everything the
 								// agent did before the failure. Report the failure instead and
 								// let the caller write nothing.
+								// A turn that prints nothing by design (a `/compact`) is judged
+								// by its exit code; text it does print is still checked.
+								const emptyByDesign =
+									options?.allowEmptyResponse === true && !stripAnsiCodes(responseText).trim();
 								const failed =
 									(typeof code === 'number' && code !== 0) ||
-									isFailedSynopsisResponse(responseText, toolType);
+									(!emptyByDesign && isFailedSynopsisResponse(responseText, toolType));
 								resolve({
 									success: !failed,
 									response: responseText,
@@ -822,7 +911,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									contextUsage: ctx,
 									...(failed
 										? {
-												error: stripAnsiCodes(responseText).trim() || `exit code ${code}`,
+												error:
+													stripAnsiCodes(responseText).trim() ||
+													synopsisAgentError ||
+													`exit code ${code}`,
 												errorKind: 'process-exit' as const,
 											}
 										: {}),
@@ -867,14 +959,21 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// that just did the engineering is pure waste - one premium turn per
 							// completed turn, forever. Falls back to the tab's own model where
 							// the provider has no tier mapping, or where the cheap model's
-							// context window is smaller than the tab's (see synopsisModel).
+							// context window is smaller than the tab's (see synopsisTurn).
 							//
 							// Safe only because the synopsis is a LEAF: every caller discards the
 							// agentSessionId it returns rather than adopting it, so the cheap
 							// model cannot follow the conversation into the next real turn. A
 							// future caller that adopts that id must revisit this.
-							sessionCustomModel: synopsisModel,
-							sessionCustomEffort: cheapSynopsis.effort ?? sessionConfig?.customEffort,
+							//
+							// `keepTurnSettings` opts out: a compaction is not a leaf, its
+							// summary becomes the conversation every later turn reads.
+							sessionCustomModel: options?.keepTurnSettings
+								? sessionConfig?.customModel
+								: synopsisTurn.model,
+							sessionCustomEffort: options?.keepTurnSettings
+								? sessionConfig?.customEffort
+								: synopsisTurn.effort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the
@@ -964,6 +1063,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 	// Update refs for functions that need to be accessed from other callbacks
 	spawnBackgroundSynopsisRef.current = spawnBackgroundSynopsis;
+	spawnAgentForSessionRef.current = spawnAgentForSession;
 	spawnAgentWithPromptRef.current = spawnAgentWithPrompt;
 
 	return {

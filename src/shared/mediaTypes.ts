@@ -50,6 +50,19 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
 export type MediaKind = 'audio' | 'video';
 
 /**
+ * What opening a playable audio/video file should do.
+ *
+ * `play` (the default) hands it to the floating player and starts it. `queue`
+ * appends it instead, leaving whatever is playing alone - that is how opening
+ * ten files at once plays the first and lines up the other nine. Queueing into
+ * an idle player loads the file PAUSED, so it is also how an agent puts media
+ * on screen for the user to start themselves (`maestro-cli open-file --queue`).
+ *
+ * Ignored for everything that is not media.
+ */
+export type MediaOpenMode = 'play' | 'queue';
+
+/**
  * Extract a lowercase file extension, or `null` when the name has none.
  *
  * Unlike a bare `split('.').pop()` this does not treat an extensionless file
@@ -163,6 +176,53 @@ export function parseMediaStreamUrl(url: string, expectedToken: string): string 
 	const filePath = fromHex(hex);
 	if (!filePath || !isMediaFile(filePath)) return null;
 	return filePath;
+}
+
+/**
+ * Whether a media item's `path` is a remote http(s) URL rather than a local file.
+ *
+ * Remote media skips the `maestro-media://` protocol entirely: the element
+ * loads the URL itself, and Chromium range-requests a progressive MP4
+ * (H.264/AAC) over HTTP the same way it seeks a local file. Adaptive formats
+ * (HLS, DASH) and live transports (RTSP, RTMP) are NOT covered - they need a
+ * Media Source Extensions demuxer this player does not ship.
+ */
+export function isRemoteMediaUrl(value: string | null | undefined): boolean {
+	return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+/**
+ * Audio or video for a remote URL, read off the extension of its path (never
+ * the query string, so a signed `clip.mp4?sig=...` still counts as video).
+ *
+ * Falls back to `video` when the path names no known extension: a `<video>`
+ * element plays an audio-only stream too, while an `<audio>` element given a
+ * video discards the picture.
+ */
+export function getRemoteMediaKind(url: string): MediaKind {
+	try {
+		return getMediaKind(new URL(url).pathname) ?? 'video';
+	} catch {
+		return 'video';
+	}
+}
+
+/** Title for a remote media item: the last path segment, else the host. */
+export function getRemoteMediaName(url: string): string {
+	try {
+		const parsed = new URL(url);
+		const segment = parsed.pathname.split('/').filter(Boolean).pop();
+		if (segment) {
+			try {
+				return decodeURIComponent(segment);
+			} catch {
+				return segment;
+			}
+		}
+		return parsed.host || url;
+	} catch {
+		return url;
+	}
 }
 
 /** Playback speeds offered by the media transport, slowest first. */

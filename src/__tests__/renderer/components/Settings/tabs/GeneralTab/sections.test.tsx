@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	AutoResumeSection,
 	BrowserSection,
+	CrossAgentMentionsSection,
 	HistorySection,
 	InputBehaviorSection,
 	MaestroCliSection,
@@ -238,6 +239,7 @@ describe('GeneralTab section components', () => {
 
 	it('wires tab naming and placement controls', () => {
 		const setAutomaticTabNamingEnabled = vi.fn();
+		const setShortenLongTabNames = vi.fn();
 		const setNewTabPlacement = vi.fn();
 		const setNewBrowserTabPlacement = vi.fn();
 		const setNewTerminalPlacement = vi.fn();
@@ -248,6 +250,8 @@ describe('GeneralTab section components', () => {
 				theme={mockTheme}
 				automaticTabNamingEnabled={true}
 				setAutomaticTabNamingEnabled={setAutomaticTabNamingEnabled}
+				shortenLongTabNames={false}
+				setShortenLongTabNames={setShortenLongTabNames}
 				newTabPlacement="end"
 				setNewTabPlacement={setNewTabPlacement}
 				newBrowserTabPlacement="end"
@@ -263,6 +267,9 @@ describe('GeneralTab section components', () => {
 			screen.getByRole('switch', { name: 'Automatically name tabs based on first message' })
 		);
 		expect(setAutomaticTabNamingEnabled).toHaveBeenCalledWith(false);
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Shorten long tab names' }));
+		expect(setShortenLongTabNames).toHaveBeenCalledWith(true);
 
 		const terminalSection = screen.getByText('New terminal placement').parentElement!;
 		fireEvent.click(within(terminalSection).getByRole('button', { name: 'After current tab' }));
@@ -428,7 +435,7 @@ describe('GeneralTab section components', () => {
 					statusError: 'Failed to check Maestro CLI status',
 					checking: true,
 					installing: true,
-					installMessage: 'CLI is installed and matches this Maestro version.',
+					installMessage: { text: 'CLI is installed and matches this Maestro version.', ok: true },
 					checkStatus: vi.fn(),
 					installOrUpdate: vi.fn(),
 				}}
@@ -491,5 +498,43 @@ describe('GeneralTab section components', () => {
 		expect(
 			screen.queryByText('Restart Maestro for changes to take effect')
 		).not.toBeInTheDocument();
+	});
+});
+
+describe('CrossAgentMentionsSection', () => {
+	function renderSection(handoffsWritable: boolean) {
+		const setCrossAgentHandoffsWritable = vi.fn();
+		const setCrossAgentMentionsWritable = vi.fn();
+		render(
+			<CrossAgentMentionsSection
+				theme={mockTheme}
+				crossAgentMentionsWritable={false}
+				setCrossAgentMentionsWritable={setCrossAgentMentionsWritable}
+				crossAgentHandoffsWritable={handoffsWritable}
+				setCrossAgentHandoffsWritable={setCrossAgentHandoffsWritable}
+			/>
+		);
+		return { setCrossAgentHandoffsWritable, setCrossAgentMentionsWritable };
+	}
+
+	it('gives hand-offs their own switch, separate from consults', () => {
+		const { setCrossAgentHandoffsWritable, setCrossAgentMentionsWritable } = renderSection(true);
+
+		expect(screen.getByText('Hand-offs')).toBeInTheDocument();
+		// The second Read-Only button belongs to the Hand-offs group.
+		fireEvent.click(screen.getAllByRole('button', { name: 'Read-Only' })[1]);
+
+		expect(setCrossAgentHandoffsWritable).toHaveBeenCalledWith(false);
+		expect(setCrossAgentMentionsWritable).not.toHaveBeenCalled();
+	});
+
+	it('warns that a writable hand-off acts on forwarded text unattended', () => {
+		renderSection(true);
+		expect(screen.getByText(/can include text from the web/)).toBeInTheDocument();
+	});
+
+	it('drops the warning when hand-offs are read-only', () => {
+		renderSection(false);
+		expect(screen.queryByText(/can include text from the web/)).not.toBeInTheDocument();
 	});
 });

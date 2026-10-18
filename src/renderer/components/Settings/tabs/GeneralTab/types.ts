@@ -24,7 +24,7 @@ export interface MaestroCliState {
 	statusError: string | null;
 	checking: boolean;
 	installing: boolean;
-	installMessage: string | null;
+	installMessage: { text: string; ok: boolean } | null;
 	checkStatus: () => Promise<void>;
 	installOrUpdate: () => Promise<void>;
 }

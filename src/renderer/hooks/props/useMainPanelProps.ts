@@ -34,7 +34,7 @@ import type {
 } from '../../types/contextMerge';
 import type { FileNode } from '../../types/fileTree';
 import type { DocumentGenerationCallbacks } from '../../services/inlineWizardDocumentGeneration';
-import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { ForceSendEligibility, SteerEligibility } from '../../utils/executionQueue';
 import type { PublishTextAsGistOptions } from '../tabs/useTabExportHandlers';
 
 /**
@@ -143,18 +143,22 @@ export interface UseMainPanelPropsDeps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
+	handleUploadFiles?: (files: File[]) => void;
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
 	handleStopBatchRun: (sessionId?: string) => void;
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleToggleQueuedItemPause: (itemId: string) => void;
+	handleMergeQueuedItem: (itemId: string) => void;
 	handleEditQueuedItem: (itemId: string, patch: QueuedItemEditPatch) => void;
 	handleReorderQueuedItem: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
 	forcedParallelEnabled: boolean;
 	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
 	getForceSendContext: (item: QueuedItem) => ForceSendEligibility | null;
+	getSteerContext: (item: QueuedItem) => SteerEligibility | null;
+	handleSteerQueuedItem: (itemId: string) => void;
 	handleOpenQueueBrowser: () => void;
 
 	// Tab management handlers
@@ -196,7 +200,7 @@ export interface UseMainPanelPropsDeps {
 	handleBrowserTabUpdate: (
 		sessionId: string,
 		tabId: string,
-		updates: Partial<import('../../types').BrowserTab>
+		updates: Partial<import('../../../shared/browserPage').BrowserTab>
 	) => void;
 
 	// Terminal tab callbacks (Phase 8)
@@ -385,6 +389,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			handleInputKeyDown: deps.handleInputKeyDown,
 			handlePaste: deps.handlePaste,
 			handleDrop: deps.handleDrop,
+			onUploadFiles: deps.handleUploadFiles,
 			getContextColor: deps.getContextColor,
 			setActiveSessionId: deps.setActiveSessionId,
 			currentSessionBatchState: deps.currentSessionBatchState,
@@ -392,11 +397,14 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
 			onTogglePauseQueuedItem: deps.handleToggleQueuedItemPause,
+			onMergeQueuedItem: deps.handleMergeQueuedItem,
 			onEditQueuedItem: deps.handleEditQueuedItem,
 			onReorderQueuedItem: deps.handleReorderQueuedItem,
 			onForceSendQueuedItem: deps.handleForceSendQueuedItem,
 			forcedParallelEnabled: deps.forcedParallelEnabled,
 			getForceSendContext: deps.getForceSendContext,
+			getSteerContext: deps.getSteerContext,
+			onSteerQueuedItem: deps.handleSteerQueuedItem,
 			onOpenQueueBrowser: deps.handleOpenQueueBrowser,
 			// Tab management handlers
 			onTabSelect: deps.handleTabSelect,
@@ -636,17 +644,21 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleInputKeyDown,
 			deps.handlePaste,
 			deps.handleDrop,
+			deps.handleUploadFiles,
 			deps.getContextColor,
 			deps.setActiveSessionId,
 			deps.handleStopBatchRun,
 			deps.handleDeleteLog,
 			deps.handleRemoveQueuedItem,
 			deps.handleToggleQueuedItemPause,
+			deps.handleMergeQueuedItem,
 			deps.handleEditQueuedItem,
 			deps.handleReorderQueuedItem,
 			deps.handleForceSendQueuedItem,
 			deps.forcedParallelEnabled,
 			deps.getForceSendContext,
+			deps.getSteerContext,
+			deps.handleSteerQueuedItem,
 			deps.handleOpenQueueBrowser,
 			deps.handleTabSelect,
 			deps.handleTabClose,

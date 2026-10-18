@@ -3,7 +3,7 @@
 
 import { getSessionById, readHistory, readGroups } from '../services/storage';
 import { formatAgentDetail, formatError } from '../output/formatter';
-import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { readAgentSessionSettings } from '../services/agent-settings';
 
 interface ShowAgentOptions {
 	json?: boolean;
@@ -55,14 +55,6 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 		// Get recent history (last 10 entries)
 		const recentHistory = history.sort((a, b) => b.timestamp - a.timestamp).slice(0, 10);
 
-		// Resolve the Claude token source to the friendly tri-state (api | tui via
-		// 'interactive' | dynamic) the Edit Agent modal shows. SSH enablement flips
-		// the default for an unconfigured agent, so pass it through.
-		const tokenSource = getClaudeTokenMode(
-			{ enableMaestroP: agent.enableMaestroP, maestroPMode: agent.maestroPMode },
-			{ sshEnabled: agent.sessionSshRemoteConfig?.enabled === true }
-		);
-
 		const output = {
 			id: agent.id,
 			name: agent.name,
@@ -75,28 +67,9 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			// Where this agent's worktrees go (Git menu -> Configure Worktrees).
 			// Null when unset; `create-worktree` then picks the desktop default.
 			worktreeBasePath: agent.worktreeConfig?.basePath ?? null,
-			// Left Bar bookmark state (settable with `maestro-cli bookmark` /
-			// `unbookmark`, or `update-agent --bookmark`).
-			bookmarked: !!agent.bookmarked,
 			// Editable per-agent settings (the Edit Agent modal fields) so callers
 			// can read the full config without parsing raw store files.
-			nudgeMessage: agent.nudgeMessage ?? null,
-			newSessionMessage: agent.newSessionMessage ?? null,
-			customPath: agent.customPath ?? null,
-			customArgs: agent.customArgs ?? null,
-			customEnvVars: agent.customEnvVars ?? null,
-			customModel: agent.customModel ?? null,
-			customEffort: agent.customEffort ?? null,
-			customContextWindow: agent.customContextWindow ?? null,
-			// Claude token source: friendly tri-state plus the raw stored pair.
-			tokenSource: agent.toolType === 'claude-code' ? tokenSource : null,
-			enableMaestroP: agent.enableMaestroP ?? null,
-			maestroPMode: agent.maestroPMode ?? null,
-			maestroPPath: agent.maestroPPath ?? null,
-			// Full SSH execution config so onboarding/verification can confirm the
-			// agent's remote, working-dir override, and history-sync state without
-			// reading raw store files.
-			sessionSshRemoteConfig: agent.sessionSshRemoteConfig ?? null,
+			...readAgentSessionSettings(agent),
 			stats: {
 				historyEntries: history.length,
 				successCount,

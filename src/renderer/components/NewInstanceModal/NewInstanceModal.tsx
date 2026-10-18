@@ -26,8 +26,10 @@ import {
 	providerLocationLabel,
 } from '../../utils/providerAvailability';
 import { logger } from '../../utils/logger';
+import type { CodexTransport } from '../../../shared/codexTransport';
 import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
+import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 
 export function NewInstanceModal({
 	isOpen,
@@ -72,6 +74,10 @@ export function NewInstanceModal({
 	// Codex automatic usage resets, per provider. Defaults OFF - unlike the
 	// resilience toggles above, spending a reset credit is irreversible.
 	const [codexAutoResetByAgent, setCodexAutoResetByAgent] = useState<Record<string, boolean>>({});
+	// Codex transport, per provider. Absent means `exec`, the default.
+	const [codexTransportByAgent, setCodexTransportByAgent] = useState<
+		Record<string, CodexTransport>
+	>({});
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
 	const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
 	const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
@@ -357,6 +363,11 @@ export function NewInstanceModal({
 					...prev,
 					[source.toolType]: source.codexAutoResetOnExhaustion === true,
 				}));
+				// A copy runs its chat turns on the same transport as the original.
+				setCodexTransportByAgent((prev) => ({
+					...prev,
+					[source.toolType]: source.codexTransport === 'app-server' ? 'app-server' : 'exec',
+				}));
 
 				// Pre-fill SSH remote configuration if source session has it
 				if (source.sessionSshRemoteConfig?.enabled && source.sessionSshRemoteConfig?.remoteId) {
@@ -632,7 +643,8 @@ export function NewInstanceModal({
 			retryAvailabilityByAgent[selectedAgent] ?? true,
 			retryTokenByAgent[selectedAgent] ?? true,
 			normalizeAdditionalDirectories(additionalDirectories, homeDir),
-			codexAutoResetByAgent[selectedAgent] ?? false
+			codexAutoResetByAgent[selectedAgent] ?? false,
+			codexTransportByAgent[selectedAgent] ?? 'exec'
 		);
 		onClose();
 
@@ -698,6 +710,10 @@ export function NewInstanceModal({
 		handleWorkingDirChange,
 		existingSessions,
 		selectedGroupId,
+		retryAvailabilityByAgent,
+		retryTokenByAgent,
+		codexAutoResetByAgent,
+		codexTransportByAgent,
 	]);
 
 	// Check if form is valid for submission
@@ -1035,19 +1051,9 @@ export function NewInstanceModal({
 						}
 					}}
 					onEnvVarAdd={(agentId) => {
-						const currentVars = customAgentEnvVars[agentId] || {};
-						let newKey = 'NEW_VAR';
-						let counter = 1;
-						while (currentVars[newKey]) {
-							newKey = `NEW_VAR_${counter}`;
-							counter++;
-						}
 						setCustomAgentEnvVars((prev) => ({
 							...prev,
-							[agentId]: {
-								...prev[agentId],
-								[newKey]: '',
-							},
+							[agentId]: withBlankEnvVarRow(prev[agentId] ?? {}),
 						}));
 					}}
 					onConfigChange={(agentId, key, value) => {
@@ -1088,6 +1094,10 @@ export function NewInstanceModal({
 					codexAutoResetByAgent={codexAutoResetByAgent}
 					onCodexAutoResetChange={(agentId, value) =>
 						setCodexAutoResetByAgent((prev) => ({ ...prev, [agentId]: value }))
+					}
+					codexTransportByAgent={codexTransportByAgent}
+					onCodexTransportChange={(agentId, value) =>
+						setCodexTransportByAgent((prev) => ({ ...prev, [agentId]: value }))
 					}
 				/>
 

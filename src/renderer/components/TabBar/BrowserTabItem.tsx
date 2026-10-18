@@ -12,9 +12,9 @@ import {
 	RotateCcw,
 	VenetianMask,
 } from 'lucide-react';
-import type { BrowserTab, Theme } from '../../types';
+import type { Theme } from '../../types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
-import { isCoarsePointer } from '../../utils/touch';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { LongPressable } from '../shared/LongPressable';
 import { TabOverlayPortal } from './TabOverlayPortal';
@@ -168,8 +168,6 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	const handleTabSelect = useCallback(() => {
 		onSelect(tab.id);
 	}, [onSelect, tab.id]);
-	// Coarse pointer: long-press owns the gesture, so native drag is off.
-	const coarse = isCoarsePointer();
 	const handleDoubleClick = useCallback(() => onRename?.(tab.id), [onRename, tab.id]);
 	const handleRenameClick = useCallback(
 		(e: React.MouseEvent) => {
@@ -329,7 +327,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 			onMouseDown={handleMouseDown}
 			onMouseEnter={handleMouseEnter}
 			onMouseLeave={handleMouseLeave}
-			draggable={!coarse}
+			draggable
 			onDragStart={handleTabDragStart}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
@@ -360,6 +358,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 			)}
 
 			<span
+				data-tab-label
 				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
@@ -392,6 +391,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 			{(isHovered || isActive) && (
 				<button
 					onClick={handleCloseClick}
+					data-tab-close
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
 					title={`Close tab${shortcutSuffix(tabShortcuts.closeTab?.keys)}`}
 				>

@@ -116,6 +116,23 @@ describe('ProcessManager per-spawn coworking socket override', () => {
 		expect(forwarded.customEnvVars?.[OVERRIDE_ENV]).toBe(SENTINEL_SOCKET);
 	});
 
+	it('injects no coworking env at all while the coworking Encore flag is off', () => {
+		let coworkingOn = false;
+		const gated = new ProcessManager(undefined, { isCoworkingEnabled: () => coworkingOn });
+		const spawnAgent = (sessionId: string) =>
+			gated.spawn({ sessionId, toolType: 'claude-code', cwd: '/tmp', command: 'claude', args: [] });
+
+		spawnAgent('agent-off');
+		expect(captured.child[0].customEnvVars?.[SESSION_ID_ENV]).toBeUndefined();
+		expect(captured.child[0].customEnvVars?.[OVERRIDE_ENV]).toBeUndefined();
+		expect(mockGetBridgeSocketPath).not.toHaveBeenCalled();
+
+		// Read live on every spawn: turning the flag on applies to the next one.
+		coworkingOn = true;
+		spawnAgent('agent-on');
+		expect(captured.child[1].customEnvVars?.[OVERRIDE_ENV]).toBe(SENTINEL_SOCKET);
+	});
+
 	it('does not inject the socket override for terminal spawns', () => {
 		pm.spawn({
 			sessionId: 'term-1',

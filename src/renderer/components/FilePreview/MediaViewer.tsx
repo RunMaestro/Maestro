@@ -28,7 +28,12 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import { formatMediaTime } from '../../utils/mediaItems';
 import { resolveMediaStreamSrc } from '../../utils/mediaStreamSrc';
-import { MEDIA_PLAYBACK_RATES, isMediaStreamUrl, type MediaKind } from '../../../shared/mediaTypes';
+import {
+	MEDIA_PLAYBACK_RATES,
+	isMediaStreamUrl,
+	isRemoteMediaUrl,
+	type MediaKind,
+} from '../../../shared/mediaTypes';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition';
@@ -38,7 +43,10 @@ interface MediaViewerProps {
 	kind: MediaKind;
 	/** File name, used for the audio placeholder label. */
 	name: string;
-	/** Absolute path. Re-resolved into a fresh stream URL, and the "open externally" target. */
+	/**
+	 * Absolute path, re-resolved into a fresh stream URL; or an http(s) URL the
+	 * element loads directly. Also the "open externally" target either way.
+	 */
 	path: string;
 	/** Start playing as soon as the file is ready. Set for tabs the user just opened. */
 	autoplay?: boolean;
@@ -255,6 +263,13 @@ export const MediaViewer = memo(function MediaViewer({
 		autoplayPendingRef.current = autoplayRequestedRef.current;
 		resumeRef.current = resumeRequestedRef.current;
 
+		// A remote URL is already something the element can load: there is no file
+		// to read, no capability token to mint, and no web-desktop route to map.
+		if (isRemoteMediaUrl(path)) {
+			setSrc(path);
+			return;
+		}
+
 		void (async () => {
 			try {
 				const resolved = await window.maestro.fs.readFile(path);
@@ -375,6 +390,8 @@ export const MediaViewer = memo(function MediaViewer({
 	// in Default App" escape hatch on screen for the case where it helps.
 	const handleMediaError = useCallback(() => {
 		setLoadState('error');
+		// A URL has no disk to ask; the error card speaks for it.
+		if (isRemoteMediaUrl(path)) return;
 		const forPath = path;
 		void window.maestro.fs
 			.stat(forPath)
@@ -466,8 +483,10 @@ export const MediaViewer = memo(function MediaViewer({
 		if (el && 'requestFullscreen' in el) void el.requestFullscreen().catch(() => undefined);
 	}, []);
 
+	const isRemote = isRemoteMediaUrl(path);
 	const openExternally = useCallback(() => {
-		void window.maestro.shell.openPath(path);
+		if (isRemoteMediaUrl(path)) void window.maestro.shell.openExternal(path);
+		else void window.maestro.shell.openPath(path);
 	}, [path]);
 
 	// Close the speed menu on any outside click. Both the button and the portaled
@@ -602,10 +621,12 @@ export const MediaViewer = memo(function MediaViewer({
 				<AlertTriangle className="w-12 h-12" style={{ color: theme.colors.textDim }} />
 				<div className="text-center">
 					<p className="text-lg font-medium" style={{ color: theme.colors.textMain }}>
-						Cannot Play This File
+						{isRemote ? 'Cannot Play This Stream' : 'Cannot Play This File'}
 					</p>
 					<p className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
-						The codec inside this container is not supported.
+						{isRemote
+							? 'The URL did not return playable media, the server refused the request, or the format is not a progressive MP4 / plain audio file.'
+							: 'The codec inside this container is not supported.'}
 					</p>
 					<button
 						onClick={openExternally}
@@ -613,7 +634,7 @@ export const MediaViewer = memo(function MediaViewer({
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 					>
 						<ExternalLink className="w-4 h-4" />
-						Open in Default App
+						{isRemote ? 'Open in Browser' : 'Open in Default App'}
 					</button>
 				</div>
 			</div>
@@ -830,8 +851,8 @@ export const MediaViewer = memo(function MediaViewer({
 
 					<GhostIconButton
 						onClick={openExternally}
-						title="Open in default app"
-						ariaLabel="Open in default app"
+						title={isRemote ? 'Open in browser' : 'Open in default app'}
+						ariaLabel={isRemote ? 'Open in browser' : 'Open in default app'}
 						color={theme.colors.textDim}
 					>
 						<ExternalLink className="w-4 h-4" />

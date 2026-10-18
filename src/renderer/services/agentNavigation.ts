@@ -23,10 +23,11 @@ import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useGroupChatStore } from '../stores/groupChatStore';
 import { useModalStore } from '../stores/modalStore';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
+import { requestSidebarReveal } from '../utils/sidebarReveal';
 
 /**
  * Make sure a jumped-to agent is actually visible in the Left Bar, without
- * expanding more than we have to.
+ * expanding more than we have to, and scroll its row into view.
  *
  * - Not bookmarked: expand the parent group if collapsed.
  * - Bookmarked: prefer whichever section the agent is already visible in. If
@@ -34,6 +35,9 @@ import { aiTabFocusFields } from '../utils/tabFocusFields';
  *   pinned bookmark row is the lighter-weight reveal of the two).
  */
 export function revealAgentInSidebar(session: Session): void {
+	// Explicit even though the switch itself triggers a reveal: jumping to the
+	// agent that is already active changes nothing the Left Bar watches.
+	requestSidebarReveal();
 	const { groups, setGroups } = useSessionStore.getState();
 
 	if (!session.bookmarked) {

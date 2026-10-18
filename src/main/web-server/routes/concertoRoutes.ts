@@ -20,7 +20,8 @@
 
 import { FastifyInstance } from 'fastify';
 import { logger } from '../../utils/logger';
-import { CONCERTO_HTML_RESPONSE_HEADERS, getConcertoHtmlDocumentBody } from '../../concerto-html';
+import { concertoHtmlResponseHeaders, getConcertoHtmlDocumentBody } from '../../concerto-html';
+import { isConcertoHtmlSurface } from '../../../shared/concerto-html';
 
 const LOG_CONTEXT = 'WebServer:Concerto';
 
@@ -41,14 +42,14 @@ export class ConcertoRoutes {
 	registerRoutes(server: FastifyInstance): void {
 		server.get(`/${this.concertoToken}/concerto/render`, async (request, reply) => {
 			const { surface, id } = request.query as RenderQuery;
-			if ((surface !== 'movement' && surface !== 'cadenza') || !id) {
+			if (!isConcertoHtmlSurface(surface) || !id) {
 				return reply.code(400).type('text/plain').send('bad request');
 			}
 			const body = getConcertoHtmlDocumentBody(surface, id);
 			if (body === null) {
 				return reply.code(404).type('text/plain').send('not found');
 			}
-			return reply.headers({ ...CONCERTO_HTML_RESPONSE_HEADERS }).send(body);
+			return reply.headers(concertoHtmlResponseHeaders(surface)).send(body);
 		});
 
 		logger.debug('Concerto routes registered', LOG_CONTEXT);

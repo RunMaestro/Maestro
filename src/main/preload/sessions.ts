@@ -74,9 +74,9 @@ export function createClaudeApi() {
 			logDeprecationWarning('listSessionsPaginated', 'listPaginated');
 			return ipcRenderer.invoke('claude:listSessionsPaginated', projectPath, options);
 		},
-		getProjectStats: (projectPath: string) => {
+		getProjectStats: (projectPath: string, ownerAgentId?: string) => {
 			logDeprecationWarning('getProjectStats');
-			return ipcRenderer.invoke('claude:getProjectStats', projectPath);
+			return ipcRenderer.invoke('claude:getProjectStats', projectPath, ownerAgentId);
 		},
 		getSessionTimestamps: (projectPath: string): Promise<{ timestamps: string[] }> => {
 			logDeprecationWarning('getSessionTimestamps');
@@ -89,6 +89,16 @@ export function createClaudeApi() {
 				totalMessages: number;
 				totalCostUsd: number;
 				totalSizeBytes: number;
+				totalTokens?: number;
+				/** `totalTokens` by kind, over the sessions that recorded one. */
+				tokenSplit?: {
+					inputTokens: number;
+					outputTokens: number;
+					cacheReadTokens: number;
+					cacheCreationTokens: number;
+				};
+				/** Archived tokens counted in `totalTokens` with no record of their kind. */
+				unsplitTokens?: number;
 				oldestTimestamp: string | null;
 				processedCount: number;
 				isComplete: boolean;
@@ -227,7 +237,8 @@ export function createAgentSessionsApi() {
 		listPaginated: (
 			agentId: string,
 			projectPath: string,
-			options?: { cursor?: string; limit?: number },
+			/** `ownerAgentId` is the Maestro agent browsing; its account's pool is listed. */
+			options?: { cursor?: string; limit?: number; ownerAgentId?: string },
 			sshRemoteId?: string
 		) =>
 			ipcRenderer.invoke('agentSessions:listPaginated', agentId, projectPath, options, sshRemoteId),
@@ -319,7 +330,10 @@ export function createAgentSessionsApi() {
 			agentId: string,
 			projectPath: string
 		): Promise<
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		> => ipcRenderer.invoke('agentSessions:getOrigins', agentId, projectPath),
 
 		setSessionName: (

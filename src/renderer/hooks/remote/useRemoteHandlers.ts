@@ -21,7 +21,11 @@ import {
 import { useSessionStore, updateAiTab } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getActiveTab } from '../../utils/tabHelpers';
+import {
+	getActiveTab,
+	settleAgentStateFromTabs,
+	settleTabThinkingState,
+} from '../../utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -29,14 +33,18 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
 import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
+	previewMentionDispatch,
+	withMentionTurnNotes,
 } from '../../services/crossAgentMentions';
 import { noteDirectDispatch } from '../../stores/retryStore';
+import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -161,6 +169,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  Forwarded to the agent spawn so AI tabs can render and send
 				 *  them in the prompt, mirroring desktop staged-images. */
 				images?: string[];
+				/** New-tab provider commands that have no Maestro prompt expansion. */
+				literalPrompt?: boolean;
 				/** Reply channel for the web server's delivery receipt. Set when the
 				 *  command arrived over `remote:executeCommand`; absent for
 				 *  in-renderer synthetic dispatches. */
@@ -173,6 +183,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				tabId: requestedTabId,
 				force,
 				images,
+				literalPrompt,
 				receiptChannel,
 			} = customEvent.detail;
 
@@ -276,10 +287,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						prev.map((s) => {
 							if (s.id !== sessionId) return s;
 							return {
-								...s,
-								state: 'idle' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
+								...settleAgentStateFromTabs(s),
 								// TODO: Remove shellLogs once terminal tabs migration is complete
 								...(!s.terminalTabs?.length && {
 									shellLogs: [
@@ -386,7 +394,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					reportDelivery(false, 'no-target-tab-for-mention');
 					return;
 				}
-				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
+				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
+				// The bubble below lands in this tab, so name it from the message just as
+				// the composer does for a leading mention (it names before planning).
+				requestTabAutoNameForMessage(session, writeTabId, command, 'remote');
 				const mentionOnlyEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
@@ -407,7 +418,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			let commandMetadata: { command: string; description: string } | undefined;
 
 			// Handle slash commands (custom AI commands only)
-			if (command.trim().startsWith('/')) {
+			if (!literalPrompt && command.trim().startsWith('/')) {
 				const commandText = command.trim();
 				logger.info('[Remote] Detected slash command:', undefined, commandText);
 
@@ -562,6 +573,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 				const remoteImages = images && images.length > 0 ? images : undefined;
 
+				// A dispatch that opens the tab's first turn starts a new provider
+				// session, so it carries the New Session Message like a typed message
+				// does. Agent-only: the user bubble below keeps the plain `promptToSend`.
+				const agentPrompt = prependNewSessionMessageOnFirstTurn(
+					promptToSend,
+					session.newSessionMessage,
+					tabAgentSessionId
+				);
+
 				logger.info('[Remote] Spawning agent:', undefined, {
 					maestroSessionId: sessionId,
 					targetSessionId,
@@ -574,6 +594,19 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					prompt: promptToSend.substring(0, 100),
 					imageCount: remoteImages?.length ?? 0,
 				});
+
+				// Name the tab from what was dispatched, exactly as the composer does for a
+				// typed message. `maestro-cli dispatch`, `send --live`, an idle `dispatch
+				// --new-tab`, and the web/mobile composer all land here without passing
+				// through the desktop composer, so this is the only chance such a tab
+				// gets to be named. A matched slash command is skipped, as it is in the
+				// composer (which returns before naming) and in the queue drain (which
+				// skips `command` items): its text is a command name, not a request.
+				// Runs after the awaits above, and the helper reads the live tab, so a
+				// tab closed or named in the meantime is left alone.
+				if (targetTab && !commandMetadata) {
+					requestTabAutoNameForMessage(session, targetTab.id, command, 'remote');
+				}
 
 				// Add user message to target tab's logs and set state to busy
 				const userLogEntry: LogEntry = {
@@ -600,6 +633,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 											? {
 													...tab,
 													state: 'busy' as const,
+													// Per-tab, like a composer send: a tab's elapsed timer (Quick
+													// Chat's "Working for", parallel tabs) reads the tab's own start.
+													thinkingStartTime: Date.now(),
 													logs: [...tab.logs, userLogEntry],
 													...codifyTurnSettings(tab, s),
 												}
@@ -680,7 +716,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						prompt: promptToSend,
+						// A trailing mention is answered by the consulted agent in parallel,
+						// or handed this turn's answer when it ends (dispatched below); tell
+						// this turn which, so it waits for the reply or writes an answer
+						// that stands alone. Agent-only: the user bubble above keeps the
+						// plain `promptToSend`.
+						prompt:
+							mentionPlan && writeTabId
+								? withMentionTurnNotes(agentPrompt, previewMentionDispatch(mentionPlan))
+								: agentPrompt,
 						images: remoteImages,
 						appendSystemPrompt,
 						agentSessionId: tabAgentSessionId ?? undefined,
@@ -702,9 +746,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// A no-op if the grace timer already acked.
 				reportDelivery(true);
 				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
-				// Trailing mention: this agent answers AND the mentioned agent is consulted.
+				// Trailing mention: this agent answers AND the mentioned agent is
+				// consulted alongside it, or handed the answer when it ends.
 				if (mentionPlan && writeTabId) {
-					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
+					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
 				}
 			} catch (error: unknown) {
 				// A remote command that lands while the agent is mid-turn is refused
@@ -713,7 +758,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// honest `accepted: false` receipt below and the tab gets the error
 				// log, so the user is told either way. Reporting it paged Sentry for
 				// nothing (MAESTRO-ZS). Every other spawn failure still reports.
-				if (!isAgentAlreadyRunningError(error)) {
+				const isSpawnCollision = isAgentAlreadyRunningError(error);
+				if (!isSpawnCollision) {
 					captureException(error, {
 						extra: {
 							sessionId,
@@ -742,20 +788,6 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						// Mirror the success path: route the error log to the same tab
 						// we tried to write into, falling back to active when unset.
 						const resolvedWriteTabId = writeTabId ?? s.activeTabId;
-						const updatedAiTabs =
-							s.aiTabs?.length > 0
-								? s.aiTabs.map((tab) =>
-										tab.id === resolvedWriteTabId
-											? {
-													...tab,
-													state: 'idle' as const,
-													thinkingStartTime: undefined,
-													logs: [...tab.logs, errorLogEntry],
-												}
-											: tab
-									)
-								: s.aiTabs;
-
 						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
 							logger.error(
 								'[runAICommand error] Target tab not found in session - dropping error log'
@@ -763,13 +795,18 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 							return s;
 						}
 
-						return {
+						const withLog = {
 							...s,
-							state: 'idle' as SessionState,
-							busySource: undefined,
-							thinkingStartTime: undefined,
-							aiTabs: updatedAiTabs,
+							aiTabs: s.aiTabs.map((tab) =>
+								tab.id === resolvedWriteTabId ? { ...tab, logs: [...tab.logs, errorLogEntry] } : tab
+							),
 						};
+						// A collision means another turn is live on this tab: leave its
+						// busy state exactly as it is, the same rule the composer and the
+						// queue follow - its exit settles it. Any other failure started
+						// nothing, so settle only this tab; another tab mid-turn keeps the
+						// agent busy.
+						return isSpawnCollision ? withLog : settleTabThinkingState(withLog, resolvedWriteTabId);
 					})
 				);
 			}

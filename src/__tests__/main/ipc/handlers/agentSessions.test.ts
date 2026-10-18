@@ -12,6 +12,15 @@ import {
 	isExpectedSessionReadError,
 } from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
+import {
+	GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
+	GLOBAL_STATS_CACHE_VERSION,
+	loadGlobalStatsCache,
+	saveGlobalStatsCache,
+} from '../../../../main/utils/statsCache';
+import os from 'os';
+import path from 'path';
+import { promises as realFs } from 'fs';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -34,6 +43,14 @@ vi.mock('../../../../main/agents', () => ({
 // behavior the tests below assert against), not an "uninitialized" throw.
 vi.mock('../../../../main/stores', () => ({
 	getSshRemoteById: vi.fn().mockReturnValue(undefined),
+}));
+
+// The global stats scan reads and writes a cache under userData; start cold
+// and discard writes so a test only ever sees the transcripts it created.
+vi.mock('../../../../main/utils/statsCache', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/utils/statsCache')>()),
+	loadGlobalStatsCache: vi.fn().mockResolvedValue(null),
+	saveGlobalStatsCache: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock the logger
@@ -513,5 +530,150 @@ describe('isExpectedSessionReadError', () => {
 	it('handles non-Error throwables', () => {
 		expect(isExpectedSessionReadError(undefined)).toBe(false);
 		expect(isExpectedSessionReadError('EACCES')).toBe(false);
+	});
+});
+
+describe('agentSessions:getGlobalStats discovery', () => {
+	let home: string;
+	let getGlobalStats: () => Promise<{
+		totalSessions: number;
+		totalMessages: number;
+		totalSizeBytes: number;
+		byProvider: Record<string, { sessions: number }>;
+	}>;
+
+	beforeEach(async () => {
+		home = await realFs.mkdtemp(path.join(os.tmpdir(), 'maestro-global-stats-'));
+		vi.spyOn(os, 'homedir').mockReturnValue(home);
+		const handlers = new Map<string, Function>();
+		vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+			handlers.set(channel, handler);
+		});
+		registerAgentSessionsHandlers();
+		const handler = handlers.get('agentSessions:getGlobalStats')!;
+		getGlobalStats = () => handler({});
+	});
+
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		await realFs.rm(home, { recursive: true, force: true });
+	});
+
+	it('counts every non-empty transcript across more files than the concurrency cap', async () => {
+		const claudeTranscript = '{"type":"user"}\n{"type":"assistant"}\n';
+		const projects = path.join(home, '.claude', 'projects');
+		// 40 transcripts across two projects: more than either pool's cap, so
+		// workers must pull past their first item for the count to come out right.
+		for (const project of ['-Users-a', '-Users-b']) {
+			await realFs.mkdir(path.join(projects, project), { recursive: true });
+			for (let i = 0; i < 20; i++) {
+				await realFs.writeFile(path.join(projects, project, `s${i}.jsonl`), claudeTranscript);
+			}
+		}
+		// Skipped: an abandoned 0-byte session, a non-transcript, and a stray file
+		// where a project directory is expected.
+		await realFs.writeFile(path.join(projects, '-Users-a', 'empty.jsonl'), '');
+		await realFs.writeFile(path.join(projects, '-Users-a', 'notes.txt'), 'x');
+		await realFs.writeFile(path.join(projects, 'stray.jsonl'), claudeTranscript);
+
+		const codexDay = path.join(home, '.codex', 'sessions', '2026', '10', '11');
+		await realFs.mkdir(codexDay, { recursive: true });
+		await realFs.writeFile(
+			path.join(codexDay, 'rollout.jsonl'),
+			'{"type":"response_item","payload":{"type":"message","role":"user"}}\n'
+		);
+
+		const stats = await getGlobalStats();
+
+		expect(stats.byProvider['claude-code'].sessions).toBe(40);
+		expect(stats.byProvider['codex'].sessions).toBe(1);
+		expect(stats.totalSessions).toBe(41);
+		expect(stats.totalMessages).toBe(81);
+		expect(stats.totalSizeBytes).toBe(
+			40 * claudeTranscript.length +
+				'{"type":"response_item","payload":{"type":"message","role":"user"}}\n'.length
+		);
+	});
+
+	it('upgrades a cache from an older Claude parser: re-parses live sessions, rescales archived ones', async () => {
+		const projects = path.join(home, '.claude', 'projects', '-Users-a');
+		await realFs.mkdir(projects, { recursive: true });
+		// One API response written as two lines (one per content block), each
+		// repeating the usage: 1M Sonnet input = $3 once deduplicated.
+		const line = JSON.stringify({
+			type: 'assistant',
+			requestId: 'req_1',
+			message: { id: 'msg_1', model: 'claude-sonnet-4-6', usage: { input_tokens: 1_000_000 } },
+		});
+		await realFs.writeFile(path.join(projects, 'live.jsonl'), `${line}\n${line}\n`);
+
+		const cachedEntry = (inputTokens: number, costUsd: number, archived = false) => ({
+			messages: 2,
+			inputTokens,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			cachedInputTokens: 0,
+			sizeBytes: 1,
+			costUsd,
+			// Newer than the file, so only the version can force the re-parse.
+			fileMtimeMs: Date.now() + 60_000,
+			archived,
+		});
+		vi.mocked(loadGlobalStatsCache).mockResolvedValueOnce({
+			version: GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
+			lastUpdated: 0,
+			providers: {
+				'claude-code': {
+					sessions: {
+						'-Users-a/live': cachedEntry(2_000_000, 6),
+						'-Users-a/gone': cachedEntry(4_000_000, 12, true),
+					},
+				},
+				codex: { sessions: {} },
+			},
+		});
+
+		const stats = (await getGlobalStats()) as unknown as {
+			totalCostUsd: number;
+			totalInputTokens: number;
+		};
+
+		// Live re-parsed to $3; the fix halved it, so the archived $12 becomes $6.
+		expect(stats.totalCostUsd).toBeCloseTo(9, 10);
+		expect(stats.totalInputTokens).toBe(3_000_000);
+		const saved = vi.mocked(saveGlobalStatsCache).mock.calls.at(-1)![0];
+		expect(saved.version).toBe(GLOBAL_STATS_CACHE_VERSION);
+	});
+
+	it("prices a Claude session's subagent transcripts into the totals without counting them as sessions", async () => {
+		const project = path.join(home, '.claude', 'projects', '-Users-a');
+		const line = (id: string) =>
+			JSON.stringify({
+				type: 'assistant',
+				requestId: `req_${id}`,
+				message: { id, model: 'claude-sonnet-4-6', usage: { input_tokens: 1_000_000 } },
+			});
+		await realFs.mkdir(path.join(project, 's1', 'subagents'), { recursive: true });
+		await realFs.writeFile(path.join(project, 's1.jsonl'), `${line('parent')}\n`);
+		await realFs.writeFile(
+			path.join(project, 's1', 'subagents', 'agent-x.jsonl'),
+			`${line('child')}\n`
+		);
+
+		const stats = (await getGlobalStats()) as unknown as {
+			totalSessions: number;
+			totalInputTokens: number;
+			totalCostUsd: number;
+		};
+
+		expect(stats.totalSessions).toBe(1);
+		expect(stats.totalInputTokens).toBe(2_000_000);
+		expect(stats.totalCostUsd).toBeCloseTo(6, 10);
+	});
+
+	it('reports zero when neither provider has a transcript directory', async () => {
+		const stats = await getGlobalStats();
+		expect(stats.totalSessions).toBe(0);
 	});
 });

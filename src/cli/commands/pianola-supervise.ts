@@ -27,6 +27,7 @@ const DEFAULT_CONCURRENCY = 3;
 export interface PianolaSuperviseWatchOptions {
 	agent?: string;
 	interval?: string;
+	idleHours?: string;
 	json?: boolean;
 }
 
@@ -81,6 +82,16 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 	};
 	const interval = parsePositiveInt(options.interval, 1);
 	if (interval !== undefined) target.intervalSeconds = interval;
+	// Keep a previously chosen idle timeout when re-registering without the flag.
+	let idleHours = existing?.idleHours;
+	if (options.idleHours !== undefined) {
+		const parsed = Number(options.idleHours.trim());
+		if (options.idleHours.trim() === '' || !Number.isFinite(parsed) || parsed < 0) {
+			fail('--idle-hours must be a number of hours (0 = never)', options.json);
+		}
+		idleHours = parsed;
+	}
+	if (idleHours !== undefined) target.idleHours = idleHours;
 
 	const written = upsertPianolaSupervisorTarget(target);
 	if (!written.some((t) => t.id === target.id)) {

@@ -9,13 +9,31 @@
 //                 still changes, which is why the name over-promises.
 //   --background  change nothing that is currently rendered, on any agent.
 //                 Strictly stronger, so it wins when both are passed.
+//
+// `--queue` is for audio/video only: it adds the file to the floating media
+// player's queue WITHOUT starting playback, and shows the player. With nothing
+// loaded, the file loads paused so the user presses play themselves; with
+// something already loaded, it lines up behind it and nothing is interrupted.
+// It never switches agents - the player is app-wide, so there is nowhere to go.
+//
+// An http(s) URL instead of a path streams it in the media player: progressive
+// MP4 (H.264/AAC) and plain audio files over HTTP. It never becomes a tab and
+// never switches agents. The agent it is filed under is `--agent`, else the
+// agent owning the shell's cwd.
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { getSessionById } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import {
+	getRemoteMediaName,
+	isMediaFile,
+	isRemoteMediaUrl,
+	type MediaOpenMode,
+} from '../../shared/mediaTypes';
 import { resolveOwningAgent } from '../utils/owning-agent';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenFileOptions {
 	agent?: string;
@@ -23,6 +41,8 @@ interface OpenFileOptions {
 	switch?: boolean;
 	background?: boolean;
 	focus?: boolean;
+	/** Add audio/video to the player's queue without starting playback. */
+	queue?: boolean;
 	json?: boolean;
 }
 
@@ -32,12 +52,24 @@ interface ResolvedTarget {
 }
 
 export async function openFile(filePath: string, options: OpenFileOptions): Promise<void> {
-	const target = resolveTarget(filePath, options);
+	const remote = isRemoteMediaUrl(filePath);
+	const target = remote ? resolveUrlTarget(filePath, options) : resolveTarget(filePath, options);
 
-	if (!fs.existsSync(target.absolutePath)) {
+	if (!remote && !fs.existsSync(target.absolutePath)) {
 		console.error(`Error: File not found: ${target.absolutePath}`);
 		process.exit(1);
 	}
+
+	if (options.queue && !remote && !isMediaFile(target.absolutePath)) {
+		const error = `--queue only applies to audio and video files: ${target.absolutePath}`;
+		if (options.json) console.log(JSON.stringify({ success: false, error }));
+		else console.error(`Error: ${error}`);
+		process.exit(1);
+	}
+	const mediaMode: MediaOpenMode = options.queue ? 'queue' : 'play';
+	const displayName = remote
+		? getRemoteMediaName(target.absolutePath)
+		: path.basename(target.absolutePath);
 
 	const background = resolveBackgroundFlag(options, 'open-file');
 	// `--background` is strictly stronger, so it implies the weaker ask too and
@@ -53,6 +85,7 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 					filePath: target.absolutePath,
 					background,
 					switchToAgent,
+					mediaMode,
 				},
 				'open_file_tab_result'
 			);
@@ -67,14 +100,13 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 						path: target.absolutePath,
 						background,
 						switchToAgent,
+						mediaMode,
 					})
 				);
-			else
-				console.log(
-					`Opened ${path.basename(target.absolutePath)} in Maestro${
-						background ? ' (background tab)' : ''
-					}`
-				);
+			else if (mediaMode === 'queue')
+				console.log(`Queued ${displayName} in the media player (not playing)`);
+			else if (remote) console.log(`Streaming ${displayName} in the media player`);
+			else console.log(`Opened ${displayName} in Maestro${background ? ' (background tab)' : ''}`);
 		} else {
 			const error = result.error || 'Failed to open file';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
@@ -82,11 +114,46 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
 		process.exit(1);
 	}
+}
+
+/**
+ * Validate a remote media URL and pick the agent to file it under.
+ *
+ * A URL lives in no agent's working directory, so ownership falls back to the
+ * shell's cwd: an agent calling this from its own workspace files the stream
+ * under itself without having to pass `--agent`.
+ */
+function resolveUrlTarget(url: string, options: OpenFileOptions): ResolvedTarget {
+	try {
+		new URL(url);
+	} catch {
+		console.error(`Error: Not a valid URL: ${url}`);
+		process.exit(1);
+	}
+
+	if (options.agent) {
+		const session = getSessionById(options.agent);
+		if (!session) {
+			console.error(`Error: Agent not found: ${options.agent}`);
+			process.exit(1);
+		}
+		return { sessionId: session.id, absolutePath: url };
+	}
+
+	const owned = resolveOwningAgent(process.cwd());
+	if (!owned) {
+		console.error(
+			`Error: the current directory is not inside any agent's working directory. Pick an agent with --agent <id>.`
+		);
+		process.exit(1);
+	}
+	return { sessionId: owned.agent.id, absolutePath: url };
 }
 
 /**

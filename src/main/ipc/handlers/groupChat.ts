@@ -49,9 +49,11 @@ import {
 	removeFromQueue,
 	reorderQueue,
 	resumeQueueFor,
+	steerQueuedItem,
 	submitMessage,
 } from '../../group-chat/group-chat-queue';
 import type { GroupChatQueuedItem } from '../../../shared/group-chat-types';
+import type { SteeringResultFrame } from '../../../shared/chatSteering';
 
 // Group chat moderator imports
 import {
@@ -83,6 +85,7 @@ import {
 	markParticipantResponded,
 	settleGroupChatToIdle,
 	spawnModeratorSynthesis,
+	steerRunningRound,
 } from '../../group-chat/group-chat-router';
 
 // Agent detector import
@@ -94,6 +97,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[GroupChat]';
 
@@ -106,41 +113,15 @@ const assertGroupChatProviderProcessesEnabled = (): void => {
 	}
 };
 
-/**
- * Moderator usage stats for display in the moderator card.
- */
-export interface ModeratorUsage {
-	contextUsage: number;
-	totalCost: number;
-	tokenCount: number;
-}
+import {
+	groupChatEmitters,
+	type ModeratorUsage,
+	type ParticipantState,
+} from '../../group-chat/emitters';
 
-/**
- * Participant state for tracking individual agent working status.
- */
-export type ParticipantState = 'idle' | 'working';
-
-/**
- * Module-level object to store emitter functions after initialization.
- * These can be used by other modules to emit messages and state changes.
- */
-export const groupChatEmitters: {
-	emitMessage?: (groupChatId: string, message: GroupChatMessage) => void;
-	emitStateChange?: (groupChatId: string, state: GroupChatState) => void;
-	emitParticipantsChanged?: (groupChatId: string, participants: GroupChatParticipant[]) => void;
-	emitModeratorUsage?: (groupChatId: string, usage: ModeratorUsage) => void;
-	emitHistoryEntry?: (groupChatId: string, entry: GroupChatHistoryEntry) => void;
-	emitParticipantState?: (
-		groupChatId: string,
-		participantName: string,
-		state: ParticipantState
-	) => void;
-	emitModeratorSessionIdChanged?: (groupChatId: string, sessionId: string) => void;
-	emitParticipantLiveOutput?: (groupChatId: string, participantName: string, chunk: string) => void;
-	emitAutoRunTriggered?: (groupChatId: string, participantName: string, filename?: string) => void;
-	/** Tells the renderer to force-complete the batch run for a participant (clears stuck AUTO badge). */
-	emitAutoRunBatchComplete?: (groupChatId: string, participantName: string) => void;
-} = {};
+// The emitters object and its two types live in the group chat module (so the router
+// no longer imports this file); re-exported so every existing import keeps resolving.
+export { groupChatEmitters, type ModeratorUsage, type ParticipantState };
 
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
@@ -171,11 +152,28 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 export function resolveParticipantSshRemoteConfig(
 	participantName: string
 ): { enabled: boolean; remoteId: string | null; workingDirOverride?: string } | undefined {
+	return findParticipantSourceSession(participantName)?.sessionSshRemoteConfig;
+}
+
+/**
+ * The Claude token source of the agent a participant was added from, resolved
+ * by the same name match as {@link resolveParticipantSshRemoteConfig}, so a
+ * participant whose agent is set to TUI summarizes through maestro-p like its
+ * turns do. Undefined when the source agent is gone (the summary runs as API).
+ */
+export function resolveParticipantClaudeTokenSource(
+	participantName: string
+): ClaudeTokenSourceFields | undefined {
+	const match = findParticipantSourceSession(participantName);
+	// StoredSession keeps these fields behind its index signature.
+	return match ? getClaudeTokenSourceFields(match as ClaudeTokenSourceFields) : undefined;
+}
+
+function findParticipantSourceSession(participantName: string) {
 	const sessions = getSessionsStore().get('sessions', []);
-	const match = sessions.find(
+	return sessions.find(
 		(session) => mentionMatches(session.name, participantName) || session.name === participantName
 	);
-	return match?.sessionSshRemoteConfig;
 }
 
 /**
@@ -237,6 +235,8 @@ interface GenericProcessManager {
 	}): { pid: number; success: boolean };
 	write(sessionId: string, data: string): boolean;
 	kill(sessionId: string): boolean;
+	/** Chat steering: type text into a running turn. See ProcessManager.steer. */
+	steer?(sessionId: string, text: string): Promise<SteeringResultFrame>;
 	on(event: string, handler: (...args: unknown[]) => void): void;
 	off(event: string, handler: (...args: unknown[]) => void): void;
 }
@@ -710,6 +710,15 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(handlerOpts('queueResume'), async (id: string) => resumeQueueFor(id))
 	);
 
+	// Steer a queued message into the round that is running instead of waiting
+	// for it to end. Never throws for an outcome: a refusal is an answer to show.
+	ipcMain.handle(
+		'groupChat:queueSteer',
+		withIpcErrorLogging(handlerOpts('queueSteer'), async (id: string, itemId: string) =>
+			steerQueuedItem(id, itemId)
+		)
+	);
+
 	// Stop the moderator for a group chat
 	ipcMain.handle(
 		'groupChat:stopModerator',
@@ -1013,6 +1022,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 							sessionCustomModel: cheapSummary.model,
 							sessionCustomEffort: cheapSummary.effort,
 							sessionSshRemoteConfig: participantSshRemoteConfig,
+							claudeTokenSource: resolveParticipantClaudeTokenSource(participantName),
 							sshStore: participantSshRemoteConfig?.enabled
 								? createSshRemoteStoreAdapter(getSettingsStore())
 								: undefined,
@@ -1218,6 +1228,14 @@ Respond with ONLY the summary text, no additional commentary.`;
 		},
 		// Absent means nothing has run yet, which is idle.
 		isIdle: (groupChatId) => (lastModeratorState.get(groupChatId) ?? 'idle') === 'idle',
+		steer: async (groupChatId, text, readOnly) => {
+			const processManager = getProcessManager();
+			const steer = processManager?.steer?.bind(processManager);
+			if (!steer) {
+				return { outcome: 'unavailable', detail: 'the process manager cannot steer a turn' };
+			}
+			return steerRunningRound(groupChatId, { text, readOnly }, { steer });
+		},
 	});
 
 	/**

@@ -100,7 +100,7 @@ Tracks individual tasks within an Auto Run session:
 
 **Indexes**: `auto_run_session_id`, `start_time`
 
-#### `wizard_runs` (Migration v10)
+#### `wizard_runs` (Migration v11, `active_ms` v13)
 
 One row per Auto Run wizard conversation, powering the Wizard section of the dashboard's Auto Run tab:
 
@@ -118,16 +118,21 @@ One row per Auto Run wizard conversation, powering the Wizard section of the das
 | `documents`    | INTEGER NOT NULL | Auto Run documents produced                                |
 | `tasks`        | INTEGER NOT NULL | Task checkboxes across those documents                     |
 | `project_path` | TEXT             | Project path                                               |
+| `active_ms`    | INTEGER          | Time actually spent in the wizard (v13; NULL = not timed)  |
 
 **Indexes**: `started_at`, compound `(surface, started_at)`
 
 Unlike every other table here, a row is written **repeatedly** - once per milestone (opened, each
 exchange, documents written, closed), always under the same `id`, via `INSERT OR REPLACE`. The reason
 is that the payoff (documents) and the close are separated by however long the user reads the result,
-and many runs are never closed at all, so a single write at the end would lose whole runs. `ended_at`
-therefore means "last activity", which keeps `ended_at - started_at` an honest measure of time spent
-in the wizard whether or not the run was ever closed. The renderer side of that state machine is
-`src/renderer/services/wizardStats.ts`.
+and many runs are never closed at all, so a single write at the end would lose whole runs.
+
+Time spent is `active_ms`, never `ended_at - started_at`. A wizard tab can sit open for days, and the
+open-to-close window once logged 26 hours for a 9-message run. `active_ms` is accrued gap by gap
+between milestones: a gap while the agent works (a turn or a document generation) counts in full up
+to 60 minutes, and a gap while the wizard waits on the user counts at most 5 minutes. Rows from before
+v13 stay NULL rather than being backfilled from the window, and the dashboard leaves them out of time
+totals. The renderer side of that state machine is `src/renderer/services/wizardStats.ts`.
 
 #### `session_lifecycle` (Migration v3)
 
@@ -209,6 +214,7 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v10     | Add `resilience_events` table                                         |
 | v11     | Add `wizard_runs` table                                               |
 | v12     | Add `user_name` column to `query_events` for Web Login attribution    |
+| v13     | Add `active_ms` column to `wizard_runs`                               |
 
 To add a new migration:
 
@@ -429,6 +435,31 @@ Located in `src/renderer/components/UsageDashboard/`:
 | `UsageDashboardFooter.tsx`      | Status bar: range label, per-tab summary, Esc hint          |
 | `footerSummary.ts`              | All footer summary copy, as pure builders (see below)       |
 | `useFooterSummary.ts`           | Store letting a panel publish its own footer line           |
+
+### Range-Scoped vs Lifetime Token Totals
+
+Two different numbers answer "how many tokens did this cost", and putting the
+wrong one under the dashboard's range selector is a bug that looks like a frozen
+counter:
+
+| Source                             | Scope                        | Helper                                           |
+| ---------------------------------- | ---------------------------- | ------------------------------------------------ |
+| `Session.usageStats`               | Lifetime, per agent, in-hand | `aggregateUsage()` in `src/shared/usageStats.ts` |
+| `StatsAggregation.bySessionTokens` | The selected time range      | `aggregateRangeUsage()` in the same module       |
+
+`usageStats` is a counter that only ever grows, so it **cannot** move when the
+range selector does. The Overview tab's Tokens and Cost cards were summing it,
+and reported the same figure on This Week as on This Year while every other card
+on the tab changed (issue #1399). Anything rendered under a range selector reads
+`bySessionTokens` through `aggregateRangeUsage()`; the per-agent detail modal,
+which has no range at all, legitimately keeps the lifetime figure.
+
+One catch `aggregateRangeUsage` handles so callers do not have to: the stats DB
+records provider-REPORTED cost per turn and nothing else, so an agent on a
+provider that prices nothing itself stores zero. Pass the optional
+`modelForSession` resolver and those sessions fall back to the same rate-table
+estimate `resolveUsageCost` applies to a live agent, with `costEstimated` set so
+the UI can mark the figure `~`.
 
 ### Footer Summaries (per-tab status line)
 

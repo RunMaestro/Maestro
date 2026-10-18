@@ -21,6 +21,23 @@ import type { CueEvent, CueSubscription } from '../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../shared/types';
 import type { TemplateContext } from '../../../shared/templateVariables';
 
+/**
+ * An SSH store holding the remotes these tests point at. The launch plan
+ * resolves the remote before wrapping, so an empty list is now an error.
+ */
+function sshStoreWithRemotes() {
+	const remote = (id: string) => ({
+		id,
+		name: `Remote ${id}`,
+		host: `${id}.example.com`,
+		port: 22,
+		username: 'dev',
+		privateKeyPath: '',
+		enabled: true,
+	});
+	return { getSshRemotes: vi.fn(() => [remote('remote-1'), remote('r1')]) };
+}
+
 // --- Mocks ---
 
 // Mock fs - only `readFileSync` is overridden (the executor uses it for prompt
@@ -29,11 +46,27 @@ import type { TemplateContext } from '../../../shared/templateVariables';
 // transitively imports `cue-github-poller`, which calls `getExpandedEnv()` at
 // module-load time and needs `fs.existsSync` for nvm/path detection.
 const mockReadFileSync = vi.fn();
+const { injectInvalidProof } = vi.hoisted(() => ({ injectInvalidProof: { current: false } }));
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
 	return {
 		...actual,
 		readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+	};
+});
+
+vi.mock('../../../main/cue/cue-spawn-builder', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../main/cue/cue-spawn-builder')>();
+	return {
+		...actual,
+		buildSpawnSpec: async (...args: Parameters<typeof actual.buildSpawnSpec>) => {
+			const result = await actual.buildSpawnSpec(...args);
+			if (injectInvalidProof.current && result.ok) {
+				// Cleanup rejects this path after the provider has already completed.
+				result.spec.pluginRunProofFile = '/invalid/not-a-proof';
+			}
+			return result;
+		},
 	};
 });
 
@@ -93,23 +126,32 @@ const mockApplyOverrides = vi.fn((_agent: unknown, args: string[], _overrides: u
 	customEnvSource: 'none' as const,
 	modelSource: 'default' as const,
 }));
-vi.mock('../../../main/utils/agent-args', () => ({
+vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: (...args: unknown[]) => mockBuildAgentArgs(...args),
 	applyAgentConfigOverrides: (...args: unknown[]) => mockApplyOverrides(...args),
 }));
 
 // Mock wrapSpawnWithSsh
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	// Stand-in; the real wording is covered by the ssh-spawn-wrapper suite.
+	sshUnresolvedRemoteMessage: (cfg: { remoteId: string | null }) =>
+		`remote "${cfg.remoteId}" could not be resolved`,
 }));
 
 // Mock parsers - default returns null (no parser), overridden per test as needed
 const mockGetOutputParser = vi.fn(
 	() => null as ReturnType<typeof import('../../../main/parsers').getOutputParser>
 );
+// A resolved remote is probed for maestro-p before the token mode is chosen.
+vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
+	ensureRemoteMaestroPProbed: vi.fn(async () => true),
+}));
+
 vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
+	createOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 }));
 
 // Force the POSIX kill path (child.kill('SIGTERM')) in the underlying
@@ -130,6 +172,7 @@ class MockChildProcess extends EventEmitter {
 	stdin = {
 		write: vi.fn(),
 		end: vi.fn(),
+		on: vi.fn(),
 	};
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
@@ -267,6 +310,7 @@ const defaultAgentDef = {
 describe('cue-executor', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		injectInvalidProof.current = false;
 		vi.useFakeTimers();
 		getActiveProcesses().clear();
 
@@ -283,6 +327,22 @@ describe('cue-executor', () => {
 	});
 
 	describe('executeCuePrompt', () => {
+		it('preserves a completed run when proof cleanup fails', async () => {
+			injectInvalidProof.current = true;
+			const onRunTranscript = vi.fn();
+			const resultPromise = executeCuePrompt(createExecutionConfig({ onRunTranscript }));
+			await vi.advanceTimersByTimeAsync(0);
+			mockChild.stdout.emit('data', 'Completed output');
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+			expect(result.status).toBe('completed');
+			expect(result.exitCode).toBe(0);
+			expect(onRunTranscript).toHaveBeenCalledTimes(1);
+			expect(onRunTranscript).toHaveBeenCalledWith(
+				expect.objectContaining({ rawStdout: 'Completed output', status: 'completed', exitCode: 0 })
+			);
+		});
+
 		// As of the Phase 2 cleanup, the executor no longer resolves prompt files -
 		// the cue-config-normalizer reads prompt_file at config-load time and stores
 		// the resolved content in `prompt`. The executor's `promptPath` parameter is
@@ -307,6 +367,59 @@ describe('cue-executor', () => {
 
 			mockChild.emit('close', 0);
 			await resultPromise;
+		});
+
+		describe('New Session Message', () => {
+			// Every Cue run is a fresh provider session (no --resume), so the
+			// agent's standing instructions ride along on each one.
+			it('prefixes the agent message onto the prompt of every run', async () => {
+				const config = createExecutionConfig({
+					promptPath: 'Triage the new issue',
+					session: createMockSession({ newSessionMessage: 'Always answer in English' }),
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				expect(spawnedArgs[spawnedArgs.length - 1]).toBe(
+					'Always answer in English\n\n---\n\nsubstituted: Triage the new issue'
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('sends the prompt unchanged when the agent has no message', async () => {
+				const config = createExecutionConfig({ promptPath: 'Triage the new issue' });
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				expect(spawnedArgs[spawnedArgs.length - 1]).toBe('substituted: Triage the new issue');
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it("is not template-substituted (it is the user's own text, not a Cue prompt)", async () => {
+				const config = createExecutionConfig({
+					promptPath: 'Triage the new issue',
+					session: createMockSession({ newSessionMessage: 'Keep {{CUE_SOURCE_OUTPUT}} literal' }),
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(mockSubstitute).not.toHaveBeenCalledWith(
+					expect.stringContaining('Keep {{CUE_SOURCE_OUTPUT}} literal'),
+					expect.anything()
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
 		});
 
 		it('returns failed result when prompt content is empty', async () => {
@@ -429,6 +542,50 @@ describe('cue-executor', () => {
 			await resultPromise;
 		});
 
+		describe('Maestro system prompt', () => {
+			it('delivers appendSystemPrompt with the native flag for supporting agents', async () => {
+				mockGetAgentCapabilities.mockReturnValueOnce({
+					...mockGetAgentCapabilities(),
+					supportsAppendSystemPrompt: true,
+				} as any);
+				const config = createExecutionConfig({
+					promptPath: 'Hello world',
+					appendSystemPrompt: 'MAESTRO SYS',
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				const idx = spawnedArgs.indexOf('--append-system-prompt');
+				expect(idx).toBeGreaterThan(-1);
+				expect(spawnedArgs[idx + 1]).toBe('MAESTRO SYS');
+				expect(spawnedArgs[spawnedArgs.length - 1]).toContain('Hello world');
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('embeds appendSystemPrompt into the prompt for agents without the flag', async () => {
+				const config = createExecutionConfig({
+					promptPath: 'Hello world',
+					appendSystemPrompt: 'MAESTRO SYS',
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				expect(spawnedArgs).not.toContain('--append-system-prompt');
+				const last = spawnedArgs[spawnedArgs.length - 1];
+				expect(last).toContain('MAESTRO SYS');
+				expect(last).toContain('Hello world');
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+		});
+
 		describe('prompt appended as CLI positional arg', () => {
 			it('appends -- then prompt for agents with no promptArgs/noPromptSeparator (default)', async () => {
 				// defaultAgentDef has neither promptArgs nor noPromptSeparator
@@ -485,7 +642,7 @@ describe('cue-executor', () => {
 			});
 
 			it('does not double-append prompt for SSH execution (wrapper handles it)', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -531,6 +688,90 @@ describe('cue-executor', () => {
 
 			expect(result.stdout).toBe('Hello world');
 			expect(result.stderr).toBe('Warning: something');
+		});
+
+		// `onRunTranscript` is how the chain of thought export reads a Cue run. It
+		// is an observer: it sees the finished run and cannot change it.
+		describe('onRunTranscript', () => {
+			it('hands over the raw transcript once, after the run', async () => {
+				const onRunTranscript = vi.fn();
+				const config = createExecutionConfig({
+					promptPath: 'Summarize the change',
+					onRunTranscript,
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+				mockChild.stdout.emit('data', 'Hello ');
+				mockChild.stdout.emit('data', 'world');
+				expect(onRunTranscript).not.toHaveBeenCalled();
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(onRunTranscript).toHaveBeenCalledTimes(1);
+				const run = onRunTranscript.mock.calls[0][0];
+				expect(run).toMatchObject({
+					agentId: 'session-1',
+					toolType: 'claude-code',
+					prompt: 'substituted: Summarize the change',
+					rawStdout: 'Hello world',
+					cwd: '/projects/test',
+					exitCode: 0,
+					status: 'completed',
+					durationMs: result.durationMs,
+				});
+				expect(run.startTime).toBe(Date.parse(result.startedAt));
+			});
+
+			it('reports a failed run with its exit code', async () => {
+				const onRunTranscript = vi.fn();
+				const resultPromise = executeCuePrompt(createExecutionConfig({ onRunTranscript }));
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.emit('close', 1);
+				await resultPromise;
+
+				expect(onRunTranscript.mock.calls[0][0]).toMatchObject({ exitCode: 1, status: 'failed' });
+			});
+
+			it('does not change the result, and a throwing callback does not fail the run', async () => {
+				const runOnce = async (overrides: Partial<CueExecutionConfig>) => {
+					const resultPromise = executeCuePrompt(createExecutionConfig(overrides));
+					await vi.advanceTimersByTimeAsync(0);
+					mockChild.stdout.emit('data', 'Hello world');
+					mockChild.stderr.emit('data', 'Warning');
+					mockChild.emit('close', 0);
+					return resultPromise;
+				};
+
+				const plain = await runOnce({});
+				const observed = await runOnce({
+					onRunTranscript: () => {
+						throw new Error('observer failed');
+					},
+				});
+
+				const comparable = (r: typeof plain) => ({
+					status: r.status,
+					stdout: r.stdout,
+					stderr: r.stderr,
+					exitCode: r.exitCode,
+					durationMs: r.durationMs,
+				});
+				expect(comparable(observed)).toEqual(comparable(plain));
+				expect(observed.status).toBe('completed');
+			});
+
+			it('is not called when no process was started', async () => {
+				const onRunTranscript = vi.fn();
+
+				const result = await executeCuePrompt(
+					createExecutionConfig({ promptPath: '   ', onRunTranscript })
+				);
+
+				expect(result.status).toBe('failed');
+				expect(onRunTranscript).not.toHaveBeenCalled();
+			});
 		});
 
 		it('should return completed status on exit code 0', async () => {
@@ -686,9 +927,54 @@ describe('cue-executor', () => {
 			});
 		});
 
+		describe('a run stopped before its process starts', () => {
+			it('spawns nothing when stopped while the SSH resolution is awaited', async () => {
+				let resolveWrap!: (value: unknown) => void;
+				mockWrapSpawnWithSsh.mockImplementationOnce(
+					() =>
+						new Promise((resolve) => {
+							resolveWrap = resolve;
+						})
+				);
+				const controller = new AbortController();
+				const resultPromise = executeCuePrompt(
+					createExecutionConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+						sshStore: sshStoreWithRemotes(),
+						signal: controller.signal,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+
+				controller.abort();
+				resolveWrap({
+					command: 'ssh',
+					args: ['user@host'],
+					cwd: '/Users/test',
+					customEnvVars: undefined,
+					prompt: undefined,
+					sshRemoteUsed: { id: 'remote-1', name: 'My Server', host: 'host.example.com' },
+				});
+				const result = await resultPromise;
+
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(getActiveProcesses().size).toBe(0);
+				expect(result).toMatchObject({ status: 'stopped', stdout: '', stderr: '', exitCode: null });
+			});
+
+			it('spawns nothing when the signal is already aborted', async () => {
+				const controller = new AbortController();
+				controller.abort();
+				const result = await executeCuePrompt(createExecutionConfig({ signal: controller.signal }));
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(result.status).toBe('stopped');
+			});
+		});
+
 		describe('SSH remote execution', () => {
 			it('should call wrapSpawnWithSsh when SSH is enabled', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -726,8 +1012,35 @@ describe('cue-executor', () => {
 				await resultPromise;
 			});
 
+			it('fails the run without spawning when the wrapper cannot resolve the planned remote', async () => {
+				// The launch plan resolved the remote; the wrapper then handed back the
+				// local config (remote deleted or disabled in between).
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'claude',
+					args: ['--print'],
+					cwd: '/projects/test',
+					customEnvVars: undefined,
+					prompt: 'test prompt',
+					sshRemoteUsed: null,
+				});
+				const onLog = vi.fn();
+
+				const result = await executeCuePrompt(
+					createExecutionConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+						sshStore: sshStoreWithRemotes(),
+						onLog,
+					})
+				);
+
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toBe('remote "remote-1" could not be resolved');
+				expect(onLog).toHaveBeenCalledWith('error', 'remote "remote-1" could not be resolved');
+			});
+
 			it('should write prompt to stdin for SSH large prompt mode', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -746,7 +1059,10 @@ describe('cue-executor', () => {
 				const resultPromise = executeCuePrompt(config);
 				await vi.advanceTimersByTimeAsync(0);
 
-				expect(mockChild.stdin.write).toHaveBeenCalledWith('large prompt content');
+				expect(mockChild.stdin.write).toHaveBeenCalledWith(
+					'large prompt content',
+					expect.any(Function)
+				);
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);

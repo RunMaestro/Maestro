@@ -802,7 +802,7 @@ export function useModalHandlers(
 	// Restore focus when LogViewer closes to ensure global hotkeys work
 	useEffect(() => {
 		if (!logViewerOpen) {
-			setTimeout(() => {
+			const timer = setTimeout(() => {
 				if (inputRef.current) {
 					inputRef.current.focus();
 				} else if (terminalOutputRef.current) {
@@ -812,6 +812,7 @@ export function useModalHandlers(
 					document.body.focus();
 				}
 			}, 50);
+			return () => clearTimeout(timer);
 		}
 	}, [logViewerOpen, inputRef, terminalOutputRef]);
 

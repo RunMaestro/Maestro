@@ -357,3 +357,87 @@ describe('net:connect capability (persistent outbound websocket)', () => {
 		expect(isPermitted([grant('net:connect')], 'net:connect', 'wss.slack.com')).toBe(true);
 	});
 });
+
+describe('services:call exact provider/service allowlists', () => {
+	const target = 'sh.maestro.transcription/transcription';
+	const other = 'example.media/transcription';
+	const invalidScopes = [
+		undefined,
+		'',
+		' ',
+		',',
+		'*',
+		'transcription',
+		'/transcription',
+		'sh.maestro.transcription/',
+		'sh.maestro.transcription/transcription/extra',
+		'sh.maestro.transcription//transcription',
+		'sh.maestro.transcription\\transcription',
+		'*/transcription',
+		'sh.maestro.transcription/*',
+		'sh.maestro.transcription/transcription?',
+		'sh.maestro.transcription/../transcription',
+		'sh.maestro.transcription/ transcription',
+		'sh.maestro.transcription\n/transcription',
+		'sh.maestro.transcription/transcription\nextra',
+		'sh.maestro.transcription/transcription\0',
+		'https://sh.maestro.transcription/transcription',
+		`${'p'.repeat(129)}/transcription`,
+		`sh.maestro.transcription/${'s'.repeat(65)}`,
+		`${target},sh.maestro.transcription/*`,
+	];
+
+	it('parses comma-separated exact pairs without changing their identity', () => {
+		const parsed = parsePermissions([
+			{ capability: 'services:call', scope: ` ${target}, ${other} ` },
+		]);
+		expect(parsed.errors).toEqual([]);
+		const grants = grantsFromRequests(parsed.requests, 1);
+		expect(grants[0].scope).toBe(`${target}, ${other}`);
+		expect(isPermitted(grants, 'services:call', target)).toBe(true);
+		expect(isPermitted(grants, 'services:call', other)).toBe(true);
+	});
+
+	it.each(invalidScopes)(
+		'rejects malformed/wildcard scope %j at parse and enforcement',
+		(scope) => {
+			const parsed = parsePermissions([{ capability: 'services:call', scope }]);
+			expect(parsed.requests).toEqual([]);
+			expect(parsed.errors).not.toHaveLength(0);
+			const grants: PermissionGrant[] = [{ capability: 'services:call', scope, grantedAt: 1 }];
+			expect(isPermitted(grants, 'services:call', target)).toBe(false);
+			if (scope !== undefined) expect(isPermitted(grants, 'services:call', scope)).toBe(false);
+		}
+	);
+
+	it('denies foreign providers/services, partial matches, missing targets and other capabilities', () => {
+		const grants = grantsFromRequests(
+			parsePermissions([{ capability: 'services:call', scope: target }]).requests,
+			1
+		);
+		for (const denied of [
+			undefined,
+			other,
+			'sh.maestro.transcription/other',
+			'sh.maestro.transcription/transcription-extra',
+			target.toUpperCase(),
+			'sh.maestro.transcription',
+			'transcription',
+			`${target},${other}`,
+		]) {
+			expect(isPermitted(grants, 'services:call', denied)).toBe(false);
+		}
+		expect(isPermitted([], 'services:call', target)).toBe(false);
+		expect(isPermitted(grants, 'services:provide', 'transcription')).toBe(false);
+	});
+
+	it.each(['agents:dispatch', 'process:spawn', 'media:tools', 'services:provide'] as const)(
+		'preserves slash rejection for ordinary allowlist capability %s',
+		(capability) => {
+			const parsed = parsePermissions([{ capability, scope: target }]);
+			expect(parsed.requests).toEqual([]);
+			expect(parsed.errors[0]).toMatch(/forbidden characters/);
+			expect(isValidAllowlistMember(target)).toBe(false);
+		}
+	);
+});

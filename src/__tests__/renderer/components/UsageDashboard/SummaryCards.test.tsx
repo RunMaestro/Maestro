@@ -24,6 +24,7 @@ import {
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 // Test theme
 const theme = THEMES['dracula'];
@@ -58,6 +59,7 @@ const mockData: StatsAggregation = {
 		parent: { count: 150, duration: 7200000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Empty data for edge case testing
@@ -84,6 +86,7 @@ const emptyData: StatsAggregation = {
 		parent: { count: 0, duration: 0 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Data with large numbers
@@ -113,6 +116,7 @@ const largeNumbersData: StatsAggregation = {
 		parent: { count: 1500000, duration: 360000000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Single agent data
@@ -141,6 +145,7 @@ const singleAgentData: StatsAggregation = {
 		parent: { count: 50, duration: 1800000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Mock sessions with tabs for open tab count testing
@@ -180,6 +185,116 @@ describe('SummaryCards', () => {
 
 			const cards = screen.getAllByTestId('metric-card');
 			expect(cards).toHaveLength(14);
+		});
+
+		// Regression for issue #1399: the Tokens and Cost cards used to sum each
+		// agent's persisted lifetime `usageStats`, which cannot move when the
+		// dashboard's range selector does. They now read the range-scoped
+		// `bySessionTokens` the aggregation already carries.
+		it('reads Tokens and Cost from the range-scoped totals, not lifetime usageStats', () => {
+			const sessionsWithLifetimeUsage = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [],
+					filePreviewTabs: [],
+					// Lifetime counter, deliberately far larger than the range below.
+					usageStats: {
+						inputTokens: 900_000_000,
+						outputTokens: 900_000_000,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 999,
+					},
+				},
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={
+						{
+							...mockData,
+							bySessionTokens: {
+								s1: {
+									inputTokens: 1_000_000,
+									outputTokens: 500_000,
+									cacheReadTokens: 0,
+									cacheCreationTokens: 0,
+									costUsd: 12.5,
+									pricedQueries: 40,
+								},
+							},
+						} as StatsAggregation
+					}
+					theme={theme}
+					sessions={sessionsWithLifetimeUsage}
+				/>
+			);
+
+			expect(screen.getByRole('group', { name: 'Tokens: 1.5M' })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: 'Cost: $12.50' })).toBeInTheDocument();
+		});
+
+		it('shows a dash for Tokens when the selected range recorded none', () => {
+			const sessionsWithLifetimeUsage = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [],
+					filePreviewTabs: [],
+					usageStats: {
+						inputTokens: 5_000_000,
+						outputTokens: 5_000_000,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 42,
+					},
+				},
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={{ ...mockData, bySessionTokens: {} } as StatsAggregation}
+					theme={theme}
+					sessions={sessionsWithLifetimeUsage}
+				/>
+			);
+
+			expect(screen.getByRole('group', { name: 'Tokens: \u2014' })).toBeInTheDocument();
+		});
+
+		// The stats DB only stores provider-REPORTED cost, so a provider that
+		// prices nothing itself would blank the Cost card without the rate-table
+		// fallback the lifetime path used to supply.
+		it('estimates Cost from the rate table when the range reported none', () => {
+			const sessions = [
+				{ id: 's1', toolType: 'claude-code', aiTabs: [], filePreviewTabs: [] },
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={
+						{
+							...mockData,
+							bySessionTokens: {
+								s1: {
+									inputTokens: 1_000_000,
+									outputTokens: 1_000_000,
+									cacheReadTokens: 0,
+									cacheCreationTokens: 0,
+									costUsd: 0,
+									pricedQueries: 10,
+								},
+							},
+						} as StatsAggregation
+					}
+					theme={theme}
+					sessions={sessions}
+				/>
+			);
+
+			expect(screen.getByText('Est. Cost')).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /^Est\. Cost: ~\$/ })).toBeInTheDocument();
 		});
 
 		it('renders Total Queries metric', async () => {

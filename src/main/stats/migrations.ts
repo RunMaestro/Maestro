@@ -34,6 +34,7 @@ import {
 	CREATE_RESILIENCE_EVENTS_INDEXES_SQL,
 	CREATE_WIZARD_RUNS_SQL,
 	CREATE_WIZARD_RUNS_INDEXES_SQL,
+	ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -124,6 +125,19 @@ function getMigrations(): Migration[] {
 			version: 12,
 			description: 'Add user_name column to query_events for Web Login turn attribution',
 			up: (db) => migrateV12(db),
+		},
+		{
+			// main numbers this v11; on rc wizard_runs is v11 and v12 is Web Login's
+			// user_name column. The body is guarded by hasColumn, so renumbering is safe.
+			version: 13,
+			description: 'Add active_ms column to wizard_runs so wizard time excludes idle tabs',
+			up: (db) => migrateV13(db),
+			isApplied: (db) => hasColumn(db, 'wizard_runs', 'active_ms'),
+		},
+		{
+			version: 14,
+			description: 'Add kind column to auto_run_sessions for goal-driven vs spec-driven split',
+			up: (db) => migrateV14(db),
 		},
 	];
 }
@@ -469,6 +483,33 @@ function migrateV12(db: Database.Database): void {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_query_user_name ON query_events(user_name)').run();
 
 	logger.debug('Added user_name column to query_events table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v13: wizard_runs.active_ms - time actually spent in the wizard.
+ * Rows from before it stay NULL ("not measured") rather than being backfilled
+ * from `ended_at - started_at`, which is the open-to-close wall clock this
+ * column exists to replace. The dashboard leaves NULL rows out of time totals.
+ */
+function migrateV13(db: Database.Database): void {
+	if (!hasColumn(db, 'wizard_runs', 'active_ms')) {
+		db.prepare('ALTER TABLE wizard_runs ADD COLUMN active_ms INTEGER').run();
+	}
+	logger.debug('Added active_ms column to wizard_runs', LOG_CONTEXT);
+}
+
+/**
+ * Migration v14: `kind` column on auto_run_sessions ('goal-driven' |
+ * 'spec-driven'), so the Usage Dashboard can split Auto Run time by engine.
+ *
+ * Additive with a DEFAULT, so every existing row reads back as spec-driven with
+ * its other fields untouched. Guarded by hasColumn for the same reason as v5.
+ */
+function migrateV14(db: Database.Database): void {
+	if (!hasColumn(db, 'auto_run_sessions', 'kind')) {
+		db.prepare(ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL).run();
+	}
+	logger.debug('Added kind column to auto_run_sessions table', LOG_CONTEXT);
 }
 
 /**

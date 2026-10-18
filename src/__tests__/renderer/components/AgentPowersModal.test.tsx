@@ -11,6 +11,7 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 
 import { AgentPowersModal } from '../../../renderer/components/AgentPowersModal';
 import { mockTheme } from '../../helpers/mockTheme';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 function renderModal(overrides: Partial<React.ComponentProps<typeof AgentPowersModal>> = {}) {
 	const props = {
@@ -54,6 +55,23 @@ describe('AgentPowersModal', () => {
 		expect(screen.getByText('Schedule a Task')).toBeInTheDocument();
 		expect(screen.getByText('Build a Cue Pipeline')).toBeInTheDocument();
 		expect(screen.getByText('Build Me a Dashboard')).toBeInTheDocument();
+	});
+
+	// Scheduled Tasks and pipelines are both Maestro Cue. With Cue off the agent
+	// could not carry either out, and a disabled feature leaves no trace.
+	it('leaves the Cue examples and the Cue mention out while Maestro Cue is off', () => {
+		const previous = useSettingsStore.getState().encoreFeatures;
+		useSettingsStore.setState({ encoreFeatures: { ...previous, maestroCue: false } });
+		try {
+			renderModal();
+
+			expect(screen.queryByText('Schedule a Task')).not.toBeInTheDocument();
+			expect(screen.queryByText('Build a Cue Pipeline')).not.toBeInTheDocument();
+			expect(screen.getByText('Write an Auto Run Doc')).toBeInTheDocument();
+			expect(screen.getByTestId('agent-powers-modal').textContent).not.toMatch(/cue/i);
+		} finally {
+			useSettingsStore.setState({ encoreFeatures: previous });
+		}
 	});
 
 	it('splits the two automation pills by what starts them', () => {

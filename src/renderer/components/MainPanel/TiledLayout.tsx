@@ -20,8 +20,8 @@ import {
 	Maximize2,
 	GripHorizontal,
 	AlertCircle,
-	Loader2,
 } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 
 import { TerminalOutput, type TerminalOutputProps } from '../TerminalOutput';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
@@ -116,11 +116,14 @@ export type PaneChatActions = Partial<
 		| 'onDeleteLog'
 		| 'onRemoveQueuedItem'
 		| 'onTogglePauseQueuedItem'
+		| 'onMergeQueuedItem'
 		| 'onEditQueuedItem'
 		| 'onReorderQueuedItem'
 		| 'onForceSendQueuedItem'
 		| 'forcedParallelEnabled'
 		| 'getForceSendContext'
+		| 'getSteerContext'
+		| 'onSteerQueuedItem'
 		| 'onInterrupt'
 		| 'setLightboxImage'
 		| 'setMarkdownEditMode'
@@ -1006,10 +1009,7 @@ function PaneStatusIndicators({
 			<WizardIndicator active={isWizard} generatingDocs={!!aiTab.wizardState?.isGeneratingDocs} />
 			{aiTab.isGeneratingName && (
 				<span title="Generating tab name...">
-					<Loader2
-						className="w-3 h-3 shrink-0 animate-spin"
-						style={{ color: theme.colors.textDim }}
-					/>
+					<Spinner size={12} color={theme.colors.textDim} decorative />
 				</span>
 			)}
 			{aiTab.state !== 'busy' && aiTab.hasUnread && (
@@ -1184,12 +1184,15 @@ function SplitDivider({
 	theme,
 	onDrag,
 	onCommit,
+	onCancel,
 }: {
 	direction: 'row' | 'column';
 	theme: Theme;
 	/** clientX/Y delta from drag start; returns nothing (caller applies to DOM). */
 	onDrag: (delta: number) => void;
 	onCommit: () => void;
+	/** Escape (or an abandoned drag): put the panes back at their pre-drag sizes. */
+	onCancel: () => void;
 }) {
 	const [isDragging, setIsDragging] = React.useState(false);
 	const startDrag = usePointerDrag();
@@ -1207,9 +1210,13 @@ function SplitDivider({
 					setIsDragging(false);
 					onCommit();
 				},
+				onCancel: () => {
+					setIsDragging(false);
+					onCancel();
+				},
 			});
 		},
-		[isRow, onDrag, onCommit, startDrag]
+		[isRow, onDrag, onCommit, onCancel, startDrag]
 	);
 
 	return (
@@ -1300,6 +1307,14 @@ function LayoutNode({
 		);
 	};
 
+	// Escape mid-drag: drop the uncommitted sizes and undo the direct DOM writes.
+	const cancelDrag = () => {
+		dragSizesRef.current = null;
+		childRefs.current.forEach((el, i) => {
+			if (el) el.style.flexGrow = String(node.sizes[i]);
+		});
+	};
+
 	return (
 		<div className={`flex flex-1 min-w-0 min-h-0 ${isRow ? 'flex-row' : 'flex-col'}`}>
 			{node.children.map((child, index) => (
@@ -1310,6 +1325,7 @@ function LayoutNode({
 							theme={theme}
 							onDrag={(delta) => applyDrag(index - 1, delta)}
 							onCommit={commitDrag}
+							onCancel={cancelDrag}
 						/>
 					)}
 					<div

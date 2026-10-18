@@ -71,3 +71,20 @@ describe('pianolaSuperviseWatch dedupe', () => {
 		expect(targets).toHaveLength(3);
 	});
 });
+
+describe('pianolaSuperviseWatch --idle-hours', () => {
+	it('stores the idle timeout and keeps it when re-registering without the flag', () => {
+		pianolaSuperviseWatch('tab-1', { agent: 'agent-1', idleHours: '2', json: true });
+		expect(readPianolaSupervisorTargets()[0].idleHours).toBe(2);
+
+		pianolaSuperviseWatch('tab-1', { agent: 'agent-1', json: true });
+		expect(readPianolaSupervisorTargets()[0].idleHours).toBe(2);
+	});
+
+	it('rejects a negative idle timeout', () => {
+		expect(() =>
+			pianolaSuperviseWatch('tab-1', { agent: 'agent-1', idleHours: '-1', json: true })
+		).toThrow('__exit__');
+		expect(readPianolaSupervisorTargets()).toHaveLength(0);
+	});
+});

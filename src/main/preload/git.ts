@@ -33,6 +33,14 @@ export interface WorktreeInfo {
  */
 export interface WorktreeEntry {
 	path: string;
+	/** Physical identity for the raw registry path, including a missing leaf candidate. */
+	resolvedPath?: string;
+	/** The registry path's individual filesystem probe could not be completed. */
+	pathUnresolved?: boolean;
+	/** The directory was absent when its reachable parent was probed. */
+	pathMissing?: boolean;
+	/** Git retains a registration for a worktree that can be pruned. */
+	isPrunable?: boolean;
 	head: string;
 	branch: string | null;
 	isBare: boolean;
@@ -210,7 +218,7 @@ export function createGitApi() {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		): Promise<{ stdout: string; stderr: string }> =>
+		): Promise<{ stdout: string; stderr: string; timedOut?: boolean }> =>
 			ipcRenderer.invoke('git:numstat', cwd, sshRemoteId, remoteCwd),
 
 		/**
@@ -220,7 +228,7 @@ export function createGitApi() {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		): Promise<{ stdout: string; stderr: string }> =>
+		): Promise<{ stdout: string; stderr: string; timedOut?: boolean }> =>
 			ipcRenderer.invoke('git:branch', cwd, sshRemoteId, remoteCwd),
 
 		/**
@@ -266,6 +274,8 @@ export function createGitApi() {
 			behind: number;
 			ahead: number;
 			uncommittedChanges: number;
+			/** One of the underlying queries timed out; the zero/empty fields are placeholders. */
+			timedOut?: boolean;
 		}> => ipcRenderer.invoke('git:info', cwd, sshRemoteId, remoteCwd),
 
 		/**
@@ -493,9 +503,23 @@ export function createGitApi() {
 		/**
 		 * List all worktrees for a git repository
 		 * Supports SSH remote execution via optional sshRemoteId parameter
+		 * Passing basePath resolves SSH directory aliases for safe reconciliation.
 		 */
-		listWorktrees: (cwd: string, sshRemoteId?: string): Promise<{ worktrees: WorktreeEntry[] }> =>
-			ipcRenderer.invoke('git:listWorktrees', cwd, sshRemoteId),
+		listWorktrees: (
+			cwd: string,
+			sshRemoteId?: string,
+			basePath?: string,
+			sessionPaths?: string[]
+		): Promise<{
+			worktrees: WorktreeEntry[];
+			resolvedCwd?: string;
+			resolvedBasePath?: string;
+			resolvedSessionPaths?: Record<string, string>;
+			// Missing candidates are safe to reconcile only after a successful registry read.
+			missingSessionPaths?: string[];
+			/** Individual aliases that could not be resolved; keep their existing sessions. */
+			unresolvedSessionPaths?: string[];
+		}> => ipcRenderer.invoke('git:listWorktrees', cwd, sshRemoteId, basePath, sessionPaths),
 
 		/**
 		 * Scan a directory for subdirectories that are git repositories or worktrees
@@ -504,8 +528,12 @@ export function createGitApi() {
 		scanWorktreeDirectory: (
 			parentPath: string,
 			sshRemoteId?: string
-		): Promise<{ gitSubdirs: GitSubdirEntry[]; scanFailed?: boolean }> =>
-			ipcRenderer.invoke('git:scanWorktreeDirectory', parentPath, sshRemoteId),
+		): Promise<{
+			gitSubdirs: GitSubdirEntry[];
+			scanFailed?: boolean;
+			/** Uncertain candidate or group roots whose existing sessions must be preserved. */
+			unresolvedPaths?: string[];
+		}> => ipcRenderer.invoke('git:scanWorktreeDirectory', parentPath, sshRemoteId),
 
 		/**
 		 * Watch a worktree directory for new worktrees

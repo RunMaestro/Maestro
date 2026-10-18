@@ -425,6 +425,50 @@ describe('normalizeMermaidSource', () => {
 		});
 	});
 
+	describe('escapes what a timeline period cannot carry', () => {
+		it('escapes a clock time in a period, leaving the events alone', () => {
+			expect(
+				normalizeMermaidSource('timeline\n    16:18 : Email received\n    21:57 : Fix at 22:23')
+			).toBe('timeline\n    16#58;18 : Email received\n    21#58;57 : Fix at 22:23');
+		});
+
+		it('escapes a period that stands alone above its events', () => {
+			expect(normalizeMermaidSource('timeline\n    16:18\n      : Email')).toBe(
+				'timeline\n    16#58;18\n      : Email'
+			);
+		});
+
+		it('escapes a # so the rest of the line is not read as a comment', () => {
+			expect(normalizeMermaidSource('timeline\n    Issue #1710 : opened')).toBe(
+				'timeline\n    Issue #35;1710 : opened'
+			);
+		});
+
+		it('escapes every : in a section title, which cannot carry events', () => {
+			expect(
+				normalizeMermaidSource('timeline\n    section 12:00 - 14:00\n    section Day 1: start')
+			).toBe('timeline\n    section 12#58;00 - 14#58;00\n    section Day 1#58; start');
+		});
+
+		it('leaves a timeline that already parses byte-for-byte alone', () => {
+			const source =
+				'---\ntitle: a:b\n---\ntimeline LR\n    title Report: (UTC)\n    accTitle: a:b\n    accDescr {\n    a:b\n    }\n    %% x:y\n    Oct 4 : 16:18 email : 17:23 fix\n    Oct 5:';
+			expect(normalizeMermaidSource(source)).toBe(source);
+		});
+
+		it('is idempotent - existing entity codes pass through', () => {
+			const once = normalizeMermaidSource(
+				'timeline\n    16:18 #9 : a\n    section 12:00\n    x : y'
+			);
+			expect(normalizeMermaidSource(once)).toBe(once);
+		});
+
+		it('leaves : in a flowchart label alone', () => {
+			const source = 'flowchart LR\n  A[a:b] --> B';
+			expect(normalizeMermaidSource(source)).toBe(source);
+		});
+	});
+
 	it('detects a flowchart behind frontmatter, comments, and init directives', () => {
 		const source =
 			'---\ntitle: Flow\n---\n%%{init: {"theme":"dark"}}%%\n%% note\n\nflowchart LR\n  A[a@b] --> B';

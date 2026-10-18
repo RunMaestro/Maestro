@@ -99,6 +99,29 @@ describe('maybeAutoResetCodexUsage', () => {
 		expect(loadMock).not.toHaveBeenCalled();
 	});
 
+	// A quota wall the pattern bank has not learned a wording for arrives typed
+	// `unknown`. Its text still says what it is, and the spend must not hinge on
+	// the bank having caught up.
+	it('recognises a quota wall by its text when the type is unknown', async () => {
+		loadMock.mockImplementation(async () => seedCredits({ available: 2, applicable: 2 }));
+		const wall = limitError({
+			type: 'unknown',
+			message: 'Your workspace is out of credits. Add credits to continue.',
+		});
+
+		await expect(maybeAutoResetCodexUsage(session(), wall)).resolves.toBe(true);
+		expect(redeemMock).toHaveBeenCalledWith(CODEX_HOME_KEY);
+	});
+
+	// Reading text must not widen the gate to throttles: an overload clears on
+	// its own, and a credit spent on it is gone for nothing.
+	it('does not treat an availability blip as a quota wall', async () => {
+		const blip = limitError({ type: 'unknown', message: '503 Service Unavailable' });
+
+		await expect(maybeAutoResetCodexUsage(session(), blip)).resolves.toBe(false);
+		expect(loadMock).not.toHaveBeenCalled();
+	});
+
 	// The credits read here belong to THIS machine's account, not the remote's,
 	// so a spend would land on the wrong account entirely.
 	it('refuses an SSH-backed agent', async () => {

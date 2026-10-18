@@ -419,17 +419,13 @@ describe('AutoRunnerHelpModal', () => {
 	});
 
 	describe('Dynamic Content', () => {
-		it('should format keyboard shortcuts using formatShortcutKeys', () => {
+		it('draws shortcuts as one key cap per key', () => {
 			render(<AutoRunnerHelpModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Our mock returns keys joined with +
-			// The component uses formatShortcutKeys for shortcuts like ['Meta', 'l']
-			// Should render something like "Meta+l"
-			const kbdElements = document.querySelectorAll('kbd');
-			const hasFormattedShortcut = Array.from(kbdElements).some((kbd) =>
-				kbd.textContent?.includes('Meta')
-			);
-			expect(hasFormattedShortcut).toBe(true);
+			// ShortcutKeys draws ['Meta', 'l'] as two caps: the modifier, then the letter.
+			const chord = document.querySelector('[data-shortcut-keys="Meta+l"]') as HTMLElement;
+			expect(chord).not.toBeNull();
+			expect(chord.querySelectorAll('kbd')).toHaveLength(2);
 		});
 
 		it('should highlight "Quick Insert" tips', () => {

@@ -22,6 +22,7 @@ export function listGroups(options: ListGroupsOptions): void {
 				color: g.color,
 				collapsed: g.collapsed,
 				parentGroupId: g.parentGroupId,
+				hidden: !!g.hidden,
 			}));
 			console.log(JSON.stringify(output, null, 2));
 		} else {
@@ -31,6 +32,7 @@ export function listGroups(options: ListGroupsOptions): void {
 				name: g.name,
 				emoji: g.emoji,
 				collapsed: g.collapsed,
+				hidden: !!g.hidden,
 			}));
 			console.log(formatGroups(displayGroups));
 		}

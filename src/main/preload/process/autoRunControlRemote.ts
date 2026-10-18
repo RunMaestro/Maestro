@@ -1,22 +1,50 @@
 import { ipcRenderer } from 'electron';
 import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
+import type { BatchRunConfig } from '../../../shared/types';
+import type { AutoRunRemoteControl, AutoRunRemoteResult } from '../../../shared/autoRunRemote';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../../shared/autoRunSteeringCommands';
 
 export function createAutoRunControlRemoteApi() {
 	return {
-		/**
-		 * Subscribe to Auto Run state belonging to a DIFFERENT Maestro client.
-		 *
-		 * Two producers feed this one channel. In the web-desktop (browser) build
-		 * the WebSocket shim maps the server's `autorun_state` packet onto it. In
-		 * the Electron desktop app main sends it directly, for a run owned by a
-		 * browser tab - the desktop is not a WebSocket client, so without that
-		 * forward a web-started run was invisible here for its whole duration
-		 * (issue #1519).
-		 *
-		 * A window is never sent its own run back, so the owner keeps its
-		 * controls; see `forwardAutoRunStateToDesktopWindows` in
-		 * `main/ipc/handlers/web.ts`.
-		 */
+		onRemoteStartAutoRun: (
+			callback: (
+				sessionId: string,
+				config: BatchRunConfig,
+				folderPath: string,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				config: BatchRunConfig,
+				folderPath: string,
+				responseChannel: string
+			) => callback(sessionId, config, folderPath, responseChannel);
+			ipcRenderer.on('remote:startAutoRun', handler);
+			return () => ipcRenderer.removeListener('remote:startAutoRun', handler);
+		},
+		onRemoteControlAutoRun: (
+			callback: (sessionId: string, control: AutoRunRemoteControl, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				control: AutoRunRemoteControl,
+				responseChannel: string
+			) => callback(sessionId, control, responseChannel);
+			ipcRenderer.on('remote:controlAutoRun', handler);
+			return () => ipcRenderer.removeListener('remote:controlAutoRun', handler);
+		},
+		sendRemoteAutoRunResponse: (responseChannel: string, result: AutoRunRemoteResult): void => {
+			if (/^remote:(startAutoRun|controlAutoRun):response:[a-f0-9-]+$/i.test(responseChannel)) {
+				ipcRenderer.send(responseChannel, result);
+			}
+		},
+		/** Host Auto Run broadcasts mapped by the web-desktop bridge. */
 		onRemoteAutoRunStateMirror: (
 			callback: (sessionId: string, state: AutoRunBroadcastState | null) => void
 		): (() => void) => {
@@ -137,6 +165,29 @@ export function createAutoRunControlRemoteApi() {
 
 		sendRemoteAbortAutoRunErrorResponse: (responseChannel: string, success: boolean): void => {
 			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to a remote Auto Run steering verb (`maestro-cli steer-auto-run`).
+		 *
+		 * A round trip rather than a fire-and-forget send: every verb answers the
+		 * caller with the note it parked or took back, or with the run's notes
+		 * and replies, so the response channel is part of the contract.
+		 */
+		onRemoteAutoRunSteeringCommand: (
+			callback: (request: SteeringCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, request: SteeringCommandRequest, responseChannel: string) =>
+				callback(request, responseChannel);
+			ipcRenderer.on('remote:autoRunSteeringCommand', handler);
+			return () => ipcRenderer.removeListener('remote:autoRunSteeringCommand', handler);
+		},
+
+		sendRemoteAutoRunSteeringCommandResponse: (
+			responseChannel: string,
+			result: SteeringCommandResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 	};
 }

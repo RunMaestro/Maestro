@@ -14,6 +14,7 @@ import {
 	isImageFile,
 	getImageMimeType,
 	isWorktreeAlreadyUsedError,
+	isNotAGitRepositoryError,
 	parseWorktreePathForBranch,
 	sanitizeGitBranchName,
 	formatGitChangeSummary,
@@ -319,6 +320,31 @@ describe('gitUtils', () => {
 			expect(getImageMimeType('.JPG')).toBe('image/jpeg');
 			expect(getImageMimeType('.PNG')).toBe('image/png');
 			expect(getImageMimeType('SVG')).toBe('image/svg+xml');
+		});
+	});
+
+	describe('isNotAGitRepositoryError', () => {
+		it('detects the message git prints outside a repo', () => {
+			expect(
+				isNotAGitRepositoryError(
+					'fatal: not a git repository (or any of the parent directories): .git'
+				)
+			).toBe(true);
+		});
+
+		it('detects a broken .git file pointing at a missing gitdir', () => {
+			expect(
+				isNotAGitRepositoryError('fatal: not a git repository: /repo/.git/worktrees/feature')
+			).toBe(true);
+		});
+
+		it('returns false for connection, path, and empty errors', () => {
+			expect(
+				isNotAGitRepositoryError('ssh: connect to host example port 22: Connection refused')
+			).toBe(false);
+			expect(isNotAGitRepositoryError('cd: /missing: No such file or directory')).toBe(false);
+			expect(isNotAGitRepositoryError('')).toBe(false);
+			expect(isNotAGitRepositoryError(undefined)).toBe(false);
 		});
 	});
 

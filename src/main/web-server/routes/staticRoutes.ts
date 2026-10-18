@@ -185,13 +185,14 @@ export class StaticRoutes {
 			const configScript = `<script>
         window.__MAESTRO_CONFIG__ = {
           securityToken: ${JSON.stringify(token)},
+          hostPlatform: ${JSON.stringify(process.platform)},
           sessionId: null,
           tabId: null,
           apiBase: "/${token}/api",
           wsUrl: "/${token}/ws",
           concertoToken: ${JSON.stringify(this.concertoToken)},
-          webLoginRequired: ${JSON.stringify(auth.required)},
-          webLoginUser: ${jsonForScript(auth.user ?? null)}
+          webLoginRequired: ${JSON.stringify(auth.method !== 'device-pairing' && auth.required)},
+          webLoginUser: ${jsonForScript(auth.method === 'device-pairing' ? null : (auth.user ?? null))}
         };
       </script>`;
 
@@ -229,42 +230,43 @@ export class StaticRoutes {
 	/**
 	 * Register all static routes on the Fastify server
 	 */
-	registerRoutes(server: FastifyInstance): void {
+	registerRoutes(server: FastifyInstance, prefixOnly = false): void {
 		const token = this.securityToken;
 
-		// Root path - redirect to GitHub (no access without token)
-		server.get('/', async (_request, reply) => {
-			return reply.redirect(REDIRECT_URL, 302);
-		});
+		if (!prefixOnly) {
+			// Root path - redirect to GitHub (no access without token)
+			server.get('/', async (_request, reply) => {
+				return reply.redirect(REDIRECT_URL, 302);
+			});
 
-		// Health check (no auth required)
-		server.get('/health', async () => {
-			return { status: 'ok', timestamp: Date.now() };
-		});
+			// Health check (no auth required)
+			server.get('/health', async () => {
+				return { status: 'ok', timestamp: Date.now() };
+			});
 
-		// Social preview card. Deliberately outside the token prefix: see
-		// OG_IMAGE_ROUTE in ../social-preview.ts for why that is safe and why it
-		// matters. Fastify matches a static path ahead of the `/:token` parametric
-		// route below, so this cannot be swallowed by the invalid-token catch-all.
-		server.get(OG_IMAGE_ROUTE, async (_request, reply) => {
-			if (!this.webAssetsPath) {
-				return reply.code(404).send({ error: 'Not Found' });
-			}
-			const imagePath = path.join(this.webAssetsPath, 'og-image.png');
-			if (!existsSync(imagePath)) {
-				return reply.code(404).send({ error: 'Not Found' });
-			}
-			// Not run through getCachedFile: that cache holds utf-8 strings, which
-			// would corrupt a PNG. A crawler fetches this once per share, so the
-			// read is not worth a second cache - but it IS worth a long max-age,
-			// since a brand mark that changes only on rebuild is what immutable
-			// caching is for, and chat clients re-fetch previews aggressively.
-			return reply
-				.type('image/png')
-				.header('Cache-Control', 'public, max-age=86400')
-				.send(readFileSync(imagePath));
-		});
-
+			// Social preview card. Deliberately outside the token prefix: see
+			// OG_IMAGE_ROUTE in ../social-preview.ts for why that is safe and why it
+			// matters. Fastify matches a static path ahead of the `/:token` parametric
+			// route below, so this cannot be swallowed by the invalid-token catch-all.
+			server.get(OG_IMAGE_ROUTE, async (_request, reply) => {
+				if (!this.webAssetsPath) {
+					return reply.code(404).send({ error: 'Not Found' });
+				}
+				const imagePath = path.join(this.webAssetsPath, 'og-image.png');
+				if (!existsSync(imagePath)) {
+					return reply.code(404).send({ error: 'Not Found' });
+				}
+				// Not run through getCachedFile: that cache holds utf-8 strings, which
+				// would corrupt a PNG. A crawler fetches this once per share, so the
+				// read is not worth a second cache - but it IS worth a long max-age,
+				// since a brand mark that changes only on rebuild is what immutable
+				// caching is for, and chat clients re-fetch previews aggressively.
+				return reply
+					.type('image/png')
+					.header('Cache-Control', 'public, max-age=86400')
+					.send(readFileSync(imagePath));
+			});
+		}
 		// PWA manifest.json (cached)
 		server.get(`/${token}/manifest.json`, async (_request, reply) => {
 			if (!this.webAssetsPath) {
@@ -316,6 +318,7 @@ export class StaticRoutes {
 			this.serveDesktopIndex(request, reply);
 		});
 
+		if (prefixOnly) return;
 		// Catch-all for invalid tokens - redirect to GitHub
 		server.get('/:token', async (request, reply) => {
 			const { token: reqToken } = request.params as { token: string };

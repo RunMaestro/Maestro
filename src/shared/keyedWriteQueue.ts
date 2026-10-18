@@ -13,6 +13,11 @@
 /** Enqueue an async callback, serialized against others sharing the same key. */
 export interface KeyedWriteQueue {
 	enqueue<T>(key: string, fn: () => Promise<T>): Promise<T>;
+	/**
+	 * Resolves once every callback enqueued so far, on any key, has settled (including ones they
+	 * chained). For a process that must not exit with a write half done.
+	 */
+	idle(): Promise<void>;
 }
 
 /**
@@ -41,5 +46,10 @@ export function createKeyedWriteQueue(): KeyedWriteQueue {
 		return next;
 	}
 
-	return { enqueue };
+	async function idle(): Promise<void> {
+		// A settled entry removes itself, so the loop ends when nothing is left to wait for.
+		while (queues.size > 0) await Promise.all([...queues.values()]);
+	}
+
+	return { enqueue, idle };
 }

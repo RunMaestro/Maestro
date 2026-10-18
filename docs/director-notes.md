@@ -115,7 +115,7 @@ You can set which mode opens by default in **Settings > Plugins > Director's Not
 
 Both reading modes carry the same table of contents as the Markdown file preview, in the same place (the round button at the bottom right) with the same behavior:
 
-- Toggle it with the **Table of Contents** shortcut (<kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>\</kbd>) or by clicking the button.
+- Toggle it with the **Table of Contents** shortcut (<kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>\\</kbd>) or by clicking the button.
 - The first entry is focused when it opens, so <kbd>↑</kbd> / <kbd>↓</kbd> (plus <kbd>Home</kbd> / <kbd>End</kbd>) move through sections and scroll as you go.
 - Clicking an entry scrolls to that section and leaves the panel open, so you can jump a few times in a row.
 - **Top** and **Bottom** jump to the ends of the report.

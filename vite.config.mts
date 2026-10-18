@@ -44,6 +44,10 @@ export default defineConfig(({ mode }) => ({
 	base: './',
 	define: {
 		__APP_VERSION__: JSON.stringify(appVersion),
+		// Whether this build can report crashes at all. The DSN lives in a CI-injected
+		// artifact, not in source, so a build from source reports nowhere - this flag is
+		// the renderer's copy of that decision. See src/shared/buildProvenance.ts.
+		__CRASH_REPORTING_BUILD__: JSON.stringify(Boolean(process.env.MAESTRO_SENTRY_DSN?.trim())),
 		// Embed the commit hash in every build (dev AND production) so the About modal
 		// can show exactly what HEAD a local/packaged build was cut from. Empty only
 		// when git isn't reachable and VITE_COMMIT_HASH isn't set.

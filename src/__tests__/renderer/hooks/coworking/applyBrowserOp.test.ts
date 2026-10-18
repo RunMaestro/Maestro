@@ -7,7 +7,8 @@ import {
 import type { BrowserTabViewHandle } from '../../../../renderer/components/MainPanel/BrowserTabView';
 import { selectActiveSession, useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { SessionStore } from '../../../../renderer/stores/sessionStore';
-import type { BrowserTab, Session } from '../../../../renderer/types';
+import type { Session } from '../../../../renderer/types';
+import type { BrowserTab } from '../../../../shared/browserPage';
 import {
 	useCoworkingBrowserKeepAliveStore,
 	activePinnedTabIds,

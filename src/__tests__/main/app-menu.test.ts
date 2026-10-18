@@ -38,6 +38,7 @@ vi.mock('../../shared/platformDetection', () => ({
 import {
 	installApplicationMenu,
 	setMenuShortcutKeys,
+	setMenuEncoreFeatures,
 	resetMenuShortcutKeysForTesting,
 } from '../../main/app-menu';
 
@@ -204,6 +205,27 @@ describe('app menu', () => {
 		itemNamed(appMenu, 'Settings...').click?.({}, undefined);
 
 		expect(send).toHaveBeenCalledWith('menu:command', 'settings');
+	});
+
+	// A switched-off Encore Feature leaves no trace: the renderer refuses its
+	// keystroke, so its menu item would be visible and dead.
+	it('leaves out the item of an Encore Feature that is off, and follows the flag live', () => {
+		const viewItems = () => menuNamed('View').submenu!.map(nameOf);
+
+		setMenuEncoreFeatures({ usageStats: false });
+		installApplicationMenu();
+		expect(viewItems()).not.toContain('Usage Dashboard');
+		expect(viewItems()).toContain('System Log Viewer');
+
+		buildFromTemplate.mockClear();
+		setMenuEncoreFeatures({ usageStats: true });
+		expect(buildFromTemplate).toHaveBeenCalledTimes(1);
+		expect(viewItems()).toContain('Usage Dashboard');
+
+		// An unchanged push does not rebuild the menu.
+		buildFromTemplate.mockClear();
+		setMenuEncoreFeatures({ usageStats: true });
+		expect(buildFromTemplate).not.toHaveBeenCalled();
 	});
 
 	it('does not send to a destroyed window', () => {

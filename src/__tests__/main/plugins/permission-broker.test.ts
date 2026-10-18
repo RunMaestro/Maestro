@@ -75,6 +75,37 @@ describe('PermissionBroker', () => {
 		);
 	});
 
+	it('checks live media grants without emitting synthetic RPC audit decisions', () => {
+		let grants: PermissionGrant[] = [grant('media:tools', 'discord-voice')];
+		const onDecision = vi.fn();
+		const broker = new PermissionBroker({ getGrants: () => grants, onDecision });
+		expect(broker.authorize('p', 'media.open', {}).allowed).toBe(true);
+		expect(broker.authorize('p', 'media.open', {}, { audit: false }).allowed).toBe(true);
+		grants = [grant('media:tools', '*')];
+		expect(broker.authorize('p', 'media.open', {}, { audit: false }).allowed).toBe(false);
+		grants = [];
+		expect(broker.authorize('p', 'media.open', {}, { audit: false }).allowed).toBe(false);
+		expect(onDecision).toHaveBeenCalledTimes(1);
+		expect(broker.authorize('p', 'media.open', {}).allowed).toBe(false);
+		expect(onDecision).toHaveBeenCalledTimes(2);
+	});
+
+	it('preserves protected-path refusal when a host check suppresses auditing', () => {
+		const onDecision = vi.fn();
+		const broker = new PermissionBroker({
+			getGrants: () => [grant('fs:read')],
+			protectedPaths: () => ['/private/config'],
+			onDecision,
+		});
+		expect(
+			broker.authorize('p', 'fs.read', { path: '/private/config/grants.json' }, { audit: false })
+		).toMatchObject({
+			allowed: false,
+			reason: expect.stringContaining('protected location'),
+		});
+		expect(onDecision).not.toHaveBeenCalled();
+	});
+
 	it('per-plugin isolation: grants for one plugin do not leak to another', () => {
 		const broker = new PermissionBroker({
 			getGrants: (id) => (id === 'trusted' ? [grant('fs:read')] : []),

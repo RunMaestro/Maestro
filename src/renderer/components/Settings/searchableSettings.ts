@@ -24,6 +24,7 @@ import {
 } from './searchableSettingsMisc';
 import { NOTIFICATION_SETTINGS, AI_COMMANDS_SETTINGS } from './searchableSettingsNotifications';
 import { ENCORE_SETTINGS } from './searchableSettingsEncore';
+import type { EncoreFeatureFlags } from '../../types';
 
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
@@ -40,7 +41,8 @@ export interface SearchableSetting {
 		| 'ssh'
 		| 'environment'
 		| 'encore'
-		| 'prompts';
+		| 'prompts'
+		| `plugin-settings:${string}`;
 	/** Human-readable tab label */
 	tabLabel: string;
 	/** The setting's visible title */
@@ -58,6 +60,27 @@ export interface SearchableSetting {
 	 * does render so the result still lands somewhere meaningful.
 	 */
 	jumpToId?: string;
+	/**
+	 * Encore Feature this setting configures. The entry is left out of search
+	 * while that feature is off, so a disabled feature's options cannot be
+	 * found. Do NOT set it on the feature's own tile entry: the tile is how the
+	 * user turns the feature on, so it has to stay findable.
+	 */
+	requiresEncore?: keyof EncoreFeatureFlags;
+	/**
+	 * Keywords that match only while the named Encore Feature is on, for an
+	 * always-present setting that also touches a feature (Prevent Sleep counts
+	 * scheduled Cue pipelines). A disabled feature's name must lead nowhere, so
+	 * the description stays feature-neutral and these carry the feature terms.
+	 */
+	encoreKeywords?: { [K in keyof EncoreFeatureFlags]?: string[] };
+	/**
+	 * The Plugins tile whose details pane renders this entry's anchor, when the
+	 * entry is that tile's own (it has no `requiresEncore`). A jump opens the
+	 * tile first: the anchor is not mounted while the grid shows, so without
+	 * this the jump would land on the grid and give up.
+	 */
+	encoreTile?: keyof EncoreFeatureFlags;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,36 +101,78 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 ];
 
 /**
+ * The Plugins tile a jump to `settingId` has to open, or undefined when the
+ * anchor is not inside one. Sub-settings live in their feature's tile, so
+ * `requiresEncore` names it; a tile's own entry names it with `encoreTile`.
+ */
+export function encoreTileForSetting(settingId: string): keyof EncoreFeatureFlags | undefined {
+	const entry = ALL_SEARCHABLE_SETTINGS.find((s) => s.id === settingId);
+	if (entry?.tab !== 'encore') return undefined;
+	return entry.encoreTile ?? entry.requiresEncore;
+}
+
+/** The entry's `encoreKeywords` whose feature is on (all of them when no flags are given). */
+function activeEncoreKeywords(
+	setting: SearchableSetting,
+	encoreFeatures: Partial<EncoreFeatureFlags> | undefined
+): string[] {
+	if (!setting.encoreKeywords) return [];
+	const out: string[] = [];
+	for (const [flag, words] of Object.entries(setting.encoreKeywords)) {
+		if (!words) continue;
+		if (encoreFeatures && encoreFeatures[flag as keyof EncoreFeatureFlags] !== true) continue;
+		out.push(...words);
+	}
+	return out;
+}
+
+/**
  * Search settings by query string. Matches against label, description, tab label, and keywords.
  * Returns matching settings sorted by relevance (label match first, then description, then keywords).
  */
-export function searchSettings(query: string): SearchableSetting[] {
+export function searchSettings(
+	query: string,
+	additional: SearchableSetting[] = [],
+	encoreFeatures?: Partial<EncoreFeatureFlags>
+): SearchableSetting[] {
 	if (!query.trim()) return [];
 	const q = query.toLowerCase().trim();
 	const terms = q.split(/\s+/);
 
-	return ALL_SEARCHABLE_SETTINGS.map((setting) => {
-		const label = setting.label.toLowerCase();
-		const desc = (setting.description || '').toLowerCase();
-		const tabLabel = setting.tabLabel.toLowerCase();
-		const keywords = (setting.keywords || []).join(' ').toLowerCase();
-		const all = `${label} ${desc} ${tabLabel} ${keywords}`;
+	return [...ALL_SEARCHABLE_SETTINGS, ...additional]
+		.filter(
+			(setting) =>
+				!encoreFeatures ||
+				!setting.requiresEncore ||
+				encoreFeatures[setting.requiresEncore] === true
+		)
+		.map((setting) => {
+			const label = setting.label.toLowerCase();
+			const desc = (setting.description || '').toLowerCase();
+			const tabLabel = setting.tabLabel.toLowerCase();
+			const keywords = [
+				...(setting.keywords || []),
+				...activeEncoreKeywords(setting, encoreFeatures),
+			]
+				.join(' ')
+				.toLowerCase();
+			const all = `${label} ${desc} ${tabLabel} ${keywords}`;
 
-		// Every search term must appear somewhere
-		const allMatch = terms.every((term) => all.includes(term));
-		if (!allMatch) return null;
+			// Every search term must appear somewhere
+			const allMatch = terms.every((term) => all.includes(term));
+			if (!allMatch) return null;
 
-		// Score: label match is strongest, then description, then keywords
-		let score = 0;
-		for (const term of terms) {
-			if (label.includes(term)) score += 3;
-			else if (desc.includes(term)) score += 2;
-			else if (tabLabel.includes(term)) score += 1;
-			else if (keywords.includes(term)) score += 1;
-		}
+			// Score: label match is strongest, then description, then keywords
+			let score = 0;
+			for (const term of terms) {
+				if (label.includes(term)) score += 3;
+				else if (desc.includes(term)) score += 2;
+				else if (tabLabel.includes(term)) score += 1;
+				else if (keywords.includes(term)) score += 1;
+			}
 
-		return { setting, score };
-	})
+			return { setting, score };
+		})
 		.filter(Boolean)
 		.sort((a, b) => b!.score - a!.score)
 		.map((entry) => entry!.setting);

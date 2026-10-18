@@ -8,6 +8,9 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { AutoRunOwner, OrphanedAutoRun } from '../../shared/autoRunBroadcast';
+import type { BatchRunConfig } from '../../shared/types';
+import type { AutoRunRemoteControl, AutoRunRemoteResult } from '../../shared/autoRunRemote';
 
 /**
  * Auto Run state for broadcasting
@@ -55,16 +58,51 @@ export interface AiTabState {
  */
 export function createWebApi() {
 	return {
+		startAutoRun: (sessionId: string, config: BatchRunConfig, folderPath: string) =>
+			ipcRenderer.invoke(
+				'web:startAutoRun',
+				sessionId,
+				config,
+				folderPath
+			) as Promise<AutoRunRemoteResult>,
+		controlAutoRun: (sessionId: string, control: AutoRunRemoteControl) =>
+			ipcRenderer.invoke('web:controlAutoRun', sessionId, control) as Promise<AutoRunRemoteResult>,
+		/** Private host readiness probe; never exposed through the remote bridge. */
+		onLiteReady: (getReady: () => boolean) => {
+			const handler = (_event: Electron.IpcRendererEvent, responseChannel: string) => {
+				if (responseChannel.startsWith('remote:liteReady:response:')) {
+					ipcRenderer.send(responseChannel, getReady());
+				}
+			};
+			ipcRenderer.on('remote:liteReady', handler);
+			return () => ipcRenderer.removeListener('remote:liteReady', handler);
+		},
+
 		// Atomically reserve one agent before a renderer starts an Auto Run. Main
 		// owns the claim so simultaneous desktop/browser starts cannot both win.
-		claimAutoRunStart: (sessionId: string) =>
-			ipcRenderer.invoke('web:claimAutoRunStart', sessionId) as Promise<boolean>,
+		// `owner` records who started the run so a reload can hand it back (#1470).
+		claimAutoRunStart: (sessionId: string, owner?: AutoRunOwner) =>
+			ipcRenderer.invoke('web:claimAutoRunStart', sessionId, owner) as Promise<boolean>,
 		releaseAutoRunStartClaim: (sessionId: string) =>
 			ipcRenderer.invoke('web:releaseAutoRunStartClaim', sessionId) as Promise<boolean>,
+		// The runs this client's previous page left running when it reloaded.
+		takeOrphanedAutoRuns: (instanceId: string) =>
+			ipcRenderer.invoke('web:takeOrphanedAutoRuns', instanceId) as Promise<OrphanedAutoRun[]>,
+		abandonAutoRunReclaim: (sessionId: string, instanceId: string) =>
+			ipcRenderer.invoke('web:abandonAutoRunReclaim', sessionId, instanceId) as Promise<boolean>,
 
 		// Create a tab in the Electron renderer, which owns canonical tab state.
 		requestNewTab: (sessionId: string, background = false) =>
 			ipcRenderer.invoke('web:requestNewTab', sessionId, background) as Promise<{
+				tabId: string;
+			} | null>,
+		/** Wait for the owning renderer to close this conversation. */
+		requestCloseTab: (sessionId: string, tabId: string) =>
+			ipcRenderer.invoke('web:requestCloseTab', sessionId, tabId) as Promise<boolean>,
+
+		/** Restore the requested closed conversation on its owning desktop. */
+		requestReopenTab: (sessionId: string, tabId: string) =>
+			ipcRenderer.invoke('web:requestReopenTab', sessionId, tabId) as Promise<{
 				tabId: string;
 			} | null>,
 
@@ -110,6 +148,7 @@ export function createWebApi() {
  */
 export function createWebserverApi() {
 	return {
+		openLitePairing: () => ipcRenderer.invoke('webserver:openLitePairing') as Promise<void>,
 		getUrl: () => ipcRenderer.invoke('webserver:getUrl'),
 		getConnectedClients: () => ipcRenderer.invoke('webserver:getConnectedClients'),
 	};

@@ -28,6 +28,7 @@ import { attachSpellCheckContextMenu } from './spell-check-menu';
 import { attachWindowCrashHandlers } from './window-crash-handlers';
 import { registerDevAutoUpdaterStubs } from './dev-auto-updater-stubs';
 import { resolveVisibleWindowPosition, resolveWindowSizeConstraints } from './window-position';
+import { resolveLinuxWindowIconPath } from './app-icon';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
@@ -174,6 +175,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			height: rawHeight,
 		});
 		const position = resolveVisibleWindowPosition({ x: bounds?.x, y: bounds?.y, width, height });
+		const linuxWindowIcon = resolveLinuxWindowIconPath();
 
 		const browserWindow = new BrowserWindow({
 			x: position.x,
@@ -183,6 +185,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			minWidth,
 			minHeight,
 			backgroundColor: '#0b0b0d',
+			// Linux binaries carry no icon; without this the window and taskbar
+			// entry draw the generic Electron icon (always for an AppImage).
+			...(linuxWindowIcon ? { icon: linuxWindowIcon } : {}),
 			...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
 			...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
 			webPreferences: {
@@ -378,7 +383,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		// These handlers capture crashes that Sentry in the renderer cannot
 		// report (because the renderer process is dead or broken).
 
-		attachWindowCrashHandlers(browserWindow);
+		attachWindowCrashHandlers(browserWindow, getIsQuitting);
 		// Initialize auto-updater (only in production, and only for the primary
 		// window - update checks/installs are a single app-wide concern).
 		if (isMain) {

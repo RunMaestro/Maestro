@@ -6,6 +6,7 @@ import * as Sentry from '@sentry/electron/renderer';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import MaestroConsole from './App';
 import { CadenzaHudRoot } from './cadenzaHud';
+import { QuickChatRoot } from './quickChat/QuickChatRoot';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayerStackProvider } from './contexts/LayerStackContext';
 // ToastProvider removed - notification state now managed by notificationStore (Zustand)
@@ -25,7 +26,11 @@ const initSentry = async () => {
 	try {
 		const crashReportingEnabled =
 			(await window.maestro?.settings?.get('crashReportingEnabled')) ?? true;
-		if (crashReportingEnabled && !isDevelopment) {
+		// __CRASH_REPORTING_BUILD__ is false in any build from source. The main process
+		// holds the DSN and the renderer reports through it over Classic IPC, so an
+		// un-provisioned build already has nowhere to send events - this check just makes
+		// that explicit instead of relying on the IPC channel being absent.
+		if (crashReportingEnabled && !isDevelopment && __CRASH_REPORTING_BUILD__) {
 			Sentry.init({
 				// Set release version for filtering errors by app version
 				release: __APP_VERSION__,
@@ -107,8 +112,23 @@ window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => 
 // always-on-top child window with `?cadenzaHud`. Render just the floating
 // cadenza cards - no app chrome, no providers the cards don't need.
 const isCadenzaHud = new URLSearchParams(window.location.search).has('cadenzaHud');
+// Quick Chat mode: the hotkey-summoned floating chat window, loaded with
+// `?quickChat`. Renders only the chat view; the conversation runs in the app
+// window that owns the agent.
+const isQuickChat = new URLSearchParams(window.location.search).has('quickChat');
 
-if (isCadenzaHud) {
+if (isQuickChat) {
+	document.documentElement.classList.add('quick-chat-window');
+	document.body.classList.add('quick-chat-window');
+	document.getElementById('initial-splash')?.remove();
+	ReactDOM.createRoot(document.getElementById('root')!).render(
+		<React.StrictMode>
+			<ErrorBoundary>
+				<QuickChatRoot />
+			</ErrorBoundary>
+		</React.StrictMode>
+	);
+} else if (isCadenzaHud) {
 	document.documentElement.classList.add('cadenza-hud');
 	document.body.classList.add('cadenza-hud');
 	// The static loading splash (index.html) is hidden by the full App on ready,

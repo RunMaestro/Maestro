@@ -17,16 +17,20 @@
  *
  * Right-click context menus (chat) are opt-in via the onLinkContextMenu /
  * onFileContextMenu callbacks; when omitted, no context-menu handler is attached.
+ * Both `maestro-file://` and `file://` targets go to onFileContextMenu - being
+ * outside the project root changes the href scheme, not the fact that it is a file.
  */
 
 import React from 'react';
 import type { Theme } from '../../../types';
 import { openUrl } from '../../../utils/openUrl';
-import { openFileUrl } from '../../../utils/openFileUrl';
+import { fileUrlToPath, openFileUrl } from '../../../utils/openFileUrl';
 import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { RenderedMentionChip } from './RenderedMentionChip';
 import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
 import { notifyToast } from '../../../stores/notificationStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { isWebUrl } from '../../../../shared/urlRoutingHint';
 
 export interface MarkdownLinkBehavior {
 	/** Chat: handle http/file/git destinations inline via openUrl/openPath. */
@@ -114,6 +118,13 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 		// agent's chat can point at a Movement/Cadenza instead of re-typing it.
 		const concertoTarget = parseConcertoHref(href);
 		if (concertoTarget) {
+			// With the Concerto Encore Feature off the link is plain text: no chip,
+			// no click handler, nothing that names the disabled feature. Read at
+			// render (not subscribed) because react-markdown and the tests call
+			// this positionally; the next message render picks up a flag change.
+			if (useSettingsStore.getState().encoreFeatures?.concerto !== true) {
+				return React.createElement(React.Fragment, null, children);
+			}
 			const notifyUnavailable = () =>
 				notifyToast({
 					color: 'orange',
@@ -193,7 +204,7 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 				// it to the same ctrlKey inversion openUrl expects (#1060).
 				if (openFileUrl(href, onFileClick)) return;
 
-				if (/^https?:\/\//.test(href)) {
+				if (isWebUrl(href)) {
 					openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
 				} else {
 					// gitToHttps is a pure string transform (no throw); convert and open
@@ -207,7 +218,7 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 			}
 
 			// Doc: route external links through the caller's callback.
-			if (onExternalLinkClick && /^https?:\/\/|^mailto:/.test(href)) {
+			if (onExternalLinkClick && (isWebUrl(href) || /^mailto:/.test(href))) {
 				onExternalLinkClick(href, { ctrlKey: e.metaKey || e.ctrlKey });
 				return;
 			}
@@ -217,7 +228,7 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 				behavior.relativeAsFile &&
 				onFileClick &&
 				!href.startsWith('mailto:') &&
-				!/^https?:\/\//.test(href)
+				!isWebUrl(href)
 			) {
 				onFileClick(href, { openInNewTab });
 			}
@@ -225,16 +236,22 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 
 		const handleContextMenu = hasContextMenu
 			? (e: React.MouseEvent) => {
-					if (isMaestroFile && filePath && onFileContextMenu) {
+					// A path OUTSIDE the project root arrives as `file://` rather than
+					// `maestro-file://` (see remarkFileLinks / markdownItAdapter), but it
+					// is still a file: it wants Copy Path and Reveal, not the browser
+					// actions the link menu offers.
+					const externalFilePath = href ? fileUrlToPath(href) : null;
+					const targetPath = isMaestroFile ? filePath : externalFilePath;
+					if (targetPath && onFileContextMenu) {
 						e.preventDefault();
 						e.stopPropagation();
 						// Resolve to absolute path for file operations.
-						const absPath = filePath.startsWith('/')
-							? filePath
+						const absPath = targetPath.startsWith('/')
+							? targetPath
 							: projectRoot
-								? `${projectRoot}/${filePath}`
-								: filePath;
-						const fileName = filePath.split('/').pop() || filePath;
+								? `${projectRoot}/${targetPath}`
+								: targetPath;
+						const fileName = targetPath.split('/').pop() || targetPath;
 						onFileContextMenu(e, absPath, fileName);
 					} else if (href && onLinkContextMenu) {
 						e.preventDefault();

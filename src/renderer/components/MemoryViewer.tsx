@@ -115,7 +115,8 @@ function suggestNewFilename(existing: Set<string>): string {
 
 export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProps): JSX.Element {
 	const projectPath = activeSession?.projectRoot || activeSession?.cwd || '';
-	const agentId = activeSession?.toolType || 'claude-code';
+	// Main resolves this agent's actual account and managed project binding.
+	const agentId = activeSession?.id || 'claude-code';
 
 	const [entries, setEntries] = useState<MemoryEntry[]>([]);
 	const [stats, setStats] = useState<MemoryStats>({

@@ -38,7 +38,31 @@ describe('Web Preload API', () => {
 				mockInvoke.mockResolvedValue(true);
 
 				await expect(api.claimAutoRunStart('session-123')).resolves.toBe(true);
-				expect(mockInvoke).toHaveBeenCalledWith('web:claimAutoRunStart', 'session-123');
+				expect(mockInvoke).toHaveBeenCalledWith('web:claimAutoRunStart', 'session-123', undefined);
+			});
+
+			it('should pass the run owner through so a reload can hand the run back', async () => {
+				mockInvoke.mockResolvedValue(true);
+				const owner = { instanceId: 'tab-1', config: { documents: [] }, folderPath: '/docs' };
+
+				await api.claimAutoRunStart('session-123', owner);
+				expect(mockInvoke).toHaveBeenCalledWith('web:claimAutoRunStart', 'session-123', owner);
+			});
+		});
+
+		describe('takeOrphanedAutoRuns / abandonAutoRunReclaim', () => {
+			it('should invoke the main-process reclaim channels', async () => {
+				mockInvoke.mockResolvedValue([]);
+				await expect(api.takeOrphanedAutoRuns('tab-1')).resolves.toEqual([]);
+				expect(mockInvoke).toHaveBeenCalledWith('web:takeOrphanedAutoRuns', 'tab-1');
+
+				mockInvoke.mockResolvedValue(true);
+				await expect(api.abandonAutoRunReclaim('session-123', 'tab-1')).resolves.toBe(true);
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'web:abandonAutoRunReclaim',
+					'session-123',
+					'tab-1'
+				);
 			});
 		});
 
@@ -60,6 +84,22 @@ describe('Web Preload API', () => {
 				expect(mockInvoke).toHaveBeenCalledWith('web:requestNewTab', 'session-123', false);
 				expect(result).toEqual({ tabId: 'tab-2' });
 			});
+		});
+
+		describe('requestCloseTab', () => {
+			it('forwards the agent and tab ids to the desktop', async () => {
+				mockInvoke.mockResolvedValue(true);
+				await expect(api.requestCloseTab('session-123', 'tab-1')).resolves.toBe(true);
+				expect(mockInvoke).toHaveBeenCalledWith('web:requestCloseTab', 'session-123', 'tab-1');
+			});
+		});
+
+		it('requests reopening by the original closed tab id', async () => {
+			mockInvoke.mockResolvedValue({ tabId: 'restored' });
+			await expect(api.requestReopenTab('session-1', 'closed-tab')).resolves.toEqual({
+				tabId: 'restored',
+			});
+			expect(mockInvoke).toHaveBeenCalledWith('web:requestReopenTab', 'session-1', 'closed-tab');
 		});
 
 		describe('broadcastUserInput', () => {

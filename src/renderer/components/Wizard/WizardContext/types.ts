@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { AdditionalDirectory, ToolType, AgentConfig } from '../../../types';
+import type { CodexTransport } from '../../../../shared/codexTransport';
 
 export type WizardStep =
 	| 'agent-selection'
@@ -49,6 +50,8 @@ export interface WizardState {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/** Codex transport choice (codex only). Undefined means `exec`, the default. */
+	codexTransport?: CodexTransport;
 	/**
 	 * Model the WIZARD plans with, for this run only. Undefined means "whatever
 	 * the agent is configured to use". Deliberately not carried onto the created
@@ -98,6 +101,7 @@ export type WizardAction =
 	| { type: 'SET_AGENT_CONFIG_VALUES'; values: Record<string, unknown> | undefined }
 	| { type: 'SET_ENABLE_MAESTRO_P'; value: boolean | undefined }
 	| { type: 'SET_MAESTRO_P_MODE'; mode: 'interactive' | 'dynamic' }
+	| { type: 'SET_CODEX_TRANSPORT'; transport: CodexTransport }
 	| { type: 'SET_MAESTRO_P_PATH'; path: string | undefined }
 	| { type: 'SET_PLANNER_MODEL'; model: string | undefined }
 	| {
@@ -170,6 +174,7 @@ export interface WizardContextAPI {
 	setEnableMaestroP: (value: boolean | undefined) => void;
 	setMaestroPMode: (mode: 'interactive' | 'dynamic') => void;
 	setMaestroPPath: (path: string | undefined) => void;
+	setCodexTransport: (transport: CodexTransport) => void;
 	setPlannerModel: (model: string | undefined) => void;
 	setSessionSshRemoteConfig: (config: WizardSessionSshRemoteConfig | undefined) => void;
 	setDirectoryPath: (path: string) => void;

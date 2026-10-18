@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TEMPLATE_VARIABLES } from '../../utils/templateVariables';
+import { getAvailableTemplateVariables } from './useAvailableTemplateVariables';
 
 export interface AutocompleteState {
 	isOpen: boolean;
@@ -59,10 +60,13 @@ export const INITIAL_AUTOCOMPLETE_STATE: AutocompleteState = {
 	filteredVariables: TEMPLATE_VARIABLES,
 };
 
+// Read at the moment the popup opens or refilters, so a variable of a
+// switched-off Encore Feature is never offered.
 function filterVariables(searchText: string): typeof TEMPLATE_VARIABLES {
-	if (!searchText) return TEMPLATE_VARIABLES;
+	const variables = getAvailableTemplateVariables();
+	if (!searchText) return variables;
 	const search = searchText.toLowerCase();
-	return TEMPLATE_VARIABLES.filter(
+	return variables.filter(
 		(v) => v.variable.toLowerCase().includes(search) || v.description.toLowerCase().includes(search)
 	);
 }
@@ -125,7 +129,7 @@ export function useTemplateAutocompleteEngine(
 				position: targetRef.current.getCaretPosition(caret),
 				selectedIndex: 0,
 				searchText: '',
-				filteredVariables: TEMPLATE_VARIABLES,
+				filteredVariables: filterVariables(''),
 			});
 		},
 		[closeAutocomplete]

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
+import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
 
 const mockUpdateSessionWith = vi.fn();
 vi.mock('../../../../../renderer/stores/sessionStore', () => ({
@@ -18,35 +19,9 @@ vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importO
 const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
 
 describe('ToolbarControls', () => {
-	const originalMatchMedia = window.matchMedia;
-
-	// isCoarsePointer() reads window.matchMedia('(pointer: coarse)'); drive it so
-	// the touch-only mic button can be tested. jsdom has no matchMedia, so the
-	// default (undefined) already yields a fine (non-coarse) pointer.
-	function setCoarsePointer(coarse: boolean) {
-		Object.defineProperty(window, 'matchMedia', {
-			writable: true,
-			configurable: true,
-			value: (query: string) => ({
-				matches: coarse,
-				media: query,
-				onchange: null,
-				addEventListener: vi.fn(),
-				removeEventListener: vi.fn(),
-				addListener: vi.fn(),
-				removeListener: vi.fn(),
-				dispatchEvent: vi.fn(),
-			}),
-		});
-	}
-
 	afterEach(() => {
 		vi.restoreAllMocks();
-		Object.defineProperty(window, 'matchMedia', {
-			writable: true,
-			configurable: true,
-			value: originalMatchMedia,
-		});
+		restorePointer();
 		mockUpdateSessionWith.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
 	});

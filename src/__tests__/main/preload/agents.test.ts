@@ -23,6 +23,13 @@ describe('Agents Preload API', () => {
 		api = createAgentsApi();
 	});
 
+	it('uses the single translation IPC contract and returns refusal unchanged', async () => {
+		const request = { agentId: 'agent', destination: 'codex' as const, action: 'apply' as const };
+		const refusal = { success: false, error: 'Native resume is unverified' };
+		mockInvoke.mockResolvedValue(refusal);
+		expect(await api.translateProvider(request)).toEqual(refusal);
+		expect(mockInvoke).toHaveBeenCalledWith('agents:translateProvider', request);
+	});
 	describe('detect', () => {
 		it('should invoke agents:detect', async () => {
 			const mockAgents = [
@@ -364,6 +371,21 @@ describe('Agents Preload API', () => {
 	});
 
 	describe('discoverSlashCommands', () => {
+		it('passes the Codex session environment to discovery', async () => {
+			mockInvoke.mockResolvedValue([]);
+			await api.discoverSlashCommands('codex', '/project', undefined, undefined, {
+				CODEX_HOME: '/profile',
+			});
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'agents:discoverSlashCommands',
+				'codex',
+				'/project',
+				undefined,
+				undefined,
+				{ CODEX_HOME: '/profile' }
+			);
+		});
+
 		it('should invoke agents:discoverSlashCommands', async () => {
 			const commands = ['compact', 'help', 'review'];
 			mockInvoke.mockResolvedValue(commands);

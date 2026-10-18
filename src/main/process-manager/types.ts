@@ -1,19 +1,30 @@
 import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
-import type { AgentOutputParser } from '../parsers';
-import type { AgentError } from '../../shared/types';
+import type { AgentOutputParser, ParsedEvent } from '../parsers';
+import type { AgentError, CallUsage } from '../../shared/types';
+import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
+import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
+import type { CodexTransport } from '../../shared/codexTransport';
+import type { CodexAppServerSshLaunch } from '../codex-app-server/ssh-launch';
+import type { CodexAppServerProcessHandle } from '../codex-app-server/protocol';
 
 /**
- * Kill/interrupt handle for server-backed processes that have no OS child
- * (currently the OpenCode SDK path). ProcessManager routes kill()/interrupt()
- * here when `ManagedProcess.sdkController` is set.
+ * Kill/interrupt handle for server-backed processes, whose stop starts with a
+ * protocol call rather than a signal: the OpenCode SDK path (no OS child) and
+ * the Codex app-server path (`turn/interrupt`, then the stop ladder on its
+ * child). ProcessManager routes kill()/interrupt() here when
+ * `ManagedProcess.sdkController` is set.
  */
 export interface SdkProcessController {
 	/** Abort the in-flight turn; the session/stream stays alive. */
 	interrupt: () => void;
-	/** Hard stop: abort the turn and tear down the event subscription. */
-	kill: () => void;
+	/**
+	 * Hard stop: abort the turn and tear down the transport. `sync` and
+	 * `shutdown` carry `ProcessManager.kill()`'s options through to a
+	 * controller that owns an OS child.
+	 */
+	kill: (options?: { sync?: boolean; shutdown?: boolean }) => void;
 }
 
 /**
@@ -25,6 +36,8 @@ export interface ProcessConfig {
 	cwd: string;
 	command: string;
 	args: string[];
+	/** Attach to an existing terminal handle instead of replacing it. */
+	reuseTerminal?: boolean;
 	requiresPty?: boolean;
 	prompt?: string;
 	shell?: string;
@@ -85,6 +98,15 @@ export interface ProcessConfig {
 	 *  never runs and the renderer falls back to streamed commentary instead
 	 *  of the authoritative final answer / context window snapshot. */
 	agentSessionId?: string;
+	/** Resolved Codex transport for this turn (`resolveCodexTransport`). Set by
+	 *  the desktop spawn handler from the persisted agent record; anything other
+	 *  than `'app-server'` (including absent) means `codex exec`. A preference:
+	 *  the spawner still runs exec for turns app-server cannot carry. */
+	codexTransport?: CodexTransport;
+	/** An app-server turn on an SSH remote: the launch the spawn handler built
+	 *  beside the exec wrapper, set only when the turn wants app-server. The
+	 *  app-server spawner runs it; exec ignores it. */
+	codexAppServerSsh?: CodexAppServerSshLaunch;
 }
 
 /**
@@ -134,11 +156,22 @@ export interface ManagedProcess {
 	 *  corrected `usage` event immediately instead of the gauge staying wrong until
 	 *  the next turn. Cleared once resolved or pushed, so no double emit. */
 	pendingOmpUsagePush?: { model: string; stats: UsageStats };
-	tempImageFiles?: string[];
+	/** Temporary CLI attachments (images and prompt files), owned until process termination. */
+	tempFiles?: string[];
 	command?: string;
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
 	usageIsCumulative?: boolean;
+	/**
+	 * The maestro-lib UsageAccumulator instance doing the actual delta
+	 * normalization for this process (see `normalizeUsageToDelta` in
+	 * StdoutHandler.ts). `lastUsageTotals`/`usageIsCumulative` above are kept
+	 * in sync from its `lastTotals`/`isCumulative` getters after every call -
+	 * they still need to exist as their own fields because
+	 * `plugin-event-listener.ts` and the existing test suite read them
+	 * directly, not through the accumulator.
+	 */
+	usageAccumulator?: UsageAccumulator;
 	emittedToolCallIds?: Set<string>;
 	querySource?: 'user' | 'auto';
 	tabId?: string;
@@ -148,6 +181,10 @@ export interface ManagedProcess {
 	/** Human-readable remote command line for SSH spawns (the agent invocation that
 	 *  runs on the remote host). Shown in Process Details above the local SSH command. */
 	sshRemoteCommand?: string;
+	/** Remote file the launch script writes the agent's pid to, so Stop and kill
+	 *  can signal the agent on its host rather than only the local ssh client.
+	 *  See utils/ssh-remote-signal.ts. Set only for stdin-script SSH spawns. */
+	sshRemotePidFile?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),
@@ -163,6 +200,8 @@ export interface ManagedProcess {
 	opencodeSessionId?: string;
 	/** OpenCode SDK client bound to the shared server, for abort calls. */
 	opencodeClient?: OpencodeClient;
+	/** Codex app-server turn state (thread id, turn id, request channel) for steering. */
+	codexAppServer?: CodexAppServerProcessHandle;
 	/** Monotonic spawn number for this session id, claimed at registration.
 	 *  Lets a late event from a killed process recognize that a newer spawn owns
 	 *  the session even after that newer spawn has removed its own map entry.
@@ -185,10 +224,18 @@ export type { UsageStats } from '../../shared/types';
 export interface SpawnResult {
 	pid: number;
 	success: boolean;
+	error?: string;
+	/** True when the existing terminal was reused; startup commands must not run again. */
+	attached?: boolean;
 }
 
 export interface CommandResult {
 	exitCode: number;
+}
+
+export interface TurnSettlement {
+	outcome: TurnOutcome;
+	answerCaptured: boolean;
 }
 
 /**
@@ -200,13 +247,19 @@ export interface ProcessManagerEvents {
 	/** `signal` is set only when the process was terminated by a signal
 	 *  (WIFSIGNALED). node-pty reports those with `code` 0, so the code alone
 	 *  cannot distinguish a clean exit from a kill. */
-	exit: (sessionId: string, code: number, signal?: number) => void;
+	exit: (sessionId: string, code: number, signal?: number, settlement?: TurnSettlement) => void;
 	spawn: (config: ProcessConfig) => void;
 	'command-exit': (sessionId: string, code: number) => void;
 	usage: (sessionId: string, stats: UsageStats) => void;
+	/** One API call's new spend, mid-turn (see `CallUsage`). claude-code only. */
+	'call-usage': (sessionId: string, usage: CallUsage) => void;
 	'session-id': (sessionId: string, agentSessionId: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
 	'thinking-chunk': (sessionId: string, text: string) => void;
+	/** One parsed output line, as the parser built it and before anything
+	 *  interprets it. Fires once per line, and only while something is
+	 *  subscribed (see `utils/parsedEvent.ts`). */
+	'parsed-event': (sessionId: string, event: ParsedEvent) => void;
 	'tool-execution': (sessionId: string, tool: ToolExecution) => void;
 	'slash-commands': (sessionId: string, commands: unknown[]) => void;
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;

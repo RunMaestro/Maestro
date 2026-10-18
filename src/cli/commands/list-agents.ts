@@ -1,7 +1,12 @@
 // List agents command
 // Lists all agents/sessions from Maestro storage
 
-import { readSessions, readGroups, getSessionsByGroup, resolveGroupId } from '../services/storage';
+import {
+	readLiveSessions,
+	readGroups,
+	getSessionsByGroup,
+	resolveGroupId,
+} from '../services/storage';
 import { formatAgents, formatError, AgentDisplay } from '../output/formatter';
 
 interface ListAgentsOptions {
@@ -23,7 +28,7 @@ export function listAgents(options: ListAgentsOptions): void {
 			const group = groups.find((g) => g.id === groupId);
 			groupName = group?.name;
 		} else {
-			sessions = readSessions();
+			sessions = readLiveSessions();
 		}
 
 		if (options.json) {

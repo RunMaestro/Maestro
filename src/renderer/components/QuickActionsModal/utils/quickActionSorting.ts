@@ -32,6 +32,15 @@ export function filterAndSortQuickActions(
 			return a.label.toLowerCase().includes(searchLower);
 		})
 		.sort((a, b) => {
+			// Buckets outrank everything in agents mode: the list is drawn under
+			// one header per bucket, so a row sorted out of its tier renders under
+			// the wrong header. The sort key is the agent's NAME, which two agents
+			// can share, so the bookmark tie-break below must not cross a bucket.
+			if (mode === 'agents') {
+				const aBucket = AGENT_BUCKET_ORDER.indexOf(getAgentBucket(a));
+				const bBucket = AGENT_BUCKET_ORDER.indexOf(getAgentBucket(b));
+				if (aBucket !== bBucket) return aBucket - bBucket;
+			}
 			const sameAgent =
 				a.agentSortKey !== undefined &&
 				b.agentSortKey !== undefined &&
@@ -40,9 +49,6 @@ export function filterAndSortQuickActions(
 				return a.bookmarked ? -1 : 1;
 			}
 			if (mode === 'agents') {
-				const aBucket = AGENT_BUCKET_ORDER.indexOf(getAgentBucket(a));
-				const bBucket = AGENT_BUCKET_ORDER.indexOf(getAgentBucket(b));
-				if (aBucket !== bBucket) return aBucket - bBucket;
 				return alphabetizeKey(a.label).localeCompare(alphabetizeKey(b.label));
 			}
 			return a.label.localeCompare(b.label);

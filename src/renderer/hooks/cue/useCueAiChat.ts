@@ -11,7 +11,7 @@ import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only - no markdown, no code fences, no bullet lists, no formatting.
 
-Event types: app.startup (fires once on application start, no extra fields), time.heartbeat (interval_minutes), time.scheduled (schedule_times array, optional schedule_days), file.changed (watch glob), agent.completed (source_session, optional fan_out), github.pull_request (poll_minutes, optional repo), github.issue (poll_minutes, optional repo), github.label (fires when a label is added to a PR or issue; optional gh_label_target: pr|issue|both, optional gh_labels array, poll_minutes, optional repo), task.pending (watch glob, poll_minutes).
+Event types: app.startup (fires once on application start, no extra fields), time.heartbeat (interval_minutes), time.scheduled (schedule_times array, optional schedule_days), file.changed (watch glob), agent.completed (source_session, optional fan_out), github.pull_request (repo owner/name, required: it never runs without one; poll_minutes), github.issue (repo owner/name, required: it never runs without one; poll_minutes), github.label (fires when a label is added to a PR or issue; optional gh_label_target: pr|issue|both, optional gh_labels array, poll_minutes, repo owner/name, required: it never runs without one), task.pending (watch glob, poll_minutes).
 
 Optional filter block on any subscription: AND'd conditions on payload fields. Operators: exact string, "!value" negation, ">N"/"<N" numeric, glob patterns, boolean.
 
@@ -106,6 +106,7 @@ export function useCueAiChat({
 			? `${AI_SYSTEM_PROMPT}\n\nThe config file is at: ${yamlPath}\n\n${text}`
 			: text;
 
+		let errorReported = false;
 		try {
 			const appendSystemPrompt = await prepareMaestroSystemPrompt({
 				session,
@@ -177,6 +178,7 @@ export function useCueAiChat({
 			const cleanupError = window.maestro.process.onAgentError(
 				(sid: string, error: { message: string }) => {
 					if (sid === spawnSessionIdRef.current) {
+						errorReported = true;
 						const msg = error.message || 'Agent encountered an error.';
 						setChatMessages((prev) => [...prev, { role: 'assistant', text: msg }]);
 						setChatBusy(false);
@@ -188,7 +190,9 @@ export function useCueAiChat({
 
 			await window.maestro.process.spawn(spawnConfig);
 		} catch {
-			setChatMessages((prev) => [...prev, { role: 'assistant', text: 'Failed to start agent.' }]);
+			if (!errorReported) {
+				setChatMessages((prev) => [...prev, { role: 'assistant', text: 'Failed to start agent.' }]);
+			}
 			setChatBusy(false);
 			aiCleanupRef.current.forEach((fn) => fn());
 			aiCleanupRef.current = [];

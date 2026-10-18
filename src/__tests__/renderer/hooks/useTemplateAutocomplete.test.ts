@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTemplateAutocomplete } from '../../../renderer/hooks';
-import { TEMPLATE_VARIABLES } from '../../../shared/templateVariables';
+import { TEMPLATE_VARIABLES, availableTemplateVariables } from '../../../shared/templateVariables';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 describe('useTemplateAutocomplete', () => {
 	let mockTextarea: HTMLTextAreaElement;
@@ -459,9 +460,14 @@ describe('useTemplateAutocomplete', () => {
 				} as React.ChangeEvent<HTMLTextAreaElement>);
 			});
 
-			expect(result.current.autocompleteState.filteredVariables.length).toBe(
-				TEMPLATE_VARIABLES.length
+			// "All" is every variable whose Encore Feature is on: one that belongs
+			// to a switched-off feature is not offered.
+			const offered = availableTemplateVariables(
+				TEMPLATE_VARIABLES,
+				useSettingsStore.getState().encoreFeatures
 			);
+			expect(result.current.autocompleteState.filteredVariables).toEqual(offered);
+			expect(offered.length).toBeGreaterThan(0);
 		});
 	});
 

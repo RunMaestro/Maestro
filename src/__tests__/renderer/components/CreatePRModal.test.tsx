@@ -15,7 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CreatePRModal } from '../../../renderer/components/CreatePRModal';
 import { usePRCreationStore, prRunKey } from '../../../renderer/stores/prCreationStore';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -46,6 +46,12 @@ function renderModal(overrides: Partial<React.ComponentProps<typeof CreatePRModa
 	return { ...render(<CreatePRModal {...props} />), props };
 }
 
+async function clickCreatePR() {
+	const button = await screen.findByRole('button', { name: /create pr/i });
+	await waitFor(() => expect(button).toBeEnabled());
+	fireEvent.click(button);
+}
+
 describe('CreatePRModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -61,8 +67,7 @@ describe('CreatePRModal', () => {
 
 	it('hands the request to the store instead of holding it', async () => {
 		renderModal();
-		const button = await screen.findByRole('button', { name: /create pr/i });
-		fireEvent.click(button);
+		await clickCreatePR();
 
 		expect(createPR).toHaveBeenCalledWith(WORKTREE, 'main', 'visual polish', '');
 		expect(usePRCreationStore.getState().runs[KEY]?.status).toBe('running');
@@ -70,7 +75,7 @@ describe('CreatePRModal', () => {
 
 	it('offers Run in Background while the request is in flight', async () => {
 		renderModal();
-		fireEvent.click(await screen.findByRole('button', { name: /create pr/i }));
+		await clickCreatePR();
 
 		expect(screen.getByText('Creating...')).toBeInTheDocument();
 		const close = screen.getByTestId('create-pr-close');
@@ -82,7 +87,7 @@ describe('CreatePRModal', () => {
 
 	it('re-attaches to the running request rather than resetting the form', async () => {
 		const first = renderModal();
-		fireEvent.click(await screen.findByRole('button', { name: /create pr/i }));
+		await clickCreatePR();
 		first.unmount();
 
 		renderModal();
@@ -117,7 +122,7 @@ describe('CreatePRModal', () => {
 			await screen.findByText('no commits between main and visual-polish')
 		).toBeInTheDocument();
 		// And it can be retried from there.
-		fireEvent.click(screen.getByRole('button', { name: /create pr/i }));
+		await clickCreatePR();
 		expect(createPR).toHaveBeenCalledTimes(1);
 	});
 });

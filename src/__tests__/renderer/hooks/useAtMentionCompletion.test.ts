@@ -842,28 +842,30 @@ describe('useAtMentionCompletion', () => {
 	// =============================================================================
 
 	describe('performance optimizations', () => {
-		it('caps file tree traversal at MAX_FILE_TREE_ENTRIES', () => {
-			// Generate a tree with more than 50k files
-			const largeFolder: FileNode[] = [];
+		it('searches the whole tree, not just the first 50k entries', () => {
+			// Regression: a 50k flatten cap (counting folders, walked depth-first)
+			// hid files the Files panel showed. Mirror the real failure: a big
+			// `.maestro` subtree first, whose paths fuzzy-match the query, then the
+			// real file far past entry 50,000.
+			const shots: FileNode[] = [];
 			for (let i = 0; i < 200; i++) {
 				const children: FileNode[] = [];
 				for (let j = 0; j < 300; j++) {
-					children.push(createFile(`file_${i}_${j}.ts`));
+					children.push(createFile(`overview-${i}-${j}.png`));
 				}
-				largeFolder.push(createFolder(`dir_${i}`, children));
+				shots.push(createFolder(`strata-usage-console-${i}`, children));
 			}
-			// This tree has 200 folders + 60,000 files = 60,200 nodes total
+			const tree: FileNode[] = [
+				createFolder('.maestro', [createFolder('playbooks', shots)]),
+				createFolder('brand', [createFolder('Mark', [createFile('mark-color.png')])]),
+			];
 
-			const session = createMockSession(largeFolder);
+			const session = createMockSession(tree);
 			const { result } = renderHook(() => useAtMentionCompletion(session));
 
-			// With empty filter, should return at most 15 suggestions
-			const suggestions = result.current.getSuggestions('');
+			const suggestions = result.current.getSuggestions('mark-color.png');
 			expect(suggestions.length).toBeLessThanOrEqual(15);
-
-			// With a filter that would match many files, should still return max 15
-			const filtered = result.current.getSuggestions('file');
-			expect(filtered.length).toBeLessThanOrEqual(15);
+			expect(suggestions[0].fullPath).toBe('brand/Mark/mark-color.png');
 		});
 
 		it('empty filter skips fuzzy matching and returns sorted results', () => {
@@ -883,26 +885,22 @@ describe('useAtMentionCompletion', () => {
 			expect(suggestions.every((s) => s.score === 0)).toBe(true);
 		});
 
-		it('early exits after enough exact substring matches', () => {
-			// Create 200 files that contain "match" in their name (exact substring matches)
-			// plus files that would only fuzzy-match
-			const files: FileNode[] = [];
+		it('ranks a later basename prefix hit above earlier path-substring hits', () => {
+			// Regression: an early exit after 50 substring hits stopped the scan
+			// before reaching a stronger basename prefix match further down.
+			const noise: FileNode[] = [];
 			for (let i = 0; i < 200; i++) {
-				files.push(createFile(`match_${i}.ts`));
+				noise.push(createFile(`notes_${i}.md`));
 			}
-			// Add some files that would only fuzzy match (no "match" substring)
-			for (let i = 0; i < 100; i++) {
-				files.push(createFile(`m_a_t_c_h_${i}.ts`));
-			}
-
-			const session = createMockSession(files);
+			const session = createMockSession([
+				createFolder('docs-markup', noise),
+				createFolder('zz', [createFile('mark-color.png')]),
+			]);
 			const { result } = renderHook(() => useAtMentionCompletion(session));
 
-			const suggestions = result.current.getSuggestions('match');
-			// Should still return valid results with max 15
+			const suggestions = result.current.getSuggestions('mark');
 			expect(suggestions.length).toBe(15);
-			// Top results should be exact substring matches (higher score)
-			expect(suggestions[0].displayText).toContain('match');
+			expect(suggestions[0].displayText).toBe('mark-color.png');
 		});
 	});
 });

@@ -4,32 +4,13 @@ import * as path from 'path';
 import * as os from 'os';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
-import { resolveToBytesSync } from '../../storage/session-image-store';
+import { parseDataUrl } from '../../../shared/maestro-lib/launch/image-refs';
 
-/**
- * Resolve an image value to base64 + media type.
- *
- * Accepts BOTH inline `data:image/...;base64,...` data URLs (freshly pasted,
- * not yet persisted) AND `maestro-image://store/<sha>.<ext>` references (images
- * relocated to the content-addressed store on persistence - see
- * src/main/storage/session-image-store.ts). Because every send-to-agent path
- * (normal send, replay of an old message, SSH, stream-json) funnels through
- * this function, making it ref-aware transparently lets agents receive images
- * regardless of whether they're still inline or already on disk.
- */
-export function parseDataUrl(value: string): { base64: string; mediaType: string } | null {
-	// Inline data URL (freshly pasted): return the original base64 substring
-	// verbatim - no decode/re-encode - so this path stays byte-identical to the
-	// historical behavior (re-encoding would canonicalize padding/whitespace).
-	const match = value.match(/^data:(image\/[^;]+);base64,(.+)$/);
-	if (match) return { mediaType: match[1], base64: match[2] };
-
-	// maestro-image ref (persisted image relocated to the content-addressed
-	// store): read the bytes off disk and encode them for the agent hand-off.
-	const resolved = resolveToBytesSync(value);
-	if (!resolved) return null;
-	return { mediaType: resolved.mediaType, base64: resolved.buffer.toString('base64') };
-}
+// The pure half lives in maestro-lib; re-exported so existing importers keep working.
+export {
+	parseDataUrl,
+	buildImagePromptPrefix,
+} from '../../../shared/maestro-lib/launch/image-refs';
 
 /**
  * Save a base64 data URL image to a temp file.
@@ -61,16 +42,6 @@ export function saveImageToTempFile(dataUrl: string, index: number): string | nu
 		});
 		return null;
 	}
-}
-
-/**
- * Build a text prefix for embedding image file paths in the prompt.
- * Used when an agent's resume mode doesn't support -i flag (e.g., codex exec resume).
- * The prefix is prepended to the user's prompt so the agent knows where to find images on disk.
- */
-export function buildImagePromptPrefix(tempPaths: string[]): string {
-	if (tempPaths.length === 0) return '';
-	return `[Attached images: ${tempPaths.join(', ')}]\n\n`;
 }
 
 /**

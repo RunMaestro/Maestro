@@ -2,6 +2,7 @@ import { ActivityHeatmap } from '../../ActivityHeatmap';
 import { ChartErrorBoundary } from '../../ChartErrorBoundary';
 import { DelegationTrendChart } from '../../DelegationTrendChart';
 import { DurationTrendsChart } from '../../DurationTrendsChart';
+import { PromptCadenceStats } from '../../PromptCadenceStats';
 import { WeekdayComparisonChart } from '../../WeekdayComparisonChart';
 import { DashboardSection } from '../components';
 import { DashboardTabPanel } from './DashboardTabPanel';
@@ -19,6 +20,19 @@ export function ActivityView({
 }: ActivityViewProps) {
 	return (
 		<DashboardTabPanel viewMode="activity">
+			<DashboardSection
+				sectionId="prompt-cadence"
+				focusedSection={focusedSection}
+				setSectionRef={setSectionRef}
+				handleSectionKeyDown={handleSectionKeyDown}
+				theme={theme}
+				style={{ animationDelay: '0ms' }}
+			>
+				<ChartErrorBoundary theme={theme} chartName="Prompts">
+					<PromptCadenceStats cadence={data.prompts} theme={theme} />
+				</ChartErrorBoundary>
+			</DashboardSection>
+
 			<DashboardSection
 				sectionId="delegation-trend"
 				focusedSection={focusedSection}

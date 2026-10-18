@@ -43,7 +43,7 @@ import { Modal, ModalFooter } from '../ui/Modal';
 import { MermaidRenderer } from '../MermaidRenderer';
 import { CsvTableRenderer } from '../CsvTableRenderer';
 import { JsonlViewer, SYNTAX_EXAMPLES } from '../JsonlViewer';
-import { getEncoder } from '../../utils/tokenCounter';
+import { countTokens } from '../../utils/tokenCounter';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import remarkFrontmatter from 'remark-frontmatter';
@@ -58,6 +58,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
+import { isWebUrl } from '../../../shared/urlRoutingHint';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
@@ -842,7 +843,7 @@ export const FilePreview = React.memo(
 				// A file:// target Maestro can render stays inside the app (preview
 				// tab or player); only OS-owned types go to the default app.
 				if (openFileUrl(href, (path) => onFileClick?.(path))) return;
-				if (/^https?:\/\/|^mailto:/.test(href)) {
+				if (isWebUrl(href) || /^mailto:/.test(href)) {
 					openUrl(href, opts);
 				}
 			},
@@ -1047,15 +1048,18 @@ export const FilePreview = React.memo(
 				return;
 			}
 
-			getEncoder()
-				.then((encoder) => {
-					const tokens = encoder.encode(file.content);
-					setTokenCount(tokens.length);
+			let isActive = true;
+			countTokens(file.content)
+				.then((count) => {
+					if (isActive) setTokenCount(count);
 				})
 				.catch((err) => {
 					logger.error('Failed to count tokens:', undefined, err);
-					setTokenCount(null);
+					if (isActive) setTokenCount(null);
 				});
+			return () => {
+				isActive = false;
+			};
 		}, [file?.content, isImage, isBinary, isParquet, isLargeFile]);
 
 		// Sync internal edit content when file changes (only when NOT using external content)

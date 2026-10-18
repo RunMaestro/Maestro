@@ -31,6 +31,7 @@ import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { isTextInputTarget } from '../utils/messageScrollNavigation';
 import { JumpToMessageTopButton } from './JumpToMessageTopButton';
+import { SteeredMessageHeader } from './SteeredMessageHeader';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface GroupChatMessagesProps {
@@ -503,6 +504,14 @@ export const GroupChatMessages = memo(
 											color: theme.colors.textMain,
 										}}
 									>
+										{/* A message steered into a running round never started one */}
+										{isUser && msg.steeredTo && msg.steeredTo.length > 0 && (
+											<SteeredMessageHeader
+												state={undefined}
+												theme={theme}
+												targets={msg.steeredTo}
+											/>
+										)}
 										{/* Sender label for non-user messages */}
 										{!isUser && (
 											<div className="text-xs font-medium mb-2" style={{ color: senderColor }}>

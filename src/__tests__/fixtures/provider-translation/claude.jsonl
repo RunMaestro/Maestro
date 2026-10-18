@@ -1,0 +1,7 @@
+{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"repeat"}}
+{"type":"user","uuid":"u2","parentUuid":"u1","message":{"role":"user","content":"repeat"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u2","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-1","name":"read_file","input":{"path":"synthetic.md"}},{"type":"thinking","thinking":"synthetic opaque evidence","signature":"synthetic-only"}]}}
+{"type":"user","uuid":"u3","parentUuid":"a1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"synthetic fact: azure kite"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"c3ludGhldGljLWJ5dGVz"}}]}}
+{"type":"system","uuid":"compact","subtype":"compact_boundary"}
+{"type":"assistant","uuid":"branch","parentUuid":"u2","isSidechain":true,"message":{"role":"assistant","content":"synthetic branch"}}
+{"type":"future_record","payload":{"unknown":"preserved"}}

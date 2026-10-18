@@ -1,0 +1,104 @@
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'events';
+import * as fs from 'fs';
+import * as path from 'path';
+import { watch } from 'chokidar';
+
+vi.mock('chokidar', () => ({
+	watch: vi.fn(() => Object.assign(new EventEmitter(), { close: vi.fn() })),
+}));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+
+import {
+	readCueConfigFile,
+	watchCueConfigFile,
+} from '../../../main/cue/config/cue-config-repository';
+import { logger } from '../../../main/utils/logger';
+import { writeCueYamlAtomicSync } from '../../../main/cue/cue-yaml-write';
+
+describe('YAML reconciliation when native notifications are lost', () => {
+	let root: string;
+	let config: string;
+	let cleanup: () => void;
+	beforeEach(() => {
+		fs.mkdirSync('.build', { recursive: true });
+		root = fs.mkdtempSync(path.resolve('.build/cue-reconcile-test-'));
+		fs.mkdirSync(path.join(root, '.maestro'));
+		config = path.join(root, '.maestro/cue.yaml');
+		fs.writeFileSync(config, 'subscriptions: []\n');
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		cleanup?.();
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+	it('recovers changed bytes despite equal size and timestamp, once, with an informational log', () => {
+		fs.writeFileSync(config, 'subscriptions: [a]\n');
+		const stamp = fs.statSync(config).mtime;
+		const info = vi.spyOn(logger, 'info');
+		const onChange = vi.fn();
+		const onWarning = vi.fn();
+		cleanup = watchCueConfigFile(root, onChange, { onWarning });
+		writeCueYamlAtomicSync(config, 'subscriptions: [b]\n');
+		fs.utimesSync(config, stamp, stamp);
+		vi.advanceTimersByTime(31_000);
+		expect(onChange).toHaveBeenCalledTimes(1);
+		expect(onWarning).not.toHaveBeenCalled();
+		expect(info).toHaveBeenCalledWith(expect.stringContaining('Missed config change'), 'CueConfig');
+		vi.advanceTimersByTime(60_000);
+		expect(onChange).toHaveBeenCalledTimes(1);
+	});
+
+	it('detects creation/deletion and stops health polling on teardown', () => {
+		fs.unlinkSync(config);
+		const onChange = vi.fn();
+		cleanup = watchCueConfigFile(root, onChange);
+		writeCueYamlAtomicSync(config, 'subscriptions: []\n');
+		vi.advanceTimersByTime(31_000);
+		expect(onChange).toHaveBeenCalledTimes(1);
+		fs.unlinkSync(config);
+		vi.advanceTimersByTime(30_000);
+		expect(onChange).toHaveBeenCalledTimes(2);
+		cleanup();
+		writeCueYamlAtomicSync(config, 'subscriptions: [a]\n');
+		vi.advanceTimersByTime(60_000);
+		expect(onChange).toHaveBeenCalledTimes(2);
+	});
+
+	it('retries a failed reload rather than marking stale runtime content reconciled', () => {
+		const onChange = vi.fn().mockImplementationOnce(() => {
+			throw new Error('reload unavailable');
+		});
+		const onWarning = vi.fn();
+		cleanup = watchCueConfigFile(root, onChange, { onWarning });
+		writeCueYamlAtomicSync(config, 'subscriptions: [a]\n');
+		vi.advanceTimersByTime(31_000);
+		expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('Config reload failed'));
+		vi.advanceTimersByTime(30_000);
+		expect(onChange).toHaveBeenCalledTimes(2);
+	});
+	it('alarms on watcher errors while retaining missed-change recovery', () => {
+		const onChange = vi.fn();
+		const onWarning = vi.fn();
+		cleanup = watchCueConfigFile(root, onChange, { onWarning });
+		const watcher = vi.mocked(watch).mock.results.at(-1)!.value;
+		watcher.emit('error', new Error('ENOSPC: watcher unavailable'));
+		expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('Config watcher unhealthy'));
+		writeCueYamlAtomicSync(config, 'subscriptions: [a]\n');
+		vi.advanceTimersByTime(31_000);
+		expect(onChange).toHaveBeenCalledTimes(1);
+		expect(onWarning).toHaveBeenCalledTimes(1);
+	});
+	it('ignores a late native notification for loaded YAML using chokidar path separators', () => {
+		const loaded = readCueConfigFile(root);
+		const onChange = vi.fn();
+		cleanup = watchCueConfigFile(root, onChange, { getLoadedConfigFile: () => loaded });
+		const watcher = vi.mocked(watch).mock.results.at(-1)!.value;
+		watcher.emit('change', config.replace(/\\/g, '/'));
+		vi.advanceTimersByTime(1000);
+		expect(onChange).not.toHaveBeenCalled();
+	});
+});

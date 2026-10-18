@@ -21,14 +21,18 @@ export function extractInlineCodeText(children: React.ReactNode): string {
 	return '';
 }
 
-/** Copy inline code text and surface the standard center flash. */
-export async function copyInlineCode(children: React.ReactNode): Promise<void> {
-	const text = extractInlineCodeText(children).trim();
+/** Copy text and surface the standard center flash. No-op on empty text. */
+export async function copyTextWithFlash(text: string): Promise<void> {
 	if (!text) return;
 	const ok = await safeClipboardWrite(text);
 	if (ok) {
 		flashCopiedToClipboard(text);
 	}
+}
+
+/** Copy inline code text and surface the standard center flash. */
+export async function copyInlineCode(children: React.ReactNode): Promise<void> {
+	await copyTextWithFlash(extractInlineCodeText(children).trim());
 }
 
 /** Visual + a11y props applied to every clickable inline-code element. */

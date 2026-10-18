@@ -282,6 +282,61 @@ describe('Git Preload API', () => {
 	});
 
 	describe('listWorktrees', () => {
+		it('forwards physical registry identities and retained missing registrations', async () => {
+			const response = {
+				success: true,
+				worktrees: [
+					{
+						path: '/trees/group/live',
+						resolvedPath: '/migrated/live',
+						head: 'abc',
+						branch: 'live',
+						isBare: false,
+					},
+					{
+						path: '/trees/group/removed',
+						resolvedPath: '/migrated/removed',
+						head: 'def',
+						branch: 'removed',
+						isBare: false,
+						isPrunable: true,
+						pathMissing: true,
+					},
+					{
+						path: '/trees/unreachable',
+						head: 'ghi',
+						branch: 'unreachable',
+						isBare: false,
+						pathUnresolved: true,
+					},
+				],
+				resolvedCwd: '/repo',
+				resolvedBasePath: '/trees',
+			};
+			mockInvoke.mockResolvedValue(response);
+
+			expect(await api.listWorktrees('/repo', 'ssh-1', '/trees')).toEqual(response);
+		});
+
+		it('forwards unresolved aliases alongside successfully listed SSH worktrees', async () => {
+			const response = {
+				worktrees: [{ path: '/data/trees/live', head: 'def', branch: 'live', isBare: false }],
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/trees',
+				unresolvedSessionPaths: ['/old-alias/unreadable'],
+			};
+			mockInvoke.mockResolvedValue(response);
+
+			const result = await api.listWorktrees('~/repo', 'ssh-1', '~/trees', [
+				'/old-alias/unreadable',
+			]);
+
+			expect(result).toEqual(response);
+			expect(mockInvoke).toHaveBeenCalledWith('git:listWorktrees', '~/repo', 'ssh-1', '~/trees', [
+				'/old-alias/unreadable',
+			]);
+		});
+
 		it('should invoke git:listWorktrees', async () => {
 			const mockWorktrees = [
 				{ path: '/home/user/project', head: 'abc123', branch: 'main', isBare: false },
@@ -291,8 +346,90 @@ describe('Git Preload API', () => {
 
 			const result = await api.listWorktrees('/home/user/project');
 
-			expect(mockInvoke).toHaveBeenCalledWith('git:listWorktrees', '/home/user/project', undefined);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'git:listWorktrees',
+				'/home/user/project',
+				undefined,
+				undefined,
+				undefined
+			);
 			expect(result.worktrees).toEqual(mockWorktrees);
+		});
+
+		it('passes the configured SSH base path and returns resolved directory metadata', async () => {
+			const resolved = {
+				worktrees: [],
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/worktrees',
+				resolvedSessionPaths: { '/old-alias/review': '/data/worktrees/review' },
+			};
+			mockInvoke.mockResolvedValue(resolved);
+
+			const result = await api.listWorktrees('~/repo', 'ssh-1', '~/worktrees', [
+				'/old-alias/review',
+			]);
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'git:listWorktrees',
+				'~/repo',
+				'ssh-1',
+				'~/worktrees',
+				['/old-alias/review']
+			);
+			expect(result).toEqual(resolved);
+		});
+
+		it('forwards known missing old aliases alongside the SSH registry and resolved live aliases', async () => {
+			const sessionPaths = ['/old-alias/deleted', '/old-alias/live'];
+			const response = {
+				success: true,
+				worktrees: [
+					{ path: '/data/repo', head: 'abc', branch: 'main', isBare: false },
+					{ path: '/data/worktrees/live', head: 'def', branch: 'live', isBare: false },
+				],
+				resolvedCwd: '/data/repo',
+				resolvedBasePath: '/data/worktrees',
+				resolvedSessionPaths: {
+					'/old-alias/deleted': '/data/worktrees/deleted',
+					'/old-alias/live': '/data/worktrees/live',
+				},
+				missingSessionPaths: ['/old-alias/deleted'],
+			};
+			mockInvoke.mockResolvedValue(response);
+
+			const result = await api.listWorktrees('~/repo', 'ssh-1', '~/worktrees', sessionPaths);
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'git:listWorktrees',
+				'~/repo',
+				'ssh-1',
+				'~/worktrees',
+				sessionPaths
+			);
+			expect(result).toEqual(response);
+		});
+	});
+
+	describe('scanWorktreeDirectory', () => {
+		it('forwards unresolved candidate roots without hiding healthy scan results', async () => {
+			const response = {
+				gitSubdirs: [
+					{
+						path: '/trees/live',
+						name: 'live',
+						isWorktree: true,
+						branch: 'live',
+						repoRoot: '/repo',
+					},
+				],
+				unresolvedPaths: ['/trees/unreadable'],
+			};
+			mockInvoke.mockResolvedValue(response);
+
+			const result = await api.scanWorktreeDirectory('/trees');
+
+			expect(result).toEqual(response);
+			expect(mockInvoke).toHaveBeenCalledWith('git:scanWorktreeDirectory', '/trees', undefined);
 		});
 	});
 

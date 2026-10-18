@@ -17,6 +17,7 @@
  * To run:  RUN_INTEGRATION_TESTS=true npm test -- CopilotProcessManager
  */
 
+import * as os from 'os';
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -163,7 +164,7 @@ describe.skipIf(SKIP_E2E)('Copilot-CLI E2E through ProcessManager', () => {
 			const result = pm.spawn({
 				sessionId,
 				toolType: 'copilot-cli',
-				cwd: '/tmp',
+				cwd: os.tmpdir(),
 				command: agent.command,
 				args,
 				prompt,
@@ -222,7 +223,7 @@ describe.skipIf(SKIP_E2E)('Copilot-CLI E2E through ProcessManager', () => {
 			pm.spawn({
 				sessionId,
 				toolType: 'copilot-cli',
-				cwd: '/tmp',
+				cwd: os.tmpdir(),
 				command: agent.command,
 				args,
 				prompt,
@@ -259,7 +260,7 @@ describe.skipIf(SKIP_E2E)('Copilot-CLI E2E through ProcessManager', () => {
 			pm.spawn({
 				sessionId: sessionA,
 				toolType: 'copilot-cli',
-				cwd: '/tmp',
+				cwd: os.tmpdir(),
 				command: agent.command,
 				args: buildBatchArgs(
 					'Remember the marker token PURPLE_MAESTRO_42. Reply with exactly "Got it." and nothing else.'
@@ -281,7 +282,7 @@ describe.skipIf(SKIP_E2E)('Copilot-CLI E2E through ProcessManager', () => {
 			pm.spawn({
 				sessionId: sessionB,
 				toolType: 'copilot-cli',
-				cwd: '/tmp',
+				cwd: os.tmpdir(),
 				command: agent.command,
 				args: buildBatchArgs(
 					'What was the marker token? Reply with just the token, nothing else.',
@@ -320,7 +321,7 @@ describe.skipIf(SKIP_E2E)('Copilot-CLI E2E through ProcessManager', () => {
 			pm.spawn({
 				sessionId,
 				toolType: 'copilot-cli',
-				cwd: '/tmp',
+				cwd: os.tmpdir(),
 				command: agent.command,
 				args: buildBatchArgs('Reply with OK.'),
 				prompt: 'Reply with OK.',

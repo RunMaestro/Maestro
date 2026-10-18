@@ -6,7 +6,8 @@ import {
 	useCoworkingBrowserKeepAliveStore,
 	BROWSER_KEEPALIVE_TTL_MS,
 } from '../../../renderer/stores/coworkingBrowserKeepAliveStore';
-import type { BrowserTab, Session } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
+import type { BrowserTab } from '../../../shared/browserPage';
 
 function makeBrowserTab(id: string): BrowserTab {
 	return {

@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { useClickOutside } from '../ui/useClickOutside';
+import { installPointerTypeTracking, isTouchEmulatedMouseEvent } from '../../utils/touch';
 
 export interface OverlayPosition {
 	top: number;
@@ -31,7 +32,7 @@ export interface UseTabHoverOverlayReturn {
 	setTabRef: (el: HTMLDivElement | null) => void;
 	/**
 	 * Open the overlay immediately (no hover delay), anchored to the tab.
-	 * Used by the touch path (tap an already-active tab) so tab actions are
+	 * Used by the touch path (a long-press on the chip) so tab actions are
 	 * reachable without a hover. Respects the same `shouldOpen` guard as hover.
 	 */
 	openOverlay: () => void;
@@ -47,6 +48,12 @@ export interface UseTabHoverOverlayReturn {
  * Shared hover/overlay state and timing logic for tab components.
  * Manages the 400ms open delay, 100ms close delay, and portal mouse tracking
  * that is identical across AITab, FileTab, and TerminalTabItem.
+ *
+ * Hover is a MOUSE affordance only. On a touch screen the browser answers each
+ * tap with an emulated mouseenter and never sends the matching mouseleave, so a
+ * hover timer armed there opened the menu 400ms after every tap and left the
+ * chip painted as hovered - the user tapped to switch tabs and got a menu
+ * instead. Touch reaches the menu through `openOverlay` on a long-press.
  */
 export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabHoverOverlayReturn {
 	const [isHovered, setIsHovered] = useState(false);
@@ -120,7 +127,14 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		positionAndOpen();
 	}, [options?.shouldOpen, positionAndOpen]);
 
+	// Lets each mouseenter be judged by the pointer that produced it.
+	useEffect(() => {
+		installPointerTypeTracking();
+	}, []);
+
 	const handleMouseEnter = useCallback(() => {
+		// A tap's emulated mouseenter: not a hover. See the hook docblock.
+		if (isTouchEmulatedMouseEvent()) return;
 		setIsHovered(true);
 		if (options?.shouldOpen && !options.shouldOpen()) return;
 		// Clear any pending close timer so it doesn't fire while we're opening

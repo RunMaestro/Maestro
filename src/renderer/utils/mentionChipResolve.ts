@@ -9,7 +9,7 @@
  */
 
 import type { Theme } from '../types';
-import { useSessionStore } from '../stores/sessionStore';
+import { getLiveSessionsSnapshot } from '../hooks/session/useLiveSessions';
 import { normalizeMentionName, generateParticipantColor } from './participantColors';
 import { getExtensionColor } from './extensionColors';
 
@@ -29,7 +29,8 @@ export interface ResolvedAgentMention {
  */
 export function resolveAgentMention(name: string, theme: Theme): ResolvedAgentMention {
 	const normalized = normalizeMentionName(name);
-	const mentionable = useSessionStore.getState().sessions.filter((s) => s.toolType !== 'terminal');
+	// Live agents only: a dormant Pianola (flag off) never resolves.
+	const mentionable = getLiveSessionsSnapshot().filter((s) => s.toolType !== 'terminal');
 	const index = mentionable.findIndex((s) => normalizeMentionName(s.name) === normalized);
 	if (index === -1) {
 		return { label: name, color: theme.colors.accent };

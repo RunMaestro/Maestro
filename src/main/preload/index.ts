@@ -19,6 +19,8 @@ import {
 import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
 import { createWebLoginApi } from './webLogin';
+import { createComputerHistoryApi } from './computerHistory';
+import { createMaestroRunApi } from './maestroRun';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -58,6 +60,7 @@ import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
+import { createCueBundleApi } from './cueBundle';
 import { createPianolaApi } from './pianola';
 import { createPluginsApi } from './plugins';
 import { createWakatimeApi } from './wakatime';
@@ -70,6 +73,9 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { createCotExportApi } from './cotExport';
+import { createQuickChatApi } from './quickChat';
+import { createCodexVisualizationApi } from './codexVisualization';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -124,6 +130,12 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Web Login API (accounts for the web interface - desktop-only)
 	webLogin: createWebLoginApi(),
+
+	// Computer History API (desktop-only; the web bridge refuses these channels)
+	computerHistory: createComputerHistoryApi(),
+
+	// MaestroRun API (macOS launcher install + Full Disk Access walkthrough)
+	maestroRun: createMaestroRunApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -251,6 +263,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
+	// Cue Bundle API (Cue modal Bundles tab - export / import pipelines and agents)
+	cueBundle: createCueBundleApi(),
+
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: createPianolaApi(),
 
@@ -280,6 +295,13 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
+
+	// Chain of thought export (desktop-only; the handlers refuse every other sender)
+	cotExport: createCotExportApi(),
+	// Quick Chat API (hotkey-summoned floating chat window + its engine)
+	quickChat: createQuickChatApi(),
+	// Codex `visualize` content references rendered inline
+	codexVisualization: createCodexVisualizationApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -297,6 +319,9 @@ export {
 	createLiveApi,
 	// Web Login accounts
 	createWebLoginApi,
+	// Computer History
+	createComputerHistoryApi,
+	createMaestroRunApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,
@@ -365,6 +390,8 @@ export {
 	createCueApi,
 	// Cue Backup
 	createCueBackupApi,
+	// Cue Bundles
+	createCueBundleApi,
 	// Pianola
 	createPianolaApi,
 	// Plugins
@@ -387,6 +414,12 @@ export {
 	createWindowsApi,
 	// Session Images
 	createImagesApi,
+	// Chain of thought export
+	createCotExportApi,
+	// Quick Chat
+	createQuickChatApi,
+	// Codex visualizations
+	createCodexVisualizationApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -675,3 +708,11 @@ export type {
 	// From images
 	ImagesApi,
 } from './images';
+export type {
+	// From cotExport
+	CotExportApi,
+} from './cotExport';
+export type {
+	// From codexVisualization
+	CodexVisualizationApi,
+} from './codexVisualization';

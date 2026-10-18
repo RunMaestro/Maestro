@@ -11,6 +11,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import SymphonyModal from '../../../renderer/components/SymphonyModal';
 import type { Theme } from '../../../renderer/types';
 import type {
 	RegisteredRepository,
@@ -266,8 +267,6 @@ describe('SymphonyModal', () => {
 				})
 			);
 
-			const SymphonyModal = (await import('../../../renderer/components/SymphonyModal')).default;
-
 			render(
 				<SymphonyModal
 					theme={testTheme}
@@ -295,8 +294,6 @@ describe('SymphonyModal', () => {
 
 		it('blocks when gh CLI is not installed', async () => {
 			checkGhCliMock.mockResolvedValue({ installed: false, authenticated: false });
-
-			const SymphonyModal = (await import('../../../renderer/components/SymphonyModal')).default;
 
 			render(
 				<SymphonyModal
@@ -327,8 +324,6 @@ describe('SymphonyModal', () => {
 		it('blocks when gh CLI is not authenticated', async () => {
 			checkGhCliMock.mockResolvedValue({ installed: true, authenticated: false });
 
-			const SymphonyModal = (await import('../../../renderer/components/SymphonyModal')).default;
-
 			render(
 				<SymphonyModal
 					theme={testTheme}
@@ -358,8 +353,6 @@ describe('SymphonyModal', () => {
 		it('shows build tools warning with gh checkmark when gh is OK', async () => {
 			checkGhCliMock.mockResolvedValue({ installed: true, authenticated: true });
 
-			const SymphonyModal = (await import('../../../renderer/components/SymphonyModal')).default;
-
 			render(
 				<SymphonyModal
 					theme={testTheme}
@@ -387,8 +380,6 @@ describe('SymphonyModal', () => {
 
 		it('dismisses dialog when Close is clicked on gh error', async () => {
 			checkGhCliMock.mockResolvedValue({ installed: false, authenticated: false });
-
-			const SymphonyModal = (await import('../../../renderer/components/SymphonyModal')).default;
 
 			render(
 				<SymphonyModal
@@ -420,8 +411,6 @@ describe('SymphonyModal', () => {
 
 		it('treats gh CLI check failure as not installed', async () => {
 			checkGhCliMock.mockRejectedValue(new Error('IPC failed'));
-
-			const SymphonyModal = (await import('../../../renderer/components/SymphonyModal')).default;
 
 			render(
 				<SymphonyModal

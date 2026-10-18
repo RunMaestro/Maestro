@@ -187,7 +187,7 @@ export const AgentDrawer = memo(function AgentDrawer({
 			{/* Agent list */}
 			<div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px 8px' }}>
 				{/* Nodes section - drag the Command pill to add an unbound command
-				 *  node (shell or maestro-cli). The owning agent is picked in the
+				 *  node (shell or agent message). The owning agent is picked in the
 				 *  node's config panel after drop. Hidden when the user is searching
 				 *  to avoid clutter. */}
 				{!search.trim() && (
@@ -239,7 +239,7 @@ export const AgentDrawer = memo(function AgentDrawer({
 									Command
 								</div>
 								<div style={{ color: theme.colors.textDim, fontSize: 10 }}>
-									shell or maestro-cli
+									shell or agent message
 								</div>
 							</div>
 						</div>

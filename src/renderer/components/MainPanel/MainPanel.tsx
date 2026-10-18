@@ -53,6 +53,7 @@ import { PianolaDashboard } from '../PianolaDashboard';
 import { PianolaDashboardTab } from '../PianolaDashboard/PianolaTabControls';
 import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
 import { CoworkingBackgroundBrowsers } from '../coworking/CoworkingBackgroundBrowsers';
+import { useHostBrowserRelayResponder } from '../../hooks/browser/useHostBrowserRelayResponder';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
@@ -143,17 +144,21 @@ export const MainPanel = React.memo(
 			handleInputKeyDown,
 			handlePaste,
 			handleDrop,
+			onUploadFiles,
 			getContextColor,
 			setActiveSessionId,
 			currentSessionBatchState,
 			onStopBatchRun,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onMergeQueuedItem,
 			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			getSteerContext,
+			onSteerQueuedItem,
 			onOpenQueueBrowser,
 			isMobileLandscape = false,
 			showFlashNotification,
@@ -362,6 +367,7 @@ export const MainPanel = React.memo(
 		// switches the user's visible tab. No-ops when the `coworking` Encore flag
 		// is off.
 		useCoworkingBrowserResponder(browserViewRefs);
+		useHostBrowserRelayResponder();
 
 		// Get the active tab for header display
 		// Prefer local derivation from the full session (includes live usage/cost).
@@ -400,7 +406,10 @@ export const MainPanel = React.memo(
 		const { gitInfo, refreshGitStatus } = useGitInfo(activeSession);
 
 		// Get agent capabilities for conditional feature rendering
-		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
+		const { hasCapability } = useAgentCapabilities(
+			activeSession?.toolType,
+			activeSession?.providerTranslationKnowledgeDirectory
+		);
 
 		// Model/Effort pills: available options, current values, and agent-level
 		// defaults. Shared with the keyboard-only Model & Effort modal and with the
@@ -1433,14 +1442,18 @@ export const MainPanel = React.memo(
 									handleInputKeyDown={handleInputKeyDown}
 									handlePaste={handlePaste}
 									handleDrop={handleDrop}
+									onUploadFiles={onUploadFiles}
 									onStopBatchRun={onStopBatchRun}
 									onRemoveQueuedItem={onRemoveQueuedItem}
 									onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+									onMergeQueuedItem={onMergeQueuedItem}
 									onEditQueuedItem={onEditQueuedItem}
 									onReorderQueuedItem={onReorderQueuedItem}
 									onForceSendQueuedItem={onForceSendQueuedItem}
 									forcedParallelEnabled={forcedParallelEnabled}
 									getForceSendContext={getForceSendContext}
+									getSteerContext={getSteerContext}
+									onSteerQueuedItem={onSteerQueuedItem}
 									onOpenQueueBrowser={onOpenQueueBrowser}
 									showFlashNotification={showFlashNotification}
 									summarizeProgress={summarizeProgress}

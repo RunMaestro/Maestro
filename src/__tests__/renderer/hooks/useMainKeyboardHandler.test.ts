@@ -6,8 +6,11 @@ import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { STEER_SEND_EVENT } from '../../../renderer/services/chatSteering';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
@@ -20,6 +23,7 @@ vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
 }));
 import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
+import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
 
 /**
  * Creates a minimal mock context with all required handler functions.
@@ -1095,6 +1099,33 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(mockSetActiveSessionId).toHaveBeenCalledWith('session-1');
+		});
+
+		it('asks the Left Bar to scroll the jumped-to agent into view', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			// Target is already active: no switch for the Left Bar to observe.
+			result.current.keyboardHandlerRef.current = createMockContext({
+				visibleSessions: [{ id: 'session-1' }],
+				setActiveSessionId: vi.fn(),
+				leftSidebarOpen: true,
+				setLeftSidebarOpen: vi.fn(),
+			});
+			const before = getSidebarRevealToken();
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '1',
+						code: 'Digit1',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(getSidebarRevealToken()).toBe(before + 1);
 		});
 
 		it('should expand sidebar when jumping to session', () => {
@@ -3433,6 +3464,90 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('toggleThroughputGauge shortcut', () => {
+		const pressGaugeChord = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'T',
+						code: 'KeyT',
+						altKey: true,
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		beforeEach(() => {
+			useThroughputGaugeStore.setState({ visible: false });
+		});
+
+		it('toggles the gauge on Opt+Cmd+Shift+T while the Encore Feature is on', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { throughputGauge: true },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleThroughputGauge',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(true);
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		});
+
+		it('does nothing while the Encore Feature is off', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { throughputGauge: false },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleThroughputGauge',
+			});
+
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		});
+	});
+
+	describe('openNotificationCenter shortcut', () => {
+		// Unbound by default, so the test binds it through isShortcut.
+		const press = () =>
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
+			});
+
+		beforeEach(() => {
+			useNotificationStore.getState().setNotificationCenterOpen(false);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ notificationCenterEnabled: false });
+		});
+
+		it('opens the inbox while the notification center is enabled', () => {
+			useSettingsStore.setState({ notificationCenterEnabled: true });
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openNotificationCenter',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			press();
+			expect(useNotificationStore.getState().notificationCenterOpen).toBe(true);
+		});
+
+		it('does nothing while the notification center is disabled', () => {
+			useSettingsStore.setState({ notificationCenterEnabled: false });
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openNotificationCenter',
+			});
+
+			press();
+			expect(useNotificationStore.getState().notificationCenterOpen).toBe(false);
+		});
+	});
+
 	describe('jumpToTerminal shortcut', () => {
 		it('should navigate to closest terminal tab on Opt+Cmd+J', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
@@ -4861,6 +4976,41 @@ describe('useMainKeyboardHandler - destination surface switching', () => {
 		expect(setDirectorNotesOpen).toHaveBeenCalledWith(true);
 	});
 
+	describe('Computer History (a Ctrl+Cmd chord)', () => {
+		const withHistory = { usageStats: true, computerHistory: true };
+
+		afterEach(() => {
+			useModalStore.getState().closeModal('computerHistory');
+		});
+
+		it('opens on Ctrl+Cmd+H', () => {
+			// Both matchers accept the full chord; the folded one is what lets it
+			// through the open-modal guard as a destination shortcut.
+			pressShortcut(
+				'computerHistory',
+				{ key: 'h', metaKey: true, ctrlKey: true },
+				{
+					encoreFeatures: withHistory,
+					isPaneShortcut: (_e: KeyboardEvent, id: string) => id === 'computerHistory',
+				}
+			);
+
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(true);
+		});
+
+		it('does not open on plain Cmd+H, which the general matcher would accept', () => {
+			// isShortcut folds Ctrl and Cmd into one modifier, so it reports this
+			// binding as matched on a bare Cmd+H (macOS Hide) or Ctrl+H.
+			pressShortcut(
+				'computerHistory',
+				{ key: 'h', metaKey: true },
+				{ encoreFeatures: withHistory, isPaneShortcut: () => false }
+			);
+
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(false);
+		});
+	});
+
 	it('still opens the Usage Dashboard from an open modal', () => {
 		const setUsageDashboardOpen = vi.fn();
 		pressShortcut(
@@ -4920,5 +5070,49 @@ describe('useMainKeyboardHandler - destination surface switching', () => {
 			activeSession: { id: 'test' },
 		});
 		expect(blockedWithModal).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * Steer Running Turn from outside the composer. The composer answers the chord
+ * itself while the caret is in it; everywhere else the window handler asks for it
+ * by event, because the queued message it steers is drawn in the transcript.
+ */
+describe('useMainKeyboardHandler - steerSend', () => {
+	function press(ctxOverrides: Record<string, unknown>, target?: HTMLElement): number {
+		const heard = vi.fn();
+		window.addEventListener(STEER_SEND_EVENT, heard);
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'steerSend',
+			...ctxOverrides,
+		});
+		act(() => {
+			(target ?? window).dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, altKey: true, bubbles: true })
+			);
+		});
+		window.removeEventListener(STEER_SEND_EVENT, heard);
+		return heard.mock.calls.length;
+	}
+
+	it('asks the composer to steer when the chord is pressed outside it', () => {
+		expect(press({})).toBe(1);
+	});
+
+	it('leaves the chord to the composer when the caret is inside it', () => {
+		// The composer already ran it on its own keydown; firing the event too
+		// would send the draft twice.
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		try {
+			expect(press({ inputRef: { current: textarea } }, textarea)).toBe(0);
+		} finally {
+			textarea.remove();
+		}
+	});
+
+	it('does nothing while a group chat is on screen', () => {
+		expect(press({ activeGroupChatId: 'group-chat-1' })).toBe(0);
 	});
 });

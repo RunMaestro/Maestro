@@ -10,6 +10,7 @@ export {
 	substituteTemplateVariables,
 	TEMPLATE_VARIABLES,
 	TEMPLATE_VARIABLES_GENERAL,
+	availableTemplateVariables,
 	type TemplateContext,
 	type TemplateSessionInfo,
 } from '../../shared/templateVariables';

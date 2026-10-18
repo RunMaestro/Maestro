@@ -26,12 +26,14 @@
 
 import { useEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
+import { noteRetryProgress } from '../../../stores/retryStore';
+import { noteLiveTabOutput } from './helpers/liveTabOutput';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { isLikelyConcatenatedToolNames } from '../../../constants/app';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import { canAppendToLogEntry } from '../../../utils/logEntries';
 import type { LogEntry } from '../../../types';
 
@@ -44,7 +46,7 @@ export function useAgentThinkingListener(): void {
 		new Map()
 	);
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
@@ -60,6 +62,12 @@ export function useAgentThinkingListener(): void {
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
 				const bufferKey = `${actualSessionId}:${tabId}`;
+
+				// Model output proves an auto-retry resend got through; resolve the
+				// outage before the thinking-mode filter below can drop the chunk.
+				noteRetryProgress(actualSessionId, tabId);
+				// It also proves the turn is running, whoever started it.
+				noteLiveTabOutput(actualSessionId, tabId);
 
 				const existing = thinkingChunkBufferRef.current.get(bufferKey);
 				thinkingChunkBufferRef.current.set(bufferKey, {

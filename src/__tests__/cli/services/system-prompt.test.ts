@@ -17,6 +17,11 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	getConfigDirectory: vi.fn(() => '/mock/config'),
 	readSettingValue: vi.fn(),
+	resolveSessionHistoryFilePath: vi.fn(),
+}));
+
+vi.mock('../../../shared/maestro-run/state-file', () => ({
+	readMaestroRunReadyPath: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/git-utils', () => ({
@@ -24,25 +29,11 @@ vi.mock('../../../cli/services/git-utils', () => ({
 	isGitRepo: vi.fn(),
 }));
 
-vi.mock('fs', async () => {
-	const actual = await vi.importActual<typeof import('fs')>('fs');
-	// `actual.constants` is a getter on the fs module - spreading `actual`
-	// drops it (only own enumerable data properties carry through), and
-	// production code reads `fs.constants.R_OK`. Inline the literal so the
-	// mock surface still exposes a usable constants object.
-	const mocked = {
-		...actual,
-		accessSync: vi.fn(),
-		constants: { ...actual.constants, R_OK: 4 },
-	};
-	return { ...mocked, default: mocked };
-});
-
-import fs from 'fs';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { getCliPrompt } from '../../../cli/services/prompt-loader';
-import { readSettingValue } from '../../../cli/services/storage';
+import { readSettingValue, resolveSessionHistoryFilePath } from '../../../cli/services/storage';
 import { getGitBranch, isGitRepo } from '../../../cli/services/git-utils';
+import { readMaestroRunReadyPath } from '../../../shared/maestro-run/state-file';
 
 const mockSession = (overrides: Partial<SessionInfo> = {}): SessionInfo => ({
 	id: 'agent-abc-123',
@@ -62,11 +53,15 @@ describe('prepareMaestroSystemPromptCli', () => {
 		// nuke it, and we want a stable getConfigDirectory return value.
 		vi.mocked(isGitRepo).mockReturnValue(true);
 		vi.mocked(getGitBranch).mockReturnValue('main');
-		vi.mocked(readSettingValue).mockReturnValue('');
-		vi.mocked(fs.accessSync).mockImplementation(() => {
-			// Default: history file does NOT exist (fresh session)
-			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-		});
+		// Maestro Cue ships on and carries a section: switch it off by default so
+		// each test sees only the sections it is about.
+		vi.mocked(readSettingValue).mockImplementation((key: string) =>
+			key === 'encoreFeatures' ? { maestroCue: false } : ''
+		);
+		// Default: history file does NOT exist (fresh session)
+		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue(undefined);
+		// Default: the app has not recorded MaestroRun as ready.
+		vi.mocked(readMaestroRunReadyPath).mockReturnValue(undefined);
 	});
 
 	it('substitutes agent identity, branch, and conductor profile into the template', async () => {
@@ -130,7 +125,6 @@ describe('prepareMaestroSystemPromptCli', () => {
 
 	it('omits the history file path when one is not yet written (fresh session)', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('history=[{{AGENT_HISTORY_PATH}}]');
-		// fs.accessSync is already mocked to throw ENOENT in beforeEach
 
 		const result = await prepareMaestroSystemPromptCli(mockSession());
 
@@ -139,18 +133,17 @@ describe('prepareMaestroSystemPromptCli', () => {
 
 	it('includes the history file path when the file exists locally', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('history=[{{AGENT_HISTORY_PATH}}]');
-		// Override the throw-by-default beforeEach with a no-op success.
-		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
+		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue('/mock/config/history/sess-1.jsonl');
 
 		const result = await prepareMaestroSystemPromptCli(mockSession({ id: 'sess-1' }));
 
-		// Sanitized session id forms the filename
-		expect(result).toMatch(/history=\[.*sess-1\.json\]/);
+		expect(resolveSessionHistoryFilePath).toHaveBeenCalledWith('sess-1');
+		expect(result).toBe('history=[/mock/config/history/sess-1.jsonl]');
 	});
 
 	it('skips the history file pointer for SSH sessions (path is local-only)', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('history=[{{AGENT_HISTORY_PATH}}]');
-		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
+		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue('/mock/config/history/x.jsonl');
 
 		const result = await prepareMaestroSystemPromptCli(
 			mockSession({
@@ -164,10 +157,126 @@ describe('prepareMaestroSystemPromptCli', () => {
 	it('tolerates a non-string conductor profile setting', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('cond=[{{CONDUCTOR_PROFILE}}]');
 		// e.g. a malformed settings file with a non-string value
-		vi.mocked(readSettingValue).mockReturnValue({ accidentallyAnObject: true });
+		vi.mocked(readSettingValue).mockImplementation((key: string) =>
+			key === 'encoreFeatures' ? { maestroCue: false } : { accidentallyAnObject: true }
+		);
 
 		const result = await prepareMaestroSystemPromptCli(mockSession());
 
 		expect(result).toBe('cond=[]');
+	});
+
+	describe('role and plugin sections', () => {
+		const prompts: Record<string, string> = {
+			'maestro-system-prompt': 'BASE {{AGENT_NAME}}',
+			'pianola-system': 'PIANOLA',
+			'computer-history-system': 'HISTORY at {{COMPUTER_HISTORY_DIR}}',
+			'cue-system': 'CUE for {{AGENT_NAME}}',
+		};
+		const settings = (encoreFeatures: Record<string, unknown>) => (key: string) =>
+			key === 'encoreFeatures' ? { maestroCue: false, ...encoreFeatures } : '';
+
+		beforeEach(() => {
+			vi.mocked(getCliPrompt).mockImplementation(async (id: string) => {
+				if (id in prompts) return prompts[id];
+				throw new Error(`Failed to load prompt "${id}" (${id}.md)`);
+			});
+		});
+
+		it('appends nothing extra while every section flag is off', async () => {
+			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+			expect(result).toBe('BASE A');
+		});
+
+		it('appends the Maestro Cue section while Cue is on (its shipped default)', async () => {
+			vi.mocked(readSettingValue).mockImplementation((key: string) =>
+				key === 'encoreFeatures' ? {} : ''
+			);
+			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+			expect(result).toBe('BASE A\n\n---\n\nCUE for A');
+		});
+
+		it('appends the Pianola role section for the Pianola agent', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ pianola: true }));
+			const result = await prepareMaestroSystemPromptCli(
+				mockSession({ name: 'A', isPianola: true })
+			);
+			expect(result).toBe('BASE A\n\n---\n\nPIANOLA');
+		});
+
+		it('leaves the Pianola role section out while the pianola flag is off', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ pianola: false }));
+			const result = await prepareMaestroSystemPromptCli(
+				mockSession({ name: 'A', isPianola: true })
+			);
+			expect(result).toBe('BASE A');
+		});
+
+		it('appends the Computer History section with the local store path when enabled', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ computerHistory: true }));
+
+			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+
+			expect(result).toBe('BASE A\n\n---\n\nHISTORY at /mock/config/computer-history');
+		});
+
+		describe('MaestroRun', () => {
+			const LAUNCHER = '/Users/me/Applications/MaestroRun.app/Contents/MacOS/maestro-run';
+
+			beforeEach(() => {
+				prompts['maestro-run-system'] = 'RUN {{MAESTRO_RUN_PATH}}';
+				vi.mocked(readSettingValue).mockImplementation(settings({ maestroRun: true }));
+			});
+
+			it('is left out while the app has not recorded the launcher as ready', async () => {
+				const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+				expect(result).toBe('BASE A');
+				expect(readMaestroRunReadyPath).toHaveBeenCalledWith('/mock/config');
+			});
+
+			it('is appended with the launcher path once the state file says ready', async () => {
+				vi.mocked(readMaestroRunReadyPath).mockReturnValue(LAUNCHER);
+				const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+				expect(result).toBe(`BASE A\n\n---\n\nRUN ${LAUNCHER}`);
+			});
+
+			it('is left out when ready but the flag is off', async () => {
+				vi.mocked(readMaestroRunReadyPath).mockReturnValue(LAUNCHER);
+				vi.mocked(readSettingValue).mockImplementation(settings({ maestroRun: false }));
+				expect(await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }))).toBe('BASE A');
+			});
+
+			it('is never given to an SSH agent, and the state file is not read', async () => {
+				vi.mocked(readMaestroRunReadyPath).mockReturnValue(LAUNCHER);
+				const result = await prepareMaestroSystemPromptCli(
+					mockSession({ name: 'A', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+				);
+				expect(result).toBe('BASE A');
+				expect(readMaestroRunReadyPath).not.toHaveBeenCalled();
+			});
+		});
+
+		it('skips the localOnly Computer History section for SSH agents', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ computerHistory: true }));
+
+			const result = await prepareMaestroSystemPromptCli(
+				mockSession({ name: 'A', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+			);
+
+			expect(result).toBe('BASE A');
+		});
+
+		it('skips a section whose prompt file is missing instead of dropping the whole prompt', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ computerHistory: true }));
+			delete prompts['computer-history-system'];
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+
+			expect(result).toBe('BASE A');
+			expect(errSpy).toHaveBeenCalled();
+			errSpy.mockRestore();
+			prompts['computer-history-system'] = 'HISTORY at {{COMPUTER_HISTORY_DIR}}';
+		});
 	});
 });

@@ -23,6 +23,7 @@ import {
 	type ModelTokenUsage,
 	type SessionTokenBreakdown,
 } from '../../../../shared/tokenUsage';
+import type { TokenSpeedBucket } from '../../../../shared/tokenSpeed';
 
 const { toBreakdown, aggregate, bucketStart } = _internal;
 
@@ -438,5 +439,66 @@ describe('buildSeries', () => {
 		expect(s.byDay).toEqual({});
 		expect(s.byHour).toEqual({});
 		expect(s.bySource.user).toBe(15);
+	});
+});
+
+describe('token speed', () => {
+	const hour = new Date(2026, 4, 20, 14, 0).getTime();
+	const speedBucket = (overrides: Partial<TokenSpeedBucket> = {}): TokenSpeedBucket => ({
+		startMs: hour,
+		model: 'claude-opus-4-8',
+		calls: 2,
+		inputTokens: 1000,
+		outputTokens: 200,
+		durationMs: 4000,
+		...overrides,
+	});
+
+	it('carries a storage-supplied speed split onto the breakdown, and omits an empty one', () => {
+		const withSpeed = toBreakdown('claude-code', makeInfo({ speed: [speedBucket()] }));
+		expect(withSpeed.speed).toEqual([speedBucket()]);
+
+		const withoutSpeed = toBreakdown('claude-code', makeInfo({ speed: [] }));
+		expect(withoutSpeed).not.toHaveProperty('speed');
+	});
+
+	it('summarizes speed per provider and model in the aggregate', () => {
+		const all = [
+			breakdown({ sessionId: 'a', timestampMs: hour + 60_000, speed: [speedBucket()] }),
+			breakdown({
+				sessionId: 'b',
+				agentType: 'codex',
+				timestampMs: hour + 60_000,
+				speed: [
+					speedBucket({ model: 'gpt-5', outputTokens: 50, inputTokens: 0, durationMs: 1000 }),
+				],
+			}),
+			// No speed data: absent from the speed summary, not counted as zero.
+			breakdown({ sessionId: 'c', agentType: 'opencode', timestampMs: hour + 60_000 }),
+		];
+
+		const { speed } = aggregate(all, { granularity: 'day' });
+		expect(speed.overall.calls).toBe(4);
+		expect(speed.overall.avgOutputTps).toBeCloseTo(250 / 5);
+		expect(speed.byAgent.map((g) => g.key).sort()).toEqual(['claude-code', 'codex']);
+		expect(speed.byAgent.find((g) => g.key === 'codex')?.label).toBe('Codex');
+		expect(speed.byModel.map((g) => g.key).sort()).toEqual(['claude-opus-4-8', 'gpt-5']);
+		expect(speed.measuredAgents).toEqual(['claude-code', 'codex']);
+	});
+
+	it('filters speed by the hour each call finished, not by session activity', () => {
+		const since = hour + 2 * 3_600_000;
+		const all = [
+			breakdown({
+				timestampMs: since + 3_600_000,
+				speed: [
+					speedBucket({ startMs: hour }), // before the window
+					speedBucket({ startMs: since + 3_600_000, outputTokens: 900 }),
+				],
+			}),
+		];
+
+		const { speed } = aggregate(all, { sinceMs: since });
+		expect(speed.overall.outputTokens).toBe(900);
 	});
 });

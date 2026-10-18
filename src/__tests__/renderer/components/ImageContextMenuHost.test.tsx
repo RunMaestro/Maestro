@@ -16,6 +16,7 @@ import {
 import { saveImageToProject } from '../../../renderer/utils/imageExport';
 import { THEMES } from '../../../renderer/constants/themes';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useZoomViewerStore } from '../../../renderer/components/ZoomViewer/zoomViewerStore';
 
 let activeSession: { id: string; projectRoot: string; sshRemoteId?: string } | null = null;
 
@@ -161,5 +162,50 @@ describe('ImageContextMenuHost save destination', () => {
 
 		expect(await screen.findByText('Copy Image')).toBeInTheDocument();
 		expect(screen.queryByText('Save to Project...')).not.toBeInTheDocument();
+	});
+});
+
+describe('ImageContextMenuHost expand', () => {
+	let imageHost: HTMLDivElement;
+
+	beforeEach(() => {
+		activeSession = { id: 'a', projectRoot: '/proj-a' };
+		useZoomViewerStore.getState().close();
+		imageHost = document.createElement('div');
+		document.body.appendChild(imageHost);
+	});
+
+	afterEach(() => {
+		imageHost.remove();
+		useZoomViewerStore.getState().close();
+	});
+
+	const renderHost = () =>
+		render(
+			<LayerStackProvider>
+				<ImageContextMenuHost theme={THEMES.dracula} />
+			</LayerStackProvider>
+		);
+
+	it('opens any right-clicked image or diagram in the pan/zoom viewer', async () => {
+		renderHost();
+		const svg = withSize(document.createElementNS('http://www.w3.org/2000/svg', 'svg'), 600, 400);
+		imageHost.appendChild(svg);
+		fireEvent.contextMenu(svg);
+
+		fireEvent.click(await screen.findByText('Expand (Pan and Zoom)'));
+		expect(useZoomViewerStore.getState().request?.element).toBe(svg);
+		expect(screen.queryByText('Copy Image')).not.toBeInTheDocument();
+	});
+
+	it('drops Expand for an image already inside the viewer', async () => {
+		renderHost();
+		imageHost.setAttribute('data-zoom-viewer', '');
+		const img = withSize(document.createElement('img'), 400, 300);
+		imageHost.appendChild(img);
+		fireEvent.contextMenu(img);
+
+		expect(await screen.findByText('Copy Image')).toBeInTheDocument();
+		expect(screen.queryByText('Expand (Pan and Zoom)')).not.toBeInTheDocument();
 	});
 });

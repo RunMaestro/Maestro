@@ -3,16 +3,19 @@
  * shared ShikiCodeBlock can only syntax-highlight a fence, so mermaid diagrams
  * used to leak through as plain source. This wraps MermaidRenderer with a
  * Diagram/Source toggle so the diagram renders inline by default while the raw
- * source is always one click away (and a copy button for the source).
+ * source is always one click away (and a copy button for the source). The
+ * header's expand button opens the rendered diagram in the full-screen
+ * pan/zoom viewer.
  *
  * The document surface gets the same capability through customLanguageRenderers
  * (see PrismCodeBlock); this is the chat-only equivalent.
  */
 
-import { useState } from 'react';
-import { Clipboard, Code2, Workflow } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Clipboard, Code2, Maximize2, Workflow } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { MermaidRenderer } from '../../MermaidRenderer';
+import { openZoomViewer } from '../../ZoomViewer/zoomViewerStore';
 
 interface MermaidCodeBlockProps {
 	code: string;
@@ -22,6 +25,14 @@ interface MermaidCodeBlockProps {
 
 export function MermaidCodeBlock({ code, theme, onCopy }: MermaidCodeBlockProps) {
 	const [view, setView] = useState<'diagram' | 'source'>('diagram');
+	const blockRef = useRef<HTMLDivElement>(null);
+
+	// The SVG is injected by MermaidRenderer after render, so look it up at click
+	// time. Nothing to expand while it is still rendering or failed to parse.
+	const expandDiagram = () => {
+		const svg = blockRef.current?.querySelector<SVGSVGElement>('.mermaid-container svg');
+		if (svg) openZoomViewer(svg, 'Diagram');
+	};
 
 	const containerStyle = {
 		margin: '0.5em 0',
@@ -39,7 +50,7 @@ export function MermaidCodeBlock({ code, theme, onCopy }: MermaidCodeBlockProps)
 	});
 
 	return (
-		<div className="mermaid-code-block" style={containerStyle}>
+		<div ref={blockRef} className="mermaid-code-block" style={containerStyle}>
 			<div
 				className="flex items-center justify-between px-2 py-1.5"
 				style={{ borderBottom: `1px solid ${theme.colors.border}` }}
@@ -64,17 +75,30 @@ export function MermaidCodeBlock({ code, theme, onCopy }: MermaidCodeBlockProps)
 						Source
 					</button>
 				</div>
-				<button
-					onClick={() => onCopy(code)}
-					className="p-1 rounded opacity-70 hover:opacity-100 transition-opacity"
-					style={{ color: theme.colors.textDim }}
-					title="Copy source"
-				>
-					<Clipboard className="w-3.5 h-3.5" />
-				</button>
+				<div className="flex items-center gap-1">
+					{view === 'diagram' && (
+						<button
+							onClick={expandDiagram}
+							className="p-1 rounded opacity-70 hover:opacity-100 transition-opacity"
+							style={{ color: theme.colors.textDim }}
+							title="Expand (pan and zoom)"
+							aria-label="Expand diagram"
+						>
+							<Maximize2 className="w-3.5 h-3.5" />
+						</button>
+					)}
+					<button
+						onClick={() => onCopy(code)}
+						className="p-1 rounded opacity-70 hover:opacity-100 transition-opacity"
+						style={{ color: theme.colors.textDim }}
+						title="Copy source"
+					>
+						<Clipboard className="w-3.5 h-3.5" />
+					</button>
+				</div>
 			</div>
 			{view === 'diagram' ? (
-				<MermaidRenderer chart={code} theme={theme} />
+				<MermaidRenderer chart={code} theme={theme} expandable={false} />
 			) : (
 				<pre
 					className="m-0 p-3 overflow-x-auto"

@@ -6,6 +6,7 @@
  *   - recoverable account failures do not cancel sampling for the rest of the batch
  *   - unexpected account failures are reported after the rest of the batch runs
  *   - discovery only swallows expected missing/unreadable auth.json errors
+ *   - SSH-remote sessions are never sampled against local disk
  */
 
 import * as fs from 'fs';
@@ -78,6 +79,7 @@ import {
 	clearCodexUsageSnapshots,
 	getAllCodexUsageSnapshots,
 	resolveCodexHomeKey,
+	setCodexUsageSnapshot,
 	__resetForTests as resetCodexUsageStore,
 	type CodexUsageSnapshot,
 } from '../../../main/stores/codexUsageStore';
@@ -434,6 +436,58 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 
 		expect(sampleCodexUsageMock).toHaveBeenCalledWith({
 			codexHome: '/Users/test/.codex-symlinked',
+		});
+	});
+
+	it('skips SSH-remote sessions and drops the row an earlier build stored for them', async () => {
+		// The remote's CODEX_HOME is a path on that host. Reading it locally
+		// produced a "No auth.json" row beside the real local account of the
+		// same name, with zero agents attributed to it.
+		const remoteKey = resolveCodexHomeKey({ CODEX_HOME: '/config/.codex-banaco' });
+		setCodexUsageSnapshot({ ...makeSnapshot(remoteKey), authState: 'missing_auth' });
+		sampleCodexUsageMock.mockResolvedValue(makeSnapshot(path.resolve('/Users/test/.codex')));
+
+		await runCodexUsageSampling({
+			sessionsStore: makeStore({
+				sessions: [
+					{
+						id: 'codex-remote',
+						toolType: 'codex',
+						cwd: '/config/agent',
+						customEnvVars: { CODEX_HOME: '/config/.codex-banaco' },
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				],
+			}) as never,
+			agentConfigsStore: makeStore({ configs: {} }) as never,
+			agentDetector: makeDetector(FAKE_AGENT) as never,
+		});
+
+		expect(sampleCodexUsageMock).not.toHaveBeenCalledWith({ codexHome: '/config/.codex-banaco' });
+		expect(getAllCodexUsageSnapshots()).not.toHaveProperty([remoteKey]);
+		expect(getRememberedQuotaAccountKeys('codex')).not.toContain(remoteKey);
+	});
+
+	it('uses the agent-level CODEX_HOME only when the session has no env vars of its own', async () => {
+		// Session env vars REPLACE the provider-level set at spawn, so a session
+		// with its own vars never receives the provider's CODEX_HOME.
+		sampleCodexUsageMock.mockResolvedValue(makeSnapshot(path.resolve('/Users/test/.codex')));
+
+		await runCodexUsageSampling({
+			sessionsStore: makeStore({
+				sessions: [{ id: 'codex-1', toolType: 'codex', cwd: '/tmp', customEnvVars: { FOO: '1' } }],
+			}) as never,
+			agentConfigsStore: makeStore({
+				configs: { codex: { customEnvVars: { CODEX_HOME: '/Users/test/.codex-team' } } },
+			}) as never,
+			agentDetector: makeDetector(FAKE_AGENT) as never,
+		});
+
+		expect(sampleCodexUsageMock).toHaveBeenCalledWith({
+			codexHome: path.join(os.homedir(), '.codex'),
+		});
+		expect(sampleCodexUsageMock).not.toHaveBeenCalledWith({
+			codexHome: '/Users/test/.codex-team',
 		});
 	});
 });

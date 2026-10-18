@@ -5,6 +5,9 @@
 // same vocabulary. Three near-identical copies of the boolean parser had
 // already drifted (one accepted on/off, the others didn't).
 
+import * as path from 'path';
+import { expandTilde } from '../../shared/pathUtils';
+
 /** Values that read as `true` / `false` on the command line. */
 const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
 const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
@@ -22,6 +25,32 @@ export function parseCliBool(value: string, flag: string): boolean {
 }
 
 /**
+ * Parse a TCP port argument: a whole number from 0 to 65535 (0 lets the OS
+ * pick). Throws with the flag named, like {@link parseCliBool}.
+ */
+export function parseCliPort(value: string, flag: string): number {
+	const v = String(value).trim();
+	const port = /^\d+$/.test(v) ? Number(v) : NaN;
+	if (!Number.isInteger(port) || port < 0 || port > 65535) {
+		throw new Error(`${flag} expects a port number from 0 to 65535, got "${value}"`);
+	}
+	return port;
+}
+
+/**
+ * Parse a whole number of seconds, 0 or more. Throws with the flag named, like
+ * {@link parseCliBool}.
+ */
+export function parseCliSeconds(value: string, flag: string): number {
+	const v = String(value).trim();
+	const seconds = /^\d+$/.test(v) ? Number(v) : NaN;
+	if (!Number.isSafeInteger(seconds)) {
+		throw new Error(`${flag} expects a whole number of seconds (0 or more), got "${value}"`);
+	}
+	return seconds;
+}
+
+/**
  * Words that clear a per-tab or per-agent override so the value is inherited
  * again (from the agent, or from the global setting). Distinct from `false`:
  * clearing enter-to-send returns the tab to the `enterToSendAI` setting rather
@@ -32,4 +61,13 @@ const INHERIT_WORDS = new Set(['', 'inherit', 'default', 'none', 'clear', 'unset
 /** True when an argument means "drop the override and inherit". */
 export function isInheritValue(value: string): boolean {
 	return INHERIT_WORDS.has(String(value).trim().toLowerCase());
+}
+
+/**
+ * Resolve a path the user typed: `~` expanded, then made absolute against the
+ * CLI's cwd. The desktop app's cwd is unrelated (`/` for a Finder launch), so
+ * a path must be absolute before it crosses the bridge.
+ */
+export function resolveCliPath(input: string): string {
+	return path.resolve(process.cwd(), expandTilde(input.trim()));
 }

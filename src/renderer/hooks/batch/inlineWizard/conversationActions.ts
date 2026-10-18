@@ -16,6 +16,7 @@ import {
 import {
 	beginWizardRun,
 	countWizardExchange,
+	setWizardAgentWorking,
 	updateWizardRun,
 } from '../../../services/wizardStats';
 import { logger } from '../../../utils/logger';
@@ -131,6 +132,7 @@ export function useInlineWizardConversationActions({
 				sessionCustomArgs: sessionOverrides?.customArgs,
 				sessionCustomEnvVars: sessionOverrides?.customEnvVars,
 				sessionCustomModel: sessionOverrides?.customModel,
+				sessionClaudeTokenSource: sessionOverrides?.claudeTokenSource,
 				conductorProfile,
 			}));
 
@@ -188,6 +190,7 @@ export function useInlineWizardConversationActions({
 						sessionCustomArgs: sessionOverrides?.customArgs,
 						sessionCustomEnvVars: sessionOverrides?.customEnvVars,
 						sessionCustomModel: sessionOverrides?.customModel,
+						sessionClaudeTokenSource: sessionOverrides?.claudeTokenSource,
 						conductorProfile,
 						historyFilePath,
 					});
@@ -315,6 +318,7 @@ export function useInlineWizardConversationActions({
 						sessionCustomArgs: currentState.sessionCustomArgs,
 						sessionCustomEnvVars: currentState.sessionCustomEnvVars,
 						sessionCustomModel: currentState.sessionCustomModel,
+						sessionClaudeTokenSource: currentState.sessionClaudeTokenSource,
 						conductorProfile: currentState.conductorProfile,
 						historyFilePath: currentState.historyFilePath,
 					});
@@ -343,6 +347,9 @@ export function useInlineWizardConversationActions({
 			}
 
 			try {
+				// Call the AI service. The agent's turn is wizard time in full; the
+				// finally below hands the clock back to the user however it ends.
+				setWizardAgentWorking(tabId, true);
 				const result = await sendWizardMessage(
 					session,
 					content,
@@ -415,6 +422,8 @@ export function useInlineWizardConversationActions({
 				}));
 
 				callbacks?.onError?.(errorMessage);
+			} finally {
+				setWizardAgentWorking(tabId, false);
 			}
 		},
 		[conversationSessionsMap, currentTabId, setCurrentTabId, setTabState, tabStatesRef]
@@ -530,6 +539,7 @@ export function useInlineWizardConversationActions({
 						sessionCustomArgs: currentState.sessionCustomArgs,
 						sessionCustomEnvVars: currentState.sessionCustomEnvVars,
 						sessionCustomModel: currentState.sessionCustomModel,
+						sessionClaudeTokenSource: currentState.sessionClaudeTokenSource,
 						conductorProfile: currentState.conductorProfile,
 						historyFilePath: currentState.historyFilePath,
 					});

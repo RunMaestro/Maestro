@@ -4,11 +4,19 @@
  *
  * These callbacks are set once during initialization and used by both
  * group-chat-router.ts and group-chat-agent.ts to avoid duplication.
+ *
+ * The shell and stdin rules themselves live in the library
+ * (`maestro-lib/groupchat/windows-spawn.ts`), so the headless runtime applies the same
+ * ones; this module binds them to the custom shell path the desktop registers.
  */
 
-import { getAgentCapabilities } from '../agents';
-import { getWindowsShellForAgentExecution } from '../process-manager/utils/shellEscape';
-import { isWindows } from '../../shared/platformDetection';
+import {
+	getWindowsSpawnConfig as getLibraryWindowsSpawnConfig,
+	type SpawnSshConfig,
+	type WindowsSpawnConfig,
+} from '../../shared/maestro-lib/groupchat/windows-spawn';
+
+export type { SpawnSshConfig, WindowsSpawnConfig };
 
 // Module-level callback for getting custom shell path from settings
 let getCustomShellPathCallback: (() => string | undefined) | null = null;
@@ -31,73 +39,14 @@ function getCustomShellPath(): string | undefined {
 }
 
 /**
- * SSH remote configuration type for spawn config.
- * Matches the pattern used in GroupChatSessionInfo.sshRemoteConfig.
- */
-export interface SpawnSshConfig {
-	enabled: boolean;
-	remoteId: string | null;
-	workingDirOverride?: string;
-}
-
-/**
- * Result of getWindowsSpawnConfig - shell and stdin flags for Windows spawning.
- */
-export interface WindowsSpawnConfig {
-	/** Shell path for Windows (PowerShell or cmd.exe) */
-	shell: string | undefined;
-	/** Whether to run in shell */
-	runInShell: boolean;
-	/** Whether to send prompt via stdin as JSON (for stream-json agents) */
-	sendPromptViaStdin: boolean;
-	/** Whether to send prompt via stdin as raw text (for non-stream-json agents) */
-	sendPromptViaStdinRaw: boolean;
-}
-
-/**
- * Gets Windows-specific spawn configuration for group chat agent execution.
- *
- * This centralizes the logic for:
- * 1. Shell selection (PowerShell vs cmd.exe)
- * 2. Stdin mode selection (JSON vs raw text based on agent capabilities)
- *
- * IMPORTANT: This should NOT be applied when SSH remote execution is enabled,
- * as the remote host may be Linux where these Windows-specific configs don't apply.
- *
- * @param agentId - The agent ID to check capabilities for
- * @param sshConfig - Optional SSH configuration; if enabled, returns no-op config
- * @returns Shell and stdin configuration for Windows, or no-op config for non-Windows/SSH
+ * Gets Windows-specific spawn configuration for group chat agent execution, with the
+ * desktop's custom shell path applied. See `getWindowsSpawnConfig` in the library.
  */
 export function getWindowsSpawnConfig(
 	agentId: string,
 	sshConfig?: SpawnSshConfig
 ): WindowsSpawnConfig {
-	// Don't apply Windows shell config when using SSH (remote may be Linux)
-	if (!isWindows() || sshConfig?.enabled) {
-		return {
-			shell: undefined,
-			runInShell: false,
-			sendPromptViaStdin: false,
-			sendPromptViaStdinRaw: false,
-		};
-	}
-
-	// Get shell configuration for Windows
-	const shellConfig = getWindowsShellForAgentExecution({
+	return getLibraryWindowsSpawnConfig(agentId, sshConfig, {
 		customShellPath: getCustomShellPath(),
 	});
-
-	// Determine stdin mode based on agent capabilities. A CLI that only accepts
-	// the prompt as a positional argument (omp) keeps it in argv - handing it
-	// stdin instead makes it run with no prompt at all.
-	const capabilities = getAgentCapabilities(agentId);
-	const supportsStreamJson = capabilities.supportsStreamJsonInput;
-	const supportsPromptViaStdin = capabilities.supportsPromptViaStdin;
-
-	return {
-		shell: shellConfig.shell,
-		runInShell: shellConfig.useShell,
-		sendPromptViaStdin: supportsPromptViaStdin && supportsStreamJson,
-		sendPromptViaStdinRaw: supportsPromptViaStdin && !supportsStreamJson,
-	};
 }

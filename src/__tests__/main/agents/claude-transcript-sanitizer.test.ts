@@ -305,4 +305,31 @@ describe('stripThinkingFromTranscript', () => {
 		const content = (readRows()[0].message as { content: Array<{ type: string }> }).content;
 		expect(content.map((b) => b.type)).toEqual(['text']);
 	});
+
+	// The sanitizer skips its per-line parse when the raw text cannot hold a
+	// shell. That pre-check must not miss one written with JSON whitespace.
+	it('finds an empty shell written with whitespace around the colon', () => {
+		const row = {
+			type: 'assistant',
+			uuid: 'a1',
+			parentUuid: null,
+			message: {
+				role: 'assistant',
+				content: [
+					{ type: 'thinking', thinking: '', signature: 'sig' },
+					{ type: 'text', text: 'visible' },
+				],
+			},
+		};
+		fs.writeFileSync(
+			transcriptPath,
+			`${JSON.stringify(row).replace('"thinking":""', '"thinking" : ""')}\n`,
+			'utf8'
+		);
+
+		const res = stripThinkingFromTranscript(transcriptPath);
+
+		expect(res.sanitized).toBe(true);
+		expect(res.strippedBlocks).toBe(1);
+	});
 });

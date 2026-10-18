@@ -11,9 +11,15 @@ import {
 	Bot,
 	User,
 	Terminal,
+	Target,
+	Settings,
 } from 'lucide-react';
 import type { Theme, Shortcut } from '../../types';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutKeys, type ShortcutChords } from '../ui/ShortcutHint';
+import { formatCount } from '../../../shared/formatters';
+import { IDEAL_END_STATE_MAX_LENGTH } from '../../../shared/directorNotesEndState';
+import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 export interface TabFocusHandle {
 	focus: () => void;
@@ -21,16 +27,24 @@ export interface TabFocusHandle {
 	onEscape?: () => boolean;
 }
 
+/** `data-setting-id` of the Ideal End State textarea in Settings > Encore. */
+export const IDEAL_END_STATE_SETTING_ID = 'encore-director-notes-ideal-end-state';
+
 interface OverviewTabProps {
 	theme: Theme;
 	shortcuts: Record<string, Shortcut>;
+	/** The configured Ideal End State; drives the "set / not set" status line. */
+	idealEndState?: string;
+	/** Deep-link to a `data-setting-id` in Settings. Omitted hides the button. */
+	onOpenSetting?: (settingId: string) => void;
 }
 
 export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function OverviewTab(
-	{ theme, shortcuts },
+	{ theme, shortcuts, idealEndState, onOpenSetting },
 	ref
 ) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 
 	useImperativeHandle(ref, () => ({
 		focus: () => containerRef.current?.focus(),
@@ -38,6 +52,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 	const sectionHeaderClass = 'flex items-center gap-2 mb-3';
 	const sectionContentClass = 'text-sm space-y-2 pl-7';
 	const codeClass = 'px-1.5 py-0.5 rounded text-xs-plus font-mono';
+	const endStateLength = idealEndState?.trim().length ?? 0;
 
 	return (
 		<div
@@ -94,6 +109,72 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 									Notes.
 								</p>
 							</div>
+						</div>
+					</div>
+				</section>
+
+				{/* Ideal End State */}
+				<section>
+					<div className={sectionHeaderClass}>
+						<Target className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Ideal End State</h3>
+					</div>
+					<div className={sectionContentClass} style={{ color: theme.colors.textDim }}>
+						<p>
+							Tell Director's Notes where you are trying to get to, and the AI Overview stops being
+							a plain recap. It puts the projects you name first, frames{' '}
+							<strong style={{ color: theme.colors.textMain }}>Next Steps</strong> around them, and
+							adds a{' '}
+							<strong style={{ color: theme.colors.textMain }}>
+								Progress Toward Ideal End State
+							</strong>{' '}
+							section that measures how far the lookback window moved you. Leave it empty and the
+							notes are a recap only.
+						</p>
+						<p>A good end state answers three questions for each project in flight:</p>
+						<ul className="list-disc pl-5 space-y-1">
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>What is the project?</strong> One
+								line, in your own words.
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Which agents work on it?</strong>{' '}
+								Use their Left Bar names, so the notes can attribute the work.
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>What does done look like?</strong>{' '}
+								A state you can check, not a direction. "The new schema is live and the legacy path
+								is deleted" beats "improve the ingest pipeline".
+							</li>
+						</ul>
+						<div
+							className="rounded border p-3 text-xs-plus whitespace-pre-line"
+							style={{
+								borderColor: theme.colors.border,
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+							}}
+						>
+							{
+								'Shipping v2 of the ingest pipeline. Agents parser-a, parser-b and schema-migration are on it. Done means the new schema is live and the legacy path is deleted.\n\nDocs rewrite (agent docs-refresh). Done means every page under /guides covers the new CLI flags.'
+							}
+						</div>
+						<div className="flex items-center gap-3 pt-1">
+							{onOpenSetting && (
+								<HeaderActionButton
+									theme={theme}
+									onClick={() => onOpenSetting(IDEAL_END_STATE_SETTING_ID)}
+									icon={<Settings />}
+									testId="director-notes-help-ideal-end-state"
+								>
+									{endStateLength > 0 ? 'Edit Ideal End State' : 'Set Ideal End State'}
+								</HeaderActionButton>
+							)}
+							<span className="text-xs" data-testid="director-notes-help-ideal-end-state-status">
+								{endStateLength > 0
+									? `Set (${formatCount(endStateLength)} of ${formatCount(IDEAL_END_STATE_MAX_LENGTH)} characters). The next synopsis uses it.`
+									: 'Not set. Synopses are a recap only.'}
+							</span>
 						</div>
 					</div>
 				</section>
@@ -171,20 +252,11 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 					</div>
 					<div className={sectionContentClass} style={{ color: theme.colors.textDim }}>
 						<p>
-							Press{' '}
-							<kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
-								{formatShortcutKeys(['Meta', 'f'])}
-							</kbd>{' '}
-							to search across all entry summaries and agent names. Results filter the list in
+							Press <ShortcutKeys theme={theme} keys={['Meta', 'f']} className="align-middle" /> to
+							search across all entry summaries and agent names. Results filter the list in
 							real-time. The search bar shows match count and supports previous/next navigation with{' '}
-							<kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
-								Enter
-							</kbd>{' '}
-							/{' '}
-							<kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
-								Shift+Enter
-							</kbd>
-							.
+							<ShortcutKeys theme={theme} keys={['Enter']} className="align-middle" /> /{' '}
+							<ShortcutKeys theme={theme} keys={['Shift', 'Enter']} className="align-middle" />.
 						</p>
 					</div>
 				</section>
@@ -200,35 +272,33 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 							className="rounded border overflow-hidden"
 							style={{ borderColor: theme.colors.border }}
 						>
-							{[
+							{(
 								[
-									shortcuts.directorNotes ? formatShortcutKeys(shortcuts.directorNotes.keys) : '',
-									"Open Director's Notes",
-								],
-								[`${formatShortcutKeys(['Meta', 'Shift'])} [ / ]`, 'Switch between tabs'],
-								[formatShortcutKeys(['Meta', 'f']), 'Search / filter entries'],
-								['Arrow Up/Down', 'Navigate entry list'],
-								['Enter', 'Open entry detail'],
-								['Escape', 'Close search, then close modal'],
-							].map(([key, desc], i) => (
+									[shortcuts.directorNotes?.keys ?? [], "Open Director's Notes"],
+									[
+										[
+											['Meta', 'Shift', '['],
+											['Meta', 'Shift', ']'],
+										],
+										'Switch between tabs',
+									],
+									[['Meta', 'f'], 'Search / filter entries'],
+									[[['ArrowUp'], ['ArrowDown']], 'Navigate entry list'],
+									[['Enter'], 'Open entry detail'],
+									[['Escape'], 'Close search, then close modal'],
+								] as [ShortcutChords, string][]
+							).map(([keys, desc], i) => (
 								<div
-									key={key}
+									key={desc}
 									className="flex items-center gap-3 px-3 py-2 text-sm"
 									style={{
 										borderTop: i > 0 ? `1px solid ${theme.colors.border}` : undefined,
 										backgroundColor: i % 2 === 0 ? 'transparent' : theme.colors.bgActivity + '40',
 									}}
 								>
-									<kbd
-										className="px-2 py-0.5 rounded text-xs-plus font-mono font-medium shrink-0 min-w-[140px]"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textMain,
-											border: `1px solid ${theme.colors.border}`,
-										}}
-									>
-										{key}
-									</kbd>
+									<span className="shrink-0 min-w-[140px]">
+										<ShortcutKeys theme={theme} keys={keys} size="md" />
+									</span>
 									<span>{desc}</span>
 								</div>
 							))}
@@ -277,11 +347,12 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
 								cron
 							</code>
-							,{' '}
+							{maestroCueEnabled ? ', ' : ' or '}
 							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
 								launchd
 							</code>
-							, or Maestro Cue to wake up to a fresh weekly report every Monday.{' '}
+							{maestroCueEnabled && ', or Maestro Cue'} to wake up to a fresh weekly report every
+							Monday.{' '}
 							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
 								history
 							</code>{' '}

@@ -12,7 +12,7 @@
  * flag is off, which we render as a friendly note as defense in depth).
  */
 
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import {
 	AlertTriangle,
@@ -62,6 +62,7 @@ import { computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { buildCueSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
+import { useCachedResource } from '../../hooks/utils/useCachedResource';
 
 interface CueStatsProps {
 	timeRange: StatsTimeRange;
@@ -1284,7 +1285,7 @@ const DisabledNote = memo(function DisabledNote({ theme }: { theme: Theme }) {
 			</div>
 			<div className="text-xs" style={{ color: theme.colors.textDim, maxWidth: 420 }}>
 				Both <strong>Maestro Cue</strong> and <strong>Usage Dashboard</strong> Encore features must
-				be enabled to view Cue analytics. Open Settings → Encore Features to turn them on.
+				be enabled to view Cue analytics. Open Settings → Plugins to turn them on.
 			</div>
 		</div>
 	);
@@ -1326,14 +1327,15 @@ const ErrorNote = memo(function ErrorNote({
 
 /* -------------------------------- Component ------------------------------ */
 
+function isCueStatsDisabled(err: unknown): boolean {
+	return (err instanceof Error ? err.message : String(err)).includes('CueStatsDisabled');
+}
+
 export const CueStats = memo(function CueStats({
 	timeRange,
 	theme,
 	colorBlindMode = false,
 }: CueStatsProps) {
-	const [aggregation, setAggregation] = useState<CueStatsAggregation | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
 	// Raw trigger types the user has hidden. Kept as a sorted, joined string so
 	// the fetch callback has a primitive dependency and a re-render with an
 	// equivalent set doesn't refire the query.
@@ -1344,29 +1346,38 @@ export const CueStats = memo(function CueStats({
 	);
 	const excludedSet = useMemo(() => new Set(excludedTriggers), [excludedTriggers]);
 
-	const fetchAggregation = useCallback(async () => {
-		setLoading(true);
-		setError(null);
-		try {
-			const excluded = excludedKey.length === 0 ? [] : excludedKey.split('\u0000');
-			const result = await window.maestro.cueStats.getAggregation(timeRange, excluded);
-			setAggregation(result);
-		} catch (err) {
-			// Preload normalizes the disabled sentinel to a bare 'CueStatsDisabled'
-			// message (Electron otherwise wraps thrown errors). Substring check
-			// remains as defense-in-depth in case the bridge changes.
-			const rawMessage = err instanceof Error ? err.message : String(err);
-			const isDisabled = rawMessage.includes('CueStatsDisabled');
-			if (!isDisabled) {
+	// Cached per range and trigger filter, so reopening the dashboard shows the
+	// last result at once and refreshes it in place.
+	const {
+		data,
+		loading,
+		error: fetchError,
+		refresh: fetchAggregation,
+	} = useCachedResource(
+		`cue-stats:${timeRange}:${excludedKey}`,
+		() =>
+			window.maestro.cueStats.getAggregation(
+				timeRange,
+				excludedKey.length === 0 ? [] : excludedKey.split('\u0000')
+			),
+		{
+			onError: (err) => {
+				// Preload normalizes the disabled sentinel to a bare 'CueStatsDisabled'
+				// message (Electron otherwise wraps thrown errors). Substring check
+				// remains as defense-in-depth in case the bridge changes.
+				if (isCueStatsDisabled(err)) return;
 				logger.error('Failed to fetch Cue stats:', undefined, err);
 				captureException(err, { extra: { timeRange } });
-			}
-			setError(isDisabled ? 'CueStatsDisabled' : rawMessage);
-			setAggregation(null);
-		} finally {
-			setLoading(false);
+			},
 		}
-	}, [timeRange, excludedKey]);
+	);
+	const aggregation: CueStatsAggregation | null = data ?? null;
+	// A failed refresh keeps the last good data on screen.
+	const error = data
+		? null
+		: fetchError && fetchError.includes('CueStatsDisabled')
+			? 'CueStatsDisabled'
+			: fetchError;
 
 	const toggleTrigger = useCallback((key: string) => {
 		setExcludedTriggers((prev) => {
@@ -1380,10 +1391,6 @@ export const CueStats = memo(function CueStats({
 		setExcludedTriggers([]);
 		saveExcludedTriggers([]);
 	}, []);
-
-	useEffect(() => {
-		fetchAggregation();
-	}, [fetchAggregation]);
 
 	// Published above the loading / error / empty returns below: a hook cannot
 	// sit behind an early return, and a tab that just went empty is exactly the

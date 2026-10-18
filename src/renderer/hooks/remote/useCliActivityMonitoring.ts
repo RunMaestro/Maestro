@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Session } from '../../types';
 import { logger } from '../../utils/logger';
+import { settleAgentStateFromTabs } from '../../utils/tabHelpers';
 
 /**
  * Dependencies for the useCliActivityMonitoring hook.
@@ -66,14 +67,10 @@ export function useCliActivityMonitoring(
 								};
 							}
 						} else if (session.cliActivity) {
-							// CLI activity ended - set back to idle (unless process is still running)
-							if (!session.aiPid) {
-								return {
-									...session,
-									state: 'idle' as const,
-									cliActivity: undefined,
-								};
-							}
+							// CLI activity ended: hand the agent back to whatever its AI tabs
+							// are doing. `aiPid` cannot answer that - per-tab agents leave it
+							// 0 (or -1 after a restore) whether or not a turn is running.
+							return { ...settleAgentStateFromTabs(session), cliActivity: undefined };
 						}
 						return session;
 					})

@@ -16,9 +16,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ToastContainer, buildToastClipboardText } from '../../../renderer/components/Toast';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
-import type { Toast } from '../../../renderer/stores/notificationStore';
+import { useToastAvoidZoneStore } from '../../../renderer/hooks/ui/useToastAvoidZone';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import type { Toast } from '../../../renderer/stores/notificationStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { createMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
 import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
 
@@ -45,7 +48,9 @@ function setStoreToasts(toasts: Toast[]) {
 describe('Toast', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
+		useSessionStore.setState(useSessionStore.getInitialState(), true);
 		useNotificationStore.setState({
+			history: [],
 			toasts: [],
 			config: {
 				defaultDuration: 20,
@@ -302,6 +307,35 @@ describe('Toast', () => {
 		});
 	});
 
+	it.each(['open-terminal', 'open-browser', 'jump-session'] as const)(
+		'acknowledges a clicked toast even when its %s target tab has closed',
+		(kind) => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'source', terminalTabs: [], browserTabs: [], aiTabs: [] }),
+				],
+			});
+			const clickAction =
+				kind === 'open-terminal'
+					? { kind, sessionId: 'source', tabRef: 'closed' }
+					: { kind, sessionId: 'source', tabId: 'closed' };
+			const toast = createMockToast({
+				title: 'Closed destination',
+				duration: 0,
+				dismissible: true,
+				clickAction,
+			});
+			useNotificationStore.setState({ toasts: [toast], history: [{ ...toast, read: false }] });
+			render(<ToastContainer theme={mockTheme} onSessionClick={vi.fn(() => true)} />);
+			fireEvent.click(screen.getByText('Closed destination'));
+			expect(useNotificationStore.getState().history.find((n) => n.id === toast.id)?.read).toBe(
+				true
+			);
+			act(() => vi.advanceTimersByTime(300));
+			expect(useNotificationStore.getState().toasts.some((n) => n.id === toast.id)).toBe(false);
+		}
+	);
+
 	describe('clickAction', () => {
 		it('jump-session: dispatches onSessionClick with the action sessionId/tabId', () => {
 			const onSessionClick = vi.fn();
@@ -339,6 +373,7 @@ describe('Toast', () => {
 
 		it('open-file: dispatches the maestro:openFileTab CustomEvent', () => {
 			const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+			useSessionStore.setState({ sessions: [createMockSession({ id: 'sess-9' })] });
 			setStoreToasts([
 				createMockToast({
 					clickAction: { kind: 'open-file', sessionId: 'sess-9', path: '/tmp/foo.ts' },
@@ -494,6 +529,20 @@ describe('Toast', () => {
 			);
 		});
 
+		it('marks the inline link read without invoking the body action', () => {
+			const onClick = vi.fn();
+			const toast = createMockToast({
+				actionUrl: 'https://example.com',
+				actionLabel: 'Open link',
+				onClick,
+			});
+			useNotificationStore.setState({ toasts: [toast], history: [{ ...toast, read: false }] });
+			render(<ToastContainer theme={mockTheme} />);
+			fireEvent.click(screen.getByText('Open link'));
+			expect(useNotificationStore.getState().history[0].read).toBe(true);
+			expect(onClick).not.toHaveBeenCalled();
+		});
+
 		it('does not render action link when actionUrl is not provided', () => {
 			setStoreToasts([createMockToast()]);
 
@@ -643,6 +692,109 @@ describe('Toast', () => {
 			unmount();
 		});
 	});
+
+	describe('composer avoidance', () => {
+		// setup.ts reports every element as 1000px wide, which would make the
+		// stack span nearly the whole jsdom window and overlap any composer.
+		// Measure it at the default dynamic width (Right Bar 384 - 2 * 16).
+		let offsetWidthSpy: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			useSettingsStore.setState({ toastPosition: 'bottom-right' });
+			offsetWidthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(352);
+		});
+
+		afterEach(() => {
+			offsetWidthSpy.mockRestore();
+			useToastAvoidZoneStore.setState({ zones: {} });
+			useSettingsStore.setState({ toastPosition: 'bottom-right' });
+		});
+
+		const composerZone = (right: number) => ({
+			composer: {
+				left: 0,
+				top: window.innerHeight - 120,
+				right,
+				bottom: window.innerHeight,
+			},
+		});
+
+		it('sits just above the window bottom when no zone overlaps', () => {
+			setStoreToasts([createMockToast()]);
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.getByTestId('toast-stack').style.bottom).toBe('8px');
+		});
+
+		it('lifts above a composer that runs under the stack', () => {
+			// Right Bar closed: the composer spans to the window's right edge.
+			useToastAvoidZoneStore.setState({ zones: composerZone(window.innerWidth) });
+			setStoreToasts([createMockToast()]);
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.getByTestId('toast-stack').style.bottom).toBe('128px');
+		});
+
+		it('stays put when the composer stops short of the stack', () => {
+			// Right Bar open and wider than the toast column.
+			useToastAvoidZoneStore.setState({ zones: composerZone(window.innerWidth - 600) });
+			setStoreToasts([createMockToast()]);
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.getByTestId('toast-stack').style.bottom).toBe('8px');
+		});
+
+		it('ignores the composer in a top corner', () => {
+			useSettingsStore.setState({ toastPosition: 'top-right' });
+			useToastAvoidZoneStore.setState({ zones: composerZone(window.innerWidth) });
+			setStoreToasts([createMockToast()]);
+			render(<ToastContainer theme={mockTheme} />);
+			const stack = screen.getByTestId('toast-stack');
+			expect(stack.style.bottom).toBe('');
+			expect(stack.style.top).toBe('48px');
+		});
+	});
+
+	describe('position', () => {
+		afterEach(() => {
+			useSettingsStore.setState({ toastPosition: 'bottom-right' });
+		});
+
+		const titlesInDomOrder = () =>
+			Array.from(screen.getByTestId('toast-stack').firstElementChild!.children).map(
+				(el) => el.textContent
+			);
+
+		it('pins a bottom-right stack to the bottom and right edges, newest last', () => {
+			setStoreToasts([
+				createMockToast({ id: 'a', title: 'Older' }),
+				createMockToast({ id: 'b', title: 'Newer' }),
+			]);
+			render(<ToastContainer theme={mockTheme} />);
+			const stack = screen.getByTestId('toast-stack');
+			expect(stack.style.right).toBe('16px');
+			expect(stack.style.left).toBe('');
+			expect(stack.firstElementChild!.className).toContain('flex-col');
+			expect(stack.firstElementChild!.className).not.toContain('flex-col-reverse');
+			expect(titlesInDomOrder()[1]).toContain('Newer');
+		});
+
+		it('pins a top-left stack below the title bar and reverses it so the newest is on top', () => {
+			useSettingsStore.setState({ toastPosition: 'top-left' });
+			setStoreToasts([createMockToast()]);
+			render(<ToastContainer theme={mockTheme} />);
+			const stack = screen.getByTestId('toast-stack');
+			expect(stack.style.top).toBe('48px');
+			expect(stack.style.left).toBe('16px');
+			expect(stack.style.right).toBe('');
+			expect(stack.firstElementChild!.className).toContain('flex-col-reverse');
+		});
+
+		it('slides a left-corner toast in from the left edge', () => {
+			useSettingsStore.setState({ toastPosition: 'bottom-left' });
+			setStoreToasts([createMockToast()]);
+			render(<ToastContainer theme={mockTheme} />);
+			const toastOuter = document.body.querySelector('.relative.overflow-hidden');
+			expect(toastOuter).toHaveStyle({ transform: 'translateX(-100%)' });
+		});
+	});
 });
 
 describe('Toast on a phone', () => {
@@ -661,8 +813,8 @@ describe('Toast on a phone', () => {
 		useSettingsStore.setState({ toastWidth: 'small' });
 		render(<ToastContainer theme={mockTheme} />);
 		const stack = screen.getByTestId('toast-stack');
-		expect(stack).toHaveClass('right-4');
-		expect(stack).not.toHaveClass('left-3');
+		expect(stack.style.right).toBe('16px');
+		expect(stack.style.left).toBe('');
 		const card = screen.getByText('Test Toast').closest('.rounded-lg') as HTMLElement;
 		expect(card.style.minWidth).toBe('320px');
 		expect(card.style.maxWidth).toBe('400px');
@@ -672,8 +824,8 @@ describe('Toast on a phone', () => {
 		vi.mocked(usePhoneLayout).mockReturnValue(true);
 		render(<ToastContainer theme={mockTheme} />);
 		const stack = screen.getByTestId('toast-stack');
-		expect(stack).toHaveClass('left-3');
-		expect(stack).toHaveClass('right-3');
+		expect(stack.style.left).toBe('12px');
+		expect(stack.style.right).toBe('12px');
 		const card = screen.getByText('Test Toast').closest('.rounded-lg') as HTMLElement;
 		expect(card.style.minWidth).toBe('');
 		expect(card.style.maxWidth).toBe('');
@@ -695,7 +847,7 @@ describe('ToastContainer over the floating media player', () => {
 	it('sits on the bottom edge when no player is on screen', () => {
 		useMediaPlaybackStore.setState({ floatFootprint: null });
 		render(<ToastContainer theme={mockTheme} />);
-		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('');
+		expect(screen.getByTestId('toast-stack').style.bottom).toBe('8px');
 	});
 
 	it('steps over a player parked in the same corner', () => {
@@ -705,7 +857,7 @@ describe('ToastContainer over the floating media player', () => {
 			floatFootprint: { fromBottom: 156, fromRight: 24, width: 380, viewportHeight: 900 },
 		});
 		render(<ToastContainer theme={mockTheme} />);
-		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('164px');
+		expect(screen.getByTestId('toast-stack').style.bottom).toBe('172px');
 	});
 
 	it('stays on the bottom edge for a player in another column', () => {
@@ -713,7 +865,7 @@ describe('ToastContainer over the floating media player', () => {
 			floatFootprint: { fromBottom: 156, fromRight: 1100, width: 380, viewportHeight: 900 },
 		});
 		render(<ToastContainer theme={mockTheme} />);
-		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('');
+		expect(screen.getByTestId('toast-stack').style.bottom).toBe('8px');
 	});
 
 	it('keeps the safe-area inset while stepping over the player on a phone', () => {
@@ -725,6 +877,6 @@ describe('ToastContainer over the floating media player', () => {
 		// The lift is a margin and the safe-area inset is padding, so neither can
 		// eat the other. (jsdom drops the `env()` padding entirely, so only the
 		// margin is assertable here.)
-		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('164px');
+		expect(screen.getByTestId('toast-stack').style.bottom).toBe('172px');
 	});
 });

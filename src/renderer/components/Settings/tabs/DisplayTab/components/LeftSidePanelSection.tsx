@@ -13,6 +13,8 @@ interface LeftSidePanelSectionProps {
 	setShowStarredSessionsSection: (enabled: boolean) => void;
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (enabled: boolean) => void;
+	showLeftPanelCollapsedInitials: boolean;
+	setShowLeftPanelCollapsedInitials: (enabled: boolean) => void;
 	leftPanelCollapsedPillsPerRow: number;
 	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	showLeftPanelLocationPills: boolean;
@@ -31,6 +33,8 @@ interface LeftSidePanelSectionProps {
 	setShowWorktreePill: (enabled: boolean) => void;
 	showWorktreeBranchName: boolean;
 	setShowWorktreeBranchName: (enabled: boolean) => void;
+	showWorktreeProvider: boolean;
+	setShowWorktreeProvider: (enabled: boolean) => void;
 }
 
 function MonoExample({ children }: { children: ReactNode }) {
@@ -44,6 +48,8 @@ export function LeftSidePanelSection({
 	setShowStarredSessionsSection,
 	showLeftPanelGroupMemberCount,
 	setShowLeftPanelGroupMemberCount,
+	showLeftPanelCollapsedInitials,
+	setShowLeftPanelCollapsedInitials,
 	leftPanelCollapsedPillsPerRow,
 	setLeftPanelCollapsedPillsPerRow,
 	showLeftPanelLocationPills,
@@ -62,6 +68,8 @@ export function LeftSidePanelSection({
 	setShowWorktreePill,
 	showWorktreeBranchName,
 	setShowWorktreeBranchName,
+	showWorktreeProvider,
+	setShowWorktreeProvider,
 }: LeftSidePanelSectionProps) {
 	const pillPercentage = ((leftPanelCollapsedPillsPerRow - 5) / 45) * 100;
 
@@ -93,6 +101,24 @@ export function LeftSidePanelSection({
 					ariaLabel="Show group member count in left side bar"
 					borderTop
 				/>
+				<div data-setting-id="display-left-panel-collapsed-initials">
+					<ToggleSettingRow
+						theme={theme}
+						title="Show agent initials when collapsed"
+						description={
+							<>
+								When the left side bar is collapsed, label each agent with two letters from its name
+								(e.g. <MonoExample>MR</MonoExample> for Maestro RC), tinted with its status color.
+								Letters are picked so no two agents share a label. Turn off to show a plain status
+								dot.
+							</>
+						}
+						checked={showLeftPanelCollapsedInitials}
+						onChange={setShowLeftPanelCollapsedInitials}
+						ariaLabel="Show agent initials in collapsed left side bar"
+						borderTop
+					/>
+				</div>
 
 				<div className="pt-3 border-t" style={{ borderColor: theme.colors.border }}>
 					<p className="text-sm" style={{ color: theme.colors.textMain }}>
@@ -222,6 +248,16 @@ export function LeftSidePanelSection({
 					onChange={setShowWorktreeBranchName}
 					ariaLabel="Show branch name in left panel agent list"
 					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Show provider in subagent list"
+					description="Display the provider backing each worktree agent beneath its name in the left panel."
+					checked={showWorktreeProvider}
+					onChange={setShowWorktreeProvider}
+					ariaLabel="Show provider in left panel agent list"
+					borderTop
+					clickableRow
 				/>
 			</SectionCard>
 		</div>

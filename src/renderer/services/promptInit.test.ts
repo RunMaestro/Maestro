@@ -11,6 +11,7 @@ vi.mock('../hooks/agent/useAgentListeners', () => ({ loadAgentListenersPrompts: 
 vi.mock('../hooks/batch/batchUtils', () => ({ loadBatchUtilsPrompts: vi.fn() }));
 vi.mock('./contextGroomer', () => ({ loadContextGroomerPrompts: vi.fn() }));
 vi.mock('./contextSummarizer', () => ({ loadContextSummarizerPrompts: vi.fn() }));
+vi.mock('./crossAgentConsultHold', () => ({ loadCrossAgentConsultPrompts: vi.fn() }));
 vi.mock('./inlineWizardConversation', () => ({ loadInlineWizardConversationPrompts: vi.fn() }));
 vi.mock('./inlineWizardDocumentGeneration', () => ({ loadInlineWizardDocGenPrompts: vi.fn() }));
 vi.mock('../components/Wizard/services/wizardPrompts', () => ({ loadWizardPrompts: vi.fn() }));

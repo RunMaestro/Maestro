@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getConfigDirectory } from '../../cli/services/storage';
 import { readAgentRuns, readAgentRunEvents } from '../../cli/services/agent-run-store';
+import type { AgentRun } from '../../shared/agent-run';
 import { broadcastRunUpdated, broadcastEventAppended } from './broadcast';
 import { logger } from '../utils/logger';
 
@@ -26,8 +27,27 @@ export interface StoreWatcherHandle {
 	stop: () => void;
 }
 
-export function startAgentRunStoreWatcher(): StoreWatcherHandle {
+export interface StoreWatcherOptions {
+	/**
+	 * Called once when the watcher starts, and after each debounced change.
+	 * `readRuns` gives the runs in the ledger: after a change, the list the
+	 * watcher just read; at the start, a read that is made only if it is
+	 * called. So a listener with nothing to do costs no read of the file, and
+	 * one that needs the runs does not read them a second time. A throw from
+	 * the listener is swallowed.
+	 */
+	onRunsChanged?: (readRuns: () => AgentRun[]) => void;
+}
+
+export function startAgentRunStoreWatcher(options: StoreWatcherOptions = {}): StoreWatcherHandle {
 	const dir = getConfigDirectory();
+	const notifyRunsChanged = (readRuns: () => AgentRun[]): void => {
+		try {
+			options.onRunsChanged?.(readRuns);
+		} catch (error) {
+			logger.warn('store watch listener failed', LOG_CONTEXT, { error: String(error) });
+		}
+	};
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	let lastEventCount = safeEventCount();
 
@@ -41,6 +61,7 @@ export function startAgentRunStoreWatcher(): StoreWatcherHandle {
 				const newest = runs.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
 				broadcastRunUpdated(newest);
 			}
+			notifyRunsChanged(() => runs);
 			const events = readAgentRunEvents();
 			if (events.length > lastEventCount) {
 				for (const event of events.slice(lastEventCount)) broadcastEventAppended(event);
@@ -79,6 +100,9 @@ export function startAgentRunStoreWatcher(): StoreWatcherHandle {
 	} catch (error) {
 		logger.debug('store dir watch skipped', LOG_CONTEXT, { error: String(error) });
 	}
+
+	// Whatever changed while the app was not running was never announced.
+	notifyRunsChanged(readAgentRuns);
 
 	logger.info('AgentRun store watcher started', LOG_CONTEXT);
 	return {

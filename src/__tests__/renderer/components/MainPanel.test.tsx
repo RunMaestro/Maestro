@@ -116,8 +116,12 @@ vi.mock('../../../renderer/components/LogViewer', () => ({
 	},
 }));
 
+// The latest props TerminalOutput received, so prop-forwarding regressions are visible.
+const terminalOutputProps: { current: Record<string, unknown> | null } = { current: null };
+
 vi.mock('../../../renderer/components/TerminalOutput', () => ({
 	TerminalOutput: React.forwardRef((props: { session: { name: string } }, ref) => {
+		terminalOutputProps.current = props as unknown as Record<string, unknown>;
 		return React.createElement(
 			'div',
 			{ 'data-testid': 'terminal-output', ref },
@@ -1285,6 +1289,49 @@ describe('MainPanel', () => {
 			expect(screen.queryByText(/\$0\.15/)).not.toBeInTheDocument();
 
 			// Restore
+			if (originalOffsetWidth) {
+				Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth);
+			}
+		});
+
+		it('should not display a $0.00 cost tracker when the provider reported tokens but no cost', () => {
+			// A grok-compatible custom binary: supportsCostTracking is true for the provider,
+			// but this binary reports tokens only. "$0.00" would be a wrong answer.
+			const originalOffsetWidth = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'offsetWidth'
+			);
+			Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+				configurable: true,
+				value: 800,
+			});
+
+			const session = createSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'grok-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+						usageStats: {
+							inputTokens: 12164,
+							outputTokens: 32,
+							cacheReadInputTokens: 3200,
+							cacheCreationInputTokens: 0,
+							totalCostUsd: 0,
+							contextWindow: 500000,
+						},
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			renderMainPanel({ activeSession: session });
+
+			expect(screen.queryByText(/\$\d+\.\d+/)).not.toBeInTheDocument();
+
 			if (originalOffsetWidth) {
 				Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth);
 			}
@@ -3690,6 +3737,21 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
 			expect(screen.getByText('Wizard Conversation (2 messages)')).toBeInTheDocument();
 			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
+		});
+
+		it('forwards the queued-item Steer props down to TerminalOutput', () => {
+			// Regression: MainPanel dropped these two props, so the Steer button never
+			// rendered in the app even though every layer below it was wired.
+			const getSteerContext = vi.fn();
+			const onSteerQueuedItem = vi.fn();
+			renderMainPanel({
+				activeSession: createSessionWithTabWizardState(undefined),
+				getSteerContext,
+				onSteerQueuedItem,
+			} as never);
+
+			expect(terminalOutputProps.current?.getSteerContext).toBe(getSteerContext);
+			expect(terminalOutputProps.current?.onSteerQueuedItem).toBe(onSteerQueuedItem);
 		});
 
 		it('should render TerminalOutput when wizard is not active', () => {

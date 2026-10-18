@@ -17,6 +17,8 @@
 import { randomBytes } from 'crypto';
 import {
 	grantsFromRequests,
+	isValidAllowlistMember,
+	parseAllowlistScope,
 	isPluginCapability,
 	isHighRiskActCapability,
 	type PluginCapability,
@@ -111,6 +113,8 @@ export function sameConsentSender(a: ConsentSender, b: ConsentSender): boolean {
 export interface OpenConsentPrompt {
 	pluginId: string;
 	offered: readonly PluginCapability[];
+	/** The scopes and reasons shown in this prompt, including a retained Dispatch selection. */
+	requested: readonly PermissionRequest[];
 	sender: ConsentSender;
 	/** The exact nonce this prompt issued; a confirm must echo THIS one, not a
 	 * still-live nonce from a superseded prompt for the same plugin. */
@@ -124,6 +128,7 @@ export type MintRejection =
 	| 'plugin-mismatch' // confirm names a different plugin than the open prompt
 	| 'bad-nonce' // nonce missing/expired/replayed, or approved ⊄ offered
 	| 'no-identity' // the plugin dir is unhashable (symlink) - never mintable
+	| 'offer-changed' // permissions or user-owned scope changed after the prompt opened
 	| 'conflict' // transcripts:read + egress on an untrusted plugin
 	| 'bundled-act-verb' // an act verb rode the plain approved[] channel (forgery/spoof)
 	| 'bad-high-risk' // approvedHighRisk carried a non-act-verb capability
@@ -136,7 +141,11 @@ export type MintOutcome =
 export interface ConsentMinterDeps {
 	registry: ConsentNonceRegistry;
 	/** The sealed authorization ledger - the only thing that creates trust. */
-	store: { mint: (pluginId: string, caps: PermissionGrant[], identity: AuthIdentity) => void };
+	store: {
+		mint: (pluginId: string, caps: PermissionGrant[], identity: AuthIdentity) => void;
+		readGrants?: (pluginId: string) => PermissionGrant[];
+		entryIdentity?: (pluginId: string) => AuthIdentity | undefined;
+	};
 	/** The plugin's manifest-requested permissions (capability + scope + reason). */
 	requested: (pluginId: string) => PermissionRequest[];
 	/** The plugin's CURRENT identity (content digest + signature), or null if unhashable. */
@@ -146,6 +155,7 @@ export interface ConsentMinterDeps {
 	openPrompt: (req: {
 		pluginId: string;
 		offered: readonly PluginCapability[];
+		requested: readonly PermissionRequest[];
 		nonce: string;
 	}) => Promise<ConsentSender>;
 	now?: () => number;
@@ -186,11 +196,41 @@ export class ConsentMinter {
 	 * A second request supersedes any prior open prompt (its nonce stays single-use
 	 * in the registry and simply expires).
 	 */
+	private requestsForConsent(pluginId: string): PermissionRequest[] {
+		const requested = this.deps.requested(pluginId);
+		const previous = this.deps.store.entryIdentity?.(pluginId);
+		if (!previous || previous.signatureStatus !== 'trusted' || !previous.signerKey) {
+			return requested;
+		}
+		const current = this.deps.identityOf(pluginId);
+		// Preserve the user's agent selection only for the same trusted publisher.
+		// Changed code still requires consent; revoked/uninstalled grants are absent.
+		if (
+			!current ||
+			current.signatureStatus !== 'trusted' ||
+			current.signerKey !== previous.signerKey
+		)
+			return requested;
+		const dispatch = this.deps.store
+			.readGrants?.(pluginId)
+			.find((grant) => grant.capability === 'agents:dispatch');
+		if (!dispatch) return requested;
+		const members = parseAllowlistScope(dispatch.scope);
+		const scope = members && members.every(isValidAllowlistMember) ? members.join(',') : undefined;
+		// An absent scope is an intentional deny-all selection. A malformed saved
+		// scope must not replace the manifest request with an unusable grant.
+		if (dispatch.scope !== undefined && scope === undefined) return requested;
+		return requested.map((request) =>
+			request.capability === 'agents:dispatch' ? { ...request, scope } : request
+		);
+	}
+
 	async requestConsent(pluginId: string): Promise<void> {
-		const offered = this.deps.requested(pluginId).map((r) => r.capability);
+		const requested = this.requestsForConsent(pluginId).map((request) => ({ ...request }));
+		const offered = requested.map((r) => r.capability);
 		const nonce = this.deps.registry.issue(pluginId, offered);
-		const sender = await this.deps.openPrompt({ pluginId, offered, nonce });
-		this.open = { pluginId, offered, sender, nonce };
+		const sender = await this.deps.openPrompt({ pluginId, offered, requested, nonce });
+		this.open = { pluginId, offered, requested, sender, nonce };
 	}
 
 	/**
@@ -254,8 +294,19 @@ export class ConsentMinter {
 		}
 		const identity = this.deps.identityOf(req.pluginId);
 		if (!identity) return { ok: false, reason: 'no-identity' };
+		const currentRequests = this.requestsForConsent(req.pluginId);
+		if (
+			currentRequests.length !== open.requested.length ||
+			currentRequests.some(
+				(request, i) =>
+					request.capability !== open.requested[i].capability ||
+					request.scope !== open.requested[i].scope ||
+					request.reason !== open.requested[i].reason
+			)
+		)
+			return { ok: false, reason: 'offer-changed' };
 		const approvedSet = new Set(allApproved);
-		const toGrant = this.deps.requested(req.pluginId).filter((r) => approvedSet.has(r.capability));
+		const toGrant = currentRequests.filter((r) => approvedSet.has(r.capability));
 		const unattendedSet = new Set(unattended);
 		// The separate, revocable unattended flag is minted ONLY from the
 		// explicit unattended acceptance - never inferred from the grant itself.

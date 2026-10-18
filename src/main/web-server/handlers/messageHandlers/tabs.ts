@@ -9,6 +9,7 @@
 
 import path from 'path';
 import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
+import { isRemoteMediaUrl, type MediaOpenMode } from '../../../../shared/mediaTypes';
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
@@ -20,7 +21,10 @@ import {
 	resolveUiSurface,
 	resolveUiSurfaceTab,
 	surfaceTabIds,
+	uiSurfaceRefusal,
+	type UiSurfaceTab,
 } from '../../../../shared/uiSurfaces';
+import { resolveEncoreFeatures } from '../../../../shared/encoreFeatureDefaults';
 import { normalizeRenameTabResult } from '../../types';
 
 /**
@@ -336,8 +340,11 @@ export function handleOpenFileTab(
 	//                          anywhere. Strictly stronger, so it wins.
 	const background = readBackgroundField(message);
 	const switchToAgent = readSwitchToAgentField(message);
+	// Opt-in like `background`: only a literal 'queue' counts, so an absent
+	// field keeps today's open-and-play behaviour for every existing caller.
+	const mediaMode: MediaOpenMode = message.mediaMode === 'queue' ? 'queue' : 'play';
 	logger.info(
-		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, background=${background}, switchToAgent=${switchToAgent}`,
+		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, background=${background}, switchToAgent=${switchToAgent}, mediaMode=${mediaMode}`,
 		LOG_CONTEXT
 	);
 
@@ -368,8 +375,12 @@ export function handleOpenFileTab(
 	// intentionally allowed - a paired client already has shell-level access
 	// (execute_command), so confining preview tabs to the worktree gated
 	// nothing the connection token doesn't already gate.
-	const sessionRoot = path.resolve(session.cwd);
-	const resolved = path.resolve(sessionRoot, filePath);
+	//
+	// An http(s) URL is remote media for the floating player
+	// (`maestro-cli open-file <url>`), so it passes through untouched - running it
+	// through path.resolve would glue it onto the agent's cwd.
+	const remoteMedia = isRemoteMediaUrl(filePath);
+	const resolved = remoteMedia ? filePath : path.resolve(path.resolve(session.cwd), filePath);
 
 	if (!ctx.callbacks.openFileTab) {
 		sendErrorResult('File tab opening not configured');
@@ -377,7 +388,7 @@ export function handleOpenFileTab(
 	}
 
 	ctx.callbacks
-		.openFileTab(sessionId, resolved, { background, switchToAgent })
+		.openFileTab(sessionId, resolved, { background, switchToAgent, mediaMode })
 		.then((success) => {
 			ctx.send(client, {
 				type: 'open_file_tab_result',
@@ -386,6 +397,7 @@ export function handleOpenFileTab(
 				filePath,
 				background,
 				switchToAgent,
+				mediaMode,
 				requestId: message.requestId,
 			});
 		})
@@ -545,6 +557,7 @@ export async function handleOpenTerminalTab(
 	const rawShell = message.shell;
 	const rawName = message.name;
 	const rawCommand = message.command;
+	const rawInputRequired = message.inputRequired;
 	const background = readBackgroundField(message);
 	// cwd/shell/name can leak local usernames or project names - log
 	// presence flags only.
@@ -588,6 +601,10 @@ export async function handleOpenTerminalTab(
 	}
 	if (rawCommand !== undefined && typeof rawCommand !== 'string') {
 		sendErrorResult('Invalid command: must be a string');
+		return;
+	}
+	if (rawInputRequired !== undefined && typeof rawInputRequired !== 'boolean') {
+		sendErrorResult('Invalid inputRequired: must be a boolean');
 		return;
 	}
 	const cwd = typeof rawCwd === 'string' ? rawCwd : undefined;
@@ -636,7 +653,17 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command }, { background })
+		.openTerminalTab(
+			sessionId,
+			{
+				cwd: resolvedCwd,
+				shell,
+				name,
+				command,
+				...(rawInputRequired === true && { inputRequired: true }),
+			},
+			{ background }
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',
@@ -668,6 +695,12 @@ export function handleNewAITabWithPrompt(
 	// background=true creates the tab without switching to/focusing it.
 	// `maestro-cli dispatch --new-tab` sets this by default; `--focus` clears it.
 	const background = message.background === true;
+	// hidden=true creates the tab with no chip in the strip: a hand-off another
+	// agent (or Cue) dispatched runs out of sight until the user opens it from a
+	// toast or the delegation pill. `dispatch --new-tab` sets it by default;
+	// `--visible` and `--focus` clear it. Only meaningful in the background - a
+	// focused tab the strip does not draw would strand the user on it.
+	const hidden = background && message.hidden === true;
 	// Prompts can contain user-authored content with secrets or PII -
 	// log length only rather than a raw preview.
 	logger.info(
@@ -713,7 +746,7 @@ export function handleNewAITabWithPrompt(
 	}
 
 	ctx.callbacks
-		.newAITabWithPrompt(sessionId, prompt, background)
+		.newAITabWithPrompt(sessionId, prompt, background, hidden)
 		.then((result) => {
 			// Arm the callback only once the fresh tab id is known - that id is
 			// the correlation key. `isNewTab` lets the registry adopt a spawn the
@@ -1049,6 +1082,23 @@ export function handleOpenDocumentGraph(
 }
 
 /**
+ * The persisted Encore flags, resolved onto their defaults. Lazy so this module
+ * loads in tests that never initialize the settings store; with no store the
+ * defaults apply.
+ */
+function readEncoreFeatures(): ReturnType<typeof resolveEncoreFeatures> {
+	let raw: unknown;
+	try {
+		const { getSettingsStore } =
+			require('../../../stores/getters') as typeof import('../../../stores/getters');
+		raw = getSettingsStore().get('encoreFeatures');
+	} catch {
+		raw = undefined;
+	}
+	return resolveEncoreFeatures(raw);
+}
+
+/**
  * Handle open_modal message - open one of the app's modals / dashboards by
  * `UiSurface.id`, optionally on a specific tab. Both the surface and the tab
  * are validated here so the renderer only ever receives ids it can act on.
@@ -1081,8 +1131,10 @@ export function handleOpenModal(
 	}
 
 	let tabId: string | undefined;
+	let resolvedTab: UiSurfaceTab | null = null;
 	if (tabName !== undefined) {
 		const tab = resolveUiSurfaceTab(surface, tabName);
+		resolvedTab = tab;
 		if (!tab) {
 			const valid = surfaceTabIds(surface);
 			sendResult(
@@ -1094,6 +1146,16 @@ export function handleOpenModal(
 			return;
 		}
 		tabId = tab.id;
+	}
+
+	// A surface behind a switched-off Encore Feature does not exist for the user.
+	// Refuse here so the caller gets a clear error; the renderer refuses too, but
+	// silently (no toast advertising the disabled feature), and its answer never
+	// travels back over this one-way send.
+	const refusal = uiSurfaceRefusal(surface, resolvedTab, readEncoreFeatures());
+	if (refusal) {
+		sendResult(false, refusal);
+		return;
 	}
 
 	logger.info(

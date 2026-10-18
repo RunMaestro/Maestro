@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useCallback } from 'react';
+import { lazy, Suspense, memo, useCallback, useMemo } from 'react';
 import type React from 'react';
 import type {
 	Theme,
@@ -20,6 +20,8 @@ import type { FlatFileItem } from '../FileSearchModal';
 
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { GitLogModalData } from '../../stores/modalStore';
 
 // Utility Modal Components
@@ -56,6 +58,8 @@ const GitLogViewer = lazy(() =>
 export interface AppUtilityModalsProps {
 	theme: Theme;
 	sessions: Session[];
+	/** Left Bar draw order; the first ten own the Opt+Cmd+# slots */
+	visibleSessions?: Session[];
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	activeSessionId: string;
 	activeSession: Session | null;
@@ -295,6 +299,7 @@ export interface AppUtilityModalsProps {
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -327,6 +332,7 @@ export interface AppUtilityModalsProps {
 export const AppUtilityModals = memo(function AppUtilityModals({
 	theme,
 	sessions,
+	visibleSessions,
 	setSessions,
 	activeSessionId,
 	activeSession,
@@ -520,6 +526,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onTogglePauseQueueItem,
 	onEditQueueItem,
 	onForceSendQueueItem,
+	onMergeQueueItem,
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab,
 	onQuickActionsNewFileTab,
@@ -530,6 +537,13 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onNavBack,
 	onNavForward,
 }: AppUtilityModalsProps) {
+	// Live agents only: a dormant Pianola (flag off) is not offered as a prompt
+	// target and its queue is not browsed.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const liveSessions = useMemo(
+		() => filterLiveAgents(sessions, { pianola: pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	// Read per-modal data from the modal store for modals that support it.
 	// `presetDocuments` is set by the inline wizard's "Start Auto Run" button so
 	// the BatchRunnerModal opens with all freshly generated docs pre-selected.
@@ -572,6 +586,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<QuickActionsModal
 					theme={theme}
 					sessions={sessions}
+					visibleSessions={visibleSessions}
 					setSessions={setSessions}
 					activeSessionId={activeSessionId}
 					groups={groups}
@@ -852,7 +867,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					enterToSend={promptEnterToSend}
 					onToggleEnterToSend={onPromptToggleEnterToSend}
 					activeSession={activeGroupChatId ? undefined : activeSession}
-					sessions={activeGroupChatId ? sessions : undefined}
+					sessions={activeGroupChatId ? liveSessions : undefined}
 					groups={activeGroupChatId ? groups : undefined}
 				/>
 			)}
@@ -862,7 +877,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<ExecutionQueueBrowser
 					isOpen={queueBrowserOpen}
 					onClose={onCloseQueueBrowser}
-					sessions={sessions}
+					sessions={liveSessions}
 					activeSessionId={activeSessionId}
 					theme={theme}
 					onRemoveItem={onRemoveQueueItem}
@@ -871,6 +886,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onToggleItemPause={onTogglePauseQueueItem}
 					onEditItem={onEditQueueItem}
 					onForceSendItem={onForceSendQueueItem}
+					onMergeItem={onMergeQueueItem}
 				/>
 			)}
 

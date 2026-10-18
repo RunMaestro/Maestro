@@ -14,10 +14,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'path';
+import fs from 'fs/promises';
 import {
 	SessionStatsCache,
 	STATS_CACHE_VERSION,
+	STATS_CACHE_MIN_UPGRADABLE_VERSION,
 	PerProjectSessionStats,
+	loadStatsCache,
+	rescaleArchivedEntries,
+	statsCacheScope,
 } from '../../../main/utils/statsCache';
 
 // Mock electron app module
@@ -36,6 +41,7 @@ vi.mock('fs/promises', () => ({
 		access: vi.fn(),
 		readdir: vi.fn(),
 		stat: vi.fn(),
+		realpath: vi.fn(),
 	},
 }));
 
@@ -589,5 +595,110 @@ describe('Regression Prevention', () => {
 		expect(updatedCache.totals.totalSessions).toBe(1);
 		expect(updatedCache.totals.totalMessages).toBe(500);
 		expect(updatedCache.totals.totalCostUsd).toBe(50.0);
+	});
+});
+
+describe('Derivation upgrades', () => {
+	const entry = (costUsd: number, tokens: number, archived = false): PerProjectSessionStats => ({
+		messages: 10,
+		costUsd,
+		sizeBytes: 100,
+		tokens,
+		oldestTimestamp: null,
+		fileMtimeMs: 1,
+		archived,
+	});
+
+	it('loads a cache that only differs in derivation instead of discarding its archived sessions', async () => {
+		vi.mocked(fs.readFile).mockResolvedValueOnce(
+			JSON.stringify({
+				version: STATS_CACHE_MIN_UPGRADABLE_VERSION,
+				sessions: { gone: entry(9, 90, true) },
+				totals: {},
+				lastUpdated: 0,
+			})
+		);
+		const cache = await loadStatsCache('/project');
+		expect(cache?.version).toBe(STATS_CACHE_MIN_UPGRADABLE_VERSION);
+		expect(cache?.sessions.gone.archived).toBe(true);
+	});
+
+	it('still discards a cache older than the upgradable floor', async () => {
+		vi.mocked(fs.readFile).mockResolvedValueOnce(
+			JSON.stringify({
+				version: STATS_CACHE_MIN_UPGRADABLE_VERSION - 1,
+				sessions: {},
+				totals: {},
+				lastUpdated: 0,
+			})
+		);
+		expect(await loadStatsCache('/project')).toBeNull();
+	});
+
+	it('rescales archived sessions by how far the fix moved the re-parsed ones', () => {
+		const before = { live: entry(30, 300), gone: entry(9, 90, true) };
+		// The re-parse brought the live session down to two thirds of its cost and
+		// half of its tokens.
+		const after = { live: entry(20, 150), gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
+
+		expect(after.gone.costUsd).toBeCloseTo(6, 10);
+		expect(after.gone.tokens).toBeCloseTo(45, 10);
+		// Live entries are already re-derived and must not be touched.
+		expect(after.live).toEqual(entry(20, 150));
+	});
+
+	it('rounds scaled counts but keeps cents on fractional fields', () => {
+		const before = {
+			live: { ...entry(3, 3), messages: 3 },
+			gone: { ...entry(10, 10, true), messages: 10 },
+		};
+		const after = { live: { ...entry(2, 2), messages: 2 }, gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens', 'messages'], ['costUsd']);
+
+		expect(after.gone.costUsd).toBeCloseTo(6.6667, 3);
+		expect(after.gone.tokens).toBe(7);
+		expect(after.gone.messages).toBe(7);
+	});
+
+	it('leaves archived sessions alone when no live session gives a baseline', () => {
+		const before = { gone: entry(9, 90, true) };
+		const after = { gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
+
+		expect(after.gone).toEqual(entry(9, 90, true));
+	});
+
+	it('ignores entries that were never re-parsed when measuring the fix', () => {
+		const unchanged = entry(100, 1000);
+		const before = { live: entry(30, 300), stuck: unchanged, gone: entry(9, 90, true) };
+		const after = { live: entry(15, 150), stuck: unchanged, gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
+
+		// Only `live` moved, by half; `stuck` (same object, parse failed) is no evidence.
+		expect(after.gone.costUsd).toBeCloseTo(4.5, 10);
+	});
+});
+
+// Two accounts with separate pools must not share a cache file (each would
+// archive the other's sessions), but a pool shared through a symlinked
+// projects/ must keep the unscoped file so its archived sessions survive.
+describe('statsCacheScope', () => {
+	it('keeps the unscoped cache when the account resolves to the default pool', async () => {
+		vi.mocked(fs.realpath).mockImplementation(async () => '/home/.claude/projects/-p');
+		expect(
+			await statsCacheScope('/home/.claude-work/projects/-p', '/home/.claude/projects/-p')
+		).toBeUndefined();
+	});
+
+	it('scopes the cache to a separate pool', async () => {
+		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
+		expect(
+			await statsCacheScope('/home/.claude-work/projects/-p', '/home/.claude/projects/-p')
+		).toBe('/home/.claude-work/projects/-p');
 	});
 });

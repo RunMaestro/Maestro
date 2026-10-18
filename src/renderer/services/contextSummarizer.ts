@@ -210,6 +210,7 @@ export class ContextSummarizationService {
 					customEnvVars: request.customEnvVars,
 					// Summaries are read once by a human and never fed back into
 					// context, so this turn runs at the bottom of both ladders.
+					claudeTokenSource: request.claudeTokenSource,
 					cheapTurn: true,
 				}
 			);
@@ -292,6 +293,7 @@ export class ContextSummarizationService {
 					customEnvVars: request.customEnvVars,
 					// Summaries are read once by a human and never fed back into
 					// context, so this turn runs at the bottom of both ladders.
+					claudeTokenSource: request.claudeTokenSource,
 					cheapTurn: true,
 				}
 			);
@@ -335,6 +337,7 @@ export class ContextSummarizationService {
 					customEnvVars: request.customEnvVars,
 					// Summaries are read once by a human and never fed back into
 					// context, so this turn runs at the bottom of both ladders.
+					claudeTokenSource: request.claudeTokenSource,
 					cheapTurn: true,
 				}
 			);

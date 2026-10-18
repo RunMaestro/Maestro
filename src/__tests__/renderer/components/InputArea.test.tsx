@@ -910,7 +910,11 @@ describe('InputArea', () => {
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
 		});
 
-		it('fills input on double-click', () => {
+		it('accepts the command on a single click, through the full composer', () => {
+			// A single click must accept. This popover used to reserve acceptance for
+			// a double-click, which a touch screen cannot produce and a phone has no
+			// Enter key to substitute for: the menu opened and every tap did nothing.
+			// The trailing space matches what Tab/Enter write in useInputKeyDown.
 			const setInputValue = vi.fn();
 			const setSlashCommandOpen = vi.fn();
 			const inputRef = { current: { focus: vi.fn() } } as any;
@@ -924,10 +928,12 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			const clearCmd = screen.getByText('/clear').closest('button');
-			fireEvent.doubleClick(clearCmd!);
+			fireEvent.click(clearCmd!);
 
-			expect(setInputValue).toHaveBeenCalledWith('/clear');
+			expect(setInputValue).toHaveBeenCalledWith('/clear ');
 			expect(setSlashCommandOpen).toHaveBeenCalledWith(false);
+			// Focus is asserted at the overlay level (SlashCommandPopover.test): the
+			// full composer mounts a real textarea onto this ref, replacing the spy.
 		});
 
 		it('shows slash command autocomplete for all agents (built-in commands always available)', async () => {
@@ -994,27 +1000,20 @@ describe('InputArea', () => {
 			expect(screen.queryByText('/help')).not.toBeInTheDocument();
 		});
 
-		it('single click updates selection without closing dropdown', () => {
+		it('a single click also records the row as selected', () => {
+			// The highlight follows the accepted row so a reopened menu lands where
+			// the user left it; acceptance itself is covered above.
 			const setSelectedSlashCommandIndex = vi.fn();
-			const setSlashCommandOpen = vi.fn();
-			const setInputValue = vi.fn();
 			const props = createDefaultProps({
 				slashCommandOpen: true,
 				inputValue: '/',
 				setSelectedSlashCommandIndex,
-				setSlashCommandOpen,
-				setInputValue,
 			});
 			render(<InputArea {...props} />);
 
-			const helpCmd = screen.getByText('/help').closest('button');
-			fireEvent.click(helpCmd!);
+			fireEvent.click(screen.getByText('/help').closest('button')!);
 
-			// Single click should update selection
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
-			// But should NOT close dropdown or fill input
-			expect(setSlashCommandOpen).not.toHaveBeenCalled();
-			expect(setInputValue).not.toHaveBeenCalled();
 		});
 
 		it('renders command description text', () => {

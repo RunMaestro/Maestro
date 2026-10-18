@@ -165,9 +165,10 @@ describe('GeneralTab hooks', () => {
 
 			expect(result.current.status).toEqual(cliStatus);
 			expect(result.current.statusError).toBe('Unable to update shell profile');
-			expect(result.current.installMessage).toBe(
-				'CLI installed. Open a new terminal for PATH changes to apply.'
-			);
+			expect(result.current.installMessage).toEqual({
+				text: 'CLI installed. Open a new terminal for PATH changes to apply.',
+				ok: true,
+			});
 		});
 
 		it('reports install failures and captures them', async () => {

@@ -3,7 +3,7 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_sessions,
  * create_session, create_worktree_session, delete_session, rename_session,
- * update_session_cwd, update_session_ssh, update_session_config,
+ * update_session_cwd, update_session_ssh, update_session_config, provider_translation,
  * list_desktop_sessions, get_session_history.
  */
 
@@ -103,7 +103,14 @@ export function handleCreateSession(
 	const hasConfig = Object.keys(config).length > 0;
 
 	ctx.callbacks
-		.createSession(name, toolType, cwd, groupId, hasConfig ? config : undefined)
+		.createSession(
+			name,
+			toolType,
+			cwd,
+			groupId,
+			hasConfig ? config : undefined,
+			readBackgroundField(message)
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'create_session_result',
@@ -364,7 +371,10 @@ export function handleUpdateSessionSsh(
 export function handleUpdateSessionConfig(
 	ctx: MessageHandlerContext,
 	client: WebClient,
-	message: WebClientMessage
+	message: WebClientMessage,
+	responseType:
+		| 'update_session_config_result'
+		| 'provider_translation_result' = 'update_session_config_result'
 ): void {
 	const sessionId = message.sessionId as string;
 	const configPatch = message.configPatch as Record<string, unknown> | undefined;
@@ -388,9 +398,11 @@ export function handleUpdateSessionConfig(
 		.updateSessionConfig(sessionId, configPatch)
 		.then((result) => {
 			ctx.send(client, {
-				type: 'update_session_config_result',
+				type: responseType,
 				success: result.success,
 				error: result.error,
+				plan: result.plan,
+				result: result.result,
 				sessionId,
 				requestId: message.requestId,
 			});
@@ -398,6 +410,57 @@ export function handleUpdateSessionConfig(
 		.catch((error) => {
 			ctx.sendError(client, `Failed to update session config: ${error.message}`);
 		});
+}
+
+/** Dedicated verb: older desktops reject it instead of applying a destructive toolType patch. */
+export function handleProviderTranslation(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const patch = message.configPatch as Record<string, unknown> | undefined;
+	if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+		ctx.sendError(client, 'Missing or invalid provider translation request');
+		return;
+	}
+	const allowedKeys = [
+		'toolType',
+		'migrationAction',
+		'acceptTranslationLimitations',
+		'selectedUserResources',
+		'migrationPlanId',
+	];
+	if (Object.keys(patch).some((key) => !allowedKeys.includes(key))) {
+		ctx.sendError(client, 'Provider translation cannot include unrelated settings edits');
+		return;
+	}
+	if (
+		typeof patch.migrationAction !== 'string' ||
+		!['plan', 'apply', 'status', 'recover', 'rollback'].includes(patch.migrationAction)
+	) {
+		ctx.sendError(client, 'Invalid provider translation action');
+		return;
+	}
+	if (
+		patch.toolType !== undefined &&
+		(typeof patch.toolType !== 'string' || !VALID_AGENT_TYPES.has(patch.toolType))
+	) {
+		ctx.sendError(client, 'Invalid destination provider');
+		return;
+	}
+	if (
+		(patch.acceptTranslationLimitations !== undefined &&
+			typeof patch.acceptTranslationLimitations !== 'boolean') ||
+		(patch.migrationPlanId !== undefined &&
+			(typeof patch.migrationPlanId !== 'string' || !patch.migrationPlanId.trim())) ||
+		(patch.selectedUserResources !== undefined &&
+			(!Array.isArray(patch.selectedUserResources) ||
+				patch.selectedUserResources.some((resource) => typeof resource !== 'string')))
+	) {
+		ctx.sendError(client, 'Invalid provider translation options');
+		return;
+	}
+	handleUpdateSessionConfig(ctx, client, message, 'provider_translation_result');
 }
 
 /**

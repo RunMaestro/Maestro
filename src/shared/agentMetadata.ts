@@ -256,6 +256,13 @@ export interface AgentLoginCommand {
 	args: string;
 	/** Slash command the user must type once the TUI is up, when `args` can't do it. */
 	followUp?: string;
+	/**
+	 * Arguments to use instead of `args` when the login runs on an SSH remote.
+	 * A browser-callback login starts a server on the REMOTE's localhost, which
+	 * the browser on this machine cannot reach, so the flow can never finish.
+	 * A device-code flow has no callback and works from any host.
+	 */
+	remoteArgs?: string;
 }
 
 /**
@@ -267,7 +274,7 @@ export interface AgentLoginCommand {
 const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	terminal: null,
 	'claude-code': { binary: 'claude', args: '/login' },
-	codex: { binary: 'codex', args: 'login' },
+	codex: { binary: 'codex', args: 'login', remoteArgs: 'login --device-auth' },
 	'gemini-cli': { binary: 'gemini', args: '', followUp: '/auth' },
 	'qwen3-coder': { binary: 'qwen3-coder', args: '', followUp: '/auth' },
 	opencode: { binary: 'opencode', args: 'auth login' },
@@ -290,16 +297,20 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
  * @param agentId - The agent to authenticate.
  * @param customPath - The agent's configured binary path, when the user set one.
  *   Substituted for the default binary name so a non-PATH install still works.
+ * @param opts.remote - The login runs on an SSH remote. Swaps in `remoteArgs`
+ *   when the provider has a flow that does not need a local browser callback.
  */
 export function getAgentLoginCommand(
 	agentId: AgentId | string,
-	customPath?: string
+	customPath?: string,
+	opts: { remote?: boolean } = {}
 ): AgentLoginCommand | null {
 	if (!Object.prototype.hasOwnProperty.call(AGENT_LOGIN_COMMANDS, agentId)) return null;
 	const entry = AGENT_LOGIN_COMMANDS[agentId as AgentId];
 	if (!entry) return null;
 	const binary = customPath?.trim() || entry.binary;
-	return binary === entry.binary ? entry : { ...entry, binary };
+	const args = opts.remote && entry.remoteArgs !== undefined ? entry.remoteArgs : entry.args;
+	return binary === entry.binary && args === entry.args ? entry : { ...entry, binary, args };
 }
 
 /**
@@ -331,6 +342,28 @@ export function formatAgentLoginCommand(
 	// cmd.exe executes a quoted path directly, so only PowerShell needs help.
 	const prefix = syntax === 'powershell' && needsQuoting ? '& ' : '';
 	return login.args ? `${prefix}${binary} ${login.args}` : `${prefix}${binary}`;
+}
+
+/**
+ * Make the shell exit with the status of the command line it was typed.
+ *
+ * A login typed into an interactive shell leaves the shell running when it
+ * finishes, so nothing can tell a finished login from a pending one. Appending
+ * this turns the end of the login into the end of the PTY, with the login's
+ * own exit code, which is what lets a caller continue as soon as it succeeds.
+ *
+ * cmd.exe expands `%ERRORLEVEL%` when the line is parsed, before the command
+ * runs, so it uses `&&` / `||` instead.
+ */
+export function exitWithCommandStatus(line: string, syntax: LoginShellSyntax = 'posix'): string {
+	switch (syntax) {
+		case 'powershell':
+			return `${line}; exit $LASTEXITCODE`;
+		case 'cmd':
+			return `${line} && exit 0 || exit 1`;
+		default:
+			return `${line}; exit $?`;
+	}
 }
 
 /**

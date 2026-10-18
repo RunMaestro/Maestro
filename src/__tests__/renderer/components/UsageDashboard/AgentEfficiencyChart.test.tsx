@@ -13,6 +13,7 @@ import { AgentEfficiencyChart } from '../../../../renderer/components/UsageDashb
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+import { BAR_CHART_GRID_STYLE } from '../../../../renderer/components/UsageDashboard/chartUtils';
 
 let _sessionIdCounter = 0;
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -42,6 +43,13 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 		createdAt: 0,
 		...overrides,
 	} as Session;
+}
+
+/** Bar rows, found through their name labels (each row is the label's parent). */
+function barRows(container: HTMLElement): HTMLElement[] {
+	return Array.from(container.querySelectorAll<HTMLElement>('[data-testid="bar-chart-label"]')).map(
+		(label) => label.parentElement as HTMLElement
+	);
 }
 
 const theme = THEMES['dracula'];
@@ -155,7 +163,9 @@ describe('AgentEfficiencyChart', () => {
 				<AgentEfficiencyChart data={data} theme={theme} sessions={[session]} />
 			);
 
-			const labelEl = container.querySelector('.w-28[title]') as HTMLElement | null;
+			const labelEl = container.querySelector(
+				'[data-testid="bar-chart-label"]'
+			) as HTMLElement | null;
 			expect(labelEl).not.toBeNull();
 			expect(labelEl?.title).toBe('Backend API');
 		});
@@ -164,10 +174,9 @@ describe('AgentEfficiencyChart', () => {
 	describe('Drill-down filter', () => {
 		it('renders all entries at full opacity when no activeFilterKey is provided', () => {
 			const { container } = render(<AgentEfficiencyChart data={baseData} theme={theme} />);
-			// Row containers live at the top of the .space-y-3 wrapper as
-			// `.flex.items-center.gap-3` divs. With no filter, neither row should
-			// have the dim opacity applied.
-			const rows = container.querySelectorAll('.space-y-3 > div.flex.items-center.gap-3');
+			// Each row is the parent of its name label. With no filter, neither
+			// row should have the dim opacity applied.
+			const rows = barRows(container);
 			expect(rows.length).toBe(2);
 			rows.forEach((row) => {
 				expect((row as HTMLElement).style.opacity).not.toBe('0.3');
@@ -178,9 +187,7 @@ describe('AgentEfficiencyChart', () => {
 			const { container } = render(
 				<AgentEfficiencyChart data={baseData} theme={theme} activeFilterKey="claude-code" />
 			);
-			const rows = container.querySelectorAll(
-				'.space-y-3 > div.flex.items-center.gap-3'
-			) as NodeListOf<HTMLElement>;
+			const rows = barRows(container);
 			expect(rows.length).toBe(2);
 
 			// Two providers: claude-code (matches) and factory-droid (dimmed).
@@ -201,9 +208,7 @@ describe('AgentEfficiencyChart', () => {
 			const { container } = render(
 				<AgentEfficiencyChart data={baseData} theme={theme} activeFilterKey="nonexistent" />
 			);
-			const rows = container.querySelectorAll(
-				'.space-y-3 > div.flex.items-center.gap-3'
-			) as NodeListOf<HTMLElement>;
+			const rows = barRows(container);
 			expect(rows.length).toBe(2);
 			rows.forEach((row) => {
 				expect(row.style.opacity).toBe('0.3');
@@ -236,6 +241,41 @@ describe('AgentEfficiencyChart', () => {
 			// the prettified type for the regular row plus a "(Worktree)" suffix.
 			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
 			expect(screen.getAllByText('Claude Code (Worktree)').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('sizes the label column to its content so "(Worktree)" labels are not clipped', () => {
+			const parent = makeSession({ id: 'parent', toolType: 'claude-code' });
+			const worktree = makeSession({
+				id: 'wt-1',
+				toolType: 'claude-code',
+				parentSessionId: 'parent',
+			});
+
+			const dataWithSessions: StatsAggregation = {
+				...baseData,
+				bySessionByDay: {
+					parent: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+					'wt-1': [{ date: '2024-12-20', count: 10, duration: 500000 }],
+				},
+			};
+
+			const { container } = render(
+				<AgentEfficiencyChart data={dataWithSessions} theme={theme} sessions={[parent, worktree]} />
+			);
+
+			const labels = Array.from(
+				container.querySelectorAll<HTMLElement>('[data-testid="bar-chart-label"]')
+			);
+			expect(labels.length).toBeGreaterThanOrEqual(2);
+			// No label carries its own (estimated) width: every row sits in the
+			// parent grid's shared name column, which the browser sizes to the
+			// widest label it actually renders.
+			for (const label of labels) {
+				expect(label.style.width).toBe('');
+				expect(label.parentElement?.style.gridTemplateColumns).toBe('subgrid');
+			}
+			const grid = labels[0].parentElement?.parentElement as HTMLElement;
+			expect(grid.style.gridTemplateColumns).toBe(BAR_CHART_GRID_STYLE.gridTemplateColumns);
 		});
 	});
 });

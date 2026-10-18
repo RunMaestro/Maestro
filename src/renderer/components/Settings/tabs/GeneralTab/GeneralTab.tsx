@@ -61,6 +61,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				conductorProfile={settings.conductorProfile}
 				setConductorProfile={settings.setConductorProfile}
 			/>
+			<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
 			<ShellSettingsSection
 				theme={theme}
 				defaultShell={settings.defaultShell}
@@ -76,7 +77,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setLogLevel={settings.setLogLevel}
 			/>
 			<GitHubCliSection theme={theme} ghPath={settings.ghPath} setGhPath={settings.setGhPath} />
-			<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
 			<WebInterfaceSection
 				theme={theme}
 				webInterfaceAutoStart={settings.webInterfaceAutoStart}
@@ -91,6 +91,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				forcedParallelExecution={settings.forcedParallelExecution}
 				forcedParallelAlways={settings.forcedParallelAlways}
 				setForcedParallelAlways={settings.setForcedParallelAlways}
+				sendButtonMenu={settings.sendButtonMenu}
+				setSendButtonMenu={settings.setSendButtonMenu}
 				shortcuts={settings.shortcuts}
 				forcedParallelWarning={forcedParallelWarning}
 			/>
@@ -98,6 +100,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				crossAgentMentionsWritable={settings.crossAgentMentionsWritable}
 				setCrossAgentMentionsWritable={settings.setCrossAgentMentionsWritable}
+				crossAgentHandoffsWritable={settings.crossAgentHandoffsWritable}
+				setCrossAgentHandoffsWritable={settings.setCrossAgentHandoffsWritable}
 			/>
 			<AutoRunInactivitySection
 				theme={theme}
@@ -135,6 +139,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				automaticTabNamingEnabled={settings.automaticTabNamingEnabled}
 				setAutomaticTabNamingEnabled={settings.setAutomaticTabNamingEnabled}
+				shortenLongTabNames={settings.shortenLongTabNames}
+				setShortenLongTabNames={settings.setShortenLongTabNames}
 				newTabPlacement={settings.newTabPlacement}
 				setNewTabPlacement={settings.setNewTabPlacement}
 				newBrowserTabPlacement={settings.newBrowserTabPlacement}

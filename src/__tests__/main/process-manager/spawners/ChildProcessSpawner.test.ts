@@ -7,6 +7,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
+import * as nodeFs from 'fs';
+import * as nodeOs from 'os';
+import * as nodePath from 'path';
+import { existsSync, readFileSync, unlinkSync } from 'fs';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -23,6 +27,7 @@ function createMockChildProcess() {
 		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
 		stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
 		on: vi.fn(),
+		unref: vi.fn(),
 		killed: false,
 		exitCode: null,
 	};
@@ -74,7 +79,8 @@ vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 	collectMaestroEnvVars: vi.fn(() => ({})),
 }));
 
-vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
+vi.mock('../../../../main/process-manager/utils/imageUtils', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/process-manager/utils/imageUtils')>()),
 	saveImageToTempFile: vi.fn(),
 	buildImagePromptPrefix: vi.fn((paths: string[]) => {
 		if (paths.length === 0) return '';
@@ -108,8 +114,23 @@ import { buildStreamJsonMessage } from '../../../../main/process-manager/utils/s
 import { saveImageToTempFile } from '../../../../main/process-manager/utils/imageUtils';
 import { createOutputParser } from '../../../../main/parsers';
 import { isWindows } from '../../../../shared/platformDetection';
-
+import { getAgentDefinition } from '../../../../main/agents/definitions';
+import { getAgentCapabilities as getRealAgentCapabilities } from '../../../../main/agents/capabilities';
+import { logger } from '../../../../main/utils/logger';
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * The child's event handlers by name, keeping the FIRST registration of each.
+ * `close` and `exit` also get listeners from the stdio watchdog, registered
+ * after the spawner's own, and a plain Map would keep those instead.
+ */
+function childHandlers(child: { on: { mock: { calls: unknown[][] } } }): Map<string, Function> {
+	const handlers = new Map<string, Function>();
+	for (const [event, fn] of child.on.mock.calls as [string, Function][]) {
+		if (!handlers.has(event)) handlers.set(event, fn);
+	}
+	return handlers;
+}
 
 function createTestContext() {
 	const processes = new Map<string, ManagedProcess>();
@@ -359,6 +380,101 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.sshRemoteId).toBe('my-remote-server');
 			expect(proc?.sshRemoteHost).toBe('dev.example.com');
 		});
+
+		// Stop over SSH used to signal only the local ssh client, leaving the remote
+		// agent running. The launch script records the remote pid so Stop can reach it.
+		it('records the remote agent pid ahead of a stdin launch script', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					command: '/usr/bin/ssh',
+					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+					sshStdinScript: 'cd /project\nexec claude --print\n',
+				})
+			);
+
+			const pidFile = processes.get('test-session')?.sshRemotePidFile;
+			expect(pidFile).toMatch(/^\/tmp\/maestro-agent-[0-9a-f-]+\.pid$/);
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toContain(`printf '%s %s\\n' "$$"`);
+			expect(written).toContain(pidFile);
+			expect(written.endsWith('cd /project\nexec claude --print\n')).toBe(true);
+		});
+
+		it('records nothing when the args are not a stdin-script ssh invocation', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash'],
+					sshStdinScript: 'exec claude',
+				})
+			);
+
+			expect(processes.get('test-session')?.sshRemotePidFile).toBeUndefined();
+			expect(mockChildProcess.stdin.write.mock.calls[0][0]).toBe('exec claude');
+		});
+
+		// 2026-10-15: the local ssh of a Codex turn exited non-zero while Codex
+		// kept working on the remote for two more minutes. The turn settled, the
+		// synopsis resumed the thread under it, and Codex refused ("already has an
+		// active writer"). An unrequested SSH failure now stops the remote agent.
+		describe('remote agent after the local ssh client fails', () => {
+			const sshConfig = () =>
+				createBaseConfig({
+					command: '/usr/bin/ssh',
+					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+					sshStdinScript: 'exec codex exec --json\n',
+				});
+
+			function closeWith(code: number | null, signal: string | null = null) {
+				childHandlers(mockChildProcess).get('close')?.(code, signal);
+			}
+
+			it('terminates the remote agent when ssh exits non-zero on its own', async () => {
+				const { processes, spawner } = createTestContext();
+				spawner.spawn(sshConfig());
+				const pidFile = processes.get('test-session')!.sshRemotePidFile!;
+				const sshChild = mockChildProcess;
+
+				closeWith(255);
+
+				await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+				const [command, args] = mockSpawn.mock.calls[1] as [string, string[]];
+				expect(command).toBe('/usr/bin/ssh');
+				expect(args).toContain('user@host');
+				const script = mockChildProcess.stdin.end.mock.calls[0][0] as string;
+				expect(script).toContain(pidFile);
+				expect(script).toContain('TERM');
+				expect(mockChildProcess).not.toBe(sshChild);
+			});
+
+			it('leaves the remote alone after a clean exit', async () => {
+				const { spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig());
+
+				closeWith(0);
+
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			});
+
+			it('leaves the remote to the Stop path when the user interrupted', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig());
+				processes.get('test-session')!.interrupted = true;
+
+				closeWith(130);
+
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			});
+		});
 	});
 
 	describe('image input-format flag (regression: commit 2d227ed0)', () => {
@@ -593,7 +709,39 @@ describe('ChildProcessSpawner', () => {
 			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
 			const eventNames = onCalls.map(([event]) => event);
 			expect(eventNames).toContain('close');
-			expect(eventNames).not.toContain('exit');
+		});
+
+		it('does not settle the turn on "exit" alone (that listener only arms the stdio watchdog)', async () => {
+			const { spawner, emitter, processes } = createTestContext();
+			const config = createBaseConfig({ prompt: 'test' });
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			spawner.spawn(config);
+			const exitHandlers = (mockChildProcess.on.mock.calls as [string, Function][])
+				.filter(([event]) => event === 'exit')
+				.map(([, fn]) => fn);
+			exitHandlers.forEach((fn) => fn(0, null));
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(onExit).not.toHaveBeenCalled();
+			expect(processes.has(config.sessionId)).toBe(true);
+		});
+
+		it('releases the entry and reports exit when handleExit throws before doing so', async () => {
+			const { spawner, emitter, processes } = createTestContext();
+			const config = createBaseConfig({ prompt: 'test' });
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			spawner.spawn(config);
+			const exitHandler = (spawner as any).exitHandler;
+			vi.spyOn(exitHandler, 'handleExit').mockRejectedValueOnce(new Error('boom'));
+			const handlers = childHandlers(mockChildProcess);
+
+			handlers.get('close')?.(130);
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalledWith(config.sessionId, 130));
+			expect(processes.has(config.sessionId)).toBe(false);
 		});
 
 		it('should listen for "error" events on the child process', () => {
@@ -620,9 +768,7 @@ describe('ChildProcessSpawner', () => {
 
 			ctx.spawner.spawn(config);
 			const first = mockChildProcess;
-			const firstHandlers = new Map<string, Function>(
-				(first.on.mock.calls as [string, Function][]).map(([event, fn]) => [event, fn])
-			);
+			const firstHandlers = childHandlers(first);
 
 			// ProcessManager.spawn() kills the predecessor (dropping its map entry)
 			// before the spawner registers the successor under the same key.
@@ -683,9 +829,7 @@ describe('ChildProcessSpawner', () => {
 			const baseConfig = createBaseConfig({ prompt: 'only turn' });
 
 			spawner.spawn(baseConfig);
-			const handlers = new Map<string, Function>(
-				(mockChildProcess.on.mock.calls as [string, Function][]).map(([event, fn]) => [event, fn])
-			);
+			const handlers = childHandlers(mockChildProcess);
 			const onExit = vi.fn();
 			emitter.on('exit', onExit);
 
@@ -693,7 +837,12 @@ describe('ChildProcessSpawner', () => {
 			// handleExit is async (post-exit reconciliation) - let it settle.
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 
-			expect(onExit).toHaveBeenCalledWith(baseConfig.sessionId, 0);
+			expect(onExit).toHaveBeenCalledWith(
+				baseConfig.sessionId,
+				0,
+				undefined,
+				expect.objectContaining({ outcome: 'completed' })
+			);
 			expect(processes.has(baseConfig.sessionId)).toBe(false);
 		});
 	});
@@ -920,7 +1069,180 @@ describe('ChildProcessSpawner', () => {
 		afterEach(() => {
 			vi.mocked(isWindows).mockReturnValue(false);
 		});
+		it('delivers a long OMP prompt as a UTF-8 attachment while preserving launch options and images', () => {
+			const { spawner, processes } = createTestContext();
+			const omp = getAgentDefinition('omp')!;
+			const prompt = '---\nPrivate playbook "quoted" & %PATH% 日本語\n'.repeat(1000);
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(getRealAgentCapabilities('omp'));
+			vi.mocked(saveImageToTempFile).mockReturnValueOnce('/tmp/maestro-image-0.png');
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'omp',
+					command: 'omp.exe',
+					args: [
+						'-p',
+						'--mode',
+						'json',
+						'--model',
+						'openai-codex/gpt-6.1-sol',
+						'--resume',
+						'saved-session',
+						'--tools',
+						'read,grep,glob',
+					],
+					prompt,
+					images: ['data:image/png;base64,abc123'],
+					imageArgs: omp.imageArgs,
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			const promptFile = args.at(-1)!.slice(1);
+			try {
+				expect(args.slice(0, -1)).toEqual([
+					'-p',
+					'--mode',
+					'json',
+					'--model',
+					'openai-codex/gpt-6.1-sol',
+					'--resume',
+					'saved-session',
+					'--tools',
+					'read,grep,glob',
+					'@/tmp/maestro-image-0.png',
+				]);
+				expect(readFileSync(promptFile, 'utf8')).toBe(prompt);
+				expect(processes.get('test-session')?.tempFiles).toContain(promptFile);
+				expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+			} finally {
+				if (args.at(-1)!.startsWith('@')) unlinkSync(promptFile);
+			}
+		});
 
+		it('reports a synchronous spawn failure and removes its temporary prompt attachment', async () => {
+			const { spawner, processes } = createTestContext();
+			let promptFile = '';
+			mockSpawn.mockImplementationOnce((_command, args: string[]) => {
+				promptFile = args.at(-1)!.slice(1);
+				throw Object.assign(new Error('spawn ENAMETOOLONG'), { code: 'ENAMETOOLONG' });
+			});
+			const result = spawner.spawn(
+				createBaseConfig({
+					toolType: 'omp',
+					command: 'omp.exe',
+					args: ['-p', '--mode', 'json'],
+					prompt: 'Long prompt'.repeat(10000),
+				})
+			);
+			expect(result).toMatchObject({ success: false, pid: -1, error: 'spawn ENAMETOOLONG' });
+			await vi.waitFor(() => expect(existsSync(promptFile)).toBe(false));
+			expect(processes.has('test-session')).toBe(false);
+		});
+
+		it('cleans a failed child attachment and publishes one failure rather than a second close outcome', async () => {
+			const { spawner, emitter, processes } = createTestContext();
+			const exit = vi.fn();
+			emitter.on('exit', exit);
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'omp',
+					command: 'omp.exe',
+					args: ['-p', '--mode', 'json'],
+					prompt: 'Prompt content',
+				})
+			);
+			const promptFile = processes.get('test-session')!.tempFiles![0];
+			const errorHandler = mockChildProcess.on.mock.calls.find(
+				([event]: [string]) => event === 'error'
+			)[1];
+			const closeHandler = mockChildProcess.on.mock.calls.find(
+				([event]: [string]) => event === 'close'
+			)[1];
+			errorHandler(new Error('spawn ENOENT'));
+			closeHandler(-1);
+			await vi.waitFor(() => expect(exit).toHaveBeenCalledTimes(1));
+			expect(exit.mock.calls[0].slice(0, 2)).toEqual(['test-session', 1]);
+			expect(exit.mock.calls[0][3]).toMatchObject({ outcome: 'crashed', answerCaptured: false });
+			expect(processes.has('test-session')).toBe(false);
+			await vi.waitFor(() => expect(existsSync(promptFile)).toBe(false));
+		});
+
+		it('removes a replaced turn attachment without settling or deleting its live successor', async () => {
+			const { spawner, emitter, processes } = createTestContext();
+			const exit = vi.fn();
+			emitter.on('exit', exit);
+			const config = createBaseConfig({
+				toolType: 'omp',
+				command: 'omp.exe',
+				args: ['-p', '--mode', 'json'],
+				prompt: 'First prompt',
+			});
+			spawner.spawn(config);
+			const firstChild = mockChildProcess;
+			const firstFile = processes.get('test-session')!.tempFiles![0];
+			spawner.spawn({ ...config, prompt: 'Successor prompt' });
+			const successor = processes.get('test-session')!;
+			const secondFile = successor.tempFiles![0];
+			try {
+				firstChild.on.mock.calls.find(([event]: [string]) => event === 'close')[1](143);
+				await vi.waitFor(() => expect(existsSync(firstFile)).toBe(false));
+				expect(existsSync(secondFile)).toBe(true);
+				expect(processes.get('test-session')).toBe(successor);
+				expect(exit).not.toHaveBeenCalled();
+			} finally {
+				unlinkSync(secondFile);
+			}
+		});
+
+		it('does not report success when Node returns a pidless child', () => {
+			const { spawner } = createTestContext();
+			mockSpawn.mockImplementationOnce(() => ({ ...createMockChildProcess(), pid: undefined }));
+			const result = spawner.spawn(createBaseConfig({ command: 'missing.exe', prompt: 'hello' }));
+			expect(result).toMatchObject({ success: false, pid: -1 });
+		});
+
+		it('delivers a long Hermes query through stdin with explicit one-shot query selection', () => {
+			const { spawner } = createTestContext();
+			const hermes = getAgentDefinition('hermes')!;
+			const capabilities = getRealAgentCapabilities('hermes');
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(capabilities);
+			const prompt = 'Private playbook text "quoted" & %PATH% 日本語\n'.repeat(1000);
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'hermes',
+					command: 'hermes.cmd',
+					args: [...hermes.batchModePrefix!, ...hermes.batchModeArgs!],
+					promptArgs: hermes.promptArgs,
+					prompt,
+					sendPromptViaStdinRaw: capabilities.supportsPromptViaStdin,
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			expect(args).toEqual(['chat', '-Q', '--yolo', '--query-file', '-']);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(
+				prompt,
+				expect.any(Function)
+			);
+			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
+		});
+
+		it.each([false, true])('keeps prompt content out of spawn diagnostics (stdin=%s)', (stdin) => {
+			const { spawner } = createTestContext();
+			const secret = 'PRIVATE_HERMES_PROMPT_CONTENT';
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'hermes',
+					command: 'hermes.cmd',
+					args: ['chat', '-Q', '--yolo'],
+					promptArgs: getAgentDefinition('hermes')!.promptArgs,
+					prompt: secret,
+					sendPromptViaStdinRaw: stdin,
+				})
+			);
+			expect(mockSpawn).toHaveBeenCalledOnce();
+			for (const level of ['info', 'debug', 'warn', 'error'] as const) {
+				expect(JSON.stringify(vi.mocked(logger[level]).mock.calls)).not.toContain(secret);
+			}
+		});
 		it('auto-enables shell for a .cmd command on Windows', () => {
 			const { spawner } = createTestContext();
 
@@ -1014,6 +1336,78 @@ describe('ChildProcessSpawner', () => {
 
 			const proc = processes.get('test-session');
 			expect(proc?.agentSessionId).toBeUndefined();
+		});
+	});
+
+	// Claude reports its cost as a running SESSION total; the spawn hands the
+	// parser the total the resumed transcript held, so it can report the turn's.
+	describe('Claude session cost baseline', () => {
+		const primedParser = () => {
+			const primeResumedSession = vi.fn();
+			vi.mocked(createOutputParser).mockReturnValueOnce({
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn(),
+				extractUsage: vi.fn(),
+				extractSessionId: vi.fn(),
+				extractSlashCommands: vi.fn(),
+				isResultMessage: vi.fn(),
+				detectErrorFromLine: vi.fn(),
+				detectErrorFromExit: vi.fn(() => null),
+				primeResumedSession,
+			} as any);
+			return primeResumedSession;
+		};
+
+		it("primes a resumed turn with the transcript's last cost-state row", () => {
+			const root = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'spawner-cost-'));
+			try {
+				const cwd = nodePath.join(root, 'proj');
+				const projectDir = nodePath.join(
+					root,
+					'cfg',
+					'projects',
+					cwd.replace(/[^a-zA-Z0-9]/g, '-')
+				);
+				nodeFs.mkdirSync(projectDir, { recursive: true });
+				nodeFs.writeFileSync(
+					nodePath.join(projectDir, 'sid-1.jsonl'),
+					JSON.stringify({ type: 'cost-state', totalCostUSD: 0.5, modelUsage: {} }) + '\n'
+				);
+				vi.mocked(buildChildProcessEnv).mockReturnValueOnce({
+					PATH: '/usr/bin',
+					CLAUDE_CONFIG_DIR: nodePath.join(root, 'cfg'),
+				});
+				const prime = primedParser();
+				const { spawner } = createTestContext();
+
+				spawner.spawn(
+					createBaseConfig({ cwd, args: ['--print', '--resume', 'sid-1'], prompt: 'next' })
+				);
+
+				expect(prime).toHaveBeenCalledWith('sid-1', { totalCostUSD: 0.5, modelUsage: {} });
+			} finally {
+				nodeFs.rmSync(root, { recursive: true, force: true });
+			}
+		});
+
+		it('primes a remote resumed turn with an unknown baseline', () => {
+			const prime = primedParser();
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({ agentSessionId: 'sid-2', sshRemoteId: 'remote-1', prompt: 'next' })
+			);
+
+			expect(prime).toHaveBeenCalledWith('sid-2', undefined);
+		});
+
+		it('does not prime a fresh session', () => {
+			const prime = primedParser();
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ args: ['--print', '--session-id', 'new'], prompt: 'hi' }));
+
+			expect(prime).not.toHaveBeenCalled();
 		});
 	});
 });

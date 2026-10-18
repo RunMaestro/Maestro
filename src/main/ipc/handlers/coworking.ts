@@ -31,6 +31,10 @@ import {
 	browserOpNeedsConfirm,
 	BROWSER_INTERACT_TIMEOUT_MS,
 } from '../../../shared/coworkingBrowser';
+import {
+	requireEncoreFeature,
+	type EncoreSettingsReader,
+} from '../../../shared/encoreFeatureDefaults';
 
 const LOG_CTX = '[Coworking][IPC]';
 
@@ -41,6 +45,8 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 
 export interface CoworkingHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
+	/** Read for the `coworking` Encore flag: installs are refused while it is off. */
+	settingsStore: EncoreSettingsReader;
 }
 
 export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): void {
@@ -48,6 +54,13 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	setBrowserAuditSink(createDefaultBrowserAuditSink());
 
 	// ---- Settings panel ----
+	//
+	// Installing writes the coworking MCP server into an agent's config, so it
+	// is refused while the feature is off (`maestro-cli coworking` reaches the
+	// same channels). Uninstalling stays open: it only removes what an earlier
+	// install wrote, and turning the feature off is exactly when a user cleans up.
+	const requireCoworking = () =>
+		requireEncoreFeature(deps.settingsStore, 'coworking', 'CoworkingDisabled');
 
 	ipcMain.handle(
 		'coworking:getInstallStatus',
@@ -60,6 +73,7 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	ipcMain.handle(
 		'coworking:install',
 		withIpcErrorLogging(handlerOpts('install'), async (agentId: string): Promise<void> => {
+			requireCoworking();
 			await installFor(agentId);
 		})
 	);
@@ -73,7 +87,10 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 
 	ipcMain.handle(
 		'coworking:installAll',
-		withIpcErrorLogging(handlerOpts('installAll'), async () => installForAll())
+		withIpcErrorLogging(handlerOpts('installAll'), async () => {
+			requireCoworking();
+			return installForAll();
+		})
 	);
 
 	// ---- Registry sync (renderer → main) ----

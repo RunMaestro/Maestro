@@ -77,6 +77,25 @@ describe('gitService', () => {
 	});
 
 	describe('getStatus', () => {
+		test('flags a timed-out check instead of reporting a clean tree', async () => {
+			mockGit.status.mockResolvedValue({ stdout: '', stderr: 'ETIMEDOUT', timedOut: true });
+			mockGit.branch.mockResolvedValue({ stdout: 'main' });
+
+			const result = await gitService.getStatus('/path/to/repo');
+
+			expect(result.timedOut).toBe(true);
+			expect(result.notARepo).toBeUndefined();
+		});
+
+		test('flags the result when only the branch query timed out', async () => {
+			mockGit.status.mockResolvedValue({ stdout: ' M a.ts\n', stderr: '' });
+			mockGit.branch.mockResolvedValue({ stdout: '', stderr: 'ETIMEDOUT', timedOut: true });
+
+			const result = await gitService.getStatus('/path/to/repo');
+
+			expect(result.timedOut).toBe(true);
+		});
+
 		test('returns empty files array when status is clean', async () => {
 			mockGit.status.mockResolvedValue({ stdout: '' });
 			mockGit.branch.mockResolvedValue({ stdout: 'main' });
@@ -143,6 +162,31 @@ D  deleted.ts
 			const result = await gitService.getStatus('/path/to/repo');
 
 			expect(result.branch).toBeUndefined();
+		});
+
+		test('flags notARepo when git says the directory is not a repository', async () => {
+			mockGit.status.mockResolvedValue({
+				stdout: '',
+				stderr: 'fatal: not a git repository (or any of the parent directories): .git\n',
+			});
+			mockGit.branch.mockResolvedValue({ stdout: '' });
+
+			const result = await gitService.getStatus('/path/to/plain-dir');
+
+			expect(result.notARepo).toBe(true);
+			expect(result.files).toEqual([]);
+		});
+
+		test('does not flag notARepo for other failures', async () => {
+			mockGit.status.mockResolvedValue({
+				stdout: '',
+				stderr: 'ssh: connect to host example port 22: Connection refused',
+			});
+			mockGit.branch.mockResolvedValue({ stdout: '' });
+
+			const result = await gitService.getStatus('/path/to/repo');
+
+			expect(result.notARepo).toBeUndefined();
 		});
 
 		test('returns empty files array on error', async () => {
@@ -231,6 +275,14 @@ UU both-changed-in-merge.ts`;
 	});
 
 	describe('getNumstat', () => {
+		test('flags a timed-out check', async () => {
+			mockGit.numstat.mockResolvedValue({ stdout: '', stderr: 'ETIMEDOUT', timedOut: true });
+
+			const result = await gitService.getNumstat('/path/to/repo');
+
+			expect(result).toEqual({ files: [], timedOut: true });
+		});
+
 		test('parses numstat output correctly', async () => {
 			const numstatOutput = `10\t5\tsrc/file1.ts
 20\t3\tsrc/file2.ts`;

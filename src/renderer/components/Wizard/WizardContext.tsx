@@ -9,6 +9,7 @@ import {
 } from 'react';
 import type { AdditionalDirectory, ToolType, AgentConfig } from '../../types';
 import { captureException } from '../../utils/sentry';
+import type { CodexTransport } from '../../../shared/codexTransport';
 import { STEP_INDEX, INDEX_TO_STEP, WIZARD_TOTAL_STEPS } from './WizardContext/constants';
 import { generateMessageId } from './WizardContext/messageIds';
 import {
@@ -159,6 +160,10 @@ export function WizardProvider({ children }: WizardProviderProps) {
 
 	const setMaestroPPath = useCallback((path: string | undefined) => {
 		dispatch({ type: 'SET_MAESTRO_P_PATH', path });
+	}, []);
+
+	const setCodexTransport = useCallback((transport: CodexTransport) => {
+		dispatch({ type: 'SET_CODEX_TRANSPORT', transport });
 	}, []);
 
 	const setPlannerModel = useCallback((model: string | undefined) => {
@@ -349,6 +354,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setEnableMaestroP,
 			setMaestroPMode,
 			setMaestroPPath,
+			setCodexTransport,
 			setPlannerModel,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
@@ -400,6 +406,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setEnableMaestroP,
 			setMaestroPMode,
 			setMaestroPPath,
+			setCodexTransport,
 			setPlannerModel,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,

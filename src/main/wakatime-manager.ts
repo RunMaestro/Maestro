@@ -282,6 +282,7 @@ export class WakaTimeManager {
 	private languageCache: Map<string, string> = new Map();
 	private cliPath: string | null = null;
 	private cliDetected = false;
+	private detecting: Promise<boolean> | null = null;
 	private installing: Promise<boolean> | null = null;
 	private lastUpdateCheck = 0;
 
@@ -315,8 +316,19 @@ export class WakaTimeManager {
 	/** Detect wakatime-cli on PATH or in ~/.wakatime/ */
 	async detectCli(): Promise<boolean> {
 		if (this.cliDetected) return this.cliPath !== null;
-		this.cliDetected = true;
+		// Concurrent callers share the in-flight probe. Answering them from
+		// `cliPath` before the probe settles reported "not installed" for a CLI
+		// that was about to be found, and kicked off a redundant download.
+		if (!this.detecting) {
+			this.detecting = this.probeCli().finally(() => {
+				this.cliDetected = true;
+				this.detecting = null;
+			});
+		}
+		return this.detecting;
+	}
 
+	private async probeCli(): Promise<boolean> {
 		// Try common binary names on PATH
 		for (const cmd of ['wakatime-cli', 'wakatime']) {
 			const result = await execFileNoThrow(cmd, ['--version']);
@@ -600,6 +612,13 @@ export class WakaTimeManager {
 		const ctx: HeartbeatContext =
 			typeof sourceOrContext === 'string' ? { source: sourceOrContext } : (sourceOrContext ?? {});
 		const source = ctx.source;
+		// Debounce per session BEFORE touching settings. Callers fire this on every
+		// stdout chunk of a running agent, and each settings get() is a synchronous
+		// read + parse of the whole settings file on the main thread.
+		const now = Date.now();
+		const lastBeat = this.lastHeartbeatPerSession.get(sessionId) || 0;
+		if (now - lastBeat < HEARTBEAT_DEBOUNCE_MS) return;
+
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -609,11 +628,6 @@ export class WakaTimeManager {
 			apiKey = this.readApiKeyFromConfig();
 		}
 		if (!apiKey) return;
-
-		// Debounce per session
-		const now = Date.now();
-		const lastBeat = this.lastHeartbeatPerSession.get(sessionId) || 0;
-		if (now - lastBeat < HEARTBEAT_DEBOUNCE_MS) return;
 
 		// Ensure CLI is available (auto-installs if needed)
 		if (!(await this.ensureCliInstalled())) {

@@ -3,6 +3,7 @@ import React from 'react';
 import { useUIStore } from '../../stores/uiStore';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { usePointerDrag } from '../utils/usePointerDrag';
 import {
 	computeDropZone,
 	movePaneInGroup,
@@ -65,9 +66,16 @@ function isOverTabBar(clientX: number, clientY: number): boolean {
  * `drop`, so a native-DnD pane rearrange silently no-ops. Pointer events are immune -
  * they behave identically in every window - so tiling drags run entirely on them.
  *
- * On press we arm window-level pointer listeners; once the pointer clears
- * {@link DRAG_THRESHOLD} the drag is live and `uiStore.paneDrag` publishes the hovered
- * target so PaneDragOverlay can paint the drop highlight. On release we commit:
+ * Runs on {@link usePointerDrag} for pointer capture. A tiled browser pane is a
+ * guest `<webview>`, and without capture the pointer moving over it stops feeding
+ * this window's listeners: the release lands in the guest, the drag never ends, and
+ * the "Rearranging tile" ghost stays stuck on screen. A release that is still lost
+ * settles on the next buttonless move; Escape and an unmount mid-drag cancel through
+ * `onCancel`, which clears `uiStore.paneDrag` without moving anything.
+ *
+ * Once the pointer clears {@link DRAG_THRESHOLD} the drag is live and
+ * `uiStore.paneDrag` publishes the hovered target so PaneDragOverlay can paint the
+ * drop highlight. On release we commit:
  *   - dropped on another pane's CENTER -> {@link swapPanesInGroup} (trade tiles in place)
  *   - dropped on another pane's EDGE   -> {@link movePaneInGroup} (re-split to that side)
  *   - dropped on the tab strip         -> {@link promotePaneToStandalone} (pop the pane out)
@@ -75,61 +83,67 @@ function isOverTabBar(clientX: number, clientY: number): boolean {
  */
 export function usePaneDrag(sessionId: string, groupId: string, leafId: string) {
 	const setPaneDrag = useUIStore((s) => s.setPaneDrag);
+	const startDrag = usePointerDrag();
 
 	return React.useCallback(
-		(e: React.PointerEvent) => {
-			// Left button only; ignore the chevron menu / maximize button (they stop
-			// propagation themselves, but guard anyway) and modified clicks.
+		(e: React.PointerEvent<HTMLElement>) => {
+			// Left button only. Header buttons (chevron menu, maximize) are skipped by
+			// `ignoreButtons`: capturing the pointer on the bar would retarget their click.
 			if (e.button !== 0) return;
 			const startX = e.clientX;
 			const startY = e.clientY;
 			let dragging = false;
+			let last = { x: startX, y: startY };
 
-			const onMove = (ev: PointerEvent) => {
-				if (!dragging) {
-					if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD) return;
-					dragging = true;
-				}
-				setPaneDrag({
-					groupId,
-					leafId,
-					pointer: { x: ev.clientX, y: ev.clientY },
-					hover: resolvePaneHover(ev.clientX, ev.clientY, leafId),
-				});
+			const clear = () => {
+				if (dragging) setPaneDrag(null);
 			};
 
-			const onUp = (ev: PointerEvent) => {
-				window.removeEventListener('pointermove', onMove, true);
-				window.removeEventListener('pointerup', onUp, true);
-				window.removeEventListener('pointercancel', onUp, true);
-				if (dragging) {
-					const hover = resolvePaneHover(ev.clientX, ev.clientY, leafId);
-					if (hover) {
-						if (hover.zone === 'center') {
-							updateSessionWith(sessionId, (s) =>
-								swapPanesInGroup(s, groupId, leafId, hover.leafId)
-							);
-							notifyCenterFlash({ color: 'green', message: 'Swapped' });
-						} else {
-							updateSessionWith(sessionId, (s) =>
-								movePaneInGroup(s, groupId, leafId, hover.leafId, hover.zone)
-							);
-							notifyCenterFlash({ color: 'green', message: 'Moved' });
-						}
-					} else if (isOverTabBar(ev.clientX, ev.clientY)) {
-						updateSessionWith(sessionId, (s) =>
-							promotePaneToStandalone(s, groupId, leafId, s.unifiedTabOrder?.length ?? 0)
-						);
-						notifyCenterFlash({ color: 'green', message: 'Popped out' });
+			startDrag(
+				e,
+				(dx, dy) => {
+					if (!dragging) {
+						if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+						dragging = true;
 					}
+					last = { x: startX + dx, y: startY + dy };
+					setPaneDrag({
+						groupId,
+						leafId,
+						pointer: last,
+						hover: resolvePaneHover(last.x, last.y, leafId),
+					});
+				},
+				{
+					ignoreButtons: true,
+					onCancel: clear,
+					onEnd: () => {
+						if (!dragging) return;
+						// Clear before committing so a throwing commit cannot strand the overlay.
+						clear();
+						const hover = resolvePaneHover(last.x, last.y, leafId);
+						if (hover) {
+							if (hover.zone === 'center') {
+								updateSessionWith(sessionId, (s) =>
+									swapPanesInGroup(s, groupId, leafId, hover.leafId)
+								);
+								notifyCenterFlash({ color: 'green', message: 'Swapped' });
+							} else {
+								updateSessionWith(sessionId, (s) =>
+									movePaneInGroup(s, groupId, leafId, hover.leafId, hover.zone)
+								);
+								notifyCenterFlash({ color: 'green', message: 'Moved' });
+							}
+						} else if (isOverTabBar(last.x, last.y)) {
+							updateSessionWith(sessionId, (s) =>
+								promotePaneToStandalone(s, groupId, leafId, s.unifiedTabOrder?.length ?? 0)
+							);
+							notifyCenterFlash({ color: 'green', message: 'Popped out' });
+						}
+					},
 				}
-				setPaneDrag(null);
-			};
-
-			window.addEventListener('pointermove', onMove, true);
-			window.addEventListener('pointerup', onUp, true);
-			window.addEventListener('pointercancel', onUp, true);
+			);
 		},
-		[sessionId, groupId, leafId, setPaneDrag]
+		[sessionId, groupId, leafId, setPaneDrag, startDrag]
 	);
 }

@@ -21,7 +21,11 @@ import {
 	DEFAULT_DISCOVERY_TIMEOUT_MS,
 	cwdSlug,
 	discoverSessionId,
+	findLatestSessionId,
+	noConversationFoundMessage,
+	sessionTranscriptPath,
 } from '../../maestro-p/session-watcher';
+import { getErrorPatterns, matchErrorPattern } from '../../shared/agentErrorPatterns';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 
 const FAST_POLL_MS = 10;
@@ -148,6 +152,25 @@ describe('session-watcher', () => {
 					`cwdSlug drifted from encodeClaudeProjectPath for ${JSON.stringify(input)}`
 				).toBe(encodeClaudeProjectPath(input));
 			}
+		});
+	});
+
+	describe('sessionTranscriptPath()', () => {
+		it('points at <configDir>/projects/<slug>/<id>.jsonl, where claude writes it', () => {
+			const written = writeJsonl('abc-123');
+			expect(sessionTranscriptPath(configDir, cwd, 'abc-123')).toBe(written);
+		});
+	});
+
+	describe('noConversationFoundMessage()', () => {
+		// The desktop recovers a dead resume only when the failure classifies as
+		// session_not_found. A TUI turn must read exactly like a print turn.
+		it('classifies as session_not_found for claude-code', () => {
+			const match = matchErrorPattern(
+				getErrorPatterns('claude-code'),
+				noConversationFoundMessage('607fee3e-cf47-4ef8-a7d9-e6bb4931cca7')
+			);
+			expect(match?.type).toBe('session_not_found');
 		});
 	});
 
@@ -427,6 +450,75 @@ describe('session-watcher', () => {
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+
+		// `/clear` rotates claude onto a new session while the old transcript is
+		// still being tailed; the rotation watch must never hand back the session
+		// it is already following.
+		it('skips excludeSessionIds in the earliest-new scan', async () => {
+			const spawnTimestamp = Date.now() - 1000;
+			writeJsonl('aaaa-current');
+			await sleep(20);
+			writeJsonl('bbbb-rotated');
+			const result = await discoverSessionId({
+				configDir,
+				cwd,
+				spawnTimestamp,
+				excludeSessionIds: new Set(['aaaa-current']),
+				timeoutMs: 500,
+				pollIntervalMs: FAST_POLL_MS,
+			});
+			expect(result.sessionId).toBe('bbbb-rotated');
+		});
+
+		it('keeps waiting when only an excluded session exists', async () => {
+			writeJsonl('aaaa-current');
+			await expectDiscoveryRejection(
+				discoverSessionId({
+					configDir,
+					cwd,
+					spawnTimestamp: Date.now() - 1000,
+					excludeSessionIds: new Set(['aaaa-current']),
+					timeoutMs: 60,
+					pollIntervalMs: FAST_POLL_MS,
+				}),
+				/no new \.jsonl appeared/
+			);
+		});
+	});
+
+	// claude refuses `--continue` together with the `--session-id` maestro-p
+	// pre-assigns, so run mode resolves the session `--continue` would pick.
+	describe('findLatestSessionId()', () => {
+		const A = '11111111-2222-4333-8444-555555555555';
+		const B = '66666666-7777-4888-9999-aaaaaaaaaaaa';
+
+		function setMtime(file: string, secondsAgo: number): void {
+			const t = new Date(Date.now() - secondsAgo * 1000);
+			fs.utimesSync(file, t, t);
+		}
+
+		it('returns null when the project folder does not exist', async () => {
+			expect(await findLatestSessionId(configDir, cwd)).toBeNull();
+		});
+
+		it('returns null when the folder holds no session transcripts', async () => {
+			ensureProjectsDir();
+			fs.writeFileSync(path.join(projectsDir(), 'notes.txt'), 'x');
+			expect(await findLatestSessionId(configDir, cwd)).toBeNull();
+		});
+
+		it('picks the most recently written transcript, not the newest file name', async () => {
+			setMtime(writeJsonl(B), 300);
+			setMtime(writeJsonl(A), 10);
+			expect(await findLatestSessionId(configDir, cwd)).toBe(A);
+		});
+
+		it('ignores files that are not `<uuid>.jsonl` and folders named like one', async () => {
+			setMtime(writeJsonl(A), 300);
+			setMtime(writeJsonl('agent-1234'), 1);
+			fs.mkdirSync(path.join(projectsDir(), `${B}.jsonl`));
+			expect(await findLatestSessionId(configDir, cwd)).toBe(A);
 		});
 	});
 });

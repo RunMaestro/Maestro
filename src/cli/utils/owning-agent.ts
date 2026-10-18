@@ -14,7 +14,7 @@
 
 import * as path from 'path';
 import type { SessionInfo } from '../../shared/types';
-import { getSessionHistoryMtimeMs, readSessions } from '../services/storage';
+import { getSessionHistoryMtimeMs, readLiveSessions } from '../services/storage';
 
 /**
  * True if `target` is `parent` itself or lives strictly inside it. Uses a
@@ -34,7 +34,7 @@ export function isPathInside(target: string, parent: string): boolean {
  */
 export function findOwningSessions(
 	absolutePath: string,
-	sessions: SessionInfo[] = readSessions()
+	sessions: SessionInfo[] = readLiveSessions()
 ): SessionInfo[] {
 	const owners = sessions.filter((s) => s.cwd && isPathInside(absolutePath, s.cwd));
 	if (owners.length <= 1) return owners;
@@ -65,7 +65,7 @@ export function pickMostRecentlyActive(sessions: SessionInfo[]): SessionInfo {
  */
 export function resolveOwningAgent(
 	absolutePath: string,
-	sessions: SessionInfo[] = readSessions()
+	sessions: SessionInfo[] = readLiveSessions()
 ): { agent: SessionInfo; others: SessionInfo[] } | null {
 	const owners = findOwningSessions(absolutePath, sessions);
 	if (owners.length === 0) return null;

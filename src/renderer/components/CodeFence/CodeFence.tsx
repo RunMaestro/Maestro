@@ -1,5 +1,4 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { Clipboard } from 'lucide-react';
 import type { Theme } from '../../types';
 import { captureException } from '../../utils/sentry';
 import {
@@ -12,6 +11,7 @@ import {
 import { detectLanguage } from '../../utils/shiki/languageDetect';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { LanguagePicker } from './LanguagePicker';
+import { CodeCopyButton } from './CodeCopyButton';
 
 interface CodeFenceProps {
 	/** Raw fence tag from the markdown (e.g. `'ts'`, `''`, `'TypeScript'`). */
@@ -185,18 +185,7 @@ export const CodeFence = memo(function CodeFence({
 					<code>{code}</code>
 				</pre>
 			)}
-			<button
-				onClick={() => onCopy(code)}
-				className="absolute top-2 right-2 p-1.5 rounded opacity-70 hover:opacity-100 transition-opacity z-10"
-				style={{
-					backgroundColor: theme.colors.bgActivity,
-					color: theme.colors.textDim,
-					border: `1px solid ${theme.colors.border}`,
-				}}
-				title="Copy code"
-			>
-				<Clipboard className="w-3.5 h-3.5" />
-			</button>
+			<CodeCopyButton code={code} theme={theme} onCopy={onCopy} />
 		</div>
 	);
 });

@@ -5,6 +5,7 @@ import {
 	canSetGroupParent,
 	normalizeGroupHierarchy,
 	removeGroupAndPromoteChildren,
+	setGroupHidden,
 	setGroupParent,
 } from '../../shared/groupHierarchy';
 
@@ -111,5 +112,37 @@ describe('group hierarchy', () => {
 			group('level-two'),
 			group('level-three'),
 		]);
+	});
+
+	it('parks a group and leaves the others untouched', () => {
+		const groups = [group('company'), group('project')];
+
+		const next = setGroupHidden(groups, 'project', true);
+
+		expect(next).toEqual([group('company'), { ...group('project'), hidden: true }]);
+		expect(next[0]).toBe(groups[0]);
+	});
+
+	// A visible group stores no key at all, the way every group written before
+	// the field existed reads back.
+	it('drops the key when a group is shown again', () => {
+		const groups = [{ ...group('project'), hidden: true }];
+
+		const next = setGroupHidden(groups, 'project', false);
+
+		expect(next[0]).not.toHaveProperty('hidden');
+	});
+
+	it('returns the same list when the group already reads that way', () => {
+		const groups = [group('company'), { ...group('project'), hidden: true }];
+
+		expect(setGroupHidden(groups, 'project', true)).toBe(groups);
+		expect(setGroupHidden(groups, 'company', false)).toBe(groups);
+	});
+
+	it('returns the same list for a group that does not exist', () => {
+		const groups = [group('company')];
+
+		expect(setGroupHidden(groups, 'missing', true)).toBe(groups);
 	});
 });

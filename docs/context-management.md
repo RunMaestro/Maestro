@@ -165,6 +165,14 @@ When your conversation approaches context limits, you can compress it while pres
 - Important technical details and constraints
 - Current task state and next steps
 
+### Automatic Compaction
+
+If a conversation outgrows the model's context window anyway, the provider refuses the next message ("Prompt is too long"). Maestro handles that for you on Claude Code: it compacts the conversation in place, then sends your message again. You do not get an error and you do not retype anything. A small **Context compacted** pill in the transcript marks where it happened.
+
+This is different from **Context: Compact** above. The automatic path keeps you in the same tab and the same provider session, and the provider writes the summary. If the compaction itself fails, you get the usual **Context Limit Reached** error. Pressing **Stop** while it is compacting cancels it, and your message is not sent again.
+
+Auto Run tasks are not compacted automatically.
+
 ### How Compaction Works
 
 Compaction uses a multi-pass approach to handle conversations of any size:
@@ -247,6 +255,8 @@ Transfer your context to a different AI agent:
 2. Search for or select the target agent from the list
 3. Review the token estimate and cleaning options
 4. Click **"Send to Session"**
+
+If the target agent is busy, the button reads **"Queue for Agent"**: the context opens in a new tab and runs when the agent's current turn finishes. With **Forced Parallel Execution** on (Settings → General), a **"Force Send to Agent"** button (or the Forced Parallel Send shortcut, `Cmd+Shift+Enter` / `Ctrl+Shift+Enter`) sends it now, in parallel with the running turn.
 
 ![Send to Agent Modal](./screenshots/tab-send.png)
 

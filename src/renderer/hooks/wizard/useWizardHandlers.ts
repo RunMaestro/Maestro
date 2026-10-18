@@ -46,6 +46,7 @@ import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { readEffortFromConfig } from '../../utils/agentEffort';
+import { getSessionSshRemoteId, isSessionRemote } from '../../utils/sessionHelpers';
 import { parseSynopsis } from '../../../shared/synopsis';
 
 let cachedAutorunSynopsisPrompt: string | null = null;
@@ -80,6 +81,7 @@ import type { WizardState } from '../../components/Wizard/WizardContext';
 import type { HistoryEntryInput } from '../agent/useAgentSessionManagement';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
+import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 
 // ============================================================================
 // Dependencies interface
@@ -194,7 +196,22 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	const activeToolType = useSessionStore((s) => selectActiveSession(s)?.toolType);
 	const activeCwd = useSessionStore((s) => selectActiveSession(s)?.cwd);
 	const activeCustomPath = useSessionStore((s) => selectActiveSession(s)?.customPath);
-	const activeAgentCommands = useSessionStore((s) => selectActiveSession(s)?.agentCommands);
+	// Codex refreshes persisted command lists on focus; its own write must not retrigger discovery.
+	const activeAgentCommands = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session?.toolType === 'codex' ? undefined : session?.agentCommands;
+	});
+	const activeCodexEnv = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session?.toolType === 'codex' ? session.customEnvVars : undefined;
+	});
+	const codexShellEnv = useSettingsStore((s) =>
+		activeToolType === 'codex' ? s.shellEnvVars : undefined
+	);
+	const activeSshRemoteId = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return isSessionRemote(session) ? getSessionSshRemoteId(session) : undefined;
+	});
 	const activeProjectRoot = useSessionStore((s) => selectActiveSession(s)?.projectRoot);
 
 	// --- Store actions (stable) ---
@@ -231,7 +248,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			currentSession.toolType !== 'codex'
 		)
 			return;
-		if (currentSession.agentCommands && currentSession.agentCommands.length > 0) return;
+		if (currentSession.toolType !== 'codex' && currentSession.agentCommands?.length) return;
 
 		const sessionId = currentSession.id;
 		const projectRoot = currentSession.projectRoot;
@@ -288,7 +305,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					currentSession.toolType,
 					currentSession.cwd,
 					currentSession.customPath,
-					currentSession.sshRemote?.id
+					activeSshRemoteId,
+					...(currentSession.toolType === 'codex' && currentSession.customEnvVars !== undefined
+						? [currentSession.customEnvVars]
+						: [])
 				);
 				if (cancelled) return;
 
@@ -299,12 +319,19 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					prompt: cmd.prompt,
 				}));
 
-				if (agentCommandObjects.length > 0) {
+				if (
+					agentCommandObjects.length > 0 ||
+					(currentSession.toolType === 'codex' &&
+						(agentSlashCommands !== null || activeSshRemoteId !== undefined))
+				) {
 					updateSessionWith(sessionId, (s) => {
 						const existingCommands = s.agentCommands || [];
 						return {
 							...s,
-							agentCommands: mergeCommands(existingCommands, agentCommandObjects),
+							agentCommands:
+								currentSession.toolType === 'codex'
+									? agentCommandObjects
+									: mergeCommands(existingCommands, agentCommandObjects),
 						};
 					});
 				}
@@ -333,6 +360,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		activeCwd,
 		activeCustomPath,
 		activeAgentCommands,
+		activeCodexEnv,
+		codexShellEnv,
+		activeSshRemoteId,
 		activeProjectRoot,
 	]);
 
@@ -862,6 +892,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					customArgs: currentSession.customArgs,
 					customEnvVars: currentSession.customEnvVars,
 					customModel: currentSession.customModel,
+					claudeTokenSource: getClaudeTokenSourceFields(currentSession),
 				}
 			);
 
@@ -954,6 +985,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					customArgs: currentSession.customArgs,
 					customEnvVars: currentSession.customEnvVars,
 					customModel: currentSession.customModel,
+					claudeTokenSource: getClaudeTokenSourceFields(currentSession),
 				}
 			);
 
@@ -1193,6 +1225,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				enableMaestroP,
 				maestroPMode,
 				maestroPPath,
+				codexTransport,
 				sessionSshRemoteConfig,
 				autoRunMode,
 			} = wizardState;
@@ -1351,6 +1384,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				maestroPMode: resolvedEnableMaestroP ? maestroPMode : undefined,
 				maestroPPath:
 					resolvedEnableMaestroP && maestroPPath?.trim() ? maestroPPath.trim() : undefined,
+				// Only the opt-in is stored; `exec` is the default.
+				codexTransport:
+					selectedAgent === 'codex' && codexTransport === 'app-server' ? 'app-server' : undefined,
 				claudeInteractive:
 					selectedAgent === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};

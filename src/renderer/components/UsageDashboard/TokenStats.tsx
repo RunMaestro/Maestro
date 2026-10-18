@@ -18,47 +18,28 @@
  *   the Agents tab filter and the quota badges.
  */
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, Coins, Database, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../../shared/stats-types';
-import type {
-	TokenUsageAggregate,
-	TokenUsageGroup,
-	TokenUsageQuery,
-} from '../../../shared/tokenUsage';
+import type { TokenUsageAggregate, TokenUsageGroup } from '../../../shared/tokenUsage';
 import { formatCost, formatNumber, formatTokensCompact } from '../../../shared/formatters';
 import { parseProviderProfileKey } from '../../../shared/providerProfiles';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
-import { captureException } from '../../utils/sentry';
+import { BAR_CHART_GRID_CLASS, BAR_CHART_GRID_STYLE, BAR_CHART_ROW_STYLE } from './chartUtils';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
 import { ChartTooltip } from './ChartTooltip';
 import { EmptyState } from './EmptyState';
 import { SummaryCardsSkeleton } from './ChartSkeletons';
 import { MetricCard } from './SummaryCards';
+import { TokenSpeedStats } from './TokenSpeedStats';
+import { useTokenUsage } from './useTokenUsage';
 
 interface TokenStatsProps {
 	timeRange: StatsTimeRange;
 	theme: Theme;
 	colorBlindMode?: boolean;
-}
-
-/** Lookback for each dashboard range, mirroring `getTimeRangeStart` in main. */
-const RANGE_DAYS: Record<Exclude<StatsTimeRange, 'all'>, number> = {
-	day: 1,
-	week: 7,
-	month: 30,
-	quarter: 90,
-	year: 365,
-};
-
-/** Translate the dashboard's range selector into the accessor's query window. */
-function toQuery(range: StatsTimeRange): TokenUsageQuery {
-	if (range === 'all') return { granularity: 'month' };
-	const days = RANGE_DAYS[range];
-	const granularity = days <= 30 ? 'day' : days <= 90 ? 'week' : 'month';
-	return { sinceMs: Date.now() - days * 24 * 60 * 60 * 1000, granularity };
 }
 
 /** Total tokens across all four buckets. */
@@ -135,7 +116,7 @@ const Breakdown = memo(function Breakdown({
 			<h3 className="text-sm font-semibold mb-3" style={{ color: theme.colors.textMain }}>
 				{title}
 			</h3>
-			<div className="flex flex-col gap-2">
+			<div className={BAR_CHART_GRID_CLASS} style={BAR_CHART_GRID_STYLE}>
 				{groups.map((g, idx) => {
 					const color = colorBlindMode
 						? COLORBLIND_AGENT_PALETTE[idx % COLORBLIND_AGENT_PALETTE.length]
@@ -146,20 +127,20 @@ const Breakdown = memo(function Breakdown({
 					return (
 						<div
 							key={g.key}
-							className="flex items-center gap-3"
+							style={BAR_CHART_ROW_STYLE}
 							onMouseEnter={(e) => setHovered({ group: g, x: e.clientX, y: e.clientY })}
 							onMouseMove={(e) => setHovered({ group: g, x: e.clientX, y: e.clientY })}
 							onMouseLeave={() => setHovered(null)}
 						>
 							<span
-								className="text-xs truncate shrink-0"
-								style={{ color: theme.colors.textDim, width: '38%' }}
+								className="text-xs truncate min-w-0"
+								style={{ color: theme.colors.textDim }}
 								title={rowTitle ? rowTitle(g) : g.key}
 							>
 								{g.label}
 							</span>
 							<div
-								className="flex-1 h-4 rounded-sm overflow-hidden"
+								className="h-4 rounded-sm overflow-hidden"
 								style={{ backgroundColor: `${theme.colors.textDim}14` }}
 							>
 								<div
@@ -168,8 +149,8 @@ const Breakdown = memo(function Breakdown({
 								/>
 							</div>
 							<span
-								className="text-xs tabular-nums shrink-0 text-right"
-								style={{ color: theme.colors.textMain, width: '4.5rem' }}
+								className="text-xs tabular-nums text-right"
+								style={{ color: theme.colors.textMain, minWidth: '4.5rem' }}
 							>
 								{costText(g.costUsd, g.costEstimated)}
 							</span>
@@ -407,33 +388,9 @@ export const TokenStats = memo(function TokenStats({
 	theme,
 	colorBlindMode = false,
 }: TokenStatsProps) {
-	const [data, setData] = useState<TokenUsageAggregate | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [refreshing, setRefreshing] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const load = useCallback(
-		async (force: boolean) => {
-			try {
-				if (force) setRefreshing(true);
-				const result = await window.maestro.stats.getTokenUsage(toQuery(timeRange), force);
-				setData(result);
-				setError(null);
-			} catch (err) {
-				captureException(err);
-				setError(err instanceof Error ? err.message : String(err));
-			} finally {
-				setLoading(false);
-				setRefreshing(false);
-			}
-		},
-		[timeRange]
-	);
-
-	useEffect(() => {
-		setLoading(true);
-		void load(false);
-	}, [load]);
+	// Served from the shared cache, so a reopened dashboard shows the last
+	// result at once and refreshes it in place.
+	const { data, loading, refreshing, error, forceRefresh } = useTokenUsage(timeRange);
 
 	const cacheHitRate = useMemo(() => {
 		if (!data) return 0;
@@ -448,7 +405,7 @@ export const TokenStats = memo(function TokenStats({
 		return <SummaryCardsSkeleton theme={theme} />;
 	}
 
-	if (error) {
+	if (error && !data) {
 		return <EmptyState theme={theme} title="Couldn't read token usage" message={error} />;
 	}
 
@@ -514,6 +471,8 @@ export const TokenStats = memo(function TokenStats({
 				<Timeline data={data} theme={theme} colorBlindMode={colorBlindMode} />
 			</ChartErrorBoundary>
 
+			<TokenSpeedStats speed={data.speed} theme={theme} colorBlindMode={colorBlindMode} />
+
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 				<ChartErrorBoundary theme={theme} chartName="Tokens by Agent">
 					<Breakdown
@@ -572,7 +531,7 @@ export const TokenStats = memo(function TokenStats({
 				</span>
 				<button
 					type="button"
-					onClick={() => void load(true)}
+					onClick={() => void forceRefresh()}
 					disabled={refreshing}
 					className="flex items-center gap-1.5 px-2 py-1 rounded transition-opacity hover:opacity-80 disabled:opacity-50"
 					style={{ color: theme.colors.textDim }}

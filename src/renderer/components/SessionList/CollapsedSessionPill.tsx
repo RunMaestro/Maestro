@@ -1,3 +1,4 @@
+import { useHeadlessActivityStore } from '../../stores/headlessActivityStore';
 import { memo, useState } from 'react';
 import type { Session, Theme } from '../../types';
 import { getStatusColor } from '../../utils/theme';
@@ -86,6 +87,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 }: CollapsedSessionPillProps) {
 	const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
 	const consultedSessionIds = useConsultedSessionIds();
+	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 
 	const worktreeChildren = getWorktreeChildren(session.id);
 	const allSessions = [session, ...worktreeChildren];
@@ -106,7 +108,8 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 				// the pill folds it in beside Auto Run: same warning fill, same pulse,
 				// and it outranks the unbound-Claude hollow pill (a consult tab has no
 				// provider session of its own until the agent answers).
-				const isBusyOffState = isInBatch || consultedSessionIds.has(s.id);
+				const isBusyOffState =
+					isInBatch || consultedSessionIds.has(s.id) || (headlessCounts[s.id] ?? 0) > 0;
 
 				return (
 					<div

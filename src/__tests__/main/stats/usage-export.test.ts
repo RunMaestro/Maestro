@@ -14,6 +14,7 @@ import {
 import type { CueEventRecord } from '../../../main/cue/cue-db';
 import type { StatsAggregation } from '../../../shared/stats-types';
 import type { TokenUsageAggregate } from '../../../shared/tokenUsage';
+import { emptyTokenSpeedSummary } from '../../../shared/tokenSpeed';
 
 const T = Date.UTC(2026, 8, 10, 12, 0, 0);
 const T_ISO = '2026-09-10T12:00:00.000Z';
@@ -89,6 +90,19 @@ const tokenUsage = {
 	byProject: [],
 	byAccount: [],
 	timeline: [],
+	speed: {
+		...emptyTokenSpeedSummary(),
+		byModel: [
+			{
+				...emptyTokenSpeedSummary().overall,
+				key: 'claude-opus-5-5',
+				label: 'claude-opus-5-5',
+				calls: 3,
+				avgOutputTps: 101.5,
+				peakOutputAtMs: Date.UTC(2026, 9, 15, 14),
+			},
+		],
+	},
 } as unknown as TokenUsageAggregate;
 
 describe('buildUsageExport', () => {
@@ -156,6 +170,8 @@ describe('countUsageExportRows', () => {
 		);
 		expect(counts['cue-events']).toBe(1);
 		expect(counts['token-usage-by-agent']).toBe(0);
+		expect(counts['token-speed-by-model']).toBe(1);
+		expect(counts['token-speed-by-hour-of-day']).toBe(24);
 	});
 });
 
@@ -222,6 +238,39 @@ describe('usageExportToCsvFiles', () => {
 		expect(names).toContain('cue-events.csv');
 		expect(names).toContain('token-usage-by-model.csv');
 		expect(names).toContain('token-usage-timeline.csv');
+		expect(names).toEqual(
+			expect.arrayContaining([
+				'token-speed-by-agent.csv',
+				'token-speed-by-model.csv',
+				'token-speed-by-hour-of-day.csv',
+				'token-speed-timeline.csv',
+			])
+		);
+	});
+
+	it('writes token speed rows with the peak hour as ISO time', () => {
+		const file = usageExportToCsvFiles(
+			buildUsageExport({ ...base, cueEvents: null, tokenUsage })
+		).find((f) => f.name === 'token-speed-by-model.csv');
+		const [header, row] = (file?.content ?? '').split('\n');
+		expect(header.split(',')).toEqual([
+			'key',
+			'label',
+			'calls',
+			'inputTokens',
+			'outputTokens',
+			'durationMs',
+			'avgInputTps',
+			'avgOutputTps',
+			'avgTotalTps',
+			'peakInputTps',
+			'peakOutputTps',
+			'peakTotalTps',
+			'peakOutputAtMs',
+			'peakOutputModel',
+		]);
+		expect(row).toContain('"101.5"');
+		expect(row).toContain('"2026-10-15T14:00:00.000Z"');
 	});
 
 	it('includes token and cost columns on query events', () => {

@@ -64,6 +64,12 @@ describe('buildMirroredBatchState', () => {
 		expect(buildMirroredBatchState(mkFrame({ startTime: ownerStart })).startTime).toBe(ownerStart);
 	});
 
+	it("carries the owner's ETA baseline and keeps it when a later frame omits it", () => {
+		const first = buildMirroredBatchState(mkFrame({ initialCompletedTasks: 12 }));
+		expect(first.initialCompletedTasks).toBe(12);
+		expect(buildMirroredBatchState(mkFrame(), first).initialCompletedTasks).toBe(12);
+	});
+
 	it('falls back to the previous mirror for a field a later frame omits', () => {
 		const first = buildMirroredBatchState(mkFrame({ startTime: 123, documents: ['plan'] }));
 		const second = buildMirroredBatchState(mkFrame({ completedTasks: 2 }), first);
@@ -241,6 +247,7 @@ describe('control actions refuse a mirrored run', () => {
 				errorResolutionRefs: { current: {} },
 				stopRequestedRefs: { current: {} },
 				isMountedRef: { current: true },
+				timeTracking: { pauseTracking: vi.fn(), resumeTracking: vi.fn() },
 			})
 		);
 
@@ -278,6 +285,7 @@ describe('control actions refuse a mirrored run', () => {
 				errorResolutionRefs: { current: {} },
 				stopRequestedRefs,
 				isMountedRef: { current: true },
+				timeTracking: { pauseTracking: vi.fn(), resumeTracking: vi.fn() },
 			})
 		);
 

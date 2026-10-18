@@ -115,13 +115,27 @@ function extractSessionIdFromFilename(filename: string): string | null {
 }
 
 /** Join the `text` blocks of an omp message; thinking/tool blocks are excluded from content. */
-function extractText(content: OmpContentBlock[] | string | undefined): string {
-	if (typeof content === 'string') return content;
-	if (!Array.isArray(content)) return '';
-	return content
-		.filter((block) => block.type === 'text' && typeof block.text === 'string')
-		.map((block) => block.text || '')
-		.join('');
+function extractText(content: OmpContentBlock[] | string | undefined, role?: string): string {
+	const text =
+		typeof content === 'string'
+			? content
+			: Array.isArray(content)
+				? content
+						.filter((block) => block.type === 'text' && typeof block.text === 'string')
+						.map((block) => block.text || '')
+						.join('')
+				: '';
+	// OMP expands our @prompt-file argument into this envelope before saving it.
+	// Remove only Maestro's generated transport wrapper, never a user's attachment
+	// or an assistant quotation. Keep the payload intact, including nested tags.
+	if (role === 'user') {
+		const promptFile =
+			/^<file name="[^"\r\n]*[\\/]maestro-prompt-[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\.txt">\r?\n([\s\S]*?)\r?\n<\/file>\r?\n?$/i.exec(
+				text
+			);
+		if (promptFile) return promptFile[1];
+	}
+	return text;
 }
 
 /** Pull the tool_use / tool_result blocks (if any) so the History renderer can show them. */
@@ -291,7 +305,7 @@ export class OmpSessionStorage extends BaseSessionStorage {
 			if (event.timestamp) lastTimestamp = event.timestamp;
 
 			if (!firstMessage && role === 'user') {
-				const text = extractText(event.message.content).trim();
+				const text = extractText(event.message.content, role).trim();
 				// Skip the injected Maestro system-context turn so the preview shows
 				// the user's actual first request, not the boilerplate prompt.
 				if (text && !text.startsWith('# Maestro System Context')) {
@@ -389,7 +403,7 @@ export class OmpSessionStorage extends BaseSessionStorage {
 			const role = event.message.role;
 			if (role !== 'user' && role !== 'assistant') continue;
 
-			const content = extractText(event.message.content);
+			const content = extractText(event.message.content, role);
 			const toolUse = extractToolUse(event.message.content);
 			if (!content && !toolUse) continue;
 
@@ -422,7 +436,7 @@ export class OmpSessionStorage extends BaseSessionStorage {
 			if (event.type !== 'message' || !event.message) continue;
 			const role = event.message.role;
 			if (role !== 'user' && role !== 'assistant') continue;
-			const textContent = extractText(event.message.content);
+			const textContent = extractText(event.message.content, role);
 			if (textContent.length > 0) out.push({ role, textContent });
 		}
 		return out;
@@ -484,7 +498,7 @@ export class OmpSessionStorage extends BaseSessionStorage {
 					const byUuid = parsed.id === userMessageUuid;
 					const byContent =
 						!!fallbackContent &&
-						extractText(parsed.message?.content).trim().toLowerCase() ===
+						extractText(parsed.message?.content, parsed.message?.role).trim().toLowerCase() ===
 							fallbackContent.trim().toLowerCase();
 					if (byUuid || byContent) {
 						foundUserMessage = true;

@@ -24,7 +24,10 @@ vi.mock('../../../../renderer/services/cue', () => ({
 }));
 
 const showConfirmation = vi.fn();
-vi.mock('../../../../renderer/stores/modalStore', () => ({
+// Partial mock: the form's Model selector pulls in stores that register with
+// modalStore at import time, so the rest of the module has to stay real.
+vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/modalStore')>()),
 	getModalActions: () => ({ showConfirmation }),
 }));
 
@@ -166,6 +169,90 @@ describe('ScheduledTasksTab', () => {
 		expect(input.kind).toBe('once');
 		expect(input.prompt).toBe('ship the release');
 		expect(input.fireAt).toMatch(/Z$/);
+	});
+
+	it('the New Task form sends the picked model tier and effort with the prompt', async () => {
+		render(
+			<ScheduledTasksTab
+				theme={theme}
+				active
+				agents={[{ id: 'agent-alpha', name: 'Alpha', toolType: 'claude-code' }]}
+				defaultAgentId="agent-alpha"
+			/>
+		);
+		fireEvent.click(await screen.findByText('New Task'));
+		fireEvent.change(screen.getByPlaceholderText(/Summarize what landed/), {
+			target: { value: 'ship the release' },
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Model' }));
+		fireEvent.click(screen.getByText('High tier (opus)'));
+		fireEvent.click(screen.getByRole('button', { name: 'Effort' }));
+		fireEvent.click(screen.getByText('Low (low)'));
+		fireEvent.click(screen.getByText('Schedule task'));
+
+		await waitFor(() => expect(createScheduledTask).toHaveBeenCalledTimes(1));
+		expect(createScheduledTask.mock.calls[0][0]).toMatchObject({
+			prompt: 'ship the release',
+			tier: 'high',
+			effort: 'low',
+		});
+	});
+
+	it('a notify-only task is created without a model choice even if one was picked', async () => {
+		render(
+			<ScheduledTasksTab
+				theme={theme}
+				active
+				agents={[{ id: 'agent-alpha', name: 'Alpha', toolType: 'claude-code' }]}
+				defaultAgentId="agent-alpha"
+			/>
+		);
+		fireEvent.click(await screen.findByText('New Task'));
+		fireEvent.click(screen.getByRole('button', { name: 'Model' }));
+		fireEvent.click(screen.getByText('High tier (opus)'));
+		fireEvent.click(screen.getByLabelText('Show a notification when this task fires'));
+		fireEvent.change(screen.getByPlaceholderText(/Notification text/), {
+			target: { value: 'stand up' },
+		});
+		fireEvent.click(screen.getByText('Schedule task'));
+
+		await waitFor(() => expect(createScheduledTask).toHaveBeenCalledTimes(1));
+		const input = createScheduledTask.mock.calls[0][0];
+		expect(input.notify).toMatchObject({ message: 'stand up' });
+		expect(input).not.toHaveProperty('tier');
+	});
+
+	it('editing a task patches a changed model choice and leaves an untouched one alone', async () => {
+		listScheduledTasks.mockResolvedValue({
+			tasks: [task({ tier: 'high', effort: 'low' })],
+			warnings: [],
+		});
+		render(
+			<ScheduledTasksTab
+				theme={theme}
+				active
+				agents={[{ id: 'agent-alpha', name: 'Alpha', toolType: 'claude-code' }]}
+			/>
+		);
+		// The row names the model choice so it is visible without opening the task.
+		expect(await screen.findByText(/tier high, effort low/)).toBeInTheDocument();
+
+		fireEvent.click(screen.getByLabelText('Edit this task'));
+		fireEvent.click(screen.getByText('Save changes'));
+		await waitFor(() => expect(updateScheduledTask).toHaveBeenCalledTimes(1));
+		expect(updateScheduledTask.mock.calls[0][2]).not.toHaveProperty('turnSettings');
+
+		fireEvent.click(await screen.findByLabelText('Edit this task'));
+		fireEvent.click(screen.getByRole('button', { name: 'Model' }));
+		fireEvent.click(screen.getByText('Agent default'));
+		fireEvent.click(screen.getByText('Save changes'));
+		await waitFor(() => expect(updateScheduledTask).toHaveBeenCalledTimes(2));
+		expect(updateScheduledTask.mock.calls[1][2].turnSettings).toEqual({
+			tier: null,
+			model: null,
+			effort: 'low',
+		});
 	});
 
 	it('the form refuses to submit a task with no prompt and no notification', async () => {

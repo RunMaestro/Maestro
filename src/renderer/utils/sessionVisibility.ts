@@ -13,7 +13,12 @@
  * rendered list and the keyboard order can never disagree. Pairs with
  * {@link scopeSessionsToOwningWindow} in `windowTargets.ts`, which answers the
  * separate question of which agents THIS window owns.
+ *
+ * The rule itself lives in `src/shared/agentVisibility.ts` (shared with main and
+ * the CLI); these wrappers keep the sidebar-flavored option shape.
  */
+
+import { filterLiveAgents, isAgentDormant } from '../../shared/agentVisibility';
 
 /** Minimal shape needed to decide sidebar visibility. */
 export interface VisibilityScopableSession {
@@ -30,8 +35,7 @@ export function isSessionVisibleInSidebar(
 	session: VisibilityScopableSession,
 	{ pianolaEnabled }: SidebarVisibilityOptions
 ): boolean {
-	if (session.isPianola && !pianolaEnabled) return false;
-	return true;
+	return !isAgentDormant(session, { pianola: pianolaEnabled === true });
 }
 
 /**
@@ -42,7 +46,5 @@ export function filterSessionsVisibleInSidebar<T extends VisibilityScopableSessi
 	sessions: T[],
 	options: SidebarVisibilityOptions
 ): T[] {
-	if (options.pianolaEnabled) return sessions;
-	if (!sessions.some((s) => s.isPianola)) return sessions;
-	return sessions.filter((s) => isSessionVisibleInSidebar(s, options));
+	return filterLiveAgents(sessions, { pianola: options.pianolaEnabled === true });
 }

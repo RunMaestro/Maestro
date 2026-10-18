@@ -16,13 +16,13 @@
  * - the spawn wiring only injects verified strategies.
  *
  * Pure: no Node, no Electron. The caller writes `files`, merges `env`, and
- * prepends `globalArgs` to the agent argv.
+ * merges `globalArgs` into the agent argv with {@link mergeMcpInjectionArgs}.
  */
 
 export type McpInjectionStrategy =
 	/** claude: `--mcp-config <inline-json>` (additive, no temp file; user MCP servers preserved). */
 	| 'claude-mcp-config'
-	/** codex: `-c mcp_servers.<name>.*` overrides, placed before the subcommand. */
+	/** codex: `-c mcp_servers.<name>.*` overrides in the active subcommand scope. */
 	| 'codex-config-override'
 	/** opencode: `OPENCODE_CONFIG=<temp opencode.json>` with an `mcp` block. */
 	| 'opencode-env-config'
@@ -55,8 +55,8 @@ export interface McpConfigCapability {
 
 /** The ephemeral mutation to apply to one agent spawn. */
 export interface McpInjection {
-	/** Args inserted at the FRONT of the agent argv (global flags, before any
-	 *  subcommand like codex's `exec`). Empty for env/file-only strategies. */
+	/** Agent config args, positioned by {@link mergeMcpInjectionArgs}.
+	 * Empty for env/file-only strategies. */
 	globalArgs: string[];
 	/** Env vars to merge into the agent's spawn environment. */
 	env: Record<string, string>;
@@ -74,6 +74,24 @@ export interface BuildMcpInjectionOpts {
 /** Fixed server name used across every strategy's config payload. */
 export const MCP_SERVER_NAME = 'maestro';
 
+/**
+ * Place the bridge config in the agent's active CLI parser scope.
+ * Codex 0.159 drops root-level `-c` overrides when `exec` / `exec resume`
+ * receives its own `-c` options (model effort or user custom args). Put MCP
+ * overrides beside those options, before the prompt's `--` separator.
+ * Claude still requires its global `--mcp-config` before the other args.
+ */
+export function mergeMcpInjectionArgs(
+	cap: McpConfigCapability | undefined,
+	agentArgs: readonly string[],
+	injectionArgs: readonly string[]
+): string[] {
+	if (cap?.strategy !== 'codex-config-override') return [...injectionArgs, ...agentArgs];
+	const separator = agentArgs.indexOf('--');
+	const insertion = separator < 0 ? agentArgs.length : separator;
+	return [...agentArgs.slice(0, insertion), ...injectionArgs, ...agentArgs.slice(insertion)];
+}
+
 /** `{ mcpServers: { maestro: { command, args, env? } } }` - the claude/generic shape. */
 function mcpServersJson(spec: McpServerSpec): string {
 	const entry: Record<string, unknown> = { command: spec.command, args: spec.args };
@@ -84,7 +102,7 @@ function mcpServersJson(spec: McpServerSpec): string {
 /**
  * Build the ephemeral injection for an agent's MCP strategy. Pure and
  * deterministic given its inputs; the caller is responsible for writing `files`,
- * merging `env`, and prepending `globalArgs`.
+ * merging `env`, and placing `globalArgs` with `mergeMcpInjectionArgs`.
  */
 export function buildMcpInjection(
 	cap: McpConfigCapability,

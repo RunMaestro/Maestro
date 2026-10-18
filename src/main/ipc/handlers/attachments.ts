@@ -2,7 +2,7 @@
  * Attachments IPC Handlers
  *
  * This module handles IPC calls for session attachment operations:
- * - save: Save an image attachment for a session
+ * - save: Save an attachment for a session
  * - load: Load an attachment as base64 data URL
  * - delete: Delete an attachment
  * - list: List all attachments for a session
@@ -28,15 +28,14 @@ export interface AttachmentsHandlerDependencies {
 }
 
 /**
- * Sanitize a sessionId to prevent path traversal attacks.
- * Strips directory separators and '..' components, then verifies the
- * resolved path stays within the expected attachments base directory.
+ * Validate a session ID as one directory name and keep the resolved path
+ * within the expected attachments base directory.
  */
 function sanitizeSessionId(sessionId: string, baseDir: string): string {
 	if (
+		typeof sessionId !== 'string' ||
 		!sessionId ||
-		sessionId.includes('/') ||
-		sessionId.includes('\\') ||
+		/[/\\:\0]/.test(sessionId) ||
 		sessionId.includes('..')
 	) {
 		throw new Error(`Invalid session ID: ${sessionId}`);
@@ -59,11 +58,20 @@ function sanitizeSessionId(sessionId: string, baseDir: string): string {
 export function registerAttachmentsHandlers(deps: AttachmentsHandlerDependencies): void {
 	const { app } = deps;
 
-	// Save an image attachment for a session
+	// Save an attachment for a session
 	ipcMain.handle(
 		'attachments:save',
 		async (_event, sessionId: string, base64Data: string, filename: string) => {
 			try {
+				if (
+					typeof filename !== 'string' ||
+					!filename ||
+					/[/\\:\0]/.test(filename) ||
+					filename === '.' ||
+					filename === '..'
+				) {
+					throw new Error('Attachment filename must be a single file name');
+				}
 				const userDataPath = app.getPath('userData');
 				const attachmentsBase = path.join(userDataPath, 'attachments');
 				const safeSessionId = sanitizeSessionId(sessionId, attachmentsBase);
@@ -89,10 +97,24 @@ export function registerAttachmentsHandlers(deps: AttachmentsHandlerDependencies
 					buffer = Buffer.from(base64Data, 'base64');
 				}
 
-				// Sanitize filename to prevent path traversal attacks
-				finalFilename = path.basename(finalFilename);
+				// Keep uploaded bytes in this session, including when a host symlink exists.
+				const root = await fs.realpath(attachmentsBase);
+				const directory = await fs.realpath(attachmentsDir);
+				const relative = path.relative(root, directory);
+				if (
+					relative.startsWith('..' + path.sep) ||
+					relative === '..' ||
+					path.isAbsolute(relative)
+				) {
+					throw new Error('Attachment directory escapes the attachment store');
+				}
 
 				const filePath = path.join(attachmentsDir, finalFilename);
+				const existing = await fs.lstat(filePath).catch((error: NodeJS.ErrnoException) => {
+					if (error.code === 'ENOENT') return null;
+					throw error;
+				});
+				if (existing?.isSymbolicLink()) throw new Error('Cannot overwrite an attachment symlink');
 				await fs.writeFile(filePath, buffer);
 
 				logger.info(`Saved attachment: ${filePath}`, 'Attachments', {

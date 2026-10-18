@@ -75,13 +75,10 @@ docs/
    - Fully understand the task and inspect the relevant code.
    - Identify all subtasks within the current checkbox item.
    - There will be future runs to take care of other checkbox items.
-   - **If the task requires a human** - manual testing, visual judgment, approval or sign-off, credentials only a person can obtain, or physical/out-of-band action - you cannot complete it. Do NOT check it off, and do NOT pretend you did. Leave it unchecked and write a gate marker on its own line immediately above it, naming what the human has to do:
-
-     ```markdown
-     <!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" -->
-     ```
-
-     A gate pauses at that point and resumes the moment the human ticks the box, so the rest of the playbook is still reachable. Do NOT halt for this. Halting throws away every remaining task in every remaining document because one task needed a person, and it leaves behind a marker the user has to find and delete by hand before anything will run again.
+   - **This run is unattended. Nobody is watching it, so do not add pauses.** Do NOT write a `MAESTRO:HITL` gate marker yourself. Gates belong to the document's author, and only when the user asked for one.
+   - **If the task looks like it needs a human, first do it yourself.** Preconditions ("confirm the branch is merged", "check the file exists", "make sure the server is running") are commands you run, and if one fails, fix it when you safely can (rebase, start the server, create the worktree). Visual checks become a test, a Playwright or CDP run, or a screenshot you capture and inspect. A missing credential becomes a mocked client or a stub, so the code and its tests still land.
+   - **An instruction from the user is not a human step.** If a standing instruction says to skip part of the task (for example "do not run tests unless asked"), skip that part, finish the rest, check the task off, and say in your synopsis what you skipped and why.
+   - **If a part truly needs a person** - judging visual polish, a physical device, a sign-off, a credential you cannot mock around - do every part you can, then add one plain `-` bullet naming what the person must do under a `## Manual Follow-Up (not executed by Auto Run)` section at the end of the document (create it if it is missing), and check the task off. If NO part of the task is agent work, move the whole line there as a plain `-` bullet instead of checking it, so the run continues to the next task. Never tick a box for work you did not do, and do NOT halt for this. Halting throws away every remaining task in every remaining document because one task needed a person.
 
 4. Task Implementation
    - **Before creating new code**, search for existing implementations, utilities, helpers, or patterns in the codebase that can be reused or extended. Avoid duplicating functionality that already exists.
@@ -112,7 +109,7 @@ docs/
 
    The marker must stand alone to count. A marker inside a code fence, inside backticks, or appended to a `- [ ]` checkbox line is read as an EXAMPLE and ignored - that is how a playbook can describe halt conditions without halting itself. So do not append it to the task line, and do not indent it into a code block.
 
-   Halting is a LAST RESORT and should be rare. Do NOT halt for an ordinary task failure - the playbook runs independent tasks, and one failure does not invalidate the rest. Do NOT halt because a task needs a human; that is what the gate marker in step 3 is for. Do NOT halt because you are unsure whether to continue. If you leave a task unchecked, the engine notices after a few attempts and moves on by itself, so a stuck task does NOT require you to stop the playbook.
+   Halting is a LAST RESORT and should be rare. Do NOT halt for an ordinary task failure - the playbook runs independent tasks, and one failure does not invalidate the rest. Do NOT halt because a task needs a human; step 3 moves that work to Manual Follow-Up. Do NOT halt because you are unsure whether to continue. If you leave a task unchecked, the engine notices after a few attempts and moves on by itself, so a stuck task does NOT require you to stop the playbook.
 
    Reserve the halt marker for the case where continuing would actively waste work or cause harm: the remaining tasks build on something that is now known-broken, or proceeding would damage the repository or the environment. If the rest of the playbook could still succeed without you, do not halt.
 

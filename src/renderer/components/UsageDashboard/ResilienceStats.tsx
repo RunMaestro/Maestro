@@ -12,13 +12,13 @@
  * one-line change per branch.
  */
 
-import { memo, useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useMemo } from 'react';
 import { ShieldCheck, Clock, RefreshCw, Percent } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, ResilienceEvent } from '../../../shared/stats-types';
-import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { MetricCard } from './MetricCard';
+import { useDashboardResource } from './useDashboardResource';
 
 interface ResilienceStatsProps {
 	/** Current time range for filtering */
@@ -26,6 +26,8 @@ interface ResilienceStatsProps {
 	/** Current theme for styling */
 	theme: Theme;
 }
+
+const NO_EVENTS: ResilienceEvent[] = [];
 
 /** Local-midnight day key, so bars bucket by the user's calendar day. */
 function dayKey(ts: number): string {
@@ -44,27 +46,13 @@ export const ResilienceStats = memo(function ResilienceStats({
 	timeRange,
 	theme,
 }: ResilienceStatsProps) {
-	const [events, setEvents] = useState<ResilienceEvent[]>([]);
-	const [loading, setLoading] = useState(true);
+	const { data, loading } = useDashboardResource(
+		`resilience:${timeRange}`,
+		() => window.maestro.stats.getResilience(timeRange),
+		'fetchResilienceStats'
+	);
+	const events = data ?? NO_EVENTS;
 	const [hoveredDay, setHoveredDay] = useState<number | null>(null);
-
-	const fetchEvents = useCallback(async () => {
-		try {
-			setEvents(await window.maestro.stats.getResilience(timeRange));
-		} catch (err) {
-			captureException(err, { extra: { operation: 'fetchResilienceStats' } });
-		} finally {
-			setLoading(false);
-		}
-	}, [timeRange]);
-
-	useEffect(() => {
-		fetchEvents();
-		const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
-			fetchEvents();
-		});
-		return () => unsubscribe();
-	}, [fetchEvents]);
 
 	const summary = useMemo(() => {
 		const recovered = events.filter((e) => e.outcome === 'recovered');

@@ -134,6 +134,37 @@ describe('EnvVarKeyInput', () => {
 		expect(reachedDocument).not.toHaveBeenCalled();
 	});
 
+	it('takes the caret and opens the list when autoFocus is set', () => {
+		const { input } = renderInput({ autoFocus: true });
+
+		expect(input).toHaveFocus();
+		expect(screen.getByTestId('env-var-key-input-suggestions')).toBeInTheDocument();
+	});
+
+	it('reports back so the editor can clear the flag', () => {
+		const onAutoFocused = vi.fn();
+		renderInput({ autoFocus: true, onAutoFocused });
+
+		expect(onAutoFocused).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves focus alone when autoFocus is not set', () => {
+		const { input } = renderInput();
+
+		expect(input).not.toHaveFocus();
+		expect(screen.queryByTestId('env-var-key-input-suggestions')).not.toBeInTheDocument();
+	});
+
+	it('offers the whole catalog on an unnamed row', () => {
+		// The point of the empty name: nothing is typed, so nothing filters the
+		// list and the provider's own variables are what the user lands on.
+		const { input } = renderInput({ value: '', autoFocus: true });
+
+		expect(input).toHaveValue('');
+		expect(screen.getByRole('option', { name: /CLAUDE_CONFIG_DIR/ })).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: /ANTHROPIC_API_KEY/ })).toBeInTheDocument();
+	});
+
 	it('offers every provider catalog when no provider is named', () => {
 		const { input } = renderInput({ toolType: undefined, value: 'HOME' });
 		fireEvent.focus(input);

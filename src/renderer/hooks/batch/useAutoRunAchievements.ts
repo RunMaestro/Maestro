@@ -57,6 +57,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	// would otherwise max against zeroed defaults). Subscribing here re-runs it
 	// on the render after hydration, so the sample taken during load is not lost.
 	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 
 	// --- Store actions (stable via getState) ---
 	const { updateAutoRunProgress, updateUsageStats } = useSettingsStore.getState();
@@ -135,9 +136,11 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	// Credit autonomous Cue AI time toward the Conductor level. The main-process
 	// Cue engine emits `conductorTimeCredit` once per naturally-completed agent
 	// run, already gated (no command nodes) and floored to whole minutes, so the
-	// renderer simply accrues it through the same path as Auto Run. This effect
-	// is always mounted; Cue runs regardless of whether any Auto Run is active.
+	// renderer simply accrues it through the same path as Auto Run. Subscribed
+	// whenever the Cue Encore Feature is on, regardless of whether any Auto Run
+	// is active; with Cue off there is no engine to credit, so no listener.
 	useEffect(() => {
+		if (!maestroCueEnabled) return;
 		const unsubscribe = cueService.onActivityUpdate((payload) => {
 			if (payload?.type === 'conductorTimeCredit') {
 				creditAchievementTime(payload.creditMs, 'cue');
@@ -154,7 +157,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 			}
 		});
 		return unsubscribe;
-	}, []);
+	}, [maestroCueEnabled]);
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {

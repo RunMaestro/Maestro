@@ -1,5 +1,7 @@
 // Agent-specific configuration commands
-// Manages per-agent settings in maestro-agent-configs.json
+// Manages per-provider-type settings in maestro-agent-configs.json. `list` and
+// `get` also accept the ID of one agent in the Left Bar, and then read that
+// agent's own settings (the fields `update-agent` writes) from its record.
 
 import {
 	readAgentConfigs,
@@ -7,7 +9,14 @@ import {
 	readAgentConfigValue,
 	writeAgentConfigValue,
 	deleteAgentConfigValue,
+	getSessionById,
 } from '../services/storage';
+import {
+	readAgentSessionSettings,
+	AGENT_SESSION_SETTING_METADATA,
+} from '../services/agent-settings';
+import { isValidAgentId } from '../../shared/agentIds';
+import type { SessionInfo } from '../../shared/types';
 import {
 	formatSettingsList,
 	formatSettingDetail,
@@ -43,6 +52,11 @@ const AGENT_CONFIG_METADATA: Record<string, { description: string; type: string 
 	},
 	reasoningEffort: {
 		description: 'Reasoning effort level for agents that support it (low, medium, high).',
+		type: 'string',
+	},
+	reasoningSummary: {
+		description:
+			'Codex reasoning summary mode (auto, concise, detailed, none); empty inherits the provider default.',
 		type: 'string',
 	},
 };
@@ -87,12 +101,74 @@ function parseValue(input: string): unknown {
 	return input;
 }
 
+type SettingsTarget = { kind: 'provider'; id: string } | { kind: 'agent'; agent: SessionInfo };
+
+/**
+ * Decide which store an `<agent-id>` argument names. A provider type (or any
+ * key already in maestro-agent-configs.json) reads the provider config. An ID
+ * or unique prefix of an agent in the Left Bar reads that agent's own record,
+ * where `update-agent` writes. Anything else stays on the provider store, as
+ * before.
+ */
+function resolveSettingsTarget(agentId: string): SettingsTarget {
+	if (isValidAgentId(agentId) || agentId in readAgentConfigs()) {
+		return { kind: 'provider', id: agentId };
+	}
+	const agent = getSessionById(agentId);
+	return agent ? { kind: 'agent', agent } : { kind: 'provider', id: agentId };
+}
+
+function agentSettingEntries(agent: SessionInfo): SettingDisplay[] {
+	return Object.entries(readAgentSessionSettings(agent)).map(([key, value]) => {
+		const meta = AGENT_SESSION_SETTING_METADATA[key as keyof typeof AGENT_SESSION_SETTING_METADATA];
+		return {
+			key,
+			value,
+			type: meta.type,
+			category: `Agent: ${agent.name} (${agent.id})`,
+			description: meta.description,
+		};
+	});
+}
+
+/** `set` and `reset` only write provider defaults; an agent is edited with `update-agent`. */
+function assertProviderTarget(agentId: string): void {
+	const target = resolveSettingsTarget(agentId);
+	if (target.kind === 'agent') {
+		throw new Error(
+			`"${agentId}" is the agent "${target.agent.name}", not a provider type. ` +
+				`"settings agent set/reset" write per-provider defaults. ` +
+				`Use "maestro-cli update-agent ${target.agent.id} ..." to change this agent.`
+		);
+	}
+}
+
 /**
  * List all agent configs, or a single agent's config.
  */
 export function settingsAgentList(agentId: string | undefined, options: AgentListOptions): void {
 	try {
-		if (agentId) {
+		const target = agentId ? resolveSettingsTarget(agentId) : undefined;
+		if (target?.kind === 'agent') {
+			// Show one Left Bar agent's own settings
+			const entries = agentSettingEntries(target.agent);
+			if (options.json) {
+				for (const entry of entries) {
+					emitJsonl({
+						type: 'setting',
+						scope: 'agent',
+						agentId: target.agent.id,
+						key: entry.key,
+						value: entry.value,
+						valueType: entry.type,
+						category: entry.category,
+						...(options.verbose ? { description: entry.description } : {}),
+					});
+				}
+			} else {
+				console.log(formatSettingsList(entries, { verbose: options.verbose }));
+			}
+		} else if (agentId) {
 			// Show config for a specific agent
 			const config = readAgentConfig(agentId);
 			if (Object.keys(config).length === 0) {
@@ -119,6 +195,7 @@ export function settingsAgentList(agentId: string | undefined, options: AgentLis
 				for (const entry of entries) {
 					emitJsonl({
 						type: 'setting',
+						scope: 'provider',
 						agentId,
 						key: entry.key,
 						value: entry.value,
@@ -163,6 +240,7 @@ export function settingsAgentList(agentId: string | undefined, options: AgentLis
 				for (const entry of entries) {
 					emitJsonl({
 						type: 'setting',
+						scope: 'provider',
 						key: entry.key,
 						value: entry.value,
 						valueType: entry.type,
@@ -190,17 +268,34 @@ export function settingsAgentList(agentId: string | undefined, options: AgentLis
  */
 export function settingsAgentGet(agentId: string, key: string, options: AgentGetOptions): void {
 	try {
-		const value = readAgentConfigValue(agentId, key);
-		const meta = AGENT_CONFIG_METADATA[key];
+		const target = resolveSettingsTarget(agentId);
+		let value: unknown;
+		let meta: { description: string; type: string } | undefined;
+		let resolvedAgentId = agentId;
+		if (target.kind === 'agent') {
+			const settings = readAgentSessionSettings(target.agent);
+			if (!(key in settings)) {
+				throw new Error(
+					`Unknown setting "${key}" for agent "${target.agent.name}". Known: ${Object.keys(settings).join(', ')}`
+				);
+			}
+			value = settings[key as keyof typeof settings];
+			meta = AGENT_SESSION_SETTING_METADATA[key as keyof typeof settings];
+			resolvedAgentId = target.agent.id;
+		} else {
+			value = readAgentConfigValue(agentId, key);
+			meta = AGENT_CONFIG_METADATA[key];
+		}
 
 		if (options.json) {
 			emitJsonl({
 				type: 'setting',
-				agentId,
+				scope: target.kind,
+				agentId: resolvedAgentId,
 				key,
 				value,
 				valueType: meta?.type ?? typeof value,
-				category: `Agent: ${agentId}`,
+				category: `Agent: ${resolvedAgentId}`,
 				...(options.verbose && meta ? { description: meta.description } : {}),
 			});
 		} else {
@@ -209,7 +304,7 @@ export function settingsAgentGet(agentId: string, key: string, options: AgentGet
 					key,
 					value,
 					type: meta.type,
-					category: `Agent: ${agentId}`,
+					category: `Agent: ${resolvedAgentId}`,
 					description: meta.description,
 				};
 				console.log(formatSettingDetail(display));
@@ -242,6 +337,7 @@ export function settingsAgentSet(
 	options: AgentSetOptions
 ): void {
 	try {
+		assertProviderTarget(agentId);
 		const oldValue = readAgentConfigValue(agentId, key);
 
 		let parsedValue: unknown;
@@ -284,6 +380,7 @@ export function settingsAgentSet(
  */
 export function settingsAgentReset(agentId: string, key: string, options: AgentResetOptions): void {
 	try {
+		assertProviderTarget(agentId);
 		const oldValue = readAgentConfigValue(agentId, key);
 		const removed = deleteAgentConfigValue(agentId, key);
 

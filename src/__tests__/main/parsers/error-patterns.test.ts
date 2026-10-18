@@ -16,6 +16,7 @@ import {
 	ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH,
 	SSH_ERROR_PATTERNS,
 	isClaudeLimitNotice,
+	stripJsonEventLines,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
 
@@ -977,8 +978,7 @@ describe('error-patterns', () => {
 			// (/bin/bash --norc --noprofile). On a Windows SSH remote the default
 			// shell (cmd.exe or PowerShell) cannot run it and the agent dies with a
 			// bare exit 1. These cases prove the cryptic crash now maps to a clear,
-			// actionable message. Full Windows-remote support is deferred (needs a
-			// live Windows SSH host to verify the generated command).
+			// actionable message naming the host-side fix (OpenSSH DefaultShell).
 			it('should map cmd.exe "is not recognized as an internal or external command" to the actionable message', () => {
 				const result = matchSshErrorPattern(
 					"'/bin/bash' is not recognized as an internal or external command, operable program or batch file."
@@ -986,9 +986,8 @@ describe('error-patterns', () => {
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
 				expect(result?.recoverable).toBe(false);
-				expect(result?.message).toContain('Windows remote');
-				expect(result?.message).toContain('not yet supported');
-				expect(result?.message).toContain('#995');
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
 			});
 
 			it('should map PowerShell "is not recognized as the name of a cmdlet" to the actionable message', () => {
@@ -997,16 +996,16 @@ describe('error-patterns', () => {
 				);
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
-				expect(result?.message).toContain('Windows remote');
-				expect(result?.message).toContain('#995');
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
 			});
 
 			it('should map Windows "The system cannot find the path specified" to the actionable message', () => {
 				const result = matchSshErrorPattern('The system cannot find the path specified.');
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
-				expect(result?.message).toContain('Windows remote');
-				expect(result?.message).toContain('#995');
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
 			});
 
 			it('should NOT apply the Windows message to a POSIX remote failure (POSIX remotes unaffected)', () => {
@@ -1016,7 +1015,7 @@ describe('error-patterns', () => {
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
 				expect(result?.message).toContain('Claude command not found');
-				expect(result?.message).not.toContain('Windows remote');
+				expect(result?.message).not.toContain('Windows shell');
 			});
 
 			it('should return null for normal POSIX output mentioning bash (no false positive)', () => {
@@ -1265,5 +1264,31 @@ describe('isClaudeLimitNotice', () => {
 	it('does not fire on limit kinds Claude never paints a plan banner for', () => {
 		expect(isClaudeLimitNotice("You've hit your disk limit")).toBe(false);
 		expect(isClaudeLimitNotice('Rate limit exceeded')).toBe(false);
+	});
+});
+
+describe('stripJsonEventLines', () => {
+	it('drops lines that parse as JSON objects and keeps plain text around them', () => {
+		const stdout = [
+			'{"type":"item.completed","text":"token budget hit the limit"}',
+			'Error: rate limit exceeded',
+			'{"type":"turn.completed"}',
+		].join('\n');
+		expect(stripJsonEventLines(stdout)).toBe('Error: rate limit exceeded');
+	});
+
+	it('keeps a brace-wrapped line that is not valid JSON', () => {
+		expect(stripJsonEventLines('{not json}')).toBe('{not json}');
+	});
+
+	it('returns an empty string for empty input', () => {
+		expect(stripJsonEventLines('')).toBe('');
+	});
+
+	it('stops a loose pattern from matching across one JSON event line', () => {
+		const patterns = getErrorPatterns('codex');
+		const event = '{"type":"agent_message","text":"the token count is under the limit"}';
+		expect(matchErrorPattern(patterns, event)).not.toBeNull();
+		expect(matchErrorPattern(patterns, stripJsonEventLines(event))).toBeNull();
 	});
 });

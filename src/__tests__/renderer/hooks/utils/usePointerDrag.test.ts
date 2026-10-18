@@ -206,4 +206,103 @@ describe('usePointerDrag', () => {
 		unmount();
 		expect(releasePointerCapture).toHaveBeenCalledWith(8);
 	});
+
+	function mouseMove(clientX: number, clientY: number, pointerId: number, buttons: number) {
+		const event = pointer('pointermove', clientX, clientY, pointerId);
+		Object.defineProperty(event, 'pointerType', { value: 'mouse' });
+		Object.defineProperty(event, 'buttons', { value: buttons });
+		return event;
+	}
+
+	it('cancels on Escape when onCancel is supplied, and claims the key', () => {
+		const onDrag = vi.fn();
+		const onEnd = vi.fn();
+		const onCancel = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag, { onEnd, onCancel }));
+		const key = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+		act(() => {
+			window.dispatchEvent(key);
+		});
+
+		expect(onCancel).toHaveBeenCalledOnce();
+		expect(onEnd).not.toHaveBeenCalled();
+		expect(key.defaultPrevented).toBe(true);
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(pointer('pointermove', 90, 90, 7)));
+		expect(onDrag).not.toHaveBeenCalled();
+	});
+
+	it('leaves Escape alone when there is no onCancel', () => {
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+		const key = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+		act(() => {
+			window.dispatchEvent(key);
+		});
+
+		expect(key.defaultPrevented).toBe(false);
+		expect(releasePointerCapture).not.toHaveBeenCalled();
+	});
+
+	it('settles a lost release (mouse move with no button held) through onEnd', () => {
+		const onDrag = vi.fn();
+		const onEnd = vi.fn();
+		const onCancel = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag, { onEnd, onCancel }));
+		act(() => window.dispatchEvent(mouseMove(40, 50, 7, 1)));
+		act(() => window.dispatchEvent(mouseMove(60, 70, 7, 0)));
+
+		expect(onDrag).toHaveBeenCalledOnce();
+		expect(onEnd).toHaveBeenCalledOnce();
+		expect(onCancel).not.toHaveBeenCalled();
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(mouseMove(80, 90, 7, 1)));
+		expect(onDrag).toHaveBeenCalledOnce();
+	});
+
+	it('fires onCancel for an abandoned gesture (unmount or a superseding drag)', () => {
+		const firstCancel = vi.fn();
+		const secondCancel = vi.fn();
+		const { result, unmount } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(7), vi.fn(), { onCancel: firstCancel }));
+		act(() => result.current(dragEvent(8), vi.fn(), { onCancel: secondCancel }));
+		expect(firstCancel).toHaveBeenCalledOnce();
+
+		unmount();
+		expect(secondCancel).toHaveBeenCalledOnce();
+	});
+
+	it('pulls keyboard focus out of a focused <webview> so Escape reaches the drag', () => {
+		const webview = document.createElement('webview');
+		webview.tabIndex = 0;
+		document.body.appendChild(webview);
+		webview.focus();
+		expect(document.activeElement).toBe(webview);
+		const onCancel = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn(), { onCancel }));
+
+		expect(document.activeElement).not.toBe(webview);
+		webview.remove();
+	});
+
+	it('leaves focus alone when there is no onCancel to run', () => {
+		const webview = document.createElement('webview');
+		webview.tabIndex = 0;
+		document.body.appendChild(webview);
+		webview.focus();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+
+		expect(document.activeElement).toBe(webview);
+		webview.remove();
+	});
 });

@@ -551,6 +551,16 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 	// longer than it needed to. When a line carries both signals, quota wins.
 	rate_limited: [
 		{
+			// Matches: "Your workspace is out of credits. Add credits to continue."
+			// Codex's wording once a plan window AND the workspace's credit fallback
+			// are both spent. Without this it fell through to type `unknown`, which
+			// every path that asks "is this a limit?" by type ignores - only the
+			// retry scheduler's own text match still recognised it.
+			pattern: /out of credits|insufficient credits|add (?:more )?credits to continue/i,
+			message: 'Your workspace is out of credits. Resume when your plan quota resets.',
+			recoverable: true,
+		},
+		{
 			// Matches: "You've hit your usage limit" or "usage limit reached/exceeded"
 			pattern: /usage.?limit|hit your.*limit/i,
 			message: 'Usage limit reached. Please wait or check your plan quota.',
@@ -613,6 +623,20 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
+			// OpenAI closed the response stream mid-turn and Codex's own retries ran
+			// out (#1694): "stream disconnected before completion: websocket closed by
+			// server before response.completed". A transport drop between Codex and
+			// OpenAI, so it is transient. Keyed on the transport cause, not the
+			// prefix alone: Codex also wraps permanent failures in the same prefix
+			// ("stream disconnected before completion: The model ... does not
+			// exist"), and those must not be retried.
+			pattern:
+				/stream disconnected before completion:.*(?:websocket closed|before response\.completed|idle timeout)/i,
+			message:
+				'OpenAI closed the Codex response stream before the turn finished. This is a provider-side drop - retry the prompt.',
+			recoverable: true,
+		},
+		{
 			// Codex's HTTP client renders upstream failures as
 			// "unexpected status <code> <reason>". 429 is claimed earlier by the
 			// rate_limited bank (which runs first), so this covers the rest.
@@ -665,6 +689,19 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			pattern: /unknown\s+(model|provider)/i,
 			message: 'Unknown model or provider. Check the model setting in configuration.',
+			recoverable: true,
+		},
+		{
+			// `codex exec resume <id>` while another Codex process still owns the
+			// thread. Codex allows one writer per thread and exits 1 with stderr:
+			//   "thread/resume failed: thread <uuid> already has an active writer"
+			// Seen when an SSH turn's local process ended but Codex kept running on
+			// the remote, and the synopsis resumed the thread under it. NOT
+			// session_not_found: the thread exists, and fresh-session recovery would
+			// throw its context away.
+			pattern: /already has an active writer|thread-store conflict/i,
+			message:
+				'This Codex conversation is still running in another process. Wait for it to finish, then send again.',
 			recoverable: true,
 		},
 	],
@@ -842,13 +879,14 @@ const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 // ============================================================================
 
 /**
- * Actionable message shown when an SSH remote host appears to be Windows.
- * Maestro currently builds the remote command for a POSIX shell only
- * (see ssh-command-builder.ts: /bin/bash --norc --noprofile + single-quote
- * escaping), so Windows remotes are not yet supported. Tracked by issue #995.
+ * Actionable message shown when an SSH remote host answers with a Windows shell.
+ * Maestro builds the remote command for a POSIX shell (see ssh-command-builder.ts:
+ * /bin/bash --norc --noprofile + single-quote escaping), which cmd.exe and
+ * PowerShell cannot run. The fix is on the host: point OpenSSH's DefaultShell at
+ * Git Bash or WSL bash (see src/shared/sshRemoteShell.ts and issue #995).
  */
-const WINDOWS_REMOTE_UNSUPPORTED_MESSAGE =
-	'SSH execution to Windows remote hosts is not yet supported (Maestro builds the remote command for a POSIX shell). See issue #995.';
+const WINDOWS_REMOTE_SHELL_MESSAGE =
+	"Remote SSH shell is a Windows shell (PowerShell or cmd.exe), which cannot run /bin/bash. Point the remote's OpenSSH DefaultShell at Git Bash or WSL bash.";
 
 /**
  * Error patterns for SSH remote execution errors.
@@ -963,19 +1001,19 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			// cmd.exe: "'/bin/bash' is not recognized as an internal or external command"
 			pattern: /is not recognized as an internal or external command/i,
-			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
 			recoverable: false,
 		},
 		{
 			// PowerShell: "The term '/bin/bash' is not recognized as the name of a cmdlet"
 			pattern: /is not recognized as the name of a cmdlet/i,
-			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
 			recoverable: false,
 		},
 		{
 			// cmd.exe / Windows API: "The system cannot find the path specified"
 			pattern: /the system cannot find the path specified/i,
-			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
 			recoverable: false,
 		},
 		{
@@ -1039,6 +1077,16 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			pattern: /ssh:.*packet corrupt|ssh:.*protocol error/i,
 			message: 'SSH protocol error. The connection may be unstable.',
 			recoverable: true,
+		},
+		{
+			// Windows remote: OpenSSH handed our POSIX script to PowerShell or cmd.exe.
+			// Neither can run `/bin/bash`, so the turn dies with shell noise that
+			// reads like a missing binary. It is a host configuration problem, and
+			// no amount of retrying or reinstalling the agent will move it.
+			pattern:
+				/['"]?\/bin\/bash['"]?\s+is not recognized|the term ['"]\/bin\/bash['"] is not recognized|is not a valid statement separator in this version/i,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
+			recoverable: false,
 		},
 		{
 			// Shell parse error - indicates profile/rc file syntax issues on the remote
@@ -1780,6 +1828,34 @@ export function matchErrorPattern(
 	}
 
 	return null;
+}
+
+/**
+ * Drop the lines of a structured (JSONL) stdout that parse as JSON objects,
+ * keeping any plain text around them.
+ *
+ * Exit-time detection must not run the pattern bank over those lines. Each
+ * event was already classified on its own as it streamed, and a JSON line is
+ * one physical line, so a loose pattern like `/token.*limit/` matches across a
+ * whole assistant message or command output. A turn that exited non-zero
+ * after quoting the word "token" and later the word "limit" was reported as
+ * "Context length exceeded" at 25% context.
+ */
+export function stripJsonEventLines(text: string): string {
+	if (!text) return '';
+	return text
+		.split('\n')
+		.filter((line) => {
+			const trimmed = line.trim();
+			if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return true;
+			try {
+				JSON.parse(trimmed);
+				return false;
+			} catch {
+				return true;
+			}
+		})
+		.join('\n');
 }
 
 /**

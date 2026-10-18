@@ -49,7 +49,35 @@ describe('batchReducer', () => {
 			expect(result['session-1'].documents).toEqual(['doc1.md', 'doc2.md']);
 			expect(result['session-1'].totalTasksAcrossAllDocs).toBe(10);
 			expect(result['session-1'].completedTasksAcrossAllDocs).toBe(0);
+			expect(result['session-1'].initialCompletedTasks).toBe(0);
 			expect(result['session-1'].processingState).toBe('INITIALIZING');
+		});
+
+		it('records pre-checked tasks as the ETA baseline', () => {
+			const result = batchReducer(
+				{},
+				{
+					type: 'START_BATCH',
+					sessionId: 'session-1',
+					payload: {
+						documents: ['doc1.md'],
+						lockedDocuments: ['doc1.md'],
+						totalTasksAcrossAllDocs: 10,
+						completedTasksAcrossAllDocs: 4,
+						loopEnabled: false,
+						maxLoops: null,
+						folderPath: '/test/folder',
+						worktreeActive: false,
+						startTime: 1000,
+						cumulativeTaskTimeMs: 0,
+						accumulatedElapsedMs: 0,
+						lastActiveTimestamp: 1000,
+					},
+				}
+			);
+
+			expect(result['session-1'].completedTasksAcrossAllDocs).toBe(4);
+			expect(result['session-1'].initialCompletedTasks).toBe(4);
 		});
 
 		it('should preserve other sessions when starting a new batch', () => {
@@ -156,6 +184,32 @@ describe('batchReducer', () => {
 			// Should keep the existing completed count
 			expect(result['session-1'].completedTasksAcrossAllDocs).toBe(5);
 			expect(result['session-1'].totalTasksAcrossAllDocs).toBe(20);
+		});
+
+		it('clears lastActiveTimestamp on null (paused) and keeps it on undefined', () => {
+			const initialState: BatchState = {
+				'session-1': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					accumulatedElapsedMs: 0,
+					lastActiveTimestamp: 1000,
+				},
+			};
+
+			const kept = batchReducer(initialState, {
+				type: 'UPDATE_PROGRESS',
+				sessionId: 'session-1',
+				payload: { completedTasksAcrossAllDocs: 1 },
+			});
+			expect(kept['session-1'].lastActiveTimestamp).toBe(1000);
+
+			const paused = batchReducer(initialState, {
+				type: 'UPDATE_PROGRESS',
+				sessionId: 'session-1',
+				payload: { accumulatedElapsedMs: 5000, lastActiveTimestamp: null },
+			});
+			expect(paused['session-1'].accumulatedElapsedMs).toBe(5000);
+			expect(paused['session-1'].lastActiveTimestamp).toBeUndefined();
 		});
 
 		it('should handle multiple sequential progress updates correctly', () => {

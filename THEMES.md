@@ -88,8 +88,8 @@ npm run dev:showcase
 npm run dev:showcase -- --theme pedurple
 
 # Theme plus the exact window size these screenshots use
-# (2048x1280 logical pixels, 4096x2560 at 2x retina)
-npm run dev:showcase -- --theme catppuccin-latte --size 2048x1280
+# (2304x1360 logical pixels, 4608x2720 at 2x retina)
+npm run dev:showcase -- --theme catppuccin-latte --size 2304x1360
 ```
 
 `--theme` takes any id from `THEMES` in `src/shared/themes.ts`. The seed data is
@@ -107,7 +107,7 @@ clicking through them. See
 
 To get a hosted image URL for a new theme screenshot:
 
-1. Capture it at `--size 2048x1280` so it matches the set.
+1. Capture it at `--size 2304x1360` so it matches the set.
 2. Open any issue or pull request in this repo.
 3. Drag the file into the comment box. GitHub uploads it and gives you a
    `https://github.com/user-attachments/assets/...` URL.

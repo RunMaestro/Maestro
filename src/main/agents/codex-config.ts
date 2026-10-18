@@ -2,10 +2,12 @@
  * Codex Configuration Utilities
  *
  * Shared helpers for resolving Codex's on-disk slash-command sources. Codex
- * exposes two kinds of user-invocable `/name` entries in its TUI:
+ * exposes skills and legacy custom prompts. These paths are the fallback for
+ * older CLIs; codex-skills.ts uses skills/list for authoritative discovery,
+ * including plugins, system skills, and modern .agents/skills locations.
  *
  *   1. Skills   - `<CODEX_HOME>/skills/<name>/SKILL.md` and `<cwd>/.codex/skills/...`
- *                 (the current surface, verified against codex-cli 0.144.1)
+ *                 (legacy locations)
  *   2. Prompts  - `<CODEX_HOME>/prompts/<name>.md` and `<cwd>/.codex/prompts/...`
  *                 (the older custom-prompt surface, still probed so users on
  *                 earlier Codex builds keep their commands)

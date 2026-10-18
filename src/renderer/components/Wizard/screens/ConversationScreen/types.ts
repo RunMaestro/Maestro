@@ -60,4 +60,7 @@ export type WizardConversationState = Pick<
 	| 'customArgs'
 	| 'customEnvVars'
 	| 'agentConfigValues'
+	| 'enableMaestroP'
+	| 'maestroPMode'
+	| 'maestroPPath'
 >;

@@ -175,9 +175,8 @@ export interface CommandContribution {
 	description?: string;
 }
 
-/** Where a contributed panel docks. `modal` (default) preserves today's
- * Settings-launched behavior; the others dock the same sandboxed iframe into a
- * UI slot via the contribution registry. */
+/** Where a contributed panel renders. `settings` uses an independent
+ * host Settings card; `left`/`right`/`main` use shared docks. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /**
@@ -206,6 +205,8 @@ export interface PanelContribution {
 	placement: PanelPlacement;
 	/** Chrome size for `modal` panels. Defaults to `default`. */
 	size: PanelSize;
+	/** Host-owned destinations only; never grants settings read/write access. */
+	hostSettings?: 'media'[];
 }
 
 /**
@@ -1471,6 +1472,16 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 	}
 	const placement = parsePanelPlacement(pluginId, localId, raw.placement, errors);
 	const size = parsePanelSize(pluginId, localId, raw.size, errors);
+	if (
+		raw.hostSettings !== undefined &&
+		(!Array.isArray(raw.hostSettings) ||
+			raw.hostSettings.some((v) => v !== 'media') ||
+			placement !== 'settings')
+	) {
+		errors.push(`[${pluginId}] panel "${localId}" has invalid hostSettings`);
+		return null;
+	}
+
 	return {
 		id: namespaced(pluginId, localId),
 		localId,
@@ -1479,6 +1490,9 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		entry: raw.entry.trim(),
 		placement,
 		size,
+		...(raw.hostSettings === undefined
+			? {}
+			: { hostSettings: [...new Set(raw.hostSettings as 'media'[])] }),
 	};
 }
 
