@@ -33,10 +33,6 @@
 		},
 		{ "capability": "ui:panel", "reason": "Render the Kanban board panel." },
 		{
-			"capability": "ui:command",
-			"reason": "Offer open, refresh, and clear-placements as commands."
-		},
-		{
 			"capability": "ui:contribute",
 			"reason": "Put one \"Kanban Board\" launcher button in the Left Bar's action row, so the board is reachable without remembering its keybinding. Runs the same open command the palette does and nothing else."
 		},
