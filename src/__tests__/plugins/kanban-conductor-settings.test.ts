@@ -62,6 +62,7 @@ interface ConductorPayload {
 	conductorId: string | null;
 	conductorExists: boolean;
 	conductorConnected: boolean;
+	status: string;
 }
 
 interface KanbanConductorSettings {
@@ -72,6 +73,7 @@ interface KanbanConductorSettings {
 		providers: ConductorProvider[],
 		agentId: string | null
 	) => boolean | null;
+	conductorTabStatusFrom: (tabs: unknown, conductorId: string | null) => string;
 }
 
 /** Fresh module state per test: main.js keeps its card and config maps in
@@ -216,6 +218,37 @@ describe('maestro-kanban conductorProviderSupportsDirectories', () => {
 	});
 });
 
+describe('maestro-kanban conductorTabStatusFrom', () => {
+	it('is idle when there is no conductor id to match against', () => {
+		const plugin = loadMain();
+		expect(plugin.conductorTabStatusFrom([aiTab({ sessionId: 'conductor-1' })], null)).toBe('idle');
+	});
+
+	it("reads the matching session's ai tab status", () => {
+		const plugin = loadMain();
+		const tabs = [aiTab({ sessionId: 'conductor-1', status: 'busy' })];
+		expect(plugin.conductorTabStatusFrom(tabs, 'conductor-1')).toBe('busy');
+	});
+
+	it('falls back to idle when no tab matches the conductor id yet', () => {
+		const plugin = loadMain();
+		const tabs = [aiTab({ sessionId: 'session-1', status: 'busy' })];
+		expect(plugin.conductorTabStatusFrom(tabs, 'conductor-1')).toBe('idle');
+	});
+
+	it('ignores a terminal tab even when its sessionId matches', () => {
+		const plugin = loadMain();
+		const tabs = [aiTab({ sessionId: 'conductor-1', type: 'terminal', status: 'busy' })];
+		expect(plugin.conductorTabStatusFrom(tabs, 'conductor-1')).toBe('idle');
+	});
+
+	it('degrades a malformed tabs.list() response to idle rather than throwing', () => {
+		const plugin = loadMain();
+		expect(plugin.conductorTabStatusFrom(null, 'conductor-1')).toBe('idle');
+		expect(plugin.conductorTabStatusFrom([null, 'not an object'], 'conductor-1')).toBe('idle');
+	});
+});
+
 describe('maestro-kanban conductor settings surface', () => {
 	const projectPath = '/Users/dev/projects/widgets';
 
@@ -271,6 +304,9 @@ describe('maestro-kanban conductor settings surface', () => {
 			conductorId: null,
 			conductorExists: false,
 			conductorConnected: false,
+			// No conductor session id to match a tab against, so this is the
+			// default rather than anything read from the stub's tabsList().
+			status: 'idle',
 		});
 	});
 

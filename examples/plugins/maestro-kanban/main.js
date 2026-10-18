@@ -3982,6 +3982,8 @@ function conductorProviderSupportsDirectories(providers, agentId) {
  * degraded-provider note instead of pretending the reach above means the
  * conductor can open those files: a provider with no native add-directory
  * support still gets handed the board snapshot, never the files themselves.
+ * `status` is the conductor's own AI tab status (see "Phase 06 conductor
+ * chat surface" below), always 'idle' when there is no conductor yet.
  * @returns {Promise<object>}
  */
 async function conductorSettingsSnapshot() {
@@ -3999,6 +4001,7 @@ async function conductorSettingsSnapshot() {
 		conductorId: conductorId,
 		conductorExists: conductorId !== null,
 		conductorConnected: conductorId !== null && isSessionAccessGranted(conductorId),
+		status: conductorTabStatus(conductorId),
 	};
 }
 
@@ -4501,6 +4504,63 @@ function scheduleReachSync() {
 
 // ===========================================================================
 // End of Phase 06 conductor reach sync.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 06 conductor chat surface: once a conductor exists, it is a normal
+// agent in the Left Bar (see "Phase 06 conductor session creation" above),
+// so nudging it reaches it directly with nothing of this plugin's in the
+// way. Open Conductor therefore needs no command of its own - the panel
+// posts the exact same 'focus' command a card's own Open action already
+// posts (see registerCommands() below), aimed at the conductor's session id
+// with no tabId, which is exactly maestro.sessions.focus(conductorId).
+//
+// The live status line does need something new: the conductor's current AI
+// tab status, which only maestro.tabs.list() carries. Rather than a
+// dedicated RPC on every conductorSettingsSnapshot() push, this reuses the
+// exact tabs.list() response rebuildCardsFromTabs() already reads on every
+// refresh the cards use - "refreshed on the same session events the cards
+// use" falls out of sharing that one read rather than scheduling a second
+// one just for the conductor.
+// ===========================================================================
+
+/** The most recent maestro.tabs.list() response, kept warm by
+ * rebuildCardsFromTabs() below so conductorTabStatus() can answer
+ * synchronously from the same read the card model already took, instead of
+ * issuing its own RPC on every settings-surface snapshot. Reset on
+ * deactivate() like every other module-level cache. */
+let latestTabs = [];
+
+/**
+ * Pure lookup: the conductor session's own AI tab status out of one
+ * tabs.list() response. 'idle' is the default - both for a conductorId of
+ * null (no conductor) and for a conductorId with no matching tab yet (one
+ * just created, before the next refresh has seen it) - the same "assume
+ * ready rather than unknown" rule rebuildCardsFromTabs() applies to an
+ * ordinary card's tab.
+ * @param {unknown} tabs
+ * @param {string|null} conductorId
+ * @returns {string}
+ */
+function conductorTabStatusFrom(tabs, conductorId) {
+	if (typeof conductorId !== 'string' || conductorId === '') return 'idle';
+	for (const tab of Array.isArray(tabs) ? tabs : []) {
+		if (!tab || typeof tab !== 'object') continue;
+		if (tab.type !== 'ai' || tab.sessionId !== conductorId) continue;
+		return typeof tab.status === 'string' && tab.status ? tab.status : 'idle';
+	}
+	return 'idle';
+}
+
+/** Stateful wrapper over conductorTabStatusFrom() above: reads the warm
+ * cache rebuildCardsFromTabs() keeps rather than taking a tabs argument, so
+ * conductorSettingsSnapshot() can call it without an RPC of its own. */
+function conductorTabStatus(conductorId) {
+	return conductorTabStatusFrom(latestTabs, conductorId);
+}
+
+// ===========================================================================
+// End of Phase 06 conductor chat surface.
 // ===========================================================================
 
 // ===========================================================================
@@ -5135,6 +5195,10 @@ function rebuildSessionMeta(sessions) {
  * a first pass and their columns resolved in a second, and `cards` is only
  * swapped once every card has one - never partially. */
 async function rebuildCardsFromTabs(tabs) {
+	// Kept warm for conductorTabStatus() (see "Phase 06 conductor chat
+	// surface" above) so it can read the conductor's live tab status without
+	// a second tabs.list() RPC of its own.
+	latestTabs = Array.isArray(tabs) ? tabs : [];
 	const built = [];
 	const ordinals = new Map();
 	for (const tab of Array.isArray(tabs) ? tabs : []) {
@@ -5986,6 +6050,10 @@ function registerCommands(maestro) {
 
 	// Invoked by the panel via parent.postMessage; no manifest `commands`
 	// entry is needed since it is never surfaced in the command palette.
+	// Shared by a card's own Open action and the conductor settings
+	// surface's Open Conductor button (see "Phase 06 conductor chat
+	// surface" above) - the latter posts only `sessionId`, so `tabId` is
+	// undefined and sessions.focus() picks the conductor's own tab.
 	maestro.commands.register('focus', (args) => {
 		const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : undefined;
 		const tabId = args && typeof args.tabId === 'string' ? args.tabId : undefined;
@@ -6179,6 +6247,17 @@ module.exports = {
 	syncConductorReach: syncConductorReach,
 	reachLogForBoard: reachLogForBoard,
 
+	// Phase 06 conductor chat surface, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-conductor-settings.test.ts).
+	// conductorTabStatusFrom() is pure (a tabs.list() response in, a status
+	// string out); conductorTabStatus() is the stateful wrapper
+	// conductorSettingsSnapshot() actually calls, reading the cache
+	// rebuildCardsFromTabs() keeps warm. Open Conductor itself adds no new
+	// command - it posts the existing 'focus' command below with no tabId,
+	// so there is nothing further to export for it.
+	conductorTabStatusFrom: conductorTabStatusFrom,
+	conductorTabStatus: conductorTabStatus,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -6245,6 +6324,7 @@ module.exports = {
 		conductorIds = new Map();
 		reachLogs = new Map();
 		lastSyncedReach = new Map();
+		latestTabs = [];
 		agingByCard = new Map();
 		stopRetirementTicks();
 		cardColumnTrail.clear();

@@ -1150,6 +1150,7 @@
 				agent in Maestro's own agent settings, not here.
 			</p>
 			<div class="board-settings-row">
+				<span id="conductor-status-dot" class="status-dot" hidden></span>
 				<button id="conductor-create" type="button" hidden>Create Conductor</button>
 				<button id="conductor-open" type="button" disabled>Open Conductor</button>
 				<button id="conductor-allow-access" type="button" hidden>Allow Access</button>
@@ -2576,10 +2577,10 @@
 				// Phase 06 conductor settings surface. The stored choice
 				// (provider, model, effort) and the resolved reach it would run
 				// with, both carried on every snapshot the same way the aging
-				// settings above are. Nothing here can create or jump to a
-				// conductor yet - `conductorExists` is always false until a
-				// later task starts a session - so Open Conductor stays
-				// disabled and the status line says so plainly.
+				// settings above are. Open Conductor posts the same 'focus'
+				// command a card's own Open action does (see openConductor()
+				// below) and stays disabled only while `conductorExists` is
+				// false - there is no session yet to jump to.
 				// -------------------------------------------------------------
 
 				var conductorSettingsOpen = false;
@@ -2613,6 +2614,7 @@
 						create: document.getElementById('conductor-create'),
 						open: document.getElementById('conductor-open'),
 						allowAccess: document.getElementById('conductor-allow-access'),
+						statusDot: document.getElementById('conductor-status-dot'),
 						status: document.getElementById('conductor-status'),
 						grantedList: document.getElementById('conductor-reach-granted'),
 						grantedEmpty: document.getElementById('conductor-reach-granted-empty'),
@@ -2686,12 +2688,42 @@
 					requestConductorReachAccess(conductor.conductorId);
 				}
 
+				/** Jumps Maestro straight to the conductor's own tab, posting no
+				 * tabId - the exact same 'focus' command focusCard() above posts for
+				 * a card, which resolves to maestro.sessions.focus(conductorId) on
+				 * the sandbox side. The conductor is a normal agent in the Left Bar
+				 * once it exists, so this is the only wiring Open Conductor needs. */
+				function openConductor(conductor) {
+					if (!conductor || typeof conductor.conductorId !== 'string' || !conductor.conductorId) {
+						return;
+					}
+					parent.postMessage(
+						{
+							type: 'maestro:invokeCommand',
+							commandId: 'focus',
+							args: { sessionId: conductor.conductorId },
+						},
+						'*'
+					);
+				}
+
+				/** English label for the conductor's live tab status (see
+				 * conductorTabStatus() in main.js), matching the same vocabulary
+				 * statusColor() above already paints a card's dot with. */
+				function conductorLiveStatusLabel(status) {
+					if (status === 'error') return 'Error';
+					if (status === 'connecting') return 'Connecting';
+					if (status === 'busy' || status === 'thinking') return 'Thinking';
+					return 'Idle';
+				}
+
 				function conductorStatusText(conductor) {
 					if (!conductor) return '';
 					if (conductor.conductorExists !== true) return 'No conductor yet.';
-					return conductor.conductorConnected === true
-						? 'Conductor connected.'
-						: 'Conductor not connected.';
+					if (conductor.conductorConnected !== true) return 'Conductor not connected.';
+					return (
+						'Conductor connected, ' + conductorLiveStatusLabel(conductor.status).toLowerCase() + '.'
+					);
 				}
 
 				/** Paints one reach list: the granted list is read-only, the
@@ -2808,6 +2840,13 @@
 					if (nodes.open) nodes.open.disabled = !conductorExists;
 					if (nodes.allowAccess) nodes.allowAccess.hidden = !conductorExists || conductorConnected;
 					if (nodes.status) nodes.status.textContent = conductorStatusText(conductor);
+					if (nodes.statusDot) {
+						nodes.statusDot.hidden = !conductorExists;
+						if (conductorExists) {
+							nodes.statusDot.style.background = statusColor(conductor.status);
+							nodes.statusDot.title = conductorLiveStatusLabel(conductor.status);
+						}
+					}
 
 					var reach = (conductor && conductor.reach) || {};
 					renderConductorReachList(
@@ -3923,6 +3962,13 @@
 
 				var conductorCreateEl = document.getElementById('conductor-create');
 				if (conductorCreateEl) conductorCreateEl.addEventListener('click', postCreateConductor);
+
+				var conductorOpenEl = document.getElementById('conductor-open');
+				if (conductorOpenEl) {
+					conductorOpenEl.addEventListener('click', function () {
+						openConductor(conductorOf(currentSnapshot));
+					});
+				}
 
 				var conductorAllowAccessEl = document.getElementById('conductor-allow-access');
 				if (conductorAllowAccessEl) {
