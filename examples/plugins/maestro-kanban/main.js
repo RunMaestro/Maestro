@@ -5859,6 +5859,269 @@ async function buildPlanRequest(options) {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 07 plan run loop: turns a dispatched prompt into a parsed plan with
+// no polling anywhere in the path. askConductor() is the only place this
+// plugin ever calls maestro.agents.dispatch on a conductor's session; from
+// there the run is driven entirely by the agent.completed/run.completed
+// events every card's History excerpt already answers to (see "Phase 04
+// History excerpt" above) - never by reading session or tab status, which
+// can report idle mid-turn (a tool call between model turns, say) well
+// before the conductor has actually finished and written its plan.
+//
+// One run per board at a time, held in `planRuns`: askConductor() refuses a
+// fresh ask while the board's last one is still 'running', so a board never
+// has two plans racing to read the same scratch folder. The run itself
+// carries the exact `board`/`cards` context buildPlanRequest() built it
+// from, so parsePlan() answers legality from the board the conductor was
+// actually asked about, not whatever that board has become by the time it
+// replies.
+//
+// A run ends in exactly one of three states, and every one of them is a
+// specific, named failure rather than an empty plan: 'parsed' (parsePlan()
+// returned `ok: true`, including a plan with nothing but rejected entries -
+// a plan is still a plan if it says nothing is possible), 'failed' (a
+// dispatch error, a plan file this plugin could not read or could not parse,
+// or a timeout), or 'not-connected' (the dispatch itself was denied because
+// the conductor's grant was revoked in Settings - the same recovery
+// dispatchCardMessage() already applies to a card's own send, so the next
+// snapshot's conductorSettingsSnapshot() reads `conductorConnected: false`
+// and the settings surface offers Allow Access instead of a generic error).
+// ===========================================================================
+
+/** Generous on purpose: a conductor's turn can read every granted card's
+ * History and reason over a whole board before it ever writes a plan file,
+ * and a timeout's only job is to stop this plugin waiting forever, not to
+ * race a model that is still thinking. */
+const PLAN_RUN_TIMEOUT_MS = 15 * 60 * 1000;
+
+/** @typedef {{
+ *   planId: string,
+ *   conductorSessionId: string,
+ *   status: 'running'|'parsed'|'failed'|'not-connected',
+ *   board: object,
+ *   cards: object[],
+ *   startedAt: number,
+ *   finishedAt: number|null,
+ *   result: object|null,
+ *   timeoutTimer: ReturnType<typeof setTimeout>|null,
+ * }} PlanRun */
+
+/** @type {Map<string, PlanRun>} boardId -> that board's most recent (or
+ * still in-flight) plan run. Cleared on deactivate() like every other
+ * in-memory cache; a run in flight at shutdown is simply gone, the same as a
+ * card's own in-flight send (lastMessageOutcomes) never surviving a restart. */
+let planRuns = new Map();
+
+/** Cancels a run's timeout, if it still has one. Safe to call on a run that
+ * never got one (a dispatch denial, say) or whose timer already fired. */
+function clearPlanRunTimer(run) {
+	if (run.timeoutTimer) {
+		clearTimeout(run.timeoutTimer);
+		run.timeoutTimer = null;
+	}
+}
+
+/** Builds the `ok: false` shape parsePlan() itself returns for an unreadable
+ * plan, reusing its own planParseFailure() so a run that never got as far as
+ * a parse (a missing file, a dispatch failure, a timeout) still comes back
+ * in the exact shape a parsed-but-rejected plan would, for whatever renders
+ * `result` next. There is no raw text to show back in any of these cases, so
+ * `raw` is the empty string rather than a guess at what the conductor wrote.
+ * @param {PlanRun} run @param {string} reason */
+function planRunFailure(run, reason) {
+	return planParseFailure(reason, '', planParseContext(run.board, run.cards));
+}
+
+/** Settles a run: cancels its timeout, records the result and status, and
+ * stamps `finishedAt`. `statusOverride` names the two failure states that are
+ * not simply "parsePlan said no" - 'not-connected' and (from
+ * onPlanRunTimeout) 'timeout' folds into 'failed', since a run that timed out
+ * and a run whose plan file never parsed are the same thing to everything
+ * downstream: a failure with a reason, not a plan to approve.
+ * @param {string} boardId @param {PlanRun} run @param {object} result
+ * @param {'not-connected'=} statusOverride */
+function finishPlanRun(boardId, run, result, statusOverride) {
+	clearPlanRunTimer(run);
+	run.result = result;
+	run.status = statusOverride || (result.ok ? 'parsed' : 'failed');
+	run.finishedAt = Date.now();
+}
+
+/**
+ * Reads the plan file this run's planId names and hands it to parsePlan().
+ * Guards against a run that was already settled by onPlanRunTimeout() while
+ * this read was in flight - whichever of the two gets there first wins, and
+ * the other becomes a no-op, so a late completion event can never overwrite
+ * a run the timeout already closed out.
+ * @param {string} boardId @param {PlanRun} run
+ */
+async function settlePlanRun(boardId, run) {
+	let text;
+	try {
+		text = await sdk.fs.read(planFilePath(boardId, run.planId));
+	} catch (err) {
+		if (run.status !== 'running') return;
+		const reason = isFileNotFoundError(err)
+			? 'the conductor finished without writing this plan'
+			: "could not read the conductor's plan: " + errorMessage(err);
+		finishPlanRun(boardId, run, planRunFailure(run, reason));
+		await pushSnapshotNow();
+		return;
+	}
+	if (run.status !== 'running') return;
+	finishPlanRun(boardId, run, parsePlan(text, run.planId, run.board, run.cards));
+	await pushSnapshotNow();
+}
+
+/** The agent.completed/run.completed handler: finds every board whose
+ * in-flight run belongs to the session this event is about (there is at most
+ * one, since a session is one board's conductor) and settles it. A session
+ * with no running plan - every card's agent, or a conductor between runs -
+ * matches nothing here and this is a no-op, same as onHistoryRelevantEvent's
+ * own cache check for a session nothing is reading History for.
+ * @param {string} topic @param {unknown} payload */
+function onPlanRunEvent(topic, payload) {
+	const sessionId = sessionIdForEvent(topic, payload);
+	if (!sessionId) return;
+	for (const [boardId, run] of planRuns) {
+		if (run.status !== 'running' || run.conductorSessionId !== sessionId) continue;
+		settlePlanRun(boardId, run).catch(function (err) {
+			console.error(
+				'maestro-kanban: settling the plan run for ' + boardId + ' failed: ' + String(err)
+			);
+		});
+	}
+}
+
+/** Fires PLAN_RUN_TIMEOUT_MS after a successful dispatch. Guarded the same
+ * way settlePlanRun() is guarded against it: whichever of the two settles the
+ * run first wins. @param {string} boardId @param {PlanRun} run */
+function onPlanRunTimeout(boardId, run) {
+	if (run.status !== 'running') return;
+	finishPlanRun(
+		boardId,
+		run,
+		planRunFailure(run, 'the conductor did not finish this plan within the time this board allows')
+	);
+	pushSnapshotNow().catch(function (err) {
+		console.error('maestro-kanban: plan run timeout push failed: ' + String(err));
+	});
+}
+
+/**
+ * Backs the panel's `ask-conductor` action: `{ boardId }`. Refuses the same
+ * way createConductor() does - no board on screen, a stale board id, a
+ * halted board - plus two refusals of its own: a run already in flight for
+ * this board, and no conductor to ask at all. Otherwise builds a fresh plan
+ * request, records the run as 'running' *before* dispatching (so an event
+ * that arrives while the dispatch promise is still resolving is never missed
+ * - see sessions.create()'s own grant-mirrors-first ordering for the same
+ * reason), and dispatches. A dispatch denied for a revoked grant settles the
+ * run as 'not-connected' rather than a generic failure and leaves the actual
+ * "Allow Access" affordance to conductorSettingsSnapshot(), which already
+ * reads that denial through grantedSessions.
+ * @param {unknown} args
+ */
+async function askConductor(args) {
+	const source = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+	const boardId =
+		typeof source.boardId === 'string' && source.boardId !== '' ? source.boardId : null;
+	if (boardId === null) {
+		const reason = 'there is no board on screen to ask the conductor for a plan yet';
+		console.warn('maestro-kanban: refused ask-conductor: ' + reason);
+		await safeToast('Could not ask the conductor: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	if (boardId !== currentBoardId()) {
+		const reason = 'the board changed before the conductor could be asked; try again';
+		console.warn('maestro-kanban: refused ask-conductor: ' + reason);
+		await safeToast('Could not ask the conductor: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	if (isBoardHalted(boardId)) {
+		const reason = 'this board is halted; clear the halt before asking the conductor for a plan';
+		console.warn('maestro-kanban: refused ask-conductor: ' + reason);
+		await safeToast('Could not ask the conductor: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const inFlight = planRuns.get(boardId);
+	if (inFlight && inFlight.status === 'running') {
+		const reason = 'this board already has a plan in flight; wait for it to finish';
+		console.warn('maestro-kanban: refused ask-conductor: ' + reason);
+		await safeToast('Could not ask the conductor: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const conductorId = await resolveConductorSessionId(boardId);
+	if (conductorId === null) {
+		const reason = 'this board has no conductor to ask yet';
+		console.warn('maestro-kanban: refused ask-conductor: ' + reason);
+		await safeToast('Could not ask the conductor: ' + reason);
+		return { ok: false, reason: reason };
+	}
+	const request = await buildPlanRequest();
+	/** @type {PlanRun} */
+	const run = {
+		planId: request.planId,
+		conductorSessionId: conductorId,
+		status: 'running',
+		board: request.board,
+		cards: request.cards,
+		startedAt: Date.now(),
+		finishedAt: null,
+		result: null,
+		timeoutTimer: null,
+	};
+	planRuns.set(boardId, run);
+	try {
+		await sdk.agents.dispatch(conductorId, request.prompt);
+	} catch (err) {
+		const message = errorMessage(err);
+		if (isGrantDenial(message)) {
+			grantedSessions.delete(conductorId);
+			scheduleReachSync();
+			finishPlanRun(
+				boardId,
+				run,
+				planRunFailure(run, 'the conductor is no longer connected to this board'),
+				'not-connected'
+			);
+		} else {
+			console.error('maestro-kanban: agents.dispatch (conductor) failed: ' + String(err));
+			finishPlanRun(boardId, run, planRunFailure(run, 'could not reach the conductor: ' + message));
+		}
+		await pushSnapshotNow();
+		return { ok: false, reason: run.result.error };
+	}
+	run.timeoutTimer = setTimeout(function () {
+		onPlanRunTimeout(boardId, run);
+	}, PLAN_RUN_TIMEOUT_MS);
+	await pushSnapshotNow();
+	return { ok: true, planId: run.planId };
+}
+
+/** The board's current (or most recently finished) plan run, in the shape a
+ * caller can hand to a panel without also handing it this run's internal
+ * `board`/`cards` legality context. null before any ask-conductor for this
+ * board since activate(). @param {string|null} boardId @returns {object|null} */
+function planRunSnapshot(boardId) {
+	if (typeof boardId !== 'string' || boardId === '') return null;
+	const run = planRuns.get(boardId);
+	if (!run) return null;
+	return {
+		planId: run.planId,
+		conductorSessionId: run.conductorSessionId,
+		status: run.status,
+		startedAt: run.startedAt,
+		finishedAt: run.finishedAt,
+		result: run.result,
+	};
+}
+
+// ===========================================================================
+// End of Phase 07 plan run loop.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -6943,13 +7206,19 @@ function registerEventHandlers(maestro) {
 	);
 	// agent.completed and run.completed also drive the History excerpt's
 	// event-driven re-read (see onHistoryRelevantEvent) on top of the usual
-	// markDirty() refresh every topic here gets.
+	// markDirty() refresh every topic here gets, and - a second, independent
+	// registration on the same two topics - settle whichever board's plan
+	// run was waiting on this session (see "Phase 07 plan run loop" above).
+	// A session that is nobody's conductor, or a conductor with no run in
+	// flight, matches nothing in onPlanRunEvent() and this is a no-op for it.
 	maestro.events.on('agent.completed', (payload) =>
 		onHistoryRelevantEvent('agent.completed', payload)
 	);
+	maestro.events.on('agent.completed', (payload) => onPlanRunEvent('agent.completed', payload));
 	maestro.events.on('agent.error', (payload) => onGenericSessionEvent('agent.error', payload));
 	maestro.events.on('agent.exited', (payload) => onGenericSessionEvent('agent.exited', payload));
 	maestro.events.on('run.completed', (payload) => onHistoryRelevantEvent('run.completed', payload));
+	maestro.events.on('run.completed', (payload) => onPlanRunEvent('run.completed', payload));
 	maestro.events.on('usage.updated', (payload) => onGenericSessionEvent('usage.updated', payload));
 }
 
@@ -7147,6 +7416,22 @@ function registerCommands(maestro) {
 			return safeToast('Could not create the conductor agent.').then(() => ({
 				ok: false,
 				error: errorMessage(err),
+			}));
+		})
+	);
+
+	// Invoked by the panel's Ask Conductor action; no manifest `commands`
+	// entry is needed since the palette has no board in hand to plan for.
+	// askConductor() already catches its own failures and returns
+	// `{ ok: false, reason }` (including a denied dispatch, settled as the
+	// run's own 'not-connected' state); this outer catch only guards against
+	// something it did not anticipate.
+	maestro.commands.register('ask-conductor', (args) =>
+		askConductor(args).catch((err) => {
+			console.error('maestro-kanban: ask-conductor failed: ' + String(err));
+			return safeToast('Could not ask the conductor for a plan.').then(() => ({
+				ok: false,
+				reason: errorMessage(err),
 			}));
 		})
 	);
@@ -7598,6 +7883,20 @@ module.exports = {
 	buildPlanSnapshot: buildPlanSnapshot,
 	buildPlanRequest: buildPlanRequest,
 
+	// Phase 07 plan run loop, exported for direct unit testing (see the
+	// upcoming src/__tests__/plugins/kanban-auto-mode.test.ts). askConductor()
+	// calls sdk.agents.dispatch and sdk.fs.read, so a test drives it with a
+	// stub SDK after activate(); planRunSnapshot() is a pure read of the
+	// in-memory run map it leaves behind. onPlanRunEvent() and
+	// onPlanRunTimeout() are deliberately not exported: every other event
+	// handler in this file is reached only through registerEventHandlers()'s
+	// own registration, and a test settles a run the same way the host
+	// would - by emitting 'agent.completed'/'run.completed' - rather than by
+	// calling a private function the host never calls either.
+	PLAN_RUN_TIMEOUT_MS: PLAN_RUN_TIMEOUT_MS,
+	askConductor: askConductor,
+	planRunSnapshot: planRunSnapshot,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -7667,6 +7966,11 @@ module.exports = {
 		// Dropped like every other cache, and re-read by the next activate():
 		// a halt lives in storage, so clearing the mirror does not clear it.
 		planSettings = new Map();
+		// A run in flight at shutdown loses its timer the same way every other
+		// setTimeout in this file does on deactivate(); the run itself is
+		// in-memory only and was never going to survive a restart anyway.
+		for (const run of planRuns.values()) clearPlanRunTimer(run);
+		planRuns = new Map();
 		conductorConfigs = new Map();
 		conductorIds = new Map();
 		reachLogs = new Map();
