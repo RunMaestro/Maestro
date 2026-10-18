@@ -1110,6 +1110,27 @@ describe('ExitHandler', () => {
 			expect(dataEvents).toEqual([]);
 			expect(proc.resultEmitted).toBe(false);
 		});
+
+		// The interrupt gate is Cursor's alone. Every other agent keeps rc's
+		// behavior: what it streamed before Stop is flushed at exit.
+		it('still flushes accumulated Factory Droid text after interruption reports code zero', async () => {
+			const proc = createMockProcess({
+				toolType: 'factory-droid',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				interrupted: true,
+				streamedText: 'partial droid answer',
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(dataEvents).toEqual(['partial droid answer']);
+			expect(proc.resultEmitted).toBe(true);
+		});
 	});
 
 	describe('stream-json error ordering', () => {

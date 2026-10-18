@@ -305,14 +305,17 @@ export class ExitHandler {
 			}
 		}
 
-		// Handle stream-json mode: emit accumulated streamed text if no result was emitted
+		// Handle stream-json mode: emit accumulated streamed text if no result was emitted.
 		// Some agents (like Factory Droid) don't send explicit "done" events, they just exit.
-		// Not after an error already went out, and not after a Stop.
+		// Flush what they streamed, unless an error already went out, or this is a Cursor
+		// turn the user stopped: Cursor reports exit code 0 after an interrupt, so its partial
+		// text would otherwise be finalized as a complete answer. Other agents' partial text
+		// from an interrupted turn is flushed on purpose.
 		if (
 			isStreamJsonMode &&
 			!managedProcess.errorEmitted &&
 			!managedProcess.resultEmitted &&
-			!managedProcess.interrupted &&
+			!(managedProcess.toolType === 'cursor-cli' && managedProcess.interrupted) &&
 			managedProcess.streamedText
 		) {
 			managedProcess.resultEmitted = true;
