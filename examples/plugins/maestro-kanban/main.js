@@ -4564,6 +4564,1301 @@ function conductorTabStatus(conductorId) {
 // ===========================================================================
 
 // ===========================================================================
+// Phase 07 plan settings: the three per-board facts that decide how much a
+// conductor's plan is allowed to do to this board. Deliberately its own
+// store rather than extra keys on Phase 05's board settings: those describe
+// how cards age, these describe how much authority the conductor has, and a
+// halt that rode along in the aging settings would be merged through
+// normalizeAgingSettings(), which does not know about it and would drop it.
+//
+// Nothing here is inherited from the Global board, unlike
+// agingSettingsForBoard(). A halt is a statement about one board, and a
+// project board quietly inheriting the Global board's halt (or its fully
+// automatic mode) would be the most surprising possible reading of either
+// switch.
+// ===========================================================================
+
+const PLAN_SETTINGS_STORAGE_KEY = 'plan-settings';
+
+/** Plan and approve: every plan waits for a person. The default. */
+const PLAN_MODE_APPROVE = 'plan-approve';
+/** Fully automatic: the identical plan pipeline with the approval gate
+ * skipped. Still bound by legality, the WIP cap, and the halt. */
+const PLAN_MODE_AUTO = 'auto';
+
+/** Small on purpose. The cap is how many distinct cards one execution may
+ * act on, so the blast radius of a single misread plan is three cards rather
+ * than the whole board. */
+const DEFAULT_PLAN_WIP_CAP = 3;
+const MIN_PLAN_WIP_CAP = 1;
+const MAX_PLAN_WIP_CAP = 25;
+
+const DEFAULT_PLAN_SETTINGS = {
+	wipCap: DEFAULT_PLAN_WIP_CAP,
+	mode: PLAN_MODE_APPROVE,
+	halted: false,
+	haltedAt: null,
+};
+
+/** @typedef {{ wipCap: number, mode: string, halted: boolean, haltedAt: number|null }} PlanSettings */
+
+/** @type {Map<string, PlanSettings>} board id -> that board's plan settings */
+let planSettings = new Map();
+
+/**
+ * Reads whatever is stored (or posted by the panel) into a complete
+ * `PlanSettings`. Every field falls back to its default independently, the
+ * same way normalizeAgingSettings() handles a partial patch: `wipCap` is
+ * rounded and clamped rather than rejected, an unrecognized `mode` becomes
+ * plan-and-approve (the safe one, never the automatic one), and `haltedAt`
+ * is dropped unless the board is actually halted, so a cleared halt cannot
+ * leave a timestamp behind for a banner to read.
+ * @param {unknown} raw
+ * @returns {PlanSettings}
+ */
+function normalizePlanSettings(raw) {
+	const value =
+		raw && typeof raw === 'object' && !Array.isArray(raw)
+			? /** @type {{ wipCap?: unknown, mode?: unknown, halted?: unknown, haltedAt?: unknown }} */ (
+					raw
+				)
+			: {};
+	let wipCap = DEFAULT_PLAN_SETTINGS.wipCap;
+	if (typeof value.wipCap === 'number' && isFinite(value.wipCap)) {
+		wipCap = Math.min(MAX_PLAN_WIP_CAP, Math.max(MIN_PLAN_WIP_CAP, Math.round(value.wipCap)));
+	}
+	const halted = value.halted === true;
+	return {
+		wipCap: wipCap,
+		mode: value.mode === PLAN_MODE_AUTO ? PLAN_MODE_AUTO : PLAN_MODE_APPROVE,
+		halted: halted,
+		haltedAt: halted ? finiteTimestamp(value.haltedAt) : null,
+	};
+}
+
+/** Restores every board's plan settings from storage. Called once, alongside
+ * loadBoardSettings(), before activate()'s first seed(): a halt has to
+ * survive a restart, so it must be in hand before anything can execute. A
+ * storage failure degrades to "every board runs on the defaults", which is
+ * the conservative mode but does drop a halt, which is why it is logged
+ * rather than swallowed. */
+async function loadPlanSettings() {
+	planSettings = new Map();
+	try {
+		const raw = await sdk.storage.get(PLAN_SETTINGS_STORAGE_KEY);
+		if (typeof raw === 'string' && raw !== '') {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const key of Object.keys(parsed)) {
+					planSettings.set(key, normalizePlanSettings(parsed[key]));
+				}
+			}
+		}
+	} catch (err) {
+		console.error('maestro-kanban: failed to read stored plan settings: ' + String(err));
+	}
+}
+
+/** Writes every board's plan settings in one call. Unlike the other stores
+ * in this plugin the outcome is returned rather than only logged: the write
+ * that matters most here is a halt, and a halt the user believes is
+ * persisted but is not would come back cleared after a restart.
+ * @returns {Promise<boolean>} whether the write landed */
+async function persistPlanSettings() {
+	const obj = {};
+	for (const [boardId, settings] of planSettings) {
+		obj[boardId] = settings;
+	}
+	try {
+		await sdk.storage.set(PLAN_SETTINGS_STORAGE_KEY, JSON.stringify(obj));
+		return true;
+	} catch (err) {
+		console.error('maestro-kanban: failed to persist plan settings: ' + String(err));
+		return false;
+	}
+}
+
+/** The plan settings a board runs under: its own when it has them, the
+ * defaults otherwise (never the Global board's - see this section's header).
+ * @param {string|null} boardId
+ * @returns {PlanSettings} */
+function planSettingsForBoard(boardId) {
+	if (typeof boardId !== 'string' || boardId === '') {
+		return normalizePlanSettings(DEFAULT_PLAN_SETTINGS);
+	}
+	return planSettings.get(boardId) || normalizePlanSettings(DEFAULT_PLAN_SETTINGS);
+}
+
+/** Merges `patch` over one board's plan settings and persists the whole map,
+ * stamping `haltedAt` when this is the write that halts the board and
+ * carrying the existing stamp when the board was already halted. Returns the
+ * settings now in force plus whether the write landed, so a caller can tell
+ * the user that a halt did not persist.
+ * @param {string} boardId
+ * @param {unknown} patch
+ * @returns {Promise<{ settings: PlanSettings, persisted: boolean }>} */
+async function setPlanSettings(boardId, patch) {
+	const current = planSettingsForBoard(boardId);
+	const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+	const merged = normalizePlanSettings(Object.assign({}, current, source));
+	if (merged.halted && merged.haltedAt === null) {
+		merged.haltedAt = current.halted ? current.haltedAt || Date.now() : Date.now();
+	}
+	planSettings.set(boardId, merged);
+	const persisted = await persistPlanSettings();
+	return { settings: merged, persisted: persisted };
+}
+
+/** Whether a board refuses to execute anything right now: the first question
+ * every execution path asks.
+ * @param {string|null} boardId */
+function isBoardHalted(boardId) {
+	return planSettingsForBoard(boardId).halted === true;
+}
+
+// ===========================================================================
+// End of Phase 07 plan settings.
+// ===========================================================================
+
+// ===========================================================================
+// Phase 07 plan contract: the only thing a conductor is ever allowed to
+// propose, and the only shape this plugin will read back.
+//
+// Every line below treats the conductor's answer as adversarial input rather
+// than as an API response - not because the conductor is hostile, but
+// because a plan that half-parses is how a board quietly moves eleven cards
+// nobody asked for. Two halves:
+//
+//   renderPlanPrompt() renders the board as text: the columns and what they
+//   mean, every card with the facts a plan could need, the WIP cap, the halt
+//   state, and the rules stated as rules. It names a fresh planId and the
+//   ONE file the plan may be written to.
+//
+//   parsePlan() reads that file back and validates every entry
+//   independently, re-deriving legality from legalColumnsFor() rather than
+//   trusting the prompt's own "may move to" list, which the conductor has
+//   had every opportunity to ignore.
+//
+// Why a file and not the reply: maestro.transcripts.read projects an agent's
+// History entries (see the Phase 04 History excerpt section above), not the
+// text the model wrote, so a plan read out of History is a summary of a plan.
+// The conductor already runs in a scratch folder this plugin owns and can
+// read (see Phase 06 conductor session creation), so the plan travels as a
+// file in that folder: `plans/<planId>.json`. The planId inside the file has
+// to match the one the prompt asked for, which is what stops a leftover plan
+// from an earlier run being read as the answer to this one.
+//
+// Nothing outside `moves` and `messages` is executable. `rationale` is
+// display text and is never read as an instruction. An unknown top-level key
+// is not ignored but rejected: a model that invents `"cards": [...]` has to
+// fail loudly, rather than have its invention silently dropped while the
+// rest of its plan runs anyway.
+// ===========================================================================
+
+/** The contract version this plugin speaks. A plan that says anything else
+ * is refused whole: the version is the one field that says whether the rest
+ * of the keys mean what this parser thinks they mean. */
+const PLAN_CONTRACT_VERSION = 1;
+
+/** Subfolder of the conductor's own scratch directory that plans are written
+ * to, one file per plan, named for its planId. */
+const PLAN_DIR_BASENAME = 'plans';
+
+/** A plan id this plugin generated: lowercase, digits and hyphens, short.
+ * Every path built out of a plan id is checked against this first, so a plan
+ * id can never be a way to reach a file outside the plans folder. */
+const PLAN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+const PLAN_KNOWN_TOP_LEVEL_KEYS = ['version', 'planId', 'rationale', 'moves', 'messages'];
+const PLAN_KNOWN_MOVE_KEYS = ['cardKey', 'toColumnId', 'why'];
+const PLAN_KNOWN_MESSAGE_KEYS = ['cardKey', 'prompt', 'why'];
+
+/** Hard ceiling on the plan file this plugin will even attempt to parse. A
+ * conductor that writes a quarter of a megabyte of JSON has not written a
+ * plan. */
+const PLAN_FILE_MAX_CHARS = 256 * 1024;
+/** Hard ceiling on entries per list, independent of the WIP cap. The cap
+ * decides what executes; this decides what is read at all, so a plan with
+ * ten thousand moves cannot become ten thousand rejection reasons that then
+ * have to be rendered, logged and stored. */
+const PLAN_ENTRY_CAP = 100;
+/** Longest prompt one message may carry. Longer than this is a document,
+ * not a message. */
+const PLAN_MESSAGE_PROMPT_MAX_CHARS = 4000;
+/** `rationale` and `why` are display text, so they are clipped rather than
+ * rejected: a long one costs the panel bytes and nothing else. */
+const PLAN_RATIONALE_MAX_CHARS = 2000;
+const PLAN_WHY_MAX_CHARS = 400;
+/** How much of an unreadable answer is shown back to the user verbatim. */
+const PLAN_RAW_PREVIEW_CHARS = 2000;
+/** How much of a rejected entry is kept, as text, beside its reason. */
+const PLAN_ENTRY_PREVIEW_CHARS = 300;
+
+/** Budget for the rendered prompt. Cards past it are dropped with a line
+ * that says so - the same honesty trimToBudget() applies to the panel
+ * snapshot, because the alternative is a model confidently planning around
+ * cards that were silently withheld from it. */
+const PLAN_PROMPT_BUDGET_CHARS = 24 * 1024;
+/** Per-field caps inside one card's block of the prompt. */
+const PLAN_PROMPT_DESCRIPTION_CHARS = 400;
+const PLAN_PROMPT_COMMENT_CHARS = 200;
+const PLAN_PROMPT_COMMENT_LIMIT = 3;
+const PLAN_PROMPT_HISTORY_LIMIT = 4;
+const PLAN_PROMPT_HISTORY_CHARS = 160;
+/** At most this many sessions get a History read for one plan prompt. The
+ * excerpt is a courtesy, and transcripts.read is rate limited and audited: a
+ * board of two hundred granted cards must not cost two hundred reads. */
+const PLAN_HISTORY_SESSION_LIMIT = 8;
+
+/** A fresh plan id: the current time plus 32 bits of randomness, both in
+ * base36, so it sorts roughly by age, is unique enough within one board's
+ * plans folder, and is safe as a filename. Same spirit as nextCommentId(). */
+function newPlanId() {
+	return (
+		'plan-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 0x100000000).toString(36)
+	);
+}
+
+/** The path a plan is written to, relative to the conductor's working
+ * directory - exactly what the prompt tells the conductor to write. Throws
+ * on an id this plugin did not generate rather than building a path out of
+ * it.
+ * @param {string} planId */
+function planFileRelativePath(planId) {
+	if (typeof planId !== 'string' || !PLAN_ID_PATTERN.test(planId)) {
+		throw new Error('planFileRelativePath requires a plan id this plugin generated');
+	}
+	return PLAN_DIR_BASENAME + '/' + planId + '.json';
+}
+
+/** The same path this plugin reads the plan back from: inside the board's own
+ * conductor scratch folder, which is the only place it holds fs permission
+ * for anyway.
+ * @param {string} boardId @param {string} planId */
+function planFilePath(boardId, planId) {
+	return conductorScratchDir(boardId) + '/' + planFileRelativePath(planId);
+}
+
+/** One-line display text: whitespace collapsed, clipped with an explicit
+ * marker so a reader can tell a clipped field from a short one. Used for
+ * every free-text field that rides in a prompt or in a rejection reason.
+ * @param {unknown} value @param {number} max */
+function planClip(value, max) {
+	const text = String(value === undefined || value === null ? '' : value)
+		.replace(/\s+/g, ' ')
+		.trim();
+	return text.length <= max ? text : text.slice(0, max) + ' ... (clipped)';
+}
+
+/** `"a", "b" and "c"`: how a list of keys or columns reads inside a reason.
+ * @param {string[]} values */
+function planQuoteList(values) {
+	const quoted = (Array.isArray(values) ? values : []).map(function (value) {
+		return JSON.stringify(String(value));
+	});
+	if (quoted.length === 0) return 'nothing';
+	if (quoted.length === 1) return quoted[0];
+	return quoted.slice(0, -1).join(', ') + ' and ' + quoted[quoted.length - 1];
+}
+
+/** What a value IS, for a reason a person reads: its JSON when that is
+ * short, its type otherwise. Never the value itself unbounded.
+ * @param {unknown} value */
+function planDescribeValue(value) {
+	if (value === undefined) return 'nothing';
+	let json;
+	try {
+		json = JSON.stringify(value);
+	} catch {
+		// A value JSON.stringify refuses (a cycle, a BigInt) can still be
+		// described by its type, which is all this reason needs.
+		json = undefined;
+	}
+	if (typeof json === 'string' && json.length <= 60) return json;
+	return Array.isArray(value) ? 'an array' : 'a ' + typeof value;
+}
+
+/** What the conductor wrote, for the user to read when it could not be
+ * parsed. Deliberately NOT planClip(): this one keeps the text exactly as
+ * written, newlines and all, and only truncates, because the whole point of
+ * showing it is to let someone see the thing that failed to parse. A plan
+ * file with its whitespace collapsed is unreadable as JSON.
+ * @param {string} text */
+function planRawPreview(text) {
+	const raw = typeof text === 'string' ? text : '';
+	return raw.length <= PLAN_RAW_PREVIEW_CHARS
+		? raw
+		: raw.slice(0, PLAN_RAW_PREVIEW_CHARS) + '\n... (truncated)';
+}
+
+/** A rejected entry, as the capped text shown beside its reason.
+ * @param {unknown} entry */
+function planEntryPreview(entry) {
+	let json;
+	try {
+		json = JSON.stringify(entry);
+	} catch {
+		// Same as planDescribeValue(): the reason beside this preview is the
+		// real message, so an unserializable entry degrades to String().
+		json = undefined;
+	}
+	return planClip(typeof json === 'string' ? json : String(entry), PLAN_ENTRY_PREVIEW_CHARS);
+}
+
+/** Relative age in words, for the prompt's `last activity` line. The model
+ * gets the ISO timestamp too; this is what makes "stalled for three days"
+ * legible without arithmetic.
+ * @param {unknown} timestamp @param {number} now */
+function planAgeLabel(timestamp, now) {
+	const at = finiteTimestamp(timestamp);
+	if (at === null) return 'unknown';
+	const minutes = Math.round(Math.max(0, now - at) / 60000);
+	if (minutes < 1) return 'just now';
+	if (minutes < 60) return minutes + (minutes === 1 ? ' minute ago' : ' minutes ago');
+	const hours = Math.round(minutes / 60);
+	if (hours < 48) return hours + (hours === 1 ? ' hour ago' : ' hours ago');
+	const days = Math.round(hours / 24);
+	return days + (days === 1 ? ' day ago' : ' days ago');
+}
+
+/** An ISO timestamp, or `unknown` for a value that is not a clock reading.
+ * @param {unknown} timestamp */
+function planIsoTime(timestamp) {
+	const at = finiteTimestamp(timestamp);
+	return at === null ? 'unknown' : new Date(at).toISOString();
+}
+
+// ---------------------------------------------------------------------------
+// The prompt. Pure: everything it renders is already in the snapshot
+// buildPlanSnapshot() hands it, so a test can render a board that never
+// existed without a stub SDK.
+// ---------------------------------------------------------------------------
+
+/** One column, as the prompt's column list shows it: its id (what a move has
+ * to name), its title, and every meaning the board model gives it.
+ * @param {object} column */
+function renderPlanColumnLine(column) {
+	const notes = [];
+	if (column.terminal === true) {
+		notes.push('terminal: a card parked here is finished, and the board may archive it');
+	}
+	if (typeof column.wipLimit === 'number') {
+		notes.push('work in progress limit ' + column.wipLimit);
+	}
+	if (typeof column.mapsTo === 'string' && column.mapsTo !== '') {
+		notes.push('shows up on the Global board as "' + column.mapsTo + '"');
+	}
+	if (column.readOnly === true) {
+		notes.push('read only: no card may be moved into or out of it');
+	}
+	notes.push(
+		column.cardCount === 1 ? '1 card right now' : String(column.cardCount) + ' cards right now'
+	);
+	return '- `' + column.id + '` "' + column.title + '" (' + notes.join('; ') + ')';
+}
+
+/** One card's block of the prompt: everything a plan could need about that
+ * card and nothing else. No session id and no tab id - a plan names cards by
+ * their key and this plugin resolves the rest itself - and a History excerpt
+ * only when the user has granted this plugin access to that agent.
+ * @param {object} card @param {number} now */
+function renderPlanCardBlock(card, now) {
+	const lines = [];
+	lines.push('### `' + card.key + '`');
+	lines.push('- title: ' + planClip(card.title, 200));
+	lines.push('- agent: ' + (card.agentId ? card.agentId : 'unknown'));
+	lines.push(
+		'- project: ' +
+			(card.projectName
+				? card.projectName + ' (' + card.projectPath + ')'
+				: 'none (this card has no project folder)')
+	);
+	lines.push('- column: `' + (card.columnId ? card.columnId : 'none') + '`');
+	lines.push('- status: ' + (card.status ? card.status : 'idle'));
+	lines.push(
+		'- last activity: ' +
+			planIsoTime(card.lastActivityAt) +
+			' (' +
+			planAgeLabel(card.lastActivityAt, now) +
+			')'
+	);
+	lines.push(
+		'- messaging: ' +
+			(card.accessGranted === true
+				? 'granted, so a message for this card can be sent'
+				: 'NOT granted, so a message for this card waits until a person approves access to this agent')
+	);
+	lines.push(
+		'- may move to: ' +
+			(card.movableTo.length > 0
+				? card.movableTo
+						.map(function (id) {
+							return '`' + id + '`';
+						})
+						.join(', ')
+				: 'nothing (this card cannot change column)')
+	);
+	if (card.description) {
+		lines.push('- description: ' + planClip(card.description, PLAN_PROMPT_DESCRIPTION_CHARS));
+	}
+	for (const comment of card.comments || []) {
+		lines.push(
+			'- comment (' +
+				planIsoTime(comment.createdAt) +
+				'): ' +
+				planClip(comment.body, PLAN_PROMPT_COMMENT_CHARS)
+		);
+	}
+	for (const row of card.history || []) {
+		lines.push(
+			'- History (' +
+				planIsoTime(row.timestamp) +
+				'): ' +
+				planClip(row.summary, PLAN_PROMPT_HISTORY_CHARS)
+		);
+	}
+	return lines.join('\n');
+}
+
+/**
+ * The rendered board, as the prompt the conductor is dispatched. Pure: a
+ * snapshot in, text out, no host calls and no module state.
+ *
+ * The card list is the one part with a budget. Cards are rendered until
+ * PLAN_PROMPT_BUDGET_CHARS is reached and the rest are counted in a line
+ * that says so, so the conductor is told it is looking at part of a board.
+ * @param {object} snapshot buildPlanSnapshot()'s `snapshot`
+ * @returns {string}
+ */
+function renderPlanPrompt(snapshot) {
+	const now = finiteTimestamp(snapshot.now) || Date.now();
+	const head = [];
+	head.push(
+		'You are the conductor of the "' +
+			snapshot.boardName +
+			'" Kanban board in Maestro. Read the board below and answer with a plan.'
+	);
+	head.push('');
+	head.push(
+		'Every card on this board is one AI tab that is already open in Maestro. A plan can do exactly two things to a card: move it to another column, and send its agent one message. That is the whole of your authority. You never act on the board yourself - this plugin executes your plan, and on this board ' +
+			(snapshot.mode === PLAN_MODE_AUTO
+				? 'it executes without asking anyone first, so propose only what you are willing to have happen unreviewed.'
+				: 'a person approves or rejects each line of it first.')
+	);
+	head.push('');
+	head.push('Clock: ' + planIsoTime(now));
+	head.push('Board id: `' + String(snapshot.boardId) + '`');
+	if (snapshot.global === true) {
+		head.push(
+			'This is the Global board: it aggregates the cards of every open project, and a card moves on it only between the global columns its own project can reach.'
+		);
+	}
+	if (snapshot.boardError) {
+		head.push('Board file problem a person has to fix: ' + planClip(snapshot.boardError, 300));
+	}
+	head.push('');
+	head.push('## Columns');
+	head.push('');
+	for (const column of snapshot.columns || []) {
+		head.push(renderPlanColumnLine(column));
+	}
+	head.push('');
+	head.push('## Rules');
+	head.push('');
+	head.push(
+		'- At most ' +
+			(snapshot.wipCap === 1 ? '1 card' : snapshot.wipCap + ' cards') +
+			' may be acted on in one execution. A card you both move and message counts once. Anything past the cap is held as pending rather than run, so a plan longer than the cap is not an error: it just does not all happen at once.'
+	);
+	head.push(
+		'- At most one move and one message per card. A second entry for the same card is rejected.'
+	);
+	head.push(
+		'- You may move a card only to a column listed as "may move to" for that card. Every other column is rejected, including a column that exists on another project board.'
+	);
+	head.push(
+		'- You may never create a card and never create an agent. A card exists only because a person opened an AI tab, and nothing you write can make one.'
+	);
+	head.push(
+		'- You may message only the agents this board already reaches. A message to a card whose messaging is NOT granted is kept rather than discarded, and waits for a person to approve access to that agent.'
+	);
+	if (snapshot.halted === true) {
+		head.push(
+			'- THIS BOARD IS HALTED (since ' +
+				planIsoTime(snapshot.haltedAt) +
+				'). Nothing will execute until a person clears the halt, so an empty plan is the only useful answer right now.'
+		);
+	}
+	head.push('');
+	head.push('## Cards');
+	head.push('');
+
+	const tail = [];
+	tail.push('');
+	tail.push('## Your answer');
+	tail.push('');
+	tail.push(
+		'Write your plan to `' +
+			snapshot.planFile +
+			'`, relative to your own working directory, creating the folder if it is not there. That file is the only thing this board reads: do not paste the plan into your reply, and do not write it anywhere else.'
+	);
+	tail.push('');
+	tail.push('One JSON object, exactly this shape:');
+	tail.push('');
+	tail.push('```json');
+	tail.push('{');
+	tail.push('  "version": ' + PLAN_CONTRACT_VERSION + ',');
+	tail.push('  "planId": ' + JSON.stringify(snapshot.planId) + ',');
+	tail.push('  "rationale": "one short paragraph, for the person reading this plan",');
+	tail.push(
+		'  "moves": [{ "cardKey": "<a key from above>", "toColumnId": "<a column that card may move to>", "why": "one sentence" }],'
+	);
+	tail.push(
+		'  "messages": [{ "cardKey": "<a key from above>", "prompt": "<what to send that agent>", "why": "one sentence" }]'
+	);
+	tail.push('}');
+	tail.push('```');
+	tail.push('');
+	tail.push(
+		'- `planId` must be exactly ' +
+			JSON.stringify(snapshot.planId) +
+			'. A plan carrying any other id is read as the answer to a different request and discarded.'
+	);
+	tail.push(
+		'- No other top-level keys. A key this contract does not list makes the whole plan unreadable, so there is no way to smuggle in an instruction: `rationale` and `why` are shown to a person and never executed.'
+	);
+	tail.push(
+		'- `moves` and `messages` may both be empty. An empty plan is a valid answer, and a better one than a move you cannot justify.'
+	);
+	tail.push(
+		'- A `cardKey` must be one of the keys above, copied exactly. An invented key is rejected.'
+	);
+	tail.push(
+		'- Every message `prompt` is sent verbatim to that agent, in its own tab, as if a person had typed it. Keep it under ' +
+			PLAN_MESSAGE_PROMPT_MAX_CHARS +
+			' characters.'
+	);
+
+	const headText = head.join('\n');
+	const tailText = tail.join('\n');
+	const blocks = (snapshot.cards || []).map(function (card) {
+		return renderPlanCardBlock(card, now);
+	});
+	let used = headText.length + tailText.length;
+	const kept = [];
+	for (let i = 0; i < blocks.length; i++) {
+		if (kept.length > 0 && used + blocks[i].length > PLAN_PROMPT_BUDGET_CHARS) break;
+		kept.push(blocks[i]);
+		used += blocks[i].length + 2;
+	}
+	const omitted = blocks.length - kept.length;
+	const cardsText =
+		kept.length > 0
+			? kept.join('\n\n') +
+				(omitted > 0
+					? '\n\n' +
+						omitted +
+						' further card(s) are on this board but did not fit in this prompt. You are looking at part of the board, so do not plan for a card you cannot see here.'
+					: '')
+			: 'This board has no cards right now. The only correct plan is an empty one.';
+	return headText + '\n' + cardsText + '\n' + tailText + '\n';
+}
+
+// ---------------------------------------------------------------------------
+// The parser. Also pure: a board context and a card list in, a plan out. It
+// re-derives every legality question through legalColumnsFor() rather than
+// from the prompt it rendered, so a conductor that ignores the "may move to"
+// list is caught here and not at the point of a write.
+// ---------------------------------------------------------------------------
+
+/** Extracts the JSON value out of whatever the conductor wrote: the bare
+ * object when the whole file is one, otherwise exactly one fenced block.
+ * Several blocks is a rejection rather than a guess - picking "the first
+ * one" or "the longest one" would be this plugin deciding which of two plans
+ * the conductor meant.
+ * @param {string} text
+ * @returns {{ value?: unknown, error: string|null }} */
+function extractPlanJson(text) {
+	const raw = typeof text === 'string' ? text : '';
+	const trimmed = raw.trim();
+	if (trimmed === '') return { error: 'the plan file is empty' };
+	if (raw.length > PLAN_FILE_MAX_CHARS) {
+		return {
+			error:
+				'the plan file is ' +
+				raw.length +
+				' characters, more than the ' +
+				PLAN_FILE_MAX_CHARS +
+				' this board will read',
+		};
+	}
+	if (trimmed.charAt(0) === '{') {
+		try {
+			return { value: JSON.parse(trimmed), error: null };
+		} catch {
+			// Not a bare object after all. Fall through to the fenced-block
+			// search rather than reporting a parse error here: prose can begin
+			// with a brace, and a real fenced plan may still be further down.
+		}
+	}
+	const fence = /```([^\n`]*)\r?\n([\s\S]*?)```/g;
+	const candidates = [];
+	let match = fence.exec(raw);
+	while (match !== null) {
+		const body = match[2].trim();
+		if (body !== '' && body.charAt(0) === '{') {
+			candidates.push({ info: match[1].trim().toLowerCase(), body: body });
+		}
+		match = fence.exec(raw);
+	}
+	const tagged = candidates.filter(function (candidate) {
+		return candidate.info === 'json';
+	});
+	const usable = tagged.length > 0 ? tagged : candidates;
+	if (usable.length === 0) {
+		return {
+			error:
+				trimmed.charAt(0) === '{'
+					? 'the plan file is not valid JSON'
+					: 'there is no JSON plan in what the conductor wrote',
+		};
+	}
+	if (usable.length > 1) {
+		return {
+			error:
+				'the conductor wrote ' +
+				usable.length +
+				' JSON blocks, and a plan has to be exactly one, so there is no way to tell which one is the plan',
+		};
+	}
+	try {
+		return { value: JSON.parse(usable[0].body), error: null };
+	} catch (err) {
+		return { error: 'the plan is not valid JSON: ' + errorMessage(err) };
+	}
+}
+
+/** The board facts parsePlan() answers legality from, normalized once per
+ * parse: the card index, the boards legalColumnsFor() needs, and the cap.
+ * @param {unknown} board `{ global, globalBoard, projectBoards, wipCap }`
+ * @param {Iterable<object>|Map<string, object>} cards */
+function planParseContext(board, cards) {
+	const source =
+		board && typeof board === 'object' && !Array.isArray(board)
+			? /** @type {{ global?: unknown, globalBoard?: unknown, projectBoards?: unknown, wipCap?: unknown }} */ (
+					board
+				)
+			: {};
+	const byKey = new Map();
+	const iterable =
+		cards && typeof (/** @type {Map<string, object>} */ (cards).get) === 'function'
+			? /** @type {Map<string, object>} */ (cards).values()
+			: cards;
+	for (const card of iterable || []) {
+		if (!card || typeof card.key !== 'string' || card.key === '') continue;
+		byKey.set(card.key, card);
+	}
+	let wipCap = DEFAULT_PLAN_WIP_CAP;
+	if (typeof source.wipCap === 'number' && isFinite(source.wipCap)) {
+		wipCap = Math.max(MIN_PLAN_WIP_CAP, Math.round(source.wipCap));
+	}
+	return {
+		global: source.global === true,
+		globalBoard: /** @type {object|null} */ (source.globalBoard || null),
+		projectBoards:
+			/** @type {Map<string, object>|Record<string, object>|null} */ (source.projectBoards) || null,
+		wipCap: wipCap,
+		cardsByKey: byKey,
+		legalCache: /** @type {Map<string, string[]>} */ (new Map()),
+	};
+}
+
+/** The columns one card may legally occupy, through legalColumnsFor() and
+ * nothing else. Memoized on the pair the answer actually depends on (the
+ * card's project and its current column), since a board of fifty cards in
+ * four projects asks this question fifty times about four answers.
+ * @param {ReturnType<typeof planParseContext>} context @param {object} card
+ * @returns {string[]} */
+function planLegalColumnsFor(context, card) {
+	const projectPath = typeof card.projectPath === 'string' ? card.projectPath : '';
+	const columnId = typeof card.columnId === 'string' ? card.columnId : '';
+	// NUL, not a space: a project path and a column id can both contain one,
+	// and "/a b" + "c" must not share a cache entry with "/a" + "b c".
+	const cacheKey = projectPath + '\u0000' + columnId;
+	const cached = context.legalCache.get(cacheKey);
+	if (cached) return cached;
+	const legal = legalColumnsFor(
+		card,
+		projectBoardFor(context.projectBoards, projectPath),
+		context.globalBoard,
+		{ global: context.global }
+	);
+	context.legalCache.set(cacheKey, legal);
+	return legal;
+}
+
+/** Every key an entry carries that this contract does not name, or null when
+ * it carries none. Entries are checked as strictly as the plan object
+ * itself: `{ cardKey, toColumnId, createCard: true }` has to fail, not
+ * quietly become a plain move.
+ * @param {object} entry @param {string[]} known @returns {string[]|null} */
+function planUnknownEntryKeys(entry, known) {
+	const unknown = Object.keys(entry).filter(function (key) {
+		return known.indexOf(key) === -1;
+	});
+	return unknown.length === 0 ? null : unknown;
+}
+
+/** A whole-plan failure: `ok: false`, the reason, and what the conductor
+ * actually wrote, so the user can read that rather than being told "the plan
+ * was empty" about an answer that was not.
+ * @param {string} reason @param {string} raw
+ * @param {ReturnType<typeof planParseContext>} context */
+function planParseFailure(reason, raw, context) {
+	return {
+		ok: false,
+		error: reason,
+		raw: planRawPreview(raw),
+		planId: null,
+		version: null,
+		rationale: '',
+		moves: [],
+		messages: [],
+		rejected: [],
+		cardsTouched: 0,
+		deferredCount: 0,
+		wipCap: context.wipCap,
+	};
+}
+
+/**
+ * Reads one plan file into the entries this board is willing to execute.
+ *
+ * `ok: false` means nothing parsed: no JSON, more than one JSON block,
+ * malformed JSON, not an object, an unknown top-level key, the wrong
+ * contract version, or a planId that answers a different request. The
+ * verbatim text comes back in `raw` for the user to look at, and the result
+ * is never an empty plan, because "the conductor proposed nothing" and "this
+ * plugin could not read what the conductor proposed" are different states
+ * and have to read differently.
+ *
+ * `ok: true` means a plan parsed, and then every entry stands or falls on
+ * its own: `moves` and `messages` hold what this board will execute, and
+ * `rejected` holds the rest with a reason each. An entry past the WIP cap is
+ * neither executed nor rejected - it rides in `moves`/`messages` with
+ * `overCap: true` and its own `capReason`, and is held as pending, because
+ * silently dropping work the conductor proposed is how a board loses track
+ * of what it was asked to do. The executable subset is therefore the entries
+ * with `overCap: false`.
+ *
+ * A message to a card whose agent is not granted is not a rejection either:
+ * it is marked `needsAccess`, and Phase 04's one-time access request is what
+ * resolves it at execution time.
+ *
+ * @param {string} text the plan file's contents
+ * @param {string} expectedPlanId the planId this run asked for
+ * @param {unknown} board `{ global, globalBoard, projectBoards, wipCap }`
+ * @param {Iterable<object>|Map<string, object>} cards cards carrying `key`,
+ *   `columnId`, `projectPath`, `sessionId`, `tabId` and `accessGranted`
+ * @returns {object}
+ */
+function parsePlan(text, expectedPlanId, board, cards) {
+	const raw = typeof text === 'string' ? text : '';
+	const context = planParseContext(board, cards);
+	if (typeof expectedPlanId !== 'string' || expectedPlanId === '') {
+		return planParseFailure('this board did not ask for a plan', raw, context);
+	}
+	const extracted = extractPlanJson(raw);
+	if (extracted.error) return planParseFailure(extracted.error, raw, context);
+	const value = extracted.value;
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		return planParseFailure(
+			'a plan has to be a single JSON object, and this is ' + planDescribeValue(value),
+			raw,
+			context
+		);
+	}
+	const plan = /** @type {Record<string, any>} */ (value);
+	const unknownKeys = Object.keys(plan).filter(function (key) {
+		return PLAN_KNOWN_TOP_LEVEL_KEYS.indexOf(key) === -1;
+	});
+	if (unknownKeys.length > 0) {
+		return planParseFailure(
+			'this plan carries ' +
+				planQuoteList(unknownKeys) +
+				', which this board does not read; a plan may only carry ' +
+				planQuoteList(PLAN_KNOWN_TOP_LEVEL_KEYS),
+			raw,
+			context
+		);
+	}
+	if (plan.version !== PLAN_CONTRACT_VERSION) {
+		return planParseFailure(
+			'this board reads plan version ' +
+				PLAN_CONTRACT_VERSION +
+				', and this plan says ' +
+				planDescribeValue(plan.version),
+			raw,
+			context
+		);
+	}
+	if (typeof plan.planId !== 'string' || plan.planId === '') {
+		return planParseFailure(
+			'a plan has to carry the planId it was asked for, and this one carries ' +
+				planDescribeValue(plan.planId),
+			raw,
+			context
+		);
+	}
+	if (plan.planId !== expectedPlanId) {
+		return planParseFailure(
+			'this plan answers ' +
+				JSON.stringify(plan.planId) +
+				', not the ' +
+				JSON.stringify(expectedPlanId) +
+				' this board asked for, so it is a plan for a different request',
+			raw,
+			context
+		);
+	}
+	if (plan.moves !== undefined && !Array.isArray(plan.moves)) {
+		return planParseFailure(
+			'`moves` has to be an array, and this plan has ' + planDescribeValue(plan.moves),
+			raw,
+			context
+		);
+	}
+	if (plan.messages !== undefined && !Array.isArray(plan.messages)) {
+		return planParseFailure(
+			'`messages` has to be an array, and this plan has ' + planDescribeValue(plan.messages),
+			raw,
+			context
+		);
+	}
+
+	const moves = [];
+	const messages = [];
+	const rejected = [];
+	// Cap accounting. `touched` is every card an accepted entry has already
+	// counted, so a card that is both moved and messaged costs one; `deferred`
+	// is the cards that arrived once the cap was full, so a card's SECOND
+	// entry is deferred whenever its first one was.
+	const touched = new Set();
+	const deferred = new Set();
+	const overCapReason =
+		'held as pending: this board executes ' + context.wipCap + ' cards at a time';
+	/** Counts one accepted entry's card against the cap, and reports whether
+	 * that entry is over it. @param {string} cardKey */
+	function countAgainstCap(cardKey) {
+		if (deferred.has(cardKey)) return true;
+		if (touched.has(cardKey)) return false;
+		if (touched.size >= context.wipCap) {
+			touched.add(cardKey);
+			deferred.add(cardKey);
+			return true;
+		}
+		touched.add(cardKey);
+		return false;
+	}
+	/** @param {string} kind @param {unknown} cardKey @param {string} reason @param {unknown} entry */
+	function reject(kind, cardKey, reason, entry) {
+		rejected.push({
+			kind: kind,
+			cardKey: typeof cardKey === 'string' && cardKey !== '' ? cardKey : null,
+			reason: reason,
+			entry: planEntryPreview(entry),
+		});
+	}
+	/** The card an entry names, or null with a rejection already recorded.
+	 * Shared by both lists so "a message with no card" and "a move with no
+	 * card" read the same.
+	 * @param {string} kind @param {any} entry @param {string[]} known */
+	function resolveEntryCard(kind, entry, known) {
+		if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+			reject(kind, null, 'a ' + kind + ' has to be an object', entry);
+			return null;
+		}
+		const unknown = planUnknownEntryKeys(entry, known);
+		if (unknown) {
+			reject(
+				kind,
+				entry.cardKey,
+				'this ' +
+					kind +
+					' carries ' +
+					planQuoteList(unknown) +
+					', which this board does not read; a ' +
+					kind +
+					' may only carry ' +
+					planQuoteList(known),
+				entry
+			);
+			return null;
+		}
+		if (typeof entry.cardKey !== 'string' || entry.cardKey === '') {
+			reject(
+				kind,
+				null,
+				'this ' + kind + ' names no card (`cardKey` was ' + planDescribeValue(entry.cardKey) + ')',
+				entry
+			);
+			return null;
+		}
+		const card = context.cardsByKey.get(entry.cardKey);
+		if (!card) {
+			reject(
+				kind,
+				entry.cardKey,
+				'there is no card ' +
+					JSON.stringify(entry.cardKey) +
+					' on this board, so there is nothing to act on',
+				entry
+			);
+			return null;
+		}
+		return card;
+	}
+
+	const rawMoves = Array.isArray(plan.moves) ? plan.moves : [];
+	for (let i = 0; i < rawMoves.length; i++) {
+		const entry = rawMoves[i];
+		if (i >= PLAN_ENTRY_CAP) {
+			reject(
+				'move',
+				entry && typeof entry.cardKey === 'string' ? entry.cardKey : null,
+				'this plan proposes more than ' +
+					PLAN_ENTRY_CAP +
+					' moves, which is more than this board reads at once',
+				entry
+			);
+			continue;
+		}
+		const card = resolveEntryCard('move', entry, PLAN_KNOWN_MOVE_KEYS);
+		if (!card) continue;
+		if (typeof entry.toColumnId !== 'string' || entry.toColumnId === '') {
+			reject(
+				'move',
+				card.key,
+				'this move names no column (`toColumnId` was ' + planDescribeValue(entry.toColumnId) + ')',
+				entry
+			);
+			continue;
+		}
+		const already = moves.some(function (move) {
+			return move.cardKey === card.key;
+		});
+		if (already) {
+			reject('move', card.key, 'this plan already moves that card; one move per card', entry);
+			continue;
+		}
+		if (entry.toColumnId === card.columnId) {
+			reject(
+				'move',
+				card.key,
+				'that card is already in `' + entry.toColumnId + '`, so there is nothing to move',
+				entry
+			);
+			continue;
+		}
+		const legal = planLegalColumnsFor(context, card);
+		if (legal.indexOf(entry.toColumnId) === -1) {
+			reject(
+				'move',
+				card.key,
+				'that card may not be moved to `' +
+					entry.toColumnId +
+					'`; it may only go to ' +
+					(legal.length > 0 ? planQuoteList(legal) : 'no column at all'),
+				entry
+			);
+			continue;
+		}
+		const overCap = countAgainstCap(card.key);
+		moves.push({
+			cardKey: card.key,
+			fromColumnId: typeof card.columnId === 'string' ? card.columnId : null,
+			toColumnId: entry.toColumnId,
+			why: planClip(entry.why, PLAN_WHY_MAX_CHARS),
+			overCap: overCap,
+			capReason: overCap ? overCapReason : null,
+		});
+	}
+
+	const rawMessages = Array.isArray(plan.messages) ? plan.messages : [];
+	for (let i = 0; i < rawMessages.length; i++) {
+		const entry = rawMessages[i];
+		if (i >= PLAN_ENTRY_CAP) {
+			reject(
+				'message',
+				entry && typeof entry.cardKey === 'string' ? entry.cardKey : null,
+				'this plan proposes more than ' +
+					PLAN_ENTRY_CAP +
+					' messages, which is more than this board reads at once',
+				entry
+			);
+			continue;
+		}
+		const card = resolveEntryCard('message', entry, PLAN_KNOWN_MESSAGE_KEYS);
+		if (!card) continue;
+		const prompt = typeof entry.prompt === 'string' ? entry.prompt.trim() : '';
+		if (prompt === '') {
+			reject(
+				'message',
+				card.key,
+				'this message has no prompt to send (`prompt` was ' + planDescribeValue(entry.prompt) + ')',
+				entry
+			);
+			continue;
+		}
+		if (prompt.length > PLAN_MESSAGE_PROMPT_MAX_CHARS) {
+			reject(
+				'message',
+				card.key,
+				'that prompt is ' +
+					prompt.length +
+					' characters, more than the ' +
+					PLAN_MESSAGE_PROMPT_MAX_CHARS +
+					' one message may carry',
+				entry
+			);
+			continue;
+		}
+		const already = messages.some(function (message) {
+			return message.cardKey === card.key;
+		});
+		if (already) {
+			reject(
+				'message',
+				card.key,
+				'this plan already messages that card; one message per card',
+				entry
+			);
+			continue;
+		}
+		if (typeof card.sessionId !== 'string' || typeof card.tabId !== 'string') {
+			reject('message', card.key, 'that card has no agent tab left to send to', entry);
+			continue;
+		}
+		const overCap = countAgainstCap(card.key);
+		messages.push({
+			cardKey: card.key,
+			sessionId: card.sessionId,
+			tabId: card.tabId,
+			prompt: prompt,
+			why: planClip(entry.why, PLAN_WHY_MAX_CHARS),
+			needsAccess: card.accessGranted !== true,
+			overCap: overCap,
+			capReason: overCap ? overCapReason : null,
+		});
+	}
+
+	return {
+		ok: true,
+		error: null,
+		raw: null,
+		planId: expectedPlanId,
+		version: PLAN_CONTRACT_VERSION,
+		// Display only: clipped, never parsed, never executed. A conductor
+		// cannot reach the board through prose.
+		rationale:
+			typeof plan.rationale === 'string' ? planClip(plan.rationale, PLAN_RATIONALE_MAX_CHARS) : '',
+		moves: moves,
+		messages: messages,
+		rejected: rejected,
+		cardsTouched: touched.size - deferred.size,
+		deferredCount: deferred.size,
+		wipCap: context.wipCap,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// The snapshot. The one stateful piece: it reads the live board, its cards,
+// their notes, their grants, and - for granted cards only - their History
+// excerpt, and hands back both the display-facing snapshot the prompt
+// renders from and the context parsePlan() answers legality from.
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds everything one plan run needs: a fresh planId, the rendered-board
+ * snapshot, the parse context, and the plan-facing card list.
+ *
+ * History is read only for granted cards, at most PLAN_HISTORY_SESSION_LIMIT
+ * sessions, most recently active first, through the same cached
+ * readSessionHistoryExcerpt() the detail pane uses - so a board whose cards
+ * the user has been reading costs no extra reads at all, and an ungranted
+ * card contributes nothing.
+ * @param {{ planId?: string, now?: number }} [options]
+ * @returns {Promise<{ planId: string, snapshot: object, board: object, cards: object[] }>}
+ */
+async function buildPlanSnapshot(options) {
+	const planId =
+		options && typeof options.planId === 'string' && PLAN_ID_PATTERN.test(options.planId)
+			? options.planId
+			: newPlanId();
+	const now = (options && finiteTimestamp(options.now)) || Date.now();
+	const active = await resolveActiveBoard();
+	const boardId = currentBoardId();
+	const settings = planSettingsForBoard(boardId);
+	const global = active.view.kind === 'global';
+	const globalBoard = active.globalResult.board;
+	const projectBoards = global
+		? await loadProjectBoardsForCards()
+		: new Map(active.projectPath !== null ? [[active.projectPath, active.projectResult]] : []);
+	const parseBoard = {
+		global: global,
+		globalBoard: globalBoard,
+		projectBoards: projectBoards,
+		wipCap: settings.wipCap,
+	};
+	// Reused for its legality memo only; the card index is filled by the
+	// caller's own parsePlan() call later, off the list built below.
+	const context = planParseContext(parseBoard, []);
+
+	// Columns and their card lists in the board's own display order, through
+	// the same two builders the panel snapshot renders from, so a plan reads
+	// the board the user is looking at.
+	const columns = [];
+	const ordered = [];
+	if (global) {
+		const built = buildGlobalBoard(globalBoard, projectBoards, active.cards, {
+			orderOf: cardOrderOf,
+		});
+		for (const column of built.columns) {
+			columns.push({
+				id: column.id,
+				title: column.title,
+				terminal: column.terminal === true,
+				wipLimit: typeof column.wip_limit === 'number' ? column.wip_limit : undefined,
+				readOnly: column.readOnly === true,
+				cardCount: column.cards.length,
+			});
+			for (const card of column.cards) ordered.push(card);
+		}
+	} else {
+		const byColumn = groupCardsByColumn(active.columns, active.cards);
+		for (const column of active.columns) {
+			const members = byColumn.get(column.id) || [];
+			columns.push({
+				id: column.id,
+				title: column.title,
+				terminal: column.terminal === true,
+				wipLimit: typeof column.wip_limit === 'number' ? column.wip_limit : undefined,
+				readOnly: false,
+				mapsTo: typeof column.maps_to === 'string' ? column.maps_to : undefined,
+				cardCount: members.length,
+			});
+			for (const card of members) ordered.push(card);
+		}
+	}
+
+	// One History read per granted SESSION, not per card: History belongs to
+	// the agent, and two tabs of one agent are two cards.
+	const historyBySession = new Map();
+	const historySessions = [];
+	const byRecency = ordered.slice().sort(function (a, b) {
+		return (finiteTimestamp(b.lastActivityAt) || 0) - (finiteTimestamp(a.lastActivityAt) || 0);
+	});
+	for (const card of byRecency) {
+		if (historySessions.length >= PLAN_HISTORY_SESSION_LIMIT) break;
+		if (!isSessionAccessGranted(card.sessionId)) continue;
+		if (historyBySession.has(card.sessionId)) continue;
+		historyBySession.set(card.sessionId, []);
+		historySessions.push(card.sessionId);
+	}
+	for (const sessionId of historySessions) {
+		const entry = await readSessionHistoryExcerpt(sessionId);
+		const rows = entry && Array.isArray(entry.rows) ? entry.rows : [];
+		historyBySession.set(sessionId, rows.slice(0, PLAN_PROMPT_HISTORY_LIMIT));
+	}
+
+	const planCards = ordered.map(function (card) {
+		const note = noteFor(card.key);
+		const legal = planLegalColumnsFor(context, card);
+		const granted = isSessionAccessGranted(card.sessionId);
+		return {
+			key: card.key,
+			sessionId: card.sessionId,
+			tabId: card.tabId,
+			title: card.title,
+			agentId: card.agentId || null,
+			projectPath: card.projectPath || null,
+			projectName:
+				typeof card.projectPath === 'string' && card.projectPath !== ''
+					? projectDisplayName(card.projectPath)
+					: null,
+			columnId: card.columnId,
+			status: card.status,
+			lastActivityAt: card.lastActivityAt,
+			accessGranted: granted,
+			legalColumnIds: legal,
+			// What the prompt offers, which is never the current column: a move
+			// to the column a card already sits in is a no-op parsePlan()
+			// rejects, so inviting one would be inviting a rejection.
+			movableTo: legal.filter(function (id) {
+				return id !== card.columnId;
+			}),
+			description: note.description,
+			comments: note.comments.slice(-PLAN_PROMPT_COMMENT_LIMIT),
+			history: granted ? historyBySession.get(card.sessionId) || [] : [],
+		};
+	});
+
+	// The same preference buildGlobalBoardColumns()/buildProjectBoardColumns()
+	// apply: on the Global board the global file's own failure first and then
+	// the first project that would not parse, on a project board that
+	// project's failure first. Whichever it is, it is a file a person has to
+	// go fix, and the conductor is told so rather than left to plan around
+	// columns that are missing for a reason.
+	let boardError = global ? active.globalResult.error : active.projectResult.error;
+	if (!boardError && global) {
+		for (const result of projectBoards.values()) {
+			if (result && result.error) {
+				boardError = result.error;
+				break;
+			}
+		}
+	}
+	const snapshot = {
+		planId: planId,
+		now: now,
+		boardId: boardId,
+		boardName: currentBoardName(),
+		global: global,
+		wipCap: settings.wipCap,
+		mode: settings.mode,
+		halted: settings.halted,
+		haltedAt: settings.haltedAt,
+		planFile: planFileRelativePath(planId),
+		boardError: boardError || active.globalResult.error || null,
+		columns: columns,
+		cards: planCards,
+	};
+	return { planId: planId, snapshot: snapshot, board: parseBoard, cards: planCards };
+}
+
+/** One plan run's request: the snapshot, the prompt to dispatch, and the two
+ * arguments the eventual parsePlan() call needs. The run loop holds `board`
+ * and `cards` for the completion it is waiting on, so a plan is validated
+ * against the board it was asked about rather than whatever that board has
+ * become by the time the conductor answers.
+ * @param {{ planId?: string, now?: number }} [options]
+ * @returns {Promise<{ planId: string, snapshot: object, prompt: string, board: object, cards: object[] }>} */
+async function buildPlanRequest(options) {
+	const built = await buildPlanSnapshot(options);
+	return {
+		planId: built.planId,
+		snapshot: built.snapshot,
+		prompt: renderPlanPrompt(built.snapshot),
+		board: built.board,
+		cards: built.cards,
+	};
+}
+
+// ===========================================================================
+// End of Phase 07 plan contract.
+// ===========================================================================
+
+// ===========================================================================
 // Phase 03 board selection: which board the panel is rendering. There are
 // two kinds - one project's own board, and the Global board (the aggregation
 // in the pure section above) - and the user's choice is remembered in plugin
@@ -6258,6 +7553,51 @@ module.exports = {
 	conductorTabStatusFrom: conductorTabStatusFrom,
 	conductorTabStatus: conductorTabStatus,
 
+	// Phase 07 plan settings, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-plan-parser.test.ts and, once the run loop
+	// lands, kanban-auto-mode.test.ts). normalizePlanSettings() is pure;
+	// planSettingsForBoard() and isBoardHalted() read the map loadPlanSettings()
+	// fills at activate() time, and setPlanSettings() writes plugin storage, so
+	// a test calls those after activate() with a stub SDK. The panel reaches
+	// the same three fields through this phase's later tasks (the Halt control,
+	// the WIP cap, and the auto-mode switch); nothing else writes them.
+	PLAN_MODE_APPROVE: PLAN_MODE_APPROVE,
+	PLAN_MODE_AUTO: PLAN_MODE_AUTO,
+	DEFAULT_PLAN_WIP_CAP: DEFAULT_PLAN_WIP_CAP,
+	MIN_PLAN_WIP_CAP: MIN_PLAN_WIP_CAP,
+	MAX_PLAN_WIP_CAP: MAX_PLAN_WIP_CAP,
+	normalizePlanSettings: normalizePlanSettings,
+	planSettingsForBoard: planSettingsForBoard,
+	setPlanSettings: setPlanSettings,
+	isBoardHalted: isBoardHalted,
+
+	// Phase 07 plan contract, exported for direct unit testing (see
+	// src/__tests__/plugins/kanban-plan-parser.test.ts). parsePlan(),
+	// extractPlanJson() and renderPlanPrompt() are pure - a board context and
+	// a card list in, a plan or a prompt out - so the adversarial suite calls
+	// them straight through with no stub SDK at all, which is the whole reason
+	// the contract is shaped as three pure functions and one stateful builder
+	// rather than one method that does everything.
+	//
+	// planFileRelativePath() and planFilePath() are pure too; buildPlanSnapshot()
+	// and buildPlanRequest() read the live board, the live cards and (for
+	// granted cards only) their History excerpt, so a test calls them after
+	// activate() with a stub SDK. newPlanId() is exported so a test can assert
+	// the shape of an id this plugin builds paths out of.
+	PLAN_CONTRACT_VERSION: PLAN_CONTRACT_VERSION,
+	PLAN_ENTRY_CAP: PLAN_ENTRY_CAP,
+	PLAN_FILE_MAX_CHARS: PLAN_FILE_MAX_CHARS,
+	PLAN_MESSAGE_PROMPT_MAX_CHARS: PLAN_MESSAGE_PROMPT_MAX_CHARS,
+	PLAN_ID_PATTERN: PLAN_ID_PATTERN,
+	newPlanId: newPlanId,
+	planFileRelativePath: planFileRelativePath,
+	planFilePath: planFilePath,
+	extractPlanJson: extractPlanJson,
+	parsePlan: parsePlan,
+	renderPlanPrompt: renderPlanPrompt,
+	buildPlanSnapshot: buildPlanSnapshot,
+	buildPlanRequest: buildPlanRequest,
+
 	// Phase 02 filesystem plumbing, exported for direct unit testing (see
 	// src/__tests__/plugins/kanban-persistence.test.ts). These call
 	// sdk.fs.read/write, so a test must call activate() with a stub SDK first.
@@ -6284,6 +7624,10 @@ module.exports = {
 		await loadSelectedBoard();
 		await loadCardNotes();
 		await loadBoardSettings();
+		// Before seed() like the rest, and for one reason beyond symmetry: a
+		// halt has to be in force before anything can execute, so it is read
+		// on the way in rather than on the first plan run.
+		await loadPlanSettings();
 		await loadConductorConfigs();
 		await loadConductorIds();
 		await loadReachLogs();
@@ -6320,6 +7664,9 @@ module.exports = {
 		pendingMoveRejection = null;
 		cardNotes = new Map();
 		boardSettings = new Map();
+		// Dropped like every other cache, and re-read by the next activate():
+		// a halt lives in storage, so clearing the mirror does not clear it.
+		planSettings = new Map();
 		conductorConfigs = new Map();
 		conductorIds = new Map();
 		reachLogs = new Map();
