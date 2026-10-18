@@ -9,7 +9,11 @@ import { notifyToast } from '../../../../renderer/stores/notificationStore';
 import { createMockSession } from '../../../helpers/mockSession';
 import { buildMaestroUrl } from '../../../../renderer/utils/buildMaestroUrl';
 import { buildTipOrder } from '../../../../shared/didYouKnow';
+import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
+import type { BrowserTab } from '../../../../shared/browserPage';
 import { resetStore } from '../../../helpers';
+
+vi.mock('../../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: vi.fn(() => false) }));
 
 vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../../renderer/stores/notificationStore')>()),
@@ -18,6 +22,7 @@ vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) 
 
 describe('useDidYouKnowRotation', () => {
 	beforeEach(() => {
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		resetStore(useSettingsStore);
 		resetStore(useSessionStore);
 		useSessionStore.setState({
@@ -68,6 +73,49 @@ describe('useDidYouKnowRotation', () => {
 		act(() => result.current.goNext());
 		act(() => result.current.goBack());
 		expect(useSessionStore.getState().sessions).toBe(beforeExit);
+	});
+
+	it.each([false, true])('reuses a delayed host tab after Next, with Back=%s', async (back) => {
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		let finish!: (tab: BrowserTab) => void;
+		const originalApi = window.maestro.browserSession;
+		const createTab = vi.fn<typeof window.maestro.browserSession.createTab>(
+			() =>
+				new Promise<BrowserTab>((resolve) => {
+					finish = resolve;
+				})
+		);
+		window.maestro.browserSession = { ...originalApi, createTab };
+		try {
+			const { result } = renderHook(() => useDidYouKnowRotation({}));
+			act(() => result.current.openDocs());
+			act(() => result.current.goNext());
+			if (back) act(() => result.current.goBack());
+			const next = result.current.tip!;
+			expect(createTab).toHaveBeenCalledTimes(1);
+			await act(async () => {
+				finish({
+					id: 'host-docs',
+					url: createTab.mock.calls[0][1].url!,
+					title: 'Docs',
+					createdAt: 0,
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: true,
+				});
+			});
+			expect(useSessionStore.getState().sessions[0].browserTabs).toEqual([
+				expect.objectContaining({
+					id: 'host-docs',
+					requestedUrl: buildMaestroUrl(`https://docs.runmaestro.ai/${next.docsSlug}`),
+				}),
+			]);
+			act(() => result.current.goBack());
+			expect(createTab).toHaveBeenCalledTimes(1);
+			expect(useSessionStore.getState().sessions[0].browserTabs).toHaveLength(1);
+		} finally {
+			window.maestro.browserSession = originalApi;
+		}
 	});
 
 	it('leaves the docs page untouched and explains tips without docs in either direction', () => {

@@ -5077,7 +5077,6 @@ describe('useMainKeyboardHandler - openPromptComposer', () => {
 // Group chat Right Bar: Cmd+Shift+[ / Cmd+Shift+]
 // =====================================================================});
 
-
 /**
  * Inside a room, Toggle Tab Unread flips the room's own Left Bar dot.
  */
