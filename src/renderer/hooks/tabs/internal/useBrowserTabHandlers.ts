@@ -14,20 +14,17 @@ import { normalizeBrowserTabUpdates } from './browserTabHelpers';
 import type { BrowserTab } from '../../../../shared/browserPage';
 
 export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
-	const handleNewBrowserTab = useCallback(
-		(options?: { ephemeral?: boolean }) => {
-			const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
-			openBrowserTab(
-				homeUrl,
-				{
-					title: homeUrl === DEFAULT_BROWSER_TAB_URL ? undefined : homeUrl,
-					ephemeral: options?.ephemeral,
-				},
-				true
-			);
-		},
-		[]
-	);
+	const handleNewBrowserTab = useCallback((options?: { ephemeral?: boolean }) => {
+		const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
+		openBrowserTab(
+			homeUrl,
+			{
+				title: homeUrl === DEFAULT_BROWSER_TAB_URL ? undefined : homeUrl,
+				ephemeral: options?.ephemeral,
+			},
+			true
+		);
+	}, []);
 	const handleOpenBrowserTabAt = useCallback(openBrowserTabAt, []);
 
 	const handleSelectBrowserTab = useCallback((tabId: string) => {

@@ -39,7 +39,11 @@ React Components
 current session without requesting DOM focus. It leaves any active tiled group
 and inserts the tab after the active tab in the unified order. Empty URLs and
 missing active sessions are no-ops. Call it directly from modals or other services;
-`useBrowserTabHandlers` delegates to the same implementation.
+`useBrowserTabHandlers` delegates to the same implementation. The native path
+returns the created tab synchronously; web desktop returns a promise for the
+host-created tab (or `undefined` on failure). Consumers that reuse the opened
+tab must handle both paths. `openBrowserTab` also accepts creation options and
+an address-focus flag for the new-tab action.
 
 ### ipcWrapper.ts (~180 lines)
 

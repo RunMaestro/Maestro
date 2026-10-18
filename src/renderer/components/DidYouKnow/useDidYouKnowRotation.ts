@@ -10,6 +10,7 @@ import {
 	pickNextTip,
 	type DidYouKnowTip,
 } from '../../../shared/didYouKnow';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { openBrowserTabAt } from '../../services/browserTabs';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -33,6 +34,9 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 	const [cursor, setCursor] = useState(0);
 	const [isReading, setIsReading] = useState(false);
 	const readingTab = useRef<{ sessionId: string; tabId: string } | null>(null);
+	const pendingTab = useRef<{ sessionId: string; promise: Promise<BrowserTab | undefined> } | null>(
+		null
+	);
 	const currentId = history[cursor];
 	const tip = getTipById(currentId, order) ?? null;
 
@@ -89,12 +93,38 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 				activeGroupId: null,
 				inputMode: 'ai',
 			}));
-		} else {
-			openBrowserTabAt(url, { title: nextTip.title });
-			const openedSession = selectActiveSession(useSessionStore.getState());
-			readingTab.current = openedSession?.activeBrowserTabId
-				? { sessionId: openedSession.id, tabId: openedSession.activeBrowserTabId }
-				: null;
+		} else if (session) {
+			const pending = pendingTab.current;
+			const opened =
+				pending?.sessionId === session.id
+					? pending.promise
+					: openBrowserTabAt(url, { title: nextTip.title });
+			const remember = (tab: BrowserTab | undefined) => {
+				if (!tab) return;
+				readingTab.current = { sessionId: session.id, tabId: tab.id };
+				// Next/Back may have been pressed while the host was creating the tab.
+				if (
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === session.id)
+						?.browserTabs?.find((item) => item.id === tab.id)?.url !== url
+				) {
+					updateSessionWith(session.id, (s) => ({
+						...s,
+						browserTabs: s.browserTabs?.map((item) =>
+							item.id === tab.id ? { ...item, url, title: nextTip.title, requestedUrl: url } : item
+						),
+					}));
+				}
+			};
+			if (opened instanceof Promise) {
+				pendingTab.current = { sessionId: session.id, promise: opened };
+				void opened.then(remember).finally(() => {
+					if (pendingTab.current?.promise === opened) pendingTab.current = null;
+				});
+			} else {
+				remember(opened);
+			}
 		}
 	}, []);
 

@@ -64,6 +64,33 @@ describe('remote browser text input', () => {
 		vi.unstubAllGlobals();
 	});
 
+	it('waits for the host connection before consuming a docs navigation request', async () => {
+		const relayAction = vi.fn().mockResolvedValue(undefined);
+		window.maestro.browserSession.relayAction = relayAction;
+		const onUpdateTab = vi.fn();
+		const url = 'https://docs.runmaestro.ai/cue';
+		const { rerender } = render(
+			<RemoteBrowserTabView
+				tab={{ ...tab, requestedUrl: url }}
+				theme={mockTheme}
+				onUpdateTab={onUpdateTab}
+			/>
+		);
+		expect(relayAction).not.toHaveBeenCalled();
+		await act(() => vi.advanceTimersByTimeAsync(0));
+		expect(relayAction).toHaveBeenCalledWith('lease-1', { kind: 'navigate', url });
+		expect(onUpdateTab).toHaveBeenCalledWith(tab.id, { requestedUrl: undefined });
+		rerender(
+			<RemoteBrowserTabView
+				tab={{ ...tab, url: 'https://docs.runmaestro.ai/redirected' }}
+				theme={mockTheme}
+				onUpdateTab={onUpdateTab}
+			/>
+		);
+		await act(() => vi.advanceTimersByTimeAsync(250));
+		expect(relayAction).toHaveBeenCalledTimes(1);
+	});
+
 	it('sends complete Unicode pastes in ordered bounded chunks before subsequent typing', async () => {
 		let finishFirst!: () => void;
 		relayInput.mockReturnValueOnce(

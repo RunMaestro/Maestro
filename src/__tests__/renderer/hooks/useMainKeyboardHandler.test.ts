@@ -4831,7 +4831,6 @@ describe('useMainKeyboardHandler - openPromptComposer', () => {
 // Group chat Right Bar: Cmd+Shift+[ / Cmd+Shift+]
 // =====================================================================});
 
-
 /**
  * A group chat has no AI tabs, so the tab-cycling chord is dead there. It walks
  * the Right Bar's two panels instead - the only two views a room has.
