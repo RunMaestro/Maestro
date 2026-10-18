@@ -1207,6 +1207,51 @@ describe('ExitHandler', () => {
 			expect(events).toEqual(['usage', 'session-id', 'data']);
 			expect(proc.resultEmitted).toBe(true);
 		});
+
+		// The flushed record goes through StdoutHandler.handleParsedEvent, which
+		// emits `parsed-event` itself. ExitHandler emitting one too would hand every
+		// subscriber the run's last line twice.
+		it('emits exactly one parsed-event, usage and session-id for a record flushed without a newline', async () => {
+			const proc = createMockProcess({
+				toolType: 'cursor-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					result: 'complete answer',
+					session_id: 'cursor-once-session',
+					usage: { inputTokens: 7, outputTokens: 3 },
+				}),
+				outputParser: new CursorCliOutputParser(),
+			});
+			processes.set('test-session', proc);
+
+			const parsedEvents: string[] = [];
+			const usage: unknown[] = [];
+			const sessionIds: string[] = [];
+			const settlements: Array<{ answerCaptured?: boolean } | undefined> = [];
+			emitter.on('parsed-event', (_sid: string, event: { type: string }) =>
+				parsedEvents.push(event.type)
+			);
+			emitter.on('usage', (_sid: string, stats: unknown) => usage.push(stats));
+			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
+				sessionIds.push(agentSessionId)
+			);
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal: unknown, settlement?: { answerCaptured?: boolean }) =>
+					settlements.push(settlement)
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(parsedEvents).toEqual(['result']);
+			expect(usage).toHaveLength(1);
+			expect(sessionIds).toEqual(['cursor-once-session']);
+			// The record was the run's only output, so it is the captured answer.
+			expect(settlements).toEqual([expect.objectContaining({ answerCaptured: true })]);
+		});
 	});
 
 	describe('process cleanup', () => {
